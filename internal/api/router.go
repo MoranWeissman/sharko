@@ -16,7 +16,6 @@ import (
 	"github.com/moran/argocd-addons-platform/internal/ai"
 	"github.com/moran/argocd-addons-platform/internal/auth"
 	"github.com/moran/argocd-addons-platform/internal/config"
-	"github.com/moran/argocd-addons-platform/internal/datadog"
 	"github.com/moran/argocd-addons-platform/internal/service"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -30,7 +29,6 @@ type Server struct {
 	observabilitySvc *service.ObservabilityService
 	upgradeSvc       *service.UpgradeService
 	aiClient          *ai.Client
-	ddClient          *datadog.Client
 	agentMemory       *ai.MemoryStore
 	authStore         *auth.Store
 	aiConfigStore     *config.AIConfigStore
@@ -45,7 +43,6 @@ func NewServer(
 	observabilitySvc *service.ObservabilityService,
 	upgradeSvc *service.UpgradeService,
 	aiClient *ai.Client,
-	ddClient *datadog.Client,
 ) *Server {
 	// Initialize agent memory — store in /tmp for containers (writable), or local dir for dev
 	memoryPath := "/tmp/aap-agent-memory.json"
@@ -66,7 +63,6 @@ func NewServer(
 		observabilitySvc:  observabilitySvc,
 		upgradeSvc:        upgradeSvc,
 		aiClient:          aiClient,
-		ddClient:          ddClient,
 		agentMemory:       agentMemory,
 		authStore:         authStore,
 		aiConfigStore:     nil, // set via SetAIConfigStore
@@ -135,11 +131,6 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 
 	// Observability
 	mux.HandleFunc("GET /api/v1/observability/overview", srv.handleGetObservabilityOverview)
-
-	// Datadog Metrics
-	mux.HandleFunc("GET /api/v1/datadog/status", srv.handleDatadogStatus)
-	mux.HandleFunc("GET /api/v1/datadog/metrics/{namespace}", srv.handleDatadogNamespaceMetrics)
-	mux.HandleFunc("GET /api/v1/datadog/cluster-metrics/{clusterName}", srv.handleDatadogClusterMetrics)
 
 	// AI Agent
 	mux.HandleFunc("POST /api/v1/agent/chat", srv.handleAgentChat)
