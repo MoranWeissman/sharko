@@ -1,9 +1,8 @@
-# ArgoCD Addons Platform - Go Rewrite
-# Makefile for development, testing, building, and deployment
+# Sharko - Makefile for development, testing, building, and deployment
 
 # Configuration
-K8S_NAMESPACE = argocd-addons-platform
-IMAGE_NAME    = aap-server
+K8S_NAMESPACE = sharko
+IMAGE_NAME    = sharko
 MINIKUBE_PROFILE = minikube
 
 # Read version from VERSION file
@@ -16,8 +15,8 @@ VERSION = $(shell cat VERSION 2>/dev/null || echo "0.0.0")
 
 # Default target
 help: ## Show all available targets
-	@echo "ArgoCD Addons Platform (Go) - Available Targets"
-	@echo "================================================"
+	@echo "Sharko - Available Targets"
+	@echo "=========================="
 	@echo ""
 	@echo "Development:"
 	@echo "  make dev            Run Go backend + Vite dev server concurrently"
@@ -58,15 +57,15 @@ dev: ## Run Go backend + Vite dev server concurrently
 	@echo "Starting Go backend and Vite dev server..."
 	@trap 'kill 0' EXIT; \
 		( [ -f .env.secrets ] && set -a && . ./.env.secrets && set +a; \
-		  go run ./cmd/aap-server ) & \
+		  go run ./cmd/sharko serve ) & \
 		( sleep 2 && cd ui && npm run dev ) & \
 		wait
 
 build-go: ## Build Go binary locally
 	@echo "Building Go binary..."
 	@mkdir -p bin
-	CGO_ENABLED=0 go build -o bin/aap-server ./cmd/aap-server
-	@echo "Binary built: bin/aap-server"
+	CGO_ENABLED=0 go build -o bin/sharko ./cmd/sharko
+	@echo "Binary built: bin/sharko"
 
 run: build-go ## Build and run locally (loads .env.secrets)
 	@if [ ! -f config.yaml ]; then \
@@ -74,7 +73,7 @@ run: build-go ## Build and run locally (loads .env.secrets)
 		exit 1; \
 	fi
 	@if [ -f .env.secrets ]; then set -a && . ./.env.secrets && set +a; fi && \
-		./bin/aap-server --static ui/dist
+		./bin/sharko serve --static ui/dist
 
 # ---------------------------------------------------------------------------
 # Testing
@@ -159,21 +158,21 @@ deploy: build ensure-namespace ## Build + deploy to minikube (loads secrets from
 	@echo "Deploying $(IMAGE_NAME):$(DEPLOY_VERSION) to minikube..."
 	@# Create config.yaml as a ConfigMap so the pod can read it
 	@if [ -f config.yaml ]; then \
-		kubectl create configmap aap-config \
+		kubectl create configmap sharko-config \
 			--from-file=config.yaml=config.yaml \
 			-n $(K8S_NAMESPACE) \
 			--dry-run=client -o yaml | kubectl apply -f -; \
-		echo "ConfigMap aap-config created from config.yaml"; \
+		echo "ConfigMap sharko-config created from config.yaml"; \
 	else \
 		echo "Warning: config.yaml not found. Pod will start without connections."; \
 	fi
 	@# Create secrets from .env.secrets so env vars resolve inside the pod
 	@if [ -f .env.secrets ]; then \
-		kubectl create secret generic aap-env-secrets \
+		kubectl create secret generic sharko-env-secrets \
 			--from-env-file=.env.secrets \
 			-n $(K8S_NAMESPACE) \
 			--dry-run=client -o yaml | kubectl apply -f -; \
-		echo "Secret aap-env-secrets created from .env.secrets"; \
+		echo "Secret sharko-env-secrets created from .env.secrets"; \
 	else \
 		echo "Warning: .env.secrets not found. Env vars in config.yaml won't resolve."; \
 	fi
@@ -187,14 +186,14 @@ deploy: build ensure-namespace ## Build + deploy to minikube (loads secrets from
 	@echo "  Namespace: $(K8S_NAMESPACE)"
 	@echo ""
 	@echo "Check status: make status"
-	@echo "Port-forward: kubectl port-forward -n $(K8S_NAMESPACE) service/aap-server 8080:8080"
+	@echo "Port-forward: kubectl port-forward -n $(K8S_NAMESPACE) service/sharko 8080:8080"
 
 update: build ensure-namespace ## Quick update: build + restart deployment
 	$(eval UPDATE_VERSION := $(shell cat VERSION))
 	@echo "Updating to $(IMAGE_NAME):$(UPDATE_VERSION)..."
-	@kubectl set image deployment/aap-server aap-server=$(IMAGE_NAME):$(UPDATE_VERSION) -n $(K8S_NAMESPACE)
-	@kubectl rollout restart deployment/aap-server -n $(K8S_NAMESPACE)
-	@kubectl wait --for=condition=available --timeout=60s deployment/aap-server -n $(K8S_NAMESPACE)
+	@kubectl set image deployment/sharko sharko=$(IMAGE_NAME):$(UPDATE_VERSION) -n $(K8S_NAMESPACE)
+	@kubectl rollout restart deployment/sharko -n $(K8S_NAMESPACE)
+	@kubectl wait --for=condition=available --timeout=60s deployment/sharko -n $(K8S_NAMESPACE)
 	@echo "Update complete: $(IMAGE_NAME):$(UPDATE_VERSION)"
 
 undeploy: ## Remove deployment from minikube
@@ -210,8 +209,8 @@ undeploy: ## Remove deployment from minikube
 # ---------------------------------------------------------------------------
 
 status: ## Show deployment status
-	@echo "ArgoCD Addons Platform - Deployment Status"
-	@echo "==========================================="
+	@echo "Sharko - Deployment Status"
+	@echo "=========================="
 	@echo "Version: $(VERSION)"
 	@echo "Namespace: $(K8S_NAMESPACE)"
 	@echo ""
@@ -228,7 +227,7 @@ status: ## Show deployment status
 	@kubectl get ingress -n $(K8S_NAMESPACE) 2>/dev/null || echo "  No ingress found"
 
 logs: ## Show pod logs
-	@kubectl logs -f deployment/aap-server -n $(K8S_NAMESPACE)
+	@kubectl logs -f deployment/sharko -n $(K8S_NAMESPACE)
 
 # ---------------------------------------------------------------------------
 # Secrets Management
@@ -245,19 +244,19 @@ create-secrets: ensure-namespace ## Create K8s secrets from .env.secrets
 	fi
 	@echo "Creating secrets from .env.secrets..."
 	@set -a && source .env.secrets && set +a && \
-	kubectl create secret generic aap-azure-devops \
+	kubectl create secret generic sharko-azure-devops \
 		--from-literal=pat="$$AZURE_DEVOPS_PAT" \
 		-n $(K8S_NAMESPACE) \
 		--dry-run=client -o yaml | kubectl apply -f -
 	@set -a && source .env.secrets && set +a && \
-	kubectl create secret generic aap-argocd-nonprod \
+	kubectl create secret generic sharko-argocd-nonprod \
 		--from-literal=server-url="$$ARGOCD_NONPROD_SERVER_URL" \
 		--from-literal=token="$$ARGOCD_NONPROD_TOKEN" \
 		--from-literal=namespace="$$ARGOCD_NONPROD_NAMESPACE" \
 		-n $(K8S_NAMESPACE) \
 		--dry-run=client -o yaml | kubectl apply -f -
 	@set -a && source .env.secrets && set +a && \
-	kubectl create secret generic aap-argocd-prod \
+	kubectl create secret generic sharko-argocd-prod \
 		--from-literal=server-url="$$ARGOCD_PROD_SERVER_URL" \
 		--from-literal=token="$$ARGOCD_PROD_TOKEN" \
 		--from-literal=namespace="$$ARGOCD_PROD_NAMESPACE" \
