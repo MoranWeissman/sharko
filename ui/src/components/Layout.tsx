@@ -145,7 +145,7 @@ export function Layout() {
         <div className="fixed inset-0 z-40 bg-black/50 lg:hidden" onClick={() => setMobileOpen(false)} />
       )}
 
-      {/* Sidebar — always dark like ArgoCD */}
+      {/* Sidebar — always dark */}
       <aside
         className={`flex flex-col bg-slate-900 shadow-sm transition-all duration-200 ${
           collapsed ? 'w-16' : 'w-60'
@@ -159,9 +159,9 @@ export function Layout() {
           <Package className="h-6 w-6 shrink-0 text-cyan-400" />
           {!collapsed && (
             <div className="flex flex-col leading-tight">
-              <span className="text-sm font-bold text-white">AAP</span>
+              <span className="text-sm font-bold text-white">Sharko</span>
               <span className="text-[10px] text-slate-400">
-                ArgoCD Addons Platform
+                Addon management for Kubernetes fleets
               </span>
             </div>
           )}

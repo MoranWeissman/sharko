@@ -48,10 +48,10 @@ export function Login() {
             {/* Logo */}
             <div className="mb-8 text-center">
               <h1 className="text-3xl font-bold text-white">
-                AAP
+                Sharko
               </h1>
               <p className="mt-1 text-sm font-medium text-gray-300">
-                ArgoCD Addons Platform
+                Addon management for Kubernetes fleets
               </p>
               <p className="mt-0.5 text-xs text-gray-500">
                 Control plane for Kubernetes add-ons
@@ -111,7 +111,7 @@ export function Login() {
 
             {/* Footer */}
             <p className="mt-12 text-center text-[10px] text-gray-600">
-              AAP
+              Sharko
             </p>
           </div>
         </div>

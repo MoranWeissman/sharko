@@ -1,14 +1,14 @@
 {{/*
 Expand the name of the chart.
 */}}
-{{- define "aap.name" -}}
+{{- define "sharko.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{/*
 Create a default fully qualified app name.
 */}}
-{{- define "aap.fullname" -}}
+{{- define "sharko.fullname" -}}
 {{- if .Values.fullnameOverride }}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
 {{- else }}
@@ -24,28 +24,28 @@ Create a default fully qualified app name.
 {{/*
 Common labels
 */}}
-{{- define "aap.labels" -}}
-helm.sh/chart: {{ include "aap.name" . }}-{{ .Chart.Version | replace "+" "_" }}
-{{ include "aap.selectorLabels" . }}
+{{- define "sharko.labels" -}}
+helm.sh/chart: {{ include "sharko.name" . }}-{{ .Chart.Version | replace "+" "_" }}
+{{ include "sharko.selectorLabels" . }}
 app.kubernetes.io/version: {{ .Values.image.tag | default .Chart.AppVersion | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
-app.kubernetes.io/part-of: argocd-addons-platform
+app.kubernetes.io/part-of: sharko
 {{- end }}
 
 {{/*
 Selector labels
 */}}
-{{- define "aap.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "aap.name" . }}
+{{- define "sharko.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "sharko.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{/*
 Service account name
 */}}
-{{- define "aap.serviceAccountName" -}}
+{{- define "sharko.serviceAccountName" -}}
 {{- if .Values.serviceAccount.create }}
-{{- default (include "aap.fullname" .) .Values.serviceAccount.name }}
+{{- default (include "sharko.fullname" .) .Values.serviceAccount.name }}
 {{- else }}
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
@@ -54,17 +54,17 @@ Service account name
 {{/*
 Secret name
 */}}
-{{- define "aap.secretName" -}}
+{{- define "sharko.secretName" -}}
 {{- if .Values.existingSecret }}
 {{- .Values.existingSecret }}
 {{- else }}
-{{- include "aap.fullname" . }}
+{{- include "sharko.fullname" . }}
 {{- end }}
 {{- end }}
 
 {{/*
 ArgoCD namespace for RBAC
 */}}
-{{- define "aap.argocdNamespace" -}}
+{{- define "sharko.argocdNamespace" -}}
 {{- .Values.rbac.argocdNamespace | default "argocd" }}
 {{- end }}

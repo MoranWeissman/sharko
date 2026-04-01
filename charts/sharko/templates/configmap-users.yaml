@@ -1,11 +1,11 @@
-{{- $existing := (lookup "v1" "ConfigMap" .Release.Namespace (printf "%s-users" (include "aap.fullname" .))) -}}
+{{- $existing := (lookup "v1" "ConfigMap" .Release.Namespace (printf "%s-users" (include "sharko.fullname" .))) -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "aap.fullname" . }}-users
+  name: {{ include "sharko.fullname" . }}-users
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "aap.labels" . | nindent 4 }}
+    {{- include "sharko.labels" . | nindent 4 }}
   annotations:
     helm.sh/resource-policy: keep
 data:

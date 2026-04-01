@@ -28,7 +28,7 @@ export function useDashboards() {
       .catch(() => {
         // Fallback: try localStorage for backwards compat
         try {
-          const raw = localStorage.getItem('aap-dashboards');
+          const raw = localStorage.getItem('sharko-dashboards');
           if (raw) setDashboards(JSON.parse(raw));
         } catch { /* ignore */ }
         setLoaded(true);
@@ -41,7 +41,7 @@ export function useDashboards() {
       await api.saveEmbeddedDashboards(next);
     } catch {
       // Fallback: save to localStorage
-      localStorage.setItem('aap-dashboards', JSON.stringify(next));
+      localStorage.setItem('sharko-dashboards', JSON.stringify(next));
     }
   }, []);
 

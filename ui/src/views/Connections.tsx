@@ -165,7 +165,7 @@ function ConnectionFormFields({
             <label className={labelCls}>Token</label>
             <input className={inputCls} type="password" value={form.argocd_token} onChange={(e) => onChange({ argocd_token: e.target.value })}
               placeholder={isEdit ? 'Leave blank to keep existing' : 'ArgoCD API token'} />
-            <p className="mt-1 text-[10px] text-gray-400">ArgoCD account token (e.g. aap-api-user). Falls back to ARGOCD_TOKEN env var.</p>
+            <p className="mt-1 text-[10px] text-gray-400">ArgoCD account token (e.g. sharko-api-user). Falls back to ARGOCD_TOKEN env var.</p>
           </div>
           <div>
             <label className={labelCls}>Namespace</label>

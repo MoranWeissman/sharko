@@ -14,8 +14,8 @@ vi.mock('@/services/api', () => ({
     ]),
     docsGet: vi.fn().mockImplementation((slug: string) => {
       const contents: Record<string, string> = {
-        'overview': '# Overview\n\nArgoCD Addons Platform is a platform for managing addons.',
-        'features': '# Features\n\nHere is a quick tour of what AAP offers.',
+        'overview': '# Overview\n\nSharko is a platform for managing addons.',
+        'features': '# Features\n\nHere is a quick tour of what Sharko offers.',
         'managing-addons': '# Managing Add-ons\n\nHow to manage your addons.',
         'values-guide': '# Values Guide\n\nConfiguring values.',
         'troubleshooting': '# Troubleshooting\n\nCommon issues.',
@@ -40,7 +40,7 @@ describe('Docs', () => {
       expect(screen.getByText('Documentation')).toBeInTheDocument();
       expect(screen.getByRole('heading', { name: 'Overview', level: 1 })).toBeInTheDocument();
     });
-    expect(screen.getByText(/ArgoCD Addons Platform/)).toBeInTheDocument();
+    expect(screen.getByText(/Sharko/)).toBeInTheDocument();
   });
 
   it('renders all navigation links', async () => {

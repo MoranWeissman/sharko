@@ -1,10 +1,10 @@
-# ArgoCD Addons Platform - Helm Values
+# Sharko - Helm Values
 # See README for full documentation of all options.
 
 replicaCount: 1
 
 image:
-  repository: ghcr.io/moranweissman/argocd-addons-platform
+  repository: ghcr.io/moranweissman/sharko
   tag: ""  # Defaults to appVersion from Chart.yaml
   pullPolicy: IfNotPresent
 
@@ -32,12 +32,12 @@ rbac:
 config:
   # Connections are managed via the Settings UI and stored in an encrypted K8s Secret.
   # The Secret name can be customized below. On first deploy, open the UI to configure.
-  connectionSecretName: "aap-connections"
+  connectionSecretName: "sharko-connections"
   # Dev mode: enables env var fallback for credentials (GITHUB_TOKEN, ARGOCD_TOKEN, etc.)
   # In production, set to false — credentials must be configured via Settings UI.
   devMode: false
   # Enable read access to Kubernetes Nodes (get/list).
-  # Adds a ClusterRole rule allowing AAP to fetch node count and status.
+  # Adds a ClusterRole rule allowing Sharko to fetch node count and status.
   # Requires cluster-level permissions — opt-in.
   nodeAccess: false
   # Comma-separated list of environment keywords to extract from cluster names.
@@ -61,7 +61,7 @@ secrets:
 # Authentication
 # ---------------------------------------------------------------------------
 # Authentication is managed via K8s-native resources:
-# - ConfigMap (aap-users): user accounts (auto-created by Helm)
+# - ConfigMap (sharko-users): user accounts (auto-created by Helm)
 # - Secret: bcrypt password hashes (auto-generated on first install)
 #
 # On first install, an admin account is created with a random password.
@@ -69,8 +69,8 @@ secrets:
 #
 # For local development (outside K8s), set these env vars:
 # auth:
-#   username: ""   # maps to AAP_AUTH_USER env var
-#   password: ""   # maps to AAP_AUTH_PASSWORD env var
+#   username: ""   # maps to SHARKO_AUTH_USER env var
+#   password: ""   # maps to SHARKO_AUTH_PASSWORD env var
 
 # ---------------------------------------------------------------------------
 # GitOps Actions (v2 — PR creation from UI/AI)
@@ -94,7 +94,7 @@ ai:
   maxIterations: 8  # Agent tool-calling loop limit (increase for migration workflows)
   # Ollama settings
   ollama:
-    # Deploy an Ollama pod alongside AAP (set to true to auto-deploy)
+    # Deploy an Ollama pod alongside Sharko (set to true to auto-deploy)
     deploy: false
     image: "ollama/ollama:latest"  # ~1.2GB compressed, ~3GB on disk
     # URL is auto-set when deploy=true, override for external Ollama
@@ -126,15 +126,6 @@ ai:
         cpu: "2000m"
 
 # ---------------------------------------------------------------------------
-# Datadog Metrics (optional)
-# ---------------------------------------------------------------------------
-datadog:
-  enabled: false
-  apiKey: ""       # Stored in secret
-  appKey: ""       # Stored in secret
-  site: "datadoghq.com"  # or datadoghq.eu
-
-# ---------------------------------------------------------------------------
 # Service
 # ---------------------------------------------------------------------------
 service:
@@ -150,14 +141,14 @@ ingress:
   annotations: {}
     # nginx.ingress.kubernetes.io/ssl-redirect: "false"
   hosts:
-    - host: aap.example.com
+    - host: sharko.example.com
       paths:
         - path: /
           pathType: Prefix
   tls: []
   #  - secretName: aap-tls
   #    hosts:
-  #      - aap.example.com
+  #      - sharko.example.com
 
 # ---------------------------------------------------------------------------
 # Data Persistence (for migration state)

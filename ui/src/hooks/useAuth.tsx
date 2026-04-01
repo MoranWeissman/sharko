@@ -14,9 +14,9 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | null>(null)
 
-const TOKEN_KEY = 'aap-auth-token'
-const USER_KEY = 'aap-auth-user'
-const ROLE_KEY = 'aap-auth-role'
+const TOKEN_KEY = 'sharko-auth-token'
+const USER_KEY = 'sharko-auth-user'
+const ROLE_KEY = 'sharko-auth-role'
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(() => sessionStorage.getItem(TOKEN_KEY))

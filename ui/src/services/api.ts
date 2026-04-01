@@ -16,7 +16,7 @@ import type {
 } from './models'
 
 const BASE_URL = '/api/v1'
-const TOKEN_KEY = 'aap-auth-token'
+const TOKEN_KEY = 'sharko-auth-token'
 
 function authHeaders(): Record<string, string> {
   const token = sessionStorage.getItem(TOKEN_KEY)

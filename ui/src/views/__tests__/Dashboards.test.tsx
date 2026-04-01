@@ -94,7 +94,7 @@ describe('Dashboards', () => {
         provider: 'grafana',
       },
     ];
-    localStorage.setItem('aap-dashboards', JSON.stringify(stored));
+    localStorage.setItem('sharko-dashboards', JSON.stringify(stored));
 
     renderDashboards();
     await waitFor(() => {
@@ -112,7 +112,7 @@ describe('Dashboards', () => {
         provider: 'grafana',
       },
     ];
-    localStorage.setItem('aap-dashboards', JSON.stringify(stored));
+    localStorage.setItem('sharko-dashboards', JSON.stringify(stored));
 
     renderDashboards();
 
@@ -143,7 +143,7 @@ describe('Dashboards', () => {
         provider: 'grafana',
       },
     ];
-    localStorage.setItem('aap-dashboards', JSON.stringify(stored));
+    localStorage.setItem('sharko-dashboards', JSON.stringify(stored));
 
     renderDashboards();
 
@@ -203,7 +203,7 @@ describe('Dashboards', () => {
         provider: 'custom',
       },
     ];
-    localStorage.setItem('aap-dashboards', JSON.stringify(stored));
+    localStorage.setItem('sharko-dashboards', JSON.stringify(stored));
 
     renderDashboards();
     await waitFor(() => {

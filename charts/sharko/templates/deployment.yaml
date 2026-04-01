@@ -1,27 +1,27 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "aap.fullname" . }}
+  name: {{ include "sharko.fullname" . }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "aap.labels" . | nindent 4 }}
+    {{- include "sharko.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      {{- include "aap.selectorLabels" . | nindent 6 }}
+      {{- include "sharko.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       annotations:
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
       labels:
-        {{- include "aap.selectorLabels" . | nindent 8 }}
+        {{- include "sharko.selectorLabels" . | nindent 8 }}
     spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      serviceAccountName: {{ include "aap.serviceAccountName" . }}
+      serviceAccountName: {{ include "sharko.serviceAccountName" . }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
@@ -33,31 +33,31 @@ spec:
               containerPort: 8080
               protocol: TCP
           env:
-            - name: AAP_PORT
+            - name: SHARKO_PORT
               value: "8080"
-            - name: AAP_STATIC_DIR
+            - name: SHARKO_STATIC_DIR
               value: "/app/static"
             - name: CONNECTION_SECRET_NAME
-              value: {{ .Values.config.connectionSecretName | default "aap-connections" | quote }}
+              value: {{ .Values.config.connectionSecretName | default "sharko-connections" | quote }}
             {{- if .Values.config.devMode }}
-            - name: AAP_DEV_MODE
+            - name: SHARKO_DEV_MODE
               value: "true"
             {{- end }}
             - name: ARGOCD_NAMESPACE
-              value: {{ include "aap.argocdNamespace" . | quote }}
-            - name: AAP_NAMESPACE
+              value: {{ include "sharko.argocdNamespace" . | quote }}
+            - name: SHARKO_NAMESPACE
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
-            - name: AAP_SECRET_NAME
-              value: {{ include "aap.fullname" . | quote }}
+            - name: SHARKO_SECRET_NAME
+              value: {{ include "sharko.fullname" . | quote }}
             {{- if .Values.ai.enabled }}
             - name: AI_PROVIDER
               value: {{ .Values.ai.provider | quote }}
             {{- if eq .Values.ai.provider "ollama" }}
             - name: AI_OLLAMA_URL
               {{- if .Values.ai.ollama.deploy }}
-              value: "http://{{ include "aap.fullname" . }}-ollama:11434"
+              value: "http://{{ include "sharko.fullname" . }}-ollama:11434"
               {{- else }}
               value: {{ .Values.ai.ollama.url | default "http://localhost:11434" | quote }}
               {{- end }}
@@ -101,7 +101,7 @@ spec:
             {{- end }}
           envFrom:
             - secretRef:
-                name: {{ include "aap.secretName" . }}
+                name: {{ include "sharko.secretName" . }}
                 optional: true
           volumeMounts:
             - name: data
@@ -126,7 +126,7 @@ spec:
         - name: data
           {{- if .Values.persistence.enabled }}
           persistentVolumeClaim:
-            claimName: {{ include "aap.fullname" . }}-data
+            claimName: {{ include "sharko.fullname" . }}-data
           {{- else }}
           emptyDir: {}
           {{- end }}

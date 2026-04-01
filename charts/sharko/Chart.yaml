@@ -1,6 +1,6 @@
 apiVersion: v2
-name: argocd-addons-platform
-description: A Helm chart for ArgoCD Addons Platform — centralized addon management, observability, and AI-powered insights
+name: sharko
+description: Addon management for Kubernetes fleets, built on ArgoCD
 type: application
 version: 1.52.0
 appVersion: "1.52.0"
@@ -10,6 +10,6 @@ keywords:
   - addons
   - helm
   - observability
-home: https://github.com/MoranWeissman/argocd-addons-platform
+home: https://github.com/MoranWeissman/sharko
 maintainers:
   - name: MoranWeissman

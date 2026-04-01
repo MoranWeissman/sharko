@@ -55,7 +55,7 @@ describe('Dashboard', () => {
     renderDashboard();
 
     await waitFor(() => {
-      expect(screen.getByText('ArgoCD Addons Platform')).toBeInTheDocument();
+      expect(screen.getByText('Sharko')).toBeInTheDocument();
     });
 
     // Stat cards

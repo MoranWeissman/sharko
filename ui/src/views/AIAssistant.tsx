@@ -383,7 +383,7 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
     const now = new Date()
     const dateStr = now.toISOString().slice(0, 10)
     const header = [
-      'ArgoCD Addons Platform - AI Chat Export',
+      'Sharko - AI Chat Export',
       `Date: ${dateStr}`,
       `Messages: ${messages.length}`,
       '=====================================',
@@ -403,7 +403,7 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `aap-chat-${dateStr}.txt`
+    a.download = `sharko-chat-${dateStr}.txt`
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)

@@ -51,7 +51,7 @@ function renderLayout() {
 describe('Layout', () => {
   it('renders without crashing', () => {
     renderLayout()
-    expect(screen.getByText('AAP')).toBeInTheDocument()
+    expect(screen.getByText('Sharko')).toBeInTheDocument()
   })
 
   it('renders all navigation links', () => {

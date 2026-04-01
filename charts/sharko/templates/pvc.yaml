@@ -2,10 +2,10 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: {{ include "aap.fullname" . }}-data
+  name: {{ include "sharko.fullname" . }}-data
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "aap.labels" . | nindent 4 }}
+    {{- include "sharko.labels" . | nindent 4 }}
 spec:
   accessModes:
     - ReadWriteOnce

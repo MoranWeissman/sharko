@@ -10,7 +10,7 @@ interface ThemeContextValue {
 
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
-const STORAGE_KEY = 'aap-theme';
+const STORAGE_KEY = 'sharko-theme';
 
 function getInitialTheme(): Theme {
   if (typeof window === 'undefined') return 'light';

@@ -3,9 +3,9 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ include "aap.fullname" . }}
+  name: {{ include "sharko.fullname" . }}
   labels:
-    {{- include "aap.labels" . | nindent 4 }}
+    {{- include "sharko.labels" . | nindent 4 }}
 rules:
   # ArgoCD applications
   - apiGroups: ["argoproj.io"]
@@ -23,63 +23,63 @@ rules:
     verbs: ["get", "list"]
   {{- end }}
 ---
-# Bind to the AAP service account
+# Bind to the Sharko service account
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ include "aap.fullname" . }}
+  name: {{ include "sharko.fullname" . }}
   labels:
-    {{- include "aap.labels" . | nindent 4 }}
+    {{- include "sharko.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ include "aap.fullname" . }}
+  name: {{ include "sharko.fullname" . }}
 subjects:
   - kind: ServiceAccount
-    name: {{ include "aap.serviceAccountName" . }}
+    name: {{ include "sharko.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 ---
 # RoleBinding in ArgoCD namespace for secret read access (cluster connection info)
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ include "aap.fullname" . }}-argocd-reader
-  namespace: {{ include "aap.argocdNamespace" . }}
+  name: {{ include "sharko.fullname" . }}-argocd-reader
+  namespace: {{ include "sharko.argocdNamespace" . }}
   labels:
-    {{- include "aap.labels" . | nindent 4 }}
+    {{- include "sharko.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ include "aap.fullname" . }}
+  name: {{ include "sharko.fullname" . }}
 subjects:
   - kind: ServiceAccount
-    name: {{ include "aap.serviceAccountName" . }}
+    name: {{ include "sharko.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 ---
 # Role: read/write own secret and read users ConfigMap in the release namespace
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: {{ include "aap.fullname" . }}-auth
+  name: {{ include "sharko.fullname" . }}-auth
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "aap.labels" . | nindent 4 }}
+    {{- include "sharko.labels" . | nindent 4 }}
 rules:
   - apiGroups: [""]
     resources: ["secrets"]
-    resourceNames: [{{ include "aap.fullname" . | quote }}]
+    resourceNames: [{{ include "sharko.fullname" . | quote }}]
     verbs: ["get", "update"]
   - apiGroups: [""]
     resources: ["secrets"]
-    resourceNames: ["aap-migration-settings"]
+    resourceNames: ["sharko-migration-settings"]
     verbs: ["get", "create", "update", "delete"]
   - apiGroups: [""]
     resources: ["secrets"]
-    resourceNames: [{{ .Values.config.connectionSecretName | default "aap-connections" | quote }}]
+    resourceNames: [{{ .Values.config.connectionSecretName | default "sharko-connections" | quote }}]
     verbs: ["get", "update"]
   - apiGroups: [""]
     resources: ["secrets"]
-    resourceNames: ["aap-ai-config"]
+    resourceNames: ["sharko-ai-config"]
     verbs: ["get", "update"]
   - apiGroups: [""]
     resources: ["secrets"]
@@ -89,23 +89,23 @@ rules:
     verbs: ["get", "list", "create", "update", "delete"]  # migration state stored in ConfigMaps
   - apiGroups: [""]
     resources: ["configmaps"]
-    resourceNames: [{{ printf "%s-users" (include "aap.fullname" .) | quote }}]
+    resourceNames: [{{ printf "%s-users" (include "sharko.fullname" .) | quote }}]
     verbs: ["get"]
 ---
 # Bind auth role to the service account
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ include "aap.fullname" . }}-auth
+  name: {{ include "sharko.fullname" . }}-auth
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "aap.labels" . | nindent 4 }}
+    {{- include "sharko.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: {{ include "aap.fullname" . }}-auth
+  name: {{ include "sharko.fullname" . }}-auth
 subjects:
   - kind: ServiceAccount
-    name: {{ include "aap.serviceAccountName" . }}
+    name: {{ include "sharko.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 {{- end }}

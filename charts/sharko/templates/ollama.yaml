@@ -3,21 +3,21 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "aap.fullname" . }}-ollama
+  name: {{ include "sharko.fullname" . }}-ollama
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "aap.labels" . | nindent 4 }}
+    {{- include "sharko.labels" . | nindent 4 }}
     app.kubernetes.io/component: ollama
 spec:
   replicas: 1
   selector:
     matchLabels:
-      {{- include "aap.selectorLabels" . | nindent 6 }}
+      {{- include "sharko.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: ollama
   template:
     metadata:
       labels:
-        {{- include "aap.selectorLabels" . | nindent 8 }}
+        {{- include "sharko.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: ollama
     spec:
       {{- if .Values.ai.ollama.persistence }}
@@ -73,7 +73,7 @@ spec:
         - name: ollama-data
           {{- if .Values.ai.ollama.persistence }}
           persistentVolumeClaim:
-            claimName: {{ include "aap.fullname" . }}-ollama
+            claimName: {{ include "sharko.fullname" . }}-ollama
           {{- else }}
           emptyDir: {}
           {{- end }}
@@ -81,10 +81,10 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "aap.fullname" . }}-ollama
+  name: {{ include "sharko.fullname" . }}-ollama
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "aap.labels" . | nindent 4 }}
+    {{- include "sharko.labels" . | nindent 4 }}
     app.kubernetes.io/component: ollama
 spec:
   type: ClusterIP
@@ -94,17 +94,17 @@ spec:
       protocol: TCP
       name: http
   selector:
-    {{- include "aap.selectorLabels" . | nindent 4 }}
+    {{- include "sharko.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: ollama
 {{- if .Values.ai.ollama.persistence }}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: {{ include "aap.fullname" . }}-ollama
+  name: {{ include "sharko.fullname" . }}-ollama
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "aap.labels" . | nindent 4 }}
+    {{- include "sharko.labels" . | nindent 4 }}
     app.kubernetes.io/component: ollama
 spec:
   accessModes:
