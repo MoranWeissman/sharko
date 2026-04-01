@@ -146,7 +146,7 @@ ingress:
         - path: /
           pathType: Prefix
   tls: []
-  #  - secretName: aap-tls
+  #  - secretName: sharko-tls
   #    hosts:
   #      - sharko.example.com
 

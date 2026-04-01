@@ -4,12 +4,12 @@
 replicaCount: 1
 
 image:
-  repository: ghcr.io/moranweissman/argocd-addons-platform
+  repository: ghcr.io/moranweissman/sharko
   tag: "1.52.0"
   pullPolicy: Always
 
 config:
-  connectionSecretName: "aap-connections"
+  connectionSecretName: "sharko-connections"
   nodeAccess: true
 
 rbac:
@@ -23,10 +23,6 @@ ai:
   enabled: false
   provider: gemini
   cloudModel: gemini-2.5-flash
-
-datadog:
-  enabled: false
-  site: datadoghq.com
 
 service:
   type: ClusterIP
@@ -48,7 +44,7 @@ ingress:
     alb.ingress.kubernetes.io/healthy-threshold-count: "3"
     alb.ingress.kubernetes.io/unhealthy-threshold-count: "2"
   hosts:
-    - host: argocd-addons-platform.mahi-techlabs.com
+    - host: sharko.mahi-techlabs.com
       paths:
         - path: /
           pathType: Prefix
