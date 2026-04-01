@@ -51,8 +51,8 @@ func (g *GitHubProvider) CreateBranch(ctx context.Context, branchName, fromRef s
 // CreateOrUpdateFile creates a new file or updates an existing one on the given branch.
 func (g *GitHubProvider) CreateOrUpdateFile(ctx context.Context, path string, content []byte, branch, commitMessage string) error {
 	author := &github.CommitAuthor{
-		Name:  github.Ptr("AAP Bot"),
-		Email: github.Ptr("aap-bot@users.noreply.github.com"),
+		Name:  github.Ptr("Sharko Bot"),
+		Email: github.Ptr("sharko-bot@users.noreply.github.com"),
 	}
 
 	existing, err := g.getContentsRaw(ctx, path, branch)
@@ -111,8 +111,8 @@ func (g *GitHubProvider) DeleteFile(ctx context.Context, path, branch, commitMes
 	}
 
 	author := &github.CommitAuthor{
-		Name:  github.Ptr("AAP Bot"),
-		Email: github.Ptr("aap-bot@users.noreply.github.com"),
+		Name:  github.Ptr("Sharko Bot"),
+		Email: github.Ptr("sharko-bot@users.noreply.github.com"),
 	}
 
 	opts := &github.RepositoryContentFileOptions{

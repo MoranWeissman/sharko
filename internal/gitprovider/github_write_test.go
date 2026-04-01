@@ -148,7 +148,7 @@ func TestCreatePullRequest_Success(t *testing.T) {
 				Ref: req.Base,
 			},
 			User: &github.User{
-				Login: github.Ptr("aap-bot"),
+				Login: github.Ptr("sharko-bot"),
 			},
 		})
 	})

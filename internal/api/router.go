@@ -45,14 +45,14 @@ func NewServer(
 	aiClient *ai.Client,
 ) *Server {
 	// Initialize agent memory — store in /tmp for containers (writable), or local dir for dev
-	memoryPath := "/tmp/aap-agent-memory.json"
+	memoryPath := "/tmp/sharko-agent-memory.json"
 	agentMemory := ai.NewMemoryStore(memoryPath)
 
 	// Initialize auth store (auto-detects K8s vs local mode)
 	authStore := auth.NewStore()
 
 	if !authStore.HasUsers() {
-		slog.Warn("WARNING: Authentication is DISABLED — all API endpoints are publicly accessible. Configure users via K8s ConfigMap or AAP_AUTH_USER env var.")
+		slog.Warn("WARNING: Authentication is DISABLED — all API endpoints are publicly accessible. Configure users via K8s ConfigMap or SHARKO_AUTH_USER env var.")
 	}
 
 	return &Server{
@@ -385,7 +385,7 @@ func (s *Server) basicAuthMiddleware(next http.Handler) http.Handler {
 			token := strings.TrimPrefix(authHeader, "Bearer ")
 			if isValidSession(token) {
 				// Inject username into request for downstream handlers
-				r.Header.Set("X-AAP-User", getSessionUser(token))
+				r.Header.Set("X-Sharko-User", getSessionUser(token))
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -415,7 +415,7 @@ func (s *Server) handleUpdatePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	username := r.Header.Get("X-AAP-User")
+	username := r.Header.Get("X-Sharko-User")
 	if username == "" {
 		writeError(w, http.StatusUnauthorized, "not logged in")
 		return
@@ -468,7 +468,7 @@ func (s *Server) handleHashPassword(w http.ResponseWriter, r *http.Request) {
 
 // corsMiddleware adds CORS and security headers.
 func corsMiddleware(next http.Handler) http.Handler {
-	corsOrigin := os.Getenv("AAP_CORS_ORIGIN")
+	corsOrigin := os.Getenv("SHARKO_CORS_ORIGIN")
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Security headers
@@ -500,7 +500,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 		}
 
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-AAP-Connection")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Sharko-Connection")
 
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusOK)

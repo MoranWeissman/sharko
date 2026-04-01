@@ -18,13 +18,13 @@ func detectNS() string {
 	if err == nil && len(data) > 0 {
 		return strings.TrimSpace(string(data))
 	}
-	if ns := os.Getenv("AAP_NAMESPACE"); ns != "" {
+	if ns := os.Getenv("SHARKO_NAMESPACE"); ns != "" {
 		return ns
 	}
-	return "argocd-addons-platform"
+	return "sharko"
 }
 
-const dashboardsCMName = "aap-dashboards"
+const dashboardsCMName = "sharko-dashboards"
 
 type embeddedDashboard struct {
 	ID       string `json:"id"`
@@ -79,7 +79,7 @@ func saveDashboardsToK8s(ctx context.Context, dashboards []embeddedDashboard) er
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      dashboardsCMName,
 				Namespace: ns,
-				Labels:    map[string]string{"app.kubernetes.io/managed-by": "aap"},
+				Labels:    map[string]string{"app.kubernetes.io/managed-by": "sharko"},
 			},
 			Data: map[string]string{"dashboards": string(data)},
 		}

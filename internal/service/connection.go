@@ -19,9 +19,9 @@ type ConnectionService struct {
 }
 
 // NewConnectionService creates a new ConnectionService.
-// devMode enables env var fallback for credentials (set AAP_DEV_MODE=true or config.devMode in Helm).
+// devMode enables env var fallback for credentials (set SHARKO_DEV_MODE=true or config.devMode in Helm).
 func NewConnectionService(store config.Store) *ConnectionService {
-	devMode := os.Getenv("AAP_DEV_MODE") == "true"
+	devMode := os.Getenv("SHARKO_DEV_MODE") == "true"
 	if devMode {
 		slog.Info("connection service running in DEV MODE — env var credential fallback enabled")
 	}
@@ -148,7 +148,7 @@ func (s *ConnectionService) buildArgocdClient(conn *models.Connection) (*argocd.
 	}
 
 	if token == "" {
-		return nil, fmt.Errorf("ArgoCD token not configured. Provide it via Settings UI or set ARGOCD_TOKEN env var with AAP_DEV_MODE=true")
+		return nil, fmt.Errorf("ArgoCD token not configured. Provide it via Settings UI or set ARGOCD_TOKEN env var with SHARKO_DEV_MODE=true")
 	}
 
 	return argocd.NewClient(serverURL, token, true), nil
@@ -272,7 +272,7 @@ func (s *ConnectionService) buildGitProvider(conn *models.Connection) (gitprovid
 			}
 		}
 		if token == "" {
-			return nil, fmt.Errorf("GitHub token not configured. Provide it via Settings UI or set GITHUB_TOKEN env var with AAP_DEV_MODE=true")
+			return nil, fmt.Errorf("GitHub token not configured. Provide it via Settings UI or set GITHUB_TOKEN env var with SHARKO_DEV_MODE=true")
 		}
 		return gitprovider.NewGitHubProvider(conn.Git.Owner, conn.Git.Repo, token), nil
 	case models.GitProviderAzureDevOps:
@@ -284,7 +284,7 @@ func (s *ConnectionService) buildGitProvider(conn *models.Connection) (gitprovid
 			}
 		}
 		if pat == "" {
-			return nil, fmt.Errorf("Azure DevOps PAT not configured. Provide it via Settings UI or set AZURE_DEVOPS_PAT env var with AAP_DEV_MODE=true")
+			return nil, fmt.Errorf("Azure DevOps PAT not configured. Provide it via Settings UI or set AZURE_DEVOPS_PAT env var with SHARKO_DEV_MODE=true")
 		}
 		return gitprovider.NewAzureDevOpsProvider(conn.Git.Organization, conn.Git.Project, conn.Git.Repository, pat), nil
 	default:

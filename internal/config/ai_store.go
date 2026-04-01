@@ -15,7 +15,7 @@ import (
 	"k8s.io/client-go/rest"
 )
 
-const aiSecretName = "aap-ai-config"
+const aiSecretName = "sharko-ai-config"
 
 // AIConfigStore persists AI provider settings in an encrypted K8s Secret.
 // Uses raw JSON bytes to avoid import cycles with the ai package.
@@ -53,7 +53,7 @@ func (s *AIConfigStore) SaveJSON(data []byte) error {
 			Name:      aiSecretName,
 			Namespace: s.namespace,
 			Labels: map[string]string{
-				"app.kubernetes.io/managed-by": "aap",
+				"app.kubernetes.io/managed-by": "sharko",
 				"app.kubernetes.io/component":  "ai-config",
 			},
 		},

@@ -117,7 +117,7 @@ func (s *K8sStore) save(data *connData, resourceVersion string) error {
 			Namespace:       s.namespace,
 			ResourceVersion: resourceVersion, // optimistic concurrency for updates
 			Labels: map[string]string{
-				"app.kubernetes.io/managed-by": "aap",
+				"app.kubernetes.io/managed-by": "sharko",
 				"app.kubernetes.io/component":  "connection-config",
 			},
 		},

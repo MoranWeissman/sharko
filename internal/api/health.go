@@ -33,6 +33,6 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"status":   "healthy",
 		"version":  appVersion,
 		"mode":     deploymentMode,
-		"dev_mode": os.Getenv("AAP_DEV_MODE"),
+		"dev_mode": os.Getenv("SHARKO_DEV_MODE"),
 	})
 }

@@ -10,7 +10,7 @@ import (
 func newTestK8sStore(t *testing.T) *K8sStore {
 	t.Helper()
 	clientset := fake.NewSimpleClientset()
-	store, _ := newK8sStoreWithClient(clientset, "test-ns", "aap-connections", "test-encryption-key-32chars-ok")
+	store, _ := newK8sStoreWithClient(clientset, "test-ns", "sharko-connections", "test-encryption-key-32chars-ok")
 	return store
 }
 
@@ -233,7 +233,7 @@ func TestK8sStore_UpdateExisting(t *testing.T) {
 func TestK8sStore_PersistsAcrossInstances(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
 
-	store1, err := newK8sStoreWithClient(clientset, "test-ns", "aap-connections", "test-encryption-key-32chars-ok")
+	store1, err := newK8sStoreWithClient(clientset, "test-ns", "sharko-connections", "test-encryption-key-32chars-ok")
 	if err != nil {
 		t.Fatalf("newK8sStoreWithClient store1: %v", err)
 	}
@@ -246,7 +246,7 @@ func TestK8sStore_PersistsAcrossInstances(t *testing.T) {
 		t.Fatalf("SaveConnection: %v", err)
 	}
 
-	store2, err := newK8sStoreWithClient(clientset, "test-ns", "aap-connections", "test-encryption-key-32chars-ok")
+	store2, err := newK8sStoreWithClient(clientset, "test-ns", "sharko-connections", "test-encryption-key-32chars-ok")
 	if err != nil {
 		t.Fatalf("newK8sStoreWithClient store2: %v", err)
 	}
@@ -266,7 +266,7 @@ func TestK8sStore_PersistsAcrossInstances(t *testing.T) {
 func TestK8sStore_WrongKeyReturnsError(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
 
-	store1, err := newK8sStoreWithClient(clientset, "test-ns", "aap-connections", "correct-key-for-encryption-ok!!")
+	store1, err := newK8sStoreWithClient(clientset, "test-ns", "sharko-connections", "correct-key-for-encryption-ok!!")
 	if err != nil {
 		t.Fatalf("newK8sStoreWithClient store1: %v", err)
 	}
@@ -279,7 +279,7 @@ func TestK8sStore_WrongKeyReturnsError(t *testing.T) {
 		t.Fatalf("SaveConnection: %v", err)
 	}
 
-	store2, err := newK8sStoreWithClient(clientset, "test-ns", "aap-connections", "wrong-key-for-decryption-bad!!")
+	store2, err := newK8sStoreWithClient(clientset, "test-ns", "sharko-connections", "wrong-key-for-decryption-bad!!")
 	if err != nil {
 		t.Fatalf("newK8sStoreWithClient store2: %v", err)
 	}

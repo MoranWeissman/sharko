@@ -12,7 +12,7 @@ import (
 )
 
 func newTestServer() *Server {
-	store := config.NewFileStore("/tmp/aap-test-config.yaml")
+	store := config.NewFileStore("/tmp/sharko-test-config.yaml")
 	connSvc := service.NewConnectionService(store)
 	clusterSvc := service.NewClusterService()
 	addonSvc := service.NewAddonService()

@@ -64,7 +64,7 @@ func NewStore() *Store {
 			s.mode = ModeK8s
 			s.clientset = clientset
 			s.namespace = detectNamespace()
-			s.secretName = getEnvDefault("AAP_SECRET_NAME", "aap")
+			s.secretName = getEnvDefault("SHARKO_SECRET_NAME", "sharko")
 			slog.Info("auth store initialized in K8s mode", "namespace", s.namespace, "secret", s.secretName)
 			// Load initial data
 			if err := s.reload(); err != nil {
@@ -76,8 +76,8 @@ func NewStore() *Store {
 
 	// Fall back to local mode (env vars)
 	s.mode = ModeLocal
-	s.localUser = os.Getenv("AAP_AUTH_USER")
-	s.localPass = os.Getenv("AAP_AUTH_PASSWORD")
+	s.localUser = os.Getenv("SHARKO_AUTH_USER")
+	s.localPass = os.Getenv("SHARKO_AUTH_PASSWORD")
 
 	if s.localUser != "" {
 		s.users[s.localUser] = &UserAccount{
@@ -177,7 +177,7 @@ func (s *Store) UpdatePassword(username, currentPassword, newPassword string) er
 		}
 	} else {
 		// Local mode: update env var and in-memory
-		os.Setenv("AAP_AUTH_PASSWORD", hashStr)
+		os.Setenv("SHARKO_AUTH_PASSWORD", hashStr)
 		s.localPass = hashStr
 	}
 
@@ -511,11 +511,11 @@ func detectNamespace() string {
 	}
 
 	// Fall back to env var
-	if ns := os.Getenv("AAP_NAMESPACE"); ns != "" {
+	if ns := os.Getenv("SHARKO_NAMESPACE"); ns != "" {
 		return ns
 	}
 
-	return "argocd-addons-platform"
+	return "sharko"
 }
 
 func getEnvDefault(key, fallback string) string {

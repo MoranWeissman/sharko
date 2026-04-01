@@ -7,7 +7,7 @@ import (
 
 // requireAdmin checks that the current user has the admin role.
 func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
-	username := r.Header.Get("X-AAP-User")
+	username := r.Header.Get("X-Sharko-User")
 	if username == "" {
 		// Auth may be disabled (no users configured) — allow access
 		if !s.authStore.HasUsers() {

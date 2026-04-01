@@ -34,13 +34,13 @@ var serveCmd = &cobra.Command{
 		staticDir, _ := cmd.Flags().GetString("static")
 
 		// Override from env
-		if envPort := os.Getenv("AAP_PORT"); envPort != "" {
+		if envPort := os.Getenv("SHARKO_PORT"); envPort != "" {
 			fmt.Sscanf(envPort, "%d", &port)
 		}
-		if envConfig := os.Getenv("AAP_CONFIG"); envConfig != "" {
+		if envConfig := os.Getenv("SHARKO_CONFIG"); envConfig != "" {
 			configPath = envConfig
 		}
-		if envStatic := os.Getenv("AAP_STATIC_DIR"); envStatic != "" {
+		if envStatic := os.Getenv("SHARKO_STATIC_DIR"); envStatic != "" {
 			staticDir = envStatic
 		}
 
@@ -55,18 +55,18 @@ var serveCmd = &cobra.Command{
 		var store config.Store
 		switch mode {
 		case platform.ModeKubernetes:
-			encKey := os.Getenv("AAP_ENCRYPTION_KEY")
+			encKey := os.Getenv("SHARKO_ENCRYPTION_KEY")
 			if encKey == "" {
-				return fmt.Errorf("AAP_ENCRYPTION_KEY is required when running on Kubernetes. " +
-					"Set it in your Helm values (secrets.AAP_ENCRYPTION_KEY) or existingSecret")
+				return fmt.Errorf("SHARKO_ENCRYPTION_KEY is required when running on Kubernetes. " +
+					"Set it in your Helm values (secrets.SHARKO_ENCRYPTION_KEY) or existingSecret")
 			}
 			secretName := os.Getenv("CONNECTION_SECRET_NAME")
 			if secretName == "" {
-				secretName = "aap-connections"
+				secretName = "sharko-connections"
 			}
-			namespace := os.Getenv("AAP_NAMESPACE")
+			namespace := os.Getenv("SHARKO_NAMESPACE")
 			if namespace == "" {
-				namespace = "argocd-addons-platform"
+				namespace = "sharko"
 			}
 			var err error
 			store, err = config.NewK8sStore(namespace, secretName, encKey)
@@ -77,8 +77,8 @@ var serveCmd = &cobra.Command{
 		default:
 			store = config.NewFileStore(configPath)
 			// Local dev is always dev mode (env var fallback for credentials)
-			if os.Getenv("AAP_DEV_MODE") == "" {
-				os.Setenv("AAP_DEV_MODE", "true")
+			if os.Getenv("SHARKO_DEV_MODE") == "" {
+				os.Setenv("SHARKO_DEV_MODE", "true")
 			}
 		}
 
@@ -162,10 +162,10 @@ var serveCmd = &cobra.Command{
 
 		// AI config persistence (K8s mode — encrypted Secret)
 		if mode == platform.ModeKubernetes {
-			encKey := os.Getenv("AAP_ENCRYPTION_KEY")
-			namespace := os.Getenv("AAP_NAMESPACE")
+			encKey := os.Getenv("SHARKO_ENCRYPTION_KEY")
+			namespace := os.Getenv("SHARKO_NAMESPACE")
 			if namespace == "" {
-				namespace = "argocd-addons-platform"
+				namespace = "sharko"
 			}
 			if encKey != "" {
 				aiStore, err := config.NewAIConfigStore(namespace, encKey)
