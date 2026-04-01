@@ -1,0 +1,16 @@
+{
+  "name": "Addon container OOMKilled in {{kube_namespace.name}}",
+  "type": "query alert",
+  "query": "change(max(last_5m),last_5m):max:kubernetes_state.container.status_report.count.terminated{kube_cluster_name:*,reason:oomkilled,kube_namespace IN (datadog,keda,external-secrets)} by {kube_namespace} > 0",
+  "message": "A container in namespace {{kube_namespace.name}} was OOMKilled on cluster $cluster_name.\n\n    This usually means the container's memory limit is too low or there is a memory leak.\n    Check the Addon Deployment Health dashboard for memory usage trends.",
+  "tags": [
+    "cluster:$cluster_name",
+    "source:addon-monitoring",
+    "severity:critical"
+  ],
+  "options": {
+    "thresholds": {
+      "critical": "0"
+    }
+  }
+}

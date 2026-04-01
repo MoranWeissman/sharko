@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hello-world
+data:
+  managed-by: argocd-cluster-addons
+  deployed-at: {{ now | date "2006-01-02T15:04:05Z" }}

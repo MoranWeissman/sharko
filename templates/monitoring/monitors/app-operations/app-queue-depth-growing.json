@@ -1,0 +1,24 @@
+{
+    "name": "[ArgoCD Cluster Addons Application Operations] Work queue depth growing",
+    "type": "query alert",
+    "query": "avg(last_15m):avg:argocd.app_controller.workqueue.depth{*} > 100",
+    "message": "{{#is_alert}}\n\ud83d\udd34 [P1 CRITICAL] ArgoCD work queue depth is above 100\n\nQueue depth: {{value}}\nThe controller is falling behind processing applications. This indicates the controller cannot keep up with the number of apps or reconciliation events.\n\nActions:\n1. Check controller pod resources (CPU/memory) on Host Cluster dashboard\n2. Check if reconciliation is slow (p95 duration)\n3. Look for a surge in git changes or ApplicationSet generator changes\n4. Consider scaling controller resources or sharding\n{{/is_alert}}\n{{#is_warning}}\n\ud83d\udfe1 [P2 WARNING] ArgoCD work queue depth is above 50\n\nQueue depth: {{value}}\nThe controller is processing slower than normal.\n{{/is_warning}}\n{{#is_recovery}}\n\u2705 RECOVERED: Work queue depth is back to normal\n{{/is_recovery}}\n\n@moran.weissman@msd.com @microsoft-teams-ArgocdClusterAddonsNonProd",
+    "tags": [
+        "platform:devex",
+        "kubernetes",
+        "service:argocd-cluster-addons",
+        "component:argocd-cluster-addons-appops"
+    ],
+    "options": {
+        "thresholds": {
+            "critical": 100,
+            "warning": 50
+        },
+        "notify_audit": false,
+        "on_missing_data": "default",
+        "include_tags": true
+    },
+    "priority": 2,
+    "draft_status": "published",
+    "assets": []
+}

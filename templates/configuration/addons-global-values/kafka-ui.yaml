@@ -1,0 +1,128 @@
+# ====================================================================== #
+# Kafka UI Global Values
+# ====================================================================== #
+# Chart: kafka-ui
+# Repo: https://provectus.github.io/kafka-ui-charts
+# Docs: https://docs.kafka-ui.provectus.io/
+#
+# These values apply to ALL clusters unless overridden per-cluster
+# in addons-clusters-values/<cluster-name>.yaml
+#
+# NOTE: Kafka cluster connection details (bootstrap servers, auth)
+# should be configured per-cluster since each cluster connects to
+# different Kafka brokers.
+# ====================================================================== #
+
+# ---- Deployment ---- #
+
+# Number of replicas
+replicaCount: 1
+
+# ---- Service ---- #
+service:
+  type: ClusterIP
+  port: 80
+
+# ---- Ingress ---- #
+# ingress:
+#   enabled: false
+#   # ingressClassName: ""
+#   # annotations: {}
+#   # host: kafka-ui.example.com
+#   # path: /
+#   # tls: []
+
+# ---- Kafka Connection ---- #
+# Define Kafka clusters to connect to
+# This is typically set per-cluster in addons-clusters-values/<cluster>.yaml
+#
+# yamlApplicationConfig:
+#   kafka:
+#     clusters:
+#       - name: my-cluster
+#         bootstrapServers: kafka-broker:9092
+#         # schemaRegistry: http://schema-registry:8081
+#         # kafkaConnect:
+#         #   - name: connect
+#         #     address: http://kafka-connect:8083
+#   # Optional: authentication
+#   # auth:
+#   #   type: LOGIN_FORM
+#   # spring:
+#   #   security:
+#   #     user:
+#   #       name: admin
+#   #       password: admin
+
+# Alternative: load config from existing ConfigMap or Secret
+# existingConfigMap: ""
+# existingSecret: ""
+
+# Environment variables for sensitive config (e.g. passwords)
+# envs:
+#   secret: {}
+#   config: {}
+
+# ---- Resources ---- #
+# Kafka UI docs recommend 200m CPU / 256Mi memory
+resources:
+  requests:
+    cpu: 200m
+    memory: 256Mi
+  limits:
+    memory: 512Mi
+
+# ---- Pod Scheduling ---- #
+# nodeSelector: {}
+# tolerations: []
+# affinity: {}
+
+# ---- Security ---- #
+# podSecurityContext: {}
+# securityContext: {}
+
+# ---- Service Account ---- #
+serviceAccount:
+  create: true
+  annotations: {}
+
+# ---- Health Probes ---- #
+# probes:
+#   useHttpsScheme: false
+
+# ---- Autoscaling ---- #
+# autoscaling:
+#   enabled: false
+#   minReplicas: 1
+#   maxReplicas: 3
+#   targetCPUUtilizationPercentage: 80
+
+# ---- Network Policy ---- #
+# networkPolicy:
+#   enabled: false
+
+# ====================================================================== #
+# Cluster-Specific Overrides Reference
+# ====================================================================== #
+# Copy the relevant sections below into your cluster values file:
+#   addons-clusters-values/<cluster-name>.yaml
+#
+# kafka-ui:
+#   # Kafka cluster connections (different per cluster)
+#   yamlApplicationConfig:
+#     kafka:
+#       clusters:
+#         - name: my-cluster-kafka
+#           bootstrapServers: kafka-broker:9092
+#           schemaRegistry: http://schema-registry:8081
+#   # Ingress for cluster-specific hostname
+#   ingress:
+#     enabled: true
+#     host: kafka-ui.<cluster>.example.com
+#   # Override resources per cluster
+#   resources:
+#     requests:
+#       cpu: 100m
+#       memory: 256Mi
+#     limits:
+#       memory: 512Mi

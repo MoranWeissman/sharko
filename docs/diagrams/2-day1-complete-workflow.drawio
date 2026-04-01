@@ -1,0 +1,167 @@
+<mxfile host="app.diagrams.net" agent="Claude Code" version="24.0.0">
+  <diagram name="Day 1 Complete Workflow" id="day1-workflow">
+    <mxGraphModel dx="1434" dy="844" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1200" pageHeight="1100">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <!-- Top Row: Horizontal Initial Setup -->
+        <mxCell id="2" value="New EKS Cluster&#xa;Needed" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#4a3659;strokeColor=#9673a6;fontSize=13;fontColor=#ffffff;fontStyle=1" parent="1" vertex="1">
+          <mxGeometry x="120" y="40" width="140" height="80" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="3" value="Control Tower Creates&#xa;EKS Cluster" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#1f4e78;strokeColor=#6c8ebf;fontSize=13;fontColor=#ffffff" parent="1" vertex="1">
+          <mxGeometry x="300" y="40" width="140" height="80" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#ffffff" parent="1" source="2" target="3" edge="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="5" value="Secret Created in&#xa;DevOps Account&#xa;k8s-cluster-name" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#1f4e78;strokeColor=#6c8ebf;fontSize=13;fontColor=#ffffff" parent="1" vertex="1">
+          <mxGeometry x="480" y="40" width="140" height="80" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="6" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#ffffff" parent="1" source="3" target="5" edge="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="7" value="Add Cluster to&#xa;cluster-addons.yaml" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#5a4a0a;strokeColor=#d6b656;fontSize=13;fontColor=#ffffff" parent="1" vertex="1">
+          <mxGeometry x="660" y="40" width="140" height="80" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="8" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#ffffff" parent="1" source="5" target="7" edge="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Vertical Flow: Center Column -->
+        <mxCell id="9" value="Commit &amp; Push&#xa;to GitHub" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#5a4a0a;strokeColor=#d6b656;fontSize=13;fontColor=#ffffff" parent="1" vertex="1">
+          <mxGeometry x="480" y="160" width="140" height="60" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="10" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#ffffff" parent="1" source="7" target="9" edge="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="730" y="150"/>
+              <mxPoint x="550" y="150"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="11" value="ArgoCD Detects&#xa;New Cluster" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#1a472a;strokeColor=#82b366;fontSize=13;fontColor=#ffffff" parent="1" vertex="1">
+          <mxGeometry x="480" y="260" width="140" height="60" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="12" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#ffffff" parent="1" source="9" target="11" edge="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="13" value="ESO Fetches&#xa;Cluster Credentials" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#1a472a;strokeColor=#82b366;fontSize=13;fontColor=#ffffff" parent="1" vertex="1">
+          <mxGeometry x="480" y="360" width="140" height="60" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="14" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#ffffff" parent="1" source="11" target="13" edge="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="15" value="ArgoCD Creates&#xa;Connection" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#1a472a;strokeColor=#82b366;fontSize=13;fontColor=#ffffff" parent="1" vertex="1">
+          <mxGeometry x="480" y="460" width="140" height="60" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="16" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#ffffff" parent="1" source="13" target="15" edge="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="17" value="Cluster&#xa;Connected?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#5a4a0a;strokeColor=#d6b656;fontSize=12;fontStyle=1;fontColor=#ffffff" parent="1" vertex="1">
+          <mxGeometry x="490" y="560" width="120" height="80" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="18" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#ffffff" parent="1" source="15" target="17" edge="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="19" value="Add Add-on Labels&#xa;to Cluster" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#5a4a0a;strokeColor=#d6b656;fontSize=13;fontColor=#ffffff" parent="1" vertex="1">
+          <mxGeometry x="480" y="680" width="140" height="60" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="20" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#ffffff" parent="1" source="17" target="19" edge="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="21" value="Commit &amp; Push&#xa;to GitHub" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#5a4a0a;strokeColor=#d6b656;fontSize=13;fontColor=#ffffff" parent="1" vertex="1">
+          <mxGeometry x="480" y="780" width="140" height="60" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="22" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#ffffff" parent="1" source="19" target="21" edge="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="23" value="ApplicationSet&#xa;Detects Labels" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#1a472a;strokeColor=#82b366;fontSize=13;fontColor=#ffffff" parent="1" vertex="1">
+          <mxGeometry x="480" y="880" width="140" height="60" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="24" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#ffffff" parent="1" source="21" target="23" edge="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="25" value="Application Created&#xa;for Each Add-on" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#1a472a;strokeColor=#82b366;fontSize=13;fontColor=#ffffff" parent="1" vertex="1">
+          <mxGeometry x="480" y="980" width="140" height="60" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="26" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#ffffff" parent="1" source="23" target="25" edge="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="27" value="ArgoCD Syncs&#xa;Applications" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#1a472a;strokeColor=#82b366;fontSize=13;fontColor=#ffffff" parent="1" vertex="1">
+          <mxGeometry x="480" y="1080" width="140" height="60" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="28" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#ffffff" parent="1" source="25" target="27" edge="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="29" value="Add-ons Installed&#xa;on Remote Cluster" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#1a472a;strokeColor=#82b366;fontSize=13;fontColor=#ffffff" parent="1" vertex="1">
+          <mxGeometry x="480" y="1180" width="140" height="60" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="30" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#ffffff" parent="1" source="27" target="29" edge="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <!-- Bottom: Decision and End States -->
+        <mxCell id="31" value="Need Custom&#xa;Values?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#5a4a0a;strokeColor=#d6b656;fontSize=12;fontStyle=1;fontColor=#ffffff" parent="1" vertex="1">
+          <mxGeometry x="490" y="1280" width="120" height="80" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="32" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#ffffff" parent="1" source="29" target="31" edge="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="33" value="Create cluster-specific&#xa;values file" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#5a4a0a;strokeColor=#d6b656;fontSize=13;fontColor=#ffffff" parent="1" vertex="1">
+          <mxGeometry x="340" y="1400" width="140" height="60" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="34" value="Yes" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=12;fontStyle=1;strokeColor=#ffffff;fontColor=#ffffff" parent="1" source="31" target="33" edge="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="35" value="Add-ons Running with&#xa;Custom Config" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1a472a;strokeColor=#82b366;fontSize=13;fontStyle=1;fontColor=#ffffff" parent="1" vertex="1">
+          <mxGeometry x="200" y="1500" width="140" height="60" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="36" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#ffffff" parent="1" source="33" target="35" edge="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="37" value="Add-ons Running with&#xa;Default Config" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1a472a;strokeColor=#82b366;fontSize=13;fontStyle=1;fontColor=#ffffff" parent="1" vertex="1">
+          <mxGeometry x="660" y="1400" width="140" height="60" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="38" value="No" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;fontSize=12;fontStyle=1;strokeColor=#ffffff;fontColor=#ffffff" parent="1" source="31" target="37" edge="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

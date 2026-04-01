@@ -1,0 +1,134 @@
+{
+  "title": "ArgoCD Cluster Addons Application Troubleshooting",
+  "description": "Drill-down into a specific application — sync history, reconciliation, error logs",
+  "layout_type": "ordered",
+  "template_variables": [
+    {
+      "name": "app_name",
+      "prefix": "name",
+      "available_values": [],
+      "default": "*"
+    }
+  ],
+  "widgets": [
+    {
+      "id": 2000000001,
+      "definition": {
+        "title": "Application Status",
+        "show_title": true,
+        "type": "group",
+        "layout_type": "ordered",
+        "widgets": [
+          {"id":2000000002,"definition":{"title":"Health Status","type":"query_value","requests":[{"response_format":"scalar","queries":[{"name":"q1","data_source":"metrics","query":"count:argocd.app_controller.app.info{health_status:healthy,$app_name}","aggregator":"last"}],"formulas":[{"formula":"default_zero(q1)","conditional_formats":[{"comparator":">","value":0,"palette":"white_on_green"},{"comparator":"=","value":0,"palette":"white_on_red"}]}],"conditional_formats":[{"comparator":">","value":0,"palette":"white_on_green"},{"comparator":"=","value":0,"palette":"white_on_red"}]}],"autoscale":false,"precision":0,"timeseries_background":{"type":"area"}},"layout":{"x":0,"y":0,"width":3,"height":2}},
+          {"id":2000000003,"definition":{"title":"Syncs Succeeded (24h)","type":"query_value","requests":[{"response_format":"scalar","queries":[{"name":"q1","data_source":"metrics","query":"sum:argocd.app_controller.app.sync.count{phase:succeeded,$app_name}.as_count()","aggregator":"sum"}],"formulas":[{"formula":"default_zero(q1)","conditional_formats":[{"comparator":">","value":0,"palette":"white_on_green"}]}],"conditional_formats":[{"comparator":">","value":0,"palette":"white_on_green"}]}],"autoscale":true,"precision":0,"time":{"live_span":"1d"},"timeseries_background":{"type":"area"}},"layout":{"x":3,"y":0,"width":3,"height":2}},
+          {"id":2000000004,"definition":{"title":"Syncs Failed (24h)","type":"query_value","requests":[{"response_format":"scalar","queries":[{"name":"q1","data_source":"metrics","query":"sum:argocd.app_controller.app.sync.count{phase:error,$app_name}.as_count()","aggregator":"sum"}],"formulas":[{"formula":"default_zero(q1)","conditional_formats":[{"comparator":"=","value":0,"palette":"white_on_green"},{"comparator":">","value":0,"palette":"white_on_red"}]}],"conditional_formats":[{"comparator":"=","value":0,"palette":"white_on_green"},{"comparator":">","value":0,"palette":"white_on_red"}]}],"autoscale":true,"precision":0,"time":{"live_span":"1d"},"timeseries_background":{"type":"area"}},"layout":{"x":6,"y":0,"width":3,"height":2}},
+          {"id":2000000005,"definition":{"title":"Reconciliation Avg","type":"query_value","requests":[{"response_format":"scalar","queries":[{"name":"s","data_source":"metrics","query":"avg:argocd.app_controller.app.reconcile.sum{$app_name}","aggregator":"last"},{"name":"c","data_source":"metrics","query":"avg:argocd.app_controller.app.reconcile.count{$app_name}","aggregator":"last"}],"formulas":[{"formula":"s / c","number_format":{"unit":{"type":"canonical_unit","unit_name":"second"}},"conditional_formats":[{"comparator":"<","value":5,"palette":"white_on_green"},{"comparator":"<","value":10,"palette":"white_on_yellow"},{"comparator":">=","value":10,"palette":"white_on_red"}]}],"conditional_formats":[{"comparator":"<","value":5,"palette":"white_on_green"},{"comparator":"<","value":10,"palette":"white_on_yellow"},{"comparator":">=","value":10,"palette":"white_on_red"}]}],"autoscale":true,"precision":1,"timeseries_background":{"type":"area"}},"layout":{"x":9,"y":0,"width":3,"height":2}}
+        ]
+      },
+      "layout": {"x":0,"y":0,"width":12,"height":4}
+    },
+    {
+      "id": 2000000010,
+      "definition": {
+        "title": "Sync History",
+        "show_title": true,
+        "type": "group",
+        "layout_type": "ordered",
+        "widgets": [
+          {
+            "id": 2000000011,
+            "definition": {
+              "title": "Sync Operations Over Time",
+              "show_legend": true,
+              "legend_layout": "auto",
+              "time": {"live_span": "1d"},
+              "type": "timeseries",
+              "requests": [{"response_format":"timeseries","queries":[{"name":"succeeded","data_source":"metrics","query":"sum:argocd.app_controller.app.sync.count{phase:succeeded,$app_name}.as_count()"},{"name":"failed","data_source":"metrics","query":"sum:argocd.app_controller.app.sync.count{phase:error,$app_name}.as_count()"}],"formulas":[{"alias":"Succeeded","formula":"succeeded","style":{"palette":"green"}},{"alias":"Failed","formula":"failed","style":{"palette":"red"}}],"style":{"palette":"dog_classic","line_type":"solid","line_width":"normal"},"display_type":"bars"}],
+              "yaxis": {"include_zero":true,"min":"0"}
+            },
+            "layout": {"x":0,"y":0,"width":12,"height":3}
+          },
+          {
+            "id": 2000000012,
+            "definition": {
+              "title": "Health Status Over Time",
+              "show_legend": true,
+              "legend_layout": "auto",
+              "time": {"live_span": "1d"},
+              "type": "timeseries",
+              "requests": [{"response_format":"timeseries","queries":[{"name":"healthy","data_source":"metrics","query":"count:argocd.app_controller.app.info{health_status:healthy,$app_name}"},{"name":"degraded","data_source":"metrics","query":"count:argocd.app_controller.app.info{health_status:degraded,$app_name}"},{"name":"progressing","data_source":"metrics","query":"count:argocd.app_controller.app.info{health_status:progressing,$app_name}"},{"name":"unknown","data_source":"metrics","query":"count:argocd.app_controller.app.info{health_status:unknown,$app_name}"}],"formulas":[{"alias":"Healthy","formula":"healthy","style":{"palette":"green"}},{"alias":"Degraded","formula":"degraded","style":{"palette":"red"}},{"alias":"Progressing","formula":"progressing","style":{"palette":"yellow"}},{"alias":"Unknown","formula":"unknown","style":{"palette":"grey"}}],"style":{"palette":"dog_classic","line_type":"solid","line_width":"normal"},"display_type":"area"}],
+              "yaxis": {"include_zero":true,"min":"0"}
+            },
+            "layout": {"x":0,"y":3,"width":12,"height":3}
+          }
+        ]
+      },
+      "layout": {"x":0,"y":4,"width":12,"height":8}
+    },
+    {
+      "id": 2000000020,
+      "definition": {
+        "title": "Reconciliation Performance",
+        "show_title": true,
+        "type": "group",
+        "layout_type": "ordered",
+        "widgets": [
+          {
+            "id": 2000000021,
+            "definition": {
+              "title": "Reconciliation Duration",
+              "show_legend": true,
+              "legend_layout": "auto",
+              "time": {"live_span": "1d"},
+              "type": "timeseries",
+              "requests": [{"response_format":"timeseries","queries":[{"name":"s","data_source":"metrics","query":"sum:argocd.app_controller.app.reconcile.sum{$app_name}.as_rate()"},{"name":"c","data_source":"metrics","query":"sum:argocd.app_controller.app.reconcile.count{$app_name}.as_rate()"}],"formulas":[{"alias":"Avg Duration (s)","formula":"s / c"}],"style":{"palette":"purple","line_type":"solid","line_width":"normal"},"display_type":"line"}],
+              "yaxis": {"include_zero":true,"min":"0"},
+              "markers": [{"label":"Warning","value":"y = 10","display_type":"warning dashed"},{"label":"Critical","value":"y = 30","display_type":"error dashed"}]
+            },
+            "layout": {"x":0,"y":0,"width":12,"height":3}
+          }
+        ]
+      },
+      "layout": {"x":0,"y":12,"width":12,"height":5}
+    },
+    {
+      "id": 2000000030,
+      "definition": {
+        "title": "Error Logs",
+        "show_title": true,
+        "type": "group",
+        "layout_type": "ordered",
+        "widgets": [
+          {
+            "id": 2000000031,
+            "definition": {
+              "title": "ArgoCD Controller Error Logs",
+              "type": "log_stream",
+              "query": "source:argocd status:error -\"use of closed network connection\" -\"connection refused\" -\"connection reset by peer\"",
+              "indexes": [],
+              "columns": ["core_service"],
+              "show_date_column": true,
+              "show_message_column": true,
+              "message_display": "expanded-lg",
+              "sort": {"column": "time", "order": "desc"},
+              "time": {"live_span": "1d"}
+            },
+            "layout": {"x":0,"y":0,"width":12,"height":4}
+          },
+          {
+            "id": 2000000032,
+            "definition": {
+              "title": "Kubernetes Warning Events",
+              "requests": [{"response_format":"event_list","query":{"data_source":"event_stream","query_string":"source:kubernetes status:error $app_name","event_size":"s"},"columns":[]}],
+              "type": "list_stream",
+              "time": {"live_span": "1d"}
+            },
+            "layout": {"x":0,"y":4,"width":12,"height":4}
+          }
+        ]
+      },
+      "layout": {"x":0,"y":17,"width":12,"height":10}
+    }
+  ],
+  "notify_list": []
+}

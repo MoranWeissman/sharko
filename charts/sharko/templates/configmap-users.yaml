@@ -1,0 +1,19 @@
+{{- $existing := (lookup "v1" "ConfigMap" .Release.Namespace (printf "%s-users" (include "aap.fullname" .))) -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "aap.fullname" . }}-users
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aap.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+data:
+{{- if and $existing $existing.data (index $existing.data "accounts") }}
+  accounts: {{ index $existing.data "accounts" | quote }}
+{{- else }}
+  accounts: |
+    admin:
+      enabled: true
+      role: admin
+{{- end }}

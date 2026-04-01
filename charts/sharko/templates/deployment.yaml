@@ -1,0 +1,144 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aap.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aap.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "aap.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+      labels:
+        {{- include "aap.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "aap.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: AAP_PORT
+              value: "8080"
+            - name: AAP_STATIC_DIR
+              value: "/app/static"
+            - name: CONNECTION_SECRET_NAME
+              value: {{ .Values.config.connectionSecretName | default "aap-connections" | quote }}
+            {{- if .Values.config.devMode }}
+            - name: AAP_DEV_MODE
+              value: "true"
+            {{- end }}
+            - name: ARGOCD_NAMESPACE
+              value: {{ include "aap.argocdNamespace" . | quote }}
+            - name: AAP_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: AAP_SECRET_NAME
+              value: {{ include "aap.fullname" . | quote }}
+            {{- if .Values.ai.enabled }}
+            - name: AI_PROVIDER
+              value: {{ .Values.ai.provider | quote }}
+            {{- if eq .Values.ai.provider "ollama" }}
+            - name: AI_OLLAMA_URL
+              {{- if .Values.ai.ollama.deploy }}
+              value: "http://{{ include "aap.fullname" . }}-ollama:11434"
+              {{- else }}
+              value: {{ .Values.ai.ollama.url | default "http://localhost:11434" | quote }}
+              {{- end }}
+            - name: AI_OLLAMA_MODEL
+              value: {{ .Values.ai.ollama.model | quote }}
+            {{- if .Values.ai.ollama.agentModel }}
+            - name: AI_AGENT_MODEL
+              value: {{ .Values.ai.ollama.agentModel | quote }}
+            {{- end }}
+            {{- else }}
+            - name: AI_CLOUD_MODEL
+              value: {{ .Values.ai.cloudModel | quote }}
+            {{- end }}
+            {{- if .Values.ai.baseURL }}
+            - name: AI_BASE_URL
+              value: {{ .Values.ai.baseURL | quote }}
+            {{- end }}
+            {{- if .Values.ai.authHeader }}
+            - name: AI_AUTH_HEADER
+              value: {{ .Values.ai.authHeader | quote }}
+            {{- end }}
+            {{- if .Values.ai.maxIterations }}
+            - name: AI_MAX_ITERATIONS
+              value: {{ .Values.ai.maxIterations | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.config.environments }}
+            - name: APP_ENVIRONMENTS
+              value: {{ .Values.config.environments | quote }}
+            {{- end }}
+            {{- if .Values.gitops.actions.enabled }}
+            - name: GITOPS_ACTIONS_ENABLED
+              value: "true"
+            {{- end }}
+            {{- if .Values.datadog.enabled }}
+            - name: DATADOG_SITE
+              value: {{ .Values.datadog.site | quote }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          envFrom:
+            - secretRef:
+                name: {{ include "aap.secretName" . }}
+                optional: true
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+          {{- with .Values.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+      {{- with .Values.hostAliases }}
+      hostAliases:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "aap.fullname" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

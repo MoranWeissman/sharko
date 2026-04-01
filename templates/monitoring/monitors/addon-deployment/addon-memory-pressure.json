@@ -1,0 +1,17 @@
+{
+  "name": "Addon memory near limits in {{kube_namespace.name}}",
+  "type": "query alert",
+  "query": "avg(last_15m):( avg:kubernetes.memory.usage{kube_cluster_name:*,kube_namespace IN (datadog,keda,external-secrets)} by {kube_namespace} / avg:kubernetes.memory.limits{kube_cluster_name:*,kube_namespace IN (datadog,keda,external-secrets)} by {kube_namespace} ) * 100 > 90",
+  "message": "Addon in namespace {{kube_namespace.name}} on cluster $cluster_name is using more than 90% of its memory limit for 15 minutes.\n\n    This is often a precursor to OOMKill. Consider increasing memory limits or investigating memory usage.\n    Check the Addon Deployment Health dashboard \u2192 Resource Usage section.",
+  "tags": [
+    "cluster:$cluster_name",
+    "source:addon-monitoring",
+    "severity:warning"
+  ],
+  "options": {
+    "thresholds": {
+      "critical": "90",
+      "warning": "80"
+    }
+  }
+}

@@ -1,0 +1,149 @@
+<mxfile host="app.diagrams.net" modified="2024-01-01T00:00:00.000Z" agent="Agent" etag="W" version="21.0.0">
+  <diagram id="argocd-architecture" name="ArgoCD Architecture">
+    <mxGraphModel dx="1422" dy="762" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        
+        <!-- User Section -->
+        <mxCell id="user" value="DevOps Engineer" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;" vertex="1" parent="1">
+          <mxGeometry x="120" y="40" width="30" height="60" as="geometry" />
+        </mxCell>
+        
+        <!-- Git Repository Container -->
+        <mxCell id="git-container" value="Git Repository" style="swimlane;whiteSpace=wrap;html=1;startSize=23;fillColor=#fa6800;fontColor=#ffffff;strokeColor=#C73500;" vertex="1" parent="1">
+          <mxGeometry x="40" y="160" width="220" height="240" as="geometry" />
+        </mxCell>
+        <mxCell id="file1" value="cluster-addons.yaml&#xa;(Enable Addon)" style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;darkOpacity=0.05;size=15;align=left;spacingLeft=10;" vertex="1" parent="git-container">
+          <mxGeometry x="20" y="40" width="180" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="file2" value="global-values.yaml&#xa;(Defaults)" style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;darkOpacity=0.05;size=15;align=left;spacingLeft=10;" vertex="1" parent="git-container">
+          <mxGeometry x="20" y="90" width="180" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="file3" value="[cluster-name].yaml&#xa;(Overrides)" style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;darkOpacity=0.05;size=15;align=left;spacingLeft=10;" vertex="1" parent="git-container">
+          <mxGeometry x="20" y="140" width="180" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="file4" value="addons-catalog.yaml&#xa;(Addon Definitions)" style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;darkOpacity=0.05;size=15;align=left;spacingLeft=10;" vertex="1" parent="git-container">
+          <mxGeometry x="20" y="190" width="180" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- Management Cluster Container -->
+        <mxCell id="mgmt-cluster" value="Management Cluster (ArgoCD)" style="swimlane;whiteSpace=wrap;html=1;startSize=23;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="320" y="40" width="500" height="520" as="geometry" />
+        </mxCell>
+
+        <!-- Bootstrap Layer (inside Mgmt Cluster) -->
+        <mxCell id="bootstrap-layer" value="Bootstrap Layer" style="group;dashed=1;strokeColor=#999999;" vertex="1" connectable="0" parent="mgmt-cluster">
+          <mxGeometry x="20" y="40" width="460" height="200" as="geometry" />
+        </mxCell>
+        <mxCell id="bootstrap-box" value="" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;fillColor=none;strokeColor=#999999;" vertex="1" parent="bootstrap-layer">
+          <mxGeometry width="460" height="200" as="geometry" />
+        </mxCell>
+        <mxCell id="app-eso" value="App: ESO" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1" vertex="1" parent="bootstrap-layer">
+          <mxGeometry x="30" y="40" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="app-clusters" value="App: Clusters" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1" vertex="1" parent="bootstrap-layer">
+          <mxGeometry x="280" y="40" width="120" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="secret" value="Cluster Secret&#xa;(Connection)" style="shape=card;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="bootstrap-layer">
+          <mxGeometry x="280" y="130" width="120" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="txt-eso" value="Installs External&#xa;Secrets Operator" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;" vertex="1" parent="bootstrap-layer">
+          <mxGeometry x="30" y="105" width="120" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- Addon Layer (inside Mgmt Cluster) -->
+        <mxCell id="addon-layer" value="Addon Layer" style="group;dashed=1;strokeColor=#999999;" vertex="1" connectable="0" parent="mgmt-cluster">
+          <mxGeometry x="20" y="280" width="460" height="200" as="geometry" />
+        </mxCell>
+        <mxCell id="addon-box" value="" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;fillColor=none;strokeColor=#999999;" vertex="1" parent="addon-layer">
+          <mxGeometry width="460" height="200" as="geometry" />
+        </mxCell>
+        <mxCell id="appsets" value="ApplicationSets" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1" vertex="1" parent="addon-layer">
+          <mxGeometry x="30" y="40" width="140" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="application" value="Application" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1" vertex="1" parent="addon-layer">
+          <mxGeometry x="280" y="40" width="120" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Target System Container -->
+        <mxCell id="target-system" value="Target System" style="swimlane;whiteSpace=wrap;html=1;startSize=23;fillColor=#f5f5f5;fontColor=#333333;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="900" y="40" width="200" height="520" as="geometry" />
+        </mxCell>
+        <mxCell id="remote-cluster" value="Remote Cluster" style="image;aspect=fixed;html=1;points=[];align=center;fontSize=12;image=img/lib/azure/compute/Kubernetes_Services.svg;" vertex="1" parent="target-system">
+          <mxGeometry x="60" y="200" width="68" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- EDGES -->
+        <!-- User -> Git -->
+        <mxCell id="e1" value="Edits Config" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="user" target="git-container">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Git (cluster-addons) -> App: Clusters -->
+        <mxCell id="e2" value="Reads" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="file1" target="app-clusters">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="300" y="220" />
+              <mxPoint x="300" y="110" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Git (addons-catalog) -> AppSets -->
+        <mxCell id="e3" value="Reads" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="file4" target="appsets">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="300" y="370" />
+              <mxPoint x="300" y="350" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- App: Clusters -> Secret -->
+        <mxCell id="e4" value="Creates" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="bootstrap-layer" source="app-clusters" target="secret">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Secret -> ApplicationSets -->
+        <mxCell id="e5" value="Generates&#xa;Targets" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="secret" target="remote-cluster">
+           <!-- This is conceptual; usually secret creates connection, AppSet uses it.
+                Representing flow: Secret allows Connection. -->
+           <mxGeometry relative="1" as="geometry">
+             <Array as="points">
+               <mxPoint x="750" y="195" />
+               <mxPoint x="750" y="270" />
+               <mxPoint x="1000" y="270" />
+             </Array>
+           </mxGeometry>
+        </mxCell>
+        <!-- Correcting the Secret flow based on user prompt logic -->
+        <!-- User said: Clusters creates secret -> AppSet uses it to know where to deploy -->
+        <mxCell id="e5b" value="Used by" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;" edge="1" parent="1" source="secret" target="appsets">
+            <mxGeometry relative="1" as="geometry">
+                <Array as="points">
+                     <mxPoint x="580" y="200" />
+                     <mxPoint x="580" y="350" />
+                 </Array>
+            </mxGeometry>
+        </mxCell>
+
+        <!-- AppSets -> Application -->
+        <mxCell id="e6" value="Generates" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="addon-layer" source="appsets" target="application">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Application -> Remote Cluster -->
+        <mxCell id="e7" value="Deploys Addon" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" edge="1" parent="1" source="application" target="remote-cluster">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Dependency: App Clusters -> App ESO -->
+        <mxCell id="e8" value="Depends On" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;" edge="1" parent="bootstrap-layer" source="app-clusters" target="app-eso">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

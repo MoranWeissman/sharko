@@ -1,0 +1,8 @@
+apiVersion: v2
+name: infra-karpenter
+description: Helm chart for managing Karpenter infra-karpenters on EKS Auto-Mode clusters
+version: 1.0.0
+maintainers:
+  - name: itay.uliel
+    email: itay.uliel@msd.com
+type: application

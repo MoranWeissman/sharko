@@ -1,0 +1,45 @@
+apiVersion: datadoghq.com/v1alpha1
+kind: DatadogMonitor
+metadata:
+  name: host-cluster-argocd-appset-controller-down
+  namespace: datadog
+  labels:
+    app.kubernetes.io/part-of: argocd-cluster-addons
+    app.kubernetes.io/component: monitoring
+spec:
+  name: "[ArgoCD Cluster Addons Host Cluster] ArgoCD applicationset-controller pod down"
+  type: query alert
+  query: "avg(last_5m):avg:kubernetes_state.deployment.replicas_available{kube_namespace:argocd,kube_deployment:argocd-*-applicationset-controller} by {kube_cluster_name} < 1"
+  message: |-
+    {{#is_alert}}
+    🔴 [P1 CRITICAL] ArgoCD applicationset-controller is DOWN on {{kube_cluster_name.name}}
+
+    ApplicationSets are not reconciling. Cluster onboarding and app template changes are blocked.
+    Available replicas: {{value}}
+
+    Actions:
+    1. kubectl get pods -n argocd -l app.kubernetes.io/name=applicationset-controller
+    2. kubectl describe pod -n argocd <pod-name>
+    3. kubectl logs -n argocd <pod-name> --tail=100
+    {{/is_alert}}
+    {{#is_recovery}}
+    ✅ RECOVERED: ArgoCD applicationset-controller is back on {{kube_cluster_name.name}}
+    {{/is_recovery}}
+    {{#is_no_data}}
+    ⚠️ NO DATA from {{kube_cluster_name.name}} — Cluster Agent may be down
+    {{/is_no_data}}
+
+    @moran.weissman@msd.com
+  tags:
+    - "platform:devex"
+    - "kubernetes"
+    - "service:argocd-cluster-addons"
+    - "component:argocd-cluster-addons-host"
+  priority: 1
+  options:
+    thresholds:
+      critical: "1"
+    notifyAudit: false
+    onMissingData: show_and_notify_no_data
+    includeTags: true
+    newGroupDelay: 60

@@ -1,0 +1,26 @@
+{
+    "id": 261779019,
+    "name": "[ArgoCD Cluster Addons Host Cluster] Component memory utilization (% of limit)",
+    "type": "query alert",
+    "query": "avg(last_10m):(avg:kubernetes.memory.working_set{kube_namespace IN (argocd,external-secrets)} by {kube_cluster_name,kube_namespace,pod_name,kube_container_name} / avg:kubernetes.memory.limits{kube_namespace IN (argocd,external-secrets)} by {kube_cluster_name,kube_namespace,pod_name,kube_container_name}) * 100 > 90",
+    "message": "{{#is_alert}}\n🔴 [P1 CRITICAL] {{kube_container_name.name}} memory at {{value}}% of limit — OOMKill risk\nPod: {{pod_name.name}} | Namespace: {{kube_namespace.name}} | Cluster: {{kube_cluster_name.name}}\n{{/is_alert}}\n{{#is_warning}}\n🟡 [P2 WARNING] {{kube_container_name.name}} memory above 80% of limit — {{value}}%\nPod: {{pod_name.name}} | Namespace: {{kube_namespace.name}}\n{{/is_warning}}\n{{#is_recovery}}\n✅ RECOVERED: {{kube_container_name.name}} memory is below threshold\n{{/is_recovery}}\n\n{{#is_alert}}\nActions:\n1. kubectl top pods -n {{kube_namespace.name}}\n2. kubectl logs {{pod_name.name}} -n {{kube_namespace.name}} --tail=200\n3. Check for memory leak pattern\n4. Increase memory limits in Helm values\n{{/is_alert}}\n\n@moran.weissman@msd.com @microsoft-teams-ArgocdClusterAddonsNonProd",
+    "tags": [
+        "platform:devex",
+        "kubernetes",
+        "service:argocd-cluster-addons",
+        "component:argocd-cluster-addons-host"
+    ],
+    "options": {
+        "thresholds": {
+            "critical": 90,
+            "warning": 80
+        },
+        "notify_audit": false,
+        "on_missing_data": "default",
+        "include_tags": true,
+        "new_group_delay": 60
+    },
+    "priority": 2,
+    "draft_status": "published",
+    "assets": []
+}

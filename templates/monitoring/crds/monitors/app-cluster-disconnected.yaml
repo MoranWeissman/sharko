@@ -1,0 +1,46 @@
+apiVersion: datadoghq.com/v1alpha1
+kind: DatadogMonitor
+metadata:
+  name: appops-cluster-disconnected
+  namespace: datadog
+  labels:
+    app.kubernetes.io/part-of: argocd-cluster-addons
+    app.kubernetes.io/component: monitoring
+spec:
+  name: "[ArgoCD Cluster Addons Application Operations] Cluster disconnected"
+  type: query alert
+  query: "avg(last_5m):avg:argocd.app_controller.cluster.connection_status{kube_cluster_name:devops-argocd-addons-dev-eks} by {name} < 1"
+  message: |-
+    {{#is_alert}}
+    🔴 [P1 CRITICAL] Cluster {{name.name}} is DISCONNECTED from ArgoCD
+
+    ArgoCD cannot reach this cluster. All addons on this cluster are unmanaged.
+    Connection status: {{value}}
+
+    Actions:
+    1. Verify cluster is reachable: kubectl --context {{name.name}} get nodes
+    2. Check ArgoCD cluster secret: kubectl get secret -n argocd -l argocd.argoproj.io/secret-type=cluster
+    3. Check network connectivity and VPC peering
+    4. Review ArgoCD controller logs for TLS/auth errors
+    {{/is_alert}}
+    {{#is_recovery}}
+    ✅ RECOVERED: Cluster {{name.name}} is reconnected to ArgoCD
+    {{/is_recovery}}
+    {{#is_no_data}}
+    ⚠️ NO DATA for cluster {{name.name}} — ArgoCD metrics may not be scraped
+    {{/is_no_data}}
+
+    @moran.weissman@msd.com @microsoft-teams-ArgocdClusterAddonsNonProd
+  tags:
+    - "platform:devex"
+    - "kubernetes"
+    - "service:argocd-cluster-addons"
+    - "component:argocd-cluster-addons-appops"
+  priority: 1
+  options:
+    thresholds:
+      critical: "1"
+    notifyAudit: false
+    onMissingData: show_and_notify_no_data
+    includeTags: true
+    newGroupDelay: 60

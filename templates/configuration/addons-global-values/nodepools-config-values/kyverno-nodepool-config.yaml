@@ -1,0 +1,48 @@
+# ---- Kyverno EKS Auto Mode infra-karpenter Overrides ---- #
+#
+# Components and their scheduling:
+#   admissionController    → infrastructure nodes (nodeSelector + toleration)
+#   backgroundController   → infrastructure nodes (nodeSelector + toleration)
+#   cleanupController      → infrastructure nodes (nodeSelector + toleration)
+#   reportsController      → infrastructure nodes (nodeSelector + toleration)
+#
+
+# Admission Controller
+admissionController:
+  nodeSelector:
+    node-type: infrastructure
+  tolerations:
+    - key: infrastructure
+      operator: Equal
+      value: "true"
+      effect: NoSchedule
+
+# Background Controller
+backgroundController:
+  nodeSelector:
+    node-type: infrastructure
+  tolerations:
+    - key: infrastructure
+      operator: Equal
+      value: "true"
+      effect: NoSchedule
+
+# Cleanup Controller
+cleanupController:
+  nodeSelector:
+    node-type: infrastructure
+  tolerations:
+    - key: infrastructure
+      operator: Equal
+      value: "true"
+      effect: NoSchedule
+
+# Reports Controller
+reportsController:
+  nodeSelector:
+    node-type: infrastructure
+  tolerations:
+    - key: infrastructure
+      operator: Equal
+      value: "true"
+      effect: NoSchedule

@@ -1,0 +1,66 @@
+# ================================================================ #
+# Global Values (used by all addons)
+# Define YAML anchors with & for reuse across addon configurations
+# ================================================================ #
+clusterGlobalValues:
+  env: &env dev
+  clusterName: &clusterName poultrysense-staging
+  region: &region us-east-1
+  projectName: poultrysense-staging
+
+# ================================================================ #
+# Addon-specific overrides
+# These override the default values from global.yaml
+# Use YAML anchors (*clusterName, *region, etc.) to reference clusterGlobalValues
+# ================================================================ #
+
+# ================================================================ #
+# ------------------- Datadog Configuration ------------------- #
+# ================================================================ #
+datadog:
+  datadog:
+    # Project namespaces for log collection (addon namespaces are added automatically)
+    projectNamespaces: 'poultrysense'
+
+# ================================================================ #
+# ------------------- Anodot Configuration ----------------------- #
+# ================================================================ #
+anodot:
+  config:
+    clusterName: *clusterName
+    clusterRegion: *region
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::242212801364:role/anodot-poultrysense-staging-eks-eu-west-1
+
+# ================================================================ #
+# ------------------- KEDA Configuration ------------------------- #
+# ================================================================ #
+keda:
+  serviceAccount:
+    operator:
+      name: keda-operator-sa
+    metricServer:
+      name: keda-metrics-server-sa
+    webhooks:
+      name: keda-webhook-sa
+    annotations:
+      eks.amazonaws.com/role-arn: "arn:aws:iam::242212801364:role/poultrysense-sa-keda-staging"
+  podIdentity:
+    aws:
+      irsa:
+        enabled: true
+  crds:
+    additionalAnnotations:
+      argocd.argoproj.io/sync-options: ServerSideApply=true
+
+# ================================================================ #
+# ------------------- Redis Insight V2 Configuration ------------- #
+# ================================================================ #
+redis-insight-v2:
+  ingress:
+    oldClusterVersionSupport: false
+    host: "poultrysense-redisinsight-v2-staging.mahi-techlabs.com"
+    sgGroupName: "sg_ps_alb_staging_private"
+    svcPort: 38001
+

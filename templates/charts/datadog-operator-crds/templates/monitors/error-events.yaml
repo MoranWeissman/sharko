@@ -1,0 +1,29 @@
+# Alert on K8s error events in addon namespaces.
+# Uses event-v2 query to detect Warning/Error events from Kubernetes.
+{{- if and .Values.monitors.addonDeployment.enabled .Values.addonNamespaces }}
+{{- $c := .Values.clusterName }}
+apiVersion: datadoghq.com/v1alpha1
+kind: DatadogMonitor
+metadata:
+  name: addon-error-events-{{ $c }}
+  namespace: datadog
+spec:
+  name: "[{{ $c }}] K8s error events in addon namespace {{`{{kube_namespace.name}}`}}"
+  type: "event-v2 alert"
+  query: "events(\"source:kubernetes status:error kube_cluster_name:{{ $c }} {{ include "monitors.namespaceInEvents" . }}\").rollup(\"count\").by(\"kube_namespace\").last(\"10m\") > 5"
+  message: |-
+    More than 5 Kubernetes error events in namespace {{`{{kube_namespace.name}}`}} on cluster {{ $c }} in the last 10 minutes.
+
+    Check the Addon Deployment Health dashboard → Kubernetes Events section for details.
+    {{- include "monitors.notificationHandles" . | nindent 4 }}
+  tags:
+    - "cluster:{{ $c }}"
+    - "source:addon-monitoring"
+    - "severity:warning"
+  options:
+    thresholds:
+      critical: "5"
+    notifyNoData: false
+    includeTags: true
+    newGroupDelay: 300
+{{- end }}

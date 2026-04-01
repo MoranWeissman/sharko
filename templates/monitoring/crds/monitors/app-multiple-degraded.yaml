@@ -1,0 +1,43 @@
+apiVersion: datadoghq.com/v1alpha1
+kind: DatadogMonitor
+metadata:
+  name: appops-multiple-degraded
+  namespace: datadog
+  labels:
+    app.kubernetes.io/part-of: argocd-cluster-addons
+    app.kubernetes.io/component: monitoring
+spec:
+  name: "[ArgoCD Cluster Addons Application Operations] Multiple applications degraded"
+  type: query alert
+  query: "avg(last_5m):count:argocd.app_controller.app.info{health_status:degraded,kube_cluster_name:devops-argocd-addons-dev-eks} > 3"
+  message: |-
+    {{#is_alert}}
+    🔴 [P1 CRITICAL] More than 3 applications are in Degraded state
+
+    Degraded count: {{value}}
+    Multiple applications are unhealthy simultaneously. This likely indicates a systemic issue — cluster connectivity, shared dependency failure, or controller problem.
+
+    Actions:
+    1. Check cluster connectivity on Application Operations dashboard
+    2. Check ArgoCD controller health on Host Cluster dashboard
+    3. Identify affected apps and common patterns (same cluster? same addon type?)
+    4. Review controller logs for widespread errors
+    {{/is_alert}}
+    {{#is_recovery}}
+    ✅ RECOVERED: Degraded application count is back to normal
+    {{/is_recovery}}
+
+    @moran.weissman@msd.com @microsoft-teams-ArgocdClusterAddonsNonProd
+  tags:
+    - "platform:devex"
+    - "kubernetes"
+    - "service:argocd-cluster-addons"
+    - "component:argocd-cluster-addons-appops"
+  priority: 1
+  options:
+    thresholds:
+      critical: "3"
+    notifyAudit: false
+    onMissingData: default
+    includeTags: true
+    newGroupDelay: 60

@@ -1,0 +1,32 @@
+# Look up the cluster in the project mapping to find the correct Datadog project name and environment.
+# The mapping comes from configuration/datadog-project-mappings.yaml (loaded by the ApplicationSet).
+# If the cluster isn't in the mapping, Helm will fail — this is intentional.
+# Every cluster with Datadog must have an entry in the mapping file.
+{{- $clusterName := .Values.clusterGlobalValues.clusterName }}
+{{- $mapping := index .Values.datadogProjectMappings $clusterName }}
+{{- $projectName := $mapping.projectName }}
+{{- $env := $mapping.env }}
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: datadog-api-key
+  namespace: datadog
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: {{ .Values.secretStore.name }}
+    kind: {{ .Values.secretStore.kind }}
+  target:
+    name: datadog-api-key
+    creationPolicy: Owner
+    template:
+      engineVersion: v2
+      data:
+        api-key: "{{ `{{ .apikey }}` }}"
+  data:
+    - secretKey: apikey
+      remoteRef:
+        # Fetches from AWS Secrets Manager: datadog-api-keys-integration → "<projectName>-<env>"
+        # Example: ark-dev-eks → projectName=ark, env=dev → property "ark-dev"
+        key: datadog-api-keys-integration
+        property: "{{ $projectName }}-{{ $env }}"

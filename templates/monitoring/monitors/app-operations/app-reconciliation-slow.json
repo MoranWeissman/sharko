@@ -1,0 +1,24 @@
+{
+    "name": "[ArgoCD Cluster Addons Application Operations] Reconciliation slow",
+    "type": "query alert",
+    "query": "avg(last_10m):avg:argocd.app_controller.app.reconcile.sum{*} / avg:argocd.app_controller.app.reconcile.count{*} > 30",
+    "message": "{{#is_alert}}\n\ud83d\udd34 [P1 CRITICAL] Reconciliation avg is above 30 seconds\n\navg duration: {{value}}s\nThe ArgoCD controller is taking too long to reconcile applications.\nThis may indicate cluster API slowness, too many resources, or controller resource starvation.\n\nActions:\n1. Check controller CPU/memory on the Host Cluster dashboard\n2. Check work queue depth: should not be growing\n3. Review controller logs for timeout errors\n4. Check if specific apps are causing slow reconciliation\n{{/is_alert}}\n{{#is_warning}}\n\ud83d\udfe1 [P2 WARNING] Reconciliation avg is above 10 seconds\n\navg duration: {{value}}s\nMonitor for further degradation.\n{{/is_warning}}\n{{#is_recovery}}\n\u2705 RECOVERED: Reconciliation duration is back to normal\n{{/is_recovery}}\n\n@moran.weissman@msd.com @microsoft-teams-ArgocdClusterAddonsNonProd",
+    "tags": [
+        "platform:devex",
+        "kubernetes",
+        "service:argocd-cluster-addons",
+        "component:argocd-cluster-addons-appops"
+    ],
+    "options": {
+        "thresholds": {
+            "critical": 30,
+            "warning": 10
+        },
+        "notify_audit": false,
+        "on_missing_data": "default",
+        "include_tags": true
+    },
+    "priority": 1,
+    "draft_status": "published",
+    "assets": []
+}

@@ -1,0 +1,37 @@
+# ---- KEDA EKS Auto Mode infra-karpenter Overrides ---- #
+#
+# Components and their scheduling:
+#   operator          → infrastructure nodes (nodeSelector + toleration)
+#   metricsServer     → infrastructure nodes (nodeSelector + toleration)
+#   webhooks          → infrastructure nodes (nodeSelector + toleration)
+#
+
+# KEDA Operator
+operator:
+  nodeSelector:
+    node-type: infrastructure
+  tolerations:
+    - key: infrastructure
+      operator: Equal
+      value: "true"
+      effect: NoSchedule
+
+# KEDA Metrics Server
+metricsServer:
+  nodeSelector:
+    node-type: infrastructure
+  tolerations:
+    - key: infrastructure
+      operator: Equal
+      value: "true"
+      effect: NoSchedule
+
+# KEDA Webhooks
+webhooks:
+  nodeSelector:
+    node-type: infrastructure
+  tolerations:
+    - key: infrastructure
+      operator: Equal
+      value: "true"
+      effect: NoSchedule

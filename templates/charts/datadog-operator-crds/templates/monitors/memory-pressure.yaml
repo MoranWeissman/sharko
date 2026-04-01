@@ -1,0 +1,31 @@
+# Alert when addon memory usage approaches the configured limits.
+# Sustained high memory is often a precursor to OOMKill.
+{{- if and .Values.monitors.addonDeployment.enabled .Values.addonNamespaces }}
+{{- $c := .Values.clusterName }}
+apiVersion: datadoghq.com/v1alpha1
+kind: DatadogMonitor
+metadata:
+  name: addon-memory-pressure-{{ $c }}
+  namespace: datadog
+spec:
+  name: "[{{ $c }}] Addon memory near limits in {{`{{kube_namespace.name}}`}}"
+  type: "query alert"
+  query: "avg(last_15m):( avg:kubernetes.memory.usage{kube_cluster_name:{{ $c }},{{ include "monitors.namespaceIn" . }}} by {kube_namespace} / avg:kubernetes.memory.limits{kube_cluster_name:{{ $c }},{{ include "monitors.namespaceIn" . }}} by {kube_namespace} ) * 100 > 90"
+  message: |-
+    Addon in namespace {{`{{kube_namespace.name}}`}} on cluster {{ $c }} is using more than 90% of its memory limit for 15 minutes.
+
+    This is often a precursor to OOMKill. Consider increasing memory limits or investigating memory usage.
+    Check the Addon Deployment Health dashboard → Resource Usage section.
+    {{- include "monitors.notificationHandles" . | nindent 4 }}
+  tags:
+    - "cluster:{{ $c }}"
+    - "source:addon-monitoring"
+    - "severity:warning"
+  options:
+    thresholds:
+      critical: "90"
+      warning: "80"
+    notifyNoData: false
+    includeTags: true
+    newGroupDelay: 300
+{{- end }}

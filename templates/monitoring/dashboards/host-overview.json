@@ -1,0 +1,986 @@
+{
+  "title": "ArgoCD Cluster Addons Host Cluster",
+  "description": "Host cluster infrastructure health monitoring for ArgoCD and ESO",
+  "widgets": [
+    {
+      "id": 5934540039213112,
+      "definition": {
+        "title": "Nodes Ready",
+        "type": "query_value",
+        "requests": [
+          {
+            "response_format": "scalar",
+            "queries": [
+              {
+                "name": "q1",
+                "data_source": "metrics",
+                "query": "sum:kubernetes_state.node.count{$cluster_name}",
+                "aggregator": "last"
+              }
+            ],
+            "formulas": [
+              {
+                "formula": "q1",
+                "conditional_formats": [
+                  {
+                    "comparator": ">=",
+                    "value": 1,
+                    "palette": "white_on_green"
+                  },
+                  {
+                    "comparator": "<",
+                    "value": 1,
+                    "palette": "white_on_red"
+                  }
+                ]
+              }
+            ],
+            "conditional_formats": [
+              {
+                "comparator": "=",
+                "value": 0,
+                "palette": "white_on_red"
+              },
+              {
+                "comparator": ">",
+                "value": 0,
+                "palette": "white_on_green"
+              }
+            ]
+          }
+        ],
+        "autoscale": true,
+        "precision": 0,
+        "timeseries_background": {
+          "type": "area"
+        }
+      },
+      "layout": {
+        "x": 0,
+        "y": 0,
+        "width": 3,
+        "height": 2
+      }
+    },
+    {
+      "id": 6873358654880615,
+      "definition": {
+        "title": "Avg Node CPU",
+        "type": "query_value",
+        "requests": [
+          {
+            "response_format": "scalar",
+            "queries": [
+              {
+                "name": "q1",
+                "data_source": "metrics",
+                "query": "avg:system.cpu.idle{$cluster_name}",
+                "aggregator": "last"
+              }
+            ],
+            "formulas": [
+              {
+                "formula": "100 - q1",
+                "number_format": {
+                  "unit": {
+                    "type": "canonical_unit",
+                    "unit_name": "percent"
+                  }
+                },
+                "conditional_formats": [
+                  {
+                    "comparator": "<",
+                    "value": 70,
+                    "palette": "white_on_green"
+                  },
+                  {
+                    "comparator": "<",
+                    "value": 85,
+                    "palette": "white_on_yellow"
+                  },
+                  {
+                    "comparator": ">=",
+                    "value": 85,
+                    "palette": "white_on_red"
+                  }
+                ]
+              }
+            ],
+            "conditional_formats": [
+              {
+                "comparator": "<",
+                "value": 75,
+                "palette": "white_on_green"
+              },
+              {
+                "comparator": "<",
+                "value": 85,
+                "palette": "white_on_yellow"
+              },
+              {
+                "comparator": ">=",
+                "value": 85,
+                "palette": "white_on_red"
+              }
+            ]
+          }
+        ],
+        "autoscale": true,
+        "precision": 1,
+        "timeseries_background": {
+          "type": "area"
+        }
+      },
+      "layout": {
+        "x": 3,
+        "y": 0,
+        "width": 3,
+        "height": 2
+      }
+    },
+    {
+      "id": 566625404263792,
+      "definition": {
+        "title": "Avg Node Memory",
+        "type": "query_value",
+        "requests": [
+          {
+            "response_format": "scalar",
+            "queries": [
+              {
+                "name": "total",
+                "data_source": "metrics",
+                "query": "avg:system.mem.total{$cluster_name}",
+                "aggregator": "last"
+              },
+              {
+                "name": "usable",
+                "data_source": "metrics",
+                "query": "avg:system.mem.usable{$cluster_name}",
+                "aggregator": "last"
+              }
+            ],
+            "formulas": [
+              {
+                "formula": "((total - usable) / total) * 100",
+                "number_format": {
+                  "unit": {
+                    "type": "canonical_unit",
+                    "unit_name": "percent"
+                  }
+                },
+                "conditional_formats": [
+                  {
+                    "comparator": "<",
+                    "value": 70,
+                    "palette": "white_on_green"
+                  },
+                  {
+                    "comparator": "<",
+                    "value": 85,
+                    "palette": "white_on_yellow"
+                  },
+                  {
+                    "comparator": ">=",
+                    "value": 85,
+                    "palette": "white_on_red"
+                  }
+                ]
+              }
+            ],
+            "conditional_formats": [
+              {
+                "comparator": "<",
+                "value": 75,
+                "palette": "white_on_green"
+              },
+              {
+                "comparator": "<",
+                "value": 85,
+                "palette": "white_on_yellow"
+              },
+              {
+                "comparator": ">=",
+                "value": 85,
+                "palette": "white_on_red"
+              }
+            ]
+          }
+        ],
+        "autoscale": true,
+        "precision": 1,
+        "timeseries_background": {
+          "type": "area"
+        }
+      },
+      "layout": {
+        "x": 6,
+        "y": 0,
+        "width": 3,
+        "height": 2
+      }
+    },
+    {
+      "id": 8638736854546872,
+      "definition": {
+        "title": "Avg Node Disk",
+        "type": "query_value",
+        "requests": [
+          {
+            "response_format": "scalar",
+            "queries": [
+              {
+                "name": "q1",
+                "data_source": "metrics",
+                "query": "avg:system.disk.in_use{$cluster_name}",
+                "aggregator": "last"
+              }
+            ],
+            "formulas": [
+              {
+                "formula": "q1 * 100",
+                "number_format": {
+                  "unit": {
+                    "type": "canonical_unit",
+                    "unit_name": "percent"
+                  }
+                },
+                "conditional_formats": [
+                  {
+                    "comparator": "<",
+                    "value": 70,
+                    "palette": "white_on_green"
+                  },
+                  {
+                    "comparator": "<",
+                    "value": 85,
+                    "palette": "white_on_yellow"
+                  },
+                  {
+                    "comparator": ">=",
+                    "value": 85,
+                    "palette": "white_on_red"
+                  }
+                ]
+              }
+            ],
+            "conditional_formats": [
+              {
+                "comparator": "<",
+                "value": 75,
+                "palette": "white_on_green"
+              },
+              {
+                "comparator": "<",
+                "value": 85,
+                "palette": "white_on_yellow"
+              },
+              {
+                "comparator": ">=",
+                "value": 85,
+                "palette": "white_on_red"
+              }
+            ]
+          }
+        ],
+        "autoscale": true,
+        "precision": 1,
+        "timeseries_background": {
+          "type": "area"
+        }
+      },
+      "layout": {
+        "x": 9,
+        "y": 0,
+        "width": 3,
+        "height": 2
+      }
+    },
+    {
+      "id": 6177546390743471,
+      "definition": {
+        "title": "Node CPU Utilization",
+        "show_legend": false,
+        "type": "timeseries",
+        "requests": [
+          {
+            "response_format": "timeseries",
+            "queries": [
+              {
+                "name": "cpu",
+                "data_source": "metrics",
+                "query": "avg:system.cpu.user{$cluster_name} by {host}"
+              }
+            ],
+            "formulas": [
+              {
+                "alias": "CPU %",
+                "formula": "cpu"
+              }
+            ],
+            "style": {
+              "palette": "dog_classic",
+              "line_type": "solid",
+              "line_width": "normal"
+            },
+            "display_type": "line"
+          }
+        ],
+        "yaxis": {
+          "include_zero": true,
+          "min": "0",
+          "max": "100"
+        },
+        "markers": [
+          {
+            "label": "Critical",
+            "value": "y = 85",
+            "display_type": "error dashed"
+          },
+          {
+            "label": "Warning",
+            "value": "y = 70",
+            "display_type": "warning dashed"
+          }
+        ]
+      },
+      "layout": {
+        "x": 0,
+        "y": 2,
+        "width": 4,
+        "height": 3
+      }
+    },
+    {
+      "id": 7505483782234989,
+      "definition": {
+        "title": "Node Memory Utilization",
+        "show_legend": false,
+        "type": "timeseries",
+        "requests": [
+          {
+            "response_format": "timeseries",
+            "queries": [
+              {
+                "name": "total",
+                "data_source": "metrics",
+                "query": "avg:system.mem.total{$cluster_name} by {host}"
+              },
+              {
+                "name": "usable",
+                "data_source": "metrics",
+                "query": "avg:system.mem.usable{$cluster_name} by {host}"
+              }
+            ],
+            "formulas": [
+              {
+                "alias": "Memory %",
+                "formula": "((total - usable) / total) * 100"
+              }
+            ],
+            "style": {
+              "palette": "warm",
+              "line_type": "solid",
+              "line_width": "normal"
+            },
+            "display_type": "line"
+          }
+        ],
+        "yaxis": {
+          "include_zero": true,
+          "min": "0",
+          "max": "100"
+        },
+        "markers": [
+          {
+            "label": "Critical",
+            "value": "y = 85",
+            "display_type": "error dashed"
+          },
+          {
+            "label": "Warning",
+            "value": "y = 70",
+            "display_type": "warning dashed"
+          }
+        ]
+      },
+      "layout": {
+        "x": 4,
+        "y": 2,
+        "width": 4,
+        "height": 3
+      }
+    },
+    {
+      "id": 4436428244574892,
+      "definition": {
+        "title": "Node Disk Utilization",
+        "show_legend": false,
+        "type": "timeseries",
+        "requests": [
+          {
+            "response_format": "timeseries",
+            "queries": [
+              {
+                "name": "disk",
+                "data_source": "metrics",
+                "query": "avg:system.disk.in_use{$cluster_name} by {host}"
+              }
+            ],
+            "formulas": [
+              {
+                "alias": "Disk %",
+                "formula": "disk * 100"
+              }
+            ],
+            "style": {
+              "palette": "purple",
+              "line_type": "solid",
+              "line_width": "normal"
+            },
+            "display_type": "line"
+          }
+        ],
+        "yaxis": {
+          "include_zero": true,
+          "min": "0",
+          "max": "100"
+        },
+        "markers": [
+          {
+            "label": "Critical",
+            "value": "y = 85",
+            "display_type": "error dashed"
+          },
+          {
+            "label": "Warning",
+            "value": "y = 70",
+            "display_type": "warning dashed"
+          }
+        ]
+      },
+      "layout": {
+        "x": 8,
+        "y": 2,
+        "width": 4,
+        "height": 3
+      }
+    },
+    {
+      "id": 3391511981297644,
+      "definition": {
+        "title": "Core Components",
+        "type": "query_table",
+        "requests": [
+          {
+            "response_format": "scalar",
+            "queries": [
+              {
+                "data_source": "metrics",
+                "name": "q1",
+                "query": "max:kubernetes.cpu.usage.total{$cluster_name AND kube_namespace IN (argocd,external-secrets)} by {kube_app_name}",
+                "aggregator": "last"
+              },
+              {
+                "data_source": "metrics",
+                "name": "q2",
+                "query": "max:kubernetes.memory.usage{$cluster_name AND kube_namespace IN (argocd,external-secrets)} by {kube_app_name}",
+                "aggregator": "last"
+              },
+              {
+                "data_source": "metrics",
+                "name": "q3",
+                "query": "max:kubernetes_state.container.restarts{$cluster_name AND kube_namespace IN (argocd,external-secrets)} by {kube_app_name}",
+                "aggregator": "last"
+              }
+            ],
+            "formulas": [
+              {
+                "alias": "CPU (m)",
+                "cell_display_mode": "bar",
+                "formula": "q1 / 1000000"
+              },
+              {
+                "alias": "Memory",
+                "cell_display_mode": "bar",
+                "formula": "q2"
+              },
+              {
+                "alias": "Restarts",
+                "formula": "q3",
+                "conditional_formats": [
+                  {
+                    "comparator": "=",
+                    "value": 0,
+                    "palette": "white_on_green"
+                  },
+                  {
+                    "comparator": ">",
+                    "value": 0,
+                    "palette": "white_on_red"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "layout": {
+        "x": 0,
+        "y": 5,
+        "width": 12,
+        "height": 4
+      }
+    },
+    {
+      "id": 8905184823923218,
+      "definition": {
+        "title": "Total Pods",
+        "type": "query_value",
+        "requests": [
+          {
+            "response_format": "scalar",
+            "queries": [
+              {
+                "name": "q1",
+                "data_source": "metrics",
+                "query": "sum:kubernetes_state.pod.status_phase{$cluster_name AND kube_namespace IN (argocd,external-secrets,kube-system)}",
+                "aggregator": "last"
+              }
+            ],
+            "formulas": [
+              {
+                "formula": "q1"
+              }
+            ]
+          }
+        ],
+        "autoscale": true,
+        "precision": 0
+      },
+      "layout": {
+        "x": 0,
+        "y": 9,
+        "width": 2,
+        "height": 2
+      }
+    },
+    {
+      "id": 8628723556199959,
+      "definition": {
+        "title": "Running Pods",
+        "type": "query_value",
+        "requests": [
+          {
+            "response_format": "scalar",
+            "queries": [
+              {
+                "name": "q1",
+                "data_source": "metrics",
+                "query": "sum:kubernetes_state.pod.status_phase{$cluster_name AND pod_phase:running AND kube_namespace IN (argocd,external-secrets,kube-system)}",
+                "aggregator": "last"
+              }
+            ],
+            "formulas": [
+              {
+                "formula": "q1",
+                "conditional_formats": [
+                  {
+                    "comparator": ">=",
+                    "value": 1,
+                    "palette": "white_on_green"
+                  },
+                  {
+                    "comparator": "<",
+                    "value": 1,
+                    "palette": "white_on_red"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "autoscale": true,
+        "precision": 0
+      },
+      "layout": {
+        "x": 2,
+        "y": 9,
+        "width": 2,
+        "height": 2
+      }
+    },
+    {
+      "id": 2199499449489871,
+      "definition": {
+        "title": "Pending Pods",
+        "type": "query_value",
+        "requests": [
+          {
+            "response_format": "scalar",
+            "queries": [
+              {
+                "name": "q1",
+                "data_source": "metrics",
+                "query": "sum:kubernetes_state.pod.status_phase{$cluster_name AND pod_phase:pending AND kube_namespace IN (argocd,external-secrets,kube-system)}",
+                "aggregator": "last"
+              }
+            ],
+            "formulas": [
+              {
+                "formula": "default_zero(q1)",
+                "conditional_formats": [
+                  {
+                    "comparator": "=",
+                    "value": 0,
+                    "palette": "white_on_green"
+                  },
+                  {
+                    "comparator": ">",
+                    "value": 0,
+                    "palette": "white_on_yellow"
+                  }
+                ]
+              }
+            ],
+            "conditional_formats": [
+              {
+                "comparator": ">",
+                "value": 0,
+                "palette": "white_on_yellow"
+              }
+            ]
+          }
+        ],
+        "autoscale": true,
+        "precision": 0
+      },
+      "layout": {
+        "x": 4,
+        "y": 9,
+        "width": 2,
+        "height": 2
+      }
+    },
+    {
+      "id": 5640293395920665,
+      "definition": {
+        "title": "Failed Pods",
+        "type": "query_value",
+        "requests": [
+          {
+            "response_format": "scalar",
+            "queries": [
+              {
+                "name": "q1",
+                "data_source": "metrics",
+                "query": "sum:kubernetes_state.pod.status_phase{$cluster_name AND pod_phase:failed AND kube_namespace IN (argocd,external-secrets,kube-system)}",
+                "aggregator": "last"
+              }
+            ],
+            "formulas": [
+              {
+                "formula": "default_zero(q1)",
+                "conditional_formats": [
+                  {
+                    "comparator": "=",
+                    "value": 0,
+                    "palette": "white_on_green"
+                  },
+                  {
+                    "comparator": ">",
+                    "value": 0,
+                    "palette": "white_on_red"
+                  }
+                ]
+              }
+            ],
+            "conditional_formats": [
+              {
+                "comparator": ">",
+                "value": 0,
+                "palette": "white_on_red"
+              }
+            ]
+          }
+        ],
+        "autoscale": true,
+        "precision": 0
+      },
+      "layout": {
+        "x": 6,
+        "y": 9,
+        "width": 2,
+        "height": 2
+      }
+    },
+    {
+      "id": 8247452257699952,
+      "definition": {
+        "title": "CrashLoop Pods",
+        "type": "query_value",
+        "requests": [
+          {
+            "response_format": "scalar",
+            "queries": [
+              {
+                "name": "q1",
+                "data_source": "metrics",
+                "query": "sum:kubernetes_state.container.waiting.reason{$cluster_name AND reason:crashloopbackoff AND kube_namespace IN (argocd,external-secrets,kube-system)}",
+                "aggregator": "last"
+              }
+            ],
+            "formulas": [
+              {
+                "formula": "default_zero(q1)",
+                "conditional_formats": [
+                  {
+                    "comparator": "=",
+                    "value": 0,
+                    "palette": "white_on_green"
+                  },
+                  {
+                    "comparator": ">",
+                    "value": 0,
+                    "palette": "white_on_red"
+                  }
+                ]
+              }
+            ],
+            "conditional_formats": [
+              {
+                "comparator": ">",
+                "value": 0,
+                "palette": "white_on_red"
+              }
+            ]
+          }
+        ],
+        "autoscale": true,
+        "precision": 0
+      },
+      "layout": {
+        "x": 8,
+        "y": 9,
+        "width": 2,
+        "height": 2
+      }
+    },
+    {
+      "id": 4851450146239288,
+      "definition": {
+        "title": "Pod Restarts (Last 24h)",
+        "show_legend": false,
+        "time": {
+          "live_span": "1d"
+        },
+        "type": "timeseries",
+        "requests": [
+          {
+            "response_format": "timeseries",
+            "queries": [
+              {
+                "name": "restarts",
+                "data_source": "metrics",
+                "query": "sum:kubernetes_state.container.restarts{$cluster_name AND kube_namespace IN (argocd,external-secrets,kube-system)} by {pod_name}"
+              }
+            ],
+            "formulas": [
+              {
+                "alias": "Restarts",
+                "formula": "restarts"
+              }
+            ],
+            "style": {
+              "palette": "dog_classic",
+              "line_type": "solid",
+              "line_width": "normal"
+            },
+            "display_type": "bars"
+          }
+        ],
+        "yaxis": {
+          "include_zero": true,
+          "min": "0"
+        }
+      },
+      "layout": {
+        "x": 0,
+        "y": 11,
+        "width": 12,
+        "height": 3
+      }
+    },
+    {
+      "id": 2133585681313881,
+      "definition": {
+        "title": "Kubernetes Warning Events",
+        "requests": [
+          {
+            "response_format": "event_list",
+            "query": {
+              "data_source": "event_stream",
+              "query_string": "source:kubernetes status:error $cluster_name (kube_namespace:argocd OR kube_namespace:external-secrets OR kube_namespace:kube-system)",
+              "event_size": "s"
+            },
+            "columns": []
+          }
+        ],
+        "type": "list_stream"
+      },
+      "layout": {
+        "x": 0,
+        "y": 14,
+        "width": 12,
+        "height": 4
+      }
+    },
+    {
+      "id": 6264493205395697,
+      "definition": {
+        "title": "CPU - Usage vs Requests vs Limits (cluster total)",
+        "show_legend": true,
+        "legend_layout": "auto",
+        "type": "timeseries",
+        "requests": [
+          {
+            "response_format": "timeseries",
+            "queries": [
+              {
+                "name": "usage",
+                "data_source": "metrics",
+                "query": "sum:kubernetes.cpu.usage.total{$cluster_name AND kube_namespace IN (argocd,external-secrets,kube-system)}"
+              },
+              {
+                "name": "reqs",
+                "data_source": "metrics",
+                "query": "sum:kubernetes.cpu.requests{$cluster_name AND kube_namespace IN (argocd,external-secrets,kube-system)}"
+              },
+              {
+                "name": "lims",
+                "data_source": "metrics",
+                "query": "sum:kubernetes.cpu.limits{$cluster_name AND kube_namespace IN (argocd,external-secrets,kube-system)}"
+              }
+            ],
+            "formulas": [
+              {
+                "alias": "Usage (m)",
+                "formula": "usage / 1000000"
+              },
+              {
+                "alias": "Requests (m)",
+                "formula": "reqs * 1000"
+              },
+              {
+                "alias": "Limits (m)",
+                "formula": "lims * 1000"
+              }
+            ],
+            "style": {
+              "palette": "dog_classic",
+              "line_type": "solid",
+              "line_width": "normal"
+            },
+            "display_type": "line"
+          }
+        ],
+        "yaxis": {
+          "include_zero": true,
+          "label": "millicores",
+          "min": "0"
+        }
+      },
+      "layout": {
+        "x": 0,
+        "y": 18,
+        "width": 6,
+        "height": 3
+      }
+    },
+    {
+      "id": 5165797858379198,
+      "definition": {
+        "title": "Memory - Usage vs Requests vs Limits (cluster total)",
+        "show_legend": true,
+        "legend_layout": "auto",
+        "type": "timeseries",
+        "requests": [
+          {
+            "response_format": "timeseries",
+            "queries": [
+              {
+                "name": "usage",
+                "data_source": "metrics",
+                "query": "sum:kubernetes.memory.usage{$cluster_name AND kube_namespace IN (argocd,external-secrets,kube-system)}"
+              },
+              {
+                "name": "reqs",
+                "data_source": "metrics",
+                "query": "sum:kubernetes.memory.requests{$cluster_name AND kube_namespace IN (argocd,external-secrets,kube-system)}"
+              },
+              {
+                "name": "lims",
+                "data_source": "metrics",
+                "query": "sum:kubernetes.memory.limits{$cluster_name AND kube_namespace IN (argocd,external-secrets,kube-system)}"
+              }
+            ],
+            "formulas": [
+              {
+                "alias": "Usage",
+                "formula": "usage"
+              },
+              {
+                "alias": "Requests",
+                "formula": "reqs"
+              },
+              {
+                "alias": "Limits",
+                "formula": "lims"
+              }
+            ],
+            "style": {
+              "palette": "dog_classic",
+              "line_type": "solid",
+              "line_width": "normal"
+            },
+            "display_type": "line"
+          }
+        ],
+        "yaxis": {
+          "include_zero": true,
+          "min": "0"
+        }
+      },
+      "layout": {
+        "x": 6,
+        "y": 18,
+        "width": 6,
+        "height": 3
+      }
+    }
+  ],
+  "template_variables": [
+    {
+      "name": "environment",
+      "prefix": "env",
+      "available_values": [],
+      "default": "*"
+    },
+    {
+      "name": "cluster_name",
+      "prefix": "kube_cluster_name",
+      "available_values": [],
+      "default": "*"
+    },
+    {
+      "name": "namespace",
+      "prefix": "kube_namespace",
+      "available_values": [],
+      "default": "*"
+    }
+  ],
+  "layout_type": "ordered",
+  "notify_list": [],
+  "pause_auto_refresh": false,
+  "reflow_type": "fixed"
+}

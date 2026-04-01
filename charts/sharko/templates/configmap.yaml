@@ -1,0 +1,2 @@
+{{/* Connection config is now stored in an encrypted K8s Secret managed by the app. */}}
+{{/* This ConfigMap is preserved for potential future non-sensitive configuration. */}}

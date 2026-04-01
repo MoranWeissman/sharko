@@ -1,0 +1,315 @@
+<mxfile host="app.diagrams.net" modified="2026-01-29T00:00:00.000Z" agent="Claude" version="22.1.16">
+  <diagram name="Migration Flow - Visual" id="migration-visual">
+    <mxGraphModel dx="2200" dy="1400" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1300" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Title -->
+        <mxCell id="title" value="ArgoCD Addon Migration Flow" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=24;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="600" y="20" width="600" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- Phase Labels at Top -->
+        <mxCell id="phase1-top" value="PHASE 1: Deploy NEW Addon" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="250" y="80" width="400" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="phase2-top" value="PHASE 2: Remove OLD Addon" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=14;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="700" y="80" width="400" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="phase3-top" value="PHASE 3: Adopt Resources" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=14;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="1150" y="80" width="400" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- System Container Backgrounds -->
+
+        <!-- Git Container -->
+        <mxCell id="git-container" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="40" y="160" width="1720" height="140" as="geometry" />
+        </mxCell>
+
+        <!-- OLD ArgoCD Container -->
+        <mxCell id="old-container" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff9e6;strokeColor=#d6b656;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="40" y="310" width="1720" height="180" as="geometry" />
+        </mxCell>
+
+        <!-- NEW ArgoCD Container -->
+        <mxCell id="new-container" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e8f5e9;strokeColor=#82b366;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="40" y="500" width="1720" height="180" as="geometry" />
+        </mxCell>
+
+        <!-- Kubernetes Cluster Container -->
+        <mxCell id="k8s-container" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e3f2fd;strokeColor=#6c8ebf;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="40" y="690" width="1720" height="180" as="geometry" />
+        </mxCell>
+
+        <!-- System Headers with Icons -->
+
+        <!-- Git Header -->
+        <mxCell id="git-icon" value="" style="shape=image;html=1;verticalAlign=top;verticalLabelPosition=bottom;labelBackgroundColor=#ffffff;imageAspect=0;aspect=fixed;image=https://techicons.dev/icons/git" vertex="1" parent="1">
+          <mxGeometry x="60" y="175" width="50" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="git-label" value="Git Repository" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=14;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="35" y="230" width="100" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- OLD ArgoCD Header -->
+        <mxCell id="old-argocd-icon" value="" style="shape=image;html=1;verticalAlign=top;verticalLabelPosition=bottom;labelBackgroundColor=#ffffff;imageAspect=0;aspect=fixed;image=https://techicons.dev/icons/argocd" vertex="1" parent="1">
+          <mxGeometry x="60" y="335" width="50" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="old-argocd-label" value="OLD ArgoCD&#xa;(Azure DevOps)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=13;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="35" y="390" width="100" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- NEW ArgoCD Header -->
+        <mxCell id="new-argocd-icon" value="" style="shape=image;html=1;verticalAlign=top;verticalLabelPosition=bottom;labelBackgroundColor=#ffffff;imageAspect=0;aspect=fixed;image=https://techicons.dev/icons/argocd" vertex="1" parent="1">
+          <mxGeometry x="60" y="525" width="50" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="new-argocd-label" value="NEW ArgoCD&#xa;(GitHub)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=13;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="35" y="580" width="100" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- Kubernetes Cluster Header -->
+        <mxCell id="k8s-icon" value="" style="shape=image;html=1;verticalAlign=top;verticalLabelPosition=bottom;labelBackgroundColor=#ffffff;imageAspect=0;aspect=fixed;image=https://techicons.dev/icons/kubernetes" vertex="1" parent="1">
+          <mxGeometry x="60" y="715" width="50" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="k8s-label" value="Target Cluster" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=14;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="35" y="770" width="100" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- PHASE 1: Deploy NEW Addon -->
+
+        <!-- Git: Enable addon -->
+        <mxCell id="git-enable" value="" style="shape=document;whiteSpace=wrap;html=1;boundedLbl=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="210" y="185" width="120" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="git-enable-label" value="cluster-addons.yaml&#xa;&#xa;addon: enabled" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="220" y="197" width="100" height="46" as="geometry" />
+        </mxCell>
+
+        <!-- Git: Configure values -->
+        <mxCell id="git-values" value="" style="shape=document;whiteSpace=wrap;html=1;boundedLbl=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="370" y="185" width="120" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="git-values-label" value="values.yaml&#xa;&#xa;Match OLD exactly" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="380" y="197" width="100" height="46" as="geometry" />
+        </mxCell>
+
+        <!-- Arrow git enable to values -->
+        <mxCell id="arrow-git1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=3;strokeColor=#82b366;endArrow=block;endFill=1;" edge="1" parent="1" source="git-enable" target="git-values">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- NEW ArgoCD: Application created -->
+        <mxCell id="new-app-created" value="" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="540" y="540" width="90" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="new-app-label" value="Application&#xa;&#xa;OutOfSync" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="540" y="562" width="90" height="46" as="geometry" />
+        </mxCell>
+
+        <!-- Arrow from git values to NEW app -->
+        <mxCell id="arrow-git-new" value="ApplicationSet&#xa;generates" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=3;strokeColor=#82b366;endArrow=block;endFill=1;labelBackgroundColor=#ffffff;fontSize=10;" edge="1" parent="1" source="git-values" target="new-app-created">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="430" y="270" />
+              <mxPoint x="585" y="270" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- OLD ArgoCD: Application managing resources -->
+        <mxCell id="old-app-active" value="" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="240" y="350" width="90" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="old-app-label" value="Application&#xa;&#xa;Synced" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="240" y="372" width="90" height="46" as="geometry" />
+        </mxCell>
+
+        <!-- Cluster: Resources running (PHASE 1) -->
+        <mxCell id="cluster-resources-p1" value="" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="400" y="715" width="110" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="cluster-label-p1" value="Pods&#xa;Running&#xa;&#xa;Managed by&#xa;OLD ArgoCD" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=9;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="410" y="732" width="90" height="76" as="geometry" />
+        </mxCell>
+
+        <!-- Arrow OLD app to cluster resources -->
+        <mxCell id="arrow-old-cluster1" value="manages" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#d6b656;endArrow=block;endFill=1;dashed=1;labelBackgroundColor=#ffffff;fontSize=10;" edge="1" parent="1" source="old-app-active" target="cluster-resources-p1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="285" y="500" />
+              <mxPoint x="455" y="500" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- PHASE 1 Complete - Vertical Line -->
+        <mxCell id="phase1-divider" value="" style="endArrow=none;dashed=1;html=1;strokeWidth=3;strokeColor=#999999;" edge="1" parent="1">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="680" y="890" as="sourcePoint" />
+            <mxPoint x="680" y="150" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- PHASE 2: Remove OLD Addon -->
+
+        <!-- Git: Comment out addon -->
+        <mxCell id="git-remove" value="" style="shape=document;whiteSpace=wrap;html=1;boundedLbl=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="740" y="185" width="120" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="git-remove-label" value="clusters.yaml&#xa;&#xa;# addon: enabled" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="750" y="197" width="100" height="46" as="geometry" />
+        </mxCell>
+
+        <!-- OLD ArgoCD: Sync clusters app -->
+        <mxCell id="old-sync" value="" style="shape=process;whiteSpace=wrap;html=1;backgroundOutline=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="910" y="355" width="120" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="old-sync-label" value="Sync&#xa;clusters app" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="920" y="370" width="100" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- Arrow git remove to OLD sync -->
+        <mxCell id="arrow-git-old" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=3;strokeColor=#d6b656;endArrow=block;endFill=1;" edge="1" parent="1" source="git-remove" target="old-sync">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="800" y="270" />
+              <mxPoint x="970" y="270" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- OLD ArgoCD: Application deleted -->
+        <mxCell id="old-app-deleted" value="" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#f8f8f8;strokeColor=#999999;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="740" y="350" width="90" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="old-app-deleted-label" value="Application&#xa;&#xa;DELETED" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;fontStyle=1;fontColor=#999999;" vertex="1" parent="1">
+          <mxGeometry x="740" y="372" width="90" height="46" as="geometry" />
+        </mxCell>
+
+        <!-- Arrow OLD sync to deleted -->
+        <mxCell id="arrow-sync-delete" value="removes&#xa;Application" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#d6b656;endArrow=block;endFill=1;labelBackgroundColor=#ffffff;fontSize=10;" edge="1" parent="1" source="old-sync" target="old-app-deleted">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Cluster: Resources orphaned (PHASE 2) -->
+        <mxCell id="cluster-resources-p2" value="" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="900" y="715" width="110" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="cluster-label-p2" value="Pods&#xa;Running&#xa;&#xa;ORPHANED&#xa;No owner" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=9;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="910" y="732" width="90" height="76" as="geometry" />
+        </mxCell>
+
+        <!-- No arrow - orphaned -->
+        <mxCell id="orphan-indicator" value="⚠️" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=40;" vertex="1" parent="1">
+          <mxGeometry x="930" y="665" width="50" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- PHASE 2 Complete - Vertical Line -->
+        <mxCell id="phase2-divider" value="" style="endArrow=none;dashed=1;html=1;strokeWidth=3;strokeColor=#999999;" edge="1" parent="1">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="1130" y="890" as="sourcePoint" />
+            <mxPoint x="1130" y="150" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- PHASE 3: Adopt Resources -->
+
+        <!-- NEW ArgoCD: Hard Refresh -->
+        <mxCell id="new-refresh" value="" style="shape=process;whiteSpace=wrap;html=1;backgroundOutline=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="1190" y="545" width="120" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="new-refresh-label" value="Hard&#xa;Refresh" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="1200" y="560" width="100" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- NEW ArgoCD: Sync -->
+        <mxCell id="new-sync" value="" style="shape=process;whiteSpace=wrap;html=1;backgroundOutline=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="1370" y="545" width="120" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="new-sync-label" value="Sync" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="1380" y="560" width="100" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- Arrow refresh to sync -->
+        <mxCell id="arrow-refresh-sync" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=3;strokeColor=#9673a6;endArrow=block;endFill=1;" edge="1" parent="1" source="new-refresh" target="new-sync">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- NEW ArgoCD: Application healthy -->
+        <mxCell id="new-app-healthy" value="" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="1550" y="540" width="90" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="new-app-healthy-label" value="Application&#xa;&#xa;Synced&#xa;Healthy" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="1550" y="557" width="90" height="56" as="geometry" />
+        </mxCell>
+
+        <!-- Arrow sync to healthy -->
+        <mxCell id="arrow-sync-healthy" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=3;strokeColor=#9673a6;endArrow=block;endFill=1;" edge="1" parent="1" source="new-sync" target="new-app-healthy">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Cluster: Resources adopted (PHASE 3) -->
+        <mxCell id="cluster-resources-p3" value="" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="1400" y="715" width="110" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="cluster-label-p3" value="Pods&#xa;Running&#xa;&#xa;Managed by&#xa;NEW ArgoCD" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=9;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="1410" y="732" width="90" height="76" as="geometry" />
+        </mxCell>
+
+        <!-- Arrow NEW app to cluster resources -->
+        <mxCell id="arrow-new-cluster" value="adopts&#xa;(no restart)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=3;strokeColor=#82b366;endArrow=block;endFill=1;labelBackgroundColor=#ffffff;fontSize=10;fontStyle=1;" edge="1" parent="1" source="new-app-healthy" target="cluster-resources-p3">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1595" y="680" />
+              <mxPoint x="1455" y="680" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Success checkmark -->
+        <mxCell id="success-check" value="✅" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=50;" vertex="1" parent="1">
+          <mxGeometry x="1565" y="725" width="60" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Timeline arrow at bottom -->
+        <mxCell id="timeline" value="" style="endArrow=block;html=1;strokeWidth=4;strokeColor=#333333;endFill=1;" edge="1" parent="1">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="150" y="920" as="sourcePoint" />
+            <mxPoint x="1670" y="920" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="timeline-label" value="TIME / MIGRATION PROGRESS →" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="750" y="930" width="300" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- Key Point: No pod restarts -->
+        <mxCell id="key-point" value="🔑 KEY: Pods never restart • Resources never deleted • Zero downtime" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff4e6;strokeColor=#d79b00;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="450" y="1010" width="1000" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- Step numbers overlays -->
+        <mxCell id="step1-num" value="1" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#333333;strokeColor=#333333;fontColor=#FFFFFF;fontSize=16;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="190" y="165" width="40" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="step2-num" value="2" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#333333;strokeColor=#333333;fontColor=#FFFFFF;fontSize=16;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="350" y="165" width="40" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="step4-num" value="4" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#333333;strokeColor=#333333;fontColor=#FFFFFF;fontSize=16;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="720" y="165" width="40" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="step5-num" value="5" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#333333;strokeColor=#333333;fontColor=#FFFFFF;fontSize=16;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="890" y="335" width="40" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="step8-num" value="8" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#333333;strokeColor=#333333;fontColor=#FFFFFF;fontSize=16;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="1170" y="525" width="40" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="step9-num" value="9" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#333333;strokeColor=#333333;fontColor=#FFFFFF;fontSize=16;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="1350" y="525" width="40" height="40" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

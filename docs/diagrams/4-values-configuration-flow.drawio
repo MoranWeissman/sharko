@@ -1,0 +1,83 @@
+<mxfile host="app.diagrams.net">
+  <diagram name="Values Configuration Flow" id="values-flow">
+    <mxGraphModel dx="1434" dy="844" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1200" pageHeight="1100">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <!-- Global Configuration Container -->
+        <mxCell id="global-container" value="Global Configuration" style="swimlane;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;fontStyle=1;startSize=30;" vertex="1" parent="1">
+          <mxGeometry x="100" y="40" width="400" height="180" as="geometry"/>
+        </mxCell>
+        <mxCell id="globalfile" value="global-values.yaml&lt;br&gt;&lt;br&gt;addonsConfig.default.datadog:&lt;br&gt;• replicas: 2&lt;br&gt;• envFrom: secretRef" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e1f5fe;strokeColor=#01579b;fontSize=13;align=left;verticalAlign=top;spacingLeft=10;spacingTop=5;" vertex="1" parent="global-container">
+          <mxGeometry x="20" y="50" width="360" height="110" as="geometry"/>
+        </mxCell>
+        <!-- Cluster Configuration Container -->
+        <mxCell id="cluster-container" value="Cluster-Specific Configuration" style="swimlane;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=14;fontStyle=1;startSize=30;" vertex="1" parent="1">
+          <mxGeometry x="700" y="40" width="400" height="240" as="geometry"/>
+        </mxCell>
+        <mxCell id="clusterfile" value="clusters/feedlot-dev.yaml&lt;br&gt;&lt;br&gt;datadog:&lt;br&gt;• apiKeyExistingSecret: feedlot-dev&lt;br&gt;• clusterName: feedlot-dev&lt;br&gt;• tags: env=dev, region=eu-west-1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fffbec;strokeColor=#d6b656;fontSize=13;align=left;verticalAlign=top;spacingLeft=10;spacingTop=5;" vertex="1" parent="cluster-container">
+          <mxGeometry x="20" y="50" width="360" height="170" as="geometry"/>
+        </mxCell>
+        <!-- Merge Container -->
+        <mxCell id="merge-container" value="ArgoCD Merges Values" style="swimlane;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=14;fontStyle=1;startSize=30;" vertex="1" parent="1">
+          <mxGeometry x="320" y="320" width="560" height="200" as="geometry"/>
+        </mxCell>
+        <mxCell id="merge1" value="1. Apply Global Defaults" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f3e5f5;strokeColor=#9673a6;fontSize=13;fontStyle=1" vertex="1" parent="merge-container">
+          <mxGeometry x="30" y="50" width="150" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="merge2" value="2. Override with&#xa;Cluster Values" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f3e5f5;strokeColor=#9673a6;fontSize=13;fontStyle=1" vertex="1" parent="merge-container">
+          <mxGeometry x="205" y="50" width="150" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="merge3" value="3. Generate&#xa;Final Config" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f3e5f5;strokeColor=#9673a6;fontSize=13;fontStyle=1" vertex="1" parent="merge-container">
+          <mxGeometry x="380" y="50" width="150" height="60" as="geometry"/>
+        </mxCell>
+        <!-- Arrows within Merge -->
+        <mxCell id="merge-edge1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="merge-container" source="merge1" target="merge2">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="merge-edge2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="merge-container" source="merge2" target="merge3">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <!-- Deploy Container -->
+        <mxCell id="deploy-container" value="Deployment" style="swimlane;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;fontStyle=1;startSize=30;" vertex="1" parent="1">
+          <mxGeometry x="200" y="600" width="800" height="300" as="geometry"/>
+        </mxCell>
+        <mxCell id="final" value="Final Datadog Configuration&lt;br&gt;&lt;br&gt;• replicas: 2 (from global)&lt;br&gt;• apiKeyExistingSecret: feedlot-dev (from cluster)&lt;br&gt;• clusterName: feedlot-dev (from cluster)&lt;br&gt;• tags: env=dev, region=eu-west-1 (from cluster)&lt;br&gt;• envFrom: secretRef (from global)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e1f5e1;strokeColor=#82b366;fontSize=13;align=left;verticalAlign=top;spacingLeft=10;spacingTop=5;" vertex="1" parent="deploy-container">
+          <mxGeometry x="30" y="50" width="740" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="install" value="Install Datadog on feedlot-dev" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;fontStyle=1" vertex="1" parent="deploy-container">
+          <mxGeometry x="250" y="210" width="300" height="60" as="geometry"/>
+        </mxCell>
+        <!-- Arrows: Global to Merge -->
+        <mxCell id="edge1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;exitX=0.5;exitY=1;entryX=0;entryY=0.5;" edge="1" parent="1" source="globalfile" target="merge1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="300" y="400"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <!-- Arrows: Cluster to Merge -->
+        <mxCell id="edge2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;exitX=0.5;exitY=1;entryX=1;entryY=0.5;" edge="1" parent="1" source="clusterfile" target="merge2">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="900" y="400"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <!-- Arrow: Merge to Final -->
+        <mxCell id="edge3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="merge3" target="final">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="775" y="570"/>
+              <mxPoint x="600" y="570"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <!-- Arrow: Final to Install -->
+        <mxCell id="edge4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="final" target="install">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

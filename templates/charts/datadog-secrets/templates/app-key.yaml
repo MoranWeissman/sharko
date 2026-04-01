@@ -1,0 +1,34 @@
+# App key is only created when the Datadog Operator is enabled on this cluster.
+# The appKey.enabled value is passed by the ApplicationSet — it reads
+# datadog.datadog.operator.enabled from the cluster values automatically.
+{{- if eq (toString .Values.appKey.enabled) "true" }}
+# Same project mapping lookup as the API key.
+{{- $clusterName := .Values.clusterGlobalValues.clusterName }}
+{{- $mapping := index .Values.datadogProjectMappings $clusterName }}
+{{- $projectName := $mapping.projectName }}
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: datadog-app-key
+  namespace: datadog
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: {{ .Values.secretStore.name }}
+    kind: {{ .Values.secretStore.kind }}
+  target:
+    name: datadog-app-key
+    creationPolicy: Owner
+    template:
+      engineVersion: v2
+      data:
+        app-key: "{{ `{{ .appkey }}` }}"
+  data:
+    - secretKey: appkey
+      remoteRef:
+        # Fetches from AWS Secrets Manager: datadog-app-keys-integration → "<projectName>-non-prod"
+        # App keys always use "-non-prod" suffix (not env-specific like API keys)
+        # Example: ark-dev-eks → projectName=ark → property "ark-non-prod"
+        key: datadog-app-keys-integration
+        property: "{{ $projectName }}-non-prod"
+{{- end }}

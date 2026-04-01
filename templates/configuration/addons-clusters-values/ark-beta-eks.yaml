@@ -1,0 +1,200 @@
+# ================================================================ #
+# Global Values (used by all addons)
+# Define YAML anchors with & for reuse across addon configurations
+# ================================================================ #
+clusterGlobalValues:
+  env: &env dev
+  clusterName: &clusterName ark-beta-eks
+  region: &region us-east-1
+  projectName: ark-beta-eks
+
+# ================================================================ #
+# Addon-specific overrides
+# These override the default values from global.yaml
+# Use YAML anchors (*clusterName, *region, etc.) to reference clusterGlobalValues
+# ================================================================ #
+
+# ================================================================ #
+# ------------------- Datadog Configuration ------------------- #
+# ================================================================ #
+datadog:
+  datadog:
+    # Project namespaces for log collection (addon namespaces are added automatically)
+    projectNamespaces: 'user-management|ark|akuity'
+
+# ================================================================ #
+# ------------------- Anodot Configuration ----------------------- #
+# ================================================================ #
+anodot:
+  config:
+    clusterName: *clusterName
+    clusterRegion: *region
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::056822611329:role/anodot-ark-beta-eks-eu-west-1dukbh001
+
+# ================================================================ #
+# ------------------- Argo Events Configuration ------------------ #
+# ================================================================ #
+argo-events:
+  extraObjects:
+    - apiVersion: secrets-store.csi.x-k8s.io/v1
+      kind: SecretProviderClass
+      metadata:
+        name: workflow-secrets-aws-beta
+        namespace: argo-workflows
+      spec:
+        provider: aws
+        parameters:
+          region: eu-west-1
+          objects: |
+            - objectName: "ark-beta-argo-workflow"
+              objectType: "secretsmanager"
+              jmesPath:
+                - path: "AKUITY_ARGOCD_DEV_BUILDER_TOKEN"
+                  objectAlias: "AKUITY_ARGOCD_DEV_BUILDER_TOKEN"
+                - path: "AHM_OKTA_CLIENT_ID"
+                  objectAlias: "AHM_OKTA_CLIENT_ID"
+                - path: "AHM_OKTA_CLIENT_SECRET"
+                  objectAlias: "AHM_OKTA_CLIENT_SECRET"
+                - path: "ADO_GIT_PAT"
+                  objectAlias: "ADO_GIT_PAT"
+                - path: "ADO_API_PAT"
+                  objectAlias: "ADO_API_PAT"
+    - apiVersion: rbac.authorization.k8s.io/v1
+      kind: Role
+      metadata:
+        name: workflow-log-reader
+        namespace: argo-workflows
+      rules:
+      - apiGroups: [""]
+        resources: ["pods", "pods/log", "events"]
+        verbs: ["get", "list", "watch"]
+    - apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: workflow-log-reader-binding
+        namespace: argo-workflows
+      subjects:
+      - kind: ServiceAccount
+        name: workflow-runner-sa
+        namespace: argo-workflows
+      roleRef:
+        kind: Role
+        name: workflow-log-reader
+        apiGroup: rbac.authorization.k8s.io
+    - apiVersion: argoproj.io/v1alpha1
+      kind: EventBus
+      metadata:
+        name: default
+        namespace: argo-workflows
+      spec:
+        nats:
+          native:
+            replicas: 3
+    - apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRole
+      metadata:
+        name: clusterworkflowtemplate-reader
+      rules:
+      - apiGroups: ["argoproj.io"]
+        resources: ["clusterworkflowtemplates"]
+        verbs: ["get", "list", "watch"]
+    - apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: sensor-read-cwts
+      subjects:
+      - kind: ServiceAccount
+        name: workflow-runner-sa
+        namespace: argo-workflows
+      roleRef:
+        kind: ClusterRole
+        name: clusterworkflowtemplate-reader
+        apiGroup: rbac.authorization.k8s.io
+    - apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRole
+      metadata:
+        name: argo-workflow-create
+      rules:
+        - apiGroups: ["argoproj.io"]
+          resources: ["workflows"]
+          verbs: ["create", "get", "list", "watch", "patch", "update"]
+    - apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: argo-workflow-create-binding
+        namespace: argo-workflows
+      subjects:
+        - kind: ServiceAccount
+          name: workflow-runner-sa
+          namespace: argo-workflows
+      roleRef:
+        kind: ClusterRole
+        name: argo-workflow-create
+        apiGroup: rbac.authorization.k8s.io
+
+# ================================================================ #
+# ------------------- Argo Workflows Configuration --------------- #
+# ================================================================ #
+argo-workflows:
+  server:
+    authModes:
+      - server
+      - client
+    ingress:
+      enabled: true
+      pathType: Prefix
+      annotations:
+        alb.ingress.kubernetes.io/actions.ssl-redirect: '{"Type": "redirect", "RedirectConfig": {"Protocol": "HTTPS", "Port": "443", "StatusCode": "HTTP_301"}}'
+        alb.ingress.kubernetes.io/healthcheck-protocol: HTTPS
+        alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+        alb.ingress.kubernetes.io/scheme: internet-facing
+        alb.ingress.kubernetes.io/success-codes: 200-399
+        alb.ingress.kubernetes.io/target-type: ip
+        alb.ingress.kubernetes.io/group.name: private
+        alb.ingress.kubernetes.io/security-groups: sg_ark_alb_beta_private
+      ingressClassName: alb
+      hosts:
+        - ark-beta-workflows.mahi-techlabs.com
+      paths:
+        - /
+  workflow:
+    serviceAccount:
+      create: true
+      name: "workflow-runner-sa"
+      annotations:
+        eks.amazonaws.com/role-arn: arn:aws:iam::056822611329:role/ark-beta-argo-workflow
+  controller:
+    configMap:
+      create: true
+    nodeEvents:
+      enabled: true
+    workflowEvents:
+      enabled: true
+    workflowDefaults:
+      spec:
+        serviceAccountName: workflow-runner-sa
+        podGC:
+          strategy: OnWorkflowCompletion
+        ttlStrategy:
+          secondsAfterSuccess: 604800
+          secondsAfterFailure: 1209600
+  useStaticCredentials: false
+  artifactRepository:
+    archiveLogs: true
+    s3:
+      bucket: ark-beta-argo-workflows-repository
+      endpoint: s3.amazonaws.com
+      region: eu-west-1
+      keyFormat: "artifacts/{{workflow.namespace}}/{{workflow.name}}/{{pod.name}}"
+
+# ================================================================ #
+# ------------------- Redis Insight V2 Configuration ------------- #
+# ================================================================ #
+redis-insight-v2:
+  ingress:
+    oldClusterVersionSupport: false
+    host: "ark-redisinsight-v2-beta.mahi-techlabs.com"
+    sgGroupName: "sg_ark_alb_beta_private"
+    svcPort: 38001

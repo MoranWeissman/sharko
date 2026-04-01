@@ -1,0 +1,37 @@
+# ================================================================ #
+# Global Values (used by all addons)
+# Define YAML anchors with & for reuse across addon configurations
+# ================================================================ #
+clusterGlobalValues:
+  env: &env dev
+  clusterName: &clusterName animo-dev-eks
+  region: &region us-east-1
+  projectName: animo-dev-eks
+
+# ================================================================ #
+# Addon-specific overrides
+# These override the default values from global.yaml
+# Use YAML anchors (*clusterName, *region, etc.) to reference clusterGlobalValues
+# ================================================================ #
+
+# ================================================================ #
+# ------------------- Datadog Configuration ------------------- #
+# ================================================================ #
+datadog:
+  clusterAgent:
+    admissionController:
+      enabled: false
+  datadog:
+    # Project namespaces for log collection (addon namespaces are added automatically)
+    projectNamespaces: 'animo-dev'
+
+# ================================================================ #
+# ------------------- Anodot Configuration ----------------------- #
+# ================================================================ #
+anodot:
+  config:
+    clusterName: *clusterName
+    clusterRegion: *region
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::552292662766:role/anodot-animo-dev-eks-eu-central-1

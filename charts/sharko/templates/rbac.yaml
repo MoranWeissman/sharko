@@ -1,0 +1,111 @@
+{{- if .Values.rbac.create }}
+# ClusterRole: read access to ArgoCD resources
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "aap.fullname" . }}
+  labels:
+    {{- include "aap.labels" . | nindent 4 }}
+rules:
+  # ArgoCD applications
+  - apiGroups: ["argoproj.io"]
+    resources: ["applications", "appprojects"]
+    verbs: ["get", "list", "watch"]
+  # ArgoCD clusters (stored as secrets in argocd namespace)
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"]
+    # Restricted to ArgoCD namespace via the RoleBinding below
+  {{- if .Values.config.nodeAccess }}
+  # Node read access (opt-in via config.nodeAccess)
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
+  {{- end }}
+---
+# Bind to the AAP service account
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "aap.fullname" . }}
+  labels:
+    {{- include "aap.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "aap.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "aap.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+# RoleBinding in ArgoCD namespace for secret read access (cluster connection info)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "aap.fullname" . }}-argocd-reader
+  namespace: {{ include "aap.argocdNamespace" . }}
+  labels:
+    {{- include "aap.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "aap.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "aap.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+# Role: read/write own secret and read users ConfigMap in the release namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "aap.fullname" . }}-auth
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aap.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: [{{ include "aap.fullname" . | quote }}]
+    verbs: ["get", "update"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["aap-migration-settings"]
+    verbs: ["get", "create", "update", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: [{{ .Values.config.connectionSecretName | default "aap-connections" | quote }}]
+    verbs: ["get", "update"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["aap-ai-config"]
+    verbs: ["get", "update"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]  # needed to create new secrets (resourceNames can't restrict create)
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "create", "update", "delete"]  # migration state stored in ConfigMaps
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: [{{ printf "%s-users" (include "aap.fullname" .) | quote }}]
+    verbs: ["get"]
+---
+# Bind auth role to the service account
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "aap.fullname" . }}-auth
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aap.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "aap.fullname" . }}-auth
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "aap.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

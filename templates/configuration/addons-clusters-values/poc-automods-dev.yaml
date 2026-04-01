@@ -1,0 +1,105 @@
+# ================================================================ #
+# Global Values (used by all addons)
+# Define YAML anchors with & for reuse across addon configurations
+# ================================================================ #
+clusterGlobalValues:
+  env: &env dev
+  clusterName: &clusterName poc-automods-dev
+  region: &region us-east-1
+  projectName: poc-automods-dev
+
+# ================================================================ #
+# Addon-specific overrides
+# These override the default values from global.yaml
+# Use YAML anchors (*clusterName, *region, etc.) to reference clusterGlobalValues
+# ================================================================ #
+
+# ================================================================ #
+
+# ================================================================ #
+# ------------------- Anodot Configuration ----------------------- #
+# ================================================================ #
+anodot:
+  config:
+    clusterName: *clusterName
+    clusterRegion: *region
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::627176949220:role/anodot-poc-automods-dev-eu-central-1
+
+# ================================================================ #
+# ------------------- Argo Workflows Configuration --------------- #
+# ================================================================ #
+argo-workflows:
+  server:
+    authModes:
+      - server
+      - client
+    serviceAccount:
+      annotations:
+        eks.amazonaws.com/role-arn: arn:aws:iam::627176949220:role/argo-workflow-role
+    ingress:
+      enabled: true
+      pathType: Prefix
+      annotations:
+        alb.ingress.kubernetes.io/actions.ssl-redirect: '{"Type": "redirect", "RedirectConfig": {"Protocol": "HTTPS", "Port": "443", "StatusCode": "HTTP_301"}}'
+        alb.ingress.kubernetes.io/healthcheck-protocol: HTTPS
+        alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+        alb.ingress.kubernetes.io/scheme: internet-facing
+        alb.ingress.kubernetes.io/success-codes: 200-399
+        alb.ingress.kubernetes.io/target-type: ip
+      ingressClassName: alb
+      hosts:
+        - argo-workflows-poc.mahi-techlabs.com
+      paths:
+        - /
+
+# ================================================================ #
+# ------------------- Karpenter Configuration -------------------- #
+# ================================================================ #
+karpenter:
+  nodePools:
+  - name: automation-maksim-temp
+    intent: automation-maksim-temp
+    schedule:
+    spec:
+      requirements:
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["amd64"]
+        - key: "eks.amazonaws.com/instance-cpu"
+          operator: In
+          values: ["1", "2"]
+        - key: "eks.amazonaws.com/instance-memory"
+          operator: Gt
+          values: ["255"]
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["spot"]
+        - key: eks.amazonaws.com/instance-category
+          operator: In
+          values: ["c", "m", "r", "t"]
+      taints:
+      - key: automationMaksimTempOnly
+        value: "true"
+        effect: NoSchedule
+      nodeClassRef:
+        group: eks.amazonaws.com
+        kind: NodeClass
+        name: default
+      expireAfter: 24h
+      terminationGracePeriod: 3m
+    limits:
+      cpu: 4
+      memory: 4Gi
+    disruption:
+      consolidationPolicy: WhenEmptyOrUnderutilized
+      consolidateAfter: 0s
+  createScheduler: true
+  rbacRules:
+    - apiGroups: ["karpenter.sh"]
+      resources: ["nodepools", "nodepools/status"]
+      verbs: ["update", "patch", "get"]
+    - apiGroups: [""]
+      resources: ["nodes"]
+      verbs: ["delete", "list"]

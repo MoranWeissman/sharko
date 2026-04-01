@@ -1,0 +1,26 @@
+{
+    "id": 261778780,
+    "name": "[ArgoCD Cluster Addons Host Cluster] Container restart rate (CrashLoop signal)",
+    "type": "query alert",
+    "query": "avg(last_15m):avg:kubernetes_state.container.restarts{kube_namespace IN (argocd,external-secrets,kube-system)} by {kube_cluster_name,kube_namespace,pod_name,kube_container_name} > 5",
+    "message": "{{#is_alert}}\n🔴 [P1 CRITICAL] {{kube_container_name.name}} in {{pod_name.name}} is crash-looping\nRestarts (15m): {{value}} | Namespace: {{kube_namespace.name}} | Cluster: {{kube_cluster_name.name}}\n{{/is_alert}}\n{{#is_warning}}\n🟡 [P2 WARNING] {{kube_container_name.name}} in {{pod_name.name}} is restarting frequently\nRestarts (15m): {{value}} | Namespace: {{kube_namespace.name}}\n{{/is_warning}}\n{{#is_recovery}}\n✅ RECOVERED: {{kube_container_name.name}} in {{pod_name.name}} is stable\n{{/is_recovery}}\n\n{{#is_alert}}\nActions:\n1. kubectl describe pod {{pod_name.name}} -n {{kube_namespace.name}}\n2. kubectl logs {{pod_name.name}} -n {{kube_namespace.name}} --previous\n3. Check for OOMKill in pod events\n{{/is_alert}}\n\n@moran.weissman@msd.com @microsoft-teams-ArgocdClusterAddonsNonProd",
+    "tags": [
+        "platform:devex",
+        "kubernetes",
+        "service:argocd-cluster-addons",
+        "component:argocd-cluster-addons-host"
+    ],
+    "options": {
+        "thresholds": {
+            "critical": 5,
+            "warning": 3
+        },
+        "notify_audit": false,
+        "on_missing_data": "default",
+        "include_tags": true,
+        "new_group_delay": 60
+    },
+    "priority": 2,
+    "draft_status": "published",
+    "assets": []
+}

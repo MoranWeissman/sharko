@@ -1,0 +1,4 @@
+apiVersion: v2
+name: datadog-secrets
+description: ExternalSecrets for Datadog API key and App key from AWS Secrets Manager
+version: 0.1.0

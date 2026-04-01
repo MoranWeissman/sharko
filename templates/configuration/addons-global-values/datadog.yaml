@@ -1,0 +1,238 @@
+# ====================================================================== #
+# Datadog Global Values
+# ====================================================================== #
+# Chart: datadog
+# Repo: https://helm.datadoghq.com
+# Docs: https://docs.datadoghq.com/containers/kubernetes/installation
+#
+# These values apply to ALL clusters unless overridden per-cluster
+# in addons-clusters-values/<cluster-name>.yaml
+#
+# NOTE: Cluster name and dd_tags are injected per-cluster via
+# the datadog.parameters helper in the ApplicationSet template.
+# ====================================================================== #
+
+# Override chart name to avoid K8s 63-char limit on resource names
+# Each cluster has only one Datadog installation, so "datadog" is sufficient
+fullnameOverride: "datadog"
+
+# ---- Core Agent Settings ---- #
+datadog:
+  # Logging level for the agent (trace, debug, info, warn, error)
+  logLevel: INFO
+
+  # ---- Secret References ---- #
+  # K8s secrets created by the datadog-secrets ExternalSecret chart (multi-source)
+  apiKeyExistingSecret: datadog-api-key
+  appKeyExistingSecret: datadog-app-key
+
+  # ---- Datadog Operator ---- #
+  # Disabled by default. Enable per-cluster to use DatadogDashboard/DatadogMonitor CRDs.
+  # Requires an App key in AWS Secrets Manager (datadog-app-keys-integration).
+  operator:
+    enabled: false
+
+  # Collect Kubernetes events (deployments, pod scheduling, etc.)
+  collectEvents: true
+
+  # ---- Log Collection ---- #
+  logs:
+    # Enable log collection from containers
+    enabled: 'true'
+    # Collect logs from ALL containers (not just those with annotations)
+    containerCollectAll: 'true'
+    # Auto-detect multi-line log patterns (stack traces, etc.)
+    autoMultiLineDetection: 'true'
+    # Collect logs via files on disk (more reliable than container runtime API)
+    # containerCollectUsingFiles: true
+
+  # ---- Live Kubernetes Resources ---- #
+  # Shows pods, deployments, replicasets etc. in Datadog's Kubernetes Explorer
+  orchestratorExplorer:
+    enabled: true
+
+  # ---- APM / Tracing ---- #
+  # apm:
+  #   # Enable APM trace collection via Unix socket (default, no port needed)
+  #   socketEnabled: true
+  #   # Enable APM via TCP port 8126 (needed if apps can't use Unix socket)
+  #   portEnabled: false
+  #   # Auto-inject tracing libraries into pods (requires admission controller)
+  #   instrumentation:
+  #     enabled: false
+
+  # ---- Process Monitoring ---- #
+  # processAgent:
+  #   # Enable live process monitoring in Datadog UI
+  #   enabled: true
+  #   # Collect individual process info (not just containers)
+  #   processCollection: false
+
+  # ---- Network Performance Monitoring ---- #
+  # networkMonitoring:
+  #   # Enable network flow maps between services
+  #   enabled: false
+
+  # ---- Universal Service Monitoring ---- #
+  # serviceMonitoring:
+  #   # Auto-detect service dependencies without code changes
+  #   enabled: false
+
+  # ---- Custom Metrics (DogStatsD) ---- #
+  # dogstatsd:
+  #   # UDP port for apps to send custom metrics
+  #   port: 8125
+  #   # Accept metrics from outside the agent pod
+  #   nonLocalTraffic: true
+
+  # ---- Tag Extraction ---- #
+  # Map K8s labels/annotations to Datadog tags (applied to all metrics)
+  # podLabelsAsTags: {}
+  #   # app.kubernetes.io/name: kube_app_name
+  # podAnnotationsAsTags: {}
+  # nodeLabelsAsTags: {}
+  # namespaceLabelsAsTags: {}
+
+  # ---- Security ---- #
+  # securityAgent:
+  #   compliance:
+  #     # Cloud Security Posture Management - checks misconfigurations
+  #     enabled: false
+  #   runtime:
+  #     # Cloud Workload Security - detects runtime threats
+  #     enabled: false
+
+  # ---- OTLP Ingestion ---- #
+  # Accept OpenTelemetry traces/metrics directly
+  # otlp:
+  #   receiver:
+  #     protocols:
+  #       grpc:
+  #         enabled: false  # port 4317
+  #       http:
+  #         enabled: false  # port 4318
+
+# ---- Datadog Operator Subchart ---- #
+# Configuration for the operator subchart (alias: "operator" in Chart.yaml)
+# Only takes effect when datadog.operator.enabled is true on a cluster.
+# The operator needs its own API/App key references (separate from the agent).
+operator:
+  # Tell the operator where to find the API and App key secrets
+  # These secrets are created by the datadog-secrets chart (multi-source)
+  apiKeyExistingSecret: datadog-api-key
+  appKeyExistingSecret: datadog-app-key
+  # Enable the DatadogDashboard and DatadogMonitor CRD controllers
+  datadogDashboard:
+    enabled: true
+  datadogMonitor:
+    enabled: true
+
+# ---- Cluster Agent ---- #
+# Central component that talks to the K8s API server
+# Reduces load vs every node agent querying API directly
+clusterAgent:
+  # Only keep 1 old ReplicaSet (default is 10) — keeps the cluster clean
+  revisionHistoryLimit: 1
+
+  # Resource limits (override per-cluster if needed)
+  resources:
+    limits:
+      memory: 1Gi
+    requests:
+      cpu: 200m
+      memory: 512Mi
+
+  # Number of replicas (set to 2+ for HA in production)
+  # replicas: 1
+
+  # Admission controller - auto-injects APM/DogStatsD env vars into pods
+  # admissionController:
+  #   enabled: true
+  #   # Inject config even into pods without Datadog labels
+  #   mutateUnlabelled: false
+
+  # External metrics provider - enables HPA scaling on Datadog metrics
+  # metricsProvider:
+  #   enabled: false
+
+# ---- Node Agent (DaemonSet) ---- #
+# Resources based on Datadog recommendations (Agent 7.65+)
+agents:
+  # Only keep 1 old revision (default is 10) — keeps the cluster clean
+  revisionHistoryLimit: 1
+
+  containers:
+    agent:
+      resources:
+        requests:
+          cpu: 200m
+          memory: 256Mi
+        limits:
+          memory: 512Mi
+    # Trace agent sidecar
+    traceAgent:
+      resources:
+        requests:
+          cpu: 100m
+          memory: 200Mi
+        limits:
+          memory: 500Mi
+    # Process agent sidecar
+    processAgent:
+      resources:
+        requests:
+          cpu: 100m
+          memory: 200Mi
+        limits:
+          memory: 512Mi
+  # Tolerate all taints so the agent runs on every node (including system nodes)
+  # tolerations:
+  #   - operator: Exists
+  # Priority class to ensure agent pods survive resource pressure
+  # priorityClassName: system-node-critical
+
+# ====================================================================== #
+# Cluster-Specific Overrides Reference
+# ====================================================================== #
+# Copy the relevant sections below into your cluster values file:
+#   addons-clusters-values/<cluster-name>.yaml
+#
+# datadog:
+#   datadog:
+#     clusterName: <cluster-name>          # injected by ApplicationSet template
+#     # Filter log collection to specific namespaces
+#     containerIncludeLogs: 'kube_namespace:my-app kube_namespace:my-other-app'
+#     # Load tags from a K8s secret
+#     envFrom:
+#       - secretRef:
+#           name: datadog-tags
+#     # Enable APM tracing
+#     apm:
+#       portEnabled: true
+#       instrumentation:
+#         enabled: true
+#         enabledNamespaces:
+#           - my-app
+#     # Enable profiling
+#     profiling:
+#       enabled: true
+#   # IRSA for Cluster Agent
+#   clusterAgent:
+#     rbac:
+#       serviceAccountAnnotations:
+#         eks.amazonaws.com/role-arn: "arn:aws:iam::<accountId>:role/Datadog-Agent-<project>"
+#     # Override resources per-cluster
+#     resources:
+#       limits:
+#         memory: 1Gi
+#       requests:
+#         cpu: 200m
+#         memory: 512Mi
+#     # Disable admission controller on specific clusters
+#     admissionController:
+#       enabled: false
+#   # IRSA for Node Agents DaemonSet (same IAM role as clusterAgent)
+#   agents:
+#     rbac:
+#       serviceAccountAnnotations:
+#         eks.amazonaws.com/role-arn: "arn:aws:iam::<accountId>:role/Datadog-Agent-<project>"

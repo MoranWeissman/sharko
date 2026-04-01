@@ -1,0 +1,26 @@
+{
+    "id": 261798214,
+    "name": "[ArgoCD Cluster Addons Host Cluster] Node disk utilization",
+    "type": "query alert",
+    "query": "avg(last_5m):avg:system.disk.in_use{kube_cluster_name:devops-argocd-addons-dev-eks,!fstype:tmpfs,!fstype:overlay,!fstype:squashfs,!fstype:devtmpfs,!device:/dev/root} by {kube_cluster_name,host,device} > 0.85",
+    "message": "{{#is_alert}}\n🔴 [P1 CRITICAL] Disk {{device.name}} on {{host.name}} is above 85% — {{value}}\n{{/is_alert}}\n{{#is_warning}}\n🟡 [P2 WARNING] Disk {{device.name}} on {{host.name}} is above 75% — {{value}}\n{{/is_warning}}\n{{#is_recovery}}\n✅ RECOVERED: Disk {{device.name}} on {{host.name}} is below threshold\n{{/is_recovery}}\n\nNode: {{host.name}} | Cluster: {{kube_cluster_name.name}}\n\n{{#is_alert}}\nActions:\n1. df -h  (on the node)\n2. du -sh /var/log/containers/*\n3. crictl rmi --prune\n4. Consider increasing EBS volume in AWS console\n{{/is_alert}}\n\n@moran.weissman@msd.com @microsoft-teams-ArgocdClusterAddonsNonProd",
+    "tags": [
+        "platform:devex",
+        "kubernetes",
+        "service:argocd-cluster-addons",
+        "component:argocd-cluster-addons-host"
+    ],
+    "options": {
+        "thresholds": {
+            "critical": 0.85,
+            "warning": 0.75
+        },
+        "notify_audit": false,
+        "on_missing_data": "default",
+        "include_tags": true,
+        "new_group_delay": 60
+    },
+    "priority": 2,
+    "draft_status": "published",
+    "assets": []
+}

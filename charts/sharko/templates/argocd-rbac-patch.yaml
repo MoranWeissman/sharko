@@ -1,0 +1,61 @@
+{{- if .Values.rbac.create }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "aap.fullname" . }}-argocd-rbac-setup
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aap.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": hook-succeeded,before-hook-creation
+spec:
+  template:
+    metadata:
+      labels:
+        {{- include "aap.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "aap.serviceAccountName" . }}
+      restartPolicy: Never
+      containers:
+        - name: rbac-patch
+          image: bitnami/kubectl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              SA_NAME="system:serviceaccount:{{ .Release.Namespace }}:{{ include "aap.serviceAccountName" . }}"
+              ARGOCD_NS="{{ include "aap.argocdNamespace" . }}"
+
+              echo "Patching ArgoCD RBAC for AAP ServiceAccount: ${SA_NAME}"
+
+              # Define the policy lines AAP needs
+              AAP_POLICY="p, role:aap, applications, get, */*, allow
+              p, role:aap, applications, sync, */*, allow
+              p, role:aap, clusters, get, *, allow
+              g, ${SA_NAME}, role:aap"
+
+              # Get current policy.csv (if any)
+              CURRENT=$(kubectl get cm argocd-rbac-cm -n ${ARGOCD_NS} -o jsonpath='{.data.policy\.csv}' 2>/dev/null || echo "")
+
+              # Check if AAP policy already exists
+              if echo "${CURRENT}" | grep -q "role:aap"; then
+                echo "ArgoCD RBAC already contains AAP policy — skipping"
+                exit 0
+              fi
+
+              # Append AAP policy
+              if [ -z "${CURRENT}" ]; then
+                NEW_POLICY="${AAP_POLICY}"
+              else
+                NEW_POLICY="${CURRENT}
+              ${AAP_POLICY}"
+              fi
+
+              # Patch the ConfigMap
+              kubectl patch cm argocd-rbac-cm -n ${ARGOCD_NS} --type merge -p "{\"data\":{\"policy.csv\":\"${NEW_POLICY}\"}}"
+
+              echo "ArgoCD RBAC patched successfully"
+  backoffLimit: 3
+{{- end }}

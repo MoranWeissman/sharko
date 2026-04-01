@@ -1,0 +1,431 @@
+# ================================================================ #
+# Clusters and Addons Management
+# ================================================================ #
+# Add or remove clusters and assign addons via labels
+#
+# Structure:
+#   - name: cluster-name              # Required: EKS cluster name
+#     labels:                         # Required: addon assignments
+#       <addon-name>: enabled         # Enable addon with default version
+#       <addon-name>-version: "X.Y.Z" # Override addon version
+#
+# Note: AWS Secrets Manager secret name is automatically prefixed with "k8s-"
+#       Example: cluster name "feedlot-dev" → secret "k8s-feedlot-dev"
+#
+# Example cluster configuration
+# - name: cluster-name
+#   labels:
+#     datadog: enabled
+#     datadog-version: "3.70.7"
+#
+# See docs/VALUES_GUIDE.md for detailed documentation
+# ================================================================ #
+
+clusters:
+
+  # ================================================================ #
+  # Development Clusters
+  # ================================================================ #
+
+  - name: sh-srvc-dev-eks
+    labels:
+      hello-world: enabled
+    #   redisinsight-v2: enabled
+    #   redisinsight: enabled
+    #   datadog: enabled
+    #   datadog-version: "3.70.7"
+    #   anodot: enabled
+
+  - name: sh-srvc-dev2-eks
+    labels:
+      hello-world: enabled
+    #   redisinsight-v2: enabled
+    #   datadog: enabled
+    #   datadog-version: "3.70.7"
+    #   anodot: enabled
+
+  - name: vence-dev
+    labels:
+      hello-world: enabled
+    #   redisinsight-v2: enabled
+    #   datadog: enabled
+    #   datadog-version: "3.70.7"
+    #   anodot: enabled
+    #   keda: enabled
+
+  - name: poultrysense-dev
+    labels:
+      hello-world: enabled
+    #   redisinsight-v2: enabled
+    #   datadog: enabled
+    #   datadog-version: "3.70.7"
+    #   keda: enabled
+    #   anodot: enabled
+
+  - name: feedlot-dev
+    labels:
+      hello-world: enabled
+    #   redisinsight-v2: enabled
+    #   datadog: enabled
+    #   datadog-version: "3.70.7"
+    #   trnsfrmr: enabled
+    #   anodot: enabled
+
+  - name: swine-dev
+    labels:
+      hello-world: enabled
+    #   datadog: enabled
+    #   datadog-version: "3.70.7"
+    #   redisinsight-v2: enabled
+    #   trnsfrmr: enabled
+    #   anodot: enabled
+
+  - name: devops-crossplane-dev
+    labels:
+      hello-world: enabled
+    #   datadog: enabled
+    #   datadog-version: "3.70.7"
+    #   anodot: enabled
+
+  - name: sh-in-cloud-dev-eks
+    labels:
+      hello-world: enabled
+    #   redisinsight: enabled
+    #   redisinsight-v2: enabled
+    #   datadog: enabled
+    #   datadog-version: "3.70.7"
+    #   anodot: enabled
+
+  - name: devops-argocd-addons-dev
+    labels:
+      hello-world: enabled
+    #   datadog: enabled
+    #   datadog-version: "3.70.7"
+    #   anodot: enabled
+
+  - name: devops-argocd-addons-dev-eks
+    labels:
+      hello-world: enabled
+      # external-secrets managed by bootstrap eso.yaml on this (host) cluster
+      datadog: enabled
+
+  - name: devops-crossplane-dev-eks
+    labels:
+      hello-world: enabled
+      # external-secrets managed by bootstrap eso.yaml on this (host) cluster
+      # datadog: enabled
+
+  - name: animo-dev-eks
+    labels:
+      hello-world: enabled
+    #   datadog-version: "3.70.7"
+    #   anodot: enabled
+
+  - name: df-srvc-dev-eks
+    labels:
+      hello-world: enabled
+    #   datadog: enabled
+    #   datadog-version: "3.70.7"
+    #   anodot: enabled
+
+  - name: swine-codeflex-dev-eks
+    labels:
+      hello-world: enabled
+    #   datadog: enabled
+    #   datadog-version: "3.70.7"
+    #   anodot: enabled
+
+  - name: ark-dev-eks
+    labels:
+      hello-world: enabled
+    #   redisinsight-v2: enabled
+    #   datadog: enabled
+    #   datadog-version: "3.141.0"
+    #   keda: enabled
+    #   keda-version: "2.17.2"
+    #   trnsfrmr: enabled
+    #   argo-rollouts: enabled
+    #   argo-rollouts-version: "2.38.2"
+    #   anodot: enabled
+    #   external-secrets: enabled
+    #   external-secrets-version: "0.19.2"
+    #   cert-manager: enabled
+    #   cert-manager-version: "1.18.2"
+    #   argo-events: enabled
+    #   argo-events-version: "2.4.16"
+    #   argo-workflows: enabled
+    #   argo-workflows-version: "0.45.22"
+    #   external-dns: enabled
+    #   external-dns-version: "1.18.0"
+
+  - name: nms-core-dev-eks
+    labels:
+      hello-world: enabled
+    #   redisinsight-v2: enabled
+    #   kafka-ui: enabled
+    #   datadog: enabled
+    #   datadog-version: "3.70.7"
+    #   trnsfrmr: enabled
+    #   anodot: enabled
+    #   secrets-store-csi-driver: enabled
+    #   sscdp-aws: enabled
+
+  - name: nms-sh-dev-eks-green
+    labels:
+      hello-world: enabled
+    #   datadog: enabled
+    #   datadog-version: "3.70.7"
+    #   redisinsight-v2: enabled
+    #   anodot: enabled
+
+  - name: nms-lely-dev-eks-green
+    labels:
+      hello-world: enabled
+    #   datadog: enabled
+    #   datadog-version: "3.70.7"
+    #   redisinsight-v2: enabled
+    #   anodot: enabled
+
+  - name: aquafalcon-dev
+    labels:
+      hello-world: enabled
+    #   datadog: enabled
+    #   datadog-version: "3.70.7"
+    #   anodot: enabled
+
+  - name: devops-automation
+    labels:
+      hello-world: enabled
+      anodot: enabled
+    #   external-secrets: enabled
+    #   trnsfrmr: enabled
+      cert-manager: enabled
+
+  - name: devops-automation-dev-eks
+    labels:
+      # external-secrets: enabled
+      datadog: enabled
+      hello-world: enabled
+      istio-base: enabled
+      istiod: enabled
+      istio-cni: enabled
+      istio-ingress: enabled
+
+  - name: poc-automods-dev
+    labels:
+      hello-world: enabled
+    #   karpenter: enabled
+    #   cert-manager: enabled
+    #   argo-events: enabled
+    #   argo-workflows: enabled
+    #   anodot: enabled
+
+  # ================================================================ #
+  # Staging / LT / QA / Beta / SIT Clusters
+  # ================================================================ #
+
+  - name: feedlot-staging
+    labels:
+      hello-world: enabled
+    #   datadog: enabled
+    #   redisinsight-v2: enabled
+    #   trnsfrmr: enabled
+    #   anodot: enabled
+
+  - name: poultrysense-staging
+    labels:
+      hello-world: enabled
+    #   datadog: enabled
+    #   keda: enabled
+    #   redisinsight-v2: enabled
+    #   anodot: enabled
+
+  - name: feedlot-lt
+    labels:
+      hello-world: enabled
+    #   datadog: enabled
+    #   redisinsight-v2: enabled
+    #   anodot: enabled
+
+  - name: sh-srvc-lt-eks
+    labels:
+      hello-world: enabled
+    #   redisinsight-v2: enabled
+    #   redisinsight: enabled
+    #   datadog: enabled
+    #   anodot: enabled
+
+  - name: sh-in-cloud-qa-eks
+    labels:
+      hello-world: enabled
+    #   redisinsight: enabled
+    #   redisinsight-v2: enabled
+    #   datadog: enabled
+    #   anodot: enabled
+
+  - name: animo-qa-eks
+    labels:
+      hello-world: enabled
+    #   datadog: enabled
+    #   anodot: enabled
+
+  - name: vence-qa
+    labels:
+      hello-world: enabled
+    #   datadog: enabled
+    #   redisinsight-v2: enabled
+    #   anodot: enabled
+    #   keda: enabled
+
+  - name: aquafalcon-qa
+    labels:
+      hello-world: enabled
+    #   datadog: enabled
+    #   datadog-version: "3.70.7"
+    #   anodot: enabled
+
+  - name: ark-beta-eks
+    labels:
+      hello-world: enabled
+    #   redisinsight-v2: enabled
+    #   datadog: enabled
+    #   argo-rollouts: enabled
+    #   argo-rollouts-version: "2.40.3"
+    #   anodot: enabled
+    #   cert-manager: enabled
+    #   cert-manager-version: "1.18.2"
+    #   argo-events: enabled
+    #   argo-events-version: "2.4.16"
+    #   argo-workflows: enabled
+    #   argo-workflows-version: "0.45.22"
+
+  - name: sh-in-cloud-beta-eks
+    labels:
+      hello-world: enabled
+    #   redisinsight: enabled
+    #   redisinsight-v2: enabled
+    #   datadog: enabled
+    #   anodot: enabled
+
+  - name: df-srvc-beta-eks
+    labels:
+      hello-world: enabled
+    #   datadog: enabled
+    #   anodot: enabled
+
+  - name: sh-srvc-beta-eks
+    labels:
+      hello-world: enabled
+    #   redisinsight-v2: enabled
+    #   redisinsight: enabled
+    #   datadog: enabled
+    #   anodot: enabled
+
+  - name: nms-sh-beta-eks-green
+    labels:
+      hello-world: enabled
+    #   datadog: enabled
+    #   datadog-version: "3.70.7"
+    #   redisinsight-v2: enabled
+    #   anodot: enabled
+
+  - name: sh-in-cloud-demo-eks
+    labels:
+      hello-world: enabled
+    #   redisinsight: enabled
+    #   redisinsight-v2: enabled
+    #   datadog: enabled
+    #   anodot: enabled
+
+  - name: sh-in-cloud-lt-eks
+    labels:
+      hello-world: enabled
+    #   redisinsight: enabled
+    #   redisinsight-v2: enabled
+    #   datadog: enabled
+    #   anodot: enabled
+
+  - name: poultrysense-sit
+    labels:
+      hello-world: enabled
+    #   datadog: enabled
+    #   keda: enabled
+    #   redisinsight-v2: enabled
+    #   anodot: enabled
+
+  # ================================================================ #
+  # FAILED Clusters — needs investigation before enabling
+  # ================================================================ #
+  # These clusters are in "failed" or "pending" state in the current
+  # ArgoCD addons solution. They should remain commented out until
+  # investigated.
+
+  # - name: allflex-connect-dev
+  #   labels:
+  #   #   datadog: enabled
+  #   #   datadog-version: "3.70.7"
+  #   #   redisinsight-v2: enabled
+  #   #   anodot: enabled
+
+  # - name: allflex-connect-beta
+  #   labels:
+  #   #   datadog: enabled
+  #   #   redisinsight-v2: enabled
+  #   #   anodot: enabled
+
+  # - name: feedlot-qa
+  #   labels:
+  #   #   datadog: enabled
+  #   #   redisinsight-v2: enabled
+  #   #   anodot: enabled
+
+  # - name: biomark-dev-eks
+  #   labels:
+  #   #   anodot: enabled
+
+  # - name: eks-sh-integr-som
+  #   labels:
+  #   #   anodot: enabled
+
+  # - name: nms-feedlot-dev-eks
+  #   labels:
+  #   #   datadog: enabled
+  #   #   datadog-version: "3.70.7"
+  #   #   anodot: enabled
+
+  # - name: nms-feedlot-staging-eks
+  #   labels:
+  #   #   datadog: enabled
+  #   #   anodot: enabled
+
+  # - name: nms-ps-dev-eks-green
+  #   labels:
+  #   #   datadog: enabled
+  #   #   datadog-version: "3.70.7"
+  #   #   keda: enabled
+  #   #   anodot: enabled
+
+  # - name: sh-in-cloud-pr-eks
+  #   labels:
+  #   #   redisinsight: enabled
+  #   #   redisinsight-v2: enabled
+  #   #   datadog: enabled
+  #   #   anodot: enabled
+
+  # - name: sh-rp-mr-eks-dev
+  #   labels:
+  #   #   datadog: enabled
+  #   #   datadog-version: "3.70.7"
+  #   #   anodot: enabled
+
+  # - name: swine-beta
+  #   labels:
+  #   #   datadog: enabled
+  #   #   anodot: enabled
+
+  # - name: vence-lt
+  #   labels:
+  #   #   datadog: enabled
+  #   #   redisinsight-v2: enabled
+  #   #   anodot: enabled
+  #   #   keda: enabled

@@ -1,0 +1,34 @@
+# ================================================================ #
+# Global Values (used by all addons)
+# Define YAML anchors with & for reuse across addon configurations
+# ================================================================ #
+clusterGlobalValues:
+  env: &env dev
+  clusterName: &clusterName devops-argocd-addons-dev
+  region: &region us-east-1
+  projectName: devops-argocd-addons-dev
+
+# ================================================================ #
+# Addon-specific overrides
+# These override the default values from global.yaml
+# Use YAML anchors (*clusterName, *region, etc.) to reference clusterGlobalValues
+# ================================================================ #
+
+# ================================================================ #
+# ------------------- Datadog Configuration ------------------- #
+# ================================================================ #
+datadog:
+  clusterAgent:
+    admissionController:
+      enabled: false
+
+# ================================================================ #
+# ------------------- Anodot Configuration ----------------------- #
+# ================================================================ #
+anodot:
+  config:
+    clusterName: *clusterName
+    clusterRegion: *region
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::627176949220:role/anodot-devops-argocd-addons-dev-eu-west-1

@@ -1,0 +1,241 @@
+# ================================================================ #
+# Datadog API Key Project Name Mappings
+# ================================================================ #
+# This file maps cluster names to their Datadog project names and environments
+# for API key lookups in AWS Secrets Manager.
+#
+# Purpose: Datadog API keys are stored in AWS Secrets Manager secret
+# "datadog-api-keys-integration" with JSON properties following the pattern:
+#   {
+#     "<projectName>-<env>": "dd-api-key-value",
+#     "feedlot-dev": "...",
+#     "sensehub-dev": "...",
+#     ...
+#   }
+#
+# How it works:
+# 1. Each cluster values file sets clusterGlobalValues.projectName and
+#    clusterGlobalValues.env
+# 2. The datadog-apikey chart uses these values to construct the property
+#    name: "{projectName}-{env}"
+# 3. An ExternalSecret fetches the API key from AWS Secrets Manager
+# 4. Datadog reads the API key from the resulting K8s secret
+#
+# Since cluster names don't always match project names (e.g., "sh-srvc-dev-eks"
+# belongs to project "sensehub"), each cluster values file must set the correct
+# projectName in clusterGlobalValues.
+#
+# When adding a new cluster:
+# 1. Set clusterGlobalValues.projectName and env in the cluster values file
+# 2. Ensure AWS Secrets Manager secret "datadog-api-keys-integration" contains
+#    a JSON property: "<projectName>-<env>": "api-key-value"
+# ================================================================ #
+
+datadogProjectMappings:
+  sh-srvc-dev-eks:
+    projectName: sensehub
+    env: dev
+
+  sh-srvc-dev2-eks:
+    projectName: sensehub
+    env: dev
+
+  sh-srvc-beta-eks:
+    projectName: sensehub
+    env: dev
+
+  sh-srvc-lt-eks:
+    projectName: sensehub
+    env: dev
+
+  sh-in-cloud-dev-eks:
+    projectName: sensehub
+    env: dev
+
+  sh-in-cloud-qa-eks:
+    projectName: sensehub
+    env: dev
+
+  sh-in-cloud-beta-eks:
+    projectName: sensehub
+    env: dev
+
+  sh-in-cloud-demo-eks:
+    projectName: sensehub
+    env: dev
+
+  sh-in-cloud-pr-eks:
+    projectName: sensehub
+    env: dev
+
+  sh-in-cloud-lt-eks:
+    projectName: sensehub
+    env: dev
+
+  sh-rp-mr-eks-dev:
+    projectName: sensehub
+    env: dev
+
+  nms-lely-dev-eks-green:
+    projectName: sensehub
+    env: dev
+
+  nms-lely-beta-eks-green:
+    projectName: sensehub
+    env: dev
+
+  nms-sh-dev-eks-green:
+    projectName: sensehub
+    env: dev
+
+  nms-sh-beta-eks-green:
+    projectName: sensehub
+    env: dev
+
+  feedlot-dev:
+    projectName: feedlot
+    env: dev
+
+  feedlot-staging:
+    projectName: feedlot
+    env: staging
+
+  feedlot-lt:
+    projectName: feedlot
+    env: dev
+
+  feedlot-qa:
+    projectName: feedlot
+    env: dev
+
+  nms-feedlot-dev-eks:
+    projectName: feedlot
+    env: dev
+
+  nms-feedlot-staging-eks:
+    projectName: feedlot
+    env: staging
+
+  poultrysense-dev:
+    projectName: poultrysense
+    env: dev
+
+  poultrysense-staging:
+    projectName: poultrysense
+    env: staging
+
+  poultrysense-sit:
+    projectName: poultrysense
+    env: dev
+
+  nms-ps-dev-eks-green:
+    projectName: poultrysense
+    env: dev
+
+  animo-dev-eks:
+    projectName: animo
+    env: dev
+
+  animo-staging-eks:
+    projectName: animo
+    env: staging
+
+  animo-qa-eks:
+    projectName: animo
+    env: dev
+
+  animo-prod-eks:
+    projectName: animo
+    env: prod
+
+  vence-dev:
+    projectName: vence
+    env: dev
+
+  vence-lt:
+    projectName: vence
+    env: dev
+
+  vence-qa:
+    projectName: vence
+    env: dev
+
+  swine-dev:
+    projectName: swine
+    env: dev
+
+  swine-beta:
+    projectName: swine
+    env: dev
+
+  swine-codeflex-dev-eks:
+    projectName: swine
+    env: dev
+
+  aquafalcon-dev:
+    projectName: aquafalcon
+    env: dev
+
+  aquafalcon-qa:
+    projectName: aquafalcon
+    env: dev
+
+  allflex-connect-dev-eks:
+    projectName: allflex-connect
+    env: dev
+
+  allflex-connect-beta-eks:
+    projectName: allflex-connect
+    env: dev
+
+  ark-dev-eks:
+    projectName: ark
+    env: dev
+
+  ark-beta-eks:
+    projectName: ark
+    env: dev
+
+  nms-core-dev-eks:
+    projectName: nms-core
+    env: dev
+
+  df-srvc-dev-eks:
+    projectName: dataflow
+    env: dev
+
+  df-srvc-beta-eks:
+    projectName: dataflow
+    env: dev
+
+  biomark-dev-eks:
+    projectName: biomark
+    env: dev
+
+  devops-argocd-addons-dev-eks:
+    projectName: devops-argocd-cluster-addons
+    env: dev
+
+  devops-argocd-addons-dev:
+    projectName: devops
+    env: dev
+
+  devops-automation-dev-eks:
+    projectName: devops
+    env: dev
+
+  devops-automation:
+    projectName: devops
+    env: none-prod
+
+  devops-crossplane-dev:
+    projectName: devops
+    env: dev
+
+  devops-crossplane-dev-eks:
+    projectName: devops
+    env: dev
+
+  poc-automods-dev:
+    projectName: poc-automods
+    env: dev

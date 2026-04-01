@@ -1,0 +1,73 @@
+# ====================================================================== #
+# Istio Ingress Gateway Global Values
+# ====================================================================== #
+# Chart: gateway
+# Repo: https://istio-release.storage.googleapis.com/charts
+# Namespace: istio-system
+# Version: 1.28.0
+# Docs: https://istio.io/latest/docs/tasks/traffic-management/ingress/
+#
+# These values apply to ALL clusters unless overridden per-cluster
+# in addons-clusters-values/<cluster-name>.yaml
+#
+# Istio ingress gateway handles external traffic routing into the mesh.
+# Each cluster typically has its own LB annotations and service config.
+# ====================================================================== #
+
+# ---- Service ---- #
+# service:
+#   type: LoadBalancer
+#   # AWS NLB annotations (commonly set per-cluster)
+#   annotations: {}
+#   ports:
+#     - name: http2
+#       port: 80
+#       targetPort: 80
+#     - name: https
+#       port: 443
+#       targetPort: 443
+
+# ---- Autoscaling ---- #
+# autoscaling:
+#   enabled: true
+#   minReplicas: 2
+#   maxReplicas: 5
+#   targetCPUUtilizationPercentage: 80
+
+# ---- Resources ---- #
+# Matches upstream Istio gateway chart defaults
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 2000m
+    memory: 1024Mi
+
+# ---- Pod Scheduling ---- #
+# nodeSelector: {}
+# tolerations: []
+# affinity: {}
+
+# ====================================================================== #
+# Cluster-Specific Overrides Reference
+# ====================================================================== #
+# Copy the relevant sections below into your cluster values file:
+#   addons-clusters-values/<cluster-name>.yaml
+#
+# istio-ingress:
+#   service:
+#     type: LoadBalancer
+#     annotations:
+#       service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+#       service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+#   autoscaling:
+#     enabled: true
+#     minReplicas: 2
+#     maxReplicas: 5
+#   resources:
+#     requests:
+#       cpu: 100m
+#       memory: 128Mi
+#     limits:
+#       memory: 256Mi

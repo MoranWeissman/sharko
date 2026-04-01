@@ -1,0 +1,114 @@
+# ====================================================================== #
+# External DNS Global Values
+# ====================================================================== #
+# Chart: external-dns
+# Repo: https://kubernetes-sigs.github.io/external-dns
+# Docs: https://kubernetes-sigs.github.io/external-dns/
+#
+# These values apply to ALL clusters unless overridden per-cluster
+# in addons-clusters-values/<cluster-name>.yaml
+#
+# ExternalDNS synchronizes K8s Service/Ingress resources with DNS providers.
+# Each cluster typically manages its own hosted zones.
+# ====================================================================== #
+
+# ---- Provider ---- #
+provider:
+  name: aws
+
+# ---- DNS Sources ---- #
+# Kubernetes resources to watch for DNS entries
+sources:
+  - service
+  - ingress
+
+# ---- Sync Policy ---- #
+# create-only: only create, never delete
+# upsert-only: create and update, never delete
+# sync: full sync including deletes
+policy: upsert-only
+
+# ---- DNS Update Interval ---- #
+interval: 1m
+
+# ---- TXT Registry ---- #
+# Ownership tracking via TXT records
+registry: txt
+# txtOwnerId: ""
+# txtPrefix: ""
+
+# ---- Domain Filters ---- #
+# Limit which hosted zones ExternalDNS can manage
+# domainFilters: []
+# excludeDomains: []
+
+# ---- Security ---- #
+podSecurityContext:
+  runAsNonRoot: true
+  fsGroup: 65534
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  privileged: false
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  capabilities:
+    drop: ["ALL"]
+
+# ---- Service Account ---- #
+serviceAccount:
+  create: true
+  annotations: {}
+
+# ---- RBAC ---- #
+rbac:
+  create: true
+
+# ---- Logging ---- #
+logLevel: info
+logFormat: text
+
+# ---- Resources ---- #
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 128Mi
+
+# ---- Pod Scheduling ---- #
+# nodeSelector: {}
+# tolerations: []
+# affinity: {}
+
+# ---- Metrics ---- #
+# serviceMonitor:
+#   enabled: false
+
+# ====================================================================== #
+# Cluster-Specific Overrides Reference
+# ====================================================================== #
+# Copy the relevant sections below into your cluster values file:
+#   addons-clusters-values/<cluster-name>.yaml
+#
+# external-dns:
+#   # Domain filters (each cluster manages its own zones)
+#   domainFilters:
+#     - <cluster>.example.com
+#   # TXT owner ID (unique per cluster to avoid conflicts)
+#   txtOwnerId: "<cluster-name>"
+#   # IRSA for Route53 access
+#   serviceAccount:
+#     annotations:
+#       eks.amazonaws.com/role-arn: arn:aws:iam::<accountId>:role/external-dns-<clusterName>
+#   # Resources override
+#   resources:
+#     requests:
+#       cpu: 50m
+#       memory: 64Mi
+#     limits:
+#       memory: 128Mi

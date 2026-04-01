@@ -1,0 +1,149 @@
+# ====================================================================== #
+# Argo Rollouts Global Values
+# ====================================================================== #
+# Chart: argo-rollouts
+# Repo: https://argoproj.github.io/argo-helm
+# Docs: https://argoproj.github.io/argo-rollouts/
+#
+# These values apply to ALL clusters unless overridden per-cluster
+# in addons-clusters-values/<cluster-name>.yaml
+#
+# Argo Rollouts enables progressive delivery strategies
+# (canary, blue-green) as a drop-in replacement for K8s Deployments.
+# ====================================================================== #
+
+# ---- CRDs ---- #
+
+# Install CRDs with the chart (disable if managing CRDs separately)
+installCRDs: true
+# Keep CRDs when uninstalling the chart
+keepCRDs: true
+
+# ---- Cluster Scope ---- #
+
+# true = cluster-wide controller, false = namespaced mode (no cluster RBAC)
+clusterInstall: true
+# Create aggregate ClusterRoles for kubectl access to Rollout resources
+createClusterAggregateRoles: true
+
+# ---- Controller ---- #
+controller:
+  # Number of controller replicas (2+ for HA)
+  replicas: 2
+
+  # Logging
+  logging:
+    level: info       # debug, info, warn, error
+    format: "text"    # text, json
+
+  # Resources (based on upstream chart recommendations)
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 128Mi
+
+  # Pod scheduling
+  # nodeSelector: {}
+  # tolerations: []
+  # affinity: {}
+  # topologySpreadConstraints: []
+  # priorityClassName: ""
+
+  # Metrics (enable for Prometheus scraping)
+  metrics:
+    enabled: false
+    # service:
+    #   port: 8090
+    #   annotations: {}
+
+  # Pod Disruption Budget
+  pdb:
+    enabled: false
+    # minAvailable: 1
+
+  # Plugin system for 3rd party metric providers, traffic routers, step plugins
+  # metricProviderPlugins: []
+  # trafficRouterPlugins: []
+  # stepPlugins: []
+
+# ---- Security ---- #
+
+# Pod-level security
+podSecurityContext:
+  runAsNonRoot: true
+
+# Container-level security
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+  seccompProfile:
+    type: RuntimeDefault
+
+# ---- Service Account ---- #
+serviceAccount:
+  create: true
+  annotations: {}
+
+# ---- Traffic Router RBAC ---- #
+# Adds RBAC rules for supported traffic management providers
+providerRBAC:
+  enabled: true
+  providers:
+    istio: true              # We use Istio
+    gatewayAPI: true
+    awsLoadBalancerController: true
+    # smi: true
+    # ambassador: true
+    # awsAppMesh: true
+    # traefik: true
+    # apisix: true
+    # contour: true
+    # glooPlatform: true
+
+# ---- Dashboard (Rollouts UI) ---- #
+dashboard:
+  # Deploy the Argo Rollouts dashboard
+  enabled: false
+  # replicas: 1
+  # resources: {}
+  # service:
+  #   type: ClusterIP
+  #   port: 3100
+  # ingress:
+  #   enabled: false
+
+# ---- Notifications ---- #
+# Send alerts on rollout events (Slack, Teams, etc.)
+# notifications:
+#   configmap:
+#     create: true
+#   notifiers: {}
+#   templates: {}
+#   triggers: {}
+#   subscriptions: []
+
+# ====================================================================== #
+# Cluster-Specific Overrides Reference
+# ====================================================================== #
+# Copy the relevant sections below into your cluster values file:
+#   addons-clusters-values/<cluster-name>.yaml
+#
+# argo-rollouts:
+#   controller:
+#     # Override resources per cluster
+#     resources:
+#       requests:
+#         cpu: 100m
+#         memory: 128Mi
+#       limits:
+#         memory: 256Mi
+#     # Override replicas per cluster
+#     replicas: 2
+#     # Node scheduling overrides
+#     nodeSelector: {}
+#     tolerations: []

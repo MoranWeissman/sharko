@@ -1,0 +1,161 @@
+# ====================================================================== #
+# Cert Manager Global Values
+# ====================================================================== #
+# Chart: cert-manager
+# Repo: https://charts.jetstack.io
+# Docs: https://cert-manager.io/docs/
+#
+# These values apply to ALL clusters unless overridden per-cluster
+# in addons-clusters-values/<cluster-name>.yaml
+#
+# cert-manager automates TLS certificate management in Kubernetes.
+# Supports Let's Encrypt, self-signed, Vault, and other issuers.
+# ====================================================================== #
+
+# ---- CRDs ---- #
+# Install CRDs with the chart
+crds:
+  enabled: true
+  keep: true
+
+# ---- Global ---- #
+global:
+  rbac:
+    create: true
+    aggregateClusterRoles: true
+  priorityClassName: ""
+  commonLabels: {}
+
+# ---- Controller ---- #
+replicaCount: 1
+
+# Logging
+# logLevel: 2  # 0-6, higher = more verbose
+
+# DNS-01 recursive nameservers (useful for split-horizon DNS)
+# dns01RecursiveNameservers: ""
+# dns01RecursiveNameserversOnly: false
+
+# Security context
+securityContext:
+  runAsNonRoot: true
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+
+# Resources (cert-manager recommends setting these per environment)
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    memory: 128Mi
+
+# Pod scheduling
+nodeSelector:
+  kubernetes.io/os: linux
+# tolerations: []
+# affinity: {}
+# topologySpreadConstraints: []
+
+# Pod Disruption Budget
+# podDisruptionBudget:
+#   enabled: false
+#   minAvailable: 1
+
+# Prometheus metrics
+prometheus:
+  enabled: false
+  # servicemonitor:
+  #   enabled: false
+
+# Service account
+serviceAccount:
+  create: true
+  annotations: {}
+
+# ---- Webhook ---- #
+webhook:
+  replicaCount: 1
+  securityContext:
+    runAsNonRoot: true
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+  nodeSelector:
+    kubernetes.io/os: linux
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 64Mi
+  # tolerations: []
+
+# ---- CA Injector ---- #
+cainjector:
+  enabled: true
+  replicaCount: 1
+  securityContext:
+    runAsNonRoot: true
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+  nodeSelector:
+    kubernetes.io/os: linux
+  resources:
+    requests:
+      cpu: 10m
+      memory: 64Mi
+    limits:
+      memory: 128Mi
+  # tolerations: []
+
+# ---- Startupapicheck (post-install job) ---- #
+startupapicheck:
+  enabled: true
+  securityContext:
+    runAsNonRoot: true
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+  nodeSelector:
+    kubernetes.io/os: linux
+  # resources: {}
+
+# ====================================================================== #
+# Cluster-Specific Overrides Reference
+# ====================================================================== #
+# Copy the relevant sections below into your cluster values file:
+#   addons-clusters-values/<cluster-name>.yaml
+#
+# cert-manager:
+#   # Override resources per cluster
+#   resources:
+#     requests:
+#       cpu: 10m
+#       memory: 32Mi
+#     limits:
+#       memory: 128Mi
+#   # IRSA for Route53 DNS-01 solver
+#   serviceAccount:
+#     annotations:
+#       eks.amazonaws.com/role-arn: arn:aws:iam::<accountId>:role/cert-manager-<clusterName>
+#   # Custom DNS nameservers for split-horizon environments
+#   dns01RecursiveNameservers: "8.8.8.8:53,1.1.1.1:53"
+#   dns01RecursiveNameserversOnly: true
+#   # Node scheduling overrides
+#   nodeSelector: {}
+#   tolerations: []

@@ -1,0 +1,25 @@
+{
+    "id": 261807026,
+    "name": "[ArgoCD Cluster Addons Host Cluster] ArgoCD application-controller pod down",
+    "type": "query alert",
+    "query": "avg(last_5m):avg:kubernetes_state.statefulset.replicas_ready{kube_namespace:argocd,kube_stateful_set:argocd-*-application-cont*} by {kube_cluster_name} < 1",
+    "message": "{{#is_alert}}\n🔴 [P1 CRITICAL] ArgoCD application-controller is DOWN on {{kube_cluster_name.name}}\n\nApplication sync and reconciliation is completely stopped. All ArgoCD apps are frozen.\nReady replicas: {{value}}\n\nActions:\n1. kubectl get pods -n argocd -l app.kubernetes.io/name=application-controller\n2. kubectl describe pod -n argocd <pod-name>\n3. kubectl logs -n argocd <pod-name> --tail=100\n{{/is_alert}}\n{{#is_recovery}}\n✅ RECOVERED: ArgoCD application-controller is back on {{kube_cluster_name.name}}\n{{/is_recovery}}\n{{#is_no_data}}\n⚠️ NO DATA from {{kube_cluster_name.name}} — Cluster Agent may be down\n{{/is_no_data}}\n\n@moran.weissman@msd.com @microsoft-teams-ArgocdClusterAddonsNonProd",
+    "tags": [
+        "platform:devex",
+        "kubernetes",
+        "service:argocd-cluster-addons",
+        "component:argocd-cluster-addons-host"
+    ],
+    "options": {
+        "thresholds": {
+            "critical": 1
+        },
+        "notify_audit": false,
+        "on_missing_data": "show_and_notify_no_data",
+        "include_tags": true,
+        "new_group_delay": 60
+    },
+    "priority": 1,
+    "draft_status": "published",
+    "assets": []
+}

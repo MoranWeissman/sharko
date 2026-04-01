@@ -1,0 +1,66 @@
+apiVersion: datadoghq.com/v1alpha1
+kind: DatadogDashboard
+metadata:
+  name: app-operations-monitoring
+  namespace: datadog
+  labels:
+    app.kubernetes.io/part-of: argocd-cluster-addons
+    app.kubernetes.io/component: monitoring
+spec:
+  title: "ArgoCD Cluster Addons Application Operations"
+  description: "Application sync status, health, and ArgoCD control plane overview across the fleet"
+  layoutType: ordered
+  tags:
+    - "platform:devex"
+    - "service:argocd-cluster-addons"
+    - "component:argocd-cluster-addons-appops"
+  notifyList: []
+  templateVariables:
+    - name: cluster_name
+      prefix: kube_cluster_name
+      availableValues:
+        - devops-argocd-addons-dev-eks
+      default: "devops-argocd-addons-dev-eks"
+    - name: environment
+      prefix: env
+      availableValues: []
+      default: "*"
+    - name: project
+      prefix: project
+      availableValues: []
+      default: "*"
+  widgets: |
+    [
+      {"id":1000000001,"definition":{"title":"ArgoCD Components Health","show_title":true,"type":"group","layout_type":"ordered","widgets":[
+        {"id":1000000002,"definition":{"title":"App Controller","type":"check_status","check":"kubernetes_state.statefulset.replicas_ready","grouping":"cluster","group":"kube_stateful_set:argocd-application-controller","group_by":["kube_cluster_name"],"tags":["kube_namespace:argocd"]},"layout":{"x":0,"y":0,"width":2,"height":2}},
+        {"id":1000000003,"definition":{"title":"AppSet Controller","type":"query_value","requests":[{"response_format":"scalar","queries":[{"name":"q1","data_source":"metrics","query":"min:kubernetes_state.deployment.replicas_available{$cluster_name,kube_namespace:argocd,kube_deployment:*applicationset*,$environment}","aggregator":"last"}],"formulas":[{"formula":"q1","conditional_formats":[{"comparator":">=","value":1,"palette":"white_on_green"},{"comparator":"<","value":1,"palette":"white_on_red"}]}]}],"autoscale":false,"precision":0},"layout":{"x":2,"y":0,"width":2,"height":2}},
+        {"id":1000000004,"definition":{"title":"API Server","type":"query_value","requests":[{"response_format":"scalar","queries":[{"name":"q1","data_source":"metrics","query":"min:kubernetes_state.deployment.replicas_available{$cluster_name,kube_namespace:argocd,kube_deployment:*server,$environment}","aggregator":"last"}],"formulas":[{"formula":"q1","conditional_formats":[{"comparator":">=","value":1,"palette":"white_on_green"},{"comparator":"<","value":1,"palette":"white_on_red"}]}]}],"autoscale":false,"precision":0},"layout":{"x":4,"y":0,"width":2,"height":2}},
+        {"id":1000000005,"definition":{"title":"Repo Server","type":"query_value","requests":[{"response_format":"scalar","queries":[{"name":"q1","data_source":"metrics","query":"min:kubernetes_state.deployment.replicas_available{$cluster_name,kube_namespace:argocd,kube_deployment:*repo-server*,$environment}","aggregator":"last"}],"formulas":[{"formula":"q1","conditional_formats":[{"comparator":">=","value":1,"palette":"white_on_green"},{"comparator":"<","value":1,"palette":"white_on_red"}]}]}],"autoscale":false,"precision":0},"layout":{"x":6,"y":0,"width":2,"height":2}},
+        {"id":1000000006,"definition":{"title":"Work Queue Depth","type":"query_value","requests":[{"response_format":"scalar","queries":[{"name":"q1","data_source":"metrics","query":"avg:argocd.app_controller.workqueue.depth{$cluster_name,$environment}","aggregator":"last"}],"formulas":[{"formula":"q1","conditional_formats":[{"comparator":"<=","value":10,"palette":"white_on_green"},{"comparator":"<=","value":50,"palette":"white_on_yellow"},{"comparator":">","value":50,"palette":"white_on_red"}]}]}],"autoscale":true,"precision":0},"layout":{"x":8,"y":0,"width":2,"height":2}},
+        {"id":1000000007,"definition":{"title":"Reconciliation p95","type":"query_value","requests":[{"response_format":"scalar","queries":[{"name":"q1","data_source":"metrics","query":"p95:argocd.app_controller.app.reconcile{$cluster_name,$environment}","aggregator":"last"}],"formulas":[{"formula":"q1","number_format":{"unit":{"type":"canonical_unit","unit_name":"second"}},"conditional_formats":[{"comparator":"<","value":5,"palette":"white_on_green"},{"comparator":"<","value":10,"palette":"white_on_yellow"},{"comparator":">=","value":10,"palette":"white_on_red"}]}]}],"autoscale":true,"precision":1},"layout":{"x":10,"y":0,"width":2,"height":2}}
+      ]},"layout":{"x":0,"y":0,"width":12,"height":4}},
+
+      {"id":1000000010,"definition":{"title":"Application Status","show_title":true,"type":"group","layout_type":"ordered","widgets":[
+        {"id":1000000011,"definition":{"title":"Total Applications","type":"query_value","requests":[{"response_format":"scalar","queries":[{"name":"q1","data_source":"metrics","query":"count:argocd.app_controller.app.info{$cluster_name,$environment,$project}","aggregator":"last"}],"formulas":[{"formula":"q1"}]}],"autoscale":true,"precision":0},"layout":{"x":0,"y":0,"width":2,"height":2}},
+        {"id":1000000012,"definition":{"title":"Healthy","type":"query_value","requests":[{"response_format":"scalar","queries":[{"name":"q1","data_source":"metrics","query":"count:argocd.app_controller.app.info{$cluster_name,health_status:healthy,$environment,$project}","aggregator":"last"}],"formulas":[{"formula":"q1","conditional_formats":[{"comparator":">","value":0,"palette":"white_on_green"}]}]}],"autoscale":true,"precision":0},"layout":{"x":2,"y":0,"width":2,"height":2}},
+        {"id":1000000013,"definition":{"title":"Degraded","type":"query_value","requests":[{"response_format":"scalar","queries":[{"name":"q1","data_source":"metrics","query":"count:argocd.app_controller.app.info{$cluster_name,health_status:degraded,$environment,$project}","aggregator":"last"}],"formulas":[{"formula":"default_zero(q1)","conditional_formats":[{"comparator":"=","value":0,"palette":"white_on_green"},{"comparator":">","value":0,"palette":"white_on_red"}]}]}],"autoscale":true,"precision":0},"layout":{"x":4,"y":0,"width":2,"height":2}},
+        {"id":1000000014,"definition":{"title":"Progressing","type":"query_value","requests":[{"response_format":"scalar","queries":[{"name":"q1","data_source":"metrics","query":"count:argocd.app_controller.app.info{$cluster_name,health_status:progressing,$environment,$project}","aggregator":"last"}],"formulas":[{"formula":"default_zero(q1)","conditional_formats":[{"comparator":"=","value":0,"palette":"white_on_green"},{"comparator":">","value":0,"palette":"white_on_yellow"}]}]}],"autoscale":true,"precision":0},"layout":{"x":6,"y":0,"width":2,"height":2}},
+        {"id":1000000015,"definition":{"title":"Failed Syncs (1h)","type":"query_value","requests":[{"response_format":"scalar","queries":[{"name":"q1","data_source":"metrics","query":"sum:argocd.app_controller.app.sync.count{$cluster_name,phase:error,$environment,$project}.as_count()","aggregator":"sum"}],"formulas":[{"formula":"default_zero(q1)","conditional_formats":[{"comparator":"=","value":0,"palette":"white_on_green"},{"comparator":">","value":0,"palette":"white_on_red"}]}]}],"autoscale":true,"precision":0,"timeseries_background":{"type":"area"}},"layout":{"x":8,"y":0,"width":2,"height":2}},
+        {"id":1000000016,"definition":{"title":"Succeeded Syncs (1h)","type":"query_value","requests":[{"response_format":"scalar","queries":[{"name":"q1","data_source":"metrics","query":"sum:argocd.app_controller.app.sync.count{$cluster_name,phase:succeeded,$environment,$project}.as_count()","aggregator":"sum"}],"formulas":[{"formula":"default_zero(q1)","conditional_formats":[{"comparator":">","value":0,"palette":"white_on_green"}]}]}],"autoscale":true,"precision":0,"timeseries_background":{"type":"area"}},"layout":{"x":10,"y":0,"width":2,"height":2}}
+      ]},"layout":{"x":0,"y":4,"width":12,"height":4}},
+
+      {"id":1000000020,"definition":{"title":"Cluster Connectivity","show_title":true,"type":"group","layout_type":"ordered","widgets":[
+        {"id":1000000021,"definition":{"title":"Cluster Connection Status","type":"query_table","requests":[{"response_format":"scalar","queries":[{"data_source":"metrics","name":"q1","query":"avg:argocd.app_controller.cluster.connection_status{$cluster_name,$environment} by {name}","aggregator":"last"}],"formulas":[{"alias":"Connected","formula":"q1","conditional_formats":[{"comparator":">=","value":1,"palette":"white_on_green"},{"comparator":"<","value":1,"palette":"white_on_red"}]}]}]},"layout":{"x":0,"y":0,"width":12,"height":4}}
+      ]},"layout":{"x":0,"y":8,"width":12,"height":6}},
+
+      {"id":1000000030,"definition":{"title":"Application Health Matrix","show_title":true,"type":"group","layout_type":"ordered","widgets":[
+        {"id":1000000031,"definition":{"title":"Application Status","type":"query_table","requests":[{"response_format":"scalar","queries":[{"data_source":"metrics","name":"health","query":"avg:argocd.app_controller.app.info{$cluster_name,$environment,$project} by {name,dest_server,health_status,sync_status}","aggregator":"last"}],"formulas":[{"alias":"Status","formula":"health"}]}]},"layout":{"x":0,"y":0,"width":12,"height":6}}
+      ]},"layout":{"x":0,"y":14,"width":12,"height":8}},
+
+      {"id":1000000040,"definition":{"title":"Trends","show_title":true,"type":"group","layout_type":"ordered","widgets":[
+        {"id":1000000041,"definition":{"title":"Sync Operations Over Time","show_legend":true,"legend_layout":"auto","type":"timeseries","requests":[{"response_format":"timeseries","queries":[{"name":"succeeded","data_source":"metrics","query":"sum:argocd.app_controller.app.sync.count{$cluster_name,phase:succeeded,$environment,$project}.as_count()"},{"name":"failed","data_source":"metrics","query":"sum:argocd.app_controller.app.sync.count{$cluster_name,phase:error,$environment,$project}.as_count()"}],"formulas":[{"alias":"Succeeded","formula":"succeeded","style":{"palette":"green"}},{"alias":"Failed","formula":"failed","style":{"palette":"red"}}],"style":{"palette":"dog_classic","line_type":"solid","line_width":"normal"},"display_type":"bars"}],"yaxis":{"include_zero":true,"min":"0"}},"layout":{"x":0,"y":0,"width":6,"height":3}},
+        {"id":1000000042,"definition":{"title":"Sync Failure Rate (%)","show_legend":false,"type":"timeseries","requests":[{"response_format":"timeseries","queries":[{"name":"failed","data_source":"metrics","query":"sum:argocd.app_controller.app.sync.count{$cluster_name,phase:error,$environment,$project}.as_count()"},{"name":"total","data_source":"metrics","query":"sum:argocd.app_controller.app.sync.count{$cluster_name,$environment,$project}.as_count()"}],"formulas":[{"alias":"Failure Rate %","formula":"(failed / total) * 100"}],"style":{"palette":"warm","line_type":"solid","line_width":"normal"},"display_type":"line"}],"yaxis":{"include_zero":true,"min":"0","max":"100"},"markers":[{"label":"Warning","value":"y = 5","display_type":"warning dashed"}]},"layout":{"x":6,"y":0,"width":6,"height":3}},
+        {"id":1000000043,"definition":{"title":"Reconciliation Duration (p95)","show_legend":false,"type":"timeseries","requests":[{"response_format":"timeseries","queries":[{"name":"q1","data_source":"metrics","query":"p95:argocd.app_controller.app.reconcile{$cluster_name,$environment,$project}"}],"formulas":[{"alias":"p95 Duration","formula":"q1"}],"style":{"palette":"purple","line_type":"solid","line_width":"normal"},"display_type":"line"}],"yaxis":{"include_zero":true,"min":"0"},"markers":[{"label":"Warning","value":"y = 10","display_type":"warning dashed"},{"label":"Critical","value":"y = 30","display_type":"error dashed"}]},"layout":{"x":0,"y":3,"width":6,"height":3}},
+        {"id":1000000044,"definition":{"title":"Work Queue Depth Over Time","show_legend":false,"type":"timeseries","requests":[{"response_format":"timeseries","queries":[{"name":"q1","data_source":"metrics","query":"avg:argocd.app_controller.workqueue.depth{$cluster_name,$environment}"}],"formulas":[{"alias":"Queue Depth","formula":"q1"}],"style":{"palette":"orange","line_type":"solid","line_width":"normal"},"display_type":"line"}],"yaxis":{"include_zero":true,"min":"0"},"markers":[{"label":"Warning","value":"y = 50","display_type":"warning dashed"}]},"layout":{"x":6,"y":3,"width":6,"height":3}}
+      ]},"layout":{"x":0,"y":22,"width":12,"height":8}}
+    ]

@@ -1,0 +1,119 @@
+{{- if and .Values.ai.enabled (eq .Values.ai.provider "ollama") .Values.ai.ollama.deploy }}
+# Ollama deployment — local LLM inference sidecar
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aap.fullname" . }}-ollama
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aap.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ollama
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "aap.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: ollama
+  template:
+    metadata:
+      labels:
+        {{- include "aap.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: ollama
+    spec:
+      {{- if .Values.ai.ollama.persistence }}
+      initContainers:
+        - name: pull-model
+          image: "{{ .Values.ai.ollama.image | default "ollama/ollama:latest" }}"
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              ollama serve &
+              sleep 5
+              ollama pull {{ .Values.ai.ollama.model | default "llama3.2" }}
+              {{- if .Values.ai.ollama.agentModel }}
+              ollama pull {{ .Values.ai.ollama.agentModel }}
+              {{- end }}
+              kill %1
+          volumeMounts:
+            - name: ollama-data
+              mountPath: /root/.ollama
+          resources:
+            {{- toYaml (.Values.ai.ollama.resources | default (dict "requests" (dict "memory" "2Gi" "cpu" "500m") "limits" (dict "memory" "4Gi" "cpu" "2000m"))) | nindent 12 }}
+      {{- end }}
+      containers:
+        - name: ollama
+          image: "{{ .Values.ai.ollama.image | default "ollama/ollama:latest" }}"
+          ports:
+            - name: http
+              containerPort: 11434
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /api/tags
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /api/tags
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml (.Values.ai.ollama.resources | default (dict "requests" (dict "memory" "2Gi" "cpu" "500m") "limits" (dict "memory" "4Gi" "cpu" "2000m"))) | nindent 12 }}
+          volumeMounts:
+            - name: ollama-data
+              mountPath: /root/.ollama
+          {{- if .Values.ai.ollama.gpu }}
+          env:
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: "all"
+          {{- end }}
+      volumes:
+        - name: ollama-data
+          {{- if .Values.ai.ollama.persistence }}
+          persistentVolumeClaim:
+            claimName: {{ include "aap.fullname" . }}-ollama
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aap.fullname" . }}-ollama
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aap.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ollama
+spec:
+  type: ClusterIP
+  ports:
+    - port: 11434
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "aap.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: ollama
+{{- if .Values.ai.ollama.persistence }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "aap.fullname" . }}-ollama
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aap.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ollama
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- if .Values.ai.ollama.storageClassName }}
+  storageClassName: {{ .Values.ai.ollama.storageClassName | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.ai.ollama.storageSize | default "10Gi" }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,95 @@
+# ================================================================ #
+# Global Values (used by all addons)
+# Define YAML anchors with & for reuse across addon configurations
+# ================================================================ #
+clusterGlobalValues:
+  env: &env dev
+  clusterName: &clusterName nms-core-dev-eks
+  region: &region us-east-1
+  projectName: nms-core-dev-eks
+
+# ================================================================ #
+# Addon-specific overrides
+# These override the default values from global.yaml
+# Use YAML anchors (*clusterName, *region, etc.) to reference clusterGlobalValues
+# ================================================================ #
+
+# ================================================================ #
+# ------------------- Datadog Configuration ------------------- #
+# ================================================================ #
+datadog:
+  datadog:
+    # Project namespaces for log collection (addon namespaces are added automatically)
+    projectNamespaces: 'nms-core'
+
+# ================================================================ #
+# ------------------- Anodot Configuration ----------------------- #
+# ================================================================ #
+anodot:
+  config:
+    clusterName: *clusterName
+    clusterRegion: *region
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::637423520333:role/anodot-nms-core-dev-eks-eu-west-1
+
+# ================================================================ #
+# ------------------- Kafka UI Configuration --------------------- #
+# ================================================================ #
+kafka-ui:
+  replicaCount: 1
+  serviceAccount:
+    create: true
+    name: "kafka-ui"
+    annotations:
+      eks.amazonaws.com/role-arn: "arn:aws:iam::637423520333:role/nms-core-dev-kafka-ui"
+      eks.amazonaws.com/sts-regional-endpoints: "true"
+  yamlApplicationConfig:
+    delete:
+      topic:
+        enabled: true
+    dynamic:
+      config:
+        enabled: true
+    kafka:
+      clusters:
+        - name: "NMS Core DEV"
+          bootstrapServers: "b-1.nmscoredevmsk.fcisvc.c3.kafka.eu-west-1.amazonaws.com:9098,b-2.nmscoredevmsk.fcisvc.c3.kafka.eu-west-1.amazonaws.com:9098,b-3.nmscoredevmsk.fcisvc.c3.kafka.eu-west-1.amazonaws.com:9098"
+          properties:
+            security.protocol: "SASL_SSL"
+            sasl.mechanism: "AWS_MSK_IAM"
+            sasl.client.callback.handler.class: "software.amazon.msk.auth.iam.IAMClientCallbackHandler"
+            sasl.jaas.config: "software.amazon.msk.auth.iam.IAMLoginModule required;"
+  env:
+    - name: "DYNAMIC_CONFIG_ENABLED"
+      value: "true"
+  ingress:
+    enabled: true
+    annotations:
+      alb.ingress.kubernetes.io/group.name: "private"
+      alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS": 443}]'
+      alb.ingress.kubernetes.io/scheme: "internet-facing"
+      alb.ingress.kubernetes.io/security-groups: "nms-core-dev-alb-offices"
+      alb.ingress.kubernetes.io/target-type: "ip"
+      alb.ingress.kubernetes.io/manage-backend-security-group-rules: "true"
+    ingressClassName: "alb"
+    path: "/"
+    host: "nms-core-kafka-ui-dev.mahi-techlabs.com"
+    pathType: "Prefix"
+  resources:
+    limits:
+      cpu: 200m
+      memory: 512Mi
+    requests:
+      cpu: 200m
+      memory: 256Mi
+
+# ================================================================ #
+# ------------------- Redis Insight V2 Configuration ------------- #
+# ================================================================ #
+redis-insight-v2:
+  ingress:
+    oldClusterVersionSupport: false
+    host: "nms-core-redisinsight-v2-dev.mahi-techlabs.com"
+    sgGroupName: "nms-core-dev-alb-offices"
+    svcPort: 38001

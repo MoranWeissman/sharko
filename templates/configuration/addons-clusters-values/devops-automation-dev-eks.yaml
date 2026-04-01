@@ -1,0 +1,55 @@
+# ================================================================ #
+# Global Values (used by all addons)
+# Define YAML anchors with & for reuse across addon configurations
+# ================================================================ #
+clusterGlobalValues:
+  env: &env dev
+  clusterName: &clusterName devops-automation-dev-eks
+  region: &region eu-west-1
+  projectName: &projectName devops
+
+# ================================================================ #
+# Addon-specific overrides
+# These override the default values from global.yaml
+# Use YAML anchors (*clusterName, *region, etc.) to reference clusterGlobalValues
+# Uncomment and customize as needed for your addons
+# ================================================================ #
+
+# ================================================================ #
+# ------------------- Anodot Configuration ----------------------- #
+# ================================================================ #
+anodot:
+  config:
+    clusterName: *clusterName
+    clusterRegion: *region
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::627176949220:role/anodot-devops-automation-dev-eks-eu-west-1
+      
+# ================================================================ #
+# ------------------- Datadog Configuration ---------------------- #
+# ================================================================ #
+datadog:
+  clusterName: *clusterName
+  # Project namespaces for log collection (addon namespaces are added automatically)
+  projectNamespaces: 'apps'
+
+# IRSA for Cluster Agent
+clusterAgent:
+  rbac:
+    serviceAccountAnnotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::627176949220:role/Datadog-Agent-devops
+
+# IRSA for Node Agents DaemonSet
+agents:
+  rbac:
+    serviceAccountAnnotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::627176949220:role/Datadog-Agent-devops
+
+# ================================================================ #
+# ------------------- External Secrets Configuration ------------- #
+# ================================================================ #
+external-secrets:
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::627176949220:role/devops-secretsmanager-sa-dev

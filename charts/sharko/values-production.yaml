@@ -1,0 +1,77 @@
+# Production values.
+# Secrets are passed via --set from .env.secrets — never in this file.
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/moranweissman/argocd-addons-platform
+  tag: "1.52.0"
+  pullPolicy: Always
+
+config:
+  connectionSecretName: "aap-connections"
+  nodeAccess: true
+
+rbac:
+  create: true
+  argocdNamespace: argocd
+
+auth: {}
+  # username and password passed via --set from .env.secrets
+
+ai:
+  enabled: false
+  provider: gemini
+  cloudModel: gemini-2.5-flash
+
+datadog:
+  enabled: false
+  site: datadoghq.com
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: true
+  className: alb
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/group.name: private
+    alb.ingress.kubernetes.io/backend-protocol: HTTP
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/healthcheck-path: /api/v1/health
+    alb.ingress.kubernetes.io/healthcheck-protocol: HTTP
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: "30"
+    alb.ingress.kubernetes.io/healthcheck-timeout-seconds: "5"
+    alb.ingress.kubernetes.io/healthy-threshold-count: "3"
+    alb.ingress.kubernetes.io/unhealthy-threshold-count: "2"
+  hosts:
+    - host: argocd-addons-platform.mahi-techlabs.com
+      paths:
+        - path: /
+          pathType: Prefix
+
+persistence:
+  enabled: false
+  storageClassName: gp2
+  size: 1Gi
+
+# POC: hostAliases for private DNS resolution (remove after Route 53 VPC association)
+# Using ALB public IPs so pods can reach OLD ArgoCD via internet
+hostAliases:
+  - ip: "52.16.252.23"
+    hostnames:
+      - "devops-argocd-argocd-addons-dev.mahi-techlabs.com"
+  - ip: "52.48.109.207"
+    hostnames:
+      - "devops-argocd-addons-none-prod.mahi-techlabs.com"
+
+resources:
+  requests:
+    memory: "128Mi"
+    cpu: "100m"
+  limits:
+    memory: "512Mi"
+    cpu: "500m"

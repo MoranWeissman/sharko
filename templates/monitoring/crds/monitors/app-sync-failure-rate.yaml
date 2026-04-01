@@ -1,0 +1,49 @@
+apiVersion: datadoghq.com/v1alpha1
+kind: DatadogMonitor
+metadata:
+  name: appops-sync-failure-rate
+  namespace: datadog
+  labels:
+    app.kubernetes.io/part-of: argocd-cluster-addons
+    app.kubernetes.io/component: monitoring
+spec:
+  name: "[ArgoCD Cluster Addons Application Operations] High sync failure rate"
+  type: query alert
+  query: "sum(last_1h):sum:argocd.app_controller.app.sync.count{phase:error,kube_cluster_name:devops-argocd-addons-dev-eks}.as_count() / sum:argocd.app_controller.app.sync.count{kube_cluster_name:devops-argocd-addons-dev-eks}.as_count() * 100 > 10"
+  message: |-
+    {{#is_alert}}
+    🔴 [P1 CRITICAL] Sync failure rate is above 10% in the last hour
+
+    Failure rate: {{value}}%
+    This indicates widespread sync issues across the fleet.
+
+    Actions:
+    1. Check the Application Operations dashboard for affected apps
+    2. Review ArgoCD controller logs: kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller --tail=200
+    3. Check cluster connectivity: kubectl get appproject -A
+    {{/is_alert}}
+    {{#is_warning}}
+    🟡 [P2 WARNING] Sync failure rate is above 5% in the last hour
+
+    Failure rate: {{value}}%
+    Monitor for escalation.
+    {{/is_warning}}
+    {{#is_recovery}}
+    ✅ RECOVERED: Sync failure rate is back to normal
+    {{/is_recovery}}
+
+    @moran.weissman@msd.com @microsoft-teams-ArgocdClusterAddonsNonProd
+  tags:
+    - "platform:devex"
+    - "kubernetes"
+    - "service:argocd-cluster-addons"
+    - "component:argocd-cluster-addons-appops"
+  priority: 1
+  options:
+    thresholds:
+      critical: "10"
+      warning: "5"
+    notifyAudit: false
+    onMissingData: default
+    includeTags: true
+    newGroupDelay: 60

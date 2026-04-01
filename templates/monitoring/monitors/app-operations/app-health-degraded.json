@@ -1,0 +1,24 @@
+{
+    "name": "[ArgoCD Cluster Addons Application Operations] Application health degraded",
+    "type": "query alert",
+    "query": "avg(last_15m):count:argocd.app_controller.app.info{health_status:degraded} by {name,dest_server} > 0",
+    "message": "{{#is_alert}}\n🔴 [P2 WARNING] Application {{name.name}} is Degraded on {{dest_server.name}}\n\nThe application has been in Degraded health status for more than 15 minutes.\nThis means deployed resources are not healthy.\n\nActions:\n1. Open Application Troubleshooting dashboard filtered to {{name.name}}\n2. Check app status: argocd app get {{name.name}}\n3. Review resource health: argocd app resources {{name.name}}\n4. Check controller logs for errors related to this app\n{{/is_alert}}\n{{#is_recovery}}\n✅ RECOVERED: Application {{name.name}} is healthy on {{dest_server.name}}\n{{/is_recovery}}\n\n@moran.weissman@msd.com @microsoft-teams-ArgocdClusterAddonsNonProd",
+    "tags": [
+        "platform:devex",
+        "kubernetes",
+        "service:argocd-cluster-addons",
+        "component:argocd-cluster-addons-appops"
+    ],
+    "options": {
+        "thresholds": {
+            "critical": 0
+        },
+        "notify_audit": false,
+        "on_missing_data": "default",
+        "include_tags": true,
+        "new_group_delay": 300
+    },
+    "priority": 2,
+    "draft_status": "published",
+    "assets": []
+}

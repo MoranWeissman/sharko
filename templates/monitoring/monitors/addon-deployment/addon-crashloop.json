@@ -1,0 +1,16 @@
+{
+  "name": "Addon pod CrashLoopBackOff in {{kube_namespace.name}}",
+  "type": "query alert",
+  "query": "max(last_5m):max:kubernetes_state.container.waiting.reason{kube_cluster_name:*,reason:crashloopbackoff,kube_namespace IN (datadog,keda,external-secrets)} by {kube_namespace} >= 1",
+  "message": "Addon pod in namespace {{kube_namespace.name}} is in CrashLoopBackOff on cluster $cluster_name.\n\n    Check the Addon Deployment Health dashboard for details.",
+  "tags": [
+    "cluster:$cluster_name",
+    "source:addon-monitoring",
+    "severity:critical"
+  ],
+  "options": {
+    "thresholds": {
+      "critical": "1"
+    }
+  }
+}

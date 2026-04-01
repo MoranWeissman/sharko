@@ -1,0 +1,58 @@
+# ================================================================ #
+# Global Values (used by all addons)
+# Define YAML anchors with & for reuse across addon configurations
+# ================================================================ #
+clusterGlobalValues:
+  env: &env dev
+  clusterName: &clusterName sh-in-cloud-beta-eks
+  region: &region us-east-1
+  projectName: sh-in-cloud-beta-eks
+
+# ================================================================ #
+# Addon-specific overrides
+# These override the default values from global.yaml
+# Use YAML anchors (*clusterName, *region, etc.) to reference clusterGlobalValues
+# ================================================================ #
+
+# ================================================================ #
+# ------------------- Datadog Configuration ------------------- #
+# ================================================================ #
+datadog:
+  datadog:
+    # Project namespaces for log collection (addon namespaces are added automatically)
+    projectNamespaces: 'sh-in-cloud|datadog|shc-report-engine|shc-algo|shc-datasync|cattle-system|cattle-impersonation-system|cattle-system'
+    # otlp:
+    #   receiver:
+    #     protocols:
+    #       grpc:
+    #         enabled: true
+    #         endpoint: "0.0.0.0:4317"
+    #       http:
+    #         enabled: true
+    #         endpoint: "0.0.0.0:4318"
+    # apm:
+    #   socketEnabled: true
+    #   portEnabled: true
+    #   instrumentation:
+    #       enabled: true
+
+# ================================================================ #
+# ------------------- Anodot Configuration ----------------------- #
+# ================================================================ #
+anodot:
+  config:
+    clusterName: *clusterName
+    clusterRegion: *region
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::552292662766:role/anodot-sh-in-cloud-beta-eks-eu-west-1
+
+# ================================================================ #
+# ------------------- Redis Insight V2 Configuration ------------- #
+# ================================================================ #
+redis-insight-v2:
+  ingress:
+    oldClusterVersionSupport: true
+    host: "shc-redisinsight-v2-beta.mahi-techlabs.com"
+    sgGroupName: "SG-sh-in-cloud-redisinsight-beta"
+    svcPort: 38001

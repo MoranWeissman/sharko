@@ -1,0 +1,176 @@
+# ====================================================================== #
+# Istiod (Istio Control Plane) Global Values
+# ====================================================================== #
+# Chart: istiod
+# Repo: https://istio-release.storage.googleapis.com/charts
+# Version: 1.28.0
+# Namespace: istio-system
+# Docs: https://istio.io/latest/docs/reference/config/istio.operator.v1alpha1/
+#
+# These values apply to ALL clusters unless overridden per-cluster
+# in addons-clusters-values/<cluster-name>.yaml
+#
+# Istiod is the core control plane component. It handles service
+# discovery, configuration distribution, certificate management,
+# and sidecar injection for the Istio service mesh.
+# ====================================================================== #
+
+# ---- Internal: CNI integration ---- #
+# Tells istiod that istio-cni is installed (avoids NET_ADMIN in sidecars)
+_internal_defaults_do_not_set:
+  cni:
+    enabled: true
+
+# ---- Pilot (istiod) ---- #
+pilot:
+  # Autoscaling
+  autoscaleEnabled: true
+  autoscaleMin: 1
+  autoscaleMax: 5
+  # rollingMaxSurge: 100%
+  # rollingMaxUnavailable: 25%
+
+  # Resources
+  resources:
+    requests:
+      cpu: 500m
+      memory: 2048Mi
+    limits:
+      memory: 4096Mi
+
+  # Logging & tracing
+  traceSampling: 1.0
+  # env: {}
+
+  # Keep connections alive (helps with long-lived gRPC to envoys)
+  keepaliveMaxServerConnectionAge: 30m
+
+  # Pod Disruption Budget
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+  # Security
+  seccompProfile: {}
+  # nodeSelector: {}
+  # tolerations: []
+  # affinity: {}
+  # topologyConstraints: []
+
+# ---- Sidecar Injection ---- #
+sidecarInjectorWebhook:
+  # Rewrite app HTTP probes for mTLS compatibility
+  rewriteAppHTTPProbe: true
+  # reinvocationPolicy: Never
+  # enableNamespacesByDefault: false
+
+# ---- Global Settings ---- #
+global:
+  # Istio system namespace
+  istioNamespace: istio-system
+
+  # Mesh config
+  # meshConfig:
+  #   accessLogFile: /dev/stdout
+  #   accessLogEncoding: JSON
+  #   enableTracing: false
+  #   defaultConfig:
+  #     holdApplicationUntilProxyStarts: true
+
+  # Proxy (sidecar) defaults
+  proxy:
+    # Log level for all sidecars
+    logLevel: warning
+    componentLogLevel: "misc:error"
+    # Resources for sidecar proxies (applied mesh-wide)
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 2000m
+        memory: 1024Mi
+    # Traffic capture
+    includeInboundPorts: "*"
+    includeIPRanges: "*"
+    # excludeInboundPorts: ""
+    # excludeOutboundPorts: ""
+    # excludeIPRanges: ""
+    # Startup probe (slow-starting apps)
+    startupProbe:
+      enabled: true
+      failureThreshold: 600
+    # Status port for health checks
+    statusPort: 15020
+
+  # Proxy init container
+  # proxy_init:
+  #   resources:
+  #     limits:
+  #       cpu: 2000m
+  #       memory: 1024Mi
+  #     requests:
+  #       cpu: 10m
+  #       memory: 10Mi
+
+  # Logging
+  logging:
+    level: "default:info"
+  logAsJSON: false
+
+  # Cluster identity (important for multi-cluster)
+  # multiCluster:
+  #   clusterName: ""
+  #   enabled: false
+  # network: ""
+
+  # CA / certificate provider
+  pilotCertProvider: istiod
+
+  # Config validation webhook
+  configValidation: true
+
+  # Telemetry
+  # telemetry:
+  #   enabled: true
+  #   v2:
+  #     enabled: true
+
+# ---- Network Policy ---- #
+# networkPolicy:
+#   enabled: false
+
+# ====================================================================== #
+# Cluster-Specific Overrides Reference
+# ====================================================================== #
+# Copy the relevant sections below into your cluster values file:
+#   addons-clusters-values/<cluster-name>.yaml
+#
+# istiod:
+#   pilot:
+#     # Scale istiod per cluster size
+#     autoscaleMin: 2
+#     autoscaleMax: 10
+#     resources:
+#       requests:
+#         cpu: 1000m
+#         memory: 4096Mi
+#   global:
+#     # Enable access logging per cluster
+#     meshConfig:
+#       accessLogFile: /dev/stdout
+#       accessLogEncoding: JSON
+#       defaultConfig:
+#         holdApplicationUntilProxyStarts: true
+#     # Override sidecar proxy resources per cluster
+#     proxy:
+#       resources:
+#         requests:
+#           cpu: 100m
+#           memory: 128Mi
+#         limits:
+#           cpu: 2000m
+#           memory: 1024Mi
+#     # Multi-cluster identity
+#     multiCluster:
+#       clusterName: <cluster-name>

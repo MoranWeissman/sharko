@@ -1,0 +1,115 @@
+<mxfile host="app.diagrams.net">
+  <diagram name="ApplicationSet Template Simplification" id="appset-simplification">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="0" pageScale="1" pageWidth="1600" pageHeight="1200" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="pNjHujQ3Tv-UeEQVwNHZ-1" value="ApplicationSet Template: Hardcoded Logic → Data-Driven Approach" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=24;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="-470" y="-280" width="1200" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="pNjHujQ3Tv-UeEQVwNHZ-2" value="BEFORE: Hardcoded If/Else Chains (150+ lines)" style="text;html=1;strokeColor=none;fillColor=#f8cecc;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=1;fontSize=18;fontStyle=1;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="-590" y="-220" width="1440" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="pNjHujQ3Tv-UeEQVwNHZ-3" value="&amp;nbsp; &amp;nbsp; Hardcoded Parameters (84 lines)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=14;fontStyle=1;align=left;verticalAlign=top;spacingTop=5;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="-570" y="-150" width="420" height="330" as="geometry" />
+        </mxCell>
+        <mxCell id="pNjHujQ3Tv-UeEQVwNHZ-4" value="{{- if eq $appset.appName &quot;datadog&quot; }}&lt;br&gt;parameters:&lt;br&gt;&amp;nbsp; - name: &#39;datadog.apiKeyExistingSecret&#39;&lt;br&gt;&amp;nbsp; &amp;nbsp; value: &#39;{{`{{.name}}`}}&#39;&lt;br&gt;&amp;nbsp; - name: &#39;datadog.clusterName&#39;&lt;br&gt;&amp;nbsp; &amp;nbsp; value: &#39;{{`{{.name}}`}}&#39;&lt;br&gt;{{- end }}&lt;br&gt;&lt;br&gt;{{- if eq $appset.appName &quot;otel&quot; }}&lt;br&gt;parameters:&lt;br&gt;&amp;nbsp; - name: &#39;projectname&#39;&lt;br&gt;&amp;nbsp; &amp;nbsp; value: &#39;{{`{{.name}}`}}&#39;&lt;br&gt;{{- end }}&lt;br&gt;&lt;br&gt;{{- if eq $appset.appName &quot;karpenter&quot; }}&lt;br&gt;parameters:&lt;br&gt;&amp;nbsp; - name: &#39;settings.clusterName&#39;&lt;br&gt;&amp;nbsp; &amp;nbsp; value: &#39;{{`{{.name}}`}}&#39;&lt;br&gt;{{- end }}&lt;br&gt;&lt;br&gt;# ... more lines of this pattern&lt;div&gt;&lt;br/&gt;&lt;/div&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;rounded=0;fontSize=11;fontFamily=Courier New;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="-560" y="-120" width="400" height="260" as="geometry" />
+        </mxCell>
+        <mxCell id="pNjHujQ3Tv-UeEQVwNHZ-5" value="&amp;nbsp; &amp;nbsp;Hardcoded Namespace Logic (8+ lines)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=14;fontStyle=1;align=left;verticalAlign=top;spacingTop=5;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="-120" y="-150" width="420" height="200" as="geometry" />
+        </mxCell>
+        <mxCell id="pNjHujQ3Tv-UeEQVwNHZ-6" value="{{- if eq $appset.appName &quot;otel&quot; }}&#xa;namespace: opentelemetry-operator-system&#xa;{{- else if eq $appset.appName &quot;istio-base&quot; }}&#xa;namespace: istio-system&#xa;{{- else if $appset.namespace }}&#xa;namespace: {{ $appset.namespace }}&#xa;{{- else }}&#xa;namespace: {{ $appset.appName }}&#xa;{{- end }}" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;rounded=0;fontSize=11;fontFamily=Courier New;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="-110" y="-100" width="400" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="pNjHujQ3Tv-UeEQVwNHZ-9" value="ISSUES:" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=14;fontStyle=1;align=left;verticalAlign=top;spacingTop=5;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="340" y="-150" width="510" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="pNjHujQ3Tv-UeEQVwNHZ-10" value="❌ 150+ lines of template code (hard to maintain)&lt;br&gt;❌ Hardcoded addon names throughout template&lt;div&gt;&lt;br/&gt;&lt;/div&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;rounded=0;fontSize=13;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="350" y="-120" width="490" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="pNjHujQ3Tv-UeEQVwNHZ-11" value="Complexity Metrics" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=14;fontStyle=1;align=center;verticalAlign=top;spacingTop=5;" vertex="1" parent="1">
+          <mxGeometry x="340" y="-40" width="510" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="pNjHujQ3Tv-UeEQVwNHZ-12" value="• Lines of code: 150+&lt;br&gt;• If/else conditions: 20+&lt;br&gt;• Hardcoded addon names: 15+" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;rounded=0;fontSize=13;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="350" y="-10" width="490" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="pNjHujQ3Tv-UeEQVwNHZ-13" value="" style="shape=flexArrow;endArrow=classic;html=1;fillColor=#d5e8d4;strokeColor=#82b366;width=60;endSize=11.5;direction=south;endWidth=19;" edge="1" parent="1">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="100" y="270" as="sourcePoint" />
+            <mxPoint x="190" y="270" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="pNjHujQ3Tv-UeEQVwNHZ-14" value="NEW APPROACH" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=16;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="80" y="180" width="140" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="pNjHujQ3Tv-UeEQVwNHZ-15" value="AFTER: Data-Driven Generic Template (118 lines - 22% reduction)" style="text;html=1;strokeColor=none;fillColor=#d5e8d4;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=1;fontSize=18;fontStyle=1;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="-570" y="320" width="1440" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="pNjHujQ3Tv-UeEQVwNHZ-16" value="&amp;nbsp; &amp;nbsp; Metadata in addons-catalog.yaml (Data)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;fontStyle=1;align=left;verticalAlign=top;spacingTop=5;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="-550" y="390" width="480" height="250" as="geometry" />
+        </mxCell>
+        <mxCell id="pNjHujQ3Tv-UeEQVwNHZ-17" value="addons:&lt;br&gt;&amp;nbsp; - appName: datadog&lt;br&gt;&amp;nbsp; &amp;nbsp; repoURL: https://helm.datadoghq.com&lt;br&gt;&amp;nbsp; &amp;nbsp; chart: datadog&lt;br&gt;&amp;nbsp; &amp;nbsp; namespace: datadog&amp;nbsp; # Explicit (or defaults to appName)&lt;br&gt;&lt;br&gt;&amp;nbsp; - appName: istio-base&lt;br&gt;&amp;nbsp; &amp;nbsp; repoURL: https://istio-release.storage.googleapis.com/charts&lt;br&gt;&amp;nbsp; &amp;nbsp; chart: base&lt;br&gt;&amp;nbsp; &amp;nbsp; namespace: istio-system&lt;br&gt;&lt;br&gt;&amp;nbsp; - appName: otel&lt;br&gt;&amp;nbsp; &amp;nbsp; repoURL: https://open-telemetry.github.io/opentelemetry-helm-charts&lt;br&gt;&amp;nbsp; &amp;nbsp; chart: opentelemetry-operator&lt;br&gt;&amp;nbsp; &amp;nbsp; namespace: opentelemetry-operator-system&lt;div&gt;&lt;br/&gt;&lt;/div&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;rounded=0;fontSize=10;fontFamily=Courier New;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="-540" y="420" width="460" height="210" as="geometry" />
+        </mxCell>
+        <mxCell id="pNjHujQ3Tv-UeEQVwNHZ-18" value="&amp;nbsp; &amp;nbsp; Generic Template (No Hardcoded Logic)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;fontStyle=1;align=left;verticalAlign=top;spacingTop=5;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="-40" y="390" width="480" height="250" as="geometry" />
+        </mxCell>
+        <mxCell id="pNjHujQ3Tv-UeEQVwNHZ-19" value="# Namespace: One-liner (no if/else)&lt;br&gt;namespace: {{ $appset.namespace | default $appset.appName }}&lt;br&gt;&lt;br&gt;# Default values from global-values.yaml&lt;br&gt;helm:&lt;br&gt;&amp;nbsp; valueFiles:&lt;br&gt;&amp;nbsp; &amp;nbsp; - &#39;$values/configuration/addons-clusters-values/{{.name}}.yaml&#39;&lt;br&gt;&amp;nbsp; ignoreMissingValueFiles: true&lt;br&gt;&amp;nbsp; valuesObject:&lt;br&gt;&amp;nbsp; &amp;nbsp; {{- with index $.Values.addonsConfig.default $appset.appName }}&lt;br&gt;&amp;nbsp; &amp;nbsp; {{- toYaml . | nindent 14 }}&lt;br&gt;&amp;nbsp; &amp;nbsp; {{- end }}&lt;br&gt;&lt;br&gt;# Note: Some hardcoded logic remains (Istio sync waves,&lt;br&gt;# Datadog multi-source, Kyverno ServerSideApply)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;rounded=0;fontSize=10;fontFamily=Courier New;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="-20" y="420" width="460" height="240" as="geometry" />
+        </mxCell>
+        <mxCell id="pNjHujQ3Tv-UeEQVwNHZ-20" value="BENEFITS:" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;fontStyle=1;align=left;verticalAlign=top;spacingTop=5;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="470" y="390" width="400" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="pNjHujQ3Tv-UeEQVwNHZ-21" value="✅ 22% reduction in template code (150 → 118 lines)&lt;br&gt;✅ Configuration is self-documenting&lt;br&gt;✅ Generic, reusable template pattern&lt;br&gt;✅ Values via global-values.yaml + cluster files with YAML anchors" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;rounded=0;fontSize=12;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="480" y="420" width="380" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="pNjHujQ3Tv-UeEQVwNHZ-22" value="Complexity Metrics (After)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=14;fontStyle=1;align=center;verticalAlign=top;spacingTop=5;" vertex="1" parent="1">
+          <mxGeometry x="470" y="525" width="400" height="85" as="geometry" />
+        </mxCell>
+        <mxCell id="pNjHujQ3Tv-UeEQVwNHZ-23" value="• Lines of code: 118 (-22%)&lt;br&gt;• If/else conditions: 6+ (Istio sync waves, Datadog multi-source, Kyverno)&lt;br&gt;• Hardcoded addon names: Still present for special cases&lt;div&gt;&lt;br/&gt;&lt;/div&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;rounded=0;fontSize=12;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="470" y="560" width="380" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="pNjHujQ3Tv-UeEQVwNHZ-24a" value="Values Flow: global-values.yaml → Cluster Files → Template" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=15;fontStyle=1;align=center;verticalAlign=top;spacingTop=5;" vertex="1" parent="1">
+          <mxGeometry x="-560" y="640" width="1420" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="pNjHujQ3Tv-UeEQVwNHZ-24b" value="&amp;nbsp; &amp;nbsp; global-values.yaml (Default Values)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;fontStyle=1;align=left;verticalAlign=top;spacingTop=5;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="-560" y="680" width="470" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="pNjHujQ3Tv-UeEQVwNHZ-24c" value="# Injected via valuesObject&lt;br&gt;addonsConfig:&lt;br&gt;&amp;nbsp; default:&lt;br&gt;&amp;nbsp; &amp;nbsp; datadog:&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; clusterAgent:&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; envFrom:&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; - secretRef:&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; name: datadog-tags&lt;br&gt;&amp;nbsp; &amp;nbsp; kyverno:&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; replicaCount: 3" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;rounded=0;fontSize=10;fontFamily=Courier New;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="-550" y="710" width="450" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="pNjHujQ3Tv-UeEQVwNHZ-24d" value="&amp;nbsp; &amp;nbsp; configuration/addons-clusters-values/feedlot-dev.yaml" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;fontStyle=1;align=left;verticalAlign=top;spacingTop=5;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="-60" y="680" width="470" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="pNjHujQ3Tv-UeEQVwNHZ-24e" value="# YAML anchors for DRY principle&lt;br&gt;clusterGlobalValues:&lt;br&gt;&amp;nbsp; clusterName: &amp;amp;clusterName feedlot-dev&lt;br&gt;&amp;nbsp; env: &amp;amp;env dev&lt;br&gt;&amp;nbsp; region: &amp;amp;region eu-west-1&lt;br&gt;&lt;br&gt;datadog:&lt;br&gt;&amp;nbsp; datadog:&lt;br&gt;&amp;nbsp; &amp;nbsp; apiKeyExistingSecret: *clusterName&lt;br&gt;&amp;nbsp; &amp;nbsp; clusterName: *clusterName" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;rounded=0;fontSize=10;fontFamily=Courier New;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="-50" y="710" width="450" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="pNjHujQ3Tv-UeEQVwNHZ-24f" value="&amp;nbsp; &amp;nbsp; Result in ApplicationSet" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;fontStyle=1;align=left;verticalAlign=top;spacingTop=5;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="440" y="680" width="420" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="pNjHujQ3Tv-UeEQVwNHZ-24g" value="# Template injects default values&lt;br&gt;helm:&lt;br&gt;&amp;nbsp; valueFiles:&lt;br&gt;&amp;nbsp; &amp;nbsp; - &#39;$values/.../feedlot-dev.yaml&#39;&lt;br&gt;&amp;nbsp; valuesObject:&lt;br&gt;&amp;nbsp; &amp;nbsp; # From global-values.yaml&lt;br&gt;&amp;nbsp; &amp;nbsp; clusterAgent:&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; envFrom:&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; - secretRef:&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; name: datadog-tags" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;rounded=0;fontSize=10;fontFamily=Courier New;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="450" y="710" width="400" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="pNjHujQ3Tv-UeEQVwNHZ-24" value="Example: Adding a New Addon" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=15;fontStyle=1;align=center;verticalAlign=top;spacingTop=5;" vertex="1" parent="1">
+          <mxGeometry x="-560" y="890" width="1420" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="pNjHujQ3Tv-UeEQVwNHZ-25" value="BEFORE: Update template + data" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=13;fontStyle=1;align=left;verticalAlign=top;spacingTop=5;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="-560" y="940" width="680" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="pNjHujQ3Tv-UeEQVwNHZ-26" value="1. Add addon to addons-list.yaml&lt;br&gt;2. Update ApplicationSet template (add if/else for params if needed, namespace)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;rounded=0;fontSize=12;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="-550" y="965" width="660" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="pNjHujQ3Tv-UeEQVwNHZ-27" value="AFTER: Update data only" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;fontStyle=1;align=left;verticalAlign=top;spacingTop=5;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="140" y="940" width="680" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="pNjHujQ3Tv-UeEQVwNHZ-28" value="1. Add addon metadata to addons-catalog.yaml (name, chart, params, namespace )&lt;div&gt;&lt;br&gt;✅ Done! Template automatically handles it.&lt;/div&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;rounded=0;fontSize=12;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="150" y="965" width="660" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="pNjHujQ3Tv-UeEQVwNHZ-30" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;" edge="1" parent="1" source="pNjHujQ3Tv-UeEQVwNHZ-10" target="pNjHujQ3Tv-UeEQVwNHZ-10">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

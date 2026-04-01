@@ -1,0 +1,24 @@
+{
+    "name": "[ArgoCD Cluster Addons Host Cluster] ESO controller reconcile errors",
+    "type": "query alert",
+    "query": "sum(last_10m):sum:external_secrets.controller_runtime_reconcile_errors_total{*} by {kube_cluster_name}.as_count() > 10",
+    "message": "{{#is_alert}}\n🟡 [P2 WARNING] ESO controller reconcile errors on {{kube_cluster_name.name}}\n\nMore than 10 reconciliation errors in the last 10 minutes. This may indicate RBAC issues, CRD conflicts, or resource problems.\n\nActions:\n1. kubectl logs -n external-secrets -l app.kubernetes.io/name=external-secrets --tail=100\n2. kubectl get events -n external-secrets --sort-by=.lastTimestamp\n3. Check ESO Health dashboard → Logs section\n{{/is_alert}}\n{{#is_recovery}}\n✅ RECOVERED: ESO reconcile errors back to normal on {{kube_cluster_name.name}}\n{{/is_recovery}}\n\n@moran.weissman@msd.com @microsoft-teams-ArgocdClusterAddonsNonProd",
+    "tags": [
+        "platform:devex",
+        "kubernetes",
+        "service:argocd-cluster-addons",
+        "component:argocd-cluster-addons-host"
+    ],
+    "options": {
+        "thresholds": {
+            "critical": 10,
+            "warning": 5
+        },
+        "notify_audit": false,
+        "on_missing_data": "default",
+        "include_tags": true,
+        "new_group_delay": 60
+    },
+    "priority": 2,
+    "draft_status": "published"
+}

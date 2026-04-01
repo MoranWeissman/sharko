@@ -1,0 +1,28 @@
+# Cluster identity — passed by the ApplicationSet
+clusterName: ""
+
+# Comma-separated list of addon namespaces enabled on this cluster.
+# Built dynamically by the ApplicationSet from cluster labels.
+# Used as availableValues for the dashboard namespace filter
+# and as scope for monitors.
+# Example: ",datadog,keda,istio-system,external-secrets"
+addonNamespaces: ""
+
+# Notification targets for monitors (Datadog @-handles).
+# Appended to every monitor message. Leave empty for no notifications.
+# Examples: "@slack-platform-alerts @teams-devops-oncall @user@company.com"
+notificationHandles: ""
+
+# Which dashboards to create on this cluster.
+dashboards:
+  # Addon Deployment Health — shows pods, logs, events for addons on this cluster
+  addonDeployment:
+    enabled: false
+  # ESO Health — pods, events, logs for the external-secrets namespace
+  esoHealth:
+    enabled: false
+
+# Which monitors to create on this cluster.
+monitors:
+  addonDeployment:
+    enabled: false

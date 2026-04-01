@@ -1,0 +1,372 @@
+# =================================================================================== #
+# Global Values (used by all addons)
+# Define YAML anchors with & for reuse across addon configurations
+# Use YAML anchors (*clusterName, *region, etc.) to reference a complete value object
+# (as a standalone value and not part of a string)
+# =================================================================================== #
+clusterGlobalValues:
+  env: &env dev
+  clusterName: &clusterName cluster-example
+  region: &region eu-west-1
+  projectName: example  # Used for Datadog API key lookup in AWS Secrets Manager
+  accountId: 123456789012
+
+# ================================================================ #
+# Addon-specific overrides
+# These override the default values from addons-global-values/
+# Uncomment and customize as needed for your addons
+# ================================================================ #
+
+# ================================================================ #
+# ------------------- Anodot Configuration ------------------- #
+# ================================================================ #
+anodot:
+  config:
+    clusterName: *clusterName
+    clusterRegion: *region
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/anodot-cluster-example-eu-west-1
+
+# ================================================================ #
+# ------------------- Argo Events Configuration ------------------- #
+# ================================================================ #
+argo-events:
+  controller:
+    resources:
+      requests:
+        cpu: 250m
+        memory: 256Mi
+      limits:
+        memory: 512Mi
+    nodeSelector: {}
+    tolerations: []
+  configs:
+    jetstream:
+      streamConfig:
+        maxBytes: 2GB
+        replicas: 3
+
+# ================================================================ #
+# ------------------- Argo Rollouts Configuration ------------------- #
+# ================================================================ #
+argo-rollouts:
+  controller:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        memory: 256Mi
+    replicas: 2
+    nodeSelector: {}
+    tolerations: []
+
+# ================================================================ #
+# ------------------- Argo Workflows Configuration ------------------- #
+# ================================================================ #
+argo-workflows:
+  server:
+    authModes:
+      - server
+      - client
+    ingress:
+      enabled: true
+      hosts:
+        - argo-workflows.<cluster>.example.com
+    resources: {}
+  controller:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        memory: 512Mi
+    parallelism: 50
+    workflowNamespaces:
+      - default
+  workflow:
+    serviceAccount:
+      create: true
+      annotations:
+        eks.amazonaws.com/role-arn: arn:aws:iam::<accountId>:role/<clusterName>-argo-workflows
+
+# ================================================================ #
+# ------------------- Cert Manager Configuration ------------------- #
+# ================================================================ #
+cert-manager:
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::<accountId>:role/cert-manager-<clusterName>
+  dns01RecursiveNameservers: "8.8.8.8:53,1.1.1.1:53"
+  dns01RecursiveNameserversOnly: true
+  nodeSelector: {}
+  tolerations: []
+
+# ================================================================ #
+# ------------------- Datadog Configuration ------------------- #
+# ================================================================ #
+datadog:
+  datadog:
+    clusterName: *clusterName
+    # Project namespaces for log collection (addon namespaces are added automatically)
+    projectNamespaces: 'example'
+    # ---- Datadog Operator ---- #
+    # Enable to deploy DatadogDashboard and DatadogMonitor CRDs on this cluster
+    # operator:
+    #   enabled: true
+    #   # Notification targets for addon deployment monitors (Datadog @-handles)
+    #   # Examples: @slack-platform-alerts  @teams-devops-oncall  @user@company.com
+    #   notificationHandles: ''
+    apm:
+      portEnabled: true
+      instrumentation:
+        enabled: true
+        enabledNamespaces:
+          - my-app
+    profiling:
+      enabled: true
+
+  # IRSA for Cluster Agent
+  clusterAgent:
+    rbac:
+      serviceAccountAnnotations:
+        eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/Datadog-Agent-cluster-example"
+    resources:
+      limits:
+        memory: 1Gi
+      requests:
+        cpu: 200m
+        memory: 512Mi
+    admissionController:
+      enabled: false
+
+  # IRSA for Node Agents DaemonSet
+  agents:
+    rbac:
+      serviceAccountAnnotations:
+        eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/Datadog-Agent-cluster-example"
+
+# ================================================================ #
+# ------------------- External DNS Configuration ------------------- #
+# ================================================================ #
+external-dns:
+  domainFilters:
+    - <cluster>.example.com
+  txtOwnerId: "<cluster-name>"
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::<accountId>:role/external-dns-<clusterName>
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 128Mi
+
+# ================================================================ #
+# ------------------- External Secrets Configuration ------------------- #
+# ================================================================ #
+external-secrets:
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/example-secretsmanager-sa-dev"
+
+# ================================================================ #
+# ------------------- Istio Base Configuration ------------------- #
+# ================================================================ #
+istio-base:
+  defaultRevision: "1-28-0"
+
+# ================================================================ #
+# ------------------- Istio CNI Configuration ------------------- #
+# ================================================================ #
+istio-cni:
+  excludeNamespaces:
+    - kube-system
+    - custom-namespace
+  resources:
+    requests:
+      cpu: 100m
+      memory: 100Mi
+
+# ================================================================ #
+# ------------------- Istio Ingress Configuration ------------------- #
+# ================================================================ #
+istio-ingress:
+  service:
+    type: LoadBalancer
+    annotations:
+      service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+      service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 5
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+# ================================================================ #
+# ------------------- Istiod Configuration ------------------- #
+# ================================================================ #
+istiod:
+  pilot:
+    autoscaleMin: 2
+    autoscaleMax: 10
+    resources:
+      requests:
+        cpu: 1000m
+        memory: 4096Mi
+  global:
+    meshConfig:
+      accessLogFile: /dev/stdout
+      accessLogEncoding: JSON
+      defaultConfig:
+        holdApplicationUntilProxyStarts: true
+    proxy:
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 2000m
+          memory: 1024Mi
+    multiCluster:
+      clusterName: <cluster-name>
+
+# ================================================================ #
+# ------------------- Kafka UI Configuration ------------------- #
+# ================================================================ #
+kafka-ui:
+  yamlApplicationConfig:
+    kafka:
+      clusters:
+        - name: my-cluster-kafka
+          bootstrapServers: kafka-broker:9092
+          schemaRegistry: http://schema-registry:8081
+  ingress:
+    enabled: true
+    host: kafka-ui.<cluster>.example.com
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
+# ================================================================ #
+# ------------------- Karpenter Configuration ------------------- #
+# ================================================================ #
+  # CRDs-only chart — typically no per-cluster overrides needed
+  # See chart README in JFrog for available values
+
+# ================================================================ #
+# ------------------- KEDA Configuration ------------------- #
+# ================================================================ #
+keda:
+  serviceAccount:
+    operator:
+      annotations:
+        eks.amazonaws.com/role-arn: arn:aws:iam::<accountId>:role/keda-<clusterName>
+  operator:
+    resources:
+      requests:
+        cpu: 200m
+        memory: 256Mi
+      limits:
+        cpu: 1
+        memory: 1000Mi
+  metricsServer:
+    resources:
+      requests:
+        cpu: 200m
+        memory: 256Mi
+  prometheus:
+    operator:
+      enabled: true
+      serviceMonitor:
+        enabled: true
+
+# ================================================================ #
+# ------------------- Kyverno Configuration ------------------- #
+# ================================================================ #
+kyverno:
+  admissionController:
+    replicas: 2
+    container:
+      resources:
+        requests:
+          cpu: 200m
+          memory: 256Mi
+        limits:
+          memory: 512Mi
+    serviceMonitor:
+      enabled: true
+  config:
+    resourceFiltersIncludeNamespaces:
+      - "[*/*,argocd,*]"
+      - "[*/*,custom-namespace,*]"
+  features:
+    logging:
+      format: json
+
+# ================================================================ #
+# ------------------- Redis Insight V2 Configuration ------------------- #
+# ================================================================ #
+redis-insight-v2:
+  ingress:
+    oldClusterVersionSupport: false
+    host: "example-redisinsight-v2-dev.mahi-techlabs.com"
+    sgGroupName: "example-alb-offices"
+    svcPort: 38001
+
+# ================================================================ #
+# ------------------- Redis Insight (v1) Configuration ------------------- #
+# ================================================================ #
+redisinsight:
+  ingress:
+    enabled: true
+    host: redisinsight.<cluster>.example.com
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+# ================================================================ #
+# ------------------- Secrets Store CSI Driver Configuration ------------------- #
+# ================================================================ #
+secrets-store-csi-driver:
+  rotationPollInterval: 2m
+  linux:
+    driver:
+      resources:
+        requests:
+          cpu: 50m
+          memory: 100Mi
+        limits:
+          cpu: 200m
+          memory: 200Mi
+
+# ================================================================ #
+# ------------------- SSCDP AWS Configuration ------------------- #
+# ================================================================ #
+sscdp-aws:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 100Mi
+    limits:
+      cpu: 100m
+      memory: 200Mi
+  tolerations: []
+  kubeletPath: /var/lib/kubelet

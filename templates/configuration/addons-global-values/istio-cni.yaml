@@ -1,0 +1,62 @@
+# ====================================================================== #
+# Istio CNI Global Values
+# ====================================================================== #
+# Chart: cni
+# Repo: https://istio-release.storage.googleapis.com/charts
+# Version: 1.28.0
+# Namespace: istio-system
+# Docs: https://istio.io/latest/docs/setup/additional-setup/cni/
+#
+# These values apply to ALL clusters unless overridden per-cluster
+# in addons-clusters-values/<cluster-name>.yaml
+#
+# Istio CNI plugin handles pod networking for the mesh,
+# removing the need for init containers with NET_ADMIN capability.
+# ====================================================================== #
+
+# ---- CNI Config ---- #
+# Exclude specific namespaces from CNI interception
+# excludeNamespaces:
+#   - kube-system
+
+# Log level
+# global:
+#   logging:
+#     level: info
+
+# ---- Resources ---- #
+# Requests match upstream defaults; memory limit added as safeguard
+resources:
+  requests:
+    cpu: 100m
+    memory: 100Mi
+  limits:
+    memory: 256Mi
+
+# ---- Repair (auto-fix broken pods) ---- #
+# repair:
+#   enabled: true
+#   repairPods: true
+
+# ---- Ambient Mode ---- #
+# ambient:
+#   enabled: false
+
+# ---- Pod Scheduling ---- #
+# affinity: {}
+# tolerations: []
+
+# ====================================================================== #
+# Cluster-Specific Overrides Reference
+# ====================================================================== #
+# Copy the relevant sections below into your cluster values file:
+#   addons-clusters-values/<cluster-name>.yaml
+#
+# istio-cni:
+#   excludeNamespaces:
+#     - kube-system
+#     - custom-namespace
+#   resources:
+#     requests:
+#       cpu: 100m
+#       memory: 100Mi

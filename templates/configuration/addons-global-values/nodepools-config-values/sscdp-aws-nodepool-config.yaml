@@ -1,0 +1,16 @@
+# ---- Secrets Store CSI Driver Provider AWS EKS Auto Mode infra-karpenter Overrides ---- #
+#
+# IMPORTANT: The AWS provider DaemonSet must run on ALL nodes (not just infrastructure)
+# because it works alongside the CSI driver on every node.
+# Only add toleration (no nodeSelector) so it schedules everywhere.
+#
+# Components and their scheduling:
+#   provider DaemonSet    → ALL nodes (no nodeSelector, only toleration)
+#
+
+# AWS Provider DaemonSet - must run on ALL nodes
+tolerations:
+  - key: infrastructure
+    operator: Equal
+    value: "true"
+    effect: NoSchedule

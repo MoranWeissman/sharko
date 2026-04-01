@@ -1,0 +1,14 @@
+# ---- RedisInsight V2 EKS Auto Mode infra-karpenter Overrides ---- #
+#
+# Components and their scheduling:
+#   app    → infrastructure nodes (nodeSelector + toleration)
+#
+
+# RedisInsight V2
+nodeSelector:
+  node-type: infrastructure
+tolerations:
+  - key: infrastructure
+    operator: Equal
+    value: "true"
+    effect: NoSchedule

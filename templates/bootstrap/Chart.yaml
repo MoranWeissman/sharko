@@ -1,0 +1,8 @@
+apiVersion: v2
+name: cluster-addons-bootstrap
+description: Bootstrap chart for ArgoCD cluster addons management
+type: application
+version: 1.0.0
+maintainers:
+  - name: moran.weissman
+    email: moran.weissman@merck.com
