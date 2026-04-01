@@ -8,7 +8,6 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/ai"
 	"github.com/MoranWeissman/sharko/internal/config"
-	"github.com/MoranWeissman/sharko/internal/datadog"
 	"github.com/MoranWeissman/sharko/internal/service"
 )
 
@@ -23,8 +22,7 @@ func newTestServer() *Server {
 	upgradeSvc := service.NewUpgradeService(ai.NewClient(ai.Config{}))
 
 	aiClient := ai.NewClient(ai.Config{})
-	ddClient := datadog.NewClient(datadog.Config{})
-	return NewServer(connSvc, clusterSvc, addonSvc, dashboardSvc, observabilitySvc, upgradeSvc, aiClient, ddClient, nil)
+	return NewServer(connSvc, clusterSvc, addonSvc, dashboardSvc, observabilitySvc, upgradeSvc, aiClient)
 }
 
 func TestHealthEndpoint(t *testing.T) {
