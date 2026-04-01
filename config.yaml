@@ -1,42 +1,10 @@
-# ArgoCD Addons Platform - Connection Configuration
-# Copy this to config.yaml and fill in your values.
-# Environment variables (e.g., ${GITHUB_TOKEN}) are expanded at runtime.
-
+# Sharko configuration (local development)
 connections:
   - name: dev
     default: true
     git:
       provider: github
-      owner: merck-ahtl
-      repo: argocd-cluster-addons
-      token: ${GITHUB_TOKEN}
+      owner: your-org
+      repo: your-addons-repo
     argocd:
-      server_url: https://devops-argocd-addons-none-prod.mahi-techlabs.com
-      token: ${ARGOCD_TOKEN}
-      namespace: argocd
-      insecure: true  # Skip TLS verification for self-signed certs
-
-  # Example: additional connection for prod
-  # - name: prod
-  #   git:
-  #     provider: github
-  #     owner: merck-ahtl
-  #     repo: argocd-cluster-addons
-  #     token: ${GITHUB_TOKEN}
-  #   argocd:
-  #     server_url: https://argocd-prod.example.com
-  #     token: ${ARGOCD_PROD_TOKEN}
-  #     namespace: argocd
-
-  # Example: Azure DevOps connection (legacy)
-  # - name: azure-legacy
-  #   git:
-  #     provider: azuredevops
-  #     organization: https://dev.azure.com/AHITL
-  #     project: DevOps
-  #     repository: argocd-cluster-addons
-  #     pat: ${AZURE_DEVOPS_PAT}
-  #   argocd:
-  #     server_url: https://argocd.example.com
-  #     token: ${ARGOCD_TOKEN}
-  #     namespace: argocd
+      server_url: https://argocd.example.com
