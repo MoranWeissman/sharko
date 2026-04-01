@@ -5,12 +5,10 @@ import type {
   AvailableVersionsResponse,
   ClusterComparisonResponse,
   ClusterDetailResponse,
-  ClusterMetricsData,
   ClustersResponse,
   ConfigDiffResponse,
   ConnectionsListResponse,
   DashboardStats,
-  DatadogNamespaceMetrics,
   ObservabilityOverviewResponse,
   PullRequestsResponse,
   UpgradeCheckResponse,
@@ -159,10 +157,6 @@ export const api = {
   testAI: () => postJSON<{ status: string; response: string }>('/ai/test', {}),
   testAIConfig: (data: { provider: string; api_key?: string; model?: string; base_url?: string; ollama_url?: string }) => postJSON<{ status: string; message?: string; response?: string }>('/ai/test-config', data),
 
-  // Datadog
-  getDatadogStatus: () => fetchJSON<{ enabled: boolean; site: string }>('/datadog/status'),
-  getDatadogNamespaceMetrics: (namespace: string) => fetchJSON<DatadogNamespaceMetrics>(`/datadog/metrics/${namespace}`),
-  getClusterMetrics: (clusterName: string) => fetchJSON<ClusterMetricsData>(`/datadog/cluster-metrics/${clusterName}`),
 
   // Auth
   updatePassword: (currentPassword: string, newPassword: string) => postJSON<{ status: string }>('/auth/update-password', { current_password: currentPassword, new_password: newPassword }),
@@ -171,23 +165,6 @@ export const api = {
   agentChat: (sessionId: string, message: string, pageContext?: string) => postJSON<{ session_id: string; response: string }>('/agent/chat', { session_id: sessionId, message, page_context: pageContext }),
   agentReset: (sessionId: string) => postJSON<{ status: string }>('/agent/reset', { session_id: sessionId }),
 
-  // Migration
-  getMigrationSettings: () => fetchJSON<MigrationSettings>('/migration/settings'),
-  saveMigrationSettings: (settings: MigrationSettings) => postJSON<void>('/migration/settings', settings),
-  testMigrationConnection: () => postJSON<{ git: boolean; argocd: boolean }>('/migration/settings/test'),
-  listMigrations: () => fetchJSON<Migration[]>('/migration/list'),
-  startMigration: (data: { addon_name: string; cluster_name: string; mode?: string }) => postJSON<Migration>('/migration/start', data),
-  getMigration: (id: string) => fetchJSON<Migration>(`/migration/${id}`),
-  continueMigration: (id: string) => postJSON<void>(`/migration/${id}/continue`),
-  pauseMigration: (id: string) => postJSON<void>(`/migration/${id}/pause`),
-  retryMigration: (id: string) => postJSON<void>(`/migration/${id}/retry`),
-  cancelMigration: (id: string) => postJSON<void>(`/migration/${id}/cancel`),
-  mergeMigrationPR: (id: string, step: number) => postJSON<{ status: string }>(`/migration/${id}/merge-pr`, { step }),
-  migrationChat: (id: string, message: string) => postJSON<{ response: string }>(`/migration/${id}/chat`, { message }),
-  rollbackMigration: (id: string) => postJSON<Migration>(`/migration/${id}/rollback`),
-  deleteMigration: (id: string) => deleteJSON<void>(`/migration/${id}`),
-  azureListProjects: (org: string, pat: string) => fetchJSON<string[]>(`/migration/azure/projects?org=${encodeURIComponent(org)}&pat=${encodeURIComponent(pat)}`),
-  azureListRepos: (org: string, project: string, pat: string) => fetchJSON<string[]>(`/migration/azure/repos?org=${encodeURIComponent(org)}&project=${encodeURIComponent(project)}&pat=${encodeURIComponent(pat)}`),
   // Users
   listUsers: () => fetchJSON<{ username: string; enabled: boolean; role: string }[]>('/users'),
   createUser: (data: { username: string; role: string }) => postJSON<{ username: string; temp_password: string; message: string }>('/users', data),
@@ -211,86 +188,4 @@ export const api = {
   docsList: () => fetchJSON<{ slug: string; title: string; order: number }[]>('/docs/list'),
   docsGet: (slug: string) => fetchJSON<{ slug: string; content: string }>(`/docs/${encodeURIComponent(slug)}`),
 
-  oldRepoAddons: () => fetchJSON<string[]>('/migration/old-repo/addons'),
-  oldRepoClusters: () => fetchJSON<string[]>('/migration/old-repo/clusters'),
-  oldRepoClusterAddons: (cluster: string) => fetchJSON<ClusterAddonInfo[]>(`/migration/old-repo/cluster-addons?cluster=${encodeURIComponent(cluster)}`),
-  startBatch: (data: { addons: string[]; cluster_name: string; mode: string }) =>
-    postJSON<MigrationBatch>('/migration/start-batch', data),
-  getActiveBatch: () => fetchJSON<MigrationBatch | null>('/migration/batch-active'),
-}
-
-export interface ClusterAddonInfo {
-  name: string
-  already_migrated: boolean
-}
-
-export interface MigrationBatch {
-  id: string
-  cluster_name: string
-  mode: string
-  addons: string[]
-  migration_ids: string[]
-  current_index: number
-  status: string
-  created_at: string
-  updated_at: string
-}
-
-// Migration types
-export interface LogEntry {
-  timestamp: string
-  step: number
-  repo: string
-  action: string
-  detail: string
-}
-
-export interface MigrationStep {
-  number: number
-  title: string
-  description: string
-  status: 'pending' | 'running' | 'waiting' | 'completed' | 'failed' | 'skipped'
-  message: string
-  pr_url?: string
-  pr_number?: number
-  pr_repo?: string
-  pr_status?: string
-  started_at?: string
-  completed_at?: string
-  error?: string
-}
-
-export interface Migration {
-  id: string
-  addon_name: string
-  cluster_name: string
-  mode: string
-  status: 'pending' | 'running' | 'waiting' | 'paused' | 'gated' | 'completed' | 'failed' | 'cancelled'
-  current_step: number
-  steps: MigrationStep[]
-  logs: LogEntry[]
-  created_at: string
-  updated_at: string
-  completed_at?: string
-  error?: string
-}
-
-export interface MigrationSettings {
-  old_git: {
-    provider: string
-    owner?: string
-    repo?: string
-    token?: string
-    organization?: string
-    project?: string
-    repository?: string
-    pat?: string
-  }
-  old_argocd: {
-    server_url: string
-    token: string
-    namespace: string
-    insecure?: boolean
-  }
-  configured: boolean
 }

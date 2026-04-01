@@ -25,8 +25,6 @@ import type {
   AddonGroupHealth,
   ResourceAlert,
   SyncActivityEntry,
-  AddonMetricsData,
-  ClusterMetricsData,
 } from '@/services/models';
 import { LoadingState } from '@/components/LoadingState';
 import { ErrorState } from '@/components/ErrorState';
@@ -251,52 +249,6 @@ function ResourceAlertsSection({ alerts }: { alerts: ResourceAlert[] }) {
 // Resource usage bar: green (usage<=request), yellow (request<usage<=limit), red (>limit), gray (remaining)
 // ---------------------------------------------------------------------------
 
-function ResourceUsageBar({
-  usage,
-  request,
-  limit,
-  label,
-  unit,
-  decimals = 2,
-}: {
-  usage: number;
-  request: number;
-  limit: number;
-  label: string;
-  unit: string;
-  decimals?: number;
-}) {
-  const max = Math.max(limit, usage, request, 0.001);
-  const usagePct = Math.min((usage / max) * 100, 100);
-  const requestPct = Math.min((request / max) * 100, 100);
-
-  // Determine bar color based on usage vs request vs limit
-  let barColor = '#22c55e'; // green: usage <= request
-  if (usage > request && request > 0) barColor = '#f59e0b'; // yellow: above request
-  if (usage > limit && limit > 0) barColor = '#ef4444'; // red: above limit
-
-  return (
-    <div className="flex items-center gap-2" title={`${label}: ${usage.toFixed(decimals)} / ${request.toFixed(decimals)} / ${limit.toFixed(decimals)} ${unit}`}>
-      <div className="relative h-2.5 w-20 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
-        {/* Usage bar */}
-        <div
-          className="absolute left-0 top-0 h-full rounded-full transition-all"
-          style={{ width: `${usagePct}%`, backgroundColor: barColor }}
-        />
-        {/* Request marker line */}
-        {request > 0 && (
-          <div
-            className="absolute top-0 h-full border-r-2 border-dashed border-gray-500 dark:border-gray-400"
-            style={{ left: `${requestPct}%` }}
-          />
-        )}
-      </div>
-      <span className="whitespace-nowrap text-[10px] text-gray-500 dark:text-gray-400">
-        {usage.toFixed(decimals)}<span className="text-gray-400 dark:text-gray-500"> / {request.toFixed(decimals)} / {limit.toFixed(decimals)}</span> {unit}
-      </span>
-    </div>
-  );
-}
 
 type GroupBy = 'addon' | 'cluster';
 
@@ -318,14 +270,6 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
   const [sortMode, setSortMode] = useState<'issues' | 'alpha'>('issues');
   const [groupBy, setGroupBy] = useState<GroupBy>('addon');
   const [visibleCount, setVisibleCount] = useState(10);
-  const [ddEnabled, setDdEnabled] = useState<boolean | null>(null);
-  // Cache: clusterName -> data (or null if fetch failed/empty)
-  const [clusterMetricsCache, setClusterMetricsCache] = useState<Record<string, ClusterMetricsData | null>>({});
-  const [loadingClusters, setLoadingClusters] = useState<Set<string>>(new Set());
-
-  useEffect(() => {
-    api.getDatadogStatus().then((s) => setDdEnabled(s.enabled)).catch(() => setDdEnabled(false));
-  }, []);
 
   // Pivot data: group by cluster instead of addon
   const clusterGroups = useMemo((): ClusterGroup[] => {
@@ -375,26 +319,6 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
     return copy;
   }, [clusterGroups, sortMode]);
 
-  const fetchClusterMetrics = useCallback((clusterNames: string[]) => {
-    if (!ddEnabled) return;
-    for (const cn of clusterNames) {
-      if (cn in clusterMetricsCache || loadingClusters.has(cn)) continue;
-      setLoadingClusters((prev) => new Set(prev).add(cn));
-      api.getClusterMetrics(cn).then((data) => {
-        setClusterMetricsCache((prev) => ({ ...prev, [cn]: data }));
-      }).catch(() => {
-        // Mark as fetched-but-empty so we don't retry and don't show "..."
-        setClusterMetricsCache((prev) => ({ ...prev, [cn]: null }));
-      }).finally(() => {
-        setLoadingClusters((prev) => {
-          const next = new Set(prev);
-          next.delete(cn);
-          return next;
-        });
-      });
-    }
-  }, [ddEnabled, clusterMetricsCache, loadingClusters]);
-
   const toggle = (name: string) => {
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -402,15 +326,6 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
         next.delete(name);
       } else {
         next.add(name);
-        if (groupBy === 'addon') {
-          const group = groups.find((g) => g.addon_name === name);
-          if (group?.child_apps) {
-            const clusters = [...new Set(group.child_apps.map((c) => c.cluster_name))];
-            fetchClusterMetrics(clusters);
-          }
-        } else {
-          fetchClusterMetrics([name]);
-        }
       }
       return next;
     });
@@ -422,11 +337,6 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
     setExpanded(new Set());
   };
 
-  const getAddonMetrics = (clusterName: string, addonName: string): AddonMetricsData | undefined => {
-    const cm = clusterMetricsCache[clusterName];
-    if (!cm?.addons) return undefined;
-    return cm.addons.find((a) => a.namespace === addonName || a.addon_name === addonName);
-  };
 
   if (!groups || groups.length === 0) {
     return null;
@@ -544,21 +454,12 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
                           <th className="pb-2 font-medium">Cluster</th>
                           <th className="pb-2 font-medium">Health</th>
                           <th className="pb-2 font-medium">Sync</th>
-                          {ddEnabled ? (
-                            <>
-                              <th className="pb-2 font-medium">CPU (use / req / lim)</th>
-                              <th className="pb-2 font-medium">Memory (use / req / lim)</th>
-                              <th className="pb-2 font-medium">Pods</th>
-                            </>
-                          ) : (
-                            <th className="pb-2 font-medium">Resources</th>
-                          )}
+                          <th className="pb-2 font-medium">Resources</th>
                           <th className="pb-2 font-medium">Last Reconciled</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
                         {group.child_apps.map((child) => {
-                          const am = ddEnabled ? getAddonMetrics(child.cluster_name, group.addon_name) : undefined;
                           return (
                             <tr
                               key={child.app_name}
@@ -577,35 +478,17 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
                                   {child.sync_status || 'Unknown'}
                                 </span>
                               </td>
-                              {ddEnabled && am ? (
-                                <>
-                                  <td className="py-2 pr-3">
-                                    <ResourceUsageBar usage={am.cpu_usage_cores} request={am.cpu_request_cores} limit={am.cpu_limit_cores} label="CPU" unit="cores" decimals={3} />
-                                  </td>
-                                  <td className="py-2 pr-3">
-                                    <ResourceUsageBar usage={am.mem_usage_mb} request={am.mem_request_mb} limit={am.mem_limit_mb} label="Mem" unit="MB" decimals={0} />
-                                  </td>
-                                  <td className="py-2 pr-3 text-gray-600 dark:text-gray-300">{am.pod_count}</td>
-                                </>
-                              ) : ddEnabled && !am ? (
-                                <>
-                                  <td className="py-2 pr-3 text-gray-400">{loadingClusters.has(child.cluster_name) ? '...' : '--'}</td>
-                                  <td className="py-2 pr-3 text-gray-400">{loadingClusters.has(child.cluster_name) ? '...' : '--'}</td>
-                                  <td className="py-2 pr-3 text-gray-400">{loadingClusters.has(child.cluster_name) ? '...' : '--'}</td>
-                                </>
-                              ) : (
-                                <td className="py-2 pr-3 text-gray-500 dark:text-gray-400">
-                                  {child.resource_summary.total_pods > 0 && (
-                                    <span>{child.resource_summary.running_pods}/{child.resource_summary.total_pods} pods</span>
-                                  )}
-                                  {child.resource_summary.total_pods === 0 && child.resource_summary.total_containers > 0 && (
-                                    <span>{child.resource_summary.total_containers} workloads</span>
-                                  )}
-                                  {child.resource_summary.total_pods === 0 && child.resource_summary.total_containers === 0 && (
-                                    <span className="text-gray-400">--</span>
-                                  )}
-                                </td>
-                              )}
+                              <td className="py-2 pr-3 text-gray-500 dark:text-gray-400">
+                                {child.resource_summary.total_pods > 0 && (
+                                  <span>{child.resource_summary.running_pods}/{child.resource_summary.total_pods} pods</span>
+                                )}
+                                {child.resource_summary.total_pods === 0 && child.resource_summary.total_containers > 0 && (
+                                  <span>{child.resource_summary.total_containers} workloads</span>
+                                )}
+                                {child.resource_summary.total_pods === 0 && child.resource_summary.total_containers === 0 && (
+                                  <span className="text-gray-400">--</span>
+                                )}
+                              </td>
                               <td className="py-2 text-gray-400">
                                 {child.reconciled_at ? timeAgo(child.reconciled_at) : '--'}
                               </td>
@@ -692,21 +575,12 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
                             <th className="pb-2 font-medium">Addon</th>
                             <th className="pb-2 font-medium">Health</th>
                             <th className="pb-2 font-medium">Sync</th>
-                            {ddEnabled ? (
-                              <>
-                                <th className="pb-2 font-medium">CPU (use / req / lim)</th>
-                                <th className="pb-2 font-medium">Memory (use / req / lim)</th>
-                                <th className="pb-2 font-medium">Pods</th>
-                              </>
-                            ) : (
-                              <th className="pb-2 font-medium">Resources</th>
-                            )}
+                            <th className="pb-2 font-medium">Resources</th>
                             <th className="pb-2 font-medium">Last Reconciled</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
                           {cg.addons.map((addon) => {
-                            const am = ddEnabled ? getAddonMetrics(cg.cluster_name, addon.addon_name) : undefined;
                             return (
                               <tr
                                 key={addon.app_name}
@@ -725,35 +599,17 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
                                     {addon.sync_status || 'Unknown'}
                                   </span>
                                 </td>
-                                {ddEnabled && am ? (
-                                  <>
-                                    <td className="py-2 pr-3">
-                                      <ResourceUsageBar usage={am.cpu_usage_cores} request={am.cpu_request_cores} limit={am.cpu_limit_cores} label="CPU" unit="cores" decimals={3} />
-                                    </td>
-                                    <td className="py-2 pr-3">
-                                      <ResourceUsageBar usage={am.mem_usage_mb} request={am.mem_request_mb} limit={am.mem_limit_mb} label="Mem" unit="MB" decimals={0} />
-                                    </td>
-                                    <td className="py-2 pr-3 text-gray-600 dark:text-gray-300">{am.pod_count}</td>
-                                  </>
-                                ) : ddEnabled && !am ? (
-                                  <>
-                                    <td className="py-2 pr-3 text-gray-400">{loadingClusters.has(cg.cluster_name) ? '...' : '--'}</td>
-                                    <td className="py-2 pr-3 text-gray-400">{loadingClusters.has(cg.cluster_name) ? '...' : '--'}</td>
-                                    <td className="py-2 pr-3 text-gray-400">{loadingClusters.has(cg.cluster_name) ? '...' : '--'}</td>
-                                  </>
-                                ) : (
-                                  <td className="py-2 pr-3 text-gray-500 dark:text-gray-400">
-                                    {addon.resource_summary.total_pods > 0 && (
-                                      <span>{addon.resource_summary.running_pods}/{addon.resource_summary.total_pods} pods</span>
-                                    )}
-                                    {addon.resource_summary.total_pods === 0 && addon.resource_summary.total_containers > 0 && (
-                                      <span>{addon.resource_summary.total_containers} workloads</span>
-                                    )}
-                                    {addon.resource_summary.total_pods === 0 && addon.resource_summary.total_containers === 0 && (
-                                      <span className="text-gray-400">--</span>
-                                    )}
-                                  </td>
-                                )}
+                                <td className="py-2 pr-3 text-gray-500 dark:text-gray-400">
+                                  {addon.resource_summary.total_pods > 0 && (
+                                    <span>{addon.resource_summary.running_pods}/{addon.resource_summary.total_pods} pods</span>
+                                  )}
+                                  {addon.resource_summary.total_pods === 0 && addon.resource_summary.total_containers > 0 && (
+                                    <span>{addon.resource_summary.total_containers} workloads</span>
+                                  )}
+                                  {addon.resource_summary.total_pods === 0 && addon.resource_summary.total_containers === 0 && (
+                                    <span className="text-gray-400">--</span>
+                                  )}
+                                </td>
                                 <td className="py-2 text-gray-400">
                                   {addon.reconciled_at ? timeAgo(addon.reconciled_at) : '--'}
                                 </td>

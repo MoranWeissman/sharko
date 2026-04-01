@@ -103,8 +103,6 @@ vi.mock('@/services/api', () => ({
         },
       ],
     }),
-    getDatadogStatus: vi.fn().mockResolvedValue({ enabled: false, site: "" }),
-    getClusterMetrics: vi.fn().mockResolvedValue({ cluster_name: "", addons: [] }),
   },
 }));
 

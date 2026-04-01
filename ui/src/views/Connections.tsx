@@ -12,7 +12,6 @@ import {
   Monitor,
   Globe,
   Sparkles,
-  BarChart2,
   CheckCircle,
   XCircle,
 } from 'lucide-react'
@@ -650,13 +649,6 @@ export function Connections() {
         <AIConfigSection />
       </section>
 
-      {/* Datadog Metrics */}
-      <section className="space-y-4">
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-          Datadog Metrics
-        </h3>
-        <DatadogConfigSection />
-      </section>
     </div>
   )
 }
@@ -914,118 +906,6 @@ function AIConfigSection() {
               Cancel
             </button>
           </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function DatadogConfigSection() {
-  const [status, setStatus] = useState<{ enabled: boolean; site: string } | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [testResult, setTestResult] = useState<string | null>(null)
-  const [testing, setTesting] = useState(false)
-
-  const fetchStatus = useCallback(() => {
-    setLoading(true)
-    api.getDatadogStatus()
-      .then(setStatus)
-      .catch(() => setStatus(null))
-      .finally(() => setLoading(false))
-  }, [])
-
-  useEffect(() => {
-    fetchStatus()
-  }, [fetchStatus])
-
-  const handleTest = async () => {
-    setTesting(true)
-    setTestResult(null)
-    try {
-      // Test by fetching metrics for a known namespace
-      await api.getDatadogNamespaceMetrics('default')
-      setTestResult('Datadog connection successful')
-    } catch (err) {
-      setTestResult(err instanceof Error ? err.message : 'Connection failed')
-    } finally {
-      setTesting(false)
-    }
-  }
-
-  return (
-    <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
-      <div className="flex items-start justify-between">
-        <div className="flex items-center gap-3">
-          <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${
-            status?.enabled
-              ? 'bg-indigo-100 dark:bg-indigo-900/30'
-              : 'bg-gray-100 dark:bg-gray-700'
-          }`}>
-            <BarChart2 className={`h-5 w-5 ${status?.enabled ? 'text-indigo-600 dark:text-indigo-400' : 'text-gray-400'}`} />
-          </div>
-          <div>
-            <h4 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-              Datadog Metrics
-              {loading ? '' : status?.enabled ? (
-                <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">
-                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-500" />
-                  Active
-                </span>
-              ) : (
-                <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-500 dark:bg-gray-700 dark:text-gray-400">
-                  Disabled
-                </span>
-              )}
-            </h4>
-            <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-              {status?.enabled
-                ? `Connected to ${status.site}`
-                : 'Real-time K8s resource metrics from Datadog (CPU, memory, pods)'
-              }
-            </p>
-          </div>
-        </div>
-        {status?.enabled && (
-          <button
-            onClick={handleTest}
-            disabled={testing}
-            className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
-          >
-            {testing ? 'Testing...' : 'Test Connection'}
-          </button>
-        )}
-      </div>
-
-      {testResult && (
-        <div className={`mt-3 flex items-center gap-2 rounded-lg px-3 py-2 text-xs ${
-          testResult.includes('successful')
-            ? 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400'
-            : 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400'
-        }`}>
-          {testResult.includes('successful') ? (
-            <CheckCircle className="h-3.5 w-3.5" />
-          ) : (
-            <XCircle className="h-3.5 w-3.5" />
-          )}
-          {testResult}
-        </div>
-      )}
-
-      {!loading && !status?.enabled && (
-        <div className="mt-4 rounded-lg bg-gray-50 p-4 dark:bg-gray-900">
-          <p className="text-sm font-medium text-gray-700 dark:text-gray-300">How to enable Datadog metrics</p>
-          <p className="mt-2 text-xs text-gray-600 dark:text-gray-400">
-            Add the following to{' '}
-            <code className="rounded bg-gray-200 px-1 dark:bg-gray-700">.env.secrets</code> and restart:
-          </p>
-          <pre className="mt-2 rounded-lg bg-gray-900 p-2 font-mono text-xs text-gray-300">
-{`DATADOG_API_KEY=your-datadog-api-key
-DATADOG_APP_KEY=your-datadog-app-key
-DATADOG_SITE=datadoghq.com`}
-          </pre>
-          <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">
-            Then restart the platform with <code className="rounded bg-gray-200 px-1 dark:bg-gray-700">make dev</code>
-          </p>
         </div>
       )}
     </div>

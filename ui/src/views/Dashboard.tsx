@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Server, AppWindow, Package, Rocket, AlertTriangle, CheckCircle2,
-  ArrowUpCircle, GitPullRequest, Activity, Clock, ChevronRight
+  ArrowUpCircle, Activity, Clock, ChevronRight
 } from 'lucide-react';
 import { api } from '@/services/api';
 import type { DashboardStats, SyncActivityEntry } from '@/services/models';
@@ -249,12 +249,6 @@ export function Dashboard() {
               className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-gray-700 transition-colors hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-700">
               <ArrowUpCircle className="h-4 w-4 text-cyan-500" />
               <span>Check Upgrade Impact</span>
-              <ChevronRight className="ml-auto h-4 w-4 text-gray-400" />
-            </button>
-            <button onClick={() => navigate('/migration')}
-              className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-gray-700 transition-colors hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-700">
-              <GitPullRequest className="h-4 w-4 text-violet-500" />
-              <span>Start Migration</span>
               <ChevronRight className="ml-auto h-4 w-4 text-gray-400" />
             </button>
             <button onClick={() => navigate('/observability')}

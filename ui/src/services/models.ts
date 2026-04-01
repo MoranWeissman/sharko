@@ -98,7 +98,6 @@ export interface AddonCatalogItem {
   repo_url: string
   namespace?: string
   version: string
-  in_migration?: boolean
   total_clusters: number
   enabled_clusters: number
   healthy_applications: number
@@ -278,31 +277,6 @@ export interface ObservabilityOverviewResponse {
   resource_alerts: ResourceAlert[]
 }
 
-export interface DatadogNamespaceMetrics {
-  namespace: string
-  cpu_usage_nanocores: number
-  cpu_usage_cores: number
-  memory_usage_bytes: number
-  memory_usage_mb: number
-  running_pods: number
-}
-
-export interface AddonMetricsData {
-  addon_name: string
-  namespace: string
-  cpu_usage_cores: number
-  cpu_request_cores: number
-  cpu_limit_cores: number
-  mem_usage_mb: number
-  mem_request_mb: number
-  mem_limit_mb: number
-  pod_count: number
-}
-
-export interface ClusterMetricsData {
-  cluster_name: string
-  addons: AddonMetricsData[]
-}
 
 export interface AIProviderInfo {
   id: string

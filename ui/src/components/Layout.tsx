@@ -16,7 +16,6 @@ import {
   Sun,
   Moon,
   LogOut,
-  GitPullRequest,
   User,
   Menu,
   Search,
@@ -55,7 +54,6 @@ const navSections: NavSection[] = [
     label: 'Operate',
     items: [
       { to: '/upgrade', label: 'Add-on Upgrade Checker', icon: ArrowUpCircle },
-      { to: '/migration', label: 'Migration', icon: GitPullRequest },
       { to: '/dashboards', label: 'Dashboards', icon: BarChart3 },
     ],
   },
@@ -83,7 +81,6 @@ const routeLabels: Record<string, string> = {
   'version-matrix': 'Version Drift Detector',
   observability: 'Observability',
   upgrade: 'Add-on Upgrade Checker',
-  migration: 'Migration',
   assistant: 'AI Assistant',
   dashboards: 'Dashboards',
   docs: 'Docs',

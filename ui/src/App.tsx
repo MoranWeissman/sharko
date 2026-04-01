@@ -17,8 +17,6 @@ import { Dashboards } from '@/views/Dashboards'
 import { UpgradeChecker } from '@/views/UpgradeChecker'
 import { AIAssistant } from '@/views/AIAssistant'
 import { UserInfo } from '@/views/UserInfo'
-import MigrationPage from '@/views/MigrationPage'
-import MigrationDetail from '@/views/MigrationDetail'
 import UserManagement from '@/views/UserManagement'
 
 function AppRoutes() {
@@ -55,8 +53,6 @@ function AppRoutes() {
           <Route path="settings" element={<Connections />} />
           <Route path="users" element={<UserManagement />} />
           <Route path="user" element={<UserInfo />} />
-          <Route path="migration" element={<MigrationPage />} />
-          <Route path="migration/:id" element={<MigrationDetail />} />
         </Route>
       </Routes>
     </ConnectionProvider>

@@ -10,7 +10,6 @@ const routeContext: Record<string, string> = {
   '/version-matrix': 'the Version Matrix',
   '/observability': 'the Observability page',
   '/upgrade': 'the Add-on Upgrade Checker',
-  '/migration': 'the Migration page',
   '/settings': 'the Settings page',
   '/docs': 'the Documentation',
 }
@@ -26,10 +25,6 @@ function getPageContext(pathname: string): string | undefined {
   if (pathname.startsWith('/addons/')) {
     const name = pathname.split('/')[2]
     return `the Add-on Detail page for "${name}"`
-  }
-  if (pathname.startsWith('/migration/')) {
-    const id = pathname.split('/')[2]
-    return `Migration Detail for migration "${id}"`
   }
   return undefined
 }

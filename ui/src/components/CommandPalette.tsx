@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Search, Server, Package, FileText, LayoutDashboard, Activity, ArrowUpCircle, GitPullRequest, Settings, BookOpen } from 'lucide-react'
+import { Search, Server, Package, FileText, LayoutDashboard, Activity, ArrowUpCircle, Settings, BookOpen } from 'lucide-react'
 import { api } from '@/services/api'
 
 interface SearchResult {
@@ -17,7 +17,6 @@ const PAGE_RESULTS: SearchResult[] = [
   { label: 'Version Matrix', type: 'page', path: '/version-matrix', icon: FileText },
   { label: 'Observability', type: 'page', path: '/observability', icon: Activity },
   { label: 'Upgrade Checker', type: 'page', path: '/upgrade', icon: ArrowUpCircle },
-  { label: 'Migration', type: 'page', path: '/migration', icon: GitPullRequest },
   { label: 'Settings', type: 'page', path: '/settings', icon: Settings },
   { label: 'Docs', type: 'page', path: '/docs', icon: BookOpen },
 ]
