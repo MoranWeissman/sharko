@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/moran/argocd-addons-platform/internal/models"
+	"github.com/MoranWeissman/sharko/internal/models"
 	"gopkg.in/yaml.v3"
 )
 

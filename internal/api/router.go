@@ -13,10 +13,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/moran/argocd-addons-platform/internal/ai"
-	"github.com/moran/argocd-addons-platform/internal/auth"
-	"github.com/moran/argocd-addons-platform/internal/config"
-	"github.com/moran/argocd-addons-platform/internal/service"
+	"github.com/MoranWeissman/sharko/internal/ai"
+	"github.com/MoranWeissman/sharko/internal/auth"
+	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/service"
 	"golang.org/x/crypto/bcrypt"
 )
 

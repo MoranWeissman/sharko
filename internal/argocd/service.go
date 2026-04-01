@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/moran/argocd-addons-platform/internal/models"
+	"github.com/MoranWeissman/sharko/internal/models"
 )
 
 // Service wraps the ArgoCD Client and adds business logic on top of the

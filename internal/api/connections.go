@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/moran/argocd-addons-platform/internal/models"
+	"github.com/MoranWeissman/sharko/internal/models"
 )
 
 func (s *Server) handleListConnections(w http.ResponseWriter, r *http.Request) {

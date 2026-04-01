@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/moran/argocd-addons-platform/internal/crypto"
-	"github.com/moran/argocd-addons-platform/internal/models"
+	"github.com/MoranWeissman/sharko/internal/crypto"
+	"github.com/MoranWeissman/sharko/internal/models"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

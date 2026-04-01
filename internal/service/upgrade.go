@@ -6,11 +6,11 @@ import (
 	"log"
 	"strings"
 
-	"github.com/moran/argocd-addons-platform/internal/ai"
-	"github.com/moran/argocd-addons-platform/internal/config"
-	"github.com/moran/argocd-addons-platform/internal/gitprovider"
-	"github.com/moran/argocd-addons-platform/internal/helm"
-	"github.com/moran/argocd-addons-platform/internal/models"
+	"github.com/MoranWeissman/sharko/internal/ai"
+	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/gitprovider"
+	"github.com/MoranWeissman/sharko/internal/helm"
+	"github.com/MoranWeissman/sharko/internal/models"
 )
 
 // UpgradeService handles upgrade impact checking operations.

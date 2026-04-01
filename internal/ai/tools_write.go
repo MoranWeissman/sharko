@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/moran/argocd-addons-platform/internal/gitops"
+	"github.com/MoranWeissman/sharko/internal/gitops"
 )
 
 var branchNameRe = regexp.MustCompile(`[^a-zA-Z0-9-]`)

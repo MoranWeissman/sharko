@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/moran/argocd-addons-platform/internal/ai"
+	"github.com/MoranWeissman/sharko/internal/ai"
 )
 
 // agentSession wraps an agent with creation time for cleanup.

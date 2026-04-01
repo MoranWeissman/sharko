@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/moran/argocd-addons-platform/internal/argocd"
-	"github.com/moran/argocd-addons-platform/internal/config"
-	"github.com/moran/argocd-addons-platform/internal/gitprovider"
-	"github.com/moran/argocd-addons-platform/internal/models"
+	"github.com/MoranWeissman/sharko/internal/argocd"
+	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/gitprovider"
+	"github.com/MoranWeissman/sharko/internal/models"
 )
 
 // ObservabilityService provides aggregated observability data from ArgoCD.

@@ -11,11 +11,11 @@ import (
 	"os"
 	"strings"
 
-	"github.com/moran/argocd-addons-platform/internal/ai"
-	"github.com/moran/argocd-addons-platform/internal/api"
-	"github.com/moran/argocd-addons-platform/internal/config"
-	"github.com/moran/argocd-addons-platform/internal/platform"
-	"github.com/moran/argocd-addons-platform/internal/service"
+	"github.com/MoranWeissman/sharko/internal/ai"
+	"github.com/MoranWeissman/sharko/internal/api"
+	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/platform"
+	"github.com/MoranWeissman/sharko/internal/service"
 )
 
 func getEnvDefault(key, defaultVal string) string {

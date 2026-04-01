@@ -4,10 +4,10 @@ import (
 	"context"
 	"log"
 
-	"github.com/moran/argocd-addons-platform/internal/argocd"
-	"github.com/moran/argocd-addons-platform/internal/config"
-	"github.com/moran/argocd-addons-platform/internal/gitprovider"
-	"github.com/moran/argocd-addons-platform/internal/models"
+	"github.com/MoranWeissman/sharko/internal/argocd"
+	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/gitprovider"
+	"github.com/MoranWeissman/sharko/internal/models"
 )
 
 // DashboardService handles dashboard-related operations.

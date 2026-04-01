@@ -7,8 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/moran/argocd-addons-platform/internal/argocd"
-	"github.com/moran/argocd-addons-platform/internal/gitprovider"
+	"github.com/MoranWeissman/sharko/internal/argocd"
+	"github.com/MoranWeissman/sharko/internal/gitprovider"
 )
 
 // fakeGitProvider implements gitprovider.GitProvider for testing.

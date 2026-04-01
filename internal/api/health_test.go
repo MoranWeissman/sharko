@@ -6,10 +6,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/moran/argocd-addons-platform/internal/ai"
-	"github.com/moran/argocd-addons-platform/internal/config"
-	"github.com/moran/argocd-addons-platform/internal/datadog"
-	"github.com/moran/argocd-addons-platform/internal/service"
+	"github.com/MoranWeissman/sharko/internal/ai"
+	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/datadog"
+	"github.com/MoranWeissman/sharko/internal/service"
 )
 
 func newTestServer() *Server {

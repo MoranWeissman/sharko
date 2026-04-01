@@ -3,7 +3,7 @@ package config
 import (
 	"testing"
 
-	"github.com/moran/argocd-addons-platform/internal/models"
+	"github.com/MoranWeissman/sharko/internal/models"
 )
 
 func TestParseClusterAddons(t *testing.T) {

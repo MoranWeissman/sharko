@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/moran/argocd-addons-platform/internal/ai"
+	"github.com/MoranWeissman/sharko/internal/ai"
 )
 
 type aiProviderInfo struct {

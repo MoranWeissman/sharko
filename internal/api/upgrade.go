@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/moran/argocd-addons-platform/internal/models"
+	"github.com/MoranWeissman/sharko/internal/models"
 )
 
 func (s *Server) handleListUpgradeVersions(w http.ResponseWriter, r *http.Request) {

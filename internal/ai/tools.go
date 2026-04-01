@@ -7,10 +7,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/moran/argocd-addons-platform/internal/argocd"
-	"github.com/moran/argocd-addons-platform/internal/config"
-	"github.com/moran/argocd-addons-platform/internal/gitprovider"
-	"github.com/moran/argocd-addons-platform/internal/helm"
+	"github.com/MoranWeissman/sharko/internal/argocd"
+	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/gitprovider"
+	"github.com/MoranWeissman/sharko/internal/helm"
 	"gopkg.in/yaml.v3"
 )
 

@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/moran/argocd-addons-platform/internal/platform"
+	"github.com/MoranWeissman/sharko/internal/platform"
 )
 
 // appVersion is read once at startup from the VERSION file.

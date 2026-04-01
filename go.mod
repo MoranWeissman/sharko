@@ -1,4 +1,4 @@
-module github.com/moran/argocd-addons-platform
+module github.com/MoranWeissman/sharko
 
 go 1.25.8
 
