@@ -1,0 +1,38 @@
+# Binaries
+sharko
+bin/
+*.exe
+
+# Go
+vendor/
+
+# Node
+ui/node_modules/
+ui/dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+secrets.env
+.env.secrets
+*.pem
+*.key
+
+# Docker
+aap-server
+
+# Test
+coverage.out
+*.test
+
+# Build
+*.tar.gz
