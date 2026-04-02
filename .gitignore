@@ -27,6 +27,16 @@ secrets.env
 *.pem
 *.key
 
+# AI workspaces
+.claude/
+.serena/
+.cursor/
+.copilot/
+.continue/
+.aider*
+.planning/
+CLAUDE.md
+
 # Docker
 aap-server
 
