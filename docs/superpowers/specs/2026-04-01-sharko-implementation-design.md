@@ -171,7 +171,7 @@ Files:
 
 New dependency: `github.com/aws/aws-sdk-go-v2` (config + secretsmanager modules).
 
-Provider config comes from server config (Helm values / env vars), not from `sharko.yaml`.
+Provider config comes from server config (Helm values / env vars).
 
 **Step 6 — Orchestrator (`internal/orchestrator/`):**
 
@@ -272,36 +272,12 @@ CLI command -> API mapping:
 
 ---
 
-## 5. Config Split — Repo vs Server
+## 5. Server-Side Configuration
 
-### `sharko.yaml` — Repo Identity Marker (user-controlled, in Git)
-
-The identity marker for a Sharko-managed addons repo. The server reads this file from the Git repo on every operation to know the repo's directory layout and GitOps preferences. Like `.git/` identifies a Git repo, `sharko.yaml` identifies a Sharko addons repo.
-
-This file is **user-controlled** — users can customize paths and GitOps behavior by committing changes to `sharko.yaml`. The server respects whatever the repo says.
+All configuration is server-side — Helm values, env vars, K8s Secrets. There is no `sharko.yaml` in the addons repo. The server created the repo structure (via `sharko init`), so it already knows the layout. Customization happens via `helm upgrade --set`, same as every other config.
 
 ```yaml
-version: "1"
-paths:
-  clusterValues: configuration/addons-clusters-values
-  globalValues: configuration/addons-global-values
-  charts: charts/
-  bootstrap: bootstrap/
-gitops:
-  defaultMode: pr          # "pr" or "direct"
-  prAutoMerge: false
-  branchPrefix: sharko/
-  commitPrefix: "sharko:"
-```
-
-This file lives in the generated addons repo (created by `sharko init`), not in the Sharko server repo itself.
-
-### Server Config (admin-controlled, Helm values / env vars / K8s Secrets)
-
-Connection details and credentials are **server-side only**. They are NOT in `sharko.yaml` — a user should never be able to change which ArgoCD server or secrets provider Sharko talks to by modifying a file in the addons repo. That would be a security issue.
-
-```yaml
-# Helm values (or equivalent env vars)
+# Helm values
 argocd:
   token: <argocd-account-token>      # stored in K8s Secret
 git:
@@ -311,6 +287,16 @@ git:
 secretsProvider:
   type: aws-sm                       # or: k8s-secrets
   region: eu-west-1                  # IRSA handles auth
+repo:
+  paths:
+    clusterValues: configuration/addons-clusters-values
+    globalValues: configuration/addons-global-values
+    charts: charts/
+    bootstrap: bootstrap/
+gitops:
+  defaultMode: pr                    # "pr" or "direct"
+  branchPrefix: sharko/
+  commitPrefix: "sharko:"
 ai:
   provider: openai
   endpoint: https://api.openai.com/v1
@@ -318,16 +304,18 @@ ai:
   apiKey: <key>                      # stored in K8s Secret
 ```
 
-**The split:**
+These render as env vars (`SHARKO_REPO_PATH_CLUSTER_VALUES`, `SHARKO_GITOPS_DEFAULT_MODE`, etc.) that the server reads on startup. Defaults are baked into the Helm chart. Users override only what they need.
 
-| Config | Where | Who controls | Can change via Git? |
-|---|---|---|---|
-| Paths (where files go) | `sharko.yaml` in addons repo | Users | Yes |
-| GitOps preferences (PR vs direct) | `sharko.yaml` in addons repo | Users | Yes |
-| ArgoCD connection (URL + token) | Server config (Helm/env/Secret) | Admin | No |
-| Git connection (token) | Server config (Helm/env/Secret) | Admin | No |
-| Secrets provider (type + creds) | Server config (Helm/env/Secret) | Admin | No |
-| AI provider config | Server config (Helm/env/Secret) | Admin | No |
+**Why no sharko.yaml in the repo:** Reading config from Git on every operation is slow, fragile, and has no reconcile loop. The server already knows the repo structure because it created it. All config in one place (Helm values), one admin controls it, no security risk from repo-level config changes.
+
+| Config | Where | Who controls |
+|---|---|---|
+| Repo paths (where files go) | Helm values / env vars | Admin |
+| GitOps preferences (PR vs direct) | Helm values / env vars | Admin |
+| ArgoCD connection (URL + token) | K8s Secret (via Helm) | Admin |
+| Git connection (token) | K8s Secret (via Helm) | Admin |
+| Secrets provider (type + creds) | Helm values + IRSA | Admin |
+| AI provider config | K8s Secret (via Helm) | Admin |
 
 ---
 
