@@ -15,6 +15,10 @@ var rootCmd = &cobra.Command{
 	Version: version,
 }
 
+func init() {
+	rootCmd.PersistentFlags().Bool("insecure", false, "Skip TLS certificate verification (for self-signed certs)")
+}
+
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
