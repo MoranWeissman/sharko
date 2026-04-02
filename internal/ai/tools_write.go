@@ -82,7 +82,7 @@ func (e *ToolExecutor) enableAddon(ctx context.Context, connectionName, clusterN
 		return "", fmt.Errorf("enabling addon label: %w", err)
 	}
 
-	branch := fmt.Sprintf("aap/enable-addon/%s/%s/%d",
+	branch := fmt.Sprintf("sharko/enable-addon/%s/%s/%d",
 		sanitizeBranchName(addonName), sanitizeBranchName(clusterName), time.Now().Unix())
 
 	if err := gp.CreateBranch(ctx, branch, "main"); err != nil {
@@ -94,7 +94,7 @@ func (e *ToolExecutor) enableAddon(ctx context.Context, connectionName, clusterN
 		return "", fmt.Errorf("updating file: %w", err)
 	}
 
-	title := fmt.Sprintf("[AAP] Enable %s on %s", addonName, clusterName)
+	title := fmt.Sprintf("[Sharko] Enable %s on %s", addonName, clusterName)
 	body := fmt.Sprintf("Automated by ArgoCD Addons Platform.\n\n**Change:** Enable addon %s on cluster %s.", addonName, clusterName)
 
 	pr, err := gp.CreatePullRequest(ctx, title, body, branch, "main")
@@ -124,7 +124,7 @@ func (e *ToolExecutor) disableAddon(ctx context.Context, connectionName, cluster
 		return "", fmt.Errorf("disabling addon label: %w", err)
 	}
 
-	branch := fmt.Sprintf("aap/disable-addon/%s/%s/%d",
+	branch := fmt.Sprintf("sharko/disable-addon/%s/%s/%d",
 		sanitizeBranchName(addonName), sanitizeBranchName(clusterName), time.Now().Unix())
 
 	if err := gp.CreateBranch(ctx, branch, "main"); err != nil {
@@ -136,7 +136,7 @@ func (e *ToolExecutor) disableAddon(ctx context.Context, connectionName, cluster
 		return "", fmt.Errorf("updating file: %w", err)
 	}
 
-	title := fmt.Sprintf("[AAP] Disable %s on %s", addonName, clusterName)
+	title := fmt.Sprintf("[Sharko] Disable %s on %s", addonName, clusterName)
 	body := fmt.Sprintf("Automated by ArgoCD Addons Platform.\n\n**Change:** Disable addon %s on cluster %s.", addonName, clusterName)
 
 	pr, err := gp.CreatePullRequest(ctx, title, body, branch, "main")
@@ -166,7 +166,7 @@ func (e *ToolExecutor) updateAddonVersion(ctx context.Context, connectionName, a
 		return "", fmt.Errorf("updating catalog version: %w", err)
 	}
 
-	branch := fmt.Sprintf("aap/update-version/%s/%d",
+	branch := fmt.Sprintf("sharko/update-version/%s/%d",
 		sanitizeBranchName(addonName), time.Now().Unix())
 
 	if err := gp.CreateBranch(ctx, branch, "main"); err != nil {
@@ -178,7 +178,7 @@ func (e *ToolExecutor) updateAddonVersion(ctx context.Context, connectionName, a
 		return "", fmt.Errorf("updating file: %w", err)
 	}
 
-	title := fmt.Sprintf("[AAP] Update %s to %s", addonName, version)
+	title := fmt.Sprintf("[Sharko] Update %s to %s", addonName, version)
 	body := fmt.Sprintf("Automated by ArgoCD Addons Platform.\n\n**Change:** Update addon %s version to %s.", addonName, version)
 
 	pr, err := gp.CreatePullRequest(ctx, title, body, branch, "main")
