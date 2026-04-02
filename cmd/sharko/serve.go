@@ -17,6 +17,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/platform"
 	"github.com/MoranWeissman/sharko/internal/providers"
 	"github.com/MoranWeissman/sharko/internal/service"
+	"github.com/MoranWeissman/sharko/templates"
 	"github.com/spf13/cobra"
 )
 
@@ -161,6 +162,7 @@ var serveCmd = &cobra.Command{
 
 		// Build server
 		srv := api.NewServer(connSvc, clusterSvc, addonSvc, dashboardSvc, observabilitySvc, upgradeSvc, aiClient)
+		srv.SetTemplateFS(templates.StarterFS) // Always available — init doesn't need a provider
 
 		// Provider + Orchestrator write-API deps (optional — only if provider is configured)
 		providerType := os.Getenv("SHARKO_PROVIDER_TYPE")
@@ -198,10 +200,6 @@ var serveCmd = &cobra.Command{
 
 				srv.SetWriteAPIDeps(credProvider, &provCfg, repoPaths, gitopsCfg)
 				log.Printf("Secrets provider enabled: %s", providerType)
-				// NOTE: The orchestrator's InitRepo method and POST /api/v1/init route
-				// are scaffolded but not yet wired. StarterFS (templates/embed.go) needs
-				// to be passed to the orchestrator when the init endpoint is added.
-				// The gitopsCfg.RepoURL is read here so it's ready when that happens.
 			}
 		}
 

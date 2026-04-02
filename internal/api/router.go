@@ -40,6 +40,9 @@ type Server struct {
 	providerCfg  *providers.Config
 	repoPaths    orchestrator.RepoPathsConfig
 	gitopsCfg    orchestrator.GitOpsConfig
+
+	// Template filesystem for POST /api/v1/init (always available).
+	templateFS fs.FS
 }
 
 // NewServer creates a new API server.
@@ -80,6 +83,11 @@ func NewServer(
 // SetAIConfigStore sets the persistent AI config store (K8s mode only).
 func (s *Server) SetAIConfigStore(store *config.AIConfigStore) {
 	s.aiConfigStore = store
+}
+
+// SetTemplateFS sets the embedded template filesystem for POST /api/v1/init.
+func (s *Server) SetTemplateFS(tfs fs.FS) {
+	s.templateFS = tfs
 }
 
 // SetWriteAPIDeps configures the dependencies for write API endpoints.
@@ -124,6 +132,9 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("DELETE /api/v1/clusters/{name}", srv.handleDeregisterCluster)
 	mux.HandleFunc("PATCH /api/v1/clusters/{name}", srv.handleUpdateClusterAddons)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/refresh", srv.handleRefreshClusterCredentials)
+
+	// Init (orchestrator-backed)
+	mux.HandleFunc("POST /api/v1/init", srv.handleInit)
 
 	// Addons (write — orchestrator-backed)
 	mux.HandleFunc("POST /api/v1/addons", srv.handleAddAddon)
