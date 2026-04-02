@@ -3,9 +3,12 @@ package orchestrator
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // InitRepo scaffolds the addons repository from the embedded starter templates.
@@ -64,17 +67,79 @@ func (o *Orchestrator) InitRepo(ctx context.Context, req InitRepoRequest) (*Init
 		},
 	}
 
-	if req.BootstrapArgoCD {
-		// TODO: Apply root-app to ArgoCD via the ArgoCD client.
-		// For now, the root-app.yaml is created in the repo but not applied.
-		// The user must apply it manually: kubectl apply -f bootstrap/root-app.yaml
+	if req.BootstrapArgoCD && o.argocd != nil {
+		rootAppContent, readErr := fs.ReadFile(o.templateFS, "starter/bootstrap/root-app.yaml")
+		if readErr != nil {
+			result.ArgoCD = &InitArgocdInfo{
+				Bootstrapped: false,
+				RootApp:      fmt.Sprintf("failed to read root-app template: %v", readErr),
+			}
+			return result, nil
+		}
+
+		// Replace placeholders in the root-app content
+		rootAppContent = replacePlaceholders(rootAppContent, o.gitops)
+
+		// Split multi-document YAML (AppProject + Application)
+		bootstrapErr := o.bootstrapArgoCD(ctx, rootAppContent)
+		if bootstrapErr != nil {
+			result.ArgoCD = &InitArgocdInfo{
+				Bootstrapped: false,
+				RootApp:      fmt.Sprintf("bootstrap failed: %v", bootstrapErr),
+			}
+			return result, nil
+		}
+
 		result.ArgoCD = &InitArgocdInfo{
-			Bootstrapped: false,
-			RootApp:      "addons-bootstrap (created in repo, apply manually)",
+			Bootstrapped: true,
+			RootApp:      "addons-bootstrap",
 		}
 	}
 
 	return result, nil
+}
+
+// bootstrapArgoCD parses the root-app.yaml (multi-document YAML with AppProject + Application)
+// and applies each resource to ArgoCD via the API.
+func (o *Orchestrator) bootstrapArgoCD(ctx context.Context, rootAppYAML []byte) error {
+	// Split on YAML document separator
+	docs := bytes.Split(rootAppYAML, []byte("\n---"))
+
+	for _, doc := range docs {
+		doc = bytes.TrimSpace(doc)
+		if len(doc) == 0 {
+			continue
+		}
+
+		// Parse YAML to determine the kind
+		var resource map[string]interface{}
+		if err := yaml.Unmarshal(doc, &resource); err != nil {
+			return fmt.Errorf("parsing YAML document: %w", err)
+		}
+
+		kind, _ := resource["kind"].(string)
+
+		// Convert to JSON for the ArgoCD REST API
+		jsonData, err := json.Marshal(resource)
+		if err != nil {
+			return fmt.Errorf("converting %s to JSON: %w", kind, err)
+		}
+
+		switch kind {
+		case "AppProject":
+			if err := o.argocd.CreateProject(ctx, jsonData); err != nil {
+				return fmt.Errorf("creating AppProject: %w", err)
+			}
+		case "Application":
+			if err := o.argocd.CreateApplication(ctx, jsonData); err != nil {
+				return fmt.Errorf("creating Application: %w", err)
+			}
+		default:
+			return fmt.Errorf("unexpected resource kind %q in root-app.yaml", kind)
+		}
+	}
+
+	return nil
 }
 
 // replacePlaceholders substitutes well-known tokens in template content.

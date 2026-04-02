@@ -14,6 +14,8 @@ type ArgocdClient interface {
 	DeleteCluster(ctx context.Context, serverURL string) error
 	UpdateClusterLabels(ctx context.Context, serverURL string, labels map[string]string) error
 	SyncApplication(ctx context.Context, appName string) error
+	CreateProject(ctx context.Context, projectJSON []byte) error
+	CreateApplication(ctx context.Context, appJSON []byte) error
 }
 
 // Orchestrator coordinates multi-step operations across providers, ArgoCD,

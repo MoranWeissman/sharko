@@ -215,3 +215,27 @@ func (c *Client) UpdateClusterLabels(ctx context.Context, serverURL string, labe
 	}
 	return nil
 }
+
+// CreateProject creates an ArgoCD AppProject.
+func (c *Client) CreateProject(ctx context.Context, projectJSON []byte) error {
+	// ArgoCD expects the project wrapped in a "project" key.
+	var proj map[string]interface{}
+	if err := json.Unmarshal(projectJSON, &proj); err != nil {
+		return fmt.Errorf("parsing project JSON: %w", err)
+	}
+	wrapped, _ := json.Marshal(map[string]interface{}{"project": proj})
+	_, err := c.doPost(ctx, "/api/v1/projects", wrapped)
+	if err != nil {
+		return fmt.Errorf("creating ArgoCD project: %w", err)
+	}
+	return nil
+}
+
+// CreateApplication creates an ArgoCD Application.
+func (c *Client) CreateApplication(ctx context.Context, appJSON []byte) error {
+	_, err := c.doPost(ctx, "/api/v1/applications", appJSON)
+	if err != nil {
+		return fmt.Errorf("creating ArgoCD application: %w", err)
+	}
+	return nil
+}

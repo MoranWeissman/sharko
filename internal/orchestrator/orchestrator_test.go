@@ -58,6 +58,14 @@ func (m *mockArgocd) SyncApplication(_ context.Context, appName string) error {
 	return nil
 }
 
+func (m *mockArgocd) CreateProject(_ context.Context, _ []byte) error {
+	return nil
+}
+
+func (m *mockArgocd) CreateApplication(_ context.Context, _ []byte) error {
+	return nil
+}
+
 // ---------- mock credentials provider ----------
 
 type mockCredProvider struct {
