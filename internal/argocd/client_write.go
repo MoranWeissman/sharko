@@ -170,7 +170,7 @@ func (c *Client) RegisterCluster(ctx context.Context, name, server string, caDat
 
 // DeleteCluster removes a cluster from ArgoCD by server URL.
 func (c *Client) DeleteCluster(ctx context.Context, serverURL string) error {
-	path := "/api/v1/clusters/" + url.QueryEscape(serverURL)
+	path := "/api/v1/clusters/" + url.PathEscape(serverURL)
 	_, err := c.doDelete(ctx, path)
 	if err != nil {
 		return fmt.Errorf("deleting cluster %q: %w", serverURL, err)
@@ -182,8 +182,8 @@ func (c *Client) DeleteCluster(ctx context.Context, serverURL string) error {
 // It fetches the current cluster, merges the new labels, and PUTs it back.
 func (c *Client) UpdateClusterLabels(ctx context.Context, serverURL string, labels map[string]string) error {
 	// GET the current cluster.
-	path := "/api/v1/clusters/" + url.QueryEscape(serverURL)
-	body, err := c.doGet(ctx, path)
+	getPath := "/api/v1/clusters/" + url.PathEscape(serverURL)
+	body, err := c.doGet(ctx, getPath)
 	if err != nil {
 		return fmt.Errorf("fetching cluster %q for label update: %w", serverURL, err)
 	}
@@ -208,7 +208,8 @@ func (c *Client) UpdateClusterLabels(ctx context.Context, serverURL string, labe
 		return fmt.Errorf("marshaling updated cluster: %w", err)
 	}
 
-	_, err = c.doPut(ctx, path, updated)
+	putPath := "/api/v1/clusters/" + url.PathEscape(serverURL) + "?updateMask=metadata.labels"
+	_, err = c.doPut(ctx, putPath, updated)
 	if err != nil {
 		return fmt.Errorf("updating labels on cluster %q: %w", serverURL, err)
 	}
