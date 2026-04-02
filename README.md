@@ -11,7 +11,7 @@
 <p align="center">
   <a href="https://github.com/MoranWeissman/sharko/releases"><img src="https://img.shields.io/github/v/release/MoranWeissman/sharko" alt="Release"></a>
   <a href="https://github.com/MoranWeissman/sharko/blob/main/LICENSE"><img src="https://img.shields.io/github/license/MoranWeissman/sharko" alt="License"></a>
-  <img src="https://img.shields.io/badge/go-%3E%3D1.25-blue" alt="Go">
+  <img src="https://img.shields.io/badge/go-1.25-blue" alt="Go">
 </p>
 
 ---
@@ -57,10 +57,7 @@ The server holds all credentials. The CLI is a thin HTTP client — like `kubect
 ```bash
 helm install sharko oci://ghcr.io/moranweissman/sharko/charts/sharko \
   --namespace sharko --create-namespace \
-  --set argocd.token=<argocd-account-token> \
-  --set git.token=<github-token> \
-  --set secretsProvider.type=aws-sm \
-  --set secretsProvider.region=eu-west-1
+  --set secrets.GITHUB_TOKEN=<github-pat>
 ```
 
 ### 2. Connect the CLI
@@ -69,13 +66,17 @@ helm install sharko oci://ghcr.io/moranweissman/sharko/charts/sharko \
 sharko login --server https://sharko.your-cluster.com
 ```
 
-### 3. Initialize your addons repo
+### 3. Configure connections
+
+Open the Sharko UI and configure your ArgoCD and Git connections in Settings.
+
+### 4. Initialize your addons repo
 
 ```bash
 sharko init
 ```
 
-### 4. Add addons and clusters
+### 5. Add addons and clusters
 
 ```bash
 sharko add-addon cert-manager --chart cert-manager --repo https://charts.jetstack.io --version 1.14.5
@@ -108,6 +109,7 @@ Sharko exposes a REST API that every consumer uses — the CLI, the UI, and exte
 | POST | `/api/v1/clusters/{name}/refresh` | Refresh cluster credentials |
 | POST | `/api/v1/addons` | Add addon to catalog |
 | DELETE | `/api/v1/addons/{name}?confirm=true` | Remove addon (with safety gate) |
+| POST | `/api/v1/init` | Initialize addons repo from templates |
 
 See [docs/api-contract.md](docs/api-contract.md) for full API reference with request/response shapes.
 
@@ -135,13 +137,13 @@ Sharko uses a pluggable provider interface to fetch cluster kubeconfigs:
 | `aws-sm` | AWS Secrets Manager (IRSA for auth) |
 | `k8s-secrets` | Kubernetes Secrets (no cloud dependency) |
 
-Configure via Helm values:
+Configure via environment variables (set via Helm `extraEnv` or the created Secret):
 
-```yaml
-secretsProvider:
-  type: aws-sm
-  region: eu-west-1
-```
+| Env Var | Description |
+|---------|-------------|
+| `SHARKO_PROVIDER_TYPE` | Provider backend (`aws-sm` or `k8s-secrets`) |
+| `SHARKO_PROVIDER_REGION` | AWS region (for `aws-sm`) |
+| `SHARKO_PROVIDER_NAMESPACE` | K8s namespace for secrets (for `k8s-secrets`) |
 
 ### Writing Your Own Provider
 
@@ -160,15 +162,18 @@ See [internal/providers/](internal/providers/) for implementation examples.
 
 All configuration is server-side via Helm values and environment variables. No config files in the addons repo.
 
-| Config | Env Var | Default |
-|--------|---------|---------|
-| Provider type | `SHARKO_PROVIDER_TYPE` | (none) |
-| Provider region | `SHARKO_PROVIDER_REGION` | (none) |
-| GitOps mode | `SHARKO_GITOPS_DEFAULT_MODE` | `pr` |
-| Branch prefix | `SHARKO_GITOPS_BRANCH_PREFIX` | `sharko/` |
-| Commit prefix | `SHARKO_GITOPS_COMMIT_PREFIX` | `sharko:` |
-| Base branch | `SHARKO_GITOPS_BASE_BRANCH` | `main` |
-| Repo paths | `SHARKO_REPO_PATH_CLUSTER_VALUES` | `configuration/addons-clusters-values` |
+| Env Var | Description | Default |
+|---------|-------------|---------|
+| `SHARKO_PROVIDER_TYPE` | Secrets provider backend (`aws-sm`, `k8s-secrets`) | (none) |
+| `SHARKO_PROVIDER_REGION` | AWS region for secrets provider | (none) |
+| `SHARKO_ENCRYPTION_KEY` | Encryption key for connection secrets (required in K8s) | (none) |
+| `SHARKO_DEV_MODE` | Enable env var fallback for credentials | `false` |
+| `SHARKO_GITOPS_DEFAULT_MODE` | Git commit mode (`pr` or `direct`) | `pr` |
+| `SHARKO_GITOPS_BRANCH_PREFIX` | Branch prefix for PR mode | `sharko/` |
+| `SHARKO_GITOPS_COMMIT_PREFIX` | Commit message prefix | `sharko:` |
+| `SHARKO_GITOPS_BASE_BRANCH` | Target branch for commits/PRs | `main` |
+| `SHARKO_GITOPS_REPO_URL` | Git repo URL for init placeholder replacement | (none) |
+| `GITHUB_TOKEN` | GitHub PAT (set via `secrets.GITHUB_TOKEN` in Helm) | (none) |
 
 ## Development
 

@@ -216,7 +216,7 @@ Route registration: new versioned routes (`/api/v1/...`) alongside existing rout
 
 **Dual auth:**
 - UI uses session cookies (existing flow)
-- CLI uses Bearer tokens (new `POST /api/v1/auth/token` endpoint: accepts username/password, returns Bearer token)
+- CLI uses Bearer tokens (new `POST /api/v1/auth/login` endpoint: accepts username/password, returns Bearer token)
 - Server middleware accepts BOTH cookies and `Authorization: Bearer` on protected endpoints
 - CLI stores token in `~/.sharko/config`
 
@@ -242,7 +242,7 @@ CLI command -> API mapping:
 
 | CLI Command | API Endpoint |
 |---|---|
-| `sharko login` | `POST /api/v1/auth/token` |
+| `sharko login` | `POST /api/v1/auth/login` |
 | `sharko version` | `GET /api/v1/health` |
 | `sharko init` | `POST /api/v1/init` |
 | `sharko add-cluster <name>` | `POST /api/v1/clusters` |

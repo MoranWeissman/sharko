@@ -303,7 +303,7 @@ GET    /api/v1/health                    → Sharko server health + ArgoCD conne
 
 **Dual auth model:**
 - **UI users:** session cookies (existing login flow with username/password)
-- **CLI / API consumers:** Bearer tokens via `POST /api/v1/auth/token` (username/password → token, stored in `~/.sharko/config`)
+- **CLI / API consumers:** Bearer tokens via `POST /api/v1/auth/login` (username/password → token, stored in `~/.sharko/config`)
 
 The server middleware accepts both cookies and `Authorization: Bearer` headers on protected endpoints.
 
@@ -389,7 +389,7 @@ The CLI is a thin client. Every command maps to an API call:
 
 | CLI Command | API Endpoint |
 |---|---|
-| `sharko login` | `POST /api/v1/auth/token` |
+| `sharko login` | `POST /api/v1/auth/login` |
 | `sharko version` | `GET /api/v1/health` |
 | `sharko init` | `POST /api/v1/init` |
 | `sharko add-cluster <name>` | `POST /api/v1/clusters` |
