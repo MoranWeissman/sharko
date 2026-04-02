@@ -16,6 +16,8 @@ import (
 	"github.com/MoranWeissman/sharko/internal/ai"
 	"github.com/MoranWeissman/sharko/internal/auth"
 	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
+	"github.com/MoranWeissman/sharko/internal/providers"
 	"github.com/MoranWeissman/sharko/internal/service"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -32,6 +34,12 @@ type Server struct {
 	agentMemory       *ai.MemoryStore
 	authStore         *auth.Store
 	aiConfigStore     *config.AIConfigStore
+
+	// Write API dependencies (optional — set via SetOrchestrator).
+	credProvider providers.ClusterCredentialsProvider
+	providerCfg  *providers.Config
+	repoPaths    orchestrator.RepoPathsConfig
+	gitopsCfg    orchestrator.GitOpsConfig
 }
 
 // NewServer creates a new API server.
@@ -74,6 +82,17 @@ func (s *Server) SetAIConfigStore(store *config.AIConfigStore) {
 	s.aiConfigStore = store
 }
 
+// SetWriteAPIDeps configures the dependencies for write API endpoints.
+// credProvider is the cluster credentials backend (e.g. AWS SM, K8s secrets).
+// provCfg holds the provider configuration for system info endpoints.
+// paths and gitops hold the repo layout and gitops commit settings.
+func (s *Server) SetWriteAPIDeps(credProvider providers.ClusterCredentialsProvider, provCfg *providers.Config, paths orchestrator.RepoPathsConfig, gitops orchestrator.GitOpsConfig) {
+	s.credProvider = credProvider
+	s.providerCfg = provCfg
+	s.repoPaths = paths
+	s.gitopsCfg = gitops
+}
+
 // NewRouter builds the HTTP router with all API routes and static file serving.
 // staticFS can be nil if no static files are available (e.g., dev mode).
 func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
@@ -93,14 +112,33 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("POST /api/v1/connections/test-credentials", srv.handleTestCredentials)
 	mux.HandleFunc("GET /api/v1/connections/discover-argocd", srv.handleDiscoverArgocd)
 
-	// Clusters
+	// Clusters (read)
 	mux.HandleFunc("GET /api/v1/clusters", srv.handleListClusters)
 	mux.HandleFunc("GET /api/v1/clusters/{name}/values", srv.handleGetClusterValues)
 	mux.HandleFunc("GET /api/v1/clusters/{name}/config-diff", srv.handleGetConfigDiff)
 	mux.HandleFunc("GET /api/v1/clusters/{name}/comparison", srv.handleGetClusterComparison)
 	mux.HandleFunc("GET /api/v1/clusters/{name}", srv.handleGetCluster)
 
-	// Addons
+	// Clusters (write — orchestrator-backed)
+	mux.HandleFunc("POST /api/v1/clusters", srv.handleRegisterCluster)
+	mux.HandleFunc("DELETE /api/v1/clusters/{name}", srv.handleDeregisterCluster)
+	mux.HandleFunc("PATCH /api/v1/clusters/{name}", srv.handleUpdateClusterAddons)
+	mux.HandleFunc("POST /api/v1/clusters/{name}/refresh", srv.handleRefreshClusterCredentials)
+
+	// Addons (write — orchestrator-backed)
+	mux.HandleFunc("POST /api/v1/addons", srv.handleAddAddon)
+	mux.HandleFunc("DELETE /api/v1/addons/{name}", srv.handleRemoveAddon)
+
+	// Fleet status
+	mux.HandleFunc("GET /api/v1/fleet/status", srv.handleGetFleetStatus)
+
+	// System
+	mux.HandleFunc("GET /api/v1/providers", srv.handleGetProviders)
+	mux.HandleFunc("POST /api/v1/providers/test", srv.handleTestProvider)
+	mux.HandleFunc("POST /api/v1/providers/test-config", srv.handleTestProviderConfig)
+	mux.HandleFunc("GET /api/v1/config", srv.handleGetConfig)
+
+	// Addons (read)
 	mux.HandleFunc("GET /api/v1/addons/list", srv.handleListAddons)
 	mux.HandleFunc("GET /api/v1/addons/catalog", srv.handleGetAddonCatalog)
 	mux.HandleFunc("GET /api/v1/addons/version-matrix", srv.handleGetVersionMatrix)
@@ -499,7 +537,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 			}
 		}
 
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Sharko-Connection")
 
 		if r.Method == http.MethodOptions {

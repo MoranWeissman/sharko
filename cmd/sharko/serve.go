@@ -13,7 +13,9 @@ import (
 	"github.com/MoranWeissman/sharko/internal/ai"
 	"github.com/MoranWeissman/sharko/internal/api"
 	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/platform"
+	"github.com/MoranWeissman/sharko/internal/providers"
 	"github.com/MoranWeissman/sharko/internal/service"
 	"github.com/spf13/cobra"
 )
@@ -159,6 +161,44 @@ var serveCmd = &cobra.Command{
 
 		// Build server
 		srv := api.NewServer(connSvc, clusterSvc, addonSvc, dashboardSvc, observabilitySvc, upgradeSvc, aiClient)
+
+		// Provider + Orchestrator write-API deps (optional — only if provider is configured)
+		providerType := os.Getenv("SHARKO_PROVIDER_TYPE")
+		if providerType != "" {
+			namespace := os.Getenv("SHARKO_NAMESPACE")
+			if namespace == "" {
+				namespace = "sharko"
+			}
+
+			provCfg := providers.Config{
+				Type:      providerType,
+				Region:    os.Getenv("SHARKO_PROVIDER_REGION"),
+				Prefix:    getEnvDefault("SHARKO_PROVIDER_PREFIX", "clusters/"),
+				Namespace: getEnvDefault("SHARKO_PROVIDER_NAMESPACE", namespace),
+			}
+
+			credProvider, err := providers.New(provCfg)
+			if err != nil {
+				log.Printf("WARNING: Could not create secrets provider: %v", err)
+			} else {
+				repoPaths := orchestrator.RepoPathsConfig{
+					ClusterValues: getEnvDefault("SHARKO_REPO_PATH_CLUSTER_VALUES", "configuration/addons-clusters-values"),
+					GlobalValues:  getEnvDefault("SHARKO_REPO_PATH_GLOBAL_VALUES", "configuration/addons-global-values"),
+					Charts:        getEnvDefault("SHARKO_REPO_PATH_CHARTS", "charts/"),
+					Bootstrap:     getEnvDefault("SHARKO_REPO_PATH_BOOTSTRAP", "bootstrap/"),
+				}
+
+				gitopsCfg := orchestrator.GitOpsConfig{
+					DefaultMode:  getEnvDefault("SHARKO_GITOPS_DEFAULT_MODE", "pr"),
+					BranchPrefix: getEnvDefault("SHARKO_GITOPS_BRANCH_PREFIX", "sharko/"),
+					CommitPrefix: getEnvDefault("SHARKO_GITOPS_COMMIT_PREFIX", "sharko:"),
+					BaseBranch:   getEnvDefault("SHARKO_GITOPS_BASE_BRANCH", "main"),
+				}
+
+				srv.SetWriteAPIDeps(credProvider, &provCfg, repoPaths, gitopsCfg)
+				log.Printf("Secrets provider enabled: %s", providerType)
+			}
+		}
 
 		// AI config persistence (K8s mode — encrypted Secret)
 		if mode == platform.ModeKubernetes {
