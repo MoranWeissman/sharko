@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installer for ArgoCD Addons Platform.
+# Installer for Sharko.
 # Builds the Docker image, pushes to registry, and deploys via Helm.
 # Sources secrets from .env.secrets and passes them via --set (never in values files).
 #
@@ -11,20 +11,19 @@
 #   GITHUB_TOKEN          - GitHub PAT for Git provider access
 #
 # Optional env vars:
-#   IMAGE_REGISTRY        - Container registry (e.g. 123456.dkr.ecr.us-east-1.amazonaws.com, ghcr.io/org)
+#   IMAGE_REGISTRY        - Container registry (e.g. ghcr.io/org)
 #                           If unset, uses local image (minikube/kind/docker-desktop)
-#   IMAGE_REPOSITORY      - Image name (default: aap-server)
-#   ARGOCD_TOKEN, ARGOCD_NONPROD_SERVER_URL, ARGOCD_NONPROD_TOKEN
+#   IMAGE_REPOSITORY      - Image name (default: sharko)
+#   ARGOCD_TOKEN
 #   AI_API_KEY, AI_PROVIDER, AI_CLOUD_MODEL
-#   DATADOG_API_KEY, DATADOG_APP_KEY
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-CHART_DIR="${PROJECT_ROOT}/charts/argocd-addons-platform"
-NAMESPACE="argocd-addons-platform"
-RELEASE="aap"
+CHART_DIR="${PROJECT_ROOT}/charts/sharko"
+NAMESPACE="sharko"
+RELEASE="sharko"
 # Read version: prefer .release-please-manifest.json, fall back to VERSION file
 if [[ -f "${PROJECT_ROOT}/.release-please-manifest.json" ]]; then
   VERSION="$(grep -o '"\.": *"[^"]*"' "${PROJECT_ROOT}/.release-please-manifest.json" | grep -o '[0-9][0-9.]*')"
@@ -66,7 +65,7 @@ if [[ -z "${GITHUB_TOKEN:-}" ]]; then
 fi
 
 # --- Image config ---
-IMAGE_REPO="${IMAGE_REPOSITORY:-aap-server}"
+IMAGE_REPO="${IMAGE_REPOSITORY:-sharko}"
 REGISTRY="${IMAGE_REGISTRY:-}"
 
 if [[ -n "${REGISTRY}" ]]; then
@@ -78,23 +77,22 @@ IMAGE_TAG="${VERSION}"
 
 # --- Update Helm chart + values with current version ---
 CHART_YAML="${CHART_DIR}/Chart.yaml"
-VALUES_PROD="${CHART_DIR}/values.yaml"
+VALUES="${CHART_DIR}/values.yaml"
 if [[ -f "${CHART_YAML}" ]]; then
   sed -i.bak "s/^version:.*/version: ${VERSION}/" "${CHART_YAML}" && rm -f "${CHART_YAML}.bak"
   sed -i.bak "s/^appVersion:.*/appVersion: \"${VERSION}\"/" "${CHART_YAML}" && rm -f "${CHART_YAML}.bak"
 fi
-if [[ -f "${VALUES_PROD}" ]]; then
-  sed -i.bak "s/tag: \".*\"/tag: \"${VERSION}\"/" "${VALUES_PROD}" && rm -f "${VALUES_PROD}.bak"
+if [[ -f "${VALUES}" ]]; then
+  sed -i.bak "s/tag: \".*\"/tag: \"${VERSION}\"/" "${VALUES}" && rm -f "${VALUES}.bak"
 fi
 
-echo "=== ArgoCD Addons Platform Installer ==="
+echo "=== Sharko Installer ==="
 echo "  Version:   ${VERSION}"
 echo "  Image:     ${FULL_IMAGE}:${IMAGE_TAG}"
 echo "  Namespace: ${NAMESPACE}"
 echo "  Chart:     ${CHART_DIR}"
 echo "  Secrets:   ${SECRETS_FILE}"
 echo "  AI:        ${AI_PROVIDER:-disabled} ${AI_CLOUD_MODEL:+(${AI_CLOUD_MODEL})}"
-echo "  Datadog:   ${DATADOG_API_KEY:+enabled}${DATADOG_API_KEY:-disabled}"
 echo ""
 
 # --- Step 1: Login to registry (if configured) ---
@@ -117,7 +115,6 @@ echo ">>> Building Docker image ${FULL_IMAGE}:${IMAGE_TAG} ..."
 
 if [[ -n "${REGISTRY}" ]]; then
   # Remote registry: build multi-arch and push in one step
-  # Ensure buildx builder exists
   if ! docker buildx inspect multiarch >/dev/null 2>&1; then
     echo "    Creating buildx builder 'multiarch'..."
     docker buildx create --name multiarch --use
@@ -149,13 +146,11 @@ SECRET_ARGS=(
   --set "secrets.GITHUB_TOKEN=${GITHUB_TOKEN}"
 )
 
-# Encryption key for migration credentials
-[[ -n "${AAP_ENCRYPTION_KEY:-}" ]] && SECRET_ARGS+=(--set "secrets.AAP_ENCRYPTION_KEY=${AAP_ENCRYPTION_KEY}")
+# Encryption key
+[[ -n "${SHARKO_ENCRYPTION_KEY:-}" ]] && SECRET_ARGS+=(--set "secrets.SHARKO_ENCRYPTION_KEY=${SHARKO_ENCRYPTION_KEY}")
 
 # ArgoCD tokens
 [[ -n "${ARGOCD_TOKEN:-}" ]] && SECRET_ARGS+=(--set "secrets.ARGOCD_TOKEN=${ARGOCD_TOKEN}")
-[[ -n "${ARGOCD_NONPROD_SERVER_URL:-}" ]] && SECRET_ARGS+=(--set "secrets.ARGOCD_NONPROD_SERVER_URL=${ARGOCD_NONPROD_SERVER_URL}")
-[[ -n "${ARGOCD_NONPROD_TOKEN:-}" ]] && SECRET_ARGS+=(--set "secrets.ARGOCD_NONPROD_TOKEN=${ARGOCD_NONPROD_TOKEN}")
 
 # AI
 if [[ -n "${AI_API_KEY:-}" ]]; then
@@ -168,19 +163,11 @@ fi
 # GitOps actions
 [[ "${GITOPS_ACTIONS_ENABLED:-}" == "true" ]] && SECRET_ARGS+=(--set "gitops.actions.enabled=true")
 
-# Datadog
-if [[ -n "${DATADOG_API_KEY:-}" ]]; then
-  SECRET_ARGS+=(
-    --set "datadog.apiKey=${DATADOG_API_KEY}"
-    --set "datadog.appKey=${DATADOG_APP_KEY:-}"
-  )
-fi
-
 # Basic auth
-if [[ -n "${AAP_AUTH_USER:-}" ]]; then
+if [[ -n "${SHARKO_AUTH_USER:-}" ]]; then
   SECRET_ARGS+=(
-    --set "auth.username=${AAP_AUTH_USER}"
-    --set "auth.password=${AAP_AUTH_PASSWORD:-}"
+    --set "auth.username=${SHARKO_AUTH_USER}"
+    --set "auth.password=${SHARKO_AUTH_PASSWORD:-}"
   )
 fi
 
@@ -201,5 +188,5 @@ echo "  Version: ${VERSION}"
 echo "  Image:   ${FULL_IMAGE}:${IMAGE_TAG}"
 echo ""
 echo "  kubectl -n ${NAMESPACE} get pods"
-echo "  kubectl -n ${NAMESPACE} logs -f deploy/${RELEASE}-argocd-addons-platform"
-echo "  kubectl -n ${NAMESPACE} port-forward svc/${RELEASE}-argocd-addons-platform 8080:8080"
+echo "  kubectl -n ${NAMESPACE} logs -f deploy/${RELEASE}-sharko"
+echo "  kubectl -n ${NAMESPACE} port-forward svc/${RELEASE}-sharko 8080:8080"

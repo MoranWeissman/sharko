@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy ArgoCD Addons Platform using a pre-built image from GHCR.
+# Deploy Sharko using a pre-built image from GHCR.
 # Use this after the GitHub Actions release workflow has built and pushed the image.
 #
 # Usage:
@@ -13,9 +13,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-CHART_DIR="${PROJECT_ROOT}/charts/argocd-addons-platform"
-NAMESPACE="argocd-addons-platform"
-RELEASE="aap"
+CHART_DIR="${PROJECT_ROOT}/charts/sharko"
+NAMESPACE="sharko"
+RELEASE="sharko"
 # Read version: prefer .release-please-manifest.json, fall back to VERSION file
 if [[ -f "${PROJECT_ROOT}/.release-please-manifest.json" ]]; then
   VERSION="$(grep -o '"\.": *"[^"]*"' "${PROJECT_ROOT}/.release-please-manifest.json" | grep -o '[0-9][0-9.]*')"
@@ -57,21 +57,21 @@ fi
 
 # --- Image config ---
 IMAGE_REGISTRY="${IMAGE_REGISTRY:-ghcr.io/your-org}"
-IMAGE_REPO="${IMAGE_REPOSITORY:-argocd-addons-platform}"
+IMAGE_REPO="${IMAGE_REPOSITORY:-sharko}"
 FULL_IMAGE="${IMAGE_REGISTRY}/${IMAGE_REPO}"
 
 # --- Update Helm chart versions from VERSION file ---
 CHART_YAML="${CHART_DIR}/Chart.yaml"
-VALUES_PROD="${CHART_DIR}/values.yaml"
+VALUES="${CHART_DIR}/values.yaml"
 if [[ -f "${CHART_YAML}" ]]; then
   sed -i.bak "s/^version:.*/version: ${VERSION}/" "${CHART_YAML}" && rm -f "${CHART_YAML}.bak"
   sed -i.bak "s/^appVersion:.*/appVersion: \"${VERSION}\"/" "${CHART_YAML}" && rm -f "${CHART_YAML}.bak"
 fi
-if [[ -f "${VALUES_PROD}" ]]; then
-  sed -i.bak "s/tag: \".*\"/tag: \"${VERSION}\"/" "${VALUES_PROD}" && rm -f "${VALUES_PROD}.bak"
+if [[ -f "${VALUES}" ]]; then
+  sed -i.bak "s/tag: \".*\"/tag: \"${VERSION}\"/" "${VALUES}" && rm -f "${VALUES}.bak"
 fi
 
-echo "=== ArgoCD Addons Platform Deploy ==="
+echo "=== Sharko Deploy ==="
 echo "  Version:   ${VERSION}"
 echo "  Image:     ${FULL_IMAGE}:${VERSION}"
 echo "  Namespace: ${NAMESPACE}"
@@ -85,11 +85,9 @@ SECRET_ARGS=(
   --set "secrets.GITHUB_TOKEN=${GITHUB_TOKEN}"
 )
 
-[[ -n "${AAP_ENCRYPTION_KEY:-}" ]] && SECRET_ARGS+=(--set "secrets.AAP_ENCRYPTION_KEY=${AAP_ENCRYPTION_KEY}")
+[[ -n "${SHARKO_ENCRYPTION_KEY:-}" ]] && SECRET_ARGS+=(--set "secrets.SHARKO_ENCRYPTION_KEY=${SHARKO_ENCRYPTION_KEY}")
 [[ -n "${ARGOCD_TOKEN:-}" ]] && SECRET_ARGS+=(--set "secrets.ARGOCD_TOKEN=${ARGOCD_TOKEN}")
 [[ -n "${ARGOCD_SERVER_URL:-}" ]] && SECRET_ARGS+=(--set "secrets.ARGOCD_SERVER_URL=${ARGOCD_SERVER_URL}")
-[[ -n "${ARGOCD_NONPROD_SERVER_URL:-}" ]] && SECRET_ARGS+=(--set "secrets.ARGOCD_NONPROD_SERVER_URL=${ARGOCD_NONPROD_SERVER_URL}")
-[[ -n "${ARGOCD_NONPROD_TOKEN:-}" ]] && SECRET_ARGS+=(--set "secrets.ARGOCD_NONPROD_TOKEN=${ARGOCD_NONPROD_TOKEN}")
 
 if [[ -n "${AI_API_KEY:-}" ]]; then
   SECRET_ARGS+=(--set "ai.apiKey=${AI_API_KEY}")
@@ -98,13 +96,6 @@ fi
 [[ -n "${AI_AUTH_HEADER:-}" ]] && SECRET_ARGS+=(--set "ai.authHeader=${AI_AUTH_HEADER}")
 [[ -n "${AI_MAX_ITERATIONS:-}" ]] && SECRET_ARGS+=(--set "ai.maxIterations=${AI_MAX_ITERATIONS}")
 [[ "${GITOPS_ACTIONS_ENABLED:-}" == "true" ]] && SECRET_ARGS+=(--set "gitops.actions.enabled=true")
-
-if [[ -n "${DATADOG_API_KEY:-}" ]]; then
-  SECRET_ARGS+=(
-    --set "datadog.apiKey=${DATADOG_API_KEY}"
-    --set "datadog.appKey=${DATADOG_APP_KEY:-}"
-  )
-fi
 
 # --- Deploy ---
 echo ">>> Deploying with Helm..."
@@ -120,4 +111,4 @@ echo "  Version: ${VERSION}"
 echo "  Image:   ${FULL_IMAGE}:${VERSION}"
 echo ""
 echo "  kubectl -n ${NAMESPACE} get pods"
-echo "  kubectl -n ${NAMESPACE} logs -f deploy/${RELEASE}-argocd-addons-platform"
+echo "  kubectl -n ${NAMESPACE} logs -f deploy/${RELEASE}-sharko"
