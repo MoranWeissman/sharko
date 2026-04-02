@@ -5,15 +5,15 @@
 
 # Git repository URL and revision
 # Note: Use .git suffix for consistency with ArgoCD best practices
-repoURL: 'https://github.com/merck-ahtl/argocd-cluster-addons.git'
+repoURL: 'https://github.com/your-org/argocd-cluster-addons.git'
 # targetRevision: Branch, tag, or commit to track (HEAD tracks default branch)
 targetRevision: main
-githubUsername: weissmmo_merck
+githubUsername: your-github-username
 
 # Host cluster configuration
 # This is the cluster where ArgoCD itself is running
 hostCluster:
-  name: devops-argocd-addons-dev-eks
+  name: your-argocd-cluster
 
 # Bootstrap infrastructure configuration
 bootstrap:
@@ -26,7 +26,7 @@ bootstrap:
     namespace: external-secrets
     serviceaccount:
       name: external-secrets
-      roleArn: "arn:aws:iam::627176949220:role/EKS-devops-argocd-addons-secret-manager"
+      roleArn: "arn:aws:iam::123456789012:role/EKS-your-cluster-secret-manager"
 
 # Application configuration (loaded from configuration files)
 appName: ""

@@ -6,8 +6,8 @@
     {
       "name": "cluster_name",
       "prefix": "kube_cluster_name",
-      "available_values": ["devops-argocd-addons-dev-eks"],
-      "default": "devops-argocd-addons-dev-eks"
+      "available_values": ["your-argocd-cluster"],
+      "default": "your-argocd-cluster"
     },
     {
       "name": "addon",

@@ -7,11 +7,11 @@ set -euo pipefail
 
 NAMESPACE="${ARGOCD_NAMESPACE:-argocd}"
 SECRET_NAME="github-repo-credentials"
-REPO_URL="${REPO_URL:-https://github.com/merck-ahtl/argocd-cluster-addons}"
+REPO_URL="${REPO_URL:-https://github.com/your-org/argocd-cluster-addons}"
 
 # AWS Secrets Manager configuration (from bootstrap-config.yaml)
-AWS_ACCOUNT="627176949220"
-AWS_SECRET_NAME="argocd/devops-argocd-addons-dev-eks"
+AWS_ACCOUNT="123456789012"
+AWS_SECRET_NAME="argocd/your-cluster-name"
 AWS_REGION="${AWS_REGION:-eu-west-1}"
 
 echo "=================================================="

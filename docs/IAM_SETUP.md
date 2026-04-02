@@ -19,9 +19,9 @@ ESO uses **IRSA (IAM Roles for Service Accounts)** to authenticate with AWS Secr
 
 ### Role Details
 
-**Role Name:** `EKS-devops-argocd-addons-secret-manager`
-**Role ARN:** `arn:aws:iam::627176949220:role/EKS-devops-argocd-addons-secret-manager`
-**Account:** 627176949220 (DevOps account)
+**Role Name:** `EKS-your-cluster-secret-manager`
+**Role ARN:** `arn:aws:iam::123456789012:role/EKS-your-cluster-secret-manager`
+**Account:** 123456789012 (DevOps account)
 **Region:** eu-west-1
 
 ### Service Account
@@ -29,7 +29,7 @@ ESO uses **IRSA (IAM Roles for Service Accounts)** to authenticate with AWS Secr
 The ESO service account that assumes this role:
 - **Namespace:** `external-secrets`
 - **Service Account:** `external-secrets`
-- **Annotation:** `eks.amazonaws.com/role-arn: arn:aws:iam::627176949220:role/EKS-devops-argocd-addons-secret-manager`
+- **Annotation:** `eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/EKS-your-cluster-secret-manager`
 
 ## Adding a New Cluster
 
@@ -42,20 +42,20 @@ When deploying this solution to a new EKS cluster, you need to add the cluster's
 aws eks describe-cluster \
   --name YOUR_CLUSTER_NAME \
   --region eu-west-1 \
-  --profile devops-switch \
+  --profile your-profile \
   --query 'cluster.identity.oidc.issuer' \
   --output text
 
-# Example output: https://oidc.eks.eu-west-1.amazonaws.com/id/95A350C4A098114287BB76A160415A4A
-# Extract the ID: 95A350C4A098114287BB76A160415A4A
+# Example output: https://oidc.eks.eu-west-1.amazonaws.com/id/EXAMPLE_OIDC_ID_1
+# Extract the ID: EXAMPLE_OIDC_ID_1
 ```
 
 ### Step 2: Get Current Trust Policy
 
 ```bash
 aws iam get-role \
-  --role-name EKS-devops-argocd-addons-secret-manager \
-  --profile devops-switch \
+  --role-name EKS-your-cluster-secret-manager \
+  --profile your-profile \
   --query 'Role.AssumeRolePolicyDocument' \
   --output json > current-trust-policy.json
 ```
@@ -68,7 +68,7 @@ Add a new statement to the trust policy JSON:
 {
     "Effect": "Allow",
     "Principal": {
-        "Federated": "arn:aws:iam::627176949220:oidc-provider/oidc.eks.eu-west-1.amazonaws.com/id/YOUR_OIDC_ID"
+        "Federated": "arn:aws:iam::123456789012:oidc-provider/oidc.eks.eu-west-1.amazonaws.com/id/YOUR_OIDC_ID"
     },
     "Action": "sts:AssumeRoleWithWebIdentity",
     "Condition": {
@@ -89,17 +89,17 @@ Add a new statement to the trust policy JSON:
 
 ```bash
 aws iam update-assume-role-policy \
-  --role-name EKS-devops-argocd-addons-secret-manager \
+  --role-name EKS-your-cluster-secret-manager \
   --policy-document file://updated-trust-policy.json \
-  --profile devops-switch
+  --profile your-profile
 ```
 
 ### Step 5: Verify the Update
 
 ```bash
 aws iam get-role \
-  --role-name EKS-devops-argocd-addons-secret-manager \
-  --profile devops-switch \
+  --role-name EKS-your-cluster-secret-manager \
+  --profile your-profile \
   --query 'Role.AssumeRolePolicyDocument' \
   --output json
 ```
@@ -110,10 +110,10 @@ The role currently trusts these OIDC providers:
 
 | OIDC ID | Region | Cluster |
 |---------|--------|---------|
-| `35AEED386B175FD014B759341E41636C` | eu-west-1 | Previous cluster |
-| `7A5DA82A88A2DCD8CED6D79D77216026` | eu-west-1 | Previous cluster |
-| `5FD847A0086F2E41F75D3330AFBF9A1E` | eu-central-1 | Previous cluster |
-| `95A350C4A098114287BB76A160415A4A` | eu-west-1 | **Current ArgoCD cluster** |
+| `EXAMPLE_OIDC_ID_2` | eu-west-1 | Previous cluster |
+| `EXAMPLE_OIDC_ID_3` | eu-west-1 | Previous cluster |
+| `EXAMPLE_OIDC_ID_4` | eu-central-1 | Previous cluster |
+| `EXAMPLE_OIDC_ID_1` | eu-west-1 | **Current ArgoCD cluster** |
 
 ## Complete Trust Policy Example
 
@@ -124,13 +124,13 @@ The role currently trusts these OIDC providers:
         {
             "Effect": "Allow",
             "Principal": {
-                "Federated": "arn:aws:iam::627176949220:oidc-provider/oidc.eks.eu-west-1.amazonaws.com/id/95A350C4A098114287BB76A160415A4A"
+                "Federated": "arn:aws:iam::123456789012:oidc-provider/oidc.eks.eu-west-1.amazonaws.com/id/EXAMPLE_OIDC_ID_1"
             },
             "Action": "sts:AssumeRoleWithWebIdentity",
             "Condition": {
                 "StringEquals": {
-                    "oidc.eks.eu-west-1.amazonaws.com/id/95A350C4A098114287BB76A160415A4A:sub": "system:serviceaccount:external-secrets:external-secrets",
-                    "oidc.eks.eu-west-1.amazonaws.com/id/95A350C4A098114287BB76A160415A4A:aud": "sts.amazonaws.com"
+                    "oidc.eks.eu-west-1.amazonaws.com/id/EXAMPLE_OIDC_ID_1:sub": "system:serviceaccount:external-secrets:external-secrets",
+                    "oidc.eks.eu-west-1.amazonaws.com/id/EXAMPLE_OIDC_ID_1:aud": "sts.amazonaws.com"
                 }
             }
         }
@@ -173,7 +173,7 @@ The role should have a permissions policy that allows ESO to read secrets from A
 **Checks:**
 1. Verify OIDC provider exists in IAM:
    ```bash
-   aws iam list-open-id-connect-providers --profile devops-switch
+   aws iam list-open-id-connect-providers --profile your-profile
    ```
 
 2. Verify service account has the annotation:
@@ -198,7 +198,7 @@ The role should have a permissions policy that allows ESO to read secrets from A
 OIDC_ISSUER=$(aws eks describe-cluster \
   --name YOUR_CLUSTER \
   --region eu-west-1 \
-  --profile devops-switch \
+  --profile your-profile \
   --query 'cluster.identity.oidc.issuer' \
   --output text)
 
@@ -207,7 +207,7 @@ OIDC_ISSUER=$(aws eks describe-cluster \
 aws iam create-open-id-connect-provider \
   --url $OIDC_ISSUER \
   --client-id-list sts.amazonaws.com \
-  --profile devops-switch
+  --profile your-profile
 ```
 
 ## Security Best Practices

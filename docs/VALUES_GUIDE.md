@@ -54,7 +54,7 @@ The solution uses a **layered values architecture** with clear separation of con
 **Structure**:
 ```yaml
 # Git repository URL
-repoURL: 'https://github.com/merck-ahtl/argocd-cluster-addons'
+repoURL: 'https://github.com/your-org/argocd-cluster-addons'
 
 # Bootstrap infrastructure configuration
 bootstrap:
@@ -69,8 +69,8 @@ bootstrap:
 
   # GitHub repository credentials (for private repo access)
   github:
-    awsAccount: "627176949220"   # DevOps AWS account
-    secretName: argocd/devops-argocd-addons-dev-eks
+    awsAccount: "123456789012"   # DevOps AWS account
+    secretName: argocd/your-cluster-name
     usernameKey: github_user
     tokenKey: github_token
 
@@ -84,13 +84,13 @@ clusters: []         # Loaded from cluster-addons.yaml
 **Key Values**:
 | Value | Purpose | Default |
 |-------|---------|---------|
-| `repoURL` | Git repository URL for this solution | `https://github.com/merck-ahtl/argocd-cluster-addons` |
+| `repoURL` | Git repository URL for this solution | `https://github.com/your-org/argocd-cluster-addons` |
 | `bootstrap.region` | AWS region for ESO ClusterSecretStore | `eu-west-1` |
 | `bootstrap.eso.version` | ESO Helm chart version | `0.9.10` |
 | `bootstrap.eso.namespace` | ESO deployment namespace | `external-secrets` |
 | `bootstrap.eso.serviceAccount` | ESO service account name | `external-secrets` |
-| `bootstrap.github.awsAccount` | DevOps AWS account for GitHub PAT | `627176949220` |
-| `bootstrap.github.secretName` | Secrets Manager secret name | `argocd/devops-argocd-addons-dev-eks` |
+| `bootstrap.github.awsAccount` | DevOps AWS account for GitHub PAT | `123456789012` |
+| `bootstrap.github.secretName` | Secrets Manager secret name | `argocd/your-cluster-name` |
 | `bootstrap.github.usernameKey` | Secret key for GitHub username | `github_user` |
 | `bootstrap.github.tokenKey` | Secret key for GitHub token | `github_token` |
 
@@ -101,7 +101,7 @@ clusters: []         # Loaded from cluster-addons.yaml
 - **Multi-source applications**: Uses `repoURL` for values reference
 
 **Prerequisites**:
-- AWS Secrets Manager secret `argocd/devops-argocd-addons-dev-eks` must exist in account 627176949220
+- AWS Secrets Manager secret `argocd/your-cluster-name` must exist in account 123456789012
 - Secret must contain keys: `github_user` and `github_token`
 - See `docs/BOOTSTRAP.md` for setup instructions
 
@@ -163,9 +163,9 @@ applicationsets:
 **Structure**:
 ```yaml
 # Note: AWS Secrets Manager secret name is automatically prefixed with "k8s-"
-#       Example: cluster name "feedlot-dev" → secret "k8s-feedlot-dev"
+#       Example: cluster name "my-app-dev" → secret "k8s-my-app-dev"
 clusters:
-  - name: feedlot-dev
+  - name: my-app-dev
     labels:
       # Enable addons by setting label to "enabled"
       datadog: enabled
@@ -256,9 +256,9 @@ addonsConfig:
 # ================================================================ #
 clusterGlobalValues:
   env: &env dev
-  clusterName: &clusterName feedlot-dev
+  clusterName: &clusterName my-app-dev
   region: &region eu-west-1
-  projectName: feedlot  # Used for Datadog API key lookup
+  projectName: my-app  # Used for Datadog API key lookup
 
 # ================================================================ #
 # Addon-specific overrides
@@ -282,7 +282,7 @@ datadog:
 external-secrets:
   serviceAccount:
     annotations:
-      eks.amazonaws.com/role-arn: "arn:aws:iam::298685015100:role/feedlot-secretsmanager-sa-dev"
+      eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/example-secretsmanager-sa-dev"
 ```
 
 **Key Sections**:
@@ -295,16 +295,16 @@ external-secrets:
 ```yaml
 # Define once
 clusterGlobalValues:
-  clusterName: &clusterName feedlot-dev
+  clusterName: &clusterName my-app-dev
   region: &region eu-west-1
 
 # Reference many times
 datadog:
-  clusterName: *clusterName      # Resolves to: feedlot-dev
+  clusterName: *clusterName      # Resolves to: my-app-dev
 
 anodot:
   config:
-    clusterName: *clusterName    # Resolves to: feedlot-dev
+    clusterName: *clusterName    # Resolves to: my-app-dev
     clusterRegion: *region       # Resolves to: eu-west-1
 ```
 
@@ -372,14 +372,14 @@ generators:
               app: 'datadog'
 ```
 
-**Output**: List of cluster names matching the label selector (e.g., `feedlot-dev`, `devops-argocd-addons-dev-eks`)
+**Output**: List of cluster names matching the label selector (e.g., `my-app-dev`, `your-argocd-cluster`)
 
 #### 2. Git Files Generator
 Reads and parses cluster values files for matched clusters:
 
 ```yaml
         - git:
-            repoURL: https://github.com/merck-ahtl/argocd-cluster-addons
+            repoURL: https://github.com/your-org/argocd-cluster-addons
             revision: main
             files:
               - path: "configuration/addons-clusters-values/{{.name}}.yaml"
@@ -387,13 +387,13 @@ Reads and parses cluster values files for matched clusters:
 
 **Process**:
 1. For each cluster from Cluster Generator, substitute `{{.name}}` with cluster name
-2. Read YAML file: `configuration/addons-clusters-values/feedlot-dev.yaml`
+2. Read YAML file: `configuration/addons-clusters-values/my-app-dev.yaml`
 3. Parse YAML into key-value pairs
 4. Expose each root key as a variable in GoTemplate context
 
-**Variables Available** (example for `feedlot-dev.yaml`):
+**Variables Available** (example for `my-app-dev.yaml`):
 ```yaml
-# .clusterGlobalValues → { env: "dev", clusterName: "feedlot-dev", ... }
+# .clusterGlobalValues → { env: "dev", clusterName: "my-app-dev", ... }
 # .datadog → { datadog: { ... }, clusterAgent: { ... } }
 # .external-secrets → { serviceAccount: { ... } }
 # .keda → { ... }
@@ -446,9 +446,9 @@ helm:
 ### Example Flow
 
 ```
-1. Cluster Generator finds: feedlot-dev (label: datadog=enabled)
+1. Cluster Generator finds: my-app-dev (label: datadog=enabled)
    ↓
-2. Git Files Generator reads: configuration/addons-clusters-values/feedlot-dev.yaml
+2. Git Files Generator reads: configuration/addons-clusters-values/my-app-dev.yaml
    ↓
 3. YAML parsed into variables:
    .datadog = { datadog: {...}, clusterAgent: {...} }
@@ -460,12 +460,12 @@ helm:
 5. Inline values injected:
    values: |
      datadog:
-       clusterName: feedlot-dev
+       clusterName: my-app-dev
      clusterAgent:
        resources:
          memory: 1Gi
    ↓
-6. Application created: datadog-feedlot-dev
+6. Application created: datadog-my-app-dev
    with ONLY datadog configuration (no external-secrets, keda, etc.)
 ```
 
@@ -638,14 +638,14 @@ datadog:
       enabled: true
 
 # 3. Cluster-specific values (via Git Files generator + inline values)
-# From: configuration/addons-clusters-values/feedlot-dev.yaml
+# From: configuration/addons-clusters-values/my-app-dev.yaml
 datadog:
   clusterAgent:
     resources:
       memory: 1Gi  # Overrides: 256Mi → 1Gi
     rbac:
       serviceAccountAnnotations:
-        eks.amazonaws.com/role-arn: "arn:aws:iam::123456:role/Datadog-Agent"
+        eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/Datadog-Agent-example"
 
 # 4. EKS Auto Mode config (if eksAutoMode: "true")
 # From: nodepools-config-values/datadog-nodepool-config.yaml
@@ -658,15 +658,15 @@ agents:
 
 # 5. Datadog parameters (highest precedence)
 datadog:
-  tags: 'env:dev,cluster:feedlot-dev'  # From cluster secret annotation
-  apiKey: 'ENC[datadog-api-keys-integration;feedlot-dev]'
+  tags: 'env:dev,cluster:my-app-dev'  # From cluster secret annotation
+  apiKey: 'ENC[datadog-api-keys-integration;my-app-dev]'
   env:
     - name: DD_SECRET_BACKEND_TYPE
       value: "aws.secrets"
     - name: DD_SECRET_BACKEND_CONFIG
       value: '{"aws_session":{"aws_region":"eu-west-1"}}'
 
-# Final merged values for feedlot-dev Datadog:
+# Final merged values for my-app-dev Datadog:
 datadog:
   logLevel: INFO          # From global-values.yaml
   tags: 'env:dev,...'     # From parameters (cluster annotations)

@@ -9,7 +9,7 @@ metadata:
 spec:
   name: "[ArgoCD Cluster Addons Application Operations] Multiple applications degraded"
   type: query alert
-  query: "avg(last_5m):count:argocd.app_controller.app.info{health_status:degraded,kube_cluster_name:devops-argocd-addons-dev-eks} > 3"
+  query: "avg(last_5m):count:argocd.app_controller.app.info{health_status:degraded,kube_cluster_name:your-argocd-cluster} > 3"
   message: |-
     {{#is_alert}}
     🔴 [P1 CRITICAL] More than 3 applications are in Degraded state
@@ -27,7 +27,7 @@ spec:
     ✅ RECOVERED: Degraded application count is back to normal
     {{/is_recovery}}
 
-    @moran.weissman@msd.com @microsoft-teams-ArgocdClusterAddonsNonProd
+    @team@example.com @slack-platform-alerts
   tags:
     - "platform:devex"
     - "kubernetes"

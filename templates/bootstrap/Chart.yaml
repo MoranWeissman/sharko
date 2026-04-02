@@ -4,5 +4,5 @@ description: Bootstrap chart for ArgoCD cluster addons management
 type: application
 version: 1.0.0
 maintainers:
-  - name: moran.weissman
-    email: moran.weissman@merck.com
+  - name: maintainer
+    email: maintainer@example.com

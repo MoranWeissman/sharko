@@ -32,7 +32,7 @@ spec:
     4. Increase memory limits in Helm values
     {{/is_alert}}
 
-    @moran.weissman@msd.com
+    @team@example.com
   tags:
     - "platform:devex"
     - "kubernetes"

@@ -9,7 +9,7 @@ metadata:
 spec:
   name: "[ArgoCD Cluster Addons Application Operations] High sync failure rate"
   type: query alert
-  query: "sum(last_1h):sum:argocd.app_controller.app.sync.count{phase:error,kube_cluster_name:devops-argocd-addons-dev-eks}.as_count() / sum:argocd.app_controller.app.sync.count{kube_cluster_name:devops-argocd-addons-dev-eks}.as_count() * 100 > 10"
+  query: "sum(last_1h):sum:argocd.app_controller.app.sync.count{phase:error,kube_cluster_name:your-argocd-cluster}.as_count() / sum:argocd.app_controller.app.sync.count{kube_cluster_name:your-argocd-cluster}.as_count() * 100 > 10"
   message: |-
     {{#is_alert}}
     🔴 [P1 CRITICAL] Sync failure rate is above 10% in the last hour
@@ -32,7 +32,7 @@ spec:
     ✅ RECOVERED: Sync failure rate is back to normal
     {{/is_recovery}}
 
-    @moran.weissman@msd.com @microsoft-teams-ArgocdClusterAddonsNonProd
+    @team@example.com @slack-platform-alerts
   tags:
     - "platform:devex"
     - "kubernetes"

@@ -2,7 +2,7 @@
     "name": "[ArgoCD Cluster Addons Application Operations] Multiple applications degraded",
     "type": "query alert",
     "query": "max(last_5m):count:argocd.app_controller.app.info{health_status:degraded} > 3",
-    "message": "{{#is_alert}}\n\ud83d\udd34 [P1 CRITICAL] More than 3 applications are in Degraded state\n\nDegraded count: {{value}}\nMultiple applications are unhealthy simultaneously. This likely indicates a systemic issue \u2014 cluster connectivity, shared dependency failure, or controller problem.\n\nActions:\n1. Check cluster connectivity on Application Operations dashboard\n2. Check ArgoCD controller health on Host Cluster dashboard\n3. Identify affected apps and common patterns (same cluster? same addon type?)\n4. Review controller logs for widespread errors\n{{/is_alert}}\n{{#is_recovery}}\n\u2705 RECOVERED: Degraded application count is back to normal\n{{/is_recovery}}\n\n@moran.weissman@msd.com @microsoft-teams-ArgocdClusterAddonsNonProd",
+    "message": "{{#is_alert}}\n\ud83d\udd34 [P1 CRITICAL] More than 3 applications are in Degraded state\n\nDegraded count: {{value}}\nMultiple applications are unhealthy simultaneously. This likely indicates a systemic issue \u2014 cluster connectivity, shared dependency failure, or controller problem.\n\nActions:\n1. Check cluster connectivity on Application Operations dashboard\n2. Check ArgoCD controller health on Host Cluster dashboard\n3. Identify affected apps and common patterns (same cluster? same addon type?)\n4. Review controller logs for widespread errors\n{{/is_alert}}\n{{#is_recovery}}\n\u2705 RECOVERED: Degraded application count is back to normal\n{{/is_recovery}}\n\n@team@example.com @slack-platform-alerts",
     "tags": [
         "platform:devex",
         "kubernetes",

@@ -37,8 +37,8 @@ This guide explains how to bootstrap the ArgoCD cluster addons solution from scr
 **CRITICAL:** Before bootstrapping, create the following secret in AWS Secrets Manager:
 
 **Secret Details:**
-- **AWS Account:** 627176949220 (DevOps account)
-- **Secret Name:** `argocd/devops-argocd-addons-dev-eks`
+- **AWS Account:** 123456789012 (DevOps account)
+- **Secret Name:** `argocd/your-cluster-name`
 - **Region:** `eu-west-1` (or your configured region)
 
 **Secret Structure:**
@@ -52,7 +52,7 @@ This guide explains how to bootstrap the ArgoCD cluster addons solution from scr
 **Create Secret via AWS CLI:**
 ```bash
 aws secretsmanager create-secret \
-  --name argocd/devops-argocd-addons-dev-eks \
+  --name argocd/your-cluster-name \
   --description "GitHub credentials for ArgoCD to access argocd-cluster-addons repo" \
   --secret-string '{"github_user":"YOUR_USERNAME","github_token":"ghp_YOUR_TOKEN"}' \
   --region eu-west-1 \
@@ -62,7 +62,7 @@ aws secretsmanager create-secret \
 **PAT Requirements:**
 - Scope: `repo` (Full control of private repositories)
 - Expiration: Set according to security policy
-- Organization: `merck-ahtl`
+- Organization: `your-org`
 
 **How It Works:**
 1. Bootstrap deploys ESO with ClusterSecretStore
@@ -314,13 +314,13 @@ kubectl get externalsecrets -n argocd
 
 # Expected output:
 # NAME                           STORE                 REFRESH INTERVAL   STATUS
-# devops-automation-dev-eks      global-secret-store   1h                 SecretSynced
+# example-target-cluster      global-secret-store   1h                 SecretSynced
 
 # Check actual secrets
 kubectl get secrets -n argocd | grep cluster
 
 # Expected:
-# devops-automation-dev-eks    Opaque    3      1m
+# example-target-cluster    Opaque    3      1m
 ```
 
 ### Check ApplicationSets
@@ -343,10 +343,10 @@ kubectl get applicationsets -n argocd
 kubectl get applications -n argocd
 
 # Expected:
-# istio-base-devops-automation-dev-eks
-# istiod-devops-automation-dev-eks
-# istio-cni-devops-automation-dev-eks
-# istio-ingress-devops-automation-dev-eks
+# istio-base-example-target-cluster
+# istiod-example-target-cluster
+# istio-cni-example-target-cluster
+# istio-ingress-example-target-cluster
 ```
 
 ---
@@ -400,7 +400,7 @@ kubectl describe applicationset -n argocd istio-base-dev
 
 **Check:**
 ```bash
-kubectl describe application -n argocd istio-base-devops-automation-dev-eks
+kubectl describe application -n argocd istio-base-example-target-cluster
 ```
 
 **Common Issues:**

@@ -2,8 +2,8 @@
     "id": 261777998,
     "name": "[ArgoCD Cluster Addons Host Cluster] ArgoCD applicationset-controller pod down",
     "type": "query alert",
-    "query": "avg(last_5m):avg:kubernetes_state.deployment.replicas_available{kube_namespace:argocd,kube_deployment:argocd-devops-argocd-addons-dev-eks-applicationset-controller} by {kube_cluster_name} < 1",
-    "message": "{{#is_alert}}\n🔴 [P1 CRITICAL] ArgoCD applicationset-controller is DOWN on {{kube_cluster_name.name}}\n\nApplicationSets are not reconciling. Cluster onboarding and app template changes are blocked.\nAvailable replicas: {{value}}\n\nActions:\n1. kubectl get pods -n argocd -l app.kubernetes.io/name=applicationset-controller\n2. kubectl describe pod -n argocd <pod-name>\n3. kubectl logs -n argocd <pod-name> --tail=100\n{{/is_alert}}\n{{#is_recovery}}\n✅ RECOVERED: ArgoCD applicationset-controller is back on {{kube_cluster_name.name}}\n{{/is_recovery}}\n{{#is_no_data}}\n⚠️ NO DATA from {{kube_cluster_name.name}} — Cluster Agent may be down\n{{/is_no_data}}\n\n@moran.weissman@msd.com @microsoft-teams-ArgocdClusterAddonsNonProd",
+    "query": "avg(last_5m):avg:kubernetes_state.deployment.replicas_available{kube_namespace:argocd,kube_deployment:argocd-your-argocd-cluster-applicationset-controller} by {kube_cluster_name} < 1",
+    "message": "{{#is_alert}}\n🔴 [P1 CRITICAL] ArgoCD applicationset-controller is DOWN on {{kube_cluster_name.name}}\n\nApplicationSets are not reconciling. Cluster onboarding and app template changes are blocked.\nAvailable replicas: {{value}}\n\nActions:\n1. kubectl get pods -n argocd -l app.kubernetes.io/name=applicationset-controller\n2. kubectl describe pod -n argocd <pod-name>\n3. kubectl logs -n argocd <pod-name> --tail=100\n{{/is_alert}}\n{{#is_recovery}}\n✅ RECOVERED: ArgoCD applicationset-controller is back on {{kube_cluster_name.name}}\n{{/is_recovery}}\n{{#is_no_data}}\n⚠️ NO DATA from {{kube_cluster_name.name}} — Cluster Agent may be down\n{{/is_no_data}}\n\n@team@example.com @slack-platform-alerts",
     "tags": [
         "platform:devex",
         "kubernetes",

@@ -141,8 +141,8 @@ Filter in Datadog Monitors page: `component:argocd-cluster-addons-host` or `comp
 ## Notifications
 
 All monitors notify:
-- **Email:** moran.weissman@msd.com
-- **Microsoft Teams:** ArgocdClusterAddonsNonProd channel
+- **Email:** team@example.com
+- **Microsoft Teams:** platform-alerts channel
 
 ---
 

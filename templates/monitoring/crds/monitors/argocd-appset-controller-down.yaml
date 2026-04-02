@@ -29,7 +29,7 @@ spec:
     ⚠️ NO DATA from {{kube_cluster_name.name}} — Cluster Agent may be down
     {{/is_no_data}}
 
-    @moran.weissman@msd.com
+    @team@example.com
   tags:
     - "platform:devex"
     - "kubernetes"

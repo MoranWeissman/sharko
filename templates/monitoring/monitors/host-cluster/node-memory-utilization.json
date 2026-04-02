@@ -3,7 +3,7 @@
     "name": "[ArgoCD Cluster Addons Host Cluster] Node memory utilization",
     "type": "query alert",
     "query": "avg(last_5m):avg:system.mem.pct_usable{*} by {kube_cluster_name,host} < 0.1",
-    "message": "{{#is_alert}}\n🔴 [P1 CRITICAL] Node {{host.name}} memory above 90% on {{kube_cluster_name.name}}\nMemory pressure is high. OOMKill and pod evictions may occur.\nAvailable (pct_usable): {{value}}\n{{/is_alert}}\n{{#is_warning}}\n🟡 [P2 WARNING] Node {{host.name}} memory above 80% on {{kube_cluster_name.name}}\nAvailable (pct_usable): {{value}}\n{{/is_warning}}\n{{#is_recovery}}\n✅ RECOVERED: Node {{host.name}} memory is below threshold\n{{/is_recovery}}\n\n{{#is_alert}}\nActions:\n1. kubectl top pods -n argocd --sort-by=memory\n2. kubectl top pods -n external-secrets --sort-by=memory\n3. Check for memory leaks in component logs\n{{/is_alert}}\n\n@moran.weissman@msd.com @microsoft-teams-ArgocdClusterAddonsNonProd",
+    "message": "{{#is_alert}}\n🔴 [P1 CRITICAL] Node {{host.name}} memory above 90% on {{kube_cluster_name.name}}\nMemory pressure is high. OOMKill and pod evictions may occur.\nAvailable (pct_usable): {{value}}\n{{/is_alert}}\n{{#is_warning}}\n🟡 [P2 WARNING] Node {{host.name}} memory above 80% on {{kube_cluster_name.name}}\nAvailable (pct_usable): {{value}}\n{{/is_warning}}\n{{#is_recovery}}\n✅ RECOVERED: Node {{host.name}} memory is below threshold\n{{/is_recovery}}\n\n{{#is_alert}}\nActions:\n1. kubectl top pods -n argocd --sort-by=memory\n2. kubectl top pods -n external-secrets --sort-by=memory\n3. Check for memory leaks in component logs\n{{/is_alert}}\n\n@team@example.com @slack-platform-alerts",
     "tags": [
         "platform:devex",
         "kubernetes",

@@ -326,7 +326,7 @@ kyverno:
 redis-insight-v2:
   ingress:
     oldClusterVersionSupport: false
-    host: "example-redisinsight-v2-dev.mahi-techlabs.com"
+    host: "redisinsight-v2.<cluster>.example.com"
     sgGroupName: "example-alb-offices"
     svcPort: 38001
 

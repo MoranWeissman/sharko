@@ -4,7 +4,7 @@
 replicaCount: 1
 
 image:
-  repository: ghcr.io/moranweissman/sharko
+  repository: ghcr.io/your-org/sharko
   tag: ""  # Defaults to appVersion from Chart.yaml
   pullPolicy: IfNotPresent
 

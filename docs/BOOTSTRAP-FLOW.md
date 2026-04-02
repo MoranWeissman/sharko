@@ -99,16 +99,16 @@
 
 ## Secret Creation per Cluster Type
 
-### HOST Cluster (e.g., devops-argocd-addons-dev-eks)
+### HOST Cluster (e.g., your-argocd-cluster)
 
 ```
 AWS Secrets Manager
-├── k8s-devops-argocd-addons-dev-eks (cluster credentials + dd_tags)
+├── k8s-your-argocd-cluster (cluster credentials + dd_tags)
 └── datadog-api-keys-integration (API keys)
         ↓
 cluster-external-secret.yaml
         ↓
-Secret: devops-argocd-addons-dev-eks (in argocd namespace)
+Secret: your-argocd-cluster (in argocd namespace)
   - name, server, config (ArgoCD cluster connection)
   - datadog-apikey (embedded)
   - annotations: dd_tags
@@ -120,16 +120,16 @@ Secret: datadog-apikey (in datadog namespace)
   - tags
 ```
 
-### REMOTE Cluster (e.g., devops-automation-dev-eks)
+### REMOTE Cluster (e.g., example-target-cluster)
 
 ```
 AWS Secrets Manager
-├── k8s-devops-automation-dev-eks (cluster credentials + dd_tags)
+├── k8s-example-target-cluster (cluster credentials + dd_tags)
 └── datadog-api-keys-integration (API keys)
         ↓
 cluster-external-secret.yaml (on HOST)
         ↓
-Secret: devops-automation-dev-eks (in argocd namespace on HOST)
+Secret: example-target-cluster (in argocd namespace on HOST)
   - name, server, config (ArgoCD cluster connection)
   - datadog-apikey (embedded)
   - annotations: dd_tags
@@ -137,8 +137,8 @@ Secret: devops-automation-dev-eks (in argocd namespace on HOST)
 token-extraction-job.yaml (runs on HOST)
   ├─→ Connects to REMOTE using ArgoCD credentials
   ├─→ kubectl create token eso-push-access -n datadog --duration=87600h
-  ├─→ Creates Secret: remote-cluster-token-devops-automation-dev-eks
-  └─→ Creates ClusterSecretStore: devops-automation-dev-eks-remote-cluster
+  ├─→ Creates Secret: remote-cluster-token-example-target-cluster
+  └─→ Creates ClusterSecretStore: example-target-cluster-remote-cluster
         ↓
 datadog-pushsecret.yaml (on HOST)
   ├─→ Reads from cluster secret (datadog-apikey + dd_tags)

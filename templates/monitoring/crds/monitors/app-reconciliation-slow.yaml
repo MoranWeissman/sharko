@@ -9,7 +9,7 @@ metadata:
 spec:
   name: "[ArgoCD Cluster Addons Application Operations] Reconciliation slow"
   type: query alert
-  query: "avg(last_10m):p95:argocd.app_controller.app.reconcile{kube_cluster_name:devops-argocd-addons-dev-eks} > 30"
+  query: "avg(last_10m):p95:argocd.app_controller.app.reconcile{kube_cluster_name:your-argocd-cluster} > 30"
   message: |-
     {{#is_alert}}
     🔴 [P1 CRITICAL] Reconciliation p95 is above 30 seconds
@@ -34,7 +34,7 @@ spec:
     ✅ RECOVERED: Reconciliation duration is back to normal
     {{/is_recovery}}
 
-    @moran.weissman@msd.com @microsoft-teams-ArgocdClusterAddonsNonProd
+    @team@example.com @slack-platform-alerts
   tags:
     - "platform:devex"
     - "kubernetes"

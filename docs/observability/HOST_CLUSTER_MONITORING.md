@@ -1,6 +1,6 @@
 # Host Cluster Monitoring
 
-Datadog monitoring for the ArgoCD management cluster (`devops-argocd-addons-*-eks`) —
+Datadog monitoring for the ArgoCD management cluster (`your-argocd-cluster-*-eks`) —
 the single control plane for deploying and managing addons across 50+ EKS clusters.
 
 **Coverage:** Kubernetes infrastructure (nodes, pods, resources, events) for `argocd`,
@@ -43,7 +43,7 @@ flowchart TB
     dd_agent --> metrics_store & logs_store
     dd_cluster --> events_store & metrics_store
     metrics_store & logs_store & events_store --> monitors & dashboard
-    monitors -->|"email alerts"| teams["moran.weissman@msd.com"]
+    monitors -->|"email alerts"| teams["team@example.com"]
 ```
 
 ---
@@ -88,8 +88,8 @@ Node-level monitoring covers the underlying EC2 infrastructure.
 | ArgoCD application-controller pod down | P1 | `replicas_ready < 1` | `kube_namespace:argocd` |
 | ArgoCD applicationset-controller pod down | P1 | `replicas_available < 1` | `kube_namespace:argocd` |
 | Node NotReady | P1 | `node_status{false} >= 1` | All nodes |
-| Node disk utilization | P2/P1 | `> 75% / > 85%` | `kube_cluster_name:devops-argocd-addons-*` |
-| Node memory utilization | P2/P1 | `> 80% / > 90% used` | `kube_cluster_name:devops-argocd-addons-*` |
+| Node disk utilization | P2/P1 | `> 75% / > 85%` | `kube_cluster_name:your-argocd-cluster-*` |
+| Node memory utilization | P2/P1 | `> 80% / > 90% used` | `kube_cluster_name:your-argocd-cluster-*` |
 | Container restart rate | P2/P1 | `> 3 / > 5 restarts in 15m` | `argocd`, `external-secrets`, `kube-system` |
 | Component CPU utilization | P2/P1 | `> 80% / > 95% of limit` | `argocd`, `external-secrets` |
 | Component memory utilization | P2/P1 | `> 80% / > 90% of limit` | `argocd`, `external-secrets` |
@@ -130,9 +130,9 @@ See `monitoring/README.md` for GitOps workflow, prerequisites, and CRD vs JSON f
 
 | Recipient | Channel | Trigger |
 |-----------|---------|---------|
-| `moran.weissman@msd.com` | Email | All monitors |
+| `team@example.com` | Email | All monitors |
 
-Datadog email routing: `@moran.weissman@msd.com` in the monitor message body.
+Datadog email routing: `@team@example.com` in the monitor message body.
 
 ---
 

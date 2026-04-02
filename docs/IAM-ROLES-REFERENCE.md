@@ -8,7 +8,7 @@ The solution uses **IAM Roles for Service Accounts (IRSA)** to provide AWS crede
 
 ---
 
-## Management Account (627176949220)
+## Management Account (123456789012)
 
 ### 1. ArgoCD-Cluster-Addons
 
@@ -16,7 +16,7 @@ The solution uses **IAM Roles for Service Accounts (IRSA)** to provide AWS crede
 
 **Service Account**: `argocd-application-controller` (namespace: `argocd`)
 
-**ARN**: `arn:aws:iam::627176949220:role/ArgoCD-Cluster-Addons`
+**ARN**: `arn:aws:iam::123456789012:role/ArgoCD-Cluster-Addons`
 
 **Trust Policy**:
 ```json
@@ -26,13 +26,13 @@ The solution uses **IAM Roles for Service Accounts (IRSA)** to provide AWS crede
     {
       "Effect": "Allow",
       "Principal": {
-        "Federated": "arn:aws:iam::627176949220:oidc-provider/oidc.eks.eu-west-1.amazonaws.com/id/95A350C4A098114287BB76A160415A4A"
+        "Federated": "arn:aws:iam::123456789012:oidc-provider/oidc.eks.eu-west-1.amazonaws.com/id/EXAMPLE_OIDC_ID_1"
       },
       "Action": "sts:AssumeRoleWithWebIdentity",
       "Condition": {
         "StringEquals": {
-          "oidc.eks.eu-west-1.amazonaws.com/id/95A350C4A098114287BB76A160415A4A:aud": "sts.amazonaws.com",
-          "oidc.eks.eu-west-1.amazonaws.com/id/95A350C4A098114287BB76A160415A4A:sub": "system:serviceaccount:argocd:argocd-application-controller"
+          "oidc.eks.eu-west-1.amazonaws.com/id/EXAMPLE_OIDC_ID_1:aud": "sts.amazonaws.com",
+          "oidc.eks.eu-west-1.amazonaws.com/id/EXAMPLE_OIDC_ID_1:sub": "system:serviceaccount:argocd:argocd-application-controller"
         }
       }
     }
@@ -68,7 +68,7 @@ The solution uses **IAM Roles for Service Accounts (IRSA)** to provide AWS crede
           "codeconnections:GetConnection",
           "codeconnections:UseConnection"
         ],
-        "Resource": "arn:aws:codeconnections:eu-west-1:627176949220:connection/5b195cc0-8ded-4428-a179-4715f391a9ed"
+        "Resource": "arn:aws:codeconnections:eu-west-1:123456789012:connection/example-connection-id"
       },
       {
         "Effect": "Allow",
@@ -95,7 +95,7 @@ The solution uses **IAM Roles for Service Accounts (IRSA)** to provide AWS crede
 
 **Service Account**: `argocd-server` (namespace: `argocd`)
 
-**ARN**: `arn:aws:iam::627176949220:role/ArgoCD`
+**ARN**: `arn:aws:iam::123456789012:role/ArgoCD`
 
 **Trust Policy**: Contains multiple OIDC providers for different ArgoCD clusters (some orphaned from deleted clusters)
 
@@ -107,13 +107,13 @@ The solution uses **IAM Roles for Service Accounts (IRSA)** to provide AWS crede
 
 ---
 
-### 3. EKS-devops-argocd-addons-secret-manager
+### 3. EKS-your-cluster-secret-manager
 
 **Purpose**: IAM role for External Secrets Operator to fetch cluster credentials from AWS Secrets Manager
 
 **Service Account**: `external-secrets` (namespace: `external-secrets`)
 
-**ARN**: `arn:aws:iam::627176949220:role/EKS-devops-argocd-addons-secret-manager`
+**ARN**: `arn:aws:iam::123456789012:role/EKS-your-cluster-secret-manager`
 
 **Trust Policy**: Trusts multiple EKS OIDC providers (for different ArgoCD management clusters)
 
@@ -132,7 +132,7 @@ The solution uses **IAM Roles for Service Accounts (IRSA)** to provide AWS crede
 
 **Service Account**: `argocd-repo-server` (namespace: `argocd`)
 
-**ARN**: `arn:aws:iam::627176949220:role/argocd-addons-vault-plugin`
+**ARN**: `arn:aws:iam::123456789012:role/argocd-addons-vault-plugin`
 
 **Trust Policy**: Specific to `argocd-repo-server` service account
 
@@ -143,11 +143,11 @@ The solution uses **IAM Roles for Service Accounts (IRSA)** to provide AWS crede
 
 ---
 
-### 5. Antelliq-EKS-Admin-Assume-Role
+### 5. EKS-Admin-Assume-Role
 
 **Purpose**: Cross-account IAM role that grants administrative access to EKS clusters
 
-**ARN**: `arn:aws:iam::627176949220:role/Antelliq-EKS-Admin-Assume-Role`
+**ARN**: `arn:aws:iam::123456789012:role/EKS-Admin-Assume-Role`
 
 **Trust Policy**: Allows multiple principals to assume this role:
 ```json
@@ -158,21 +158,21 @@ The solution uses **IAM Roles for Service Accounts (IRSA)** to provide AWS crede
       "Effect": "Allow",
       "Principal": {
         "Service": "eks.amazonaws.com",
-        "AWS": "arn:aws:iam::627176949220:root"
+        "AWS": "arn:aws:iam::123456789012:root"
       },
       "Action": "sts:AssumeRole"
     },
     {
       "Effect": "Allow",
       "Principal": {
-        "AWS": "arn:aws:iam::627176949220:role/ArgoCD"
+        "AWS": "arn:aws:iam::123456789012:role/ArgoCD"
       },
       "Action": "sts:AssumeRole"
     },
     {
       "Effect": "Allow",
       "Principal": {
-        "AWS": "arn:aws:iam::627176949220:role/ArgoCD-Cluster-Addons"
+        "AWS": "arn:aws:iam::123456789012:role/ArgoCD-Cluster-Addons"
       },
       "Action": "sts:AssumeRole"
     },
@@ -187,9 +187,9 @@ The solution uses **IAM Roles for Service Accounts (IRSA)** to provide AWS crede
 
 ---
 
-## Remote Accounts (e.g., 298685015100)
+## Remote Accounts (e.g., 123456789012)
 
-### Antelliq-EKS-Admin-Assume-Role (in remote account)
+### EKS-Admin-Assume-Role (in remote account)
 
 **Purpose**: Same as management account version, but in remote accounts for cross-account access
 
@@ -201,7 +201,7 @@ The solution uses **IAM Roles for Service Accounts (IRSA)** to provide AWS crede
     {
       "Effect": "Allow",
       "Principal": {
-        "AWS": "arn:aws:iam::627176949220:role/ArgoCD-Cluster-Addons"
+        "AWS": "arn:aws:iam::123456789012:role/ArgoCD-Cluster-Addons"
       },
       "Action": "sts:AssumeRole"
     }
@@ -214,7 +214,7 @@ The solution uses **IAM Roles for Service Accounts (IRSA)** to provide AWS crede
 **EKS aws-auth Mapping**:
 ```yaml
 mapRoles: |
-  - rolearn: arn:aws:iam::298685015100:role/Antelliq-EKS-Admin-Assume-Role
+  - rolearn: arn:aws:iam::123456789012:role/EKS-Admin-Assume-Role
     username: admin
     groups:
       - system:masters
@@ -233,7 +233,7 @@ ArgoCD Pod
   │
   └─ Executes: argocd-k8s-auth
       ├─ Uses AWS credentials from IRSA
-      ├─ Calls STS: AssumeRole(Antelliq-EKS-Admin-Assume-Role)
+      ├─ Calls STS: AssumeRole(EKS-Admin-Assume-Role)
       └─ Returns: EKS cluster token
           └─ Connects to: EKS cluster API
 ```
@@ -241,7 +241,7 @@ ArgoCD Pod
 ### Cross-Account Cluster Access
 
 ```
-Management Account (627176949220)
+Management Account (123456789012)
   │
   ├─ ArgoCD Pod
   │   ├─ Service Account: argocd-application-controller
@@ -251,12 +251,12 @@ Management Account (627176949220)
       ├─ Uses: AWS credentials from IRSA
       │
       ├─ Calls STS: AssumeRole(
-      │     arn:aws:iam::298685015100:role/Antelliq-EKS-Admin-Assume-Role
+      │     arn:aws:iam::123456789012:role/EKS-Admin-Assume-Role
       │   )
       │
       └─ Returns: Temporary credentials
           │
-          └─ Remote Account (298685015100)
+          └─ Remote Account (123456789012)
               └─ EKS Cluster validates token against aws-auth
 ```
 
@@ -266,13 +266,13 @@ Management Account (627176949220)
 
 ### Application-Controller Service Account Annotation
 
-**File**: `ArgoFleet/fleet-configuration/argocd-values/devops-argocd-addons-dev-eks.yaml`
+**File**: `ArgoFleet/fleet-configuration/argocd-values/your-cluster.yaml`
 
 ```yaml
 controller:
   serviceAccount:
     annotations:
-      eks.amazonaws.com/role-arn: arn:aws:iam::627176949220:role/ArgoCD-Cluster-Addons
+      eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/ArgoCD-Cluster-Addons
 ```
 
 ### External Secrets Operator Service Account Annotation
@@ -284,7 +284,7 @@ bootstrap:
   eso:
     serviceaccount:
       name: external-secrets
-      roleArn: "arn:aws:iam::627176949220:role/EKS-devops-argocd-addons-secret-manager"
+      roleArn: "arn:aws:iam::123456789012:role/EKS-your-cluster-secret-manager"
 ```
 
 ### Cluster Secret Configuration
@@ -299,7 +299,7 @@ config: |
       "args": [
         "aws",
         "--cluster-name", "{{"{{ .clusterName }}"}}",
-        "--role-arn", "arn:aws:iam::{{"{{ .accountId }}"}}:role/Antelliq-EKS-Admin-Assume-Role"
+        "--role-arn", "arn:aws:iam::{{"{{ .accountId }}"}}:role/EKS-Admin-Assume-Role"
       ],
       "env": {
         "AWS_REGION": "{{"{{ .region }}"}}"
@@ -316,12 +316,12 @@ Current EKS clusters and their OIDC provider IDs:
 
 | Cluster Name | OIDC Provider ID | Region | Status |
 |-------------|-----------------|--------|--------|
-| devops-argocd-addons-dev | `35AEED386B175FD014B759341E41636C` | eu-west-1 | Active |
-| devops-argocd-addons-dev-eks | `95A350C4A098114287BB76A160415A4A` | eu-west-1 | Active |
-| devops-argocd-addons-prod | `7A5DA82A88A2DCD8CED6D79D77216026` | eu-west-1 | Active |
-| devops-automation-dev-eks | `FAE91871603A859645BF6A51EF794E69` | eu-west-1 | Active |
+| your-argocd-cluster | `EXAMPLE_OIDC_ID_2` | eu-west-1 | Active |
+| your-argocd-cluster | `EXAMPLE_OIDC_ID_1` | eu-west-1 | Active |
+| argocd-cluster-prod | `EXAMPLE_OIDC_ID_3` | eu-west-1 | Active |
+| example-target-cluster | `EXAMPLE_OIDC_ID_5` | eu-west-1 | Active |
 
-**Note**: Only ArgoCD management clusters need to be in IAM role trust policies. Target clusters (like devops-automation-dev-eks) don't need OIDC provider entries because ArgoCD connects TO them, not FROM them.
+**Note**: Only ArgoCD management clusters need to be in IAM role trust policies. Target clusters (like example-target-cluster) don't need OIDC provider entries because ArgoCD connects TO them, not FROM them.
 
 ---
 
@@ -351,12 +351,12 @@ Current EKS clusters and their OIDC provider IDs:
 
 ### Adding Cross-Account Access
 
-1. **In target account**, update `Antelliq-EKS-Admin-Assume-Role` trust policy:
+1. **In target account**, update `EKS-Admin-Assume-Role` trust policy:
    ```json
    {
      "Effect": "Allow",
      "Principal": {
-       "AWS": "arn:aws:iam::627176949220:role/ArgoCD-Cluster-Addons"
+       "AWS": "arn:aws:iam::123456789012:role/ArgoCD-Cluster-Addons"
      },
      "Action": "sts:AssumeRole"
    }
@@ -450,12 +450,12 @@ kubectl exec -it <pod-name> -n argocd -- aws sts get-caller-identity
 
 ```bash
 # Get trust policy
-aws iam get-role --role-name Antelliq-EKS-Admin-Assume-Role \
+aws iam get-role --role-name EKS-Admin-Assume-Role \
   --query 'Role.AssumeRolePolicyDocument'
 
 # Test assumption
 aws sts assume-role \
-  --role-arn arn:aws:iam::ACCOUNT-ID:role/Antelliq-EKS-Admin-Assume-Role \
+  --role-arn arn:aws:iam::ACCOUNT-ID:role/EKS-Admin-Assume-Role \
   --role-session-name test
 ```
 

@@ -10,8 +10,8 @@ spec:
   name: "[ArgoCD Cluster Addons Host Cluster] Node disk utilization"
   type: query alert
   # Excludes virtual/ephemeral filesystems and Bottlerocket's immutable OS partition (/dev/root).
-  # Scoped to devops-argocd-addons-* to cover dev + prod without hardcoding.
-  query: "avg(last_5m):avg:system.disk.in_use{kube_cluster_name:devops-argocd-addons-*,!fstype:tmpfs,!fstype:overlay,!fstype:squashfs,!fstype:devtmpfs,!device:/dev/root} by {kube_cluster_name,host,device} > 0.85"
+  # Scoped to your-argocd-cluster-* to cover dev + prod without hardcoding.
+  query: "avg(last_5m):avg:system.disk.in_use{kube_cluster_name:your-argocd-cluster-*,!fstype:tmpfs,!fstype:overlay,!fstype:squashfs,!fstype:devtmpfs,!device:/dev/root} by {kube_cluster_name,host,device} > 0.85"
   message: |-
     {{#is_alert}}
     🔴 [P1 CRITICAL] Disk {{device.name}} on {{host.name}} is above 85% — {{value}}
@@ -33,7 +33,7 @@ spec:
     4. Consider increasing EBS volume in Karpenter NodeClass blockDeviceMappings
     {{/is_alert}}
 
-    @moran.weissman@msd.com
+    @team@example.com
   tags:
     - "platform:devex"
     - "kubernetes"

@@ -30,7 +30,7 @@ spec:
     3. Consider increasing CPU limits in Helm values
     {{/is_alert}}
 
-    @moran.weissman@msd.com
+    @team@example.com
   tags:
     - "platform:devex"
     - "kubernetes"

@@ -19,8 +19,8 @@ spec:
     - name: cluster_name
       prefix: kube_cluster_name
       availableValues:
-        - devops-argocd-addons-dev-eks
-      default: "devops-argocd-addons-dev-eks"
+        - your-argocd-cluster
+      default: "your-argocd-cluster"
     - name: environment
       prefix: env
       availableValues: []

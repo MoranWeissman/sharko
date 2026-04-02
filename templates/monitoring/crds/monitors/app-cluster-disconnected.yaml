@@ -9,7 +9,7 @@ metadata:
 spec:
   name: "[ArgoCD Cluster Addons Application Operations] Cluster disconnected"
   type: query alert
-  query: "avg(last_5m):avg:argocd.app_controller.cluster.connection_status{kube_cluster_name:devops-argocd-addons-dev-eks} by {name} < 1"
+  query: "avg(last_5m):avg:argocd.app_controller.cluster.connection_status{kube_cluster_name:your-argocd-cluster} by {name} < 1"
   message: |-
     {{#is_alert}}
     🔴 [P1 CRITICAL] Cluster {{name.name}} is DISCONNECTED from ArgoCD
@@ -30,7 +30,7 @@ spec:
     ⚠️ NO DATA for cluster {{name.name}} — ArgoCD metrics may not be scraped
     {{/is_no_data}}
 
-    @moran.weissman@msd.com @microsoft-teams-ArgocdClusterAddonsNonProd
+    @team@example.com @slack-platform-alerts
   tags:
     - "platform:devex"
     - "kubernetes"

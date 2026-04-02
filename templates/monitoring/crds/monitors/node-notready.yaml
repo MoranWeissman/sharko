@@ -26,7 +26,7 @@ spec:
     ✅ RECOVERED: Node {{host.name}} is Ready again on {{kube_cluster_name.name}}
     {{/is_recovery}}
 
-    @moran.weissman@msd.com
+    @team@example.com
   tags:
     - "platform:devex"
     - "kubernetes"

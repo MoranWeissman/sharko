@@ -8,7 +8,7 @@ Follow these steps exactly to ensure zero-downtime migration with no resource de
 
 ## Prerequisites
 
-### OLD ArgoCD (devops-argocd-addons-dev)
+### OLD ArgoCD (your-argocd-cluster-legacy)
 
 **Source Control:** Azure DevOps
 
@@ -35,10 +35,10 @@ The OLD ArgoCD ApplicationSet has been configured to allow safe Application dele
 
 **Status:** ✅ Configuration complete - no action needed by migration engineers
 
-### NEW ArgoCD (devops-argocd-addons-dev-eks)
+### NEW ArgoCD (your-argocd-cluster)
 
 **Source Control:** GitHub
-**Repository:** `github.com/merck-ahtl/argocd-cluster-addons`
+**Repository:** `github.com/your-org/argocd-cluster-addons`
 
 **Configuration Files:**
 - `configuration/addons-catalog.yaml` - Addon definitions and ApplicationSets
@@ -63,7 +63,7 @@ The OLD ArgoCD ApplicationSet has been configured to allow safe Application dele
 ### Required Access
 
 **GitHub:**
-- Write access to `github.com/merck-ahtl/argocd-cluster-addons`
+- Write access to `github.com/your-org/argocd-cluster-addons`
 - Ability to create branches and push commits
 
 **Azure DevOps:**
@@ -153,14 +153,14 @@ These values apply to **every cluster** that enables this addon.
 Edit `configuration/addons-clusters-values/<cluster-name>.yaml`:
 
 ```yaml
-# Example: configuration/addons-clusters-values/feedlot-dev.yaml
+# Example: configuration/addons-clusters-values/my-app-dev.yaml
 
 # clusterGlobalValues section (YAML anchors for reuse)
 clusterGlobalValues:
   env: &env dev
-  clusterName: &clusterName feedlot-dev
+  clusterName: &clusterName my-app-dev
   region: &region eu-west-1
-  projectName: feedlot
+  projectName: my-app
 
 # Addon overrides (override global defaults)
 istiod:
@@ -178,7 +178,7 @@ datadog:
 > **Note on Datadog API key:** The API key is handled automatically. A dedicated `charts/datadog-apikey`
 > chart is deployed as a multi-source alongside the Datadog Helm chart. It creates an ExternalSecret
 > that fetches the key from AWS Secrets Manager using `{projectName}-{env}` as the property name
-> (e.g., `feedlot-dev`). The resulting K8s secret `datadog-api-key` is injected via the
+> (e.g., `my-app-dev`). The resulting K8s secret `datadog-api-key` is injected via the
 > `datadog.parameters` helper. No manual `apiKeyExistingSecret` configuration is needed.
 
 **How Values Merge:**
@@ -471,9 +471,9 @@ ignoreDifferences:
 
 ---
 
-## Example: Migrating istiod to devops-automation-dev-eks
+## Example: Migrating istiod to example-target-cluster
 
-This example shows migrating the `istiod` addon from OLD ArgoCD to NEW ArgoCD for cluster `devops-automation-dev-eks`.
+This example shows migrating the `istiod` addon from OLD ArgoCD to NEW ArgoCD for cluster `example-target-cluster`.
 
 ### Initial State
 
@@ -481,7 +481,7 @@ This example shows migrating the `istiod` addon from OLD ArgoCD to NEW ArgoCD fo
 ```yaml
 # clusters.yaml
 clusters:
-  - name: devops-automation-dev-eks
+  - name: example-target-cluster
     labels:
       istiod: enabled
       istiod-version: "1.22.0"
@@ -492,7 +492,7 @@ clusters:
 ```yaml
 # cluster-addons.yaml
 clusters:
-  - name: devops-automation-dev-eks
+  - name: example-target-cluster
     labels:
       datadog: enabled
       # istiod not yet enabled
@@ -518,7 +518,7 @@ applicationsets:
 Then, edit `configuration/cluster-addons.yaml`:
 ```yaml
 clusters:
-  - name: devops-automation-dev-eks
+  - name: example-target-cluster
     labels:
       datadog: enabled
       istiod: enabled          # ← Add
@@ -532,7 +532,7 @@ istio:
     enabled: true
 ```
 
-Check cluster-specific overrides in `configuration/addons-clusters-values/devops-automation-dev-eks.yaml` (if any):
+Check cluster-specific overrides in `configuration/addons-clusters-values/example-target-cluster.yaml` (if any):
 ```yaml
 # No istiod overrides needed for this cluster
 # Values from addons-global-values/istiod.yaml will be used
@@ -541,13 +541,13 @@ Check cluster-specific overrides in `configuration/addons-clusters-values/devops
 Commit and push:
 ```bash
 git add configuration/cluster-addons.yaml
-git commit -m "Add istiod to devops-automation-dev-eks for migration"
+git commit -m "Add istiod to example-target-cluster for migration"
 git push origin main
 ```
 
 Check Application created in NEW ArgoCD UI:
 1. Navigate to Applications page
-2. Find **istiod-devops-automation-dev-eks** application
+2. Find **istiod-example-target-cluster** application
 3. Verify Status: OutOfSync (expected)
 
 ---
@@ -557,7 +557,7 @@ Check Application created in NEW ArgoCD UI:
 Edit `clusters.yaml` in OLD ArgoCD repo:
 ```yaml
 clusters:
-  - name: devops-automation-dev-eks
+  - name: example-target-cluster
     labels:
       # istiod: enabled          # ← Comment out
       # istiod-version: "1.22.0" # ← Comment out
@@ -567,7 +567,7 @@ clusters:
 Commit, create PR, and merge:
 ```bash
 git add clusters.yaml
-git commit -m "Remove istiod from devops-automation-dev-eks for migration"
+git commit -m "Remove istiod from example-target-cluster for migration"
 git push
 # Complete PR process
 ```
@@ -577,7 +577,7 @@ Force sync clusters application in OLD ArgoCD UI:
 
 Verify Application removed in OLD ArgoCD UI:
 1. Navigate to Applications page
-2. Search for **istiod-devops-automation-dev-eks**
+2. Search for **istiod-example-target-cluster**
 3. Expected: Application should NOT be found
 
 Verify resources still exist in target cluster:
@@ -592,7 +592,7 @@ kubectl get pods -n istio-system
 **3. Adopt in NEW ArgoCD**
 
 Hard refresh in NEW ArgoCD UI:
-1. Navigate to **istiod-devops-automation-dev-eks** application
+1. Navigate to **istiod-example-target-cluster** application
 2. Click **App Details** → **Refresh** → **Hard Refresh**
 
 Sync in NEW ArgoCD UI:

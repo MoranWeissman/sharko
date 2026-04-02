@@ -97,9 +97,9 @@ In Datadog, a "custom metric" is any metric that isn't part of the standard infr
 Each unique combination of **metric name + tag values** counts as one custom metric. For example:
 
 ```
-argocd.app_controller.app.info{name:datadog-feedlot-dev, health_status:healthy, sync_status:synced}  = 1 custom metric
-argocd.app_controller.app.info{name:datadog-ark-dev-eks, health_status:degraded, sync_status:synced}  = 1 custom metric
-argocd.app_controller.app.info{name:keda-feedlot-dev, health_status:healthy, sync_status:synced}      = 1 custom metric
+argocd.app_controller.app.info{name:datadog-my-app-dev, health_status:healthy, sync_status:synced}  = 1 custom metric
+argocd.app_controller.app.info{name:datadog-my-service-dev-eks, health_status:degraded, sync_status:synced}  = 1 custom metric
+argocd.app_controller.app.info{name:keda-my-app-dev, health_status:healthy, sync_status:synced}      = 1 custom metric
 ```
 
 So if you have 50 clusters × 10 addons = 500 applications, each with ~5 tag combinations, that's roughly 2,500 custom metric series just for `app.info`.
@@ -158,12 +158,12 @@ Both keys are stored in AWS Secrets Manager and fetched into K8s secrets via Ext
 
 **API Key** (required for all clusters with Datadog):
 - AWS Secret: `datadog-api-keys-integration`
-- Lookup: `<projectName>-<env>` (e.g., `feedlot-dev`, `sensehub-dev`)
+- Lookup: `<projectName>-<env>` (e.g., `my-app-dev`, `my-project-dev`)
 - K8s Secret: `datadog-api-key`
 
 **App Key** (required only when Datadog Operator is enabled):
 - AWS Secret: `datadog-app-keys-integration`
-- Lookup: `<projectName>-non-prod` (e.g., `feedlot-non-prod`, `sensehub-non-prod`)
+- Lookup: `<projectName>-non-prod` (e.g., `my-app-non-prod`, `my-project-non-prod`)
 - K8s Secret: `datadog-app-key`
 - Only created when `datadog.datadog.operator.enabled: true` in the cluster values
 
@@ -172,9 +172,9 @@ Both keys are stored in AWS Secrets Manager and fetched into K8s secrets via Ext
 The `projectName` and `env` for each cluster come from `configuration/datadog-project-mappings.yaml` — the single source of truth. This file is loaded as a values file into the `datadog-secrets` chart by the ApplicationSet.
 
 The chart looks up the cluster name in the mapping to find the correct projectName:
-- `ark-dev-eks` → `projectName: ark`, `env: dev`
-- `sh-srvc-dev-eks` → `projectName: sensehub`, `env: dev`
-- `devops-argocd-addons-dev-eks` → `projectName: devops-argocd-cluster-addons`, `env: dev`
+- `my-service-dev-eks` → `projectName: ark`, `env: dev`
+- `my-project-dev-eks` → `projectName: my-project`, `env: dev`
+- `your-argocd-cluster` → `projectName: devops-argocd-cluster-addons`, `env: dev`
 
 If a cluster is not in the mapping, it falls back to `clusterGlobalValues.projectName` from the per-cluster values file.
 

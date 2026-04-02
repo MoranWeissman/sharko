@@ -27,6 +27,6 @@ spec:
     - secretKey: apikey
       remoteRef:
         # Fetches from AWS Secrets Manager: datadog-api-keys-integration → "<projectName>-<env>"
-        # Example: ark-dev-eks → projectName=ark, env=dev → property "ark-dev"
+        # Example: my-service-dev-eks → projectName=ark, env=dev → property "ark-dev"
         key: datadog-api-keys-integration
         property: "{{ $projectName }}-{{ $env }}"

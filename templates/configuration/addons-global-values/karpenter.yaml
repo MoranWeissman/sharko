@@ -2,7 +2,7 @@
 # Karpenter CRDs Global Values
 # ====================================================================== #
 # Chart: karpenter-crds-helm-chart
-# Repo: https://aic.jfrog.io/artifactory/aic-helm-charts/
+# Repo: https://your-org.github.io/karpenter-crds-chart/
 # Docs: https://karpenter.sh/docs/
 #
 # These values apply to ALL clusters unless overridden per-cluster

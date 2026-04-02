@@ -56,13 +56,13 @@ if [[ -z "${GITHUB_TOKEN:-}" ]]; then
 fi
 
 # --- Image config ---
-IMAGE_REGISTRY="${IMAGE_REGISTRY:-ghcr.io/moranweissman}"
+IMAGE_REGISTRY="${IMAGE_REGISTRY:-ghcr.io/your-org}"
 IMAGE_REPO="${IMAGE_REPOSITORY:-argocd-addons-platform}"
 FULL_IMAGE="${IMAGE_REGISTRY}/${IMAGE_REPO}"
 
 # --- Update Helm chart versions from VERSION file ---
 CHART_YAML="${CHART_DIR}/Chart.yaml"
-VALUES_PROD="${CHART_DIR}/values-production.yaml"
+VALUES_PROD="${CHART_DIR}/values.yaml"
 if [[ -f "${CHART_YAML}" ]]; then
   sed -i.bak "s/^version:.*/version: ${VERSION}/" "${CHART_YAML}" && rm -f "${CHART_YAML}.bak"
   sed -i.bak "s/^appVersion:.*/appVersion: \"${VERSION}\"/" "${CHART_YAML}" && rm -f "${CHART_YAML}.bak"
@@ -111,7 +111,7 @@ echo ">>> Deploying with Helm..."
 helm upgrade --install "${RELEASE}" "${CHART_DIR}" \
   --namespace "${NAMESPACE}" \
   --create-namespace \
-  -f "${CHART_DIR}/values-production.yaml" \
+  -f "${CHART_DIR}/values.yaml" \
   "${SECRET_ARGS[@]}"
 
 echo ""

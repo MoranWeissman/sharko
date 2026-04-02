@@ -270,7 +270,7 @@ bootstrap:
 **Goal:** Automatically configure ArgoCD to access private GitHub repository using credentials from AWS Secrets Manager
 
 **Problem:**
-- ArgoCD needs credentials to access private repository `merck-ahtl/argocd-cluster-addons`
+- ArgoCD needs credentials to access private repository `your-org/argocd-cluster-addons`
 - Manual secret creation is error-prone and doesn't scale
 - Credentials should be managed in AWS Secrets Manager (single source of truth)
 
@@ -278,9 +278,9 @@ bootstrap:
 Use ESO to fetch GitHub PAT from AWS Secrets Manager and create ArgoCD repository secret
 
 **Prerequisites:**
-Create AWS Secrets Manager secret in DevOps account (627176949220):
+Create AWS Secrets Manager secret in DevOps account (123456789012):
 ```bash
-# Secret name: argocd/devops-argocd-addons-dev-eks
+# Secret name: argocd/your-argocd-cluster
 # Keys:
 #   - github_user: GitHub username
 #   - github_token: GitHub Personal Access Token (PAT)
@@ -293,8 +293,8 @@ Create AWS Secrets Manager secret in DevOps account (627176949220):
 # configuration/bootstrap-config.yaml
 bootstrap:
   github:
-    awsAccount: "627176949220"
-    secretName: argocd/devops-argocd-addons-dev-eks
+    awsAccount: "123456789012"
+    secretName: argocd/your-argocd-cluster
     usernameKey: github_user
     tokenKey: github_token
 ```
@@ -435,8 +435,8 @@ configuration/
 ├── bootstrap-config.yaml     # Bootstrap-specific configuration (NEW)
 ├── global-values.yaml        # Global default values (renamed from defaults.yaml)
 └── clusters/                 # Per-cluster value files (one file per cluster)
-    ├── devops-automation-dev-eks.yaml
-    ├── feedlot-dev.yaml
+    ├── example-target-cluster.yaml
+    ├── my-app-dev.yaml
     └── ...
 ```
 
@@ -451,11 +451,11 @@ configuration/
 
 **Format:**
 ```yaml
-# config/values/devops-automation-dev-eks.yaml
+# config/values/example-target-cluster.yaml
 
 # Global values for this cluster (available to all addons)
 clusterGlobalValues:
-  clusterName: devops-automation-dev-eks
+  clusterName: example-target-cluster
   env: dev
   region: eu-west-1
   accountId: "123456789012"
@@ -493,7 +493,7 @@ datadog:
 ```yaml
 # values/clusters.yaml
 clusters:
-  - name: devops-automation-dev-eks
+  - name: example-target-cluster
     labels:
       env: dev              # ← Remove this
       istio-base: enabled
@@ -503,7 +503,7 @@ clusters:
 ```yaml
 # config/clusters.yaml
 clusters:
-  - name: devops-automation-dev-eks
+  - name: example-target-cluster
     labels:
       # NO env label - all clusters in this repo are non-prod
       istio-base: enabled
@@ -702,7 +702,7 @@ source:
 ## Testing Strategy
 
 ### Test Clusters
-- Start with: `devops-automation-dev-eks` (single cluster)
+- Start with: `example-target-cluster` (single cluster)
 - Start with: Istio addons only (istio-base, istiod, istio-cni, istio-ingress)
 
 ### Validation Steps

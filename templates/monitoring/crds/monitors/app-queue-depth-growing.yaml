@@ -9,7 +9,7 @@ metadata:
 spec:
   name: "[ArgoCD Cluster Addons Application Operations] Work queue depth growing"
   type: query alert
-  query: "avg(last_15m):avg:argocd.app_controller.workqueue.depth{kube_cluster_name:devops-argocd-addons-dev-eks} > 100"
+  query: "avg(last_15m):avg:argocd.app_controller.workqueue.depth{kube_cluster_name:your-argocd-cluster} > 100"
   message: |-
     {{#is_alert}}
     🔴 [P1 CRITICAL] ArgoCD work queue depth is above 100
@@ -33,7 +33,7 @@ spec:
     ✅ RECOVERED: Work queue depth is back to normal
     {{/is_recovery}}
 
-    @moran.weissman@msd.com @microsoft-teams-ArgocdClusterAddonsNonProd
+    @team@example.com @slack-platform-alerts
   tags:
     - "platform:devex"
     - "kubernetes"

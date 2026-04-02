@@ -2,7 +2,7 @@
     "name": "[ArgoCD Cluster Addons Host Cluster] ESO high sync failure rate",
     "type": "query alert",
     "query": "sum(last_10m):sum:external_secrets.externalsecret_sync_calls_error{*} by {kube_cluster_name}.as_count() > 5",
-    "message": "{{#is_alert}}\n🟡 [P2 WARNING] ESO high sync failure rate on {{kube_cluster_name.name}}\n\nMore than 5 ExternalSecret sync failures in the last 10 minutes.\n\nActions:\n1. kubectl logs -n external-secrets -l app.kubernetes.io/name=external-secrets --tail=100\n2. Check AWS Secrets Manager throttling or auth errors\n3. Verify IRSA role is not expired\n{{/is_alert}}\n{{#is_recovery}}\n✅ RECOVERED: ESO sync failure rate is back to normal on {{kube_cluster_name.name}}\n{{/is_recovery}}\n\n@moran.weissman@msd.com @microsoft-teams-ArgocdClusterAddonsNonProd",
+    "message": "{{#is_alert}}\n🟡 [P2 WARNING] ESO high sync failure rate on {{kube_cluster_name.name}}\n\nMore than 5 ExternalSecret sync failures in the last 10 minutes.\n\nActions:\n1. kubectl logs -n external-secrets -l app.kubernetes.io/name=external-secrets --tail=100\n2. Check AWS Secrets Manager throttling or auth errors\n3. Verify IRSA role is not expired\n{{/is_alert}}\n{{#is_recovery}}\n✅ RECOVERED: ESO sync failure rate is back to normal on {{kube_cluster_name.name}}\n{{/is_recovery}}\n\n@team@example.com @slack-platform-alerts",
     "tags": [
         "platform:devex",
         "kubernetes",

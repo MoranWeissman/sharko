@@ -3,6 +3,6 @@ name: infra-karpenter
 description: Helm chart for managing Karpenter infra-karpenters on EKS Auto-Mode clusters
 version: 1.0.0
 maintainers:
-  - name: itay.uliel
-    email: itay.uliel@msd.com
+  - name: maintainer
+    email: maintainer@example.com
 type: application

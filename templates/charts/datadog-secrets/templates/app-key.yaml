@@ -28,7 +28,7 @@ spec:
       remoteRef:
         # Fetches from AWS Secrets Manager: datadog-app-keys-integration → "<projectName>-non-prod"
         # App keys always use "-non-prod" suffix (not env-specific like API keys)
-        # Example: ark-dev-eks → projectName=ark → property "ark-non-prod"
+        # Example: my-service-dev-eks → projectName=ark → property "ark-non-prod"
         key: datadog-app-keys-integration
         property: "{{ $projectName }}-non-prod"
 {{- end }}

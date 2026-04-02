@@ -35,7 +35,7 @@ spec:
   project: cluster-addons
   sources:
     # Bootstrap Helm chart
-    - repoURL: https://github.com/merck-ahtl/argocd-cluster-addons.git
+    - repoURL: https://github.com/your-org/argocd-cluster-addons.git
       targetRevision: main
       path: bootstrap
       helm:
@@ -45,7 +45,7 @@ spec:
           - $values/configuration/cluster-addons.yaml
           - $values/configuration/datadog-project-mappings.yaml
     # Values repo reference
-    - repoURL: https://github.com/merck-ahtl/argocd-cluster-addons.git
+    - repoURL: https://github.com/your-org/argocd-cluster-addons.git
       targetRevision: main
       ref: values
   destination:

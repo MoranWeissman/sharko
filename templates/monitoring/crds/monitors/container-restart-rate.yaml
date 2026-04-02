@@ -30,7 +30,7 @@ spec:
     3. Check for OOMKill in pod events
     {{/is_alert}}
 
-    @moran.weissman@msd.com
+    @team@example.com
   tags:
     - "platform:devex"
     - "kubernetes"

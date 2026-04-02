@@ -78,7 +78,7 @@ IMAGE_TAG="${VERSION}"
 
 # --- Update Helm chart + values with current version ---
 CHART_YAML="${CHART_DIR}/Chart.yaml"
-VALUES_PROD="${CHART_DIR}/values-production.yaml"
+VALUES_PROD="${CHART_DIR}/values.yaml"
 if [[ -f "${CHART_YAML}" ]]; then
   sed -i.bak "s/^version:.*/version: ${VERSION}/" "${CHART_YAML}" && rm -f "${CHART_YAML}.bak"
   sed -i.bak "s/^appVersion:.*/appVersion: \"${VERSION}\"/" "${CHART_YAML}" && rm -f "${CHART_YAML}.bak"
@@ -192,7 +192,7 @@ fi
 helm upgrade --install "${RELEASE}" "${CHART_DIR}" \
   --namespace "${NAMESPACE}" \
   --create-namespace \
-  -f "${CHART_DIR}/values-production.yaml" \
+  -f "${CHART_DIR}/values.yaml" \
   "${SECRET_ARGS[@]}"
 
 echo ""

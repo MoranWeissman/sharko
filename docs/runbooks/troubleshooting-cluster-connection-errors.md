@@ -13,7 +13,7 @@ getting credentials: exec: executable argocd-k8s-auth failed with exit code 20
 ```
 
 **Affected Applications:**
-- `istiod-devops-automation-dev-eks`
+- `istiod-example-target-cluster`
 - Any application targeting remote EKS clusters
 
 **Symptoms:**
@@ -48,7 +48,7 @@ The `argocd-application-controller` service account was **missing the IAM role a
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│ Management Account (627176949220) - ArgoCD Control Plane           │
+│ Management Account (123456789012) - ArgoCD Control Plane           │
 │                                                                      │
 │  ┌────────────────────────────────────────────┐                    │
 │  │ ArgoCD Application Controller Pod          │                    │
@@ -63,10 +63,10 @@ The `argocd-application-controller` service account was **missing the IAM role a
                     │ Step 3: Calls STS AssumeRole
                     ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│ Remote Account (298685015100) - Target EKS Cluster                 │
+│ Remote Account (123456789012) - Target EKS Cluster                 │
 │                                                                      │
 │  ┌────────────────────────────────────────────┐                    │
-│  │ Antelliq-EKS-Admin-Assume-Role             │                    │
+│  │ EKS-Admin-Assume-Role             │                    │
 │  │ ├─ Trust Policy: Allows ArgoCD role        │ ← Step 4: Trust   │
 │  │ └─ Permissions: EKS cluster access         │                    │
 │  └────────────────┬───────────────────────────┘                    │
@@ -93,7 +93,7 @@ config: |
       "args": [
         "aws",
         "--cluster-name", "cluster-name",
-        "--role-arn", "arn:aws:iam::ACCOUNT-ID:role/Antelliq-EKS-Admin-Assume-Role"
+        "--role-arn", "arn:aws:iam::ACCOUNT-ID:role/EKS-Admin-Assume-Role"
       ],
       "env": {
         "AWS_REGION": "eu-west-1"
@@ -126,13 +126,13 @@ We created a new IAM role specifically for cluster addons management to avoid tr
     {
       "Effect": "Allow",
       "Principal": {
-        "Federated": "arn:aws:iam::627176949220:oidc-provider/oidc.eks.eu-west-1.amazonaws.com/id/95A350C4A098114287BB76A160415A4A"
+        "Federated": "arn:aws:iam::123456789012:oidc-provider/oidc.eks.eu-west-1.amazonaws.com/id/EXAMPLE_OIDC_ID_1"
       },
       "Action": "sts:AssumeRoleWithWebIdentity",
       "Condition": {
         "StringEquals": {
-          "oidc.eks.eu-west-1.amazonaws.com/id/95A350C4A098114287BB76A160415A4A:aud": "sts.amazonaws.com",
-          "oidc.eks.eu-west-1.amazonaws.com/id/95A350C4A098114287BB76A160415A4A:sub": "system:serviceaccount:argocd:argocd-application-controller"
+          "oidc.eks.eu-west-1.amazonaws.com/id/EXAMPLE_OIDC_ID_1:aud": "sts.amazonaws.com",
+          "oidc.eks.eu-west-1.amazonaws.com/id/EXAMPLE_OIDC_ID_1:sub": "system:serviceaccount:argocd:argocd-application-controller"
         }
       }
     }
@@ -165,31 +165,31 @@ aws iam create-role \
   --role-name ArgoCD-Cluster-Addons \
   --assume-role-policy-document file:///tmp/argocd-cluster-addons-trust-policy.json \
   --description "IAM role for ArgoCD application-controller to manage cluster addons" \
-  --profile devops-switch
+  --profile your-profile
 
 # Attach managed policy
 aws iam attach-role-policy \
   --role-name ArgoCD-Cluster-Addons \
-  --policy-arn arn:aws:iam::627176949220:policy/getSecretValuePolicy \
-  --profile devops-switch
+  --policy-arn arn:aws:iam::123456789012:policy/getSecretValuePolicy \
+  --profile your-profile
 
 # Add inline policies
 aws iam put-role-policy \
   --role-name ArgoCD-Cluster-Addons \
   --policy-name AssumeRole \
   --policy-document file:///tmp/argocd-assume-role-policy.json \
-  --profile devops-switch
+  --profile your-profile
 
 aws iam put-role-policy \
   --role-name ArgoCD-Cluster-Addons \
   --policy-name CodeConnectionsRead \
   --policy-document file:///tmp/argocd-codeconnections-policy.json \
-  --profile devops-switch
+  --profile your-profile
 ```
 
 ### Step 2: Update Application-Controller Service Account
 
-**File**: `/Users/weissmmo/projects/github-msd/ArgoFleet/fleet-configuration/argocd-values/devops-argocd-addons-dev-eks.yaml`
+**File**: `/path/to/ArgoFleet/fleet-configuration/argocd-values/your-argocd-cluster.yaml`
 
 **Change Made** (around line 165):
 ```yaml
@@ -197,7 +197,7 @@ controller:
   # === IAM Role for Cross-Account Cluster Access ===
   serviceAccount:
     annotations:
-      eks.amazonaws.com/role-arn: arn:aws:iam::627176949220:role/ArgoCD-Cluster-Addons
+      eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/ArgoCD-Cluster-Addons
 
   # === High Availability via StatefulSet Sharding ===
   replicas: 2
@@ -206,15 +206,15 @@ controller:
 
 **Commit and Push**:
 ```bash
-cd /Users/weissmmo/projects/github-msd/ArgoFleet
-git add fleet-configuration/argocd-values/devops-argocd-addons-dev-eks.yaml
+cd /path/to/ArgoFleet
+git add fleet-configuration/argocd-values/your-argocd-cluster.yaml
 git commit -m "Add IAM role to application-controller for cluster addons management"
 git push
 ```
 
 ### Step 3: Update Cross-Account Trust Policy
 
-**Role**: `Antelliq-EKS-Admin-Assume-Role` (in management account 627176949220)
+**Role**: `EKS-Admin-Assume-Role` (in management account 123456789012)
 
 **Updated Trust Policy**:
 ```json
@@ -225,14 +225,14 @@ git push
       "Effect": "Allow",
       "Principal": {
         "Service": "eks.amazonaws.com",
-        "AWS": "arn:aws:iam::627176949220:root"
+        "AWS": "arn:aws:iam::123456789012:root"
       },
       "Action": "sts:AssumeRole"
     },
     {
       "Effect": "Allow",
       "Principal": {
-        "AWS": "arn:aws:iam::627176949220:role/ArgoCD-Cluster-Addons"
+        "AWS": "arn:aws:iam::123456789012:role/ArgoCD-Cluster-Addons"
       },
       "Action": "sts:AssumeRole"
     }
@@ -241,7 +241,7 @@ git push
 }
 ```
 
-**Note**: We also removed an orphaned invalid principal (`AIDAYBFZVHXXBMIK4KTWZ`) that was causing validation errors.
+**Note**: We also removed an orphaned invalid principal (`EXAMPLE_PRINCIPAL_ID`) that was causing validation errors.
 
 ### Step 4: Restart Application-Controller Pods
 
@@ -249,17 +249,17 @@ After updating the service account annotation, pods must be restarted to pick up
 
 ```bash
 # Restart the StatefulSet
-kubectl rollout restart statefulset argocd-devops-argocd-addons-dev-eks-application-cont -n argocd
+kubectl rollout restart statefulset argocd-your-cluster-application-controller -n argocd
 
 # Wait for rollout to complete
-kubectl rollout status statefulset argocd-devops-argocd-addons-dev-eks-application-cont -n argocd
+kubectl rollout status statefulset argocd-your-cluster-application-controller -n argocd
 
 # Verify AWS credentials are injected
-kubectl get pod argocd-devops-argocd-addons-dev-eks-application-cont-0 -n argocd \
+kubectl get pod argocd-your-cluster-application-controller-0 -n argocd \
   -o jsonpath='{.spec.containers[0].env[?(@.name=="AWS_ROLE_ARN")].value}'
-# Expected: arn:aws:iam::627176949220:role/ArgoCD-Cluster-Addons
+# Expected: arn:aws:iam::123456789012:role/ArgoCD-Cluster-Addons
 
-kubectl get pod argocd-devops-argocd-addons-dev-eks-application-cont-0 -n argocd \
+kubectl get pod argocd-your-cluster-application-controller-0 -n argocd \
   -o jsonpath='{.spec.containers[0].env[?(@.name=="AWS_WEB_IDENTITY_TOKEN_FILE")].value}'
 # Expected: /var/run/secrets/eks.amazonaws.com/serviceaccount/token
 ```
@@ -272,17 +272,17 @@ kubectl get pod argocd-devops-argocd-addons-dev-eks-application-cont-0 -n argocd
 
 ```bash
 # Check sync status
-kubectl get application istiod-devops-automation-dev-eks -n argocd \
+kubectl get application istiod-example-target-cluster -n argocd \
   -o jsonpath='{.status.sync.status}'
 # Expected: Synced or OutOfSync (no ComparisonError)
 
 # Check health status
-kubectl get application istiod-devops-automation-dev-eks -n argocd \
+kubectl get application istiod-example-target-cluster -n argocd \
   -o jsonpath='{.status.health.status}'
 # Expected: Healthy
 
 # Check for errors
-kubectl get application istiod-devops-automation-dev-eks -n argocd \
+kubectl get application istiod-example-target-cluster -n argocd \
   -o jsonpath='{.status.conditions[?(@.type=="ComparisonError")].message}'
 # Expected: Empty (no errors)
 ```
@@ -291,8 +291,8 @@ kubectl get application istiod-devops-automation-dev-eks -n argocd \
 
 ```bash
 # Check for successful cluster connections
-kubectl logs argocd-devops-argocd-addons-dev-eks-application-cont-0 -n argocd --tail=100 | \
-  grep -i "devops-automation-dev-eks"
+kubectl logs argocd-your-cluster-application-controller-0 -n argocd --tail=100 | \
+  grep -i "example-target-cluster"
 
 # Look for successful reconciliation
 # Expected logs:
@@ -304,7 +304,7 @@ kubectl logs argocd-devops-argocd-addons-dev-eks-application-cont-0 -n argocd --
 ### Check Cluster Connection in ArgoCD UI
 
 1. Go to **Settings** → **Clusters**
-2. Find `devops-automation-dev-eks`
+2. Find `example-target-cluster`
 3. Status should show **Connected** (green)
 4. No error messages
 

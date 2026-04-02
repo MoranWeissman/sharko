@@ -27,13 +27,13 @@ applicationsets:
     inMigration: true
 
   - appName: redisinsight
-    repoURL: http://mahtl-redis-insight-helm-chart.s3-website-eu-west-1.amazonaws.com
+    repoURL: https://your-org.github.io/redisinsight-chart
     chart: redisinsight
     version: 1.14.0
     inMigration: true
 
   - appName: redisinsight-v2
-    repoURL: http://mahtl-redis-insight-v2-helm-chart.s3-website-eu-west-1.amazonaws.com
+    repoURL: https://your-org.github.io/redisinsight-v2-chart
     chart: redisinsight-v2
     version: 1.0.12
     inMigration: true
@@ -116,7 +116,7 @@ applicationsets:
     inMigration: true
 
   - appName: karpenter
-    repoURL: https://aic.jfrog.io/artifactory/aic-helm-charts/
+    repoURL: https://your-org.github.io/karpenter-crds-chart/
     chart: karpenter-crds-helm-chart
     version: 1.0.2
     ignoreDifferences:
@@ -153,7 +153,7 @@ applicationsets:
 
   # Connectivity test — deploys a ConfigMap to verify ArgoCD can reach the cluster
   - appName: hello-world
-    repoURL: https://github.com/merck-ahtl/argocd-cluster-addons.git
+    repoURL: https://github.com/your-org/argocd-cluster-addons.git
     path: charts/hello-world
     version: main
 

@@ -9,7 +9,7 @@ metadata:
 spec:
   name: "[ArgoCD Cluster Addons Application Operations] Application health degraded"
   type: query alert
-  query: "avg(last_15m):count:argocd.app_controller.app.info{health_status:degraded,kube_cluster_name:devops-argocd-addons-dev-eks} by {name,dest_server} > 0"
+  query: "avg(last_15m):count:argocd.app_controller.app.info{health_status:degraded,kube_cluster_name:your-argocd-cluster} by {name,dest_server} > 0"
   message: |-
     {{#is_alert}}
     🔴 [P2 WARNING] Application {{name.name}} is Degraded on {{dest_server.name}}
@@ -27,7 +27,7 @@ spec:
     ✅ RECOVERED: Application {{name.name}} is healthy on {{dest_server.name}}
     {{/is_recovery}}
 
-    @moran.weissman@msd.com @microsoft-teams-ArgocdClusterAddonsNonProd
+    @team@example.com @slack-platform-alerts
   tags:
     - "platform:devex"
     - "kubernetes"

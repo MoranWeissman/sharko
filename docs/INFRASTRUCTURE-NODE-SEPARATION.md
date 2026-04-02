@@ -556,5 +556,5 @@ The ApplicationSet will automatically include the nodepool-config file when:
 4. Monitor costs: Ensure consolidation is working properly
 5. Contact DevOps Team: For configuration assistance or issues
 
-**Maintainer:** itay.uliel@msd.com
+**Maintainer:** maintainer@example.com
 **Last Updated:** January 2026

@@ -122,7 +122,7 @@ The `KubernetesSecretProvider` is critical — anyone can try Sharko without a c
 Like ArgoCD itself, the first install is manual:
 
 ```bash
-helm install sharko oci://ghcr.io/moranweissman/sharko/charts/sharko \
+helm install sharko oci://ghcr.io/your-org/sharko/charts/sharko \
   --namespace sharko \
   --set argocd.token=<argocd-account-token> \
   --set git.token=<github-token> \

@@ -50,11 +50,11 @@ Add another processor → **Grok Parser**
 - **Log samples:** paste one of these into the sample box:
 
 ```
-time="2026-03-17T09:37:14Z" level=error msg="ComparisonError: helm template failed" app-namespace=argocd application=datadog-feedlot-dev project=datadog
+time="2026-03-17T09:37:14Z" level=error msg="ComparisonError: helm template failed" app-namespace=argocd application=datadog-my-app-dev project=datadog
 ```
 
 ```
-time="2026-03-17T09:37:14Z" level=error msg="Sync operation failed: one or more objects failed to apply" app-namespace=argocd application=istio-base-devops-automation-dev-eks project=istio-base
+time="2026-03-17T09:37:14Z" level=error msg="Sync operation failed: one or more objects failed to apply" app-namespace=argocd application=istio-base-example-target-cluster project=istio-base
 ```
 
 - **Parsing rule:** paste this into "Define parsing rules":

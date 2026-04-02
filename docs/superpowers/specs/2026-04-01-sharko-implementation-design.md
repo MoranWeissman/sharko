@@ -52,7 +52,7 @@ Sharko Server (in-cluster pod):
 Sharko is a K8s addon that manages other addons. Like ArgoCD itself, the first install is manual:
 
 ```bash
-helm install sharko oci://ghcr.io/moranweissman/sharko/charts/sharko \
+helm install sharko oci://ghcr.io/your-org/sharko/charts/sharko \
   --namespace sharko \
   --set argocd.token=<argocd-account-token> \
   --set git.token=<github-token> \
@@ -69,7 +69,7 @@ After that, everything goes through the server — including `sharko init`.
 | Property | Value |
 |---|---|
 | Go module path | `github.com/MoranWeissman/sharko` |
-| Docker image (GHCR) | `ghcr.io/moranweissman/sharko` |
+| Docker image (GHCR) | `ghcr.io/your-org/sharko` |
 | Env var prefix | `SHARKO_*` (clean break from `AAP_*`) |
 | Auth header | `X-Sharko-User` |
 | Session token key | `sharko-auth-token` |
@@ -113,7 +113,7 @@ Same functionality as the current `argocd-addons-platform`, minus stripped code,
 - All `AAP_*` env vars -> `SHARKO_*` in Go code, Helm chart, config files, test files, docs, comments
 - `X-AAP-User` -> `X-Sharko-User`
 - `aap-auth-token` -> `sharko-auth-token`
-- Helm chart `Chart.yaml`: `name: sharko`, image `ghcr.io/moranweissman/sharko`
+- Helm chart `Chart.yaml`: `name: sharko`, image `ghcr.io/your-org/sharko`
 - Helm templates: `aap.*` helpers -> `sharko.*` (cascades to all template files)
 - UI: sidebar branding, page title, login text, favicon
 - `ui/package.json` name -> `sharko`

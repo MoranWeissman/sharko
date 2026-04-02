@@ -2,7 +2,7 @@
 # RedisInsight Global Values
 # ====================================================================== #
 # Chart: redisinsight
-# Repo: http://mahtl-redis-insight-helm-chart.s3-website-eu-west-1.amazonaws.com
+# Repo: https://your-org.github.io/redisinsight-chart
 # Docs: https://redis.io/docs/connect/insight/
 #
 # These values apply to ALL clusters unless overridden per-cluster
