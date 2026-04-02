@@ -94,9 +94,9 @@ sharko/
       k8s_secrets.go    Kubernetes Secrets implementation
 
     argocd/             ArgoCD REST client
-      client.go         HTTP client for ArgoCD API
-      clusters.go       Cluster CRUD operations
-      applications.go   Application queries
+      client.go         HTTP client (read operations, connection test)
+      client_write.go   Write operations (register/delete cluster, create app)
+      service.go        Business logic layer (cluster matching)
 
     gitprovider/        Git provider interface
       provider.go       GitProvider interface
@@ -113,10 +113,10 @@ sharko/
       store.go          User store (K8s ConfigMap or env var)
 
     config/             Configuration stores
-      store.go          Connection config store interface
+      store.go          Connection config store (interface + file store)
       k8s_store.go      Encrypted K8s Secret store
-      file_store.go     Local file store (dev mode)
-      ai_config.go      AI config persistence
+      ai_store.go       AI config persistence
+      parser.go         Git repo config parser (addons-catalog, cluster-addons)
 
     service/            Read-only service layer
       connection.go     Connection management

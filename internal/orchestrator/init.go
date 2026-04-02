@@ -22,6 +22,11 @@ func (o *Orchestrator) InitRepo(ctx context.Context, req InitRepoRequest) (*Init
 		return nil, fmt.Errorf("git repo URL is required for init — set SHARKO_GITOPS_REPO_URL")
 	}
 
+	// Check if repo is already initialized by looking for bootstrap/root-app.yaml.
+	if _, err := o.git.GetFileContent(ctx, "bootstrap/root-app.yaml", o.gitops.BaseBranch); err == nil {
+		return nil, fmt.Errorf("repo already initialized: bootstrap/root-app.yaml exists")
+	}
+
 	branch := o.gitops.BaseBranch
 	commitPrefix := o.gitops.CommitPrefix
 
