@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
@@ -39,7 +40,11 @@ func (s *Server) handleInit(w http.ResponseWriter, r *http.Request) {
 	orch := orchestrator.New(s.credProvider, ac, git, s.gitopsCfg, s.repoPaths, s.templateFS)
 	result, err := orch.InitRepo(r.Context(), req)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
+		if strings.Contains(err.Error(), "already") {
+			writeError(w, http.StatusConflict, err.Error())
+		} else {
+			writeError(w, http.StatusBadGateway, err.Error())
+		}
 		return
 	}
 

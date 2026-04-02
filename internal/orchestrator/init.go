@@ -56,18 +56,19 @@ func (o *Orchestrator) InitRepo(ctx context.Context, req InitRepoRequest) (*Init
 	}
 
 	result := &InitRepoResult{
-		Status:       "success",
-		FilesCreated: filesCreated,
+		Status: "success",
+		Repo: &InitRepoInfo{
+			URL:          o.gitops.RepoURL,
+			Branch:       branch,
+			FilesCreated: filesCreated,
+		},
 	}
 
 	if req.BootstrapArgoCD {
 		// TODO: Apply root-app to ArgoCD via the ArgoCD client.
 		// For now, the root-app.yaml is created in the repo but not applied.
 		// The user must apply it manually: kubectl apply -f bootstrap/root-app.yaml
-		result.ArgoCD = &struct {
-			Bootstrapped bool   `json:"bootstrapped"`
-			RootApp      string `json:"root_app,omitempty"`
-		}{
+		result.ArgoCD = &InitArgocdInfo{
 			Bootstrapped: false,
 			RootApp:      "addons-bootstrap (created in repo, apply manually)",
 		}

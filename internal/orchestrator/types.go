@@ -68,10 +68,20 @@ type InitRepoRequest struct {
 
 // InitRepoResult is the output of a successful repo initialization.
 type InitRepoResult struct {
-	Status       string   `json:"status"`
+	Status string          `json:"status"`
+	Repo   *InitRepoInfo   `json:"repo,omitempty"`
+	ArgoCD *InitArgocdInfo `json:"argocd,omitempty"`
+}
+
+// InitRepoInfo holds Git repo details in the init response.
+type InitRepoInfo struct {
+	URL          string   `json:"url,omitempty"`
+	Branch       string   `json:"branch,omitempty"`
 	FilesCreated []string `json:"files_created"`
-	ArgoCD       *struct {
-		Bootstrapped bool   `json:"bootstrapped"`
-		RootApp      string `json:"root_app,omitempty"`
-	} `json:"argocd,omitempty"`
+}
+
+// InitArgocdInfo holds ArgoCD bootstrap details in the init response.
+type InitArgocdInfo struct {
+	Bootstrapped bool   `json:"bootstrapped"`
+	RootApp      string `json:"root_app,omitempty"`
 }

@@ -131,7 +131,7 @@ sharko remove-cluster prod-eu
 ### Update Cluster Addons
 
 ```bash
-sharko update-cluster prod-eu --enable istio --disable logging
+sharko update-cluster prod-eu --add-addon istio --remove-addon logging
 ```
 
 ### Fleet Status
