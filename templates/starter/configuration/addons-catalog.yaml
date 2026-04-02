@@ -1,0 +1,25 @@
+# Addon Catalog — available Helm charts managed by Sharko
+#
+# Each entry defines an addon that can be deployed to clusters.
+# To deploy an addon to a cluster, add the label "<appName>: enabled"
+# to the cluster in cluster-addons.yaml.
+#
+# Fields:
+#   appName:   Addon identifier (used as ArgoCD label key)
+#   repoURL:   Helm chart repository URL
+#   chart:     Chart name in the repository
+#   version:   Chart version to deploy
+#   namespace: Target namespace (defaults to appName)
+
+applicationsets:
+  - appName: cert-manager
+    repoURL: https://charts.jetstack.io
+    chart: cert-manager
+    version: "1.14.5"
+    namespace: cert-manager
+
+  - appName: metrics-server
+    repoURL: https://kubernetes-sigs.github.io/metrics-server
+    chart: metrics-server
+    version: "3.12.1"
+    namespace: kube-system

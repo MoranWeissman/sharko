@@ -193,10 +193,15 @@ var serveCmd = &cobra.Command{
 					BranchPrefix: getEnvDefault("SHARKO_GITOPS_BRANCH_PREFIX", "sharko/"),
 					CommitPrefix: getEnvDefault("SHARKO_GITOPS_COMMIT_PREFIX", "sharko:"),
 					BaseBranch:   getEnvDefault("SHARKO_GITOPS_BASE_BRANCH", "main"),
+					RepoURL:      os.Getenv("SHARKO_GITOPS_REPO_URL"),
 				}
 
 				srv.SetWriteAPIDeps(credProvider, &provCfg, repoPaths, gitopsCfg)
 				log.Printf("Secrets provider enabled: %s", providerType)
+				// NOTE: The orchestrator's InitRepo method and POST /api/v1/init route
+				// are scaffolded but not yet wired. StarterFS (templates/embed.go) needs
+				// to be passed to the orchestrator when the init endpoint is added.
+				// The gitopsCfg.RepoURL is read here so it's ready when that happens.
 			}
 		}
 

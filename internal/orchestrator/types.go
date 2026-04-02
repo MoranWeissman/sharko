@@ -6,6 +6,7 @@ type GitOpsConfig struct {
 	BranchPrefix string // e.g. "sharko/"
 	CommitPrefix string // e.g. "sharko:"
 	BaseBranch   string // e.g. "main"
+	RepoURL      string // Git repo URL for placeholder replacement
 }
 
 // RepoPathsConfig holds the addons repo directory layout (from server Helm values).

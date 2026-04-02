@@ -1,0 +1,49 @@
+---
+# Root AppProject for addon management
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: addons
+  namespace: argocd
+spec:
+  description: Addon management project
+  sourceRepos:
+    - '*'
+  destinations:
+    - namespace: '*'
+      server: '*'
+  clusterResourceWhitelist:
+    - group: '*'
+      kind: '*'
+---
+# Root Application — bootstraps the addon management system
+# ArgoCD watches this and creates ApplicationSets for each addon
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: addons-bootstrap
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: addons
+  sources:
+    - repoURL: SHARKO_GIT_REPO_URL
+      targetRevision: SHARKO_GIT_BRANCH
+      path: bootstrap
+      helm:
+        valueFiles:
+          - $values/configuration/addons-catalog.yaml
+          - $values/configuration/cluster-addons.yaml
+    - repoURL: SHARKO_GIT_REPO_URL
+      targetRevision: SHARKO_GIT_BRANCH
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"io/fs"
 
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/providers"
@@ -23,6 +24,7 @@ type Orchestrator struct {
 	git          gitprovider.GitProvider
 	gitops       GitOpsConfig
 	paths        RepoPathsConfig
+	templateFS   fs.FS
 }
 
 // New creates an Orchestrator with the given dependencies.
@@ -32,6 +34,7 @@ func New(
 	git gitprovider.GitProvider,
 	gitops GitOpsConfig,
 	paths RepoPathsConfig,
+	templateFS fs.FS,
 ) *Orchestrator {
 	return &Orchestrator{
 		credProvider: credProvider,
@@ -39,5 +42,6 @@ func New(
 		git:          git,
 		gitops:       gitops,
 		paths:        paths,
+		templateFS:   templateFS,
 	}
 }

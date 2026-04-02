@@ -1,0 +1,69 @@
+{{- range .Values.applicationsets }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: {{ .appName }}
+  namespace: argocd
+spec:
+  description: "Addon: {{ .appName }}"
+  sourceRepos: ['*']
+  destinations:
+    - namespace: {{ .namespace | default .appName }}
+      server: '*'
+  clusterResourceWhitelist:
+    - group: '*'
+      kind: '*'
+---
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: {{ .appName }}
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=zero"]
+  generators:
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  {{ .appName }}: enabled
+          - git:
+              repoURL: {{ $.Values.repoURL }}
+              revision: {{ $.Values.revision | default "main" }}
+              files:
+                - path: "configuration/addons-clusters-values/{{`{{.name}}`}}.yaml"
+  template:
+    metadata:
+      name: '{{`{{.name}}`}}-{{ .appName }}'
+    spec:
+      project: {{ .appName }}
+      sources:
+        - repoURL: {{ .repoURL }}
+          chart: {{ .chart }}
+          targetRevision: {{ .version }}
+          helm:
+            releaseName: {{ .appName }}
+            valueFiles:
+              - $values/configuration/addons-global-values/{{ .appName }}.yaml
+            values: |
+              {{`{{- $addonKey := index . "`}}{{ .appName }}{{`" -}}`}}
+              {{`{{- if $addonKey -}}`}}
+              {{`{{ $addonKey | toYaml }}`}}
+              {{`{{- end -}}`}}
+        - repoURL: {{ $.Values.repoURL }}
+          targetRevision: {{ $.Values.revision | default "main" }}
+          ref: values
+      destination:
+        server: '{{`{{.server}}`}}'
+        namespace: {{ .namespace | default .appName }}
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply={{ .serverSideApply | default false }}
+{{- end }}

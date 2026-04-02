@@ -46,7 +46,7 @@ func (s *Server) handleAddAddon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	orch := orchestrator.New(nil, ac, git, s.gitopsCfg, s.repoPaths)
+	orch := orchestrator.New(nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
 	result, err := orch.AddAddon(r.Context(), req)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
@@ -116,7 +116,7 @@ func (s *Server) handleRemoveAddon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	orch := orchestrator.New(nil, ac, git, s.gitopsCfg, s.repoPaths)
+	orch := orchestrator.New(nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
 	result, err := orch.RemoveAddon(r.Context(), name)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())

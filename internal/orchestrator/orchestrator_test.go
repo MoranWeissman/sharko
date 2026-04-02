@@ -196,7 +196,7 @@ func defaultCreds() *mockCredProvider {
 func TestRegisterCluster_DirectMode(t *testing.T) {
 	argocd := newMockArgocd()
 	git := newMockGitProvider()
-	orch := New(defaultCreds(), argocd, git, defaultGitOps(), defaultPaths())
+	orch := New(defaultCreds(), argocd, git, defaultGitOps(), defaultPaths(), nil)
 
 	result, err := orch.RegisterCluster(context.Background(), RegisterClusterRequest{
 		Name:   "prod-eu",
@@ -232,7 +232,7 @@ func TestRegisterCluster_DirectMode(t *testing.T) {
 func TestRegisterCluster_PRMode(t *testing.T) {
 	argocd := newMockArgocd()
 	git := newMockGitProvider()
-	orch := New(defaultCreds(), argocd, git, prGitOps(), defaultPaths())
+	orch := New(defaultCreds(), argocd, git, prGitOps(), defaultPaths(), nil)
 
 	result, err := orch.RegisterCluster(context.Background(), RegisterClusterRequest{
 		Name:   "prod-eu",
@@ -261,7 +261,7 @@ func TestRegisterCluster_PartialSuccess_GitFails(t *testing.T) {
 	argocd := newMockArgocd()
 	git := newMockGitProvider()
 	git.createErr = fmt.Errorf("git API error")
-	orch := New(defaultCreds(), argocd, git, defaultGitOps(), defaultPaths())
+	orch := New(defaultCreds(), argocd, git, defaultGitOps(), defaultPaths(), nil)
 
 	result, err := orch.RegisterCluster(context.Background(), RegisterClusterRequest{
 		Name:   "prod-eu",
@@ -285,7 +285,7 @@ func TestRegisterCluster_PartialSuccess_GitFails(t *testing.T) {
 
 func TestRegisterCluster_ProviderFails(t *testing.T) {
 	creds := &mockCredProvider{err: fmt.Errorf("vault unavailable")}
-	orch := New(creds, newMockArgocd(), newMockGitProvider(), defaultGitOps(), defaultPaths())
+	orch := New(creds, newMockArgocd(), newMockGitProvider(), defaultGitOps(), defaultPaths(), nil)
 
 	_, err := orch.RegisterCluster(context.Background(), RegisterClusterRequest{
 		Name: "prod-eu",
@@ -300,7 +300,7 @@ func TestRegisterCluster_ProviderFails(t *testing.T) {
 }
 
 func TestRegisterCluster_InvalidName(t *testing.T) {
-	orch := New(defaultCreds(), newMockArgocd(), newMockGitProvider(), defaultGitOps(), defaultPaths())
+	orch := New(defaultCreds(), newMockArgocd(), newMockGitProvider(), defaultGitOps(), defaultPaths(), nil)
 
 	_, err := orch.RegisterCluster(context.Background(), RegisterClusterRequest{
 		Name: "",
@@ -320,7 +320,7 @@ func TestRegisterCluster_InvalidName(t *testing.T) {
 func TestDeregisterCluster(t *testing.T) {
 	argocd := newMockArgocd()
 	git := newMockGitProvider()
-	orch := New(defaultCreds(), argocd, git, defaultGitOps(), defaultPaths())
+	orch := New(defaultCreds(), argocd, git, defaultGitOps(), defaultPaths(), nil)
 
 	result, err := orch.DeregisterCluster(context.Background(), "prod-eu", "https://k8s.example.com:6443")
 	if err != nil {
@@ -344,7 +344,7 @@ func TestDeregisterCluster(t *testing.T) {
 func TestUpdateClusterAddons(t *testing.T) {
 	argocd := newMockArgocd()
 	git := newMockGitProvider()
-	orch := New(defaultCreds(), argocd, git, defaultGitOps(), defaultPaths())
+	orch := New(defaultCreds(), argocd, git, defaultGitOps(), defaultPaths(), nil)
 
 	result, err := orch.UpdateClusterAddons(context.Background(), "prod-eu", "https://k8s.example.com:6443", "eu-west-1",
 		map[string]bool{"monitoring": true, "logging": true})
@@ -372,7 +372,7 @@ func TestUpdateClusterAddons(t *testing.T) {
 
 func TestAddAddon(t *testing.T) {
 	git := newMockGitProvider()
-	orch := New(defaultCreds(), newMockArgocd(), git, defaultGitOps(), defaultPaths())
+	orch := New(defaultCreds(), newMockArgocd(), git, defaultGitOps(), defaultPaths(), nil)
 
 	result, err := orch.AddAddon(context.Background(), AddAddonRequest{
 		Name:      "prometheus",
@@ -402,7 +402,7 @@ func TestAddAddon(t *testing.T) {
 
 func TestRemoveAddon(t *testing.T) {
 	git := newMockGitProvider()
-	orch := New(defaultCreds(), newMockArgocd(), git, defaultGitOps(), defaultPaths())
+	orch := New(defaultCreds(), newMockArgocd(), git, defaultGitOps(), defaultPaths(), nil)
 
 	result, err := orch.RemoveAddon(context.Background(), "prometheus")
 	if err != nil {
