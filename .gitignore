@@ -27,7 +27,7 @@ secrets.env
 *.pem
 *.key
 
-# AI workspaces
+# AI workspaces (local config, not project conventions)
 .claude/
 .serena/
 .cursor/
@@ -35,7 +35,7 @@ secrets.env
 .continue/
 .aider*
 .planning/
-CLAUDE.md
+# CLAUDE.md is intentionally tracked — it contains project conventions for AI sessions
 
 # Docker
 aap-server
