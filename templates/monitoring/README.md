@@ -27,7 +27,7 @@ These monitors watch the management cluster infrastructure. If any of these fire
 
 ### Application Operations — "Are addon deployments working?"
 
-These monitors watch ArgoCD's Application objects. If any of these fire, one or more addons across the fleet may have issues.
+These monitors watch ArgoCD's Application objects. If any of these fire, one or more addons across your clusters may have issues.
 
 | Monitor | What it means | When it fires |
 |---------|--------------|---------------|
@@ -47,7 +47,7 @@ These monitors watch ArgoCD's Application objects. If any of these fire, one or 
 | Dashboard | Question it answers | Status |
 |-----------|-------------------|--------|
 | **ArgoCD Cluster Addons Host Cluster** | Is the management cluster infrastructure healthy? | Live |
-| **ArgoCD Cluster Addons Application Operations** | Are addon deployments working across the fleet? | Live |
+| **ArgoCD Cluster Addons Application Operations** | Are addon deployments working across all clusters? | Live |
 | **ArgoCD Cluster Addons Application Troubleshooting** | Why is a specific addon failing? | Live |
 
 ---

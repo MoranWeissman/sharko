@@ -14,7 +14,7 @@ func init() {
 
 var statusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Show fleet status overview",
+	Short: "Show cluster status overview",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		respBody, status, err := apiGet("/api/v1/fleet/status")
 		if err != nil {
@@ -39,7 +39,7 @@ var statusCmd = &cobra.Command{
 			return fmt.Errorf("invalid response: %w", err)
 		}
 
-		fmt.Println("Fleet Status")
+		fmt.Println("Cluster Status Overview")
 		fmt.Println(strings.Repeat("\u2500", 40))
 		fmt.Printf("Clusters:    %d total", fleet.TotalClusters)
 		if fleet.TotalClusters > 0 {

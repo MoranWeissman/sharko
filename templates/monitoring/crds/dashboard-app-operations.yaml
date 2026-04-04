@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/component: monitoring
 spec:
   title: "ArgoCD Cluster Addons Application Operations"
-  description: "Application sync status, health, and ArgoCD control plane overview across the fleet"
+  description: "Application sync status, health, and ArgoCD control plane overview across all clusters"
   layoutType: ordered
   tags:
     - "platform:devex"

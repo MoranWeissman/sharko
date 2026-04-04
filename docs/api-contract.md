@@ -204,7 +204,7 @@ These endpoints are already implemented and working. Listed here for completenes
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/dashboard/stats` | Aggregated fleet statistics |
+| GET | `/api/v1/dashboard/stats` | Aggregated cluster statistics |
 | GET | `/api/v1/dashboard/attention` | Items needing attention (degraded, out-of-sync) |
 | GET | `/api/v1/dashboard/pull-requests` | Recent PRs from the Git provider |
 
@@ -212,7 +212,7 @@ These endpoints are already implemented and working. Listed here for completenes
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/observability/overview` | Fleet health overview (from ArgoCD) |
+| GET | `/api/v1/observability/overview` | Cluster health overview (from ArgoCD) |
 
 ### Upgrade Checker
 
@@ -1004,9 +1004,9 @@ Create the addons repo structure, push to Git, and optionally bootstrap the root
 
 ---
 
-### GET /api/v1/fleet/status — Fleet Overview
+### GET /api/v1/fleet/status — Cluster Status Overview
 
-Aggregated fleet health.
+Aggregated cluster health.
 
 **Response (200 OK):**
 ```json

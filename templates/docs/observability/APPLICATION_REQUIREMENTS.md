@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-This document defines the requirements for monitoring ArgoCD Application sync operations across our fleet of 50+ EKS clusters managed via ApplicationSets. The goal is to reduce Mean Time to Detect (MTTD) sync failures from 15-30 minutes to under 5 minutes, and Mean Time to Resolve (MTTR) from 30-60 minutes to 15-30 minutes through proactive monitoring, failure categorization, and guided troubleshooting dashboards.
+This document defines the requirements for monitoring ArgoCD Application sync operations across 50+ EKS clusters managed via ApplicationSets. The goal is to reduce Mean Time to Detect (MTTD) sync failures from 15-30 minutes to under 5 minutes, and Mean Time to Resolve (MTTR) from 30-60 minutes to 15-30 minutes through proactive monitoring, failure categorization, and guided troubleshooting dashboards.
 
 ---
 
@@ -274,7 +274,7 @@ conflict
 
 ### 5.1 Dashboard 1: Application Operations Overview
 
-**Purpose:** Single-pane fleet health view. First stop for on-call engineers.
+**Purpose:** Single-pane cluster health view. First stop for on-call engineers.
 
 | Panel | Widget | Metric/Query |
 |---|---|---|
@@ -388,7 +388,7 @@ These triggers can send to Slack/webhook/Datadog events:
 | ArgoCD metrics scraped by Datadog | Not configured |
 | Sync failure alerting | None (reactive, user reports) |
 | Failure categorization | Manual log search |
-| Fleet-wide health dashboard | None |
+| Cluster health dashboard | None |
 | Sync performance tracking | None |
 | Troubleshooting runbooks | None |
 
@@ -399,7 +399,7 @@ These triggers can send to Slack/webhook/Datadog events:
 | Metrics collection | All ArgoCD component metrics via OpenMetrics |
 | Alerting | 8 monitors with defined thresholds |
 | Failure categorization | Automated via log pipelines (9 categories) |
-| Fleet dashboard | 4 Datadog dashboards |
+| Cluster dashboard | 4 Datadog dashboards |
 | Performance tracking | p95/p99 reconciliation, sync duration trends |
 | Runbooks | Per-failure-category troubleshooting guides |
 
@@ -431,7 +431,7 @@ These triggers can send to Slack/webhook/Datadog events:
 |---|---|---|
 | MTTD (sync failures) | 15-30 min | < 5 min |
 | MTTR (sync failures) | 30-60 min | 15-30 min |
-| Fleet visibility | None | Real-time dashboard |
+| Cluster visibility | None | Real-time dashboard |
 | Proactive detection | 0% | 80%+ of failures |
 
 ---

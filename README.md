@@ -5,7 +5,7 @@
 <h1 align="center">Sharko</h1>
 
 <p align="center">
-  <strong>Addon management for Kubernetes fleets, built on ArgoCD</strong>
+  <strong>Addon management for Kubernetes clusters, built on ArgoCD</strong>
 </p>
 
 <p align="center">
@@ -16,13 +16,13 @@
 
 ---
 
-Sharko is a server that runs in your Kubernetes cluster, next to ArgoCD, and manages the lifecycle of addons across your fleet. It provides a REST API, a fleet dashboard UI, a thin CLI client, and an AI assistant for troubleshooting.
+Sharko is a server that runs in your Kubernetes cluster, next to ArgoCD, and manages the lifecycle of addons across your clusters. It provides a REST API, a dashboard UI, a thin CLI client, and an AI assistant for troubleshooting.
 
 ## What Sharko Does
 
 - **Register clusters** from secrets providers (AWS Secrets Manager, K8s Secrets), including remote cluster secrets (API keys delivered to remote clusters)
-- **Manage addons** across your fleet (cert-manager, monitoring, logging, etc.)
-- **Observe fleet health** with drift detection, version matrix, and sync status
+- **Manage addons** across your clusters (cert-manager, monitoring, logging, etc.)
+- **Observe cluster health** with drift detection, version matrix, and sync status
 - **Automate GitOps workflows** — every change creates a PR (auto-merged if `SHARKO_GITOPS_PR_AUTO_MERGE=true`)
 - **Upgrade addons** globally or per-cluster, with batch multi-addon upgrades
 - **Batch register clusters** — register up to 10 clusters in a single API call
@@ -43,7 +43,7 @@ Terraform / CI:
   curl / CLI ---------> Sharko Server API
 
 Sharko Server (in-cluster):
-  +-- UI (React fleet dashboard)
+  +-- UI (React dashboard)
   +-- API (read + write endpoints)
   +-- Orchestrator (workflow engine, Git-serialized via mutex)
   +-- ArgoCD client (account token auth)
@@ -102,7 +102,7 @@ Sharko exposes a REST API that every consumer uses — the CLI, the UI, and exte
 | GET | `/api/v1/clusters/available` | Discover available clusters from the secrets provider |
 | GET | `/api/v1/addons/catalog` | Addon catalog with deployment stats |
 | GET | `/api/v1/addons/version-matrix` | Version matrix: addon x cluster grid |
-| GET | `/api/v1/fleet/status` | Fleet-wide health overview |
+| GET | `/api/v1/fleet/status` | Cluster status overview |
 | GET | `/api/v1/observability/overview` | ArgoCD health groups + sync activity |
 | GET | `/api/v1/tokens` | List API keys (admin only) |
 | GET | `/api/v1/addon-secrets` | List addon secret definitions |
@@ -149,7 +149,7 @@ See [docs/api-contract.md](docs/api-contract.md) for full API reference with req
 | `sharko token create` | Create an API key |
 | `sharko token list` | List API keys |
 | `sharko token revoke <name>` | Revoke an API key |
-| `sharko status` | Fleet health overview |
+| `sharko status` | Cluster status overview |
 
 ## Secrets Providers
 

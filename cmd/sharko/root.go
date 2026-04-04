@@ -11,7 +11,7 @@ var version = "dev"
 
 var rootCmd = &cobra.Command{
 	Use:     "sharko",
-	Short:   "Addon management for Kubernetes fleets, built on ArgoCD",
+	Short:   "Addon management for Kubernetes clusters, built on ArgoCD",
 	Version: version,
 }
 

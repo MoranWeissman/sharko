@@ -205,7 +205,7 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("GET /api/v1/clusters/{name}/secrets", srv.handleListClusterSecrets)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/secrets/refresh", srv.handleRefreshClusterSecrets)
 
-	// Fleet status
+	// Cluster status overview
 	mux.HandleFunc("GET /api/v1/fleet/status", srv.handleGetFleetStatus)
 
 	// System

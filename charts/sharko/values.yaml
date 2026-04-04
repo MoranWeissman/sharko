@@ -247,7 +247,7 @@ affinity: {}
 # Host Cluster Name
 # ---------------------------------------------------------------------------
 # The name of the cluster running Sharko itself. Used to identify the
-# management/host cluster when it also appears in the fleet. When set,
+# management/host cluster when it also appears in the registered clusters. When set,
 # Sharko uses in-cluster credentials for this cluster instead of fetching
 # them from the secrets provider.
 #
