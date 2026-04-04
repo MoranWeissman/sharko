@@ -4,6 +4,7 @@ import (
 	"context"
 	"io/fs"
 	"sync"
+	"time"
 
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/models"
@@ -37,6 +38,7 @@ type Orchestrator struct {
 	secretFetcher  SecretValueFetcher
 	remoteClientFn RemoteClientFactory
 	defaultAddons  map[string]bool // addon name → enabled (merged into RegisterCluster when req.Addons is empty)
+	drainSleep     time.Duration   // wait after label removal in DeregisterCluster; overridable in tests
 }
 
 // SetDefaultAddons configures the default addons applied to clusters
@@ -65,5 +67,6 @@ func New(
 		gitops:       gitops,
 		paths:        paths,
 		templateFS:   templateFS,
+		drainSleep:   5 * time.Second,
 	}
 }

@@ -586,9 +586,9 @@ func TestRegisterCluster_PartialSuccess_GitFails(t *testing.T) {
 	if result.FailedStep != "git_commit" {
 		t.Errorf("expected failed step 'git_commit', got %q", result.FailedStep)
 	}
-	// Cluster should still be registered in ArgoCD.
-	if _, ok := argocd.registeredClusters["prod-eu"]; !ok {
-		t.Error("cluster should remain registered in ArgoCD after Git failure")
+	// ArgoCD registration is LAST — it should NOT have happened when Git fails.
+	if _, ok := argocd.registeredClusters["prod-eu"]; ok {
+		t.Error("cluster should NOT be registered in ArgoCD when Git commit fails (ArgoCD is last step)")
 	}
 }
 
@@ -630,6 +630,7 @@ func TestDeregisterCluster(t *testing.T) {
 	argocd := newMockArgocd()
 	git := newMockGitProvider()
 	orch := New(nil, defaultCreds(), argocd, git, defaultGitOps(), defaultPaths(), nil)
+	orch.drainSleep = 0 // skip drain wait in tests
 
 	result, err := orch.DeregisterCluster(context.Background(), "prod-eu", "https://k8s.example.com:6443")
 	if err != nil {
@@ -848,6 +849,7 @@ func TestDeregisterCluster_AutoMerge(t *testing.T) {
 	argocd := newMockArgocd()
 	git := newMockGitProvider()
 	orch := New(nil, defaultCreds(), argocd, git, autoMergeGitOps(), defaultPaths(), nil)
+	orch.drainSleep = 0 // skip drain wait in tests
 
 	result, err := orch.DeregisterCluster(context.Background(), "prod-eu", "https://k8s.example.com:6443")
 	if err != nil {
@@ -866,6 +868,7 @@ func TestDeregisterCluster_AutoMergeFails(t *testing.T) {
 	git := newMockGitProvider()
 	git.mergeErr = fmt.Errorf("merge conflict")
 	orch := New(nil, defaultCreds(), argocd, git, autoMergeGitOps(), defaultPaths(), nil)
+	orch.drainSleep = 0 // skip drain wait in tests
 
 	result, err := orch.DeregisterCluster(context.Background(), "prod-eu", "https://k8s.example.com:6443")
 	if err != nil {
@@ -1018,9 +1021,9 @@ func TestRegisterCluster_SecretFailure_PartialSuccess(t *testing.T) {
 	if result.FailedStep != "create_secrets" {
 		t.Errorf("expected failed step 'create_secrets', got %q", result.FailedStep)
 	}
-	// Cluster should still be registered in ArgoCD.
-	if _, ok := argocd.registeredClusters["prod-eu"]; !ok {
-		t.Error("cluster should remain registered in ArgoCD after secret failure")
+	// ArgoCD registration is LAST — it should NOT have happened when secrets fail.
+	if _, ok := argocd.registeredClusters["prod-eu"]; ok {
+		t.Error("cluster should NOT be registered in ArgoCD when secret creation fails (ArgoCD is last step)")
 	}
 	// No Git commit should have happened.
 	if len(git.files) > 0 {
