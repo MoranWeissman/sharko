@@ -4,6 +4,7 @@ package models
 type ArgocdCluster struct {
 	Name            string                 `json:"name"`
 	Server          string                 `json:"server"`
+	Labels          map[string]string      `json:"labels,omitempty"`
 	ConnectionState string                 `json:"connection_state,omitempty"`
 	ServerVersion   string                 `json:"server_version,omitempty"`
 	Namespaces      []string               `json:"namespaces,omitempty"`

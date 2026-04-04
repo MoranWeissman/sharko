@@ -160,9 +160,35 @@ func (o *Orchestrator) DeregisterCluster(ctx context.Context, name string, serve
 		Cluster: ClusterResult{Name: name, Server: serverURL},
 	}
 
-	// Step 1: Remove addon labels from ArgoCD so ApplicationSet prunes addon Applications.
-	if err := o.argocd.UpdateClusterLabels(ctx, serverURL, map[string]string{}); err != nil {
-		return nil, fmt.Errorf("removing addon labels from cluster %q in ArgoCD: %w", name, err)
+	// Step 1: Disable all addon labels on the ArgoCD cluster so ApplicationSet
+	// stops managing addons (prunes the generated Applications).
+	// We set all known addon labels to "disabled" rather than removing them,
+	// because UpdateClusterLabels merges — an empty map would be a no-op.
+	disableLabels := make(map[string]string)
+	if o.secretDefs != nil {
+		for addonName := range o.secretDefs {
+			disableLabels[addonName] = "disabled"
+		}
+	}
+	// Also read the cluster's current labels from ArgoCD to catch addons not in secretDefs.
+	clusters, listErr := o.argocd.ListClusters(ctx)
+	if listErr == nil {
+		for _, c := range clusters {
+			if c.Name == name {
+				// Any label that looks like an addon (not a system label) gets disabled.
+				for k := range c.Labels {
+					if k != "name" && k != "server" && k != "env" && k != "region" {
+						disableLabels[k] = "disabled"
+					}
+				}
+				break
+			}
+		}
+	}
+	if len(disableLabels) > 0 {
+		if err := o.argocd.UpdateClusterLabels(ctx, serverURL, disableLabels); err != nil {
+			return nil, fmt.Errorf("disabling addon labels on cluster %q in ArgoCD: %w", name, err)
+		}
 	}
 
 	// Step 2: Brief wait to give ArgoCD time to react and begin pruning addon Applications.
@@ -302,10 +328,17 @@ func (o *Orchestrator) UpdateClusterAddons(ctx context.Context, name string, ser
 	}
 
 	if err := o.argocd.UpdateClusterLabels(ctx, serverURL, labels); err != nil {
-		return nil, fmt.Errorf("updating labels on cluster %q: %w", name, err)
+		result.Status = "partial"
+		result.CompletedSteps = append(result.CompletedSteps, "git_commit")
+		result.FailedStep = "update_argocd_labels"
+		result.Error = err.Error()
+		result.Message = fmt.Sprintf("Secrets updated and values PR merged for cluster %s, but ArgoCD label update failed. Labels may be stale.", name)
+		result.Git = gitResult
+		return result, nil
 	}
 
 	result.Status = "success"
+	result.CompletedSteps = append(result.CompletedSteps, "git_commit", "update_argocd_labels")
 	result.Git = gitResult
 	return result, nil
 }

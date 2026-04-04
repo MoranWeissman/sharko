@@ -19,6 +19,13 @@ See `docs/superpowers/specs/2026-04-01-sharko-implementation-design.md` for the 
 
 Every new session: read `.claude/team/tech-lead.md` and follow the startup procedure. This gets you oriented — current phase, next task, what to do — without the user needing to explain context.
 
+## MCP Tools
+
+Use these whenever available to save tokens and improve reasoning:
+
+- **Serena MCP** — prefer for code operations (reading, searching, navigating code) when available
+- **Sequential Thinking MCP** — use for complex reasoning, multi-step decisions, architectural analysis
+
 ## Skills (Superpowers)
 
 The tech-lead playbook maps when to use each skill. Key ones for this project:
