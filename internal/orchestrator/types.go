@@ -2,7 +2,7 @@ package orchestrator
 
 // GitOpsConfig holds gitops preferences (from server Helm values).
 type GitOpsConfig struct {
-	DefaultMode  string // "pr" or "direct"
+	PRAutoMerge  bool   // true = auto-merge PRs after creation; false = manual approval
 	BranchPrefix string // e.g. "sharko/"
 	CommitPrefix string // e.g. "sharko:"
 	BaseBranch   string // e.g. "main"
@@ -45,9 +45,10 @@ type ClusterResult struct {
 
 // GitResult holds the outcome of a gitops operation.
 type GitResult struct {
-	Mode       string `json:"mode"` // "pr" or "direct"
 	PRUrl      string `json:"pr_url,omitempty"`
+	PRID       int    `json:"pr_id,omitempty"`
 	Branch     string `json:"branch,omitempty"`
+	Merged     bool   `json:"merged"`
 	CommitSHA  string `json:"commit_sha,omitempty"`
 	ValuesFile string `json:"values_file,omitempty"`
 }

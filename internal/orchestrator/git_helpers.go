@@ -8,49 +8,20 @@ import (
 	"strings"
 )
 
-// commitChanges handles the gitops flow: direct commit or PR based on config.
+// commitChanges creates a PR for the given file changes.
 // Acquires the shared Git mutex to serialize all Git operations across concurrent requests.
+// If PRAutoMerge is enabled, the PR is merged immediately after creation.
 func (o *Orchestrator) commitChanges(ctx context.Context, files map[string][]byte, deletePaths []string, operation string) (*GitResult, error) {
 	if o.gitMu != nil {
 		o.gitMu.Lock()
 		defer o.gitMu.Unlock()
 	}
-	if o.gitops.DefaultMode == "pr" {
-		return o.commitViaPR(ctx, files, deletePaths, operation)
-	}
-	return o.commitDirect(ctx, files, deletePaths, operation)
-}
 
-// commitDirect commits changes directly to the base branch.
-func (o *Orchestrator) commitDirect(ctx context.Context, files map[string][]byte, deletePaths []string, operation string) (*GitResult, error) {
-	commitMsg := fmt.Sprintf("%s %s", o.gitops.CommitPrefix, operation)
-	branch := o.gitops.BaseBranch
-
-	for path, content := range files {
-		if err := o.git.CreateOrUpdateFile(ctx, path, content, branch, commitMsg); err != nil {
-			return nil, fmt.Errorf("writing file %q: %w", path, err)
-		}
-	}
-
-	for _, path := range deletePaths {
-		if err := o.git.DeleteFile(ctx, path, branch, commitMsg); err != nil {
-			return nil, fmt.Errorf("deleting file %q: %w", path, err)
-		}
-	}
-
-	return &GitResult{
-		Mode:   "direct",
-		Branch: branch,
-	}, nil
-}
-
-// commitViaPR creates a feature branch, commits changes, and opens a PR.
-func (o *Orchestrator) commitViaPR(ctx context.Context, files map[string][]byte, deletePaths []string, operation string) (*GitResult, error) {
 	// Generate a unique branch name.
 	sanitized := strings.ReplaceAll(operation, " ", "-")
 	sanitized = strings.ToLower(sanitized)
 	randBytes := make([]byte, 4)
-	rand.Read(randBytes)
+	_, _ = rand.Read(randBytes)
 	suffix := hex.EncodeToString(randBytes)
 	branchName := fmt.Sprintf("%s%s-%s", o.gitops.BranchPrefix, sanitized, suffix)
 
@@ -77,9 +48,21 @@ func (o *Orchestrator) commitViaPR(ctx context.Context, files map[string][]byte,
 		return nil, fmt.Errorf("creating pull request: %w", err)
 	}
 
-	return &GitResult{
-		Mode:   "pr",
+	result := &GitResult{
 		PRUrl:  pr.URL,
+		PRID:   pr.ID,
 		Branch: branchName,
-	}, nil
+	}
+
+	// Auto-merge if configured.
+	if o.gitops.PRAutoMerge {
+		if mergeErr := o.git.MergePullRequest(ctx, pr.ID); mergeErr != nil {
+			// PR created but merge failed — partial success.
+			// Caller decides how to handle this (e.g. return 207).
+			return result, fmt.Errorf("PR created but merge failed: %w", mergeErr)
+		}
+		result.Merged = true
+	}
+
+	return result, nil
 }

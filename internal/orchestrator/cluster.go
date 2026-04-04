@@ -83,7 +83,17 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 
 	gitResult, err := o.commitChanges(ctx, files, nil, fmt.Sprintf("register cluster %s", req.Name))
 	if err != nil {
-		// Partial success: ArgoCD registration succeeded, Git failed.
+		if gitResult != nil {
+			// PR created but merge failed — partial success with PR info.
+			result.Status = "partial"
+			result.CompletedSteps = steps
+			result.FailedStep = "pr_merge"
+			result.Error = err.Error()
+			result.Message = "Cluster registered in ArgoCD and PR created, but auto-merge failed. Merge manually: " + gitResult.PRUrl
+			result.Git = gitResult
+			return result, nil
+		}
+		// Complete Git failure (couldn't even create PR).
 		result.Status = "partial"
 		result.CompletedSteps = steps
 		result.FailedStep = "git_commit"
@@ -115,7 +125,17 @@ func (o *Orchestrator) DeregisterCluster(ctx context.Context, name string, serve
 	valuesPath := path.Join(o.paths.ClusterValues, name+".yaml")
 	gitResult, err := o.commitChanges(ctx, nil, []string{valuesPath}, fmt.Sprintf("deregister cluster %s", name))
 	if err != nil {
-		// ArgoCD deletion succeeded but Git failed — partial success.
+		if gitResult != nil {
+			// PR created but merge failed — partial success with PR info.
+			result.Status = "partial"
+			result.CompletedSteps = []string{"delete_from_argocd"}
+			result.FailedStep = "pr_merge"
+			result.Error = err.Error()
+			result.Message = fmt.Sprintf("Cluster %s removed from ArgoCD and PR created, but auto-merge failed. Merge manually: %s", name, gitResult.PRUrl)
+			result.Git = gitResult
+			return result, nil
+		}
+		// Complete Git failure (couldn't even create PR).
 		result.Status = "partial"
 		result.CompletedSteps = []string{"delete_from_argocd"}
 		result.FailedStep = "git_commit"
@@ -159,7 +179,17 @@ func (o *Orchestrator) UpdateClusterAddons(ctx context.Context, name string, ser
 
 	gitResult, err := o.commitChanges(ctx, files, nil, fmt.Sprintf("update addons for cluster %s", name))
 	if err != nil {
-		// ArgoCD labels updated but Git failed — partial success.
+		if gitResult != nil {
+			// PR created but merge failed — partial success with PR info.
+			result.Status = "partial"
+			result.CompletedSteps = []string{"update_argocd_labels"}
+			result.FailedStep = "pr_merge"
+			result.Error = err.Error()
+			result.Message = fmt.Sprintf("ArgoCD labels updated for cluster %s and PR created, but auto-merge failed. Merge manually: %s", name, gitResult.PRUrl)
+			result.Git = gitResult
+			return result, nil
+		}
+		// Complete Git failure (couldn't even create PR).
 		result.Status = "partial"
 		result.CompletedSteps = []string{"update_argocd_labels"}
 		result.FailedStep = "git_commit"

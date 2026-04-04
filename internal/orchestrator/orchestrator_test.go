@@ -116,6 +116,7 @@ type mockGitProvider struct {
 	createErr    error
 	deleteErr    error
 	prErr        error
+	mergeErr     error
 }
 
 func newMockGitProvider() *mockGitProvider {
@@ -177,23 +178,23 @@ func (m *mockGitProvider) CreatePullRequest(_ context.Context, title, _, head, _
 	return pr, nil
 }
 
-func (m *mockGitProvider) MergePullRequest(_ context.Context, _ int) error { return nil }
+func (m *mockGitProvider) MergePullRequest(_ context.Context, _ int) error { return m.mergeErr }
 func (m *mockGitProvider) DeleteBranch(_ context.Context, _ string) error  { return nil }
 
 // ---------- helpers ----------
 
 func defaultGitOps() GitOpsConfig {
 	return GitOpsConfig{
-		DefaultMode:  "direct",
+		PRAutoMerge:  false,
 		BranchPrefix: "sharko/",
 		CommitPrefix: "sharko:",
 		BaseBranch:   "main",
 	}
 }
 
-func prGitOps() GitOpsConfig {
+func autoMergeGitOps() GitOpsConfig {
 	cfg := defaultGitOps()
-	cfg.DefaultMode = "pr"
+	cfg.PRAutoMerge = true
 	return cfg
 }
 
@@ -220,7 +221,7 @@ func defaultCreds() *mockCredProvider {
 
 // ---------- tests ----------
 
-func TestRegisterCluster_DirectMode(t *testing.T) {
+func TestRegisterCluster_ManualPR(t *testing.T) {
 	argocd := newMockArgocd()
 	git := newMockGitProvider()
 	orch := New(nil, defaultCreds(), argocd, git, defaultGitOps(), defaultPaths(), nil)
@@ -246,8 +247,11 @@ func TestRegisterCluster_DirectMode(t *testing.T) {
 	if result.Git == nil {
 		t.Fatal("expected Git result")
 	}
-	if result.Git.Mode != "direct" {
-		t.Errorf("expected mode 'direct', got %q", result.Git.Mode)
+	if result.Git.Merged {
+		t.Error("expected Merged=false for manual PR mode")
+	}
+	if result.Git.PRUrl == "" {
+		t.Error("expected PR URL")
 	}
 
 	valuesPath := "configuration/addons-clusters-values/prod-eu.yaml"
@@ -256,10 +260,10 @@ func TestRegisterCluster_DirectMode(t *testing.T) {
 	}
 }
 
-func TestRegisterCluster_PRMode(t *testing.T) {
+func TestRegisterCluster_AutoMergePR(t *testing.T) {
 	argocd := newMockArgocd()
 	git := newMockGitProvider()
-	orch := New(nil, defaultCreds(), argocd, git, prGitOps(), defaultPaths(), nil)
+	orch := New(nil, defaultCreds(), argocd, git, autoMergeGitOps(), defaultPaths(), nil)
 
 	result, err := orch.RegisterCluster(context.Background(), RegisterClusterRequest{
 		Name:   "prod-eu",
@@ -270,8 +274,11 @@ func TestRegisterCluster_PRMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Git == nil || result.Git.Mode != "pr" {
-		t.Fatal("expected PR mode result")
+	if result.Git == nil {
+		t.Fatal("expected Git result")
+	}
+	if !result.Git.Merged {
+		t.Error("expected Merged=true for auto-merge mode")
 	}
 	if result.Git.PRUrl == "" {
 		t.Error("expected PR URL")
@@ -281,6 +288,35 @@ func TestRegisterCluster_PRMode(t *testing.T) {
 	}
 	if len(git.prs) == 0 {
 		t.Error("expected PR to be created")
+	}
+}
+
+func TestRegisterCluster_AutoMergeFails(t *testing.T) {
+	argocd := newMockArgocd()
+	git := newMockGitProvider()
+	git.mergeErr = fmt.Errorf("merge conflict")
+	orch := New(nil, defaultCreds(), argocd, git, autoMergeGitOps(), defaultPaths(), nil)
+
+	result, err := orch.RegisterCluster(context.Background(), RegisterClusterRequest{
+		Name:   "prod-eu",
+		Addons: map[string]bool{"monitoring": true},
+	})
+
+	// RegisterCluster should return partial success when merge fails.
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != "partial" {
+		t.Errorf("expected status 'partial', got %q", result.Status)
+	}
+	if result.FailedStep != "pr_merge" {
+		t.Errorf("expected failed step 'pr_merge', got %q", result.FailedStep)
+	}
+	if result.Git == nil || result.Git.PRUrl == "" {
+		t.Error("expected PR URL in partial result")
+	}
+	if result.Git.Merged {
+		t.Error("expected Merged=false when merge fails")
 	}
 }
 
@@ -363,8 +399,11 @@ func TestDeregisterCluster(t *testing.T) {
 	if result.Status != "success" {
 		t.Errorf("expected success status, got %q", result.Status)
 	}
-	if result.Git == nil || result.Git.Mode != "direct" {
-		t.Error("expected direct mode git result")
+	if result.Git == nil {
+		t.Fatal("expected Git result")
+	}
+	if result.Git.Merged {
+		t.Error("expected Merged=false for manual PR mode")
 	}
 }
 
@@ -412,8 +451,8 @@ func TestAddAddon(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.Mode != "direct" {
-		t.Errorf("expected direct mode, got %q", result.Mode)
+	if result.Merged {
+		t.Error("expected Merged=false for manual PR mode")
 	}
 
 	catalogPath := "charts/prometheus/addon.yaml"
@@ -439,8 +478,8 @@ func TestRemoveAddon(t *testing.T) {
 	if len(git.deletedFiles) != 2 {
 		t.Errorf("expected 2 files deleted, got %d", len(git.deletedFiles))
 	}
-	if result.Mode != "direct" {
-		t.Errorf("expected direct mode, got %q", result.Mode)
+	if result.Merged {
+		t.Error("expected Merged=false for manual PR mode")
 	}
 }
 
@@ -513,8 +552,8 @@ func TestRegisterCluster_ConcurrentDifferentClusters(t *testing.T) {
 	argocd := newMockArgocd()
 	git := newMockGitProvider()
 	// Two orchestrators sharing the same mutex (simulates two concurrent requests).
-	orchA := New(mu, creds, argocd, git, prGitOps(), defaultPaths(), nil)
-	orchB := New(mu, creds, argocd, git, prGitOps(), defaultPaths(), nil)
+	orchA := New(mu, creds, argocd, git, autoMergeGitOps(), defaultPaths(), nil)
+	orchB := New(mu, creds, argocd, git, autoMergeGitOps(), defaultPaths(), nil)
 
 	var errA, errB error
 	var resultA, resultB *RegisterClusterResult

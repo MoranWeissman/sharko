@@ -146,8 +146,8 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 			"charts":         s.repoPaths.Charts,
 			"bootstrap":      s.repoPaths.Bootstrap,
 		},
-		"gitops": map[string]string{
-			"default_mode":  s.gitopsCfg.DefaultMode,
+		"gitops": map[string]interface{}{
+			"pr_auto_merge": s.gitopsCfg.PRAutoMerge,
 			"branch_prefix": s.gitopsCfg.BranchPrefix,
 			"commit_prefix": s.gitopsCfg.CommitPrefix,
 			"base_branch":   s.gitopsCfg.BaseBranch,

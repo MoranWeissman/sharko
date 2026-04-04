@@ -191,7 +191,7 @@ var serveCmd = &cobra.Command{
 				}
 
 				gitopsCfg := orchestrator.GitOpsConfig{
-					DefaultMode:  getEnvDefault("SHARKO_GITOPS_DEFAULT_MODE", "pr"),
+					PRAutoMerge:  os.Getenv("SHARKO_GITOPS_PR_AUTO_MERGE") == "true",
 					BranchPrefix: getEnvDefault("SHARKO_GITOPS_BRANCH_PREFIX", "sharko/"),
 					CommitPrefix: getEnvDefault("SHARKO_GITOPS_COMMIT_PREFIX", "sharko:"),
 					BaseBranch:   getEnvDefault("SHARKO_GITOPS_BASE_BRANCH", "main"),
