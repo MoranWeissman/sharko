@@ -6,14 +6,15 @@ interface RoleGuardProps {
   children: ReactNode
   roles?: string[]   // e.g. ['admin', 'operator']
   adminOnly?: boolean
+  fallback?: ReactNode // rendered instead of children when access denied
 }
 
-export function RoleGuard({ children, roles, adminOnly }: RoleGuardProps) {
+export function RoleGuard({ children, roles, adminOnly, fallback }: RoleGuardProps) {
   const ctx = useContext(AuthContext)
   // Outside AuthProvider (e.g. in tests) — fall through and render
   if (!ctx) return <>{children}</>
   const { role, isAdmin } = ctx
-  if (adminOnly && !isAdmin) return null
-  if (roles && !roles.includes(role || '')) return null
+  if (adminOnly && !isAdmin) return <>{fallback ?? null}</>
+  if (roles && !roles.includes(role || '')) return <>{fallback ?? null}</>
   return <>{children}</>
 }

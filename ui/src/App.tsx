@@ -19,6 +19,7 @@ import { AIAssistant } from '@/views/AIAssistant'
 import { UserInfo } from '@/views/UserInfo'
 import UserManagement from '@/views/UserManagement'
 import { ApiKeys } from '@/views/ApiKeys'
+import { RoleGuard } from '@/components/RoleGuard'
 
 function AppRoutes() {
   const { isAuthenticated, loading } = useAuth()
@@ -52,8 +53,8 @@ function AppRoutes() {
           <Route path="dashboards" element={<Dashboards />} />
           <Route path="docs" element={<Docs />} />
           <Route path="settings" element={<Connections />} />
-          <Route path="users" element={<UserManagement />} />
-          <Route path="api-keys" element={<ApiKeys />} />
+          <Route path="users" element={<RoleGuard adminOnly fallback={<Navigate to="/dashboard" replace />}><UserManagement /></RoleGuard>} />
+          <Route path="api-keys" element={<RoleGuard adminOnly fallback={<Navigate to="/dashboard" replace />}><ApiKeys /></RoleGuard>} />
           <Route path="user" element={<UserInfo />} />
         </Route>
       </Routes>

@@ -78,7 +78,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     sessionStorage.removeItem(ROLE_KEY)
   }, [])
 
-  const isAdmin = role === 'admin' || !role // no role = auth disabled = full access
+  const isAdmin = role === 'admin'
 
   return (
     <AuthContext.Provider value={{ token, username, role, login, logout, isAuthenticated: !!token, isAdmin, loading, error }}>
