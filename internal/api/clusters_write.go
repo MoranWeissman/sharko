@@ -3,9 +3,9 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"regexp"
-	"strings"
 
 	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
@@ -52,7 +52,7 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 	orch := orchestrator.New(&s.gitMu, s.credProvider, ac, git, s.gitopsCfg, s.repoPaths, nil)
 	result, err := orch.RegisterCluster(r.Context(), req)
 	if err != nil {
-		if strings.Contains(err.Error(), "already exists") {
+		if errors.Is(err, orchestrator.ErrClusterAlreadyExists) {
 			writeError(w, http.StatusConflict, err.Error())
 			return
 		}

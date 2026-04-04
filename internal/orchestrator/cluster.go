@@ -2,18 +2,24 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path"
 	"regexp"
 )
 
+// ErrClusterAlreadyExists is returned when attempting to register a cluster
+// that already exists in ArgoCD.
+var ErrClusterAlreadyExists = errors.New("cluster already exists")
+
 var validClusterName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]*$`)
 
 // RegisterCluster orchestrates cluster registration:
 //  1. Validate input
-//  2. Fetch credentials from provider
-//  3. Register cluster in ArgoCD with addon labels
-//  4. Generate and commit cluster values file via Git
+//  2. Check for duplicate cluster in ArgoCD (409 if exists)
+//  3. Fetch credentials from provider
+//  4. Register cluster in ArgoCD with addon labels
+//  5. Generate and commit cluster values file via Git
 //
 // If Git commit fails after ArgoCD registration, a partial success is returned.
 func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterRequest) (*RegisterClusterResult, error) {
@@ -32,7 +38,7 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	}
 	for _, c := range clusters {
 		if c.Name == req.Name {
-			return nil, fmt.Errorf("cluster %q already exists in ArgoCD", req.Name)
+			return nil, fmt.Errorf("%w: %q in ArgoCD", ErrClusterAlreadyExists, req.Name)
 		}
 	}
 
@@ -52,7 +58,7 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	steps = append(steps, "fetch_credentials")
 	result.Cluster.Server = creds.Server
 
-	// Step 3: Register cluster in ArgoCD with addon labels.
+	// Step 4: Register cluster in ArgoCD with addon labels.
 	labels := make(map[string]string)
 	for addon, enabled := range req.Addons {
 		if enabled {
@@ -67,7 +73,7 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	}
 	steps = append(steps, "argocd_register")
 
-	// Step 4: Generate cluster values file and commit to Git.
+	// Step 5: Generate cluster values file and commit to Git.
 	valuesContent := generateClusterValues(req.Name, req.Region, req.Addons)
 	valuesPath := path.Join(o.paths.ClusterValues, req.Name+".yaml")
 

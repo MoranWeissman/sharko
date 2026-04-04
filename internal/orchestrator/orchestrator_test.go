@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -15,6 +16,7 @@ import (
 // ---------- mock ArgoCD client ----------
 
 type mockArgocd struct {
+	mu                 sync.Mutex
 	registeredClusters map[string]string              // name -> server
 	deletedServers     []string
 	updatedLabels      map[string]map[string]string   // server -> labels
@@ -33,10 +35,14 @@ func newMockArgocd() *mockArgocd {
 }
 
 func (m *mockArgocd) ListClusters(_ context.Context) ([]models.ArgocdCluster, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return m.existingClusters, nil
 }
 
 func (m *mockArgocd) RegisterCluster(_ context.Context, name, server string, _ []byte, _ string, _ map[string]string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.registerErr != nil {
 		return m.registerErr
 	}
@@ -45,6 +51,8 @@ func (m *mockArgocd) RegisterCluster(_ context.Context, name, server string, _ [
 }
 
 func (m *mockArgocd) DeleteCluster(_ context.Context, serverURL string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.deleteErr != nil {
 		return m.deleteErr
 	}
@@ -53,6 +61,8 @@ func (m *mockArgocd) DeleteCluster(_ context.Context, serverURL string) error {
 }
 
 func (m *mockArgocd) UpdateClusterLabels(_ context.Context, serverURL string, labels map[string]string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.updateLabelsErr != nil {
 		return m.updateLabelsErr
 	}
@@ -61,6 +71,8 @@ func (m *mockArgocd) UpdateClusterLabels(_ context.Context, serverURL string, la
 }
 
 func (m *mockArgocd) SyncApplication(_ context.Context, appName string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.syncedApps = append(m.syncedApps, appName)
 	return nil
 }
@@ -480,8 +492,8 @@ func TestRegisterCluster_DuplicateReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for duplicate cluster")
 	}
-	if !strings.Contains(err.Error(), "already exists") {
-		t.Errorf("expected 'already exists' error, got: %v", err)
+	if !errors.Is(err, ErrClusterAlreadyExists) {
+		t.Errorf("expected ErrClusterAlreadyExists, got: %v", err)
 	}
 	// Should NOT have registered in ArgoCD.
 	if _, ok := argocd.registeredClusters["prod-eu"]; ok {
