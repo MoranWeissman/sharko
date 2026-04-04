@@ -66,7 +66,11 @@ vi.mock('@/services/api', () => ({
     getAISummary: () => Promise.resolve({ summary: '' }),
     getAIConfig: () => Promise.resolve({ current_provider: 'none', available_providers: [] }),
     setAIProvider: () => Promise.resolve({ status: 'ok', provider: 'none' }),
+    testConnection: () => Promise.resolve({ git: { status: 'ok' }, argocd: { status: 'ok' } }),
+    getProviders: () => Promise.resolve({ configured_provider: 'none', available_types: [] }),
   },
+  testConnection: () => Promise.resolve({ git: { status: 'ok' }, argocd: { status: 'ok' } }),
+  getProviders: () => Promise.resolve({ configured_provider: 'none', available_types: [] }),
 }))
 
 function renderSettings() {

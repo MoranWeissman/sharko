@@ -410,7 +410,7 @@ export function AddonCatalog() {
         sync_wave: addonForm.sync_wave ? parseInt(addonForm.sync_wave, 10) : undefined,
       })
       const prUrl = result?.pr_url || result?.pull_request_url
-      setAddAddonResult(prUrl ? `Add-on registered. PR: ${prUrl}` : 'Add-on registered successfully.')
+      setAddAddonResult(prUrl ? `Addon registered. PR: ${prUrl}` : 'Addon registered successfully.')
       void fetchCatalog()
     } catch (e: unknown) {
       setAddAddonError(e instanceof Error ? e.message : 'Failed to add addon')
@@ -547,7 +547,7 @@ export function AddonCatalog() {
       <Dialog open={addAddonOpen} onOpenChange={(v) => { if (!v) setAddAddonOpen(false) }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Register New Add-on</DialogTitle>
+            <DialogTitle>Register New Addon</DialogTitle>
             <DialogDescription>Add a new Helm chart to the catalog.</DialogDescription>
           </DialogHeader>
           <div className="space-y-3 py-2">
@@ -609,7 +609,7 @@ export function AddonCatalog() {
                 className="inline-flex items-center gap-2 rounded-md bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-cyan-700 dark:hover:bg-cyan-600"
               >
                 {addAddonSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
-                Register Add-on
+                Register Addon
               </button>
             )}
           </DialogFooter>

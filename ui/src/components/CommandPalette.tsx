@@ -117,7 +117,7 @@ export function CommandPalette() {
 
   if (!open) return null
 
-  const typeLabel = { page: 'Page', cluster: 'Cluster', addon: 'Add-on' }
+  const typeLabel = { page: 'Page', cluster: 'Cluster', addon: 'Addon' }
 
   return (
     <>

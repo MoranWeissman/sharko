@@ -54,7 +54,7 @@ const navSections: NavSection[] = [
   {
     label: 'Operate',
     items: [
-      { to: '/upgrade', label: 'Add-on Upgrade Checker', icon: ArrowUpCircle },
+      { to: '/upgrade', label: 'Addon Upgrade Checker', icon: ArrowUpCircle },
       { to: '/dashboards', label: 'Dashboards', icon: BarChart3 },
     ],
   },
@@ -82,7 +82,7 @@ const routeLabels: Record<string, string> = {
   addons: 'Addons Catalog',
   'version-matrix': 'Version Drift Detector',
   observability: 'Observability',
-  upgrade: 'Add-on Upgrade Checker',
+  upgrade: 'Addon Upgrade Checker',
   assistant: 'AI Assistant',
   dashboards: 'Dashboards',
   docs: 'Docs',

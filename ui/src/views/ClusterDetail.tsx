@@ -384,7 +384,7 @@ export function ClusterDetail() {
             <div>
               <span className="text-sm font-semibold">Cluster unreachable</span>
               <span className="ml-2 text-xs text-red-600 dark:text-red-400">({data.cluster_connection_state})</span>
-              <p className="text-xs text-red-600 dark:text-red-400">Add-on health data below reflects the last known state and may be stale.</p>
+              <p className="text-xs text-red-600 dark:text-red-400">Addon health data below reflects the last known state and may be stale.</p>
             </div>
           </div>
           <button

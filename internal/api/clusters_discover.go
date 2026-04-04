@@ -14,6 +14,9 @@ type discoverClusterEntry struct {
 // handleDiscoverClusters handles GET /api/v1/clusters/available — list provider clusters
 // and mark which are already registered in ArgoCD.
 func (s *Server) handleDiscoverClusters(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	if s.credProvider == nil {
 		writeError(w, http.StatusNotImplemented, "secrets provider not configured")
 		return

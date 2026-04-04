@@ -85,7 +85,7 @@ describe('UpgradeChecker', () => {
     renderUpgradeChecker();
 
     await waitFor(() => {
-      expect(screen.getByText('Add-on Upgrade Checker')).toBeInTheDocument();
+      expect(screen.getByText('Addon Upgrade Checker')).toBeInTheDocument();
     });
 
     expect(screen.getByText('Select Addon')).toBeInTheDocument();
