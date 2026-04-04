@@ -27,12 +27,12 @@ export function Login() {
 
   return (
     <div className="flex min-h-screen">
-      {/* Left side — mascot (desktop only) */}
-      <div className="hidden lg:flex lg:w-3/4 bg-[#0B1426] items-center justify-center">
+      {/* Left side — login background with helm shark (desktop only) */}
+      <div className="hidden lg:flex lg:w-3/4 bg-[#0B1426] items-center justify-center overflow-hidden">
         <img
-          src="/sharko-mascot-login.png"
-          alt="Sharko mascot"
-          className="max-h-[80vh] max-w-full object-contain"
+          src="/sharko-login-bg.png"
+          alt="Sharko — Let's get your addons deployed!"
+          className="h-full w-full object-cover"
         />
       </div>
 
