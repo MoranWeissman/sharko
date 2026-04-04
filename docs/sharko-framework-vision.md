@@ -35,7 +35,7 @@ This is a **blueprint** — an opinionated reference implementation for a specif
 
 "Blueprint" isn't a demotion. AWS EKS Blueprints is literally called that and is well-respected. Platform engineers understand the term: opinionated, production-tested, adopt within a specific ecosystem.
 
-The community independently converged on the same ArgoCD ApplicationSet pattern for fleet-scale addon management (~60% adoption). This solution validates that best practice. The UI is the real differentiator — nobody else does fleet-wide drift detection and version matrix well.
+The community independently converged on the same ArgoCD ApplicationSet pattern for addon management at scale (~60% adoption). This solution validates that best practice. The UI is the real differentiator — nobody else does drift detection across all clusters and version matrix well.
 
 ---
 
@@ -45,7 +45,7 @@ A thorough investigation (March 2026) across ArgoCD, Flux, Rancher Fleet, OCM, C
 
 > **No project provides a pluggable secrets/credentials backend for cluster addon management.**
 
-Everyone wires ESO or SOPS manually. Every organization hardcodes their secrets provider. There is no `secretsProvider: aws-sm` / `secretsProvider: vault` abstraction for fleet management.
+Everyone wires ESO or SOPS manually. Every organization hardcodes their secrets provider. There is no `secretsProvider: aws-sm` / `secretsProvider: vault` abstraction for cluster addon management.
 
 The delivery mechanism (ArgoCD vs Flux) is a solved problem — ArgoCD won. Abstracting it away means building for a minority. **The secrets backend is where the real abstraction belongs.**
 
@@ -69,7 +69,7 @@ sharko/
     argocd/         → ArgoCD REST client
     gitprovider/    → Git provider interface (GitHub, AzureDevOps)
     ...
-  ui/               → React frontend (fleet dashboard)
+  ui/               → React frontend (dashboard)
   templates/        → Reference addons repo structure
     starter/        → Clean scaffold embedded in binary (what sharko init generates)
     bootstrap/      → Full production AppSet templates (reference)
@@ -87,11 +87,11 @@ sharko/
 
 **Nobody stores credentials on their laptop.** The CLI sends requests to the Sharko API. The server does all the work.
 
-- Fleet observability UI (drift detection, version matrix, cluster health)
+- Cluster observability UI (drift detection, version matrix, cluster health)
 - REST API — the core product. Every consumer (UI, CLI, Backstage, Port, Terraform, CI/CD) talks to the same API
 - CLI as thin client for terminal workflows
 - Pluggable secrets provider interface
-- AI assistant for troubleshooting and fleet insights
+- AI assistant for troubleshooting and cluster insights
 - Orchestrator engine that executes complete GitOps workflows (not just file generation)
 
 ### The Provider Interface
@@ -146,7 +146,7 @@ sharko add-addon cert-manager --chart jetstack/cert-manager --version 1.14.x
 # Onboard a cluster (server fetches creds, registers in ArgoCD, commits to Git)
 sharko add-cluster prod-eu --addons monitoring,logging,cert-manager
 
-# Check fleet status
+# Check cluster status
 sharko status
 ```
 
@@ -165,7 +165,7 @@ Terraform / CI:
   curl / CLI ---------> Sharko Server API
 
 Sharko Server (in-cluster):
-  ├── UI (fleet dashboard, observability)
+  ├── UI (dashboard, observability)
   ├── API (read + write endpoints)
   ├── Orchestrator (workflow engine)
   ├── ArgoCD client (account token auth)
@@ -249,7 +249,7 @@ Sharko creates `prod-eu.yaml` when you run `sharko add-cluster prod-eu`. The App
 
 Sharko is not a UI with an API bolted on. The API is the core product. Every consumer — the UI, the CLI, Backstage, Port, Terraform, CI/CD pipelines — talks to the same API. The UI is just one client among many.
 
-This means the API must be comprehensive: it serves both **read operations** (observability, dashboards, fleet status) and **write operations** (register clusters, manage addons, update labels).
+This means the API must be comprehensive: it serves both **read operations** (observability, dashboards, cluster status) and **write operations** (register clusters, manage addons, update labels).
 
 ### Full API Surface
 
@@ -264,7 +264,7 @@ GET  /api/v1/clusters/:name/addons       → addons deployed on this cluster wit
 GET  /api/v1/addons                      → addon catalog: what's available, versions, descriptions
 GET  /api/v1/addons/:name                → addon detail: which clusters have it, version spread
 GET  /api/v1/addons/:name/drift          → version drift across clusters for this addon
-GET  /api/v1/fleet/status                → fleet-wide overview: health, sync, drift summary
+GET  /api/v1/fleet/status                → cluster status overview: health, sync, drift summary
 GET  /api/v1/fleet/version-matrix        → version matrix: addon × cluster grid
 GET  /api/v1/connections                 → configured ArgoCD/Git connections
 ```
@@ -320,10 +320,10 @@ curl -H "Authorization: Bearer <token>" https://sharko.example.com/api/v1/cluste
 
 **Backstage Plugin — what it would actually do:**
 
-A Backstage plugin that shows Sharko fleet data in the Backstage catalog. Each Kubernetes cluster registered in Backstage gets a "Sharko" tab showing:
+A Backstage plugin that shows Sharko data in the Backstage catalog. Each Kubernetes cluster registered in Backstage gets a "Sharko" tab showing:
 - Which addons are deployed on this cluster
 - Health/sync status of each addon
-- Version drift compared to fleet
+- Version drift compared to other clusters
 - Button to enable/disable addons (calls PATCH /api/v1/clusters/:name)
 
 The plugin makes GET requests to the Sharko API for read data and PATCH requests for management actions. Zero custom backend needed in Backstage — just API calls.
@@ -373,10 +373,10 @@ POST /api/v1/webhooks                    → register a webhook
   Body: { url, events: ["cluster.registered", "cluster.degraded", "addon.drift"] }
 
 Events emitted:
-  cluster.registered    → new cluster added to fleet
+  cluster.registered    → new cluster added
   cluster.deregistered  → cluster removed
   cluster.degraded      → cluster health changed from healthy to degraded
-  addon.drift           → version drift detected across fleet
+  addon.drift           → version drift detected across clusters
   addon.sync.failed     → addon sync failure on a cluster
 ```
 
@@ -408,7 +408,7 @@ The UI, Backstage, Port.io, Terraform, and CI/CD all use the same API endpoints.
 ### Name
 - **Sharko** — always capitalized as "Sharko" in prose, lowercase `sharko` in code/CLI/repo names
 - The "-o" suffix mirrors ArgoCD intentionally — they are companion tools in the same ocean
-- Tagline: *"Addon management for Kubernetes fleets, built on ArgoCD"*
+- Tagline: *"Addon management for Kubernetes clusters, built on ArgoCD"*
 
 ### Logo
 - **Shape:** Dual-tone shark dorsal fin. Reads as a fin cutting through water.
@@ -435,7 +435,7 @@ The UI, Backstage, Port.io, Terraform, and CI/CD all use the same API endpoints.
 
 ### Brand Story (for README / landing page / conference talks)
 ArgoCD is the octopus — many arms, reaching many clusters, delivering applications.
-Sharko is the shark — fast, intelligent, always moving, managing the fleet of addons that ArgoCD delivers.
+Sharko is the shark — fast, intelligent, always moving, managing the addons that ArgoCD delivers across your clusters.
 Two ocean predators, same ecosystem. ArgoCD handles delivery. Sharko handles what gets delivered and where.
 
 ---
@@ -542,15 +542,15 @@ kubebuilder          → operator scaffolding (v2 only)
 
 ## 12. Product Positioning
 
-> **Sharko** is an addon management server for Kubernetes fleets, built on ArgoCD.
+> **Sharko** is an addon management server for Kubernetes clusters, built on ArgoCD.
 > API, UI, and CLI — with pluggable secrets backends and complete GitOps workflow orchestration.
 
 For the portfolio:
 
 > Designed a GitOps blueprint for managing 50+ EKS clusters from a single config file.
-> Built Sharko — a server-first addon management platform with REST API, fleet dashboard,
+> Built Sharko — a server-first addon management platform with REST API, dashboard,
 > thin CLI client, pluggable provider interface, and workflow orchestration engine
-> for fleet-scale addon management on ArgoCD.
+> for addon management across Kubernetes clusters on ArgoCD.
 
 ---
 
@@ -560,7 +560,7 @@ For the portfolio:
 |---|---|
 | What is this today? | An opinionated GitOps blueprint for AWS EKS + ArgoCD + ESO |
 | What's the differentiator? | The UI (drift detection + version matrix) + the API (complete workflow orchestration) |
-| What gap exists? | No pluggable secrets backend for addon fleet management |
+| What gap exists? | No pluggable secrets backend for addon management across clusters |
 | What's v0.1.0? | Rebranded product. Same functionality, new identity |
 | What's v1.0.0? | Server with write API, provider interface, orchestrator, CLI thin client |
 | What's v2? | Kubernetes operator with CRDs. If adoption demands it |

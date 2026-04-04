@@ -1,6 +1,6 @@
 # Sharko Architecture
 
-This document describes the architecture of Sharko, an addon management server for Kubernetes fleets built on ArgoCD.
+This document describes the architecture of Sharko, an addon management server for Kubernetes clusters built on ArgoCD.
 
 ---
 
@@ -19,7 +19,7 @@ Terraform / CI:
   curl / CLI ---------> Sharko Server API
 
 Sharko Server (in-cluster):
-  +-- UI (React fleet dashboard)
+  +-- UI (React dashboard)
   +-- API (read + write endpoints)
   +-- Orchestrator (workflow engine, Git-serialized via mutex)
   +-- ArgoCD client (account token auth)
@@ -232,7 +232,7 @@ Operations:
 - **Update labels:** Patches cluster secret labels (addon enable/disable)
 - **Delete cluster:** Removes the cluster secret from ArgoCD
 - **Sync application:** Triggers a manual sync on an ArgoCD Application
-- **List clusters/applications:** Read operations for fleet observability
+- **List clusters/applications:** Read operations for cluster observability
 
 ---
 
@@ -342,8 +342,8 @@ Batch workflows beyond the current 10-cluster maximum could benefit from async p
 Event-driven notifications for IDPs:
 
 ```
-cluster.registered    -> new cluster added to fleet
+cluster.registered    -> new cluster added
 cluster.degraded      -> health changed from healthy to degraded
-addon.drift           -> version drift detected across fleet
+addon.drift           -> version drift detected across clusters
 addon.sync.failed     -> addon sync failure on a cluster
 ```

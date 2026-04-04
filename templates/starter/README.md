@@ -1,6 +1,6 @@
 # Addons Repository
 
-This repository is managed by [Sharko](https://github.com/MoranWeissman/sharko) — an addon management server for Kubernetes fleets, built on ArgoCD.
+This repository is managed by [Sharko](https://github.com/MoranWeissman/sharko) — an addon management server for Kubernetes clusters, built on ArgoCD.
 
 ## Structure
 

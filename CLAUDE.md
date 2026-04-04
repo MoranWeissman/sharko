@@ -12,7 +12,7 @@ This project was extracted from an internal codebase. No references to the origi
 
 ## Project Context
 
-Sharko is an addon management server for Kubernetes fleets, built on ArgoCD.
+Sharko is an addon management server for Kubernetes clusters, built on ArgoCD.
 See `docs/superpowers/specs/2026-04-01-sharko-implementation-design.md` for the authoritative design spec.
 
 ## Session Startup

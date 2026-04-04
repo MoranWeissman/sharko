@@ -69,7 +69,7 @@ sharko/
     addon.go            Addon management commands (add-addon, remove-addon)
     upgrade.go          Addon upgrade commands (upgrade-addon, upgrade-addons)
     token.go            API key management commands (token create/list/revoke)
-    status.go           Fleet status command
+    status.go           Cluster status overview command
     version_cmd.go      Version command
     client.go           HTTP client helpers for CLI commands
 
@@ -150,7 +150,7 @@ sharko/
 
     models/             Shared data models
 
-  ui/                   React frontend (fleet dashboard)
+  ui/                   React frontend (dashboard)
   templates/            Embedded repo templates
     embed.go            Go embed directive for StarterFS
     starter/            Clean scaffold (what sharko init generates)

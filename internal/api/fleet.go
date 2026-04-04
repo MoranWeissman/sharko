@@ -4,7 +4,7 @@ import (
 	"net/http"
 )
 
-// fleetClusterSummary holds per-cluster health info for the fleet status response.
+// fleetClusterSummary holds per-cluster health info for the cluster status overview response.
 type fleetClusterSummary struct {
 	Name             string `json:"name"`
 	ConnectionStatus string `json:"connection_status"`
@@ -13,7 +13,7 @@ type fleetClusterSummary struct {
 	DegradedAddons   int    `json:"degraded_addons"`
 }
 
-// fleetStatusResponse is the response for GET /api/v1/fleet/status.
+// fleetStatusResponse is the response for GET /api/v1/fleet/status (cluster status overview).
 type fleetStatusResponse struct {
 	TotalClusters        int                   `json:"total_clusters"`
 	HealthyClusters      int                   `json:"healthy_clusters"`
@@ -28,7 +28,7 @@ type fleetStatusResponse struct {
 	Clusters             []fleetClusterSummary `json:"clusters"`
 }
 
-// handleGetFleetStatus handles GET /api/v1/fleet/status — read-only fleet aggregation.
+// handleGetFleetStatus handles GET /api/v1/fleet/status — read-only cluster status aggregation.
 func (s *Server) handleGetFleetStatus(w http.ResponseWriter, r *http.Request) {
 	gp, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {

@@ -1,6 +1,6 @@
 # ArgoCD Application Operations Observability
 
-This directory contains comprehensive documentation for monitoring ArgoCD Application operations across the cluster fleet.
+This directory contains comprehensive documentation for monitoring ArgoCD Application operations across clusters.
 
 ## Documentation Overview
 
@@ -172,7 +172,7 @@ Sync failures categorize into **7 primary types**:
 ❌ **No Application metrics collection** - ArgoCD metrics not scraped by Datadog
 ❌ **No proactive alerts** - Rely on user reports (MTTD 15-30 minutes)
 ❌ **No failure categorization** - Manual log searching (MTTR 30-60 minutes)
-❌ **No fleet-wide visibility** - Can't answer "Are all Applications healthy?"
+❌ **No cross-cluster visibility** - Can't answer "Are all Applications healthy?"
 
 ### Expected Impact
 

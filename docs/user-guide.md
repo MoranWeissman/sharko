@@ -1,6 +1,6 @@
 # Sharko User Guide
 
-This guide covers installing Sharko, configuring it, and using the CLI and fleet dashboard to manage addons across your Kubernetes clusters.
+This guide covers installing Sharko, configuring it, and using the CLI and dashboard to manage addons across your Kubernetes clusters.
 
 ---
 
@@ -168,7 +168,7 @@ Upgrade multiple addons in a single pull request:
 sharko upgrade-addons cert-manager=1.15.0,metrics-server=0.7.1
 ```
 
-### Fleet Status
+### Cluster Status Overview
 
 ```bash
 sharko status
@@ -177,7 +177,7 @@ sharko status
 Example output:
 
 ```
-Fleet Status
+Cluster Status Overview
 ============
 Clusters: 12 total, 11 healthy, 1 degraded
 Addons:   8 in catalog
@@ -187,7 +187,7 @@ Degraded Clusters:
   staging-us  2 addons out-of-sync (cert-manager, monitoring)
 
 Version Drift:
-  metrics-server  3 versions across fleet (0.6.3, 0.6.4, 0.7.0)
+  metrics-server  3 versions across clusters (0.6.3, 0.6.4, 0.7.0)
 ```
 
 ### Check Version
@@ -401,9 +401,9 @@ The PR URL is included in every write operation response and CLI output, so you 
 
 ---
 
-## Fleet Dashboard
+## Dashboard
 
-The Sharko UI is a React-based fleet dashboard accessible via the Sharko service URL. It provides:
+The Sharko UI is a React-based dashboard accessible via the Sharko service URL. It provides:
 
 ### Clusters View
 
@@ -414,7 +414,7 @@ The Sharko UI is a React-based fleet dashboard accessible via the Sharko service
 
 ### Addon Catalog
 
-- All addons available in the fleet with chart, version, and deployment count
+- All addons available across your clusters with chart, version, and deployment count
 - Per-addon detail: which clusters have it deployed, version distribution
 - Add addons to the catalog and trigger upgrades from the UI
 
@@ -440,7 +440,7 @@ The Sharko UI is a React-based fleet dashboard accessible via the Sharko service
 
 ## AI Assistant Configuration
 
-Sharko includes an AI assistant for troubleshooting and fleet insights. Configure it via Helm values or the Settings UI.
+Sharko includes an AI assistant for troubleshooting and cluster insights. Configure it via Helm values or the Settings UI.
 
 ### Supported Providers
 

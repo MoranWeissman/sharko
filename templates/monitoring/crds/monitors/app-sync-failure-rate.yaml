@@ -15,7 +15,7 @@ spec:
     🔴 [P1 CRITICAL] Sync failure rate is above 10% in the last hour
 
     Failure rate: {{value}}%
-    This indicates widespread sync issues across the fleet.
+    This indicates widespread sync issues across clusters.
 
     Actions:
     1. Check the Application Operations dashboard for affected apps

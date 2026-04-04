@@ -108,7 +108,7 @@ bootstrap/                   # Bootstrap IS the folder
 
 **Rationale:**
 - Separation of concerns (ArgoCD infrastructure vs cluster addons)
-- ArgoFleet already manages ArgoCD across fleet
+- ArgoFleet already manages ArgoCD across all clusters
 - Reduces coupling and potential conflicts
 - Clearer ownership boundaries
 

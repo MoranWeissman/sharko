@@ -13,7 +13,7 @@ We investigated ArgoCD's observability capabilities for monitoring Application s
 - ArgoCD provides all metrics needed for sync monitoring via Prometheus endpoints
 - The ArgoCD API stores only the last 10 sync operations per app (configurable) and only the most recent operation's error details
 - Sync failures categorize into 9 distinct types, each identifiable via log patterns
-- Datadog's built-in ArgoCD integration covers basics but custom dashboards are needed for fleet-scale operations
+- Datadog's built-in ArgoCD integration covers basics but custom dashboards are needed for operations at scale
 - Implementation is straightforward: 1-2 weeks for full setup
 
 ---
@@ -57,7 +57,7 @@ Full taxonomy in [SYNC_FAILURE_CATEGORIZATION.md](./SYNC_FAILURE_CATEGORIZATION.
 ### Q4: What dashboards do we need?
 
 4 dashboards recommended:
-1. **Operations Overview** -- Fleet health at a glance
+1. **Operations Overview** -- Cluster health at a glance
 2. **Sync Performance** -- Duration trends, failure rates, deployment frequency
 3. **Failure Analysis** -- Top offenders, error categories, log streams
 4. **Troubleshooting** -- Per-app deep dive
@@ -86,7 +86,7 @@ Details in [APPLICATION_REQUIREMENTS.md](./APPLICATION_REQUIREMENTS.md#6-alert-r
 | Metrics collection | Not configured | No data for dashboards or alerts |
 | Sync alerting | None | Rely on user reports, MTTD 15-30 min |
 | Failure categorization | Manual | Engineers search logs manually, MTTR 30-60 min |
-| Fleet visibility | None | Cannot answer "are all apps healthy?" |
+| Cluster visibility | None | Cannot answer "are all apps healthy?" |
 | Performance tracking | None | Cannot detect degradation trends |
 
 ---
@@ -124,7 +124,7 @@ ArgoCD Notifications                       v
 |---|---|---|---|
 | MTTD (sync failures) | 15-30 min | < 5 min | Time from failure to alert |
 | MTTR (sync failures) | 30-60 min | 15-30 min | Time from alert to resolution |
-| Fleet visibility | 0% | 100% | All apps on dashboard |
+| Cluster visibility | 0% | 100% | All apps on dashboard |
 | Proactive detection | 0% | 80%+ | Failures caught by alerts vs user reports |
 
 ---
@@ -173,4 +173,4 @@ ArgoCD Notifications                       v
 - [ ] 4 dashboards operational with real data
 - [ ] 8 alerts configured with tuned thresholds
 - [ ] MTTD reduced to < 5 minutes (measured over 30 days)
-- [ ] Fleet health answerable in < 30 seconds via dashboard
+- [ ] Cluster health answerable in < 30 seconds via dashboard

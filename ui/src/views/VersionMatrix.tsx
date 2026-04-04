@@ -418,7 +418,7 @@ export function VersionMatrix() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Addons Version Drift Detector</h1>
         <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-          Identify version drift across your fleet — spot add-ons running a different version than the catalog baseline. Use the drift filter to focus on inconsistencies.
+          Identify version drift across your clusters — spot add-ons running a different version than the catalog baseline. Use the drift filter to focus on inconsistencies.
           {totalDrifts > 0 && (
             <span className="ml-2 rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
               {totalDrifts} version drift{totalDrifts !== 1 ? 's' : ''}
