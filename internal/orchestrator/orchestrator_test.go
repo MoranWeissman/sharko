@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"strings"
 	"sync"
 	"testing"
+	"testing/fstest"
+	"time"
 
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/models"
@@ -24,9 +27,13 @@ type mockArgocd struct {
 	updatedLabels      map[string]map[string]string   // server -> labels
 	syncedApps         []string
 	existingClusters   []models.ArgocdCluster         // for ListClusters / duplicate check
+	addedRepos         []string                        // repo URLs added via AddRepository
+	applications       map[string]*models.ArgocdApplication // name -> app (for GetApplication)
 	registerErr        error
 	deleteErr          error
 	updateLabelsErr    error
+	addRepoErr         error
+	getAppErr          error
 }
 
 func newMockArgocd() *mockArgocd {
@@ -85,6 +92,30 @@ func (m *mockArgocd) CreateProject(_ context.Context, _ []byte) error {
 
 func (m *mockArgocd) CreateApplication(_ context.Context, _ []byte) error {
 	return nil
+}
+
+func (m *mockArgocd) AddRepository(_ context.Context, repoURL, _, _ string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.addRepoErr != nil {
+		return m.addRepoErr
+	}
+	m.addedRepos = append(m.addedRepos, repoURL)
+	return nil
+}
+
+func (m *mockArgocd) GetApplication(_ context.Context, name string) (*models.ArgocdApplication, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.getAppErr != nil {
+		return nil, m.getAppErr
+	}
+	if m.applications != nil {
+		if app, ok := m.applications[name]; ok {
+			return app, nil
+		}
+	}
+	return nil, fmt.Errorf("application %q not found", name)
 }
 
 // ---------- mock credentials provider ----------
@@ -237,6 +268,176 @@ func defaultCreds() *mockCredProvider {
 }
 
 // ---------- tests ----------
+
+// ---------- test template FS for InitRepo ----------
+
+func testTemplateFS() fs.FS {
+	return fstest.MapFS{
+		"starter/bootstrap/root-app.yaml": &fstest.MapFile{
+			Data: []byte(`---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: addons
+  namespace: argocd
+spec:
+  description: Addon management project
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: addons-bootstrap
+  namespace: argocd
+spec:
+  project: addons
+  sources:
+    - repoURL: SHARKO_GIT_REPO_URL
+      targetRevision: SHARKO_GIT_BRANCH
+      path: bootstrap
+`),
+		},
+		"starter/configuration/addons-catalog.yaml": &fstest.MapFile{
+			Data: []byte("# catalog\n"),
+		},
+		"starter/README.md": &fstest.MapFile{
+			Data: []byte("# Addons repo\n"),
+		},
+	}
+}
+
+// ---------- InitRepo tests ----------
+
+func TestInitRepo_CommitsViaPR(t *testing.T) {
+	argocd := newMockArgocd()
+	git := newMockGitProvider()
+	cfg := autoMergeGitOps()
+	cfg.RepoURL = "https://github.com/example/addons"
+	orch := New(nil, defaultCreds(), argocd, git, cfg, defaultPaths(), testTemplateFS())
+
+	result, err := orch.InitRepo(context.Background(), InitRepoRequest{BootstrapArgoCD: false})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != "success" {
+		t.Errorf("expected status 'success', got %q", result.Status)
+	}
+	// Should have created a branch (PR mode, not direct commits).
+	if len(git.branches) == 0 {
+		t.Fatal("expected a branch to be created (PR mode)")
+	}
+	// Should have created a PR.
+	if len(git.prs) == 0 {
+		t.Fatal("expected a PR to be created")
+	}
+	if result.Repo == nil {
+		t.Fatal("expected Repo in result")
+	}
+	if result.Repo.PRUrl == "" {
+		t.Error("expected PR URL in result")
+	}
+	// Should have committed multiple files.
+	if len(result.Repo.FilesCreated) != 3 {
+		t.Errorf("expected 3 files created, got %d: %v", len(result.Repo.FilesCreated), result.Repo.FilesCreated)
+	}
+	// All files should be in git.
+	for _, f := range result.Repo.FilesCreated {
+		if _, ok := git.files[f]; !ok {
+			t.Errorf("file %q not found in git", f)
+		}
+	}
+}
+
+func TestInitRepo_AlreadyInitialized(t *testing.T) {
+	git := newMockGitProvider()
+	// Pre-populate the bootstrap file so it looks initialized.
+	git.files["bootstrap/root-app.yaml"] = []byte("existing")
+
+	cfg := defaultGitOps()
+	cfg.RepoURL = "https://github.com/example/addons"
+	orch := New(nil, defaultCreds(), newMockArgocd(), git, cfg, defaultPaths(), testTemplateFS())
+
+	_, err := orch.InitRepo(context.Background(), InitRepoRequest{BootstrapArgoCD: false})
+	if err == nil {
+		t.Fatal("expected error for already-initialized repo")
+	}
+	if !strings.Contains(err.Error(), "already initialized") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestInitRepo_SyncTimeout(t *testing.T) {
+	argocd := newMockArgocd()
+	// GetApplication always returns "not found" — triggers timeout.
+	argocd.getAppErr = fmt.Errorf("not found")
+
+	git := newMockGitProvider()
+	cfg := autoMergeGitOps()
+	cfg.RepoURL = "https://github.com/example/addons"
+	orch := New(nil, defaultCreds(), argocd, git, cfg, defaultPaths(), testTemplateFS())
+
+	// Use a context with a short deadline to avoid waiting 2 minutes.
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	result, err := orch.InitRepo(ctx, InitRepoRequest{
+		BootstrapArgoCD: true,
+		GitUsername:      "x-access-token",
+		GitToken:         "test-token",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ArgoCD == nil {
+		t.Fatal("expected ArgoCD info in result")
+	}
+	if result.ArgoCD.SyncStatus != "timeout" {
+		t.Errorf("expected sync status 'timeout', got %q", result.ArgoCD.SyncStatus)
+	}
+	if result.Status != "syncing" {
+		t.Errorf("expected status 'syncing', got %q", result.Status)
+	}
+}
+
+func TestInitRepo_WithBootstrapAndSync(t *testing.T) {
+	argocd := newMockArgocd()
+	argocd.applications = map[string]*models.ArgocdApplication{
+		"addons-bootstrap": {
+			Name:         "addons-bootstrap",
+			SyncStatus:   "Synced",
+			HealthStatus: "Healthy",
+		},
+	}
+
+	git := newMockGitProvider()
+	cfg := autoMergeGitOps()
+	cfg.RepoURL = "https://github.com/example/addons"
+	orch := New(nil, defaultCreds(), argocd, git, cfg, defaultPaths(), testTemplateFS())
+
+	result, err := orch.InitRepo(context.Background(), InitRepoRequest{
+		BootstrapArgoCD: true,
+		GitUsername:      "x-access-token",
+		GitToken:         "test-token",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ArgoCD == nil {
+		t.Fatal("expected ArgoCD info in result")
+	}
+	if !result.ArgoCD.Bootstrapped {
+		t.Error("expected Bootstrapped=true")
+	}
+	if result.ArgoCD.SyncStatus != "synced" {
+		t.Errorf("expected sync status 'synced', got %q", result.ArgoCD.SyncStatus)
+	}
+	if result.Status != "success" {
+		t.Errorf("expected status 'success', got %q", result.Status)
+	}
+	// Should have added the repo to ArgoCD.
+	if len(argocd.addedRepos) != 1 {
+		t.Errorf("expected 1 repo added to ArgoCD, got %d", len(argocd.addedRepos))
+	}
+}
 
 func TestRegisterCluster_ManualPR(t *testing.T) {
 	argocd := newMockArgocd()

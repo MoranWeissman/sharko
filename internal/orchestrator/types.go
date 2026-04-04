@@ -65,7 +65,9 @@ type AddAddonRequest struct {
 
 // InitRepoRequest is the input for initializing the addons repository.
 type InitRepoRequest struct {
-	BootstrapArgoCD bool `json:"bootstrap_argocd"`
+	BootstrapArgoCD bool   `json:"bootstrap_argocd"`
+	GitUsername      string `json:"git_username,omitempty"`
+	GitToken         string `json:"git_token,omitempty"`
 }
 
 // InitRepoResult is the output of a successful repo initialization.
@@ -80,10 +82,15 @@ type InitRepoInfo struct {
 	URL          string   `json:"url,omitempty"`
 	Branch       string   `json:"branch,omitempty"`
 	FilesCreated []string `json:"files_created"`
+	PRUrl        string   `json:"pr_url,omitempty"`
+	PRID         int      `json:"pr_id,omitempty"`
+	Merged       bool     `json:"merged"`
 }
 
 // InitArgocdInfo holds ArgoCD bootstrap details in the init response.
 type InitArgocdInfo struct {
 	Bootstrapped bool   `json:"bootstrapped"`
 	RootApp      string `json:"root_app,omitempty"`
+	SyncStatus   string `json:"sync_status,omitempty"`
+	SyncError    string `json:"sync_error,omitempty"`
 }

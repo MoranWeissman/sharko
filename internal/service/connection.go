@@ -241,6 +241,12 @@ func (s *ConnectionService) DiscoverArgocdURL(namespace string) string {
 	return argocd.DiscoverServerURL(namespace)
 }
 
+// GetActiveConnectionInfo returns the active connection with its full configuration.
+// This is used by API handlers that need access to raw credentials (e.g., for ArgoCD repo registration).
+func (s *ConnectionService) GetActiveConnectionInfo() (*models.Connection, error) {
+	return s.getActiveConn()
+}
+
 func (s *ConnectionService) getActiveConn() (*models.Connection, error) {
 	activeName, err := s.store.GetActiveConnection()
 	if err != nil {

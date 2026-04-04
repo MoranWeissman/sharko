@@ -19,6 +19,8 @@ type ArgocdClient interface {
 	SyncApplication(ctx context.Context, appName string) error
 	CreateProject(ctx context.Context, projectJSON []byte) error
 	CreateApplication(ctx context.Context, appJSON []byte) error
+	AddRepository(ctx context.Context, repoURL, username, password string) error
+	GetApplication(ctx context.Context, name string) (*models.ArgocdApplication, error)
 }
 
 // Orchestrator coordinates multi-step operations across providers, ArgoCD,

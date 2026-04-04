@@ -3,8 +3,10 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"strings"
 
+	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
@@ -37,6 +39,20 @@ func (s *Server) handleInit(w http.ResponseWriter, r *http.Request) {
 		req = orchestrator.InitRepoRequest{BootstrapArgoCD: true}
 	}
 
+	// Populate Git credentials for ArgoCD repository registration.
+	if req.GitUsername == "" || req.GitToken == "" {
+		conn, connErr := s.connSvc.GetActiveConnectionInfo()
+		if connErr == nil {
+			username, token := extractGitCredentials(conn)
+			if req.GitUsername == "" {
+				req.GitUsername = username
+			}
+			if req.GitToken == "" {
+				req.GitToken = token
+			}
+		}
+	}
+
 	orch := orchestrator.New(&s.gitMu, s.credProvider, ac, git, s.gitopsCfg, s.repoPaths, s.templateFS)
 	result, err := orch.InitRepo(r.Context(), req)
 	if err != nil {
@@ -49,4 +65,28 @@ func (s *Server) handleInit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, result)
+}
+
+// extractGitCredentials returns (username, token) from the active connection's Git config.
+// It checks the connection config first, then falls back to environment variables.
+func extractGitCredentials(conn *models.Connection) (string, string) {
+	switch conn.Git.Provider {
+	case models.GitProviderGitHub:
+		token := conn.Git.Token
+		if token == "" {
+			token = os.Getenv("GITHUB_TOKEN")
+		}
+		if token != "" {
+			return "x-access-token", token
+		}
+	case models.GitProviderAzureDevOps:
+		pat := conn.Git.PAT
+		if pat == "" {
+			pat = os.Getenv("AZURE_DEVOPS_PAT")
+		}
+		if pat != "" {
+			return conn.Git.Organization, pat
+		}
+	}
+	return "", ""
 }

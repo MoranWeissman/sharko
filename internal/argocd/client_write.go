@@ -239,3 +239,22 @@ func (c *Client) CreateApplication(ctx context.Context, appJSON []byte) error {
 	}
 	return nil
 }
+
+// AddRepository registers a Git repository in ArgoCD so it can be used as a source.
+func (c *Client) AddRepository(ctx context.Context, repoURL, username, password string) error {
+	body := map[string]interface{}{
+		"repo":     repoURL,
+		"username": username,
+		"password": password,
+		"type":     "git",
+	}
+	jsonData, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("marshalling repository request: %w", err)
+	}
+	_, err = c.doPost(ctx, "/api/v1/repositories", jsonData)
+	if err != nil {
+		return fmt.Errorf("adding repository %q to ArgoCD: %w", repoURL, err)
+	}
+	return nil
+}

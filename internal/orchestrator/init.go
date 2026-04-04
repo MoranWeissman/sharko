@@ -7,13 +7,15 @@ import (
 	"fmt"
 	"io/fs"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
 
 // InitRepo scaffolds the addons repository from the embedded starter templates.
-// It walks the templateFS, replaces placeholder tokens, and creates each file
-// via the Git provider directly to the base branch.
+// It collects all files from templateFS, commits them via a PR (using commitChanges),
+// optionally registers the repo in ArgoCD, creates the bootstrap project/application,
+// and polls for sync verification.
 func (o *Orchestrator) InitRepo(ctx context.Context, req InitRepoRequest) (*InitRepoResult, error) {
 	if o.templateFS == nil {
 		return nil, fmt.Errorf("template filesystem not configured")
@@ -22,22 +24,13 @@ func (o *Orchestrator) InitRepo(ctx context.Context, req InitRepoRequest) (*Init
 		return nil, fmt.Errorf("git repo URL is required for init — set SHARKO_GITOPS_REPO_URL")
 	}
 
-	// Check if repo is already initialized by looking for bootstrap/root-app.yaml.
+	// Step 1 — Check if repo is already initialized.
 	if _, err := o.git.GetFileContent(ctx, "bootstrap/root-app.yaml", o.gitops.BaseBranch); err == nil {
 		return nil, fmt.Errorf("repo already initialized: bootstrap/root-app.yaml exists")
 	}
 
-	branch := o.gitops.BaseBranch
-	commitPrefix := o.gitops.CommitPrefix
-
-	// Acquire Git mutex for the entire init operation (many sequential Git writes).
-	if o.gitMu != nil {
-		o.gitMu.Lock()
-		defer o.gitMu.Unlock()
-	}
-
-	var filesCreated []string
-
+	// Step 2 — Collect all files from templates.
+	files := make(map[string][]byte)
 	err := fs.WalkDir(o.templateFS, "starter", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -51,34 +44,55 @@ func (o *Orchestrator) InitRepo(ctx context.Context, req InitRepoRequest) (*Init
 			return fmt.Errorf("reading template %s: %w", path, readErr)
 		}
 
-		// Replace placeholder tokens with actual config values
+		// Replace placeholder tokens with actual config values.
 		content = replacePlaceholders(content, o.gitops)
 
-		// Strip the "starter/" prefix — files go to the repo root
+		// Strip the "starter/" prefix — files go to the repo root.
 		repoPath := strings.TrimPrefix(path, "starter/")
-
-		commitMsg := fmt.Sprintf("%s init %s", commitPrefix, repoPath)
-		if createErr := o.git.CreateOrUpdateFile(ctx, repoPath, content, branch, commitMsg); createErr != nil {
-			return fmt.Errorf("creating %s: %w", repoPath, createErr)
-		}
-
-		filesCreated = append(filesCreated, repoPath)
+		files[repoPath] = content
 		return nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("walking starter templates: %w", err)
 	}
 
+	// Step 3 — Commit all files via PR (using commitChanges with shared mutex).
+	gitResult, err := o.commitChanges(ctx, files, nil, "initialize repository")
+	if err != nil {
+		return nil, fmt.Errorf("committing init files: %w", err)
+	}
+
+	filesCreated := make([]string, 0, len(files))
+	for path := range files {
+		filesCreated = append(filesCreated, path)
+	}
+
 	result := &InitRepoResult{
 		Status: "success",
 		Repo: &InitRepoInfo{
 			URL:          o.gitops.RepoURL,
-			Branch:       branch,
+			Branch:       gitResult.Branch,
 			FilesCreated: filesCreated,
+			PRUrl:        gitResult.PRUrl,
+			PRID:         gitResult.PRID,
+			Merged:       gitResult.Merged,
 		},
 	}
 
 	if req.BootstrapArgoCD && o.argocd != nil {
+		// Step 4 — Add repository to ArgoCD.
+		if req.GitUsername != "" && req.GitToken != "" {
+			if addRepoErr := o.argocd.AddRepository(ctx, o.gitops.RepoURL, req.GitUsername, req.GitToken); addRepoErr != nil {
+				result.ArgoCD = &InitArgocdInfo{
+					Bootstrapped: false,
+					RootApp:      fmt.Sprintf("failed to add repository to ArgoCD: %v", addRepoErr),
+				}
+				result.Status = "partial"
+				return result, nil
+			}
+		}
+
+		// Step 5 & 6 — Create AppProject and Application from root-app.yaml.
 		rootAppContent, readErr := fs.ReadFile(o.templateFS, "starter/bootstrap/root-app.yaml")
 		if readErr != nil {
 			result.ArgoCD = &InitArgocdInfo{
@@ -88,16 +102,15 @@ func (o *Orchestrator) InitRepo(ctx context.Context, req InitRepoRequest) (*Init
 			return result, nil
 		}
 
-		// Replace placeholders in the root-app content
 		rootAppContent = replacePlaceholders(rootAppContent, o.gitops)
 
-		// Split multi-document YAML (AppProject + Application)
 		bootstrapErr := o.bootstrapArgoCD(ctx, rootAppContent)
 		if bootstrapErr != nil {
 			result.ArgoCD = &InitArgocdInfo{
 				Bootstrapped: false,
 				RootApp:      fmt.Sprintf("bootstrap failed: %v", bootstrapErr),
 			}
+			result.Status = "partial"
 			return result, nil
 		}
 
@@ -105,9 +118,45 @@ func (o *Orchestrator) InitRepo(ctx context.Context, req InitRepoRequest) (*Init
 			Bootstrapped: true,
 			RootApp:      "addons-bootstrap",
 		}
+
+		// Step 7 — Poll for sync verification (up to 2 minutes).
+		syncStatus, syncErr := o.waitForSync(ctx, "addons-bootstrap", 2*time.Minute)
+		result.ArgoCD.SyncStatus = syncStatus
+		result.ArgoCD.SyncError = syncErr
+		if syncStatus != "synced" {
+			result.Status = "syncing"
+		}
 	}
 
 	return result, nil
+}
+
+// waitForSync polls ArgoCD for an application's sync/health status.
+// Returns the final status ("synced", "failed", "timeout") and an optional error message.
+func (o *Orchestrator) waitForSync(ctx context.Context, appName string, timeout time.Duration) (string, string) {
+	deadline := time.After(timeout)
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-deadline:
+			return "timeout", "sync verification timed out after " + timeout.String()
+		case <-ctx.Done():
+			return "timeout", "context cancelled"
+		case <-ticker.C:
+			app, err := o.argocd.GetApplication(ctx, appName)
+			if err != nil {
+				continue // ArgoCD may not have the app yet
+			}
+			if app.SyncStatus == "Synced" && app.HealthStatus == "Healthy" {
+				return "synced", ""
+			}
+			if app.SyncStatus == "OutOfSync" && app.HealthStatus == "Degraded" {
+				return "failed", "application sync failed"
+			}
+		}
+	}
 }
 
 // bootstrapArgoCD parses the root-app.yaml (multi-document YAML with AppProject + Application)
