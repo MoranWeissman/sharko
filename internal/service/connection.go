@@ -14,8 +14,9 @@ import (
 
 // ConnectionService manages connections and provides active provider instances.
 type ConnectionService struct {
-	store   config.Store
-	devMode bool // when true, falls back to env vars for missing credentials
+	store               config.Store
+	devMode             bool // when true, falls back to env vars for missing credentials
+	gitProviderOverride gitprovider.GitProvider // when set, returned by GetActiveGitProvider (demo mode)
 }
 
 // NewConnectionService creates a new ConnectionService.
@@ -102,8 +103,21 @@ func (s *ConnectionService) SetActive(name string) error {
 	return s.store.SetActiveConnection(name)
 }
 
+// GitProviderOverride is an alias for gitprovider.GitProvider, exported so that
+// callers (e.g. api.Server) can reference the type without importing gitprovider.
+type GitProviderOverride = gitprovider.GitProvider
+
+// SetGitProviderOverride installs a fixed GitProvider that bypasses connection
+// lookup. Used in demo/test mode to inject a mock provider.
+func (s *ConnectionService) SetGitProviderOverride(p gitprovider.GitProvider) {
+	s.gitProviderOverride = p
+}
+
 // GetActiveGitProvider returns a GitProvider for the currently active connection.
 func (s *ConnectionService) GetActiveGitProvider() (gitprovider.GitProvider, error) {
+	if s.gitProviderOverride != nil {
+		return s.gitProviderOverride, nil
+	}
 	conn, err := s.getActiveConn()
 	if err != nil {
 		return nil, err
