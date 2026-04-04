@@ -45,7 +45,7 @@ func (o *Orchestrator) InitRepo(ctx context.Context, req InitRepoRequest) (*Init
 		}
 
 		// Replace placeholder tokens with actual config values.
-		content = replacePlaceholders(content, o.gitops)
+		content = replacePlaceholdersFull(content, o.gitops, o.paths)
 
 		// Strip the "starter/" prefix — files go to the repo root.
 		repoPath := strings.TrimPrefix(path, "starter/")
@@ -102,7 +102,7 @@ func (o *Orchestrator) InitRepo(ctx context.Context, req InitRepoRequest) (*Init
 			return result, nil
 		}
 
-		rootAppContent = replacePlaceholders(rootAppContent, o.gitops)
+		rootAppContent = replacePlaceholdersFull(rootAppContent, o.gitops, o.paths)
 
 		bootstrapErr := o.bootstrapArgoCD(ctx, rootAppContent)
 		if bootstrapErr != nil {
@@ -215,6 +215,10 @@ func (o *Orchestrator) bootstrapArgoCD(ctx context.Context, rootAppYAML []byte) 
 }
 
 // replacePlaceholders substitutes well-known tokens in template content.
+// Tokens replaced:
+//   - SHARKO_GIT_REPO_URL  → cfg.RepoURL
+//   - SHARKO_GIT_BRANCH    → cfg.BaseBranch (default "main")
+//   - SHARKO_HOST_CLUSTER_NAME → repoPaths.HostClusterName (if set; otherwise token removed)
 func replacePlaceholders(content []byte, cfg GitOpsConfig) []byte {
 	if cfg.RepoURL != "" {
 		content = bytes.ReplaceAll(content, []byte("SHARKO_GIT_REPO_URL"), []byte(cfg.RepoURL))
@@ -224,5 +228,15 @@ func replacePlaceholders(content []byte, cfg GitOpsConfig) []byte {
 		branch = "main"
 	}
 	content = bytes.ReplaceAll(content, []byte("SHARKO_GIT_BRANCH"), []byte(branch))
+	return content
+}
+
+// replacePlaceholdersFull extends replacePlaceholders with repo-path tokens including
+// the host cluster name used for in-cluster routing.
+func replacePlaceholdersFull(content []byte, cfg GitOpsConfig, paths RepoPathsConfig) []byte {
+	content = replacePlaceholders(content, cfg)
+	if paths.HostClusterName != "" {
+		content = bytes.ReplaceAll(content, []byte("SHARKO_HOST_CLUSTER_NAME"), []byte(paths.HostClusterName))
+	}
 	return content
 }

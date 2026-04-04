@@ -256,4 +256,7 @@ export const api = {
   docsList: () => fetchJSON<{ slug: string; title: string; order: number }[]>('/docs/list'),
   docsGet: (slug: string) => fetchJSON<{ slug: string; content: string }>(`/docs/${encodeURIComponent(slug)}`),
 
+  // Providers
+  getProviders: () => fetchJSON<{ configured_provider: { type: string; region: string; status: string } | null; available_types: string[] }>('/providers'),
+
 }

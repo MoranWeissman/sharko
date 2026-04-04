@@ -193,12 +193,29 @@ function ConnectionFormFields({
 /*  Main component                                                     */
 /* ------------------------------------------------------------------ */
 
+interface LiveStatus {
+  git: 'idle' | 'testing' | 'ok' | 'error'
+  argocd: 'idle' | 'testing' | 'ok' | 'error'
+}
+
+interface ProviderInfo {
+  type: string
+  region: string
+  status: string
+}
+
 export function Connections() {
   const { connections, loading, error, refreshConnections } =
     useConnections()
   const [switchingTo, setSwitchingTo] = useState<string | null>(null)
   const [platformInfo, setPlatformInfo] = useState<PlatformInfo | null>(null)
   const [healthLoading, setHealthLoading] = useState(true)
+
+  // Live connection status (for active connection card)
+  const [liveStatus, setLiveStatus] = useState<LiveStatus>({ git: 'idle', argocd: 'idle' })
+
+  // Secrets provider info
+  const [providerInfo, setProviderInfo] = useState<ProviderInfo | null>(null)
 
   // Add form state
   const [showAddForm, setShowAddForm] = useState(false)
@@ -244,9 +261,44 @@ export function Connections() {
       .finally(() => setHealthLoading(false))
   }, [])
 
+  const fetchLiveStatus = useCallback(() => {
+    setLiveStatus({ git: 'testing', argocd: 'testing' })
+    api
+      .testConnection()
+      .then((res) => {
+        setLiveStatus({
+          git: res.git.status === 'ok' ? 'ok' : 'error',
+          argocd: res.argocd.status === 'ok' ? 'ok' : 'error',
+        })
+      })
+      .catch(() => setLiveStatus({ git: 'error', argocd: 'error' }))
+  }, [])
+
+  const fetchProviderInfo = useCallback(() => {
+    api
+      .getProviders()
+      .then((data) => {
+        if (data.configured_provider) {
+          setProviderInfo(data.configured_provider as ProviderInfo)
+        }
+      })
+      .catch(() => setProviderInfo(null))
+  }, [])
+
   useEffect(() => {
     fetchHealth()
-  }, [fetchHealth])
+    fetchProviderInfo()
+  }, [fetchHealth, fetchProviderInfo])
+
+  // Refresh live status when active connection changes
+  useEffect(() => {
+    const activeConn = connections.find((c) => c.is_active)
+    if (activeConn) {
+      fetchLiveStatus()
+    } else {
+      setLiveStatus({ git: 'idle', argocd: 'idle' })
+    }
+  }, [connections, fetchLiveStatus])
 
   async function handleSwitch(name: string) {
     setSwitchingTo(name)
@@ -496,6 +548,28 @@ export function Connections() {
                     </div>
                   </div>
 
+                  {/* Live status badges (active connection only) */}
+                  {conn.is_active && (
+                    <div className="mb-3 flex items-center gap-3">
+                      <span className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
+                        <GitBranch className="h-3 w-3" />
+                        Git:
+                        {liveStatus.git === 'testing' && <Loader2 className="h-3 w-3 animate-spin text-gray-400" />}
+                        {liveStatus.git === 'ok' && <CheckCircle className="h-3.5 w-3.5 text-green-500" />}
+                        {liveStatus.git === 'error' && <XCircle className="h-3.5 w-3.5 text-red-500" />}
+                        {liveStatus.git === 'idle' && <span className="text-gray-400">—</span>}
+                      </span>
+                      <span className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
+                        <Server className="h-3 w-3" />
+                        ArgoCD:
+                        {liveStatus.argocd === 'testing' && <Loader2 className="h-3 w-3 animate-spin text-gray-400" />}
+                        {liveStatus.argocd === 'ok' && <CheckCircle className="h-3.5 w-3.5 text-green-500" />}
+                        {liveStatus.argocd === 'error' && <XCircle className="h-3.5 w-3.5 text-red-500" />}
+                        {liveStatus.argocd === 'idle' && <span className="text-gray-400">—</span>}
+                      </span>
+                    </div>
+                  )}
+
                   {/* Details */}
                   <dl className="space-y-2 text-sm">
                     <div className="flex items-center justify-between">
@@ -661,6 +735,56 @@ export function Connections() {
               </dd>
             </div>
           </dl>
+        </div>
+      </section>
+
+      {/* Secrets Provider */}
+      <section className="space-y-4">
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+          Secrets Provider
+        </h3>
+        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          {providerInfo ? (
+            <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <div>
+                <dt className="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400">
+                  <Shield className="h-3.5 w-3.5" />
+                  Type
+                </dt>
+                <dd className="mt-1 font-mono text-sm font-medium text-gray-900 dark:text-gray-100">
+                  {providerInfo.type}
+                </dd>
+              </div>
+              <div>
+                <dt className="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400">
+                  <Globe className="h-3.5 w-3.5" />
+                  Region
+                </dt>
+                <dd className="mt-1 font-mono text-sm font-medium text-gray-900 dark:text-gray-100">
+                  {providerInfo.region || '—'}
+                </dd>
+              </div>
+              <div>
+                <dt className="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400">
+                  <Activity className="h-3.5 w-3.5" />
+                  Status
+                </dt>
+                <dd className="mt-1 flex items-center gap-1.5 text-sm font-medium">
+                  {providerInfo.status === 'connected' ? (
+                    <><span className="inline-block h-2 w-2 rounded-full bg-green-500" /><span className="text-green-600 dark:text-green-400">Connected</span></>
+                  ) : providerInfo.status === 'configured' ? (
+                    <><span className="inline-block h-2 w-2 rounded-full bg-yellow-500" /><span className="text-yellow-600 dark:text-yellow-400">Configured</span></>
+                  ) : (
+                    <><span className="inline-block h-2 w-2 rounded-full bg-red-500" /><span className="text-red-600 dark:text-red-400">Error</span></>
+                  )}
+                </dd>
+              </div>
+            </dl>
+          ) : (
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              No secrets provider configured. Set <code className="rounded bg-gray-100 px-1 py-0.5 text-xs dark:bg-gray-700">SHARKO_PROVIDER_TYPE</code> to enable.
+            </p>
+          )}
         </div>
       </section>
 

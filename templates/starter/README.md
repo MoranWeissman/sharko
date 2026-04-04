@@ -27,3 +27,37 @@ sharko add-cluster prod-eu --addons cert-manager,metrics-server
 sharko add-addon external-dns --chart external-dns --repo https://kubernetes-sigs.github.io/external-dns --version 1.14.4
 sharko status
 ```
+
+## ArgoCD Resource Exclusions
+
+Sharko manages Kubernetes Secrets on remote clusters (for addon credentials). To prevent ArgoCD from tracking or pruning these Sharko-managed secrets, add the following exclusion to the `argocd-cm` ConfigMap in your ArgoCD namespace:
+
+```yaml
+# Add to argocd-cm ConfigMap:
+resource.exclusions: |
+  - apiGroups:
+    - ""
+    kinds:
+    - Secret
+    clusters:
+    - "*"
+    labelSelectors:
+    - app.kubernetes.io/managed-by=sharko
+```
+
+Apply with:
+
+```bash
+kubectl -n argocd patch configmap argocd-cm --patch '
+data:
+  resource.exclusions: |
+    - apiGroups:
+      - ""
+      kinds:
+      - Secret
+      clusters:
+      - "*"
+      labelSelectors:
+      - app.kubernetes.io/managed-by=sharko
+'
+```

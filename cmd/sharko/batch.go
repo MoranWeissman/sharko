@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -100,7 +102,18 @@ var addClustersCmd = &cobra.Command{
 				fmt.Println("All provider clusters are already registered.")
 				return nil
 			}
-			fmt.Printf("Found %d unregistered cluster(s): %s\n", len(names), strings.Join(names, ", "))
+			fmt.Printf("Found %d unregistered cluster(s):\n", len(names))
+			for _, n := range names {
+				fmt.Printf("  - %s\n", n)
+			}
+			fmt.Printf("\nRegister all %d clusters? [y/N]: ", len(names))
+			reader := bufio.NewReader(os.Stdin)
+			answer, _ := reader.ReadString('\n')
+			answer = strings.TrimSpace(strings.ToLower(answer))
+			if answer != "y" && answer != "yes" {
+				fmt.Println("Aborted.")
+				return nil
+			}
 		} else {
 			// Parse comma-separated cluster names from argument.
 			for _, n := range strings.Split(args[0], ",") {

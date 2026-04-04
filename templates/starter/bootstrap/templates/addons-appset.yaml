@@ -38,6 +38,10 @@ spec:
   template:
     metadata:
       name: '{{`{{.name}}`}}-{{ .appName }}'
+      {{- if .syncWave }}
+      annotations:
+        argocd.argoproj.io/sync-wave: "{{ .syncWave }}"
+      {{- end }}
     spec:
       project: {{ .appName }}
       sources:
@@ -57,7 +61,7 @@ spec:
           targetRevision: {{ $.Values.revision | default "main" }}
           ref: values
       destination:
-        server: '{{`{{.server}}`}}'
+        server: '{{`{{if eq .name "SHARKO_HOST_CLUSTER_NAME"}}https://kubernetes.default.svc{{else}}{{.server}}{{end}}`}}'
         namespace: {{ .namespace | default .appName }}
       syncPolicy:
         automated:

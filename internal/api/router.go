@@ -45,6 +45,7 @@ type Server struct {
 	// Remote secret management (optional — set via SetAddonSecretDefs).
 	addonSecretDefs   map[string]orchestrator.AddonSecretDefinition
 	addonSecretDefsMu sync.RWMutex // protects addonSecretDefs from concurrent read/write
+	addonSecretStore  config.AddonSecretStore
 	secretFetcher     orchestrator.SecretValueFetcher
 
 	// Default addons (optional — set via SetDefaultAddons).
@@ -125,6 +126,11 @@ func (s *Server) SetSecretFetcher(fetcher orchestrator.SecretValueFetcher) {
 // explicit addon selections.
 func (s *Server) SetDefaultAddons(defaults map[string]bool) {
 	s.defaultAddons = defaults
+}
+
+// SetAddonSecretStore sets the persistent store for addon secret definitions.
+func (s *Server) SetAddonSecretStore(store config.AddonSecretStore) {
+	s.addonSecretStore = store
 }
 
 // NewRouter builds the HTTP router with all API routes and static file serving.

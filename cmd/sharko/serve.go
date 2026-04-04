@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/MoranWeissman/sharko/internal/ai"
 	"github.com/MoranWeissman/sharko/internal/api"
@@ -222,16 +224,38 @@ var serveCmd = &cobra.Command{
 			}
 		}
 
-		// Addon secret definitions (optional — from SHARKO_ADDON_SECRETS env var as JSON)
+		// Addon secret definitions — create persistent store and load saved definitions.
+		addonStore := config.NewAddonSecretStore()
+		srv.SetAddonSecretStore(addonStore)
+
+		// Merge: start from persisted store, then let env var override/extend.
+		mergedDefs := make(map[string]orchestrator.AddonSecretDefinition)
+		if stored, err := addonStore.Load(); err != nil {
+			log.Printf("WARNING: Could not load addon secret definitions from store: %v", err)
+		} else {
+			for k, v := range stored {
+				mergedDefs[k] = v
+			}
+			if len(stored) > 0 {
+				log.Printf("Addon secret definitions loaded from store: %d addon(s)", len(stored))
+			}
+		}
+
 		addonSecretsJSON := os.Getenv("SHARKO_ADDON_SECRETS")
 		if addonSecretsJSON != "" {
 			var defs map[string]orchestrator.AddonSecretDefinition
 			if err := json.Unmarshal([]byte(addonSecretsJSON), &defs); err != nil {
 				log.Printf("WARNING: Could not parse SHARKO_ADDON_SECRETS: %v", err)
 			} else {
-				srv.SetAddonSecretDefs(defs)
-				log.Printf("Addon secret definitions loaded for %d addons", len(defs))
+				for k, v := range defs {
+					mergedDefs[k] = v
+				}
+				log.Printf("Addon secret definitions from env merged (%d addons)", len(defs))
 			}
+		}
+
+		if len(mergedDefs) > 0 {
+			srv.SetAddonSecretDefs(mergedDefs)
 		}
 
 		// AI config persistence (K8s mode — encrypted Secret)
@@ -261,6 +285,80 @@ var serveCmd = &cobra.Command{
 					}
 				}
 			}
+		}
+
+		// Auto-bootstrap (optional — triggered by SHARKO_INIT_AUTO_BOOTSTRAP=true)
+		if os.Getenv("SHARKO_INIT_AUTO_BOOTSTRAP") == "true" {
+			go func() {
+				time.Sleep(5 * time.Second)
+				log.Printf("auto-bootstrap: checking conditions...")
+
+				// Check if an active connection is configured.
+				git, gitErr := connSvc.GetActiveGitProvider()
+				if gitErr != nil {
+					log.Printf("auto-bootstrap: skipping — no active git connection: %v", gitErr)
+					return
+				}
+
+				conn, connInfoErr := connSvc.GetActiveConnectionInfo()
+				if connInfoErr != nil {
+					log.Printf("auto-bootstrap: skipping — could not get active connection info: %v", connInfoErr)
+					return
+				}
+
+				// Check if repo is already initialized.
+				baseBranch := getEnvDefault("SHARKO_GITOPS_BASE_BRANCH", "main")
+				if _, fileErr := git.GetFileContent(context.Background(), "bootstrap/root-app.yaml", baseBranch); fileErr == nil {
+					log.Printf("auto-bootstrap: skipping — repo already initialized (bootstrap/root-app.yaml exists)")
+					return
+				}
+
+				log.Printf("auto-bootstrap: conditions met — initializing repository...")
+
+				ac, argoErr := connSvc.GetActiveArgocdClient()
+				if argoErr != nil {
+					log.Printf("auto-bootstrap: skipping — no active ArgoCD connection: %v", argoErr)
+					return
+				}
+
+				repoPaths := orchestrator.RepoPathsConfig{
+					ClusterValues:   getEnvDefault("SHARKO_REPO_PATH_CLUSTER_VALUES", "configuration/addons-clusters-values"),
+					GlobalValues:    getEnvDefault("SHARKO_REPO_PATH_GLOBAL_VALUES", "configuration/addons-global-values"),
+					Charts:          getEnvDefault("SHARKO_REPO_PATH_CHARTS", "charts/"),
+					Bootstrap:       getEnvDefault("SHARKO_REPO_PATH_BOOTSTRAP", "bootstrap/"),
+					HostClusterName: os.Getenv("SHARKO_HOST_CLUSTER_NAME"),
+				}
+				gitopsCfg := orchestrator.GitOpsConfig{
+					PRAutoMerge:  os.Getenv("SHARKO_GITOPS_PR_AUTO_MERGE") == "true",
+					BranchPrefix: getEnvDefault("SHARKO_GITOPS_BRANCH_PREFIX", "sharko/"),
+					CommitPrefix: getEnvDefault("SHARKO_GITOPS_COMMIT_PREFIX", "sharko:"),
+					BaseBranch:   baseBranch,
+					RepoURL:      os.Getenv("SHARKO_GITOPS_REPO_URL"),
+				}
+
+				req := orchestrator.InitRepoRequest{BootstrapArgoCD: true}
+				// Populate git credentials from connection.
+				switch conn.Git.Provider {
+				case "github":
+					if conn.Git.Token != "" {
+						req.GitUsername = "x-access-token"
+						req.GitToken = conn.Git.Token
+					}
+				case "azuredevops":
+					if conn.Git.PAT != "" {
+						req.GitUsername = conn.Git.Organization
+						req.GitToken = conn.Git.PAT
+					}
+				}
+
+				orch := orchestrator.New(nil, nil, ac, git, gitopsCfg, repoPaths, templates.StarterFS)
+				result, initErr := orch.InitRepo(context.Background(), req)
+				if initErr != nil {
+					log.Printf("auto-bootstrap: failed — %v", initErr)
+					return
+				}
+				log.Printf("auto-bootstrap: completed — status=%s", result.Status)
+			}()
 		}
 
 		// Static files

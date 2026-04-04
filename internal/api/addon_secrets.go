@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
@@ -38,7 +39,18 @@ func (s *Server) handleCreateAddonSecret(w http.ResponseWriter, r *http.Request)
 
 	s.addonSecretDefsMu.Lock()
 	s.addonSecretDefs[def.AddonName] = def
+	defs := make(map[string]orchestrator.AddonSecretDefinition, len(s.addonSecretDefs))
+	for k, v := range s.addonSecretDefs {
+		defs[k] = v
+	}
 	s.addonSecretDefsMu.Unlock()
+
+	if s.addonSecretStore != nil {
+		if err := s.addonSecretStore.Save(defs); err != nil {
+			slog.Warn("failed to persist addon secret definitions", "error", err)
+		}
+	}
+
 	writeJSON(w, http.StatusCreated, def)
 }
 
@@ -59,6 +71,17 @@ func (s *Server) handleDeleteAddonSecret(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	delete(s.addonSecretDefs, addon)
+	defs := make(map[string]orchestrator.AddonSecretDefinition, len(s.addonSecretDefs))
+	for k, v := range s.addonSecretDefs {
+		defs[k] = v
+	}
 	s.addonSecretDefsMu.Unlock()
+
+	if s.addonSecretStore != nil {
+		if err := s.addonSecretStore.Save(defs); err != nil {
+			slog.Warn("failed to persist addon secret definitions", "error", err)
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted", "addon": addon})
 }
