@@ -34,6 +34,7 @@ func (s *Store) CreateToken(name, role string) (string, error) {
 		return "", fmt.Errorf("role must be admin, operator, or viewer")
 	}
 
+	// Fast-path duplicate check (read lock).
 	s.mu.RLock()
 	if _, exists := s.tokens[name]; exists {
 		s.mu.RUnlock()
@@ -60,7 +61,12 @@ func (s *Store) CreateToken(name, role string) (string, error) {
 		CreatedAt: time.Now(),
 	}
 
+	// Re-check under write lock to prevent TOCTU race (bcrypt is ~100ms).
 	s.mu.Lock()
+	if _, exists := s.tokens[name]; exists {
+		s.mu.Unlock()
+		return "", fmt.Errorf("token %q already exists", name)
+	}
 	s.tokens[name] = token
 	s.mu.Unlock()
 

@@ -451,6 +451,10 @@ func (s *Server) basicAuthMiddleware(next http.Handler) http.Handler {
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Strip any client-supplied role header to prevent spoofing.
+		// Only the middleware sets this header (for API key auth).
+		r.Header.Del("X-Sharko-Role")
+
 		path := r.URL.Path
 
 		// Skip auth for: health, login, static files
