@@ -17,10 +17,19 @@ See `docs/superpowers/specs/2026-04-01-sharko-implementation-design.md` for the 
 
 ## Agent Team
 
-When dispatching subagents for implementation, review, or documentation tasks, read the relevant agent role file from `.claude/team/` and include it as context in the prompt. Available roles:
+When dispatching subagents, read the relevant role file from `.claude/team/` and include it as context. Update role files as the product evolves — they are living documents.
 
-- `.claude/team/implementer.md` — for writing code (knows project structure, patterns, commit rules)
-- `.claude/team/code-reviewer.md` — for reviewing code (security, contract compliance, error handling)
-- `.claude/team/go-expert.md` — for complex Go work (interfaces, testing patterns, stdlib patterns)
-- `.claude/team/k8s-expert.md` — for ArgoCD, Helm, K8s provider work
-- `.claude/team/docs-writer.md` — for documentation (accuracy-checked against real code)
+**Execution:**
+- `.claude/team/implementer.md` — writes code following plans, knows project patterns
+- `.claude/team/go-expert.md` — complex Go work, interfaces, testing, stdlib patterns
+- `.claude/team/k8s-expert.md` — ArgoCD, Helm, K8s providers, ApplicationSets
+- `.claude/team/frontend-expert.md` — React UI, shadcn/ui, Vite, TypeScript
+- `.claude/team/test-engineer.md` — writes tests, knows mock patterns, tracks coverage gaps
+
+**Quality:**
+- `.claude/team/code-reviewer.md` — reviews for bugs, security, contract compliance
+- `.claude/team/security-auditor.md` — full security sweep, forbidden content, auth checks
+
+**Leadership:**
+- `.claude/team/product-manager.md` — product vision, user needs, feature prioritization
+- `.claude/team/project-manager.md` — progress tracking, build sequence, quality gates
