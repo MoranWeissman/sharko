@@ -235,8 +235,7 @@ func replacePlaceholders(content []byte, cfg GitOpsConfig) []byte {
 // the host cluster name used for in-cluster routing.
 func replacePlaceholdersFull(content []byte, cfg GitOpsConfig, paths RepoPathsConfig) []byte {
 	content = replacePlaceholders(content, cfg)
-	if paths.HostClusterName != "" {
-		content = bytes.ReplaceAll(content, []byte("SHARKO_HOST_CLUSTER_NAME"), []byte(paths.HostClusterName))
-	}
+	// Always replace — if unset, use empty string so no cluster matches the in-cluster condition.
+	content = bytes.ReplaceAll(content, []byte("SHARKO_HOST_CLUSTER_NAME"), []byte(paths.HostClusterName))
 	return content
 }

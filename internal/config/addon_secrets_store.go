@@ -72,7 +72,7 @@ type K8sAddonSecretStore struct {
 }
 
 func (s *K8sAddonSecretStore) Save(defs map[string]orchestrator.AddonSecretDefinition) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
 	data, err := json.Marshal(defs)
