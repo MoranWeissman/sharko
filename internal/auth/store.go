@@ -533,3 +533,19 @@ func getEnvDefault(key, fallback string) string {
 	}
 	return fallback
 }
+
+// AddUser creates a user with a known plaintext password directly in the
+// in-memory store. This is intended for demo and test mode only — it does
+// NOT persist to K8s. If the user already exists it is a no-op.
+func (s *Store) AddUser(username, password, role string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, exists := s.users[username]; exists {
+		return nil // already configured
+	}
+
+	s.users[username] = &UserAccount{Username: username, Enabled: true, Role: role}
+	s.passHash[username] = password // plaintext — validated by ValidateCredentials local fallback
+	return nil
+}

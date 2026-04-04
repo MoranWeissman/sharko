@@ -133,6 +133,24 @@ func (s *Server) SetAddonSecretStore(store config.AddonSecretStore) {
 	s.addonSecretStore = store
 }
 
+// SetDemoConnectionService replaces the server's connection service with one
+// backed by the provided in-memory store. Used by demo mode only.
+func (s *Server) SetDemoConnectionService(store config.Store) {
+	s.connSvc = service.NewConnectionService(store)
+}
+
+// SetDemoGitProvider installs a fixed GitProvider on the connection service,
+// bypassing real Git API calls. Used by demo mode only.
+func (s *Server) SetDemoGitProvider(gp service.GitProviderOverride) {
+	s.connSvc.SetGitProviderOverride(gp)
+}
+
+// AddDemoUser creates a user account in the auth store with a fixed password.
+// Used by demo mode only. In local mode the auth store accepts plaintext passwords.
+func (s *Server) AddDemoUser(username, password, role string) error {
+	return s.authStore.AddUser(username, password, role)
+}
+
 // NewRouter builds the HTTP router with all API routes and static file serving.
 // staticFS can be nil if no static files are available (e.g., dev mode).
 func NewRouter(srv *Server, staticFS fs.FS) http.Handler {

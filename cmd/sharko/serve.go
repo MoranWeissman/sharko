@@ -15,6 +15,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/ai"
 	"github.com/MoranWeissman/sharko/internal/api"
 	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/demo"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/platform"
 	"github.com/MoranWeissman/sharko/internal/providers"
@@ -27,6 +28,7 @@ func init() {
 	serveCmd.Flags().Int("port", 8080, "HTTP server port")
 	serveCmd.Flags().String("config", "config.yaml", "Path to config file (local mode)")
 	serveCmd.Flags().String("static", "", "Path to static files directory (UI)")
+	serveCmd.Flags().Bool("demo", false, "Run with mock backends for QA testing (no external dependencies)")
 	rootCmd.AddCommand(serveCmd)
 }
 
@@ -37,6 +39,7 @@ var serveCmd = &cobra.Command{
 		port, _ := cmd.Flags().GetInt("port")
 		configPath, _ := cmd.Flags().GetString("config")
 		staticDir, _ := cmd.Flags().GetString("static")
+		demoMode, _ := cmd.Flags().GetBool("demo")
 
 		// Override from env
 		if envPort := os.Getenv("SHARKO_PORT"); envPort != "" {
@@ -165,6 +168,31 @@ var serveCmd = &cobra.Command{
 		// Build server
 		srv := api.NewServer(connSvc, clusterSvc, addonSvc, dashboardSvc, observabilitySvc, upgradeSvc, aiClient)
 		srv.SetTemplateFS(templates.StarterFS) // Always available — init doesn't need a provider
+
+		// Demo mode: wire up mock backends and skip all real provider setup.
+		if demoMode {
+			log.Printf("DEMO MODE: Running with mock backends. Login: admin/admin or qa/sharko")
+			demoCleanup, err := demo.SetupDemoServer(srv, port)
+			if err != nil {
+				return fmt.Errorf("setting up demo server: %w", err)
+			}
+			defer demoCleanup()
+
+			// Skip the normal provider/connection setup; go straight to static files + listen.
+			var staticFS fs.FS
+			if staticDir != "" {
+				if info, err := os.Stat(staticDir); err == nil && info.IsDir() {
+					staticFS = os.DirFS(staticDir)
+				}
+			}
+			router := api.NewRouter(srv, staticFS)
+			addr := fmt.Sprintf(":%d", port)
+			log.Printf("Listening on %s", addr)
+			if err := http.ListenAndServe(addr, router); err != nil {
+				return fmt.Errorf("server error: %w", err)
+			}
+			return nil
+		}
 
 		// Provider + Orchestrator write-API deps (optional — only if provider is configured)
 		providerType := os.Getenv("SHARKO_PROVIDER_TYPE")
