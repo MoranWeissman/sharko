@@ -11,8 +11,8 @@ interface RoleGuardProps {
 
 export function RoleGuard({ children, roles, adminOnly, fallback }: RoleGuardProps) {
   const ctx = useContext(AuthContext)
-  // Outside AuthProvider (e.g. in tests) — fall through and render
-  if (!ctx) return <>{children}</>
+  // Outside AuthProvider — deny access (safe default for security boundary)
+  if (!ctx) return <>{fallback ?? null}</>
   const { role, isAdmin } = ctx
   if (adminOnly && !isAdmin) return <>{fallback ?? null}</>
   if (roles && !roles.includes(role || '')) return <>{fallback ?? null}</>

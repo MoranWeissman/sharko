@@ -37,6 +37,7 @@ export function ConfirmationModal({
   const canConfirm = typeToConfirm ? typed === typeToConfirm : true
 
   function handleClose() {
+    if (loading) return // block close during in-flight operations
     setTyped('')
     onClose()
   }
