@@ -198,7 +198,26 @@ var serveCmd = &cobra.Command{
 					RepoURL:      os.Getenv("SHARKO_GITOPS_REPO_URL"),
 				}
 
+				// Host cluster name (for in-cluster detection in templates).
+				repoPaths.HostClusterName = os.Getenv("SHARKO_HOST_CLUSTER_NAME")
+
 				srv.SetWriteAPIDeps(credProvider, &provCfg, repoPaths, gitopsCfg)
+
+				// Default addons (applied to clusters registered without explicit addons).
+				if defaultAddonsEnv := os.Getenv("SHARKO_DEFAULT_ADDONS"); defaultAddonsEnv != "" {
+					defaults := make(map[string]bool)
+					for _, name := range strings.Split(defaultAddonsEnv, ",") {
+						name = strings.TrimSpace(name)
+						if name != "" {
+							defaults[name] = true
+						}
+					}
+					if len(defaults) > 0 {
+						srv.SetDefaultAddons(defaults)
+						log.Printf("Default addons configured: %v", defaultAddonsEnv)
+					}
+				}
+
 				log.Printf("Secrets provider enabled: %s", providerType)
 			}
 		}

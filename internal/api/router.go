@@ -47,6 +47,9 @@ type Server struct {
 	addonSecretDefsMu sync.RWMutex // protects addonSecretDefs from concurrent read/write
 	secretFetcher     orchestrator.SecretValueFetcher
 
+	// Default addons (optional — set via SetDefaultAddons).
+	defaultAddons map[string]bool
+
 	// Template filesystem for POST /api/v1/init (always available).
 	templateFS fs.FS
 }
@@ -118,6 +121,12 @@ func (s *Server) SetSecretFetcher(fetcher orchestrator.SecretValueFetcher) {
 	s.secretFetcher = fetcher
 }
 
+// SetDefaultAddons configures default addons applied to clusters registered without
+// explicit addon selections.
+func (s *Server) SetDefaultAddons(defaults map[string]bool) {
+	s.defaultAddons = defaults
+}
+
 // NewRouter builds the HTTP router with all API routes and static file serving.
 // staticFS can be nil if no static files are available (e.g., dev mode).
 func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
@@ -158,6 +167,8 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("POST /api/v1/init", srv.handleInit)
 
 	// Addons (write — orchestrator-backed)
+	mux.HandleFunc("POST /api/v1/addons/upgrade-batch", srv.handleUpgradeAddonsBatch)
+	mux.HandleFunc("POST /api/v1/addons/{name}/upgrade", srv.handleUpgradeAddon)
 	mux.HandleFunc("POST /api/v1/addons", srv.handleAddAddon)
 	mux.HandleFunc("DELETE /api/v1/addons/{name}", srv.handleRemoveAddon)
 

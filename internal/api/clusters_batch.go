@@ -62,6 +62,9 @@ func (s *Server) handleBatchRegisterClusters(w http.ResponseWriter, r *http.Requ
 
 	orch := orchestrator.New(&s.gitMu, s.credProvider, ac, git, s.gitopsCfg, s.repoPaths, nil)
 	orch.SetSecretManagement(s.addonSecretDefs, s.secretFetcher, remoteclient.NewClientFromKubeconfig)
+	if len(s.defaultAddons) > 0 {
+		orch.SetDefaultAddons(s.defaultAddons)
+	}
 
 	result := orch.RegisterClusterBatch(r.Context(), req.Clusters)
 

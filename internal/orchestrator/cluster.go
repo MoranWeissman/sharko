@@ -31,6 +31,14 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		return nil, fmt.Errorf("invalid cluster name %q: must be alphanumeric with hyphens, starting with an alphanumeric character", req.Name)
 	}
 
+	// Step 1b: Merge default addons if no addons specified.
+	if len(req.Addons) == 0 && len(o.defaultAddons) > 0 {
+		req.Addons = make(map[string]bool)
+		for k, v := range o.defaultAddons {
+			req.Addons[k] = v
+		}
+	}
+
 	// Step 2: Check for duplicate — cluster must not already exist in ArgoCD.
 	clusters, err := o.argocd.ListClusters(ctx)
 	if err != nil {

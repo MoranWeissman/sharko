@@ -70,6 +70,9 @@ func generateAddonCatalogEntry(req AddAddonRequest) []byte {
 	if req.Namespace != "" {
 		b.WriteString(fmt.Sprintf("namespace: %s\n", req.Namespace))
 	}
+	if req.SyncWave != 0 {
+		b.WriteString(fmt.Sprintf("syncWave: %d\n", req.SyncWave))
+	}
 	return []byte(b.String())
 }
 

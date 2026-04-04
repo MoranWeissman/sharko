@@ -14,6 +14,7 @@ func init() {
 	addAddonCmd.Flags().String("repo", "", "Helm chart repository URL (required)")
 	addAddonCmd.Flags().String("version", "", "Chart version (required)")
 	addAddonCmd.Flags().String("namespace", "", "Target namespace")
+	addAddonCmd.Flags().Int("sync-wave", 0, "ArgoCD sync wave (0 = default, negative = earlier)")
 	addAddonCmd.MarkFlagRequired("chart")
 	addAddonCmd.MarkFlagRequired("repo")
 	addAddonCmd.MarkFlagRequired("version")
@@ -33,13 +34,17 @@ var addAddonCmd = &cobra.Command{
 		repo, _ := cmd.Flags().GetString("repo")
 		ver, _ := cmd.Flags().GetString("version")
 		namespace, _ := cmd.Flags().GetString("namespace")
+		syncWave, _ := cmd.Flags().GetInt("sync-wave")
 
-		body := map[string]string{
+		body := map[string]interface{}{
 			"name":      name,
 			"chart":     chart,
 			"repo_url":  repo,
 			"version":   ver,
 			"namespace": namespace,
+		}
+		if syncWave != 0 {
+			body["sync_wave"] = syncWave
 		}
 
 		fmt.Printf("Adding addon %s... ", name)

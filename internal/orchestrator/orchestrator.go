@@ -36,6 +36,13 @@ type Orchestrator struct {
 	secretDefs     map[string]AddonSecretDefinition // addon name → definition
 	secretFetcher  SecretValueFetcher
 	remoteClientFn RemoteClientFactory
+	defaultAddons  map[string]bool // addon name → enabled (merged into RegisterCluster when req.Addons is empty)
+}
+
+// SetDefaultAddons configures the default addons applied to clusters
+// registered without explicit addon selections.
+func (o *Orchestrator) SetDefaultAddons(defaults map[string]bool) {
+	o.defaultAddons = defaults
 }
 
 // New creates an Orchestrator with the given dependencies.

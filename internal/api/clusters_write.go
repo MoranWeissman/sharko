@@ -52,6 +52,9 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 
 	orch := orchestrator.New(&s.gitMu, s.credProvider, ac, git, s.gitopsCfg, s.repoPaths, nil)
 	orch.SetSecretManagement(s.addonSecretDefs, s.secretFetcher, remoteclient.NewClientFromKubeconfig)
+	if len(s.defaultAddons) > 0 {
+		orch.SetDefaultAddons(s.defaultAddons)
+	}
 	result, err := orch.RegisterCluster(r.Context(), req)
 	if err != nil {
 		if errors.Is(err, orchestrator.ErrClusterAlreadyExists) {

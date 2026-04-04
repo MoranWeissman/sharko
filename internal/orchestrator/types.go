@@ -11,10 +11,11 @@ type GitOpsConfig struct {
 
 // RepoPathsConfig holds the addons repo directory layout (from server Helm values).
 type RepoPathsConfig struct {
-	ClusterValues string // e.g. "configuration/addons-clusters-values"
-	GlobalValues  string // e.g. "configuration/addons-global-values"
-	Charts        string // e.g. "charts/"
-	Bootstrap     string // e.g. "bootstrap/"
+	ClusterValues   string // e.g. "configuration/addons-clusters-values"
+	GlobalValues    string // e.g. "configuration/addons-global-values"
+	Charts          string // e.g. "charts/"
+	Bootstrap       string // e.g. "bootstrap/"
+	HostClusterName string // e.g. "management" — the cluster running ArgoCD (uses in-cluster)
 }
 
 // RegisterClusterRequest is the input for cluster registration.
@@ -61,6 +62,7 @@ type AddAddonRequest struct {
 	RepoURL   string `json:"repo_url"`
 	Version   string `json:"version"`
 	Namespace string `json:"namespace"`
+	SyncWave  int    `json:"sync_wave,omitempty"`
 }
 
 // InitRepoRequest is the input for initializing the addons repository.
