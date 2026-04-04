@@ -230,6 +230,11 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/update-password", srv.handleUpdatePassword)
 	mux.HandleFunc("POST /api/v1/auth/hash", srv.handleHashPassword)
 
+	// API tokens (admin only)
+	mux.HandleFunc("POST /api/v1/tokens", srv.handleCreateToken)
+	mux.HandleFunc("GET /api/v1/tokens", srv.handleListTokens)
+	mux.HandleFunc("DELETE /api/v1/tokens/{name}", srv.handleRevokeToken)
+
 	// User management (admin only)
 	mux.HandleFunc("GET /api/v1/users", srv.handleListUsers)
 	mux.HandleFunc("POST /api/v1/users", srv.handleCreateUser)
@@ -463,6 +468,17 @@ func (s *Server) basicAuthMiddleware(next http.Handler) http.Handler {
 				r.Header.Set("X-Sharko-User", getSessionUser(token))
 				next.ServeHTTP(w, r)
 				return
+			}
+
+			// Check if Bearer token is an API key
+			if strings.HasPrefix(token, "sharko_") {
+				username, role, ok := s.authStore.ValidateToken(token)
+				if ok {
+					r.Header.Set("X-Sharko-User", username)
+					r.Header.Set("X-Sharko-Role", role)
+					next.ServeHTTP(w, r)
+					return
+				}
 			}
 		}
 

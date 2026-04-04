@@ -16,6 +16,17 @@ func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
 		writeError(w, http.StatusForbidden, "admin access required")
 		return false
 	}
+
+	// Check X-Sharko-Role header first (set by API token auth)
+	if role := r.Header.Get("X-Sharko-Role"); role != "" {
+		if role != "admin" {
+			writeError(w, http.StatusForbidden, "admin access required")
+			return false
+		}
+		return true
+	}
+
+	// Fall back to user store lookup (session-based auth)
 	user := s.authStore.GetUser(username)
 	if user == nil || user.Role != "admin" {
 		writeError(w, http.StatusForbidden, "admin access required")

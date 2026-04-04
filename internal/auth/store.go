@@ -46,6 +46,9 @@ type Store struct {
 	// Cached data from K8s
 	users    map[string]*UserAccount
 	passHash map[string]string // username -> bcrypt hash
+
+	// API tokens (in-memory)
+	tokens map[string]*APIToken // name -> token
 }
 
 // NewStore creates an auth store with auto-detection of the backend mode.
@@ -54,6 +57,7 @@ func NewStore() *Store {
 	s := &Store{
 		users:    make(map[string]*UserAccount),
 		passHash: make(map[string]string),
+		tokens:   make(map[string]*APIToken),
 	}
 
 	// Try K8s mode first
