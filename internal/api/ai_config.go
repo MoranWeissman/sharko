@@ -176,6 +176,9 @@ func (s *Server) handleTestAIConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSetAIProvider(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	var req struct {
 		Provider string `json:"provider"`
 	}

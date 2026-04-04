@@ -135,11 +135,16 @@ func (s *Store) ValidateCredentials(username, password string) bool {
 		return false
 	}
 
-	// Check bcrypt hash or plaintext (for local dev)
+	// Check bcrypt hash first.
 	if strings.HasPrefix(hash, "$2") {
 		return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
 	}
-	return hash == password
+	// Plaintext fallback only in local dev mode. In K8s mode, passwords must be bcrypt-hashed.
+	if s.mode == ModeLocal {
+		return hash == password
+	}
+	slog.Warn("password for user is not bcrypt-hashed — rejecting in K8s mode", "username", username)
+	return false
 }
 
 // UpdatePassword changes a user's password. Verifies the current password first.
