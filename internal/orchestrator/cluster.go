@@ -73,7 +73,23 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	}
 	steps = append(steps, "argocd_register")
 
-	// Step 5: Generate cluster values file and commit to Git.
+	// Step 5: Create addon secrets on remote cluster (if configured).
+	secretNames, secretErr := o.createAddonSecrets(ctx, creds.Raw, req.Addons)
+	if secretErr != nil {
+		result.Status = "partial"
+		result.CompletedSteps = steps
+		result.Secrets = secretNames
+		result.FailedStep = "create_secrets"
+		result.Error = secretErr.Error()
+		result.Message = "Cluster registered in ArgoCD but addon secret creation failed. PR not opened."
+		return result, nil
+	}
+	if len(secretNames) > 0 {
+		steps = append(steps, "create_secrets")
+		result.Secrets = secretNames
+	}
+
+	// Step 6: Generate cluster values file and commit to Git.
 	valuesContent := generateClusterValues(req.Name, req.Region, req.Addons)
 	valuesPath := path.Join(o.paths.ClusterValues, req.Name+".yaml")
 
@@ -121,7 +137,15 @@ func (o *Orchestrator) DeregisterCluster(ctx context.Context, name string, serve
 		return nil, fmt.Errorf("deleting cluster %q from ArgoCD: %w", name, err)
 	}
 
-	// Step 2: Delete values file from Git.
+	// Step 2: Delete Sharko-managed secrets from remote cluster (best-effort).
+	if o.credProvider != nil {
+		creds, credErr := o.credProvider.GetCredentials(name)
+		if credErr == nil {
+			o.deleteAllAddonSecrets(ctx, creds.Raw) // best-effort, don't fail deregister for this
+		}
+	}
+
+	// Step 3: Delete values file from Git.
 	valuesPath := path.Join(o.paths.ClusterValues, name+".yaml")
 	gitResult, err := o.commitChanges(ctx, nil, []string{valuesPath}, fmt.Sprintf("deregister cluster %s", name))
 	if err != nil {
@@ -169,7 +193,29 @@ func (o *Orchestrator) UpdateClusterAddons(ctx context.Context, name string, ser
 		return nil, fmt.Errorf("updating labels on cluster %q: %w", name, err)
 	}
 
-	// Step 2: Update values file in Git.
+	// Step 2: Create/delete addon secrets on remote cluster (best-effort).
+	if o.credProvider != nil {
+		creds, credErr := o.credProvider.GetCredentials(name)
+		if credErr == nil {
+			enabledAddons := make(map[string]bool)
+			for a, e := range addons {
+				if e {
+					enabledAddons[a] = true
+				}
+			}
+			o.createAddonSecrets(ctx, creds.Raw, enabledAddons)
+
+			disabledAddons := make(map[string]bool)
+			for a, e := range addons {
+				if !e {
+					disabledAddons[a] = false
+				}
+			}
+			o.deleteAddonSecrets(ctx, creds.Raw, disabledAddons)
+		}
+	}
+
+	// Step 3: Update values file in Git.
 	valuesContent := generateClusterValues(name, region, addons)
 	valuesPath := path.Join(o.paths.ClusterValues, name+".yaml")
 

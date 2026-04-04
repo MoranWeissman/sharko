@@ -11,6 +11,8 @@ import (
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/providers"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 // ---------- mock ArgoCD client ----------
@@ -673,5 +675,149 @@ func TestUpdateClusterAddons_AutoMergeFails(t *testing.T) {
 	}
 	if result.Git == nil || result.Git.PRUrl == "" {
 		t.Error("expected PR URL in partial result")
+	}
+}
+
+// ---------- mock secret fetcher ----------
+
+type mockSecretFetcher struct {
+	secrets map[string][]byte // provider path → value
+	err     error
+}
+
+func (m *mockSecretFetcher) GetSecretValue(_ context.Context, path string) ([]byte, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	v, ok := m.secrets[path]
+	if !ok {
+		return nil, fmt.Errorf("secret not found: %s", path)
+	}
+	return v, nil
+}
+
+func fakeClientFactory() RemoteClientFactory {
+	return func(_ []byte) (kubernetes.Interface, error) {
+		return fake.NewSimpleClientset(), nil
+	}
+}
+
+func defaultSecretDefs() map[string]AddonSecretDefinition {
+	return map[string]AddonSecretDefinition{
+		"datadog": {
+			AddonName:  "datadog",
+			SecretName: "datadog-keys",
+			Namespace:  "datadog",
+			Keys:       map[string]string{"api-key": "secrets/datadog/api-key"},
+		},
+	}
+}
+
+func defaultSecretFetcher() *mockSecretFetcher {
+	return &mockSecretFetcher{
+		secrets: map[string][]byte{
+			"secrets/datadog/api-key": []byte("dd-api-key-value"),
+		},
+	}
+}
+
+func defaultCredsWithRaw() *mockCredProvider {
+	return &mockCredProvider{
+		creds: map[string]*providers.Kubeconfig{
+			"prod-eu": {
+				Server: "https://k8s.example.com:6443",
+				CAData: []byte("fake-ca"),
+				Token:  "fake-token",
+				Raw:    []byte("fake-kubeconfig"),
+			},
+		},
+	}
+}
+
+// ---------- secret integration tests ----------
+
+func TestRegisterCluster_WithSecrets(t *testing.T) {
+	argocd := newMockArgocd()
+	git := newMockGitProvider()
+	orch := New(nil, defaultCredsWithRaw(), argocd, git, defaultGitOps(), defaultPaths(), nil)
+	orch.SetSecretManagement(defaultSecretDefs(), defaultSecretFetcher(), fakeClientFactory())
+
+	result, err := orch.RegisterCluster(context.Background(), RegisterClusterRequest{
+		Name:   "prod-eu",
+		Addons: map[string]bool{"datadog": true, "logging": false},
+		Region: "eu-west-1",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != "success" {
+		t.Errorf("expected status 'success', got %q", result.Status)
+	}
+	if len(result.Secrets) != 1 || result.Secrets[0] != "datadog-keys" {
+		t.Errorf("expected [datadog-keys], got %v", result.Secrets)
+	}
+	// Verify create_secrets step was recorded.
+	found := false
+	for _, s := range result.CompletedSteps {
+		if s == "create_secrets" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected 'create_secrets' in completed steps, got %v", result.CompletedSteps)
+	}
+}
+
+func TestRegisterCluster_SecretFailure_PartialSuccess(t *testing.T) {
+	argocd := newMockArgocd()
+	git := newMockGitProvider()
+	orch := New(nil, defaultCredsWithRaw(), argocd, git, defaultGitOps(), defaultPaths(), nil)
+	failingFetcher := &mockSecretFetcher{err: fmt.Errorf("vault connection refused")}
+	orch.SetSecretManagement(defaultSecretDefs(), failingFetcher, fakeClientFactory())
+
+	result, err := orch.RegisterCluster(context.Background(), RegisterClusterRequest{
+		Name:   "prod-eu",
+		Addons: map[string]bool{"datadog": true},
+		Region: "eu-west-1",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != "partial" {
+		t.Errorf("expected status 'partial', got %q", result.Status)
+	}
+	if result.FailedStep != "create_secrets" {
+		t.Errorf("expected failed step 'create_secrets', got %q", result.FailedStep)
+	}
+	// Cluster should still be registered in ArgoCD.
+	if _, ok := argocd.registeredClusters["prod-eu"]; !ok {
+		t.Error("cluster should remain registered in ArgoCD after secret failure")
+	}
+	// No Git commit should have happened.
+	if len(git.files) > 0 {
+		t.Error("no Git commit should happen after secret creation failure")
+	}
+}
+
+func TestRegisterCluster_NoSecretConfig_BackwardCompat(t *testing.T) {
+	argocd := newMockArgocd()
+	git := newMockGitProvider()
+	// No SetSecretManagement call — nil secret deps.
+	orch := New(nil, defaultCreds(), argocd, git, defaultGitOps(), defaultPaths(), nil)
+
+	result, err := orch.RegisterCluster(context.Background(), RegisterClusterRequest{
+		Name:   "prod-eu",
+		Addons: map[string]bool{"monitoring": true},
+		Region: "eu-west-1",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != "success" {
+		t.Errorf("expected status 'success', got %q", result.Status)
+	}
+	// No secrets should be in the result.
+	if len(result.Secrets) != 0 {
+		t.Errorf("expected no secrets, got %v", result.Secrets)
 	}
 }

@@ -24,13 +24,16 @@ type ArgocdClient interface {
 // Orchestrator coordinates multi-step operations across providers, ArgoCD,
 // and Git to execute cluster and addon management workflows.
 type Orchestrator struct {
-	gitMu        *sync.Mutex // shared across all orchestrator instances — serializes Git operations
-	credProvider providers.ClusterCredentialsProvider
-	argocd       ArgocdClient
-	git          gitprovider.GitProvider
-	gitops       GitOpsConfig
-	paths        RepoPathsConfig
-	templateFS   fs.FS
+	gitMu          *sync.Mutex // shared across all orchestrator instances — serializes Git operations
+	credProvider   providers.ClusterCredentialsProvider
+	argocd         ArgocdClient
+	git            gitprovider.GitProvider
+	gitops         GitOpsConfig
+	paths          RepoPathsConfig
+	templateFS     fs.FS
+	secretDefs     map[string]AddonSecretDefinition // addon name → definition
+	secretFetcher  SecretValueFetcher
+	remoteClientFn RemoteClientFactory
 }
 
 // New creates an Orchestrator with the given dependencies.

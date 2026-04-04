@@ -203,6 +203,18 @@ var serveCmd = &cobra.Command{
 			}
 		}
 
+		// Addon secret definitions (optional — from SHARKO_ADDON_SECRETS env var as JSON)
+		addonSecretsJSON := os.Getenv("SHARKO_ADDON_SECRETS")
+		if addonSecretsJSON != "" {
+			var defs map[string]orchestrator.AddonSecretDefinition
+			if err := json.Unmarshal([]byte(addonSecretsJSON), &defs); err != nil {
+				log.Printf("WARNING: Could not parse SHARKO_ADDON_SECRETS: %v", err)
+			} else {
+				srv.SetAddonSecretDefs(defs)
+				log.Printf("Addon secret definitions loaded for %d addons", len(defs))
+			}
+		}
+
 		// AI config persistence (K8s mode — encrypted Secret)
 		if mode == platform.ModeKubernetes {
 			encKey := os.Getenv("SHARKO_ENCRYPTION_KEY")

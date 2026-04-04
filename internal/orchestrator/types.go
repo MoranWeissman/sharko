@@ -29,6 +29,7 @@ type RegisterClusterResult struct {
 	Status         string        `json:"status"` // "success" or "partial"
 	Cluster        ClusterResult `json:"cluster"`
 	Git            *GitResult    `json:"git,omitempty"`
+	Secrets        []string      `json:"secrets_created,omitempty"` // names of created secrets
 	CompletedSteps []string      `json:"completed_steps,omitempty"`
 	FailedStep     string        `json:"failed_step,omitempty"`
 	Error          string        `json:"error,omitempty"`

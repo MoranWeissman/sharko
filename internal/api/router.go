@@ -42,6 +42,10 @@ type Server struct {
 	gitopsCfg    orchestrator.GitOpsConfig
 	gitMu        sync.Mutex // shared mutex serializing all Git operations across requests
 
+	// Remote secret management (optional — set via SetAddonSecretDefs).
+	addonSecretDefs map[string]orchestrator.AddonSecretDefinition
+	secretFetcher   orchestrator.SecretValueFetcher
+
 	// Template filesystem for POST /api/v1/init (always available).
 	templateFS fs.FS
 }
@@ -78,6 +82,7 @@ func NewServer(
 		agentMemory:       agentMemory,
 		authStore:         authStore,
 		aiConfigStore:     nil, // set via SetAIConfigStore
+		addonSecretDefs:   make(map[string]orchestrator.AddonSecretDefinition),
 	}
 }
 
@@ -100,6 +105,16 @@ func (s *Server) SetWriteAPIDeps(credProvider providers.ClusterCredentialsProvid
 	s.providerCfg = provCfg
 	s.repoPaths = paths
 	s.gitopsCfg = gitops
+}
+
+// SetAddonSecretDefs sets the addon secret definitions (loaded from env/config).
+func (s *Server) SetAddonSecretDefs(defs map[string]orchestrator.AddonSecretDefinition) {
+	s.addonSecretDefs = defs
+}
+
+// SetSecretFetcher sets the secret value fetcher for remote cluster secret operations.
+func (s *Server) SetSecretFetcher(fetcher orchestrator.SecretValueFetcher) {
+	s.secretFetcher = fetcher
 }
 
 // NewRouter builds the HTTP router with all API routes and static file serving.
@@ -140,6 +155,15 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	// Addons (write — orchestrator-backed)
 	mux.HandleFunc("POST /api/v1/addons", srv.handleAddAddon)
 	mux.HandleFunc("DELETE /api/v1/addons/{name}", srv.handleRemoveAddon)
+
+	// Addon secrets (definition CRUD)
+	mux.HandleFunc("GET /api/v1/addon-secrets", srv.handleListAddonSecrets)
+	mux.HandleFunc("POST /api/v1/addon-secrets", srv.handleCreateAddonSecret)
+	mux.HandleFunc("DELETE /api/v1/addon-secrets/{addon}", srv.handleDeleteAddonSecret)
+
+	// Cluster secrets (remote cluster operations)
+	mux.HandleFunc("GET /api/v1/clusters/{name}/secrets", srv.handleListClusterSecrets)
+	mux.HandleFunc("POST /api/v1/clusters/{name}/secrets/refresh", srv.handleRefreshClusterSecrets)
 
 	// Fleet status
 	mux.HandleFunc("GET /api/v1/fleet/status", srv.handleGetFleetStatus)
