@@ -4,14 +4,12 @@ import (
 	"context"
 	"fmt"
 	"path"
-	"regexp"
 	"strings"
+
+	"github.com/MoranWeissman/sharko/internal/gitops"
 )
 
-// versionLineRe matches a YAML line like "version: 1.14.0".
-var versionLineRe = regexp.MustCompile(`(?m)^(version:\s*)(.+)$`)
-
-// UpgradeAddonGlobal changes the version in the addon catalog entry.
+// UpgradeAddonGlobal changes the version in the addons-catalog.yaml.
 // Affects every cluster using the global version.
 func (o *Orchestrator) UpgradeAddonGlobal(ctx context.Context, addonName, newVersion string) (*GitResult, error) {
 	if addonName == "" {
@@ -21,15 +19,15 @@ func (o *Orchestrator) UpgradeAddonGlobal(ctx context.Context, addonName, newVer
 		return nil, fmt.Errorf("new version is required")
 	}
 
-	catalogPath := path.Join(o.paths.Charts, addonName, "addon.yaml")
+	catalogPath := path.Join(o.paths.GlobalValues, "..", "addons-catalog.yaml")
 	content, err := o.git.GetFileContent(ctx, catalogPath, o.gitops.BaseBranch)
 	if err != nil {
-		return nil, fmt.Errorf("reading catalog for addon %q: %w", addonName, err)
+		return nil, fmt.Errorf("reading addons-catalog.yaml: %w", err)
 	}
 
-	updated := versionLineRe.ReplaceAll(content, []byte("${1}"+newVersion))
-	if string(updated) == string(content) {
-		return nil, fmt.Errorf("version field not found in catalog for addon %q", addonName)
+	updated, err := gitops.UpdateCatalogVersion(content, addonName, newVersion)
+	if err != nil {
+		return nil, fmt.Errorf("updating version for addon %q: %w", addonName, err)
 	}
 
 	files := map[string][]byte{
@@ -83,27 +81,27 @@ func (o *Orchestrator) UpgradeAddons(ctx context.Context, upgrades map[string]st
 		return nil, fmt.Errorf("at least one addon upgrade is required")
 	}
 
-	files := make(map[string][]byte)
-	var names []string
+	// Read the catalog once, apply all version changes, commit as single PR.
+	catalogPath := path.Join(o.paths.GlobalValues, "..", "addons-catalog.yaml")
+	content, err := o.git.GetFileContent(ctx, catalogPath, o.gitops.BaseBranch)
+	if err != nil {
+		return nil, fmt.Errorf("reading addons-catalog.yaml: %w", err)
+	}
 
+	var names []string
 	for addonName, newVersion := range upgrades {
 		if addonName == "" || newVersion == "" {
 			return nil, fmt.Errorf("addon name and version are required for each upgrade")
 		}
-
-		catalogPath := path.Join(o.paths.Charts, addonName, "addon.yaml")
-		content, err := o.git.GetFileContent(ctx, catalogPath, o.gitops.BaseBranch)
+		content, err = gitops.UpdateCatalogVersion(content, addonName, newVersion)
 		if err != nil {
-			return nil, fmt.Errorf("reading catalog for addon %q: %w", addonName, err)
+			return nil, fmt.Errorf("updating version for addon %q: %w", addonName, err)
 		}
-
-		updated := versionLineRe.ReplaceAll(content, []byte("${1}"+newVersion))
-		if string(updated) == string(content) {
-			return nil, fmt.Errorf("version field not found in catalog for addon %q", addonName)
-		}
-
-		files[catalogPath] = updated
 		names = append(names, fmt.Sprintf("%s=%s", addonName, newVersion))
+	}
+
+	files := map[string][]byte{
+		catalogPath: content,
 	}
 
 	gitResult, err := o.commitChanges(ctx, files, nil, fmt.Sprintf("upgrade addons: %s", strings.Join(names, ", ")))
@@ -115,8 +113,7 @@ func (o *Orchestrator) UpgradeAddons(ctx context.Context, upgrades map[string]st
 }
 
 // setAddonVersionInClusterValues updates or inserts a version field under an addon section
-// in a cluster values YAML file. Uses simple string manipulation (no full YAML parse)
-// to match the existing pattern.
+// in a cluster values YAML file.
 func setAddonVersionInClusterValues(content, addonName, newVersion string) string {
 	lines := strings.Split(content, "\n")
 	var result []string
@@ -126,9 +123,7 @@ func setAddonVersionInClusterValues(content, addonName, newVersion string) strin
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
 
-		// Detect top-level keys (no leading whitespace, ends with colon).
 		if len(line) > 0 && line[0] != ' ' && line[0] != '\t' && strings.HasSuffix(trimmed, ":") {
-			// If we were in the addon section and didn't find/set version, insert it.
 			if inAddonSection && !versionSet {
 				result = append(result, fmt.Sprintf("  version: %s", newVersion))
 				versionSet = true
@@ -136,7 +131,6 @@ func setAddonVersionInClusterValues(content, addonName, newVersion string) strin
 			inAddonSection = strings.TrimSuffix(trimmed, ":") == addonName
 		}
 
-		// If we're in the addon section, look for existing version line.
 		if inAddonSection && !versionSet && strings.HasPrefix(trimmed, "version:") {
 			result = append(result, fmt.Sprintf("  version: %s", newVersion))
 			versionSet = true
@@ -145,14 +139,12 @@ func setAddonVersionInClusterValues(content, addonName, newVersion string) strin
 
 		result = append(result, line)
 
-		// If this is the last line and we're still in the addon section without version set.
 		if i == len(lines)-1 && inAddonSection && !versionSet {
 			result = append(result, fmt.Sprintf("  version: %s", newVersion))
 			versionSet = true
 		}
 	}
 
-	// If the addon section was never found, append it.
 	if !versionSet {
 		result = append(result, fmt.Sprintf("%s:", addonName))
 		result = append(result, fmt.Sprintf("  version: %s", newVersion))
