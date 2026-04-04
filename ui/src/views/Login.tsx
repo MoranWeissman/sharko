@@ -27,27 +27,23 @@ export function Login() {
 
   return (
     <div className="flex min-h-screen">
-      {/* Left side — login background (desktop only, responsive to all screen sizes) */}
+      {/* Left side — background image centered (ArgoCD style) */}
       <div
-        className="hidden lg:block lg:flex-1 bg-[#0B1426] bg-cover bg-left bg-no-repeat"
+        className="hidden lg:block lg:flex-1 bg-[#0B1426] bg-contain bg-center bg-no-repeat"
         style={{ backgroundImage: "url('/sharko-login-bg.png')" }}
       />
 
-      {/* Right side — login panel */}
-      <div className="flex w-full flex-col bg-gray-900 lg:w-[380px] lg:min-w-[380px] lg:max-w-[420px]">
-        <div className="flex flex-1 flex-col items-center justify-center px-10 py-12">
-          {/* Brand header */}
-          <div className="mb-10 flex items-center gap-3">
-            <img src="/sharko-icon-32.png" alt="" className="h-12 w-12" />
-            <span className="font-bold text-cyan-400 text-[36px] tracking-tight">sharko</span>
+      {/* Right side — login panel (narrow, ArgoCD style) */}
+      <div className="flex w-full flex-col bg-gray-900 lg:w-[320px] lg:min-w-[280px]">
+        <div className="flex flex-1 flex-col items-end justify-start px-8 pt-16 lg:pt-12">
+          {/* Brand name — top right, like ArgoCD */}
+          <div className="mb-12">
+            <span className="font-bold text-cyan-400 text-[28px] tracking-tight">sharko</span>
           </div>
 
-          <form onSubmit={handleSubmit} className="w-full max-w-sm space-y-5">
+          <form onSubmit={handleSubmit} className="w-full space-y-6">
             <div>
-              <label
-                htmlFor="username"
-                className="block text-sm font-medium text-gray-300"
-              >
+              <label htmlFor="username" className="block text-xs text-gray-400 mb-1">
                 Username
               </label>
               <input
@@ -57,16 +53,13 @@ export function Login() {
                 onChange={(e) => setUsername(e.target.value)}
                 autoComplete="username"
                 autoFocus
-                className="mt-1 block w-full rounded-lg border border-gray-600 bg-gray-800 px-4 py-2.5 text-sm text-white placeholder-gray-500 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                className="block w-full border-0 border-b border-gray-600 bg-transparent px-0 py-2 text-sm text-white placeholder-gray-600 focus:border-cyan-500 focus:outline-none focus:ring-0"
                 placeholder="admin"
               />
             </div>
 
             <div>
-              <label
-                htmlFor="password"
-                className="block text-sm font-medium text-gray-300"
-              >
+              <label htmlFor="password" className="block text-xs text-gray-400 mb-1">
                 Password
               </label>
               <input
@@ -75,7 +68,7 @@ export function Login() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 autoComplete="current-password"
-                className="mt-1 block w-full rounded-lg border border-gray-600 bg-gray-800 px-4 py-2.5 text-sm text-white placeholder-gray-500 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                className="block w-full border-0 border-b border-gray-600 bg-transparent px-0 py-2 text-sm text-white placeholder-gray-600 focus:border-cyan-500 focus:outline-none focus:ring-0"
                 placeholder="Password"
               />
             </div>
@@ -87,16 +80,16 @@ export function Login() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full rounded-lg bg-cyan-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:ring-offset-2 focus:ring-offset-gray-900 disabled:opacity-50"
+              className="w-full text-sm font-semibold text-cyan-400 uppercase tracking-wider hover:text-cyan-300 focus:outline-none disabled:opacity-50 py-2 text-right"
             >
-              {loading ? 'Signing in...' : 'Sign In'}
+              {loading ? 'Signing in...' : 'SIGN IN'}
             </button>
           </form>
         </div>
 
-        {/* Footer */}
-        <p className="pb-6 text-center text-xs text-gray-600">
-          Sharko v1.0.0
+        {/* Footer — bottom right */}
+        <p className="pb-4 pr-8 text-right text-[10px] text-gray-600">
+          sharko v1.0.0
         </p>
       </div>
     </div>
