@@ -7,7 +7,7 @@ const routeContext: Record<string, string> = {
   '/dashboard': 'the Dashboard (overview stats)',
   '/clusters': 'the Clusters page',
   '/addons': 'the Addons Catalog',
-  '/version-matrix': 'the Version Matrix',
+  '/version-matrix': 'the Addons Version Drift Detector',
   '/observability': 'the Observability page',
   '/upgrade': 'the Addon Upgrade Checker',
   '/settings': 'the Settings page',
