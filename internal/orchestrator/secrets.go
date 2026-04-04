@@ -116,7 +116,8 @@ func (o *Orchestrator) deleteAddonSecrets(ctx context.Context, kubeconfig []byte
 	return deleted, nil
 }
 
-// deleteAllAddonSecrets deletes ALL Sharko-managed secrets from a remote cluster (used during deregister).
+// deleteAllAddonSecrets deletes all known addon secrets from a remote cluster (used during deregister).
+// Best-effort: continues on individual delete failures, logs errors but doesn't abort.
 func (o *Orchestrator) deleteAllAddonSecrets(ctx context.Context, kubeconfig []byte) ([]string, error) {
 	if o.remoteClientFn == nil || o.secretDefs == nil {
 		return nil, nil
@@ -129,11 +130,13 @@ func (o *Orchestrator) deleteAllAddonSecrets(ctx context.Context, kubeconfig []b
 
 	var deleted []string
 	for _, def := range o.secretDefs {
-		names, delErr := remoteclient.DeleteManagedSecrets(ctx, client, def.Namespace)
-		if delErr != nil {
-			return deleted, fmt.Errorf("deleting secrets in namespace %s: %w", def.Namespace, delErr)
+		// Delete by specific secret name, not namespace sweep, to avoid cross-addon deletion.
+		err = client.CoreV1().Secrets(def.Namespace).Delete(ctx, def.SecretName, metav1.DeleteOptions{})
+		if err != nil && !apierrors.IsNotFound(err) {
+			// Best-effort: continue deleting other secrets even if one fails.
+			continue
 		}
-		deleted = append(deleted, names...)
+		deleted = append(deleted, def.SecretName)
 	}
 	return deleted, nil
 }

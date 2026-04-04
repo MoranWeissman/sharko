@@ -66,10 +66,12 @@ func (s *Server) handleRefreshClusterSecrets(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Refresh all defined addon secrets for this cluster.
+	s.addonSecretDefsMu.RLock()
 	allEnabled := make(map[string]bool)
 	for addonName := range s.addonSecretDefs {
 		allEnabled[addonName] = true
 	}
+	s.addonSecretDefsMu.RUnlock()
 
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {

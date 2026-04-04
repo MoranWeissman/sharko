@@ -11,7 +11,14 @@ func (s *Server) handleListAddonSecrets(w http.ResponseWriter, r *http.Request) 
 	if !s.requireAdmin(w, r) {
 		return
 	}
-	writeJSON(w, http.StatusOK, s.addonSecretDefs)
+	s.addonSecretDefsMu.RLock()
+	defer s.addonSecretDefsMu.RUnlock()
+	// Copy the map to avoid holding the lock during JSON encoding.
+	defs := make(map[string]orchestrator.AddonSecretDefinition, len(s.addonSecretDefs))
+	for k, v := range s.addonSecretDefs {
+		defs[k] = v
+	}
+	writeJSON(w, http.StatusOK, defs)
 }
 
 func (s *Server) handleCreateAddonSecret(w http.ResponseWriter, r *http.Request) {
@@ -29,7 +36,9 @@ func (s *Server) handleCreateAddonSecret(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	s.addonSecretDefsMu.Lock()
 	s.addonSecretDefs[def.AddonName] = def
+	s.addonSecretDefsMu.Unlock()
 	writeJSON(w, http.StatusCreated, def)
 }
 
@@ -42,10 +51,14 @@ func (s *Server) handleDeleteAddonSecret(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "addon name is required")
 		return
 	}
+
+	s.addonSecretDefsMu.Lock()
 	if _, ok := s.addonSecretDefs[addon]; !ok {
+		s.addonSecretDefsMu.Unlock()
 		writeError(w, http.StatusNotFound, "no secret definition for addon: "+addon)
 		return
 	}
 	delete(s.addonSecretDefs, addon)
+	s.addonSecretDefsMu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted", "addon": addon})
 }

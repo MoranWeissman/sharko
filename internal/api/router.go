@@ -43,8 +43,9 @@ type Server struct {
 	gitMu        sync.Mutex // shared mutex serializing all Git operations across requests
 
 	// Remote secret management (optional — set via SetAddonSecretDefs).
-	addonSecretDefs map[string]orchestrator.AddonSecretDefinition
-	secretFetcher   orchestrator.SecretValueFetcher
+	addonSecretDefs   map[string]orchestrator.AddonSecretDefinition
+	addonSecretDefsMu sync.RWMutex // protects addonSecretDefs from concurrent read/write
+	secretFetcher     orchestrator.SecretValueFetcher
 
 	// Template filesystem for POST /api/v1/init (always available).
 	templateFS fs.FS
