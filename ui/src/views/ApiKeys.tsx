@@ -20,7 +20,7 @@ interface TokenEntry {
   last_used_at?: string
 }
 
-export function ApiKeys() {
+export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
   const [tokens, setTokens] = useState<TokenEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -120,12 +120,14 @@ export function ApiKeys() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">API Keys</h2>
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            Manage API tokens for programmatic access to Sharko.
-          </p>
-        </div>
+        {!embedded && (
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">API Keys</h2>
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              Manage API tokens for programmatic access to Sharko.
+            </p>
+          </div>
+        )}
         <button
           type="button"
           onClick={openCreate}

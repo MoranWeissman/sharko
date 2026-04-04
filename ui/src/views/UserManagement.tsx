@@ -17,7 +17,7 @@ const ROLE_COLORS: Record<string, string> = {
   viewer: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400',
 }
 
-export default function UserManagement() {
+export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
   const [users, setUsers] = useState<UserAccount[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -102,13 +102,15 @@ export default function UserManagement() {
 
   return (
     <div className="mx-auto max-w-screen-lg space-y-6">
-      <div className="flex items-center gap-3">
-        <Users className="h-7 w-7 text-cyan-600 dark:text-cyan-400" />
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">User Management</h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400">Manage user accounts, roles, and access</p>
+      {!embedded && (
+        <div className="flex items-center gap-3">
+          <Users className="h-7 w-7 text-cyan-600 dark:text-cyan-400" />
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">User Management</h1>
+            <p className="text-sm text-gray-500 dark:text-gray-400">Manage user accounts, roles, and access</p>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Temp password banner */}
       {tempPassword && (

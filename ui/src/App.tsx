@@ -9,7 +9,6 @@ import { ClustersOverview } from '@/views/ClustersOverview'
 import { ClusterDetail } from '@/views/ClusterDetail'
 import { AddonCatalog } from '@/views/AddonCatalog'
 import { AddonDetail } from '@/views/AddonDetail'
-import { Connections } from '@/views/Connections'
 import { VersionMatrix } from '@/views/VersionMatrix'
 import { Docs } from '@/views/Docs'
 import { Observability } from '@/views/Observability'
@@ -17,9 +16,7 @@ import { Dashboards } from '@/views/Dashboards'
 import { UpgradeChecker } from '@/views/UpgradeChecker'
 import { AIAssistant } from '@/views/AIAssistant'
 import { UserInfo } from '@/views/UserInfo'
-import UserManagement from '@/views/UserManagement'
-import { ApiKeys } from '@/views/ApiKeys'
-import { RoleGuard } from '@/components/RoleGuard'
+import { Settings } from '@/views/Settings'
 
 function AppRoutes() {
   const { isAuthenticated, loading } = useAuth()
@@ -52,9 +49,9 @@ function AppRoutes() {
           <Route path="assistant" element={<AIAssistant />} />
           <Route path="dashboards" element={<Dashboards />} />
           <Route path="docs" element={<Docs />} />
-          <Route path="settings" element={<Connections />} />
-          <Route path="users" element={<RoleGuard adminOnly fallback={<Navigate to="/dashboard" replace />}><UserManagement /></RoleGuard>} />
-          <Route path="api-keys" element={<RoleGuard adminOnly fallback={<Navigate to="/dashboard" replace />}><ApiKeys /></RoleGuard>} />
+          <Route path="settings" element={<Settings />} />
+          <Route path="users" element={<Navigate to="/settings?tab=users" replace />} />
+          <Route path="api-keys" element={<Navigate to="/settings?tab=api-keys" replace />} />
           <Route path="user" element={<UserInfo />} />
         </Route>
       </Routes>
