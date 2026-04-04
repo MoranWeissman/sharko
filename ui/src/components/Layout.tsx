@@ -46,7 +46,7 @@ const navSections: NavSection[] = [
     items: [
       { to: '/', label: 'Dashboard', icon: LayoutDashboard },
       { to: '/clusters', label: 'Clusters', icon: Server },
-      { to: '/addons', label: 'Add-ons Catalog', icon: Package },
+      { to: '/addons', label: 'Addons Catalog', icon: Package },
       { to: '/version-matrix', label: 'Version Drift Detector', icon: TableProperties },
       { to: '/observability', label: 'Observability', icon: Activity },
     ],
@@ -79,7 +79,7 @@ const navSections: NavSection[] = [
 const routeLabels: Record<string, string> = {
   dashboard: 'Dashboard',
   clusters: 'Clusters',
-  addons: 'Add-ons Catalog',
+  addons: 'Addons Catalog',
   'version-matrix': 'Version Drift Detector',
   observability: 'Observability',
   upgrade: 'Add-on Upgrade Checker',
@@ -157,6 +157,7 @@ export function Layout() {
         {/* Logo / title + mobile close */}
         <Link
           to="/dashboard"
+          aria-label="Sharko — go to dashboard"
           className="flex h-14 items-center gap-2 border-b border-slate-700 px-4 transition-colors hover:bg-slate-800"
           onClick={() => setMobileOpen(false)}
         >

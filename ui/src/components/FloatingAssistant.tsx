@@ -6,7 +6,7 @@ import { AIAssistant } from '@/views/AIAssistant'
 const routeContext: Record<string, string> = {
   '/dashboard': 'the Dashboard (overview stats)',
   '/clusters': 'the Clusters page',
-  '/addons': 'the Add-ons Catalog',
+  '/addons': 'the Addons Catalog',
   '/version-matrix': 'the Version Matrix',
   '/observability': 'the Observability page',
   '/upgrade': 'the Add-on Upgrade Checker',

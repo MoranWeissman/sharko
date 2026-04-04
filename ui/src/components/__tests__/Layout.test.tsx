@@ -58,7 +58,7 @@ describe('Layout', () => {
     renderLayout()
     expect(screen.getByText('Dashboard')).toBeInTheDocument()
     expect(screen.getByText('Clusters')).toBeInTheDocument()
-    expect(screen.getByText('Add-ons Catalog')).toBeInTheDocument()
+    expect(screen.getByText('Addons Catalog')).toBeInTheDocument()
     expect(screen.getByText('Settings')).toBeInTheDocument()
   })
 

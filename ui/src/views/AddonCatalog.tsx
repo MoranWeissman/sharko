@@ -497,7 +497,7 @@ export function AddonCatalog() {
   if (loading) {
     return (
       <div className="space-y-4">
-        <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Add-ons Catalog</h2>
+        <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Addons Catalog</h2>
         <LoadingState message="Loading addon catalog..." />
       </div>
     )
@@ -506,7 +506,7 @@ export function AddonCatalog() {
   if (error) {
     return (
       <div className="space-y-4">
-        <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Add-ons Catalog</h2>
+        <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Addons Catalog</h2>
         <ErrorState message={error} />
       </div>
     )
@@ -515,7 +515,7 @@ export function AddonCatalog() {
   if (!catalogData) {
     return (
       <div className="space-y-4">
-        <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Add-ons Catalog</h2>
+        <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Addons Catalog</h2>
         <p className="text-gray-500 dark:text-gray-400">No addon catalog data available.</p>
       </div>
     )
@@ -526,7 +526,7 @@ export function AddonCatalog() {
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Add-ons Catalog</h2>
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Addons Catalog</h2>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
             All add-ons defined in your Git catalog. See deployment coverage, health, and version per add-on. <span className="font-medium text-amber-600 dark:text-amber-400">Catalog Only</span> means the add-on is defined in your catalog but not yet enabled on any cluster.
           </p>

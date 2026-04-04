@@ -13,7 +13,7 @@ interface SearchResult {
 const PAGE_RESULTS: SearchResult[] = [
   { label: 'Dashboard', type: 'page', path: '/dashboard', icon: LayoutDashboard },
   { label: 'Clusters', type: 'page', path: '/clusters', icon: Server },
-  { label: 'Add-ons Catalog', type: 'page', path: '/addons', icon: Package },
+  { label: 'Addons Catalog', type: 'page', path: '/addons', icon: Package },
   { label: 'Version Matrix', type: 'page', path: '/version-matrix', icon: FileText },
   { label: 'Observability', type: 'page', path: '/observability', icon: Activity },
   { label: 'Upgrade Checker', type: 'page', path: '/upgrade', icon: ArrowUpCircle },

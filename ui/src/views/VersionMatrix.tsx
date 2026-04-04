@@ -416,7 +416,7 @@ export function VersionMatrix() {
   return (
     <div className="space-y-5">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Add-ons Version Drift Detector</h1>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Addons Version Drift Detector</h1>
         <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
           Identify version drift across your fleet — spot add-ons running a different version than the catalog baseline. Use the drift filter to focus on inconsistencies.
           {totalDrifts > 0 && (

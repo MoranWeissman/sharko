@@ -8,7 +8,7 @@ vi.mock('@/services/api', () => ({
     docsList: vi.fn().mockResolvedValue([
       { slug: 'overview', title: 'Overview', order: 1 },
       { slug: 'features', title: 'Features', order: 2 },
-      { slug: 'managing-addons', title: 'Managing Add-ons', order: 3 },
+      { slug: 'managing-addons', title: 'Managing Addons', order: 3 },
       { slug: 'values-guide', title: 'Values Guide', order: 4 },
       { slug: 'troubleshooting', title: 'Troubleshooting', order: 5 },
     ]),
@@ -16,7 +16,7 @@ vi.mock('@/services/api', () => ({
       const contents: Record<string, string> = {
         'overview': '# Overview\n\nSharko is a platform for managing addons.',
         'features': '# Features\n\nHere is a quick tour of what Sharko offers.',
-        'managing-addons': '# Managing Add-ons\n\nHow to manage your addons.',
+        'managing-addons': '# Managing Addons\n\nHow to manage your addons.',
         'values-guide': '# Values Guide\n\nConfiguring values.',
         'troubleshooting': '# Troubleshooting\n\nCommon issues.',
       }
@@ -49,7 +49,7 @@ describe('Docs', () => {
       expect(screen.getByText('Overview')).toBeInTheDocument();
     });
     expect(screen.getByText('Features')).toBeInTheDocument();
-    expect(screen.getByText('Managing Add-ons')).toBeInTheDocument();
+    expect(screen.getByText('Managing Addons')).toBeInTheDocument();
     expect(screen.getByText('Values Guide')).toBeInTheDocument();
     expect(screen.getByText('Troubleshooting')).toBeInTheDocument();
   });

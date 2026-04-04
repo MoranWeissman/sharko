@@ -51,7 +51,7 @@ describe('VersionMatrix', () => {
   it('renders addon rows after loading', async () => {
     renderMatrix()
     await waitFor(() => {
-      expect(screen.getByText('Add-ons Version Drift Detector')).toBeInTheDocument()
+      expect(screen.getByText('Addons Version Drift Detector')).toBeInTheDocument()
     })
     expect(screen.getByText('ingress-nginx')).toBeInTheDocument()
     expect(screen.getByText('cert-manager')).toBeInTheDocument()
@@ -60,7 +60,7 @@ describe('VersionMatrix', () => {
   it('renders table view when table toggle is clicked', async () => {
     renderMatrix()
     await waitFor(() => {
-      expect(screen.getByText('Add-ons Version Drift Detector')).toBeInTheDocument()
+      expect(screen.getByText('Addons Version Drift Detector')).toBeInTheDocument()
     })
     // Switch to table view
     fireEvent.click(screen.getByTitle('Table matrix'))
@@ -74,7 +74,7 @@ describe('VersionMatrix', () => {
   it('switches to card view when toggle is clicked', async () => {
     renderMatrix()
     await waitFor(() => {
-      expect(screen.getByText('Add-ons Version Drift Detector')).toBeInTheDocument()
+      expect(screen.getByText('Addons Version Drift Detector')).toBeInTheDocument()
     })
     const cardButton = screen.getByTitle('Card view')
     fireEvent.click(cardButton)
@@ -85,7 +85,7 @@ describe('VersionMatrix', () => {
   it('renders search input', async () => {
     renderMatrix()
     await waitFor(() => {
-      expect(screen.getByText('Add-ons Version Drift Detector')).toBeInTheDocument()
+      expect(screen.getByText('Addons Version Drift Detector')).toBeInTheDocument()
     })
     expect(screen.getByPlaceholderText('Search add-on by name...')).toBeInTheDocument()
   })

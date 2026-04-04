@@ -217,7 +217,7 @@ export function Dashboard() {
           color="default" onClick={() => navigate('/clusters')} />
         <StatCard title="Applications" value={`${healthyCount}/${appTotal} healthy`} icon={<AppWindow className="h-6 w-6" />}
           color={degradedCount > 0 ? 'error' : 'success'} onClick={() => navigate('/addons')} />
-        <StatCard title="Available Add-ons" value={stats.addons.total_available} icon={<Package className="h-6 w-6" />}
+        <StatCard title="Available Addons" value={stats.addons.total_available} icon={<Package className="h-6 w-6" />}
           color="default" onClick={() => navigate('/addons')} />
         <StatCard title="Active Deployments" value={`${stats.addons.enabled_deployments}/${stats.addons.total_deployments}`}
           icon={<Rocket className="h-6 w-6" />} color="warning" onClick={() => navigate('/version-matrix')} />

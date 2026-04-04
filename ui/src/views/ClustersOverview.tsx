@@ -316,7 +316,7 @@ export function ClustersOverview() {
             {catalogAddons && catalogAddons.addons.length > 0 && (
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
-                  Enable Add-ons (optional)
+                  Enable Addons (optional)
                 </label>
                 <div className="max-h-40 space-y-1 overflow-y-auto rounded-md border border-gray-200 p-2 dark:border-gray-700">
                   {catalogAddons.addons.map((addon) => (
