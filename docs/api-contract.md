@@ -294,9 +294,10 @@ Register a new cluster: fetch credentials from the secrets provider, verify conn
     "addons": {"monitoring": true, "logging": true, "cert-manager": true}
   },
   "git": {
-    "mode": "pr",
-    "pr_url": "https://github.com/org/addons/pull/42",
-    "branch": "sharko/add-cluster-prod-eu",
+    "pr_url": "https://github.com/example/repo/pull/42",
+    "pr_id": 42,
+    "branch": "sharko/register-cluster-prod-eu-a1b2c3d4",
+    "merged": false,
     "values_file": "configuration/addons-clusters-values/prod-eu.yaml"
   }
 }
@@ -351,9 +352,11 @@ Remove a cluster from ArgoCD and delete its values file from Git.
   "status": "success",
   "message": "Cluster prod-eu deregistered",
   "git": {
-    "mode": "direct",
-    "commit_sha": "abc123",
-    "deleted_file": "configuration/addons-clusters-values/prod-eu.yaml"
+    "pr_url": "https://github.com/example/repo/pull/42",
+    "pr_id": 42,
+    "branch": "sharko/register-cluster-prod-eu-a1b2c3d4",
+    "merged": false,
+    "values_file": "configuration/addons-clusters-values/prod-eu.yaml"
   }
 }
 ```
@@ -402,8 +405,11 @@ Update which addons are enabled/disabled on a cluster by modifying its ArgoCD la
   "cluster": "prod-eu",
   "updated_addons": {"istio": true, "keda": false},
   "git": {
-    "mode": "pr",
-    "pr_url": "https://github.com/org/addons/pull/43"
+    "pr_url": "https://github.com/example/repo/pull/42",
+    "pr_id": 42,
+    "branch": "sharko/register-cluster-prod-eu-a1b2c3d4",
+    "merged": false,
+    "values_file": "configuration/addons-clusters-values/prod-eu.yaml"
   }
 }
 ```
@@ -491,8 +497,11 @@ Add a new addon to the addons catalog configuration. This registers the addon â€
     "namespace": "cert-manager"
   },
   "git": {
-    "mode": "pr",
-    "pr_url": "https://github.com/org/addons/pull/44"
+    "pr_url": "https://github.com/example/repo/pull/42",
+    "pr_id": 42,
+    "branch": "sharko/register-cluster-prod-eu-a1b2c3d4",
+    "merged": false,
+    "values_file": "configuration/addons-clusters-values/prod-eu.yaml"
   }
 }
 ```
@@ -545,8 +554,11 @@ Remove an addon from the catalog. **This is destructive:** when the addon entry 
   "warning": "ArgoCD will cascade-delete cert-manager from 3 clusters as the ApplicationSet entry is removed.",
   "affected_clusters": ["prod-eu", "prod-us", "staging"],
   "git": {
-    "mode": "direct",
-    "commit_sha": "def456"
+    "pr_url": "https://github.com/example/repo/pull/42",
+    "pr_id": 42,
+    "branch": "sharko/register-cluster-prod-eu-a1b2c3d4",
+    "merged": false,
+    "values_file": "configuration/addons-clusters-values/prod-eu.yaml"
   }
 }
 ```
@@ -719,7 +731,7 @@ All repo paths and gitops settings are server-side config (Helm values / env var
     "bootstrap": "bootstrap/"
   },
   "gitops": {
-    "default_mode": "pr",
+    "pr_auto_merge": false,
     "branch_prefix": "sharko/",
     "commit_prefix": "sharko:"
   }

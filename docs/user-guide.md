@@ -314,7 +314,7 @@ If ArgoCD or Git connections fail:
 | `SHARKO_PROVIDER_REGION` | AWS region for secrets provider | (none) |
 | `SHARKO_ENCRYPTION_KEY` | Encryption key for connection store (required in K8s) | (none) |
 | `SHARKO_DEV_MODE` | Enable env var fallback for credentials | `false` |
-| `SHARKO_GITOPS_DEFAULT_MODE` | Commit mode: `pr` or `direct` | `pr` |
+| `SHARKO_GITOPS_PR_AUTO_MERGE` | Auto-merge PRs after creation | `false` |
 | `SHARKO_GITOPS_BRANCH_PREFIX` | Branch prefix for PR mode | `sharko/` |
 | `SHARKO_GITOPS_COMMIT_PREFIX` | Commit message prefix | `sharko:` |
 | `SHARKO_GITOPS_BASE_BRANCH` | Target branch | `main` |

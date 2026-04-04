@@ -116,12 +116,9 @@ Operations:
 
 ## Git Integration
 
-Sharko commits changes to the addons Git repository via the configured Git provider. Two modes are supported:
+Sharko commits changes to the addons Git repository via the configured Git provider.
 
-- **PR mode** (default): Creates a branch with the configured prefix (e.g., `sharko/add-cluster-prod-eu`), commits the change, and opens a pull request. A teammate reviews and merges.
-- **Direct mode**: Commits directly to the base branch (e.g., `main`). Faster, but no review gate.
-
-The mode is configured server-side via `SHARKO_GITOPS_DEFAULT_MODE`.
+All Git operations go through pull requests. When `SHARKO_GITOPS_PR_AUTO_MERGE` is `true`, PRs are merged immediately after creation. When `false` (default), PRs require manual approval.
 
 Git providers implement the `GitProvider` interface:
 

@@ -168,7 +168,7 @@ All configuration is server-side via Helm values and environment variables. No c
 | `SHARKO_PROVIDER_REGION` | AWS region for secrets provider | (none) |
 | `SHARKO_ENCRYPTION_KEY` | Encryption key for connection secrets (required in K8s) | (none) |
 | `SHARKO_DEV_MODE` | Enable env var fallback for credentials | `false` |
-| `SHARKO_GITOPS_DEFAULT_MODE` | Git commit mode (`pr` or `direct`) | `pr` |
+| `SHARKO_GITOPS_PR_AUTO_MERGE` | Auto-merge PRs after creation | `false` |
 | `SHARKO_GITOPS_BRANCH_PREFIX` | Branch prefix for PR mode | `sharko/` |
 | `SHARKO_GITOPS_COMMIT_PREFIX` | Commit message prefix | `sharko:` |
 | `SHARKO_GITOPS_BASE_BRANCH` | Target branch for commits/PRs | `main` |
