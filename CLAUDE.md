@@ -6,18 +6,9 @@
 - **Never use --no-verify or skip hooks.**
 - Git user: `Moran Weissman <moran.weissman@gmail.com>`
 
-## Forbidden Content
+## Content Policy
 
-The following must NEVER appear anywhere in the codebase, commit messages, or commit metadata:
-
-- `scrdairy.com` — no emails, domains, or references
-- `merck.com` — no emails, domains, or references
-- `msd.com` — no emails, domains, or references
-- `mahi-techlabs.com` — no domains or references
-- `merck-ahtl` — no GitHub org references
-- Real AWS account IDs from the original internal repo
-
-If any of these are found during work, remove them immediately.
+This project was extracted from an internal codebase. No references to the original organization, internal domains, employee emails, or real AWS account IDs should appear anywhere in the code, commits, or documentation. If any are found, remove them immediately.
 
 ## Project Context
 
