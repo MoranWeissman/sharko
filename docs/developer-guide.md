@@ -64,8 +64,11 @@ sharko/
     serve.go            Server startup and dependency wiring
     login.go            sharko login command
     init_cmd.go         sharko init command
-    cluster.go          Cluster management commands
-    addon.go            Addon management commands
+    cluster.go          Cluster management commands (add-cluster, remove-cluster, update-cluster, list-clusters)
+    batch.go            Batch cluster registration (add-clusters)
+    addon.go            Addon management commands (add-addon, remove-addon)
+    upgrade.go          Addon upgrade commands (upgrade-addon, upgrade-addons)
+    token.go            API key management commands (token create/list/revoke)
     status.go           Fleet status command
     version_cmd.go      Version command
     client.go           HTTP client helpers for CLI commands
@@ -74,19 +77,30 @@ sharko/
     api/                HTTP handlers (thin glue code)
       router.go         Route registration, Server struct, middleware
       init.go           POST /api/v1/init handler
-      clusters_write.go Cluster write operation handlers
-      addons_write.go   Addon write operation handlers
+      clusters_write.go Cluster write operation handlers (register, deregister, update, refresh)
+      clusters_batch.go POST /api/v1/clusters/batch handler
+      clusters_discover.go GET /api/v1/clusters/available handler
+      cluster_secrets.go Cluster secret list/refresh handlers
+      addons_write.go   Addon write operation handlers (add, remove)
+      addons_upgrade.go Addon upgrade handlers (upgrade, upgrade-batch)
+      addon_secrets.go  Addon secret definition handlers
+      tokens.go         API key management handlers (create, list, revoke)
       connections.go    Connection management handlers
       ai_config.go      AI configuration handlers
       users.go          User management handlers
       ...
 
     orchestrator/       Workflow engine (the brain)
-      orchestrator.go   Orchestrator struct and constructor
-      types.go          Request/response types
+      orchestrator.go   Orchestrator struct, constructor, shared Git mutex
+      types.go          Request/response types (GitResult, RegisterClusterRequest, etc.)
       init.go           InitRepo workflow
       clusters.go       Cluster registration/deregistration workflows
       addons.go         Addon management workflows
+      upgrade.go        Addon upgrade workflows (global, per-cluster, batch)
+      batch.go          Batch cluster registration (MaxBatchSize = 10)
+      secrets.go        Addon secret delivery to remote clusters (AddonSecretDefinition)
+      git_helpers.go    Git operations (always via PR; auto-merge when configured)
+      values_generator.go Cluster values file generation
 
     providers/          Secrets provider interface + implementations
       provider.go       ClusterCredentialsProvider interface
@@ -103,6 +117,12 @@ sharko/
       github.go         GitHub implementation
       azuredevops.go    Azure DevOps implementation
 
+    gitops/             GitOps configuration and env var parsing
+
+    remoteclient/       Remote cluster Kubernetes client
+      client.go         Build a kubernetes.Interface from raw kubeconfig bytes
+      secrets.go        List and upsert Kubernetes Secrets on remote clusters
+
     ai/                 LLM agent
       client.go         Multi-provider AI client
       agent.go          Tool-calling agent loop
@@ -110,7 +130,7 @@ sharko/
       tools.go          Agent tool definitions
 
     auth/               Authentication
-      store.go          User store (K8s ConfigMap or env var)
+      store.go          User store + API key management (K8s ConfigMap or env var)
 
     config/             Configuration stores
       store.go          Connection config store (interface + file store)
@@ -145,11 +165,57 @@ sharko/
 
 ### orchestrator
 
-The orchestrator is the workflow engine. It coordinates multi-step operations across the secrets provider, ArgoCD client, and Git provider. Each write operation (register cluster, add addon, init repo) is an orchestrator method.
+The orchestrator is the workflow engine. It coordinates multi-step operations across the secrets provider, ArgoCD client, and Git provider. Each write operation (register cluster, add addon, init repo, upgrade addon) is an orchestrator method.
 
 Key design decisions:
+
 - **No auto-rollback.** If step 3 of 4 fails, the orchestrator returns a partial success response. The user decides whether to retry or clean up.
 - **Each method receives all dependencies via the constructor.** The orchestrator is stateless between calls.
+- **Git mutex.** A `sync.Mutex` (`gitMu`) is shared across all orchestrator instances and held for the duration of each Git operation. This prevents concurrent PR branches from colliding on the same base commit.
+
+```go
+func New(
+    gitMu *sync.Mutex,
+    credProvider providers.ClusterCredentialsProvider,
+    argocd ArgocdClient,
+    git gitprovider.GitProvider,
+    gitops GitOpsConfig,
+    paths RepoPathsConfig,
+    templateFS fs.FS,
+) *Orchestrator
+```
+
+The `gitMu` mutex is created once on the `Server` struct (`internal/api/router.go`) and passed to every orchestrator instance. In tests where concurrency is not under test, pass `nil`.
+
+### orchestrator/upgrade.go
+
+Three upgrade methods:
+- `UpgradeAddonGlobal(ctx, addonName, newVersion)` — updates `addons-catalog.yaml`
+- `UpgradeAddonCluster(ctx, addonName, clusterName, newVersion)` — updates the cluster values file
+- `UpgradeAddons(ctx, upgrades map[string]string)` — batch global upgrades in one PR
+
+### orchestrator/batch.go
+
+`RegisterClusterBatch` registers clusters sequentially. `MaxBatchSize = 10` is enforced at the handler level. Returns a `BatchResult` with per-cluster results and aggregate counts.
+
+### orchestrator/secrets.go
+
+Defines `AddonSecretDefinition` and the `SecretValueFetcher` interface. `SetSecretManagement()` configures addon secret delivery on an orchestrator instance. `createAddonSecrets` fetches values from the provider and calls `remoteclient.EnsureSecret` on the remote cluster.
+
+### remoteclient
+
+The `internal/remoteclient` package builds a `kubernetes.Interface` from raw kubeconfig bytes (returned by the secrets provider). Used by the orchestrator to deliver secrets to remote clusters.
+
+```go
+// Build a remote cluster client from raw kubeconfig bytes
+client, err := remoteclient.NewClientFromKubeconfig(kubeconfigBytes)
+
+// List Sharko-managed secrets on a remote cluster
+secrets, err := remoteclient.ListManagedSecrets(ctx, client, namespace)
+
+// Create or update a K8s Secret on a remote cluster
+err = remoteclient.EnsureSecret(ctx, client, namespace, secretName, data)
+```
 
 ### providers
 
@@ -171,11 +237,28 @@ REST client for ArgoCD. Uses account token authentication (Bearer header). Opera
 
 ### gitprovider
 
-Git provider interface for creating/updating files and opening PRs. Implementations for GitHub and Azure DevOps.
+Git provider interface for creating/updating files and opening PRs. Implementations for GitHub and Azure DevOps. All write operations go through `commitChanges` in `orchestrator/git_helpers.go`, which always creates a PR. When `GitOpsConfig.PRAutoMerge` is true, the PR is merged immediately after creation.
 
 ### api
 
-HTTP handlers. Each handler is a method on the `Server` struct. Handlers are thin -- they validate input, call the orchestrator or service layer, and write JSON responses.
+HTTP handlers. Each handler is a method on the `Server` struct. Handlers are thin — they validate input, call the orchestrator or service layer, and write JSON responses.
+
+**Handler files and their responsibilities:**
+
+| File | Endpoints |
+|------|-----------|
+| `clusters_write.go` | POST, DELETE, PATCH `/clusters`, POST `/clusters/{name}/refresh` |
+| `clusters_batch.go` | POST `/clusters/batch` |
+| `clusters_discover.go` | GET `/clusters/available` |
+| `cluster_secrets.go` | GET, POST `/clusters/{name}/secrets*` |
+| `addons_write.go` | POST, DELETE `/addons` |
+| `addons_upgrade.go` | POST `/addons/{name}/upgrade`, POST `/addons/upgrade-batch` |
+| `addon_secrets.go` | GET, POST, DELETE `/addon-secrets*` |
+| `tokens.go` | GET, POST, DELETE `/tokens*` |
+
+### auth (API key support)
+
+The `auth` store manages both session tokens (short-lived, from `POST /auth/login`) and API keys (long-lived, created via `POST /tokens`). The auth middleware in `router.go` checks for an API key first; if not found, it falls back to session token validation. API keys are stored hashed; the plaintext is only returned once at creation time.
 
 ### ai
 
@@ -208,7 +291,7 @@ func (s *Server) handleMyFeature(w http.ResponseWriter, r *http.Request) {
 mux.HandleFunc("GET /api/v1/myfeature", srv.handleMyFeature)
 ```
 
-3. **If it's a write operation**, add an orchestrator method in `internal/orchestrator/` and call it from the handler. The handler should get ArgoCD and Git clients from `s.connSvc` and construct the orchestrator.
+3. **If it's a write operation**, add an orchestrator method in `internal/orchestrator/` and call it from the handler. The handler should get ArgoCD and Git clients from `s.connSvc` and construct the orchestrator with the shared `&s.gitMu` mutex.
 
 4. **Verify**: `go build ./... && go vet ./...`
 

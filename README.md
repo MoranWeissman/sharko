@@ -20,10 +20,14 @@ Sharko is a server that runs in your Kubernetes cluster, next to ArgoCD, and man
 
 ## What Sharko Does
 
-- **Register clusters** from secrets providers (AWS Secrets Manager, K8s Secrets)
+- **Register clusters** from secrets providers (AWS Secrets Manager, K8s Secrets), including remote cluster secrets (API keys delivered to remote clusters)
 - **Manage addons** across your fleet (cert-manager, monitoring, logging, etc.)
 - **Observe fleet health** with drift detection, version matrix, and sync status
-- **Automate GitOps workflows** — every change is a Git commit or PR
+- **Automate GitOps workflows** — every change creates a PR (auto-merged if `SHARKO_GITOPS_PR_AUTO_MERGE=true`)
+- **Upgrade addons** globally or per-cluster, with batch multi-addon upgrades
+- **Batch register clusters** — register up to 10 clusters in a single API call
+- **Manage API keys** for non-interactive consumers (Backstage, Terraform, CI/CD)
+- **Full UI write capabilities** — register clusters, add addons, upgrade versions, manage secrets from the browser
 - **Integrate with IDPs** — Backstage, Port.io, Terraform, CI/CD all use the same API
 
 ## Architecture
@@ -41,10 +45,11 @@ Terraform / CI:
 Sharko Server (in-cluster):
   +-- UI (React fleet dashboard)
   +-- API (read + write endpoints)
-  +-- Orchestrator (workflow engine)
+  +-- Orchestrator (workflow engine, Git-serialized via mutex)
   +-- ArgoCD client (account token auth)
   +-- Git client (GitHub, Azure DevOps)
   +-- Secrets provider (AWS SM, K8s Secrets)
+  +-- Remote client (deliver secrets to remote clusters)
   +-- AI assistant (OpenAI, Ollama, Claude)
 ```
 
@@ -94,21 +99,33 @@ Sharko exposes a REST API that every consumer uses — the CLI, the UI, and exte
 |--------|------|-------------|
 | GET | `/api/v1/clusters` | List clusters with health stats |
 | GET | `/api/v1/clusters/{name}` | Cluster detail + addon status |
+| GET | `/api/v1/clusters/available` | Discover available clusters from the secrets provider |
 | GET | `/api/v1/addons/catalog` | Addon catalog with deployment stats |
 | GET | `/api/v1/addons/version-matrix` | Version matrix: addon x cluster grid |
 | GET | `/api/v1/fleet/status` | Fleet-wide health overview |
 | GET | `/api/v1/observability/overview` | ArgoCD health groups + sync activity |
+| GET | `/api/v1/tokens` | List API keys (admin only) |
+| GET | `/api/v1/addon-secrets` | List addon secret definitions |
+| GET | `/api/v1/clusters/{name}/secrets` | List managed secrets on a cluster |
 
 ### Write Operations (management)
 
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/api/v1/clusters` | Register a cluster |
+| POST | `/api/v1/clusters/batch` | Batch register up to 10 clusters |
 | DELETE | `/api/v1/clusters/{name}` | Deregister a cluster |
 | PATCH | `/api/v1/clusters/{name}` | Update addon labels |
 | POST | `/api/v1/clusters/{name}/refresh` | Refresh cluster credentials |
+| POST | `/api/v1/clusters/{name}/secrets/refresh` | Refresh managed secrets on a cluster |
 | POST | `/api/v1/addons` | Add addon to catalog |
 | DELETE | `/api/v1/addons/{name}?confirm=true` | Remove addon (with safety gate) |
+| POST | `/api/v1/addons/{name}/upgrade` | Upgrade an addon (global or per-cluster) |
+| POST | `/api/v1/addons/upgrade-batch` | Upgrade multiple addons in one PR |
+| POST | `/api/v1/addon-secrets` | Define an addon secret template |
+| DELETE | `/api/v1/addon-secrets/{addon}` | Remove an addon secret definition |
+| POST | `/api/v1/tokens` | Create an API key |
+| DELETE | `/api/v1/tokens/{name}` | Revoke an API key |
 | POST | `/api/v1/init` | Initialize addons repo from templates |
 
 See [docs/api-contract.md](docs/api-contract.md) for full API reference with request/response shapes.
@@ -121,11 +138,17 @@ See [docs/api-contract.md](docs/api-contract.md) for full API reference with req
 | `sharko version` | Show CLI + server version |
 | `sharko init` | Initialize the addons repo |
 | `sharko add-cluster <name>` | Register a cluster |
+| `sharko add-clusters <n1,n2,...>` | Batch register multiple clusters |
 | `sharko remove-cluster <name>` | Deregister a cluster |
 | `sharko update-cluster <name>` | Update addon assignments |
 | `sharko list-clusters` | List all clusters |
 | `sharko add-addon <name>` | Add addon to catalog |
 | `sharko remove-addon <name>` | Remove addon (dry-run without `--confirm`) |
+| `sharko upgrade-addon <name>` | Upgrade an addon version (global or per-cluster) |
+| `sharko upgrade-addons <addon=ver,...>` | Batch upgrade multiple addons |
+| `sharko token create` | Create an API key |
+| `sharko token list` | List API keys |
+| `sharko token revoke <name>` | Revoke an API key |
 | `sharko status` | Fleet health overview |
 
 ## Secrets Providers
@@ -169,10 +192,14 @@ All configuration is server-side via Helm values and environment variables. No c
 | `SHARKO_ENCRYPTION_KEY` | Encryption key for connection secrets (required in K8s) | (none) |
 | `SHARKO_DEV_MODE` | Enable env var fallback for credentials | `false` |
 | `SHARKO_GITOPS_PR_AUTO_MERGE` | Auto-merge PRs after creation | `false` |
-| `SHARKO_GITOPS_BRANCH_PREFIX` | Branch prefix for PR mode | `sharko/` |
+| `SHARKO_GITOPS_BRANCH_PREFIX` | Branch prefix for PR branches | `sharko/` |
 | `SHARKO_GITOPS_COMMIT_PREFIX` | Commit message prefix | `sharko:` |
-| `SHARKO_GITOPS_BASE_BRANCH` | Target branch for commits/PRs | `main` |
+| `SHARKO_GITOPS_BASE_BRANCH` | Target branch for PRs | `main` |
 | `SHARKO_GITOPS_REPO_URL` | Git repo URL for init placeholder replacement | (none) |
+| `SHARKO_ADDON_SECRETS` | JSON-encoded addon secret definitions | (none) |
+| `SHARKO_DEFAULT_ADDONS` | Comma-separated default addons for new clusters | (none) |
+| `SHARKO_HOST_CLUSTER_NAME` | Name of the host cluster (for in-cluster deployment) | (none) |
+| `SHARKO_INIT_AUTO_BOOTSTRAP` | Auto-bootstrap ArgoCD during init (not yet implemented, post-v1) | `false` |
 | `GITHUB_TOKEN` | GitHub PAT (set via `secrets.GITHUB_TOKEN` in Helm) | (none) |
 
 ## Development

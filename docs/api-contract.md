@@ -3,8 +3,6 @@
 > This document defines every API endpoint, request/response shape, error code, and
 > orchestration behavior. It is the single source of truth for v1.0.0 implementation.
 > CLI commands, UI write features, and IDP integrations all derive from this contract.
->
-> **Gate:** No implementation code is written until this contract is reviewed and approved.
 
 ---
 
@@ -27,7 +25,13 @@ All endpoints except `GET /api/v1/health` and `POST /api/v1/auth/login` require 
 Authorization: Bearer <token>
 ```
 
-**How to get a token:**
+**Two token types are accepted (in priority order):**
+1. **API keys** — long-lived tokens created via `POST /api/v1/tokens`. Intended for non-interactive consumers (Backstage, Terraform, CI/CD).
+2. **Session tokens** — short-lived tokens returned by `POST /api/v1/auth/login`. Used by the CLI and UI. Expire after 24 hours.
+
+The auth middleware checks for an API key first; if not found, it falls back to session token validation.
+
+**How to get a session token:**
 ```bash
 POST /api/v1/auth/login
 Content-Type: application/json
@@ -38,7 +42,6 @@ Content-Type: application/json
 Response: `{"token": "abc123...", "username": "admin", "role": "admin"}`
 
 The CLI stores this token in `~/.sharko/config`. The UI stores it in sessionStorage.
-Tokens expire after 24 hours.
 
 ### Response Format
 
@@ -75,6 +78,21 @@ This is NOT an error — it means some steps completed and others failed.
 
 HTTP status for partial success: **207 Multi-Status**
 
+### Write Operation Behavior
+
+All write endpoints are **synchronous** — they return the final result once all steps complete (or when a step fails). There are no 202 Accepted responses. Git operations always create pull requests; the `GitResult` shape reflects this:
+
+```json
+{
+  "pr_url": "https://github.com/org/repo/pull/42",
+  "pr_id": 42,
+  "branch": "sharko/register-cluster-prod-eu-a1b2c3d4",
+  "merged": false
+}
+```
+
+When `SHARKO_GITOPS_PR_AUTO_MERGE=true`, the PR is merged immediately after creation and `merged` will be `true`.
+
 ### Standard Error Codes
 
 | Code | Meaning |
@@ -93,7 +111,7 @@ HTTP status for partial success: **207 Multi-Status**
 
 ## 2. Existing Read API
 
-These endpoints are already implemented and working. Listed here for completeness — the v1.0.0 implementation does NOT modify these.
+These endpoints are already implemented and working. Listed here for completeness.
 
 ### Health
 
@@ -253,7 +271,7 @@ These endpoints are new in v1.0.0. Each is handled by the orchestrator (`interna
 
 ### POST /api/v1/clusters — Register a Cluster
 
-Register a new cluster: fetch credentials from the secrets provider, verify connectivity, register in ArgoCD, create values file, commit to Git.
+Register a new cluster: fetch credentials from the secrets provider, verify connectivity, register in ArgoCD, create values file, commit to Git as a PR.
 
 **Request:**
 ```json
@@ -271,7 +289,7 @@ Register a new cluster: fetch credentials from the secrets provider, verify conn
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | name | string | yes | Cluster name. Must match the values file name (coupling contract). Alphanumeric + hyphens. |
-| addons | map[string]bool | no | Addon labels to set. Defaults to none. |
+| addons | map[string]bool | no | Addon labels to set. Defaults to `SHARKO_DEFAULT_ADDONS` if configured, otherwise none. |
 | region | string | no | Cluster region metadata. |
 
 **Orchestration Steps:**
@@ -280,7 +298,8 @@ Register a new cluster: fetch credentials from the secrets provider, verify conn
 3. Verify Kubernetes connectivity (connect to cluster API, get version)
 4. Register cluster in ArgoCD (create cluster secret with addon labels)
 5. Generate cluster values file
-6. Commit to Git (direct or PR, based on server gitops config)
+6. Commit to Git (always as a PR; auto-merged when `SHARKO_GITOPS_PR_AUTO_MERGE=true`)
+7. If addon secret definitions are configured, deliver secrets to the remote cluster
 
 **Success Response (201 Created):**
 ```json
@@ -290,7 +309,6 @@ Register a new cluster: fetch credentials from the secrets provider, verify conn
     "name": "prod-eu",
     "server": "https://ABCD.eu-west-1.eks.amazonaws.com",
     "server_version": "1.29.3",
-    "node_count": 12,
     "addons": {"monitoring": true, "logging": true, "cert-manager": true}
   },
   "git": {
@@ -299,7 +317,8 @@ Register a new cluster: fetch credentials from the secrets provider, verify conn
     "branch": "sharko/register-cluster-prod-eu-a1b2c3d4",
     "merged": false,
     "values_file": "configuration/addons-clusters-values/prod-eu.yaml"
-  }
+  },
+  "secrets_created": ["datadog-keys"]
 }
 ```
 
@@ -329,7 +348,82 @@ Register a new cluster: fetch credentials from the secrets provider, verify conn
 **Rollback Rules:**
 - Steps 1-3 fail → no cleanup needed (nothing was created)
 - Step 4 fails → no cleanup needed (ArgoCD registration didn't happen)
-- Steps 5-6 fail → **DO NOT auto-rollback ArgoCD registration.** Return partial success. ArgoCD may have already started deploying addons; deregistering could trigger cascade deletion.
+- Steps 5-7 fail → **DO NOT auto-rollback ArgoCD registration.** Return partial success. ArgoCD may have already started deploying addons; deregistering could trigger cascade deletion.
+
+---
+
+### POST /api/v1/clusters/batch — Batch Register Clusters
+
+Register multiple clusters in a single request. Clusters are processed sequentially (not in parallel) to preserve Git serialization. Maximum 10 clusters per batch.
+
+**Request:**
+```json
+{
+  "clusters": [
+    {"name": "prod-eu", "addons": {"monitoring": true}, "region": "eu-west-1"},
+    {"name": "prod-us", "addons": {"monitoring": true}, "region": "us-east-1"}
+  ]
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| clusters | array | yes | List of cluster registration requests. Max 10. |
+| clusters[].name | string | yes | Cluster name. Alphanumeric + hyphens. |
+| clusters[].addons | map[string]bool | no | Addon labels. |
+| clusters[].region | string | no | Region metadata. |
+
+**Success Response (200 OK):**
+```json
+{
+  "total": 2,
+  "succeeded": 2,
+  "failed": 0,
+  "results": [
+    {
+      "status": "success",
+      "cluster": {"name": "prod-eu", "server": "https://..."},
+      "git": {"pr_url": "https://github.com/...", "pr_id": 42, "merged": false}
+    },
+    {
+      "status": "success",
+      "cluster": {"name": "prod-us", "server": "https://..."},
+      "git": {"pr_url": "https://github.com/...", "pr_id": 43, "merged": false}
+    }
+  ]
+}
+```
+
+**Partial Success Response (207 Multi-Status):**
+When one or more clusters fail, the response has HTTP 207 and `failed > 0`.
+
+**Error Responses:**
+| Code | Condition |
+|------|-----------|
+| 400 | Invalid request body, missing cluster name, or batch size > 10 |
+| 502 | ArgoCD or Git unreachable |
+
+---
+
+### GET /api/v1/clusters/available — Discover Available Clusters
+
+List clusters available in the configured secrets provider that have not yet been registered.
+
+**Response (200 OK):**
+```json
+{
+  "clusters": [
+    {"name": "staging-eu", "region": "eu-west-1"},
+    {"name": "dev-us", "region": "us-east-1"}
+  ]
+}
+```
+
+**Error Responses:**
+| Code | Condition |
+|------|-----------|
+| 501 | Secrets provider not configured |
+| 502 | Secrets provider unreachable |
 
 ---
 
@@ -343,8 +437,7 @@ Remove a cluster from ArgoCD and delete its values file from Git.
 **Orchestration Steps:**
 1. Verify cluster exists in ArgoCD
 2. Remove cluster from ArgoCD (delete cluster secret)
-3. Delete values file from Git
-4. Commit to Git (direct or PR)
+3. Delete values file from Git (as a PR)
 
 **Success Response (200 OK):**
 ```json
@@ -354,7 +447,7 @@ Remove a cluster from ArgoCD and delete its values file from Git.
   "git": {
     "pr_url": "https://github.com/example/repo/pull/42",
     "pr_id": 42,
-    "branch": "sharko/register-cluster-prod-eu-a1b2c3d4",
+    "branch": "sharko/deregister-cluster-prod-eu-a1b2c3d4",
     "merged": false,
     "values_file": "configuration/addons-clusters-values/prod-eu.yaml"
   }
@@ -367,13 +460,13 @@ Remove a cluster from ArgoCD and delete its values file from Git.
 | 404 | Cluster not found in ArgoCD |
 | 502 | ArgoCD or Git unreachable |
 
-**Warning:** Deregistering a cluster from ArgoCD will cause ArgoCD to stop managing addons on that cluster. Depending on ArgoCD's cascade delete policy, this MAY delete the addon resources from the cluster. The API response should include a warning about this.
+**Warning:** Deregistering a cluster from ArgoCD will cause ArgoCD to stop managing addons on that cluster. Depending on ArgoCD's cascade delete policy, this MAY delete the addon resources from the cluster.
 
 ---
 
 ### PATCH /api/v1/clusters/{name} — Update Cluster Addon Labels
 
-Update which addons are enabled/disabled on a cluster by modifying its ArgoCD labels and cluster values file.
+Update which addons are enabled/disabled on a cluster.
 
 **Path Parameters:**
 - `name` — cluster name
@@ -395,8 +488,7 @@ Update which addons are enabled/disabled on a cluster by modifying its ArgoCD la
 **Orchestration Steps:**
 1. Verify cluster exists in ArgoCD
 2. Update ArgoCD cluster secret labels
-3. Update cluster values file in Git (enable/disable addon sections)
-4. Commit to Git (direct or PR)
+3. Update cluster values file in Git (enable/disable addon sections, as a PR)
 
 **Success Response (200 OK):**
 ```json
@@ -407,7 +499,7 @@ Update which addons are enabled/disabled on a cluster by modifying its ArgoCD la
   "git": {
     "pr_url": "https://github.com/example/repo/pull/42",
     "pr_id": 42,
-    "branch": "sharko/register-cluster-prod-eu-a1b2c3d4",
+    "branch": "sharko/update-cluster-prod-eu-a1b2c3d4",
     "merged": false,
     "values_file": "configuration/addons-clusters-values/prod-eu.yaml"
   }
@@ -454,11 +546,65 @@ Re-fetch credentials from the secrets provider and update the ArgoCD cluster sec
 
 ---
 
+### GET /api/v1/clusters/{name}/secrets — List Managed Secrets
+
+List the Sharko-managed Kubernetes Secrets on a remote cluster.
+
+**Path Parameters:**
+- `name` — cluster name
+
+**Response (200 OK):**
+```json
+{
+  "cluster": "prod-eu",
+  "secrets": [
+    {
+      "name": "datadog-keys",
+      "namespace": "datadog",
+      "managed_by": "sharko"
+    }
+  ]
+}
+```
+
+**Error Responses:**
+| Code | Condition |
+|------|-----------|
+| 400 | Missing cluster name |
+| 501 | Secrets provider not configured |
+| 502 | Unable to connect to secrets provider or remote cluster |
+
+---
+
+### POST /api/v1/clusters/{name}/secrets/refresh — Refresh Remote Secrets
+
+Re-fetch secret values from the provider and upsert them as Kubernetes Secrets on the remote cluster. Applies all defined addon secret templates for addons that are enabled on this cluster.
+
+**Path Parameters:**
+- `name` — cluster name
+
+**Success Response (200 OK):**
+```json
+{
+  "cluster": "prod-eu",
+  "secrets_refreshed": ["datadog-keys", "newrelic-license"]
+}
+```
+
+**Error Responses:**
+| Code | Condition |
+|------|-----------|
+| 400 | Missing cluster name |
+| 501 | Secrets provider not configured |
+| 502 | Unable to connect to secrets provider, ArgoCD, or remote cluster |
+
+---
+
 ## 4. New Write API — Addon Operations
 
 ### POST /api/v1/addons — Add Addon to Catalog
 
-Add a new addon to the addons catalog configuration. This registers the addon — it does NOT deploy it to any cluster (that happens when a cluster has the addon label enabled).
+Add a new addon to the addons catalog configuration.
 
 **Request:**
 ```json
@@ -478,12 +624,13 @@ Add a new addon to the addons catalog configuration. This registers the addon �
 | repo_url | string | yes | Helm repo URL |
 | version | string | yes | Chart version |
 | namespace | string | no | Target namespace. Defaults to addon name. |
+| sync_wave | int | no | ArgoCD sync wave (0 = default, negative = earlier). |
 
 **Orchestration Steps:**
-1. Validate input (name format, version exists in chart repo)
+1. Validate input (name format)
 2. Add entry to `addons-catalog.yaml` in Git
 3. Create global values file at `configuration/addons-global-values/{name}.yaml`
-4. Commit to Git (direct or PR)
+4. Commit to Git as a PR
 
 **Success Response (201 Created):**
 ```json
@@ -499,9 +646,8 @@ Add a new addon to the addons catalog configuration. This registers the addon �
   "git": {
     "pr_url": "https://github.com/example/repo/pull/42",
     "pr_id": 42,
-    "branch": "sharko/register-cluster-prod-eu-a1b2c3d4",
-    "merged": false,
-    "values_file": "configuration/addons-clusters-values/prod-eu.yaml"
+    "branch": "sharko/add-addon-cert-manager-a1b2c3d4",
+    "merged": false
   }
 }
 ```
@@ -519,13 +665,7 @@ Add a new addon to the addons catalog configuration. This registers the addon �
 
 Remove an addon from the catalog. **This is destructive:** when the addon entry is removed from the catalog and the AppSet template no longer references it, ArgoCD WILL cascade-delete the Application from every cluster that had it enabled.
 
-**Requires `?confirm=true` query parameter.** Without it, returns 400 with a warning explaining the impact. This follows the same safety pattern as Kubernetes cascade deletion.
-
-**Path Parameters:**
-- `name` — addon name
-
-**Query Parameters:**
-- `confirm` — must be `true` to proceed. Without it, returns a dry-run showing what would be affected.
+**Requires `?confirm=true` query parameter.** Without it, returns 400 with a warning explaining the impact.
 
 **Without `?confirm=true` — Dry Run Response (400):**
 ```json
@@ -540,13 +680,7 @@ Remove an addon from the catalog. **This is destructive:** when the addon entry 
 }
 ```
 
-**Orchestration Steps (with `?confirm=true`):**
-1. Verify addon exists in catalog
-2. Remove entry from `addons-catalog.yaml`
-3. Remove global values file
-4. Commit to Git (direct or PR)
-
-**Success Response (200 OK):**
+**Success Response (200 OK, with `?confirm=true`):**
 ```json
 {
   "status": "success",
@@ -556,9 +690,8 @@ Remove an addon from the catalog. **This is destructive:** when the addon entry 
   "git": {
     "pr_url": "https://github.com/example/repo/pull/42",
     "pr_id": 42,
-    "branch": "sharko/register-cluster-prod-eu-a1b2c3d4",
-    "merged": false,
-    "values_file": "configuration/addons-clusters-values/prod-eu.yaml"
+    "branch": "sharko/remove-addon-cert-manager-a1b2c3d4",
+    "merged": false
   }
 }
 ```
@@ -572,17 +705,254 @@ Remove an addon from the catalog. **This is destructive:** when the addon entry 
 
 ---
 
+### POST /api/v1/addons/{name}/upgrade — Upgrade an Addon
+
+Upgrade an addon version globally (updates `addons-catalog.yaml`) or per-cluster (updates the cluster values file). Creates a PR in both cases.
+
+**Path Parameters:**
+- `name` — addon name
+
+**Request:**
+```json
+{
+  "version": "1.15.0",
+  "cluster": "prod-eu"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| version | string | yes | Target version to upgrade to. |
+| cluster | string | no | If provided, upgrades this cluster only. If omitted, upgrades globally in the catalog. |
+
+**Success Response (200 OK):**
+```json
+{
+  "pr_url": "https://github.com/example/repo/pull/43",
+  "pr_id": 43,
+  "branch": "sharko/upgrade-cert-manager-1.15.0-a1b2c3d4",
+  "merged": false
+}
+```
+
+**Error Responses:**
+| Code | Condition |
+|------|-----------|
+| 400 | Missing version or addon name |
+| 502 | ArgoCD or Git unreachable |
+
+---
+
+### POST /api/v1/addons/upgrade-batch — Batch Upgrade Addons
+
+Upgrade multiple addons in a single PR. All upgrades are applied to the global catalog.
+
+**Request:**
+```json
+{
+  "upgrades": {
+    "cert-manager": "1.15.0",
+    "metrics-server": "0.7.1"
+  }
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| upgrades | map[string]string | yes | Map of addon name → target version. At least one required. |
+
+**Success Response (200 OK):**
+```json
+{
+  "pr_url": "https://github.com/example/repo/pull/44",
+  "pr_id": 44,
+  "branch": "sharko/upgrade-batch-a1b2c3d4",
+  "merged": false
+}
+```
+
+**Error Responses:**
+| Code | Condition |
+|------|-----------|
+| 400 | Empty upgrades map or invalid request body |
+| 502 | ArgoCD or Git unreachable |
+
+---
+
 ## 5. New System API
+
+### POST /api/v1/addon-secrets — Define an Addon Secret Template
+
+Define how secrets for a specific addon should be fetched from the secrets provider and delivered to remote clusters. This definition is applied when clusters are registered or when secrets are refreshed.
+
+**Request:**
+```json
+{
+  "addon_name": "datadog",
+  "secret_name": "datadog-keys",
+  "namespace": "datadog",
+  "keys": {
+    "api-key": "secrets/datadog/api-key",
+    "app-key": "secrets/datadog/app-key"
+  }
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| addon_name | string | yes | The addon this secret belongs to. Must match an addon in the catalog. |
+| secret_name | string | yes | Name of the Kubernetes Secret to create on remote clusters. |
+| namespace | string | yes | Namespace to create the secret in on remote clusters. |
+| keys | map[string]string | yes | Map of K8s secret data key → provider path (e.g. AWS SM path or K8s secret name). |
+
+**Success Response (201 Created):**
+```json
+{
+  "addon_name": "datadog",
+  "secret_name": "datadog-keys",
+  "namespace": "datadog",
+  "keys": {
+    "api-key": "secrets/datadog/api-key",
+    "app-key": "secrets/datadog/app-key"
+  }
+}
+```
+
+**Error Responses:**
+| Code | Condition |
+|------|-----------|
+| 400 | Missing required fields (addon_name, secret_name, namespace, keys) or invalid request body |
+| 401 | Unauthorized |
+
+---
+
+### GET /api/v1/addon-secrets — List Addon Secret Definitions
+
+List all configured addon secret templates.
+
+**Response (200 OK):**
+```json
+{
+  "datadog": {
+    "addon_name": "datadog",
+    "secret_name": "datadog-keys",
+    "namespace": "datadog",
+    "keys": {
+      "api-key": "secrets/datadog/api-key",
+      "app-key": "secrets/datadog/app-key"
+    }
+  }
+}
+```
+
+---
+
+### DELETE /api/v1/addon-secrets/{addon} — Remove Addon Secret Definition
+
+Remove the secret template for a specific addon. Does not delete any existing secrets from remote clusters.
+
+**Path Parameters:**
+- `addon` — addon name
+
+**Success Response (200 OK):**
+```json
+{
+  "status": "deleted",
+  "addon": "datadog"
+}
+```
+
+**Error Responses:**
+| Code | Condition |
+|------|-----------|
+| 400 | Missing addon name |
+| 404 | No secret definition found for this addon |
+
+---
+
+### POST /api/v1/tokens — Create an API Key
+
+Create a long-lived API key for non-interactive consumers. API keys are stored hashed and the plaintext is only returned once at creation time.
+
+**Request:**
+```json
+{
+  "name": "backstage",
+  "role": "admin"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| name | string | yes | Unique name for the API key. |
+| role | string | no | Role to assign. Defaults to `admin`. |
+
+**Success Response (201 Created):**
+```json
+{
+  "name": "backstage",
+  "token": "shr_abc123...",
+  "role": "admin"
+}
+```
+
+**Important:** The `token` value is only returned once at creation time. Store it securely. There is no way to retrieve it later.
+
+**Error Responses:**
+| Code | Condition |
+|------|-----------|
+| 400 | Missing name, or token with this name already exists |
+| 401 | Unauthorized (admin only) |
+
+---
+
+### GET /api/v1/tokens — List API Keys
+
+List all API keys. Token values are not returned — only names, roles, and creation metadata.
+
+**Response (200 OK):**
+```json
+[
+  {
+    "name": "backstage",
+    "role": "admin",
+    "created_at": "2026-01-15T10:00:00Z"
+  },
+  {
+    "name": "terraform-ci",
+    "role": "admin",
+    "created_at": "2026-02-01T08:30:00Z"
+  }
+]
+```
+
+---
+
+### DELETE /api/v1/tokens/{name} — Revoke an API Key
+
+Revoke an API key by name. The key is immediately invalidated.
+
+**Path Parameters:**
+- `name` — token name
+
+**Success Response (200 OK):**
+```json
+{
+  "message": "token revoked"
+}
+```
+
+**Error Responses:**
+| Code | Condition |
+|------|-----------|
+| 400 | Missing or unknown token name |
+| 401 | Unauthorized (admin only) |
+
+---
 
 ### POST /api/v1/init — Initialize Addons Repo
 
-Create the addons repo structure, push to Git, and bootstrap the root-app into ArgoCD.
-
-**Preconditions:**
-- Sharko server is running (installed via `helm install`)
-- Git connection is configured and working (test via `POST /api/v1/connections/test`)
-- ArgoCD connection is configured and working
-- The target Git repo exists and is empty (or has no conflicting files)
+Create the addons repo structure, push to Git, and optionally bootstrap the root-app into ArgoCD.
 
 **Request:**
 ```json
@@ -598,10 +968,9 @@ Create the addons repo structure, push to Git, and bootstrap the root-app into A
 **Orchestration Steps:**
 1. Verify Git connection (can push to repo)
 2. Verify ArgoCD connection (can create applications)
-3. Generate repo structure from embedded `templates/starter/`, using server-side path config to determine directory layout
-4. Commit and push to Git
+3. Generate repo structure from embedded `templates/starter/`
+4. Commit and push to Git (as a PR)
 5. If `bootstrap_argocd`: create ArgoCD repo connection + apply root-app
-6. Verify ArgoCD synced the bootstrap
 
 **Success Response (201 Created):**
 ```json
@@ -615,7 +984,10 @@ Create the addons repo structure, push to Git, and bootstrap the root-app into A
       "bootstrap/templates/addons-appset.yaml",
       "configuration/addons-catalog.yaml",
       "configuration/addons-clusters-values/cluster-example.yaml"
-    ]
+    ],
+    "pr_url": "https://github.com/org/addons/pull/1",
+    "pr_id": 1,
+    "merged": false
   },
   "argocd": {
     "bootstrapped": true,
@@ -627,14 +999,14 @@ Create the addons repo structure, push to Git, and bootstrap the root-app into A
 **Error Responses:**
 | Code | Condition |
 |------|-----------|
-| 409 | Repo already has addon catalog and bootstrap files (already initialized) |
+| 409 | Repo already initialized |
 | 502 | Git or ArgoCD unreachable |
 
 ---
 
 ### GET /api/v1/fleet/status — Fleet Overview
 
-Aggregated fleet health. Combines data from existing cluster and addon services.
+Aggregated fleet health.
 
 **Response (200 OK):**
 ```json
@@ -663,8 +1035,6 @@ Aggregated fleet health. Combines data from existing cluster and addon services.
 ---
 
 ### GET /api/v1/providers — List Secrets Providers
-
-List the configured secrets provider and its status.
 
 **Response (200 OK):**
 ```json
@@ -704,7 +1074,6 @@ List the configured secrets provider and its status.
 ### GET /api/v1/config — Server Configuration
 
 Returns non-sensitive server configuration. Does NOT expose tokens or secrets.
-All repo paths and gitops settings are server-side config (Helm values / env vars), not read from a file in Git.
 
 **Response (200 OK):**
 ```json
@@ -738,6 +1107,8 @@ All repo paths and gitops settings are server-side config (Helm values / env var
 }
 ```
 
+Note: The `gitops` section reports `pr_auto_merge` (not a `mode` field). Git operations always create PRs; `pr_auto_merge` controls whether they are merged immediately.
+
 ---
 
 ## 6. CLI Command Mapping
@@ -750,17 +1121,23 @@ Every CLI command is a thin HTTP client call to the Sharko API.
 | `sharko version` | GET | `/api/v1/health` | Prints CLI version (ldflags) + server version from health response |
 | `sharko init` | POST | `/api/v1/init` | Bootstrap the addons repo |
 | `sharko add-cluster <name> [--addons a,b,c]` | POST | `/api/v1/clusters` | `--addons` maps to `addons` field |
+| `sharko add-clusters <n1,n2,...>` | POST | `/api/v1/clusters/batch` | Comma-separated cluster names |
 | `sharko remove-cluster <name>` | DELETE | `/api/v1/clusters/{name}` | |
 | `sharko update-cluster <name> --add-addon x --remove-addon y` | PATCH | `/api/v1/clusters/{name}` | Flags map to `addons` map |
 | `sharko list-clusters` | GET | `/api/v1/clusters` | Formatted table output |
 | `sharko add-addon <name> --chart --repo --version` | POST | `/api/v1/addons` | Flags map to request fields |
 | `sharko remove-addon <name>` | DELETE | `/api/v1/addons/{name}` | |
+| `sharko upgrade-addon <name> --version <ver> [--cluster <c>]` | POST | `/api/v1/addons/{name}/upgrade` | `--cluster` for per-cluster upgrade |
+| `sharko upgrade-addons <addon=ver,...>` | POST | `/api/v1/addons/upgrade-batch` | Comma-separated `addon=version` pairs |
+| `sharko token create [--name <n> --role <r>]` | POST | `/api/v1/tokens` | Prints token once |
+| `sharko token list` | GET | `/api/v1/tokens` | Formatted table output |
+| `sharko token revoke <name>` | DELETE | `/api/v1/tokens/{name}` | |
 | `sharko status` | GET | `/api/v1/fleet/status` | Formatted terminal output |
 
 ### CLI Auth Flow
 
 ```
-$ sharko login --server https://sharko.internal.company.com
+$ sharko login --server https://sharko.internal.example.com
 Username: admin
 Password: ****
 Logged in. Token saved to ~/.sharko/config
@@ -768,7 +1145,7 @@ Logged in. Token saved to ~/.sharko/config
 
 `~/.sharko/config` format:
 ```yaml
-server: https://sharko.internal.company.com
+server: https://sharko.internal.example.com
 token: abc123...
 ```
 
@@ -802,11 +1179,13 @@ Run 'sharko status' to watch progress.
 | Register cluster | Verify connectivity | Return 502. Nothing to clean up. |
 | Register cluster | Register in ArgoCD | Return 502. Nothing to clean up. |
 | Register cluster | Create values file / Git commit | Return **207 partial success**. DO NOT deregister from ArgoCD. User decides: retry or `sharko remove-cluster`. |
+| Batch register | Any individual cluster | Return 207 with per-cluster results. Continue with remaining clusters. |
 | Deregister cluster | Remove from ArgoCD | Return 502. Values file untouched. |
 | Deregister cluster | Delete values file / Git commit | Return 207 partial success. Cluster already removed from ArgoCD. |
 | Update cluster | Update ArgoCD labels | Return 502. Git untouched. |
 | Update cluster | Git commit | Return 207 partial success. ArgoCD labels already updated. |
 | Add addon | Git commit | Return 502. Nothing to clean up. |
+| Upgrade addon | Git commit | Return 502. Nothing changed. |
 | Init repo | Git push | Return 502. Nothing to clean up. |
 | Init repo | ArgoCD bootstrap | Return 207 partial success. Repo pushed but ArgoCD not bootstrapped. |
 
@@ -815,12 +1194,3 @@ Run 'sharko status' to watch progress.
 When a cluster is registered in ArgoCD (step 4 of register), the ApplicationSet controller may immediately detect the new cluster and start deploying addons. If we auto-deregister the cluster because a later step (Git commit) failed, ArgoCD may cascade-delete the addons it just started deploying. This causes more damage than the original failure.
 
 Partial success lets the user decide: retry the failed step, or explicitly clean up with `sharko remove-cluster`.
-
----
-
-## 8. Future Considerations (Not in v1.0.0)
-
-- **API keys** for non-interactive consumers (`sharko token create --name "backstage" --scope read,write`)
-- **Async operations** for batch workflows (return 202 Accepted + job ID, poll for status)
-- **Webhooks** for event notifications (cluster.registered, addon.drift, etc.)
-- **Batch cluster registration** (`POST /api/v1/clusters/batch`)

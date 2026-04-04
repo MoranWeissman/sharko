@@ -21,10 +21,11 @@ Terraform / CI:
 Sharko Server (in-cluster):
   +-- UI (React fleet dashboard)
   +-- API (read + write endpoints)
-  +-- Orchestrator (workflow engine)
+  +-- Orchestrator (workflow engine, Git-serialized via mutex)
   +-- ArgoCD client (account token auth)
   +-- Git client (GitHub, Azure DevOps)
   +-- Secrets provider (AWS SM, K8s Secrets)
+  +-- Remote client (deliver secrets to remote clusters)
   +-- AI assistant (multi-provider)
 ```
 
@@ -46,15 +47,18 @@ HTTP Handler (api/)
   +-- Validates request
   +-- Gets ArgoCD client from ConnectionService
   +-- Gets Git provider from ConnectionService
-  +-- Constructs Orchestrator
+  +-- Constructs Orchestrator (with shared gitMu)
   |
   v
 Orchestrator (orchestrator/)
   |
+  +-- Acquires gitMu (serializes all Git operations)
   +-- Step 1: Fetch credentials from provider
   +-- Step 2: Register in ArgoCD
   +-- Step 3: Create values file
-  +-- Step 4: Commit to Git (direct or PR)
+  +-- Step 4: Create PR in Git (always via PR)
+  +-- Step 5: Auto-merge if PRAutoMerge=true
+  +-- Releases gitMu
   |
   v
 Response (partial success or full success)
@@ -64,6 +68,7 @@ The orchestrator is stateless between calls. All dependencies are injected via t
 
 ```go
 func New(
+    gitMu *sync.Mutex,
     credProvider providers.ClusterCredentialsProvider,
     argocd ArgocdClient,
     git gitprovider.GitProvider,
@@ -74,6 +79,55 @@ func New(
 ```
 
 Handlers are thin glue code. They validate input, construct the orchestrator with the right dependencies, call the appropriate method, and write the response.
+
+---
+
+## Git Mutex Pattern
+
+All Git operations are serialized by a single `sync.Mutex` (`gitMu`) that lives on the `Server` struct and is passed to every orchestrator instance. The mutex is held for the duration of each Git write operation (branch creation → file commit → PR creation → optional merge).
+
+This prevents race conditions when multiple concurrent API requests attempt to create Git branches based on the same base commit:
+
+```
+Without mutex:                    With mutex:
+  Request A reads HEAD            Request A reads HEAD
+  Request B reads HEAD            Request A creates branch
+  Request A creates branch A      Request A creates PR
+  Request B creates branch B      Request A releases mutex
+  Both branches point at          Request B reads HEAD
+    the same parent commit        Request B creates branch
+  May cause PR conflicts          (always from latest HEAD)
+```
+
+The mutex is shared across all orchestrator instances — not per-operation type. This means even concurrent `add-cluster` + `add-addon` requests are serialized. The tradeoff (reduced throughput) is acceptable because Git operations are fast and infrequent relative to read operations.
+
+In tests where concurrency is not under test, pass `nil` for `gitMu`. The orchestrator checks for nil before locking.
+
+---
+
+## PR-Only Git Flow
+
+Sharko always creates pull requests for Git changes. There is no direct commit mode.
+
+**Configuration:**
+- `SHARKO_GITOPS_PR_AUTO_MERGE=false` (default) — PR is created and left open for human review
+- `SHARKO_GITOPS_PR_AUTO_MERGE=true` — PR is created and immediately merged (suitable for automated pipelines)
+
+**GitResult shape:**
+```go
+type GitResult struct {
+    PRUrl      string `json:"pr_url,omitempty"`
+    PRID       int    `json:"pr_id,omitempty"`
+    Branch     string `json:"branch,omitempty"`
+    Merged     bool   `json:"merged"`
+    CommitSHA  string `json:"commit_sha,omitempty"`
+    ValuesFile string `json:"values_file,omitempty"`
+}
+```
+
+`Merged: true` when `PRAutoMerge=true` and the merge succeeded. `Merged: false` when the PR is left open for manual review, or if auto-merge failed (PR still created).
+
+Every write operation response includes a `git` field with this shape, giving consumers a direct link to the created PR.
 
 ---
 
@@ -96,6 +150,74 @@ Instead, Sharko returns a structured response indicating what succeeded and what
 ```
 
 The user decides whether to retry the failed step or clean up with `sharko remove-cluster`.
+
+---
+
+## Remote Cluster Secret Management
+
+Sharko can deliver secrets from the secrets provider to remote clusters as Kubernetes Secrets. This is used for addons that need API keys or credentials at runtime (e.g., Datadog agent API keys).
+
+```
+Secrets Provider (AWS SM / K8s Secrets)
+  |
+  +-- GetSecretValue("secrets/datadog/api-key")
+  |
+  v
+Orchestrator
+  |
+  +-- remoteclient.NewClientFromKubeconfig(kubeconfigBytes)
+  +-- remoteclient.EnsureSecret(ctx, client, namespace, secretName, data)
+  |
+  v
+Remote Cluster
+  kubernetes.io/v1 Secret "datadog-keys" in namespace "datadog"
+```
+
+**AddonSecretDefinition** maps an addon to the K8s Secret it needs:
+```go
+type AddonSecretDefinition struct {
+    AddonName  string            `json:"addon_name"`
+    SecretName string            `json:"secret_name"`
+    Namespace  string            `json:"namespace"`
+    Keys       map[string]string `json:"keys"` // K8s data key → provider path
+}
+```
+
+Definitions are loaded from the `SHARKO_ADDON_SECRETS` environment variable (JSON map) at startup and can be updated at runtime via `POST /api/v1/addon-secrets`.
+
+Secret delivery happens:
+1. During `RegisterCluster` — secrets are created on the new cluster for all enabled addons that have definitions
+2. During `UpdateCluster` — when an addon is enabled, its secrets are created; when disabled, they are deleted (best-effort)
+3. On-demand via `POST /api/v1/clusters/{name}/secrets/refresh` — refreshes all secrets on a cluster
+
+---
+
+## API Key Authentication Flow
+
+Sharko supports two authentication mechanisms:
+
+1. **Session tokens** — short-lived (24h), returned by `POST /api/v1/auth/login`. Used by the CLI and browser UI.
+2. **API keys** — long-lived, created via `POST /api/v1/tokens`. Intended for non-interactive consumers.
+
+The auth middleware checks in this order:
+1. Extract the Bearer token from the `Authorization` header
+2. Check if it matches a known API key (hashed comparison)
+3. If not, validate it as a session token
+4. If neither matches, return 401
+
+API keys are stored in the same auth store as users, hashed with bcrypt. The plaintext is only returned once at creation time. Revocation (`DELETE /api/v1/tokens/{name}`) removes the entry from the store and immediately invalidates the key.
+
+---
+
+## Batch Operations Design
+
+Batch cluster registration (`POST /api/v1/clusters/batch`) processes up to `MaxBatchSize = 10` clusters sequentially (not in parallel). Sequential processing is intentional:
+
+1. **Git serialization** — each cluster registration creates a PR; parallel processing would require the Git mutex and would serialize anyway
+2. **Failure isolation** — if cluster N fails, clusters N+1 through 10 are still attempted; per-cluster results are reported independently
+3. **Predictable behavior** — no partial state from concurrent operations to reason about
+
+The response includes `total`, `succeeded`, `failed`, and a `results` array with the per-cluster outcome. If any cluster fails, HTTP 207 is returned; HTTP 200 is returned only when all clusters succeed.
 
 ---
 
@@ -183,6 +305,7 @@ Directory paths are configurable via server-side environment variables:
 - **Does not replace ArgoCD.** ArgoCD handles delivery. Sharko handles what gets delivered and where. If Sharko goes away, the repo still works -- ArgoCD does not know or care about Sharko.
 - **Does not store config in the addons repo.** All configuration is server-side (Helm values, env vars, K8s Secrets). No `sharko.yaml` in the repo.
 - **Does not auto-rollback.** Partial failures return structured responses. The user decides the next step.
+- **Does not commit directly to the base branch.** All Git changes go through pull requests.
 
 ---
 
@@ -212,7 +335,7 @@ If adoption justifies it, Sharko could evolve into a Kubernetes operator:
 
 ### Async Operations
 
-Batch workflows (e.g., registering 50 clusters) would return `202 Accepted` with a job ID for polling.
+Batch workflows beyond the current 10-cluster maximum could benefit from async processing: return `202 Accepted` with a job ID for polling, and process registrations in a background worker pool.
 
 ### Webhooks
 
@@ -224,7 +347,3 @@ cluster.degraded      -> health changed from healthy to degraded
 addon.drift           -> version drift detected across fleet
 addon.sync.failed     -> addon sync failure on a cluster
 ```
-
-### API Keys
-
-Non-interactive consumers (`sharko token create --name "backstage" --scope read,write`) for service-to-service auth without username/password.
