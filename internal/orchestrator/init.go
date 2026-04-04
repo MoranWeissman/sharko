@@ -13,7 +13,7 @@ import (
 
 // InitRepo scaffolds the addons repository from the embedded starter templates.
 // It walks the templateFS, replaces placeholder tokens, and creates each file
-// via the Git provider (either directly or through a PR branch).
+// via the Git provider directly to the base branch.
 func (o *Orchestrator) InitRepo(ctx context.Context, req InitRepoRequest) (*InitRepoResult, error) {
 	if o.templateFS == nil {
 		return nil, fmt.Errorf("template filesystem not configured")

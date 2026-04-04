@@ -109,6 +109,7 @@ func (m *mockCredProvider) ListClusters() ([]providers.ClusterInfo, error) {
 // ---------- mock Git provider ----------
 
 type mockGitProvider struct {
+	mu           sync.Mutex
 	files        map[string][]byte // path -> content (written files)
 	deletedFiles []string
 	branches     []string
@@ -126,6 +127,8 @@ func newMockGitProvider() *mockGitProvider {
 }
 
 func (m *mockGitProvider) GetFileContent(_ context.Context, path, _ string) ([]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if c, ok := m.files[path]; ok {
 		return c, nil
 	}
@@ -143,11 +146,15 @@ func (m *mockGitProvider) ListPullRequests(_ context.Context, _ string) ([]gitpr
 func (m *mockGitProvider) TestConnection(_ context.Context) error { return nil }
 
 func (m *mockGitProvider) CreateBranch(_ context.Context, branchName, _ string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.branches = append(m.branches, branchName)
 	return nil
 }
 
 func (m *mockGitProvider) CreateOrUpdateFile(_ context.Context, path string, content []byte, _, _ string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.createErr != nil {
 		return m.createErr
 	}
@@ -156,6 +163,8 @@ func (m *mockGitProvider) CreateOrUpdateFile(_ context.Context, path string, con
 }
 
 func (m *mockGitProvider) DeleteFile(_ context.Context, path, _, _ string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.deleteErr != nil {
 		return m.deleteErr
 	}
@@ -165,6 +174,8 @@ func (m *mockGitProvider) DeleteFile(_ context.Context, path, _, _ string) error
 }
 
 func (m *mockGitProvider) CreatePullRequest(_ context.Context, title, _, head, _ string) (*gitprovider.PullRequest, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.prErr != nil {
 		return nil, m.prErr
 	}
@@ -178,8 +189,12 @@ func (m *mockGitProvider) CreatePullRequest(_ context.Context, title, _, head, _
 	return pr, nil
 }
 
-func (m *mockGitProvider) MergePullRequest(_ context.Context, _ int) error { return m.mergeErr }
-func (m *mockGitProvider) DeleteBranch(_ context.Context, _ string) error  { return nil }
+func (m *mockGitProvider) MergePullRequest(_ context.Context, _ int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.mergeErr
+}
+func (m *mockGitProvider) DeleteBranch(_ context.Context, _ string) error { return nil }
 
 // ---------- helpers ----------
 
@@ -595,5 +610,68 @@ func TestRegisterCluster_ConcurrentDifferentClusters(t *testing.T) {
 	}
 	if _, ok := argocd.registeredClusters["cluster-b"]; !ok {
 		t.Error("cluster-b not registered in ArgoCD")
+	}
+}
+
+func TestDeregisterCluster_AutoMerge(t *testing.T) {
+	argocd := newMockArgocd()
+	git := newMockGitProvider()
+	orch := New(nil, defaultCreds(), argocd, git, autoMergeGitOps(), defaultPaths(), nil)
+
+	result, err := orch.DeregisterCluster(context.Background(), "prod-eu", "https://k8s.example.com:6443")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != "success" {
+		t.Errorf("expected success, got %q", result.Status)
+	}
+	if result.Git == nil || !result.Git.Merged {
+		t.Error("expected Merged=true with auto-merge")
+	}
+}
+
+func TestDeregisterCluster_AutoMergeFails(t *testing.T) {
+	argocd := newMockArgocd()
+	git := newMockGitProvider()
+	git.mergeErr = fmt.Errorf("merge conflict")
+	orch := New(nil, defaultCreds(), argocd, git, autoMergeGitOps(), defaultPaths(), nil)
+
+	result, err := orch.DeregisterCluster(context.Background(), "prod-eu", "https://k8s.example.com:6443")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != "partial" {
+		t.Errorf("expected partial, got %q", result.Status)
+	}
+	if result.FailedStep != "pr_merge" {
+		t.Errorf("expected failed step pr_merge, got %q", result.FailedStep)
+	}
+	if result.Git == nil || result.Git.PRUrl == "" {
+		t.Error("expected PR URL in partial result")
+	}
+	if result.Git.Merged {
+		t.Error("expected Merged=false when merge fails")
+	}
+}
+
+func TestUpdateClusterAddons_AutoMergeFails(t *testing.T) {
+	argocd := newMockArgocd()
+	git := newMockGitProvider()
+	git.mergeErr = fmt.Errorf("merge conflict")
+	orch := New(nil, defaultCreds(), argocd, git, autoMergeGitOps(), defaultPaths(), nil)
+
+	result, err := orch.UpdateClusterAddons(context.Background(), "prod-eu", "https://k8s.example.com:6443", "eu-west-1",
+		map[string]bool{"monitoring": true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != "partial" {
+		t.Errorf("expected partial, got %q", result.Status)
+	}
+	if result.FailedStep != "pr_merge" {
+		t.Errorf("expected failed step pr_merge, got %q", result.FailedStep)
+	}
+	if result.Git == nil || result.Git.PRUrl == "" {
+		t.Error("expected PR URL in partial result")
 	}
 }
