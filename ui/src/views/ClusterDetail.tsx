@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import {
   ArrowLeft,
   List,
@@ -53,7 +54,9 @@ export function ClusterDetail() {
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
-  const [activeTab, setActiveTab] = useState<'comparison' | 'config-overrides'>('comparison');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = searchParams.get('tab') || 'addons';
+  const setActiveTab = (tab: string) => setSearchParams({ tab }, { replace: true });
   const [configDiff, setConfigDiff] = useState<ConfigDiffResponse | null>(null);
   const [configDiffLoading, setConfigDiffLoading] = useState(false);
   const [configDiffError, setConfigDiffError] = useState<string | null>(null);
@@ -398,33 +401,13 @@ export function ClusterDetail() {
       )}
 
       {/* Tabs */}
-      <div className="flex gap-1 border-b border-gray-200 dark:border-gray-700">
-        <button
-          type="button"
-          onClick={() => setActiveTab('comparison')}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-            activeTab === 'comparison'
-              ? 'border-cyan-500 text-cyan-600 dark:text-cyan-400'
-              : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
-          }`}
-        >
-          Addons
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab('config-overrides')}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-            activeTab === 'config-overrides'
-              ? 'border-cyan-500 text-cyan-600 dark:text-cyan-400'
-              : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
-          }`}
-        >
-          Values: Global vs. Cluster
-        </button>
-      </div>
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList variant="line">
+          <TabsTrigger value="addons">Addons</TabsTrigger>
+          <TabsTrigger value="config-overrides">Values: Global vs. Cluster</TabsTrigger>
+        </TabsList>
 
-      {activeTab === 'comparison' && (
-        <>
+        <TabsContent value="addons" className="space-y-6">
           {/* Admin: Addon Enable/Disable Toggles */}
           <RoleGuard adminOnly>
             <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
@@ -540,11 +523,9 @@ export function ClusterDetail() {
               </tbody>
             </table>
           </div>
-        </>
-      )}
+        </TabsContent>
 
-      {activeTab === 'config-overrides' && (
-        <>
+        <TabsContent value="config-overrides" className="space-y-6">
           {clusterValuesYaml && (
             <YamlViewer yaml={clusterValuesYaml} title="Cluster Values" />
           )}
@@ -554,8 +535,8 @@ export function ClusterDetail() {
             error={configDiffError}
             onRetry={fetchConfigDiff}
           />
-        </>
-      )}
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
