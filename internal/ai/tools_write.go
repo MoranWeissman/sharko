@@ -95,7 +95,7 @@ func (e *ToolExecutor) enableAddon(ctx context.Context, connectionName, clusterN
 	}
 
 	title := fmt.Sprintf("[Sharko] Enable %s on %s", addonName, clusterName)
-	body := fmt.Sprintf("Automated by ArgoCD Addons Platform.\n\n**Change:** Enable addon %s on cluster %s.", addonName, clusterName)
+	body := fmt.Sprintf("Automated by Sharko.\n\n**Change:** Enable addon %s on cluster %s.", addonName, clusterName)
 
 	pr, err := gp.CreatePullRequest(ctx, title, body, branch, "main")
 	if err != nil {
@@ -137,7 +137,7 @@ func (e *ToolExecutor) disableAddon(ctx context.Context, connectionName, cluster
 	}
 
 	title := fmt.Sprintf("[Sharko] Disable %s on %s", addonName, clusterName)
-	body := fmt.Sprintf("Automated by ArgoCD Addons Platform.\n\n**Change:** Disable addon %s on cluster %s.", addonName, clusterName)
+	body := fmt.Sprintf("Automated by Sharko.\n\n**Change:** Disable addon %s on cluster %s.", addonName, clusterName)
 
 	pr, err := gp.CreatePullRequest(ctx, title, body, branch, "main")
 	if err != nil {
@@ -179,7 +179,7 @@ func (e *ToolExecutor) updateAddonVersion(ctx context.Context, connectionName, a
 	}
 
 	title := fmt.Sprintf("[Sharko] Update %s to %s", addonName, version)
-	body := fmt.Sprintf("Automated by ArgoCD Addons Platform.\n\n**Change:** Update addon %s version to %s.", addonName, version)
+	body := fmt.Sprintf("Automated by Sharko.\n\n**Change:** Update addon %s version to %s.", addonName, version)
 
 	pr, err := gp.CreatePullRequest(ctx, title, body, branch, "main")
 	if err != nil {

@@ -86,6 +86,7 @@ func (s *Server) handleDeleteConnection(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleSetActiveConnection(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) { return }
 	var req models.SetActiveConnectionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")

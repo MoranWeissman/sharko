@@ -52,7 +52,7 @@ type ollamaChatResponse struct {
 	Done    bool        `json:"done"`
 }
 
-const systemPrompt = `You are an expert Kubernetes platform engineer assistant for the ArgoCD Addons Platform.
+const systemPrompt = `You are an expert Kubernetes platform engineer assistant for Sharko.
 
 === PROJECT ARCHITECTURE ===
 This platform manages software addons (Datadog, Istio, Kyverno, External Secrets, etc.) across 50+ EKS clusters using GitOps.

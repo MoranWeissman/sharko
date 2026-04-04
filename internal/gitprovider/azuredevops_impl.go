@@ -437,7 +437,7 @@ func (a *AzureDevOpsProvider) MergePullRequest(ctx context.Context, prNumber int
 			"deleteSourceBranch":    true,
 			"mergeStrategy":         "squash",
 			"bypassPolicy":         true,
-			"bypassReason":         "Automated migration via ArgoCD Addons Platform",
+			"bypassReason":         "Automated by Sharko",
 		},
 	})
 
