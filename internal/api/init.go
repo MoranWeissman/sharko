@@ -37,7 +37,7 @@ func (s *Server) handleInit(w http.ResponseWriter, r *http.Request) {
 		req = orchestrator.InitRepoRequest{BootstrapArgoCD: true}
 	}
 
-	orch := orchestrator.New(s.credProvider, ac, git, s.gitopsCfg, s.repoPaths, s.templateFS)
+	orch := orchestrator.New(&s.gitMu, s.credProvider, ac, git, s.gitopsCfg, s.repoPaths, s.templateFS)
 	result, err := orch.InitRepo(r.Context(), req)
 	if err != nil {
 		if strings.Contains(err.Error(), "already") {

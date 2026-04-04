@@ -9,7 +9,12 @@ import (
 )
 
 // commitChanges handles the gitops flow: direct commit or PR based on config.
+// Acquires the shared Git mutex to serialize all Git operations across concurrent requests.
 func (o *Orchestrator) commitChanges(ctx context.Context, files map[string][]byte, deletePaths []string, operation string) (*GitResult, error) {
+	if o.gitMu != nil {
+		o.gitMu.Lock()
+		defer o.gitMu.Unlock()
+	}
 	if o.gitops.DefaultMode == "pr" {
 		return o.commitViaPR(ctx, files, deletePaths, operation)
 	}

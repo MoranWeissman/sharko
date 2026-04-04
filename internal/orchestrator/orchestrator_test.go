@@ -4,19 +4,22 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
+	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/providers"
 )
 
 // ---------- mock ArgoCD client ----------
 
 type mockArgocd struct {
-	registeredClusters map[string]string // name -> server
+	registeredClusters map[string]string              // name -> server
 	deletedServers     []string
-	updatedLabels      map[string]map[string]string // server -> labels
+	updatedLabels      map[string]map[string]string   // server -> labels
 	syncedApps         []string
+	existingClusters   []models.ArgocdCluster         // for ListClusters / duplicate check
 	registerErr        error
 	deleteErr          error
 	updateLabelsErr    error
@@ -27,6 +30,10 @@ func newMockArgocd() *mockArgocd {
 		registeredClusters: make(map[string]string),
 		updatedLabels:      make(map[string]map[string]string),
 	}
+}
+
+func (m *mockArgocd) ListClusters(_ context.Context) ([]models.ArgocdCluster, error) {
+	return m.existingClusters, nil
 }
 
 func (m *mockArgocd) RegisterCluster(_ context.Context, name, server string, _ []byte, _ string, _ map[string]string) error {
@@ -204,7 +211,7 @@ func defaultCreds() *mockCredProvider {
 func TestRegisterCluster_DirectMode(t *testing.T) {
 	argocd := newMockArgocd()
 	git := newMockGitProvider()
-	orch := New(defaultCreds(), argocd, git, defaultGitOps(), defaultPaths(), nil)
+	orch := New(nil, defaultCreds(), argocd, git, defaultGitOps(), defaultPaths(), nil)
 
 	result, err := orch.RegisterCluster(context.Background(), RegisterClusterRequest{
 		Name:   "prod-eu",
@@ -240,7 +247,7 @@ func TestRegisterCluster_DirectMode(t *testing.T) {
 func TestRegisterCluster_PRMode(t *testing.T) {
 	argocd := newMockArgocd()
 	git := newMockGitProvider()
-	orch := New(defaultCreds(), argocd, git, prGitOps(), defaultPaths(), nil)
+	orch := New(nil, defaultCreds(), argocd, git, prGitOps(), defaultPaths(), nil)
 
 	result, err := orch.RegisterCluster(context.Background(), RegisterClusterRequest{
 		Name:   "prod-eu",
@@ -269,7 +276,7 @@ func TestRegisterCluster_PartialSuccess_GitFails(t *testing.T) {
 	argocd := newMockArgocd()
 	git := newMockGitProvider()
 	git.createErr = fmt.Errorf("git API error")
-	orch := New(defaultCreds(), argocd, git, defaultGitOps(), defaultPaths(), nil)
+	orch := New(nil, defaultCreds(), argocd, git, defaultGitOps(), defaultPaths(), nil)
 
 	result, err := orch.RegisterCluster(context.Background(), RegisterClusterRequest{
 		Name:   "prod-eu",
@@ -293,7 +300,7 @@ func TestRegisterCluster_PartialSuccess_GitFails(t *testing.T) {
 
 func TestRegisterCluster_ProviderFails(t *testing.T) {
 	creds := &mockCredProvider{err: fmt.Errorf("vault unavailable")}
-	orch := New(creds, newMockArgocd(), newMockGitProvider(), defaultGitOps(), defaultPaths(), nil)
+	orch := New(nil, creds, newMockArgocd(), newMockGitProvider(), defaultGitOps(), defaultPaths(), nil)
 
 	_, err := orch.RegisterCluster(context.Background(), RegisterClusterRequest{
 		Name: "prod-eu",
@@ -308,7 +315,7 @@ func TestRegisterCluster_ProviderFails(t *testing.T) {
 }
 
 func TestRegisterCluster_InvalidName(t *testing.T) {
-	orch := New(defaultCreds(), newMockArgocd(), newMockGitProvider(), defaultGitOps(), defaultPaths(), nil)
+	orch := New(nil, defaultCreds(), newMockArgocd(), newMockGitProvider(), defaultGitOps(), defaultPaths(), nil)
 
 	_, err := orch.RegisterCluster(context.Background(), RegisterClusterRequest{
 		Name: "",
@@ -328,7 +335,7 @@ func TestRegisterCluster_InvalidName(t *testing.T) {
 func TestDeregisterCluster(t *testing.T) {
 	argocd := newMockArgocd()
 	git := newMockGitProvider()
-	orch := New(defaultCreds(), argocd, git, defaultGitOps(), defaultPaths(), nil)
+	orch := New(nil, defaultCreds(), argocd, git, defaultGitOps(), defaultPaths(), nil)
 
 	result, err := orch.DeregisterCluster(context.Background(), "prod-eu", "https://k8s.example.com:6443")
 	if err != nil {
@@ -352,7 +359,7 @@ func TestDeregisterCluster(t *testing.T) {
 func TestUpdateClusterAddons(t *testing.T) {
 	argocd := newMockArgocd()
 	git := newMockGitProvider()
-	orch := New(defaultCreds(), argocd, git, defaultGitOps(), defaultPaths(), nil)
+	orch := New(nil, defaultCreds(), argocd, git, defaultGitOps(), defaultPaths(), nil)
 
 	result, err := orch.UpdateClusterAddons(context.Background(), "prod-eu", "https://k8s.example.com:6443", "eu-west-1",
 		map[string]bool{"monitoring": true, "logging": true})
@@ -380,7 +387,7 @@ func TestUpdateClusterAddons(t *testing.T) {
 
 func TestAddAddon(t *testing.T) {
 	git := newMockGitProvider()
-	orch := New(defaultCreds(), newMockArgocd(), git, defaultGitOps(), defaultPaths(), nil)
+	orch := New(nil, defaultCreds(), newMockArgocd(), git, defaultGitOps(), defaultPaths(), nil)
 
 	result, err := orch.AddAddon(context.Background(), AddAddonRequest{
 		Name:      "prometheus",
@@ -410,7 +417,7 @@ func TestAddAddon(t *testing.T) {
 
 func TestRemoveAddon(t *testing.T) {
 	git := newMockGitProvider()
-	orch := New(defaultCreds(), newMockArgocd(), git, defaultGitOps(), defaultPaths(), nil)
+	orch := New(nil, defaultCreds(), newMockArgocd(), git, defaultGitOps(), defaultPaths(), nil)
 
 	result, err := orch.RemoveAddon(context.Background(), "prometheus")
 	if err != nil {
@@ -454,5 +461,88 @@ func TestGenerateClusterValues_NoAddons(t *testing.T) {
 	// Should not contain addon sections.
 	if strings.Contains(s, "enabled:") {
 		t.Error("unexpected addon section in output with nil addons")
+	}
+}
+
+func TestRegisterCluster_DuplicateReturnsError(t *testing.T) {
+	argocd := newMockArgocd()
+	argocd.existingClusters = []models.ArgocdCluster{
+		{Name: "prod-eu", Server: "https://k8s.example.com:6443"},
+	}
+	git := newMockGitProvider()
+	orch := New(nil, defaultCreds(), argocd, git, defaultGitOps(), defaultPaths(), nil)
+
+	_, err := orch.RegisterCluster(context.Background(), RegisterClusterRequest{
+		Name:   "prod-eu",
+		Addons: map[string]bool{"monitoring": true},
+	})
+
+	if err == nil {
+		t.Fatal("expected error for duplicate cluster")
+	}
+	if !strings.Contains(err.Error(), "already exists") {
+		t.Errorf("expected 'already exists' error, got: %v", err)
+	}
+	// Should NOT have registered in ArgoCD.
+	if _, ok := argocd.registeredClusters["prod-eu"]; ok {
+		t.Error("duplicate cluster should not be registered in ArgoCD")
+	}
+}
+
+func TestRegisterCluster_ConcurrentDifferentClusters(t *testing.T) {
+	mu := &sync.Mutex{}
+	creds := &mockCredProvider{
+		creds: map[string]*providers.Kubeconfig{
+			"cluster-a": {Server: "https://a.example.com:6443", CAData: []byte("ca-a"), Token: "tok-a"},
+			"cluster-b": {Server: "https://b.example.com:6443", CAData: []byte("ca-b"), Token: "tok-b"},
+		},
+	}
+
+	argocd := newMockArgocd()
+	git := newMockGitProvider()
+	// Two orchestrators sharing the same mutex (simulates two concurrent requests).
+	orchA := New(mu, creds, argocd, git, prGitOps(), defaultPaths(), nil)
+	orchB := New(mu, creds, argocd, git, prGitOps(), defaultPaths(), nil)
+
+	var errA, errB error
+	var resultA, resultB *RegisterClusterResult
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		resultA, errA = orchA.RegisterCluster(context.Background(), RegisterClusterRequest{
+			Name: "cluster-a", Addons: map[string]bool{"monitoring": true},
+		})
+	}()
+	go func() {
+		defer wg.Done()
+		resultB, errB = orchB.RegisterCluster(context.Background(), RegisterClusterRequest{
+			Name: "cluster-b", Addons: map[string]bool{"logging": true},
+		})
+	}()
+	wg.Wait()
+
+	if errA != nil {
+		t.Fatalf("cluster-a failed: %v", errA)
+	}
+	if errB != nil {
+		t.Fatalf("cluster-b failed: %v", errB)
+	}
+	if resultA.Status != "success" {
+		t.Errorf("cluster-a: expected success, got %q", resultA.Status)
+	}
+	if resultB.Status != "success" {
+		t.Errorf("cluster-b: expected success, got %q", resultB.Status)
+	}
+	// Both should have created branches (PR mode).
+	if len(git.branches) != 2 {
+		t.Errorf("expected 2 branches, got %d", len(git.branches))
+	}
+	// Both should be registered in ArgoCD.
+	if _, ok := argocd.registeredClusters["cluster-a"]; !ok {
+		t.Error("cluster-a not registered in ArgoCD")
+	}
+	if _, ok := argocd.registeredClusters["cluster-b"]; !ok {
+		t.Error("cluster-b not registered in ArgoCD")
 	}
 }

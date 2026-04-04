@@ -30,6 +30,12 @@ func (o *Orchestrator) InitRepo(ctx context.Context, req InitRepoRequest) (*Init
 	branch := o.gitops.BaseBranch
 	commitPrefix := o.gitops.CommitPrefix
 
+	// Acquire Git mutex for the entire init operation (many sequential Git writes).
+	if o.gitMu != nil {
+		o.gitMu.Lock()
+		defer o.gitMu.Unlock()
+	}
+
 	var filesCreated []string
 
 	err := fs.WalkDir(o.templateFS, "starter", func(path string, d fs.DirEntry, err error) error {

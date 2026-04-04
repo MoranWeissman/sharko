@@ -25,6 +25,17 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		return nil, fmt.Errorf("invalid cluster name %q: must be alphanumeric with hyphens, starting with an alphanumeric character", req.Name)
 	}
 
+	// Step 2: Check for duplicate — cluster must not already exist in ArgoCD.
+	clusters, err := o.argocd.ListClusters(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("checking for existing cluster %q: %w", req.Name, err)
+	}
+	for _, c := range clusters {
+		if c.Name == req.Name {
+			return nil, fmt.Errorf("cluster %q already exists in ArgoCD", req.Name)
+		}
+	}
+
 	result := &RegisterClusterResult{
 		Cluster: ClusterResult{
 			Name:   req.Name,
@@ -33,7 +44,7 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	}
 	var steps []string
 
-	// Step 2: Fetch credentials from provider.
+	// Step 3: Fetch credentials from provider.
 	creds, err := o.credProvider.GetCredentials(req.Name)
 	if err != nil {
 		return nil, fmt.Errorf("fetching credentials for cluster %q: %w", req.Name, err)

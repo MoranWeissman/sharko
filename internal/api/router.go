@@ -40,6 +40,7 @@ type Server struct {
 	providerCfg  *providers.Config
 	repoPaths    orchestrator.RepoPathsConfig
 	gitopsCfg    orchestrator.GitOpsConfig
+	gitMu        sync.Mutex // shared mutex serializing all Git operations across requests
 
 	// Template filesystem for POST /api/v1/init (always available).
 	templateFS fs.FS

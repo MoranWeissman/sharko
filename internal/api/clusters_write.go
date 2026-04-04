@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"regexp"
+	"strings"
 
 	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
@@ -48,9 +49,13 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	orch := orchestrator.New(s.credProvider, ac, git, s.gitopsCfg, s.repoPaths, nil)
+	orch := orchestrator.New(&s.gitMu, s.credProvider, ac, git, s.gitopsCfg, s.repoPaths, nil)
 	result, err := orch.RegisterCluster(r.Context(), req)
 	if err != nil {
+		if strings.Contains(err.Error(), "already exists") {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
@@ -95,7 +100,7 @@ func (s *Server) handleDeregisterCluster(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	orch := orchestrator.New(nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
+	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
 	result, err := orch.DeregisterCluster(r.Context(), name, serverURL)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
@@ -150,7 +155,7 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	orch := orchestrator.New(nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
+	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
 	// Region is empty — PATCH only updates addon labels, not cluster metadata.
 	// Region is set during RegisterCluster and not exposed via the update API.
 	result, err := orch.UpdateClusterAddons(r.Context(), name, serverURL, "", req.Addons)
@@ -198,7 +203,7 @@ func (s *Server) handleRefreshClusterCredentials(w http.ResponseWriter, r *http.
 		return
 	}
 
-	orch := orchestrator.New(s.credProvider, ac, nil, s.gitopsCfg, s.repoPaths, nil)
+	orch := orchestrator.New(&s.gitMu, s.credProvider, ac, nil, s.gitopsCfg, s.repoPaths, nil)
 	if err := orch.RefreshClusterCredentials(r.Context(), name, serverURL); err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
