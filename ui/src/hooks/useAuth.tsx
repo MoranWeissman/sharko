@@ -12,7 +12,7 @@ interface AuthContextType {
   error: string | null
 }
 
-const AuthContext = createContext<AuthContextType | null>(null)
+export const AuthContext = createContext<AuthContextType | null>(null)
 
 const TOKEN_KEY = 'sharko-auth-token'
 const USER_KEY = 'sharko-auth-user'

@@ -20,6 +20,7 @@ import {
   Menu,
   Search,
   MessageSquare,
+  Key,
 } from 'lucide-react'
 import { useConnections } from '@/hooks/useConnections'
 import { FloatingAssistant } from '@/components/FloatingAssistant'
@@ -63,6 +64,7 @@ const navSections: NavSection[] = [
     items: [
       { to: '/settings', label: 'Settings', icon: Settings },
       { to: '/users', label: 'User Management', icon: User },
+      { to: '/api-keys', label: 'API Keys', icon: Key },
     ],
   },
   {
@@ -86,6 +88,7 @@ const routeLabels: Record<string, string> = {
   docs: 'Docs',
   settings: 'Settings',
   users: 'User Management',
+  'api-keys': 'API Keys',
   user: 'Account',
 }
 

@@ -75,6 +75,24 @@ async function putJSON<T>(path: string, body?: unknown): Promise<T> {
   return res.json()
 }
 
+async function patchJSON<T>(path: string, body?: unknown): Promise<T> {
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: body ? JSON.stringify(body) : undefined,
+  })
+  if (res.status === 401) {
+    sessionStorage.removeItem(TOKEN_KEY)
+    window.location.reload()
+    throw new Error('Session expired')
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error(err.error || res.statusText)
+  }
+  return res.json()
+}
+
 async function deleteJSON<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     method: 'DELETE',
@@ -108,6 +126,56 @@ async function fetchJSONMethod<T>(path: string, method: string, body?: unknown):
     throw new Error(err.error || res.statusText)
   }
   return res.json()
+}
+
+// --- Write operations (Phase 7) ---
+
+export async function registerCluster(data: { name: string; addons?: Record<string, boolean>; region?: string }) {
+  return postJSON<any>('/clusters', data)
+}
+
+export async function deregisterCluster(name: string) {
+  return deleteJSON<any>(`/clusters/${encodeURIComponent(name)}`)
+}
+
+export async function updateClusterAddons(name: string, addons: Record<string, boolean>) {
+  return patchJSON<any>(`/clusters/${encodeURIComponent(name)}`, { addons })
+}
+
+export async function addAddon(data: { name: string; chart: string; repo_url: string; version: string; namespace?: string; sync_wave?: number }) {
+  return postJSON<any>('/addons', data)
+}
+
+export async function removeAddon(name: string) {
+  return deleteJSON<any>(`/addons/${encodeURIComponent(name)}?confirm=true`)
+}
+
+export async function upgradeAddon(name: string, data: { version: string; cluster?: string }) {
+  return postJSON<any>(`/addons/${encodeURIComponent(name)}/upgrade`, data)
+}
+
+export async function createToken(data: { name: string; role: string }) {
+  return postJSON<any>('/tokens', data)
+}
+
+export async function listTokens() {
+  return fetchJSON<any[]>('/tokens')
+}
+
+export async function revokeToken(name: string) {
+  return deleteJSON<any>(`/tokens/${encodeURIComponent(name)}`)
+}
+
+export async function batchRegisterClusters(clusters: Array<{ name: string; addons?: Record<string, boolean>; region?: string }>) {
+  return postJSON<any>('/clusters/batch', { clusters })
+}
+
+export async function discoverClusters() {
+  return fetchJSON<any>('/clusters/available')
+}
+
+export async function initRepo(data?: { bootstrap_argocd?: boolean }) {
+  return postJSON<any>('/init', data || { bootstrap_argocd: true })
 }
 
 export const api = {

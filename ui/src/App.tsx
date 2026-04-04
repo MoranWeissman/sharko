@@ -18,6 +18,7 @@ import { UpgradeChecker } from '@/views/UpgradeChecker'
 import { AIAssistant } from '@/views/AIAssistant'
 import { UserInfo } from '@/views/UserInfo'
 import UserManagement from '@/views/UserManagement'
+import { ApiKeys } from '@/views/ApiKeys'
 
 function AppRoutes() {
   const { isAuthenticated, loading } = useAuth()
@@ -52,6 +53,7 @@ function AppRoutes() {
           <Route path="docs" element={<Docs />} />
           <Route path="settings" element={<Connections />} />
           <Route path="users" element={<UserManagement />} />
+          <Route path="api-keys" element={<ApiKeys />} />
           <Route path="user" element={<UserInfo />} />
         </Route>
       </Routes>

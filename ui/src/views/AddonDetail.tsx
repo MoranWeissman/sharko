@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import {
   ArrowLeft,
@@ -9,14 +9,27 @@ import {
   Ban,
   ExternalLink,
   Activity,
+  Trash2,
+  ArrowUpCircle,
+  Loader2,
 } from 'lucide-react'
-import { api } from '@/services/api'
+import { api, removeAddon, upgradeAddon } from '@/services/api'
 import type { AddonCatalogItem, ConnectionsListResponse } from '@/services/models'
 import { StatCard } from '@/components/StatCard'
 import { StatusBadge } from '@/components/StatusBadge'
 import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
 import { YamlViewer } from '@/components/YamlViewer'
+import { RoleGuard } from '@/components/RoleGuard'
+import { ConfirmationModal } from '@/components/ConfirmationModal'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog'
 
 function HealthProgressBar({ healthy, total }: { healthy: number; total: number }) {
   if (total === 0) return null
@@ -56,6 +69,19 @@ export function AddonDetail() {
   const [statusFilter, setStatusFilter] = useState('all')
   const [healthFilter, setHealthFilter] = useState('all')
 
+  // Remove addon
+  const [removeModalOpen, setRemoveModalOpen] = useState(false)
+  const [removing, setRemoving] = useState(false)
+  const [removeError, setRemoveError] = useState<string | null>(null)
+
+  // Upgrade addon
+  const [upgradeOpen, setUpgradeOpen] = useState(false)
+  const [upgradeVersion, setUpgradeVersion] = useState('')
+  const [upgradeCluster, setUpgradeCluster] = useState('')
+  const [upgradeSubmitting, setUpgradeSubmitting] = useState(false)
+  const [upgradeError, setUpgradeError] = useState<string | null>(null)
+  const [upgradeResult, setUpgradeResult] = useState<string | null>(null)
+
   useEffect(() => {
     if (!name) return
     api
@@ -83,6 +109,38 @@ export function AddonDetail() {
       })
       .catch(() => {})
   }, [name])
+
+  const handleRemoveAddon = useCallback(async () => {
+    if (!name) return
+    setRemoving(true)
+    setRemoveError(null)
+    try {
+      await removeAddon(name)
+      navigate('/addons')
+    } catch (e: unknown) {
+      setRemoveError(e instanceof Error ? e.message : 'Failed to remove addon')
+      setRemoving(false)
+    }
+  }, [name, navigate])
+
+  const handleUpgrade = useCallback(async () => {
+    if (!name || !upgradeVersion.trim()) return
+    setUpgradeSubmitting(true)
+    setUpgradeError(null)
+    setUpgradeResult(null)
+    try {
+      const result = await upgradeAddon(name, {
+        version: upgradeVersion.trim(),
+        cluster: upgradeCluster.trim() || undefined,
+      })
+      const prUrl = result?.pr_url || result?.pull_request_url
+      setUpgradeResult(prUrl ? `Upgrade initiated. PR: ${prUrl}` : 'Upgrade initiated successfully.')
+    } catch (e: unknown) {
+      setUpgradeError(e instanceof Error ? e.message : 'Failed to upgrade addon')
+    } finally {
+      setUpgradeSubmitting(false)
+    }
+  }, [name, upgradeVersion, upgradeCluster])
 
   const enabledApps = useMemo(
     () => (addon ? addon.applications.filter((a) => a.enabled) : []),
@@ -231,22 +289,123 @@ export function AddonDetail() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center gap-3">
-        <button
-          type="button"
-          onClick={() => navigate('/addons')}
-          className="rounded-md p-2 hover:bg-gray-100 dark:hover:bg-gray-700"
-          aria-label="Back to addons"
-        >
-          <ArrowLeft className="h-5 w-5 dark:text-gray-300" />
-        </button>
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{addon.addon_name}</h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400">
-            {addon.chart} &middot; Namespace: {namespace}
-          </p>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => navigate('/addons')}
+            className="rounded-md p-2 hover:bg-gray-100 dark:hover:bg-gray-700"
+            aria-label="Back to addons"
+          >
+            <ArrowLeft className="h-5 w-5 dark:text-gray-300" />
+          </button>
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{addon.addon_name}</h1>
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              {addon.chart} &middot; Namespace: {namespace}
+            </p>
+          </div>
         </div>
+        <RoleGuard adminOnly>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={() => { setUpgradeVersion(''); setUpgradeCluster(''); setUpgradeError(null); setUpgradeResult(null); setUpgradeOpen(true) }}
+              className="inline-flex items-center gap-2 rounded-lg border border-cyan-300 bg-white px-3 py-2 text-sm font-medium text-cyan-700 hover:bg-cyan-50 dark:border-cyan-700 dark:bg-gray-800 dark:text-cyan-400 dark:hover:bg-cyan-900/20"
+            >
+              <ArrowUpCircle className="h-4 w-4" />
+              Upgrade
+            </button>
+            <button
+              type="button"
+              onClick={() => { setRemoveError(null); setRemoveModalOpen(true) }}
+              className="inline-flex items-center gap-2 rounded-lg border border-red-300 bg-white px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 dark:border-red-700 dark:bg-gray-800 dark:text-red-400 dark:hover:bg-red-900/20"
+            >
+              <Trash2 className="h-4 w-4" />
+              Remove
+            </button>
+          </div>
+        </RoleGuard>
       </div>
+
+      <ConfirmationModal
+        open={removeModalOpen}
+        onClose={() => setRemoveModalOpen(false)}
+        onConfirm={handleRemoveAddon}
+        title={`Remove add-on "${name}"?`}
+        description="This will remove the add-on from the catalog. This action creates a pull request and cannot be undone."
+        confirmText="Remove"
+        typeToConfirm={name}
+        destructive
+        loading={removing}
+      />
+      {removeError && (
+        <p className="text-sm text-red-600 dark:text-red-400">{removeError}</p>
+      )}
+
+      {/* Upgrade Dialog */}
+      <Dialog open={upgradeOpen} onOpenChange={(v) => { if (!v) setUpgradeOpen(false) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Upgrade {addon.addon_name}</DialogTitle>
+            <DialogDescription>Set a new version for this add-on.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                New Version <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={upgradeVersion}
+                onChange={(e) => setUpgradeVersion(e.target.value)}
+                placeholder="e.g. 4.9.0"
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                Specific Cluster (optional)
+              </label>
+              <select
+                value={upgradeCluster}
+                onChange={(e) => setUpgradeCluster(e.target.value)}
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
+              >
+                <option value="">All clusters (global)</option>
+                {enabledApps.map((app) => (
+                  <option key={app.cluster_name} value={app.cluster_name}>
+                    {app.cluster_name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {upgradeError && <p className="text-sm text-red-600 dark:text-red-400">{upgradeError}</p>}
+            {upgradeResult && <p className="text-sm text-green-600 dark:text-green-400">{upgradeResult}</p>}
+          </div>
+          <DialogFooter>
+            <button
+              type="button"
+              onClick={() => setUpgradeOpen(false)}
+              disabled={upgradeSubmitting}
+              className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+            >
+              {upgradeResult ? 'Close' : 'Cancel'}
+            </button>
+            {!upgradeResult && (
+              <button
+                type="button"
+                onClick={handleUpgrade}
+                disabled={!upgradeVersion.trim() || upgradeSubmitting}
+                className="inline-flex items-center gap-2 rounded-md bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-cyan-700 dark:hover:bg-cyan-600"
+              >
+                {upgradeSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
+                Upgrade
+              </button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Summary stat cards */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">

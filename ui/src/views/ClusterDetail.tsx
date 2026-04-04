@@ -16,14 +16,18 @@ import {
   WifiOff,
   MessageSquare,
   Tag,
+  Trash2,
+  Loader2,
 } from 'lucide-react';
-import { api } from '@/services/api';
+import { api, deregisterCluster, updateClusterAddons } from '@/services/api';
 import type { ClusterComparisonResponse, AddonComparisonStatus, ConfigDiffResponse } from '@/services/models';
 import { StatCard } from '@/components/StatCard';
 import { StatusBadge } from '@/components/StatusBadge';
 import { LoadingState } from '@/components/LoadingState';
 import { ErrorState } from '@/components/ErrorState';
 import { YamlViewer } from '@/components/YamlViewer';
+import { RoleGuard } from '@/components/RoleGuard';
+import { ConfirmationModal } from '@/components/ConfirmationModal';
 
 type StatusFilter =
   | 'all'
@@ -57,6 +61,18 @@ export function ClusterDetail() {
   const [nodeInfo, setNodeInfo] = useState<{ total: number; ready: number; not_ready: number } | null>(null);
   const [argocdBaseURL, setArgocdBaseURL] = useState<string>('');
 
+  // Remove cluster
+  const [removeModalOpen, setRemoveModalOpen] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [removeError, setRemoveError] = useState<string | null>(null);
+
+  // Addon toggles
+  const [addonToggles, setAddonToggles] = useState<Record<string, boolean>>({});
+  const [originalToggles, setOriginalToggles] = useState<Record<string, boolean>>({});
+  const [applyingToggles, setApplyingToggles] = useState(false);
+  const [toggleError, setToggleError] = useState<string | null>(null);
+  const [toggleResult, setToggleResult] = useState<string | null>(null);
+
   const fetchData = useCallback(async () => {
     if (!name) return;
     try {
@@ -68,6 +84,13 @@ export function ClusterDetail() {
         api.getConnections().catch(() => null),
       ]);
       setData(result);
+      // Initialize addon toggles from cluster data
+      const toggleMap: Record<string, boolean> = {};
+      result.addon_comparisons.forEach((a: { addon_name: string; git_enabled: boolean }) => {
+        toggleMap[a.addon_name] = a.git_enabled;
+      });
+      setAddonToggles(toggleMap);
+      setOriginalToggles(toggleMap);
       if (nodes && typeof nodes === 'object' && 'total' in nodes) {
         setNodeInfo(nodes as { total: number; ready: number; not_ready: number });
       }
@@ -89,6 +112,40 @@ export function ClusterDetail() {
       setLoading(false);
     }
   }, [name]);
+
+  const handleRemoveCluster = useCallback(async () => {
+    if (!name) return;
+    setRemoving(true);
+    setRemoveError(null);
+    try {
+      await deregisterCluster(name);
+      navigate('/clusters');
+    } catch (e: unknown) {
+      setRemoveError(e instanceof Error ? e.message : 'Failed to remove cluster');
+      setRemoving(false);
+    }
+  }, [name, navigate]);
+
+  const hasToggleChanges = useMemo(() => {
+    return Object.keys(addonToggles).some((k) => addonToggles[k] !== originalToggles[k]);
+  }, [addonToggles, originalToggles]);
+
+  const handleApplyToggles = useCallback(async () => {
+    if (!name) return;
+    setApplyingToggles(true);
+    setToggleError(null);
+    setToggleResult(null);
+    try {
+      const result = await updateClusterAddons(name, addonToggles);
+      const prUrl = result?.pr_url || result?.pull_request_url;
+      setToggleResult(prUrl ? `Changes applied. PR: ${prUrl}` : 'Changes applied successfully.');
+      setOriginalToggles({ ...addonToggles });
+    } catch (e: unknown) {
+      setToggleError(e instanceof Error ? e.message : 'Failed to apply changes');
+    } finally {
+      setApplyingToggles(false);
+    }
+  }, [name, addonToggles]);
 
   const fetchConfigDiff = useCallback(async () => {
     if (!name) return;
@@ -246,12 +303,38 @@ export function ClusterDetail() {
       </button>
 
       {/* Heading + cluster meta */}
-      <div>
-        <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{data.cluster.name}</h2>
-        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-          Kubernetes cluster managed by ArgoCD — deployed add-ons, health, and configuration overrides.
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{data.cluster.name}</h2>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            Kubernetes cluster managed by ArgoCD — deployed add-ons, health, and configuration overrides.
+          </p>
+        </div>
+        <RoleGuard adminOnly>
+          <button
+            type="button"
+            onClick={() => { setRemoveError(null); setRemoveModalOpen(true); }}
+            className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-red-300 bg-white px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 dark:border-red-700 dark:bg-gray-800 dark:text-red-400 dark:hover:bg-red-900/20"
+          >
+            <Trash2 className="h-4 w-4" />
+            Remove Cluster
+          </button>
+        </RoleGuard>
       </div>
+
+      <ConfirmationModal
+        open={removeModalOpen}
+        onClose={() => setRemoveModalOpen(false)}
+        onConfirm={handleRemoveCluster}
+        title={`Remove cluster "${name}"?`}
+        description="This will remove the cluster from the Git catalog. This action creates a pull request and cannot be undone."
+        confirmText="Remove"
+        destructive
+        loading={removing}
+      />
+      {removeError && (
+        <p className="text-sm text-red-600 dark:text-red-400">{removeError}</p>
+      )}
 
       {/* Cluster info stat cards */}
       <div className="flex flex-wrap gap-3">
@@ -342,6 +425,67 @@ export function ClusterDetail() {
 
       {activeTab === 'comparison' && (
         <>
+          {/* Admin: Addon Enable/Disable Toggles */}
+          <RoleGuard adminOnly>
+            <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+              <h3 className="mb-3 text-base font-semibold text-gray-900 dark:text-gray-100">Manage Add-ons</h3>
+              {Object.keys(addonToggles).length === 0 ? (
+                <p className="text-sm text-gray-400 dark:text-gray-500">No add-ons in catalog.</p>
+              ) : (
+                <div className="grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-3 lg:grid-cols-4">
+                  {Object.keys(addonToggles).sort().map((addonName) => (
+                    <label key={addonName} className="flex cursor-pointer items-center gap-2 text-sm">
+                      <div
+                        role="switch"
+                        aria-checked={addonToggles[addonName]}
+                        onClick={() =>
+                          setAddonToggles((prev) => ({ ...prev, [addonName]: !prev[addonName] }))
+                        }
+                        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none ${
+                          addonToggles[addonName]
+                            ? 'bg-cyan-600'
+                            : 'bg-gray-200 dark:bg-gray-600'
+                        }`}
+                      >
+                        <span
+                          className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-lg transition-transform ${
+                            addonToggles[addonName] ? 'translate-x-4' : 'translate-x-0'
+                          }`}
+                        />
+                      </div>
+                      <span className={`capitalize ${addonToggles[addonName] !== originalToggles[addonName] ? 'font-semibold text-cyan-600 dark:text-cyan-400' : 'text-gray-700 dark:text-gray-300'}`}>
+                        {addonName}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              )}
+              {hasToggleChanges && (
+                <div className="mt-4 flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={handleApplyToggles}
+                    disabled={applyingToggles}
+                    className="inline-flex items-center gap-2 rounded-md bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-700 disabled:opacity-50 dark:bg-cyan-700 dark:hover:bg-cyan-600"
+                  >
+                    {applyingToggles && <Loader2 className="h-4 w-4 animate-spin" />}
+                    Apply Changes
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setAddonToggles({ ...originalToggles }); setToggleError(null); setToggleResult(null); }}
+                    disabled={applyingToggles}
+                    className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                  >
+                    Discard
+                  </button>
+                </div>
+              )}
+              {toggleError && <p className="mt-2 text-sm text-red-600 dark:text-red-400">{toggleError}</p>}
+              {toggleResult && <p className="mt-2 text-sm text-green-600 dark:text-green-400">{toggleResult}</p>}
+            </div>
+          </RoleGuard>
+
           {/* Status filter cards — hide zero-count categories */}
           <div className="flex flex-wrap gap-4">
             {statItems

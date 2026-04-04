@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Search,
@@ -13,13 +13,24 @@ import {
   ExternalLink,
   LayoutGrid,
   LayoutList,
+  Plus,
+  Loader2,
 } from 'lucide-react'
-import { api } from '@/services/api'
+import { api, addAddon } from '@/services/api'
 import type { AddonCatalogItem, AddonCatalogResponse } from '@/services/models'
 import { StatCard } from '@/components/StatCard'
 import { StatusBadge } from '@/components/StatusBadge'
 import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
+import { RoleGuard } from '@/components/RoleGuard'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog'
 
 type FilterType = 'all' | 'healthy' | 'unhealthy' | 'git-only'
 type SortBy = 'name' | 'applications'
@@ -354,8 +365,17 @@ export function AddonCatalog() {
   const [pageSize, setPageSize] = useState<PageSize>(15)
   const [page, setPage] = useState(1)
 
-  useEffect(() => {
-    api
+  // Add Addon dialog state
+  const [addAddonOpen, setAddAddonOpen] = useState(false)
+  const [addonForm, setAddonForm] = useState({
+    name: '', chart: '', repo_url: '', version: '', namespace: '', sync_wave: '',
+  })
+  const [addAddonSubmitting, setAddAddonSubmitting] = useState(false)
+  const [addAddonError, setAddAddonError] = useState<string | null>(null)
+  const [addAddonResult, setAddAddonResult] = useState<string | null>(null)
+
+  const fetchCatalog = useCallback(() => {
+    return api
       .getAddonCatalog()
       .then((data) => setCatalogData(data))
       .catch((e: unknown) =>
@@ -363,6 +383,41 @@ export function AddonCatalog() {
       )
       .finally(() => setLoading(false))
   }, [])
+
+  useEffect(() => {
+    void fetchCatalog()
+  }, [fetchCatalog])
+
+  const openAddAddon = useCallback(() => {
+    setAddAddonOpen(true)
+    setAddAddonError(null)
+    setAddAddonResult(null)
+    setAddonForm({ name: '', chart: '', repo_url: '', version: '', namespace: '', sync_wave: '' })
+  }, [])
+
+  const handleAddAddon = useCallback(async () => {
+    if (!addonForm.name.trim() || !addonForm.chart.trim() || !addonForm.repo_url.trim() || !addonForm.version.trim()) return
+    setAddAddonSubmitting(true)
+    setAddAddonError(null)
+    setAddAddonResult(null)
+    try {
+      const result = await addAddon({
+        name: addonForm.name.trim(),
+        chart: addonForm.chart.trim(),
+        repo_url: addonForm.repo_url.trim(),
+        version: addonForm.version.trim(),
+        namespace: addonForm.namespace.trim() || undefined,
+        sync_wave: addonForm.sync_wave ? parseInt(addonForm.sync_wave, 10) : undefined,
+      })
+      const prUrl = result?.pr_url || result?.pull_request_url
+      setAddAddonResult(prUrl ? `Add-on registered. PR: ${prUrl}` : 'Add-on registered successfully.')
+      void fetchCatalog()
+    } catch (e: unknown) {
+      setAddAddonError(e instanceof Error ? e.message : 'Failed to add addon')
+    } finally {
+      setAddAddonSubmitting(false)
+    }
+  }, [addonForm, fetchCatalog])
 
   // Reset page on filter/search/sort/pageSize change
   useEffect(() => {
@@ -469,12 +524,97 @@ export function AddonCatalog() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div>
-        <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Add-ons Catalog</h2>
-        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-          All add-ons defined in your Git catalog. See deployment coverage, health, and version per add-on. <span className="font-medium text-amber-600 dark:text-amber-400">Catalog Only</span> means the add-on is defined in your catalog but not yet enabled on any cluster.
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Add-ons Catalog</h2>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            All add-ons defined in your Git catalog. See deployment coverage, health, and version per add-on. <span className="font-medium text-amber-600 dark:text-amber-400">Catalog Only</span> means the add-on is defined in your catalog but not yet enabled on any cluster.
+          </p>
+        </div>
+        <RoleGuard adminOnly>
+          <button
+            type="button"
+            onClick={openAddAddon}
+            className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-700 dark:bg-cyan-700 dark:hover:bg-cyan-600"
+          >
+            <Plus className="h-4 w-4" />
+            Add Addon
+          </button>
+        </RoleGuard>
       </div>
+
+      {/* Add Addon Dialog */}
+      <Dialog open={addAddonOpen} onOpenChange={(v) => { if (!v) setAddAddonOpen(false) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Register New Add-on</DialogTitle>
+            <DialogDescription>Add a new Helm chart to the catalog.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            {(['name', 'chart', 'repo_url', 'version', 'namespace'] as const).map((field) => (
+              <div key={field}>
+                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300 capitalize">
+                  {field.replace('_', ' ')}
+                  {['name', 'chart', 'repo_url', 'version'].includes(field) && (
+                    <span className="text-red-500"> *</span>
+                  )}
+                </label>
+                <input
+                  type="text"
+                  value={addonForm[field]}
+                  onChange={(e) => setAddonForm((prev) => ({ ...prev, [field]: e.target.value }))}
+                  placeholder={
+                    field === 'repo_url' ? 'https://helm.example.com'
+                    : field === 'version' ? '1.0.0'
+                    : field === 'namespace' ? 'optional, defaults to addon name'
+                    : ''
+                  }
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500"
+                />
+              </div>
+            ))}
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                Sync Wave (optional)
+              </label>
+              <input
+                type="number"
+                value={addonForm.sync_wave}
+                onChange={(e) => setAddonForm((prev) => ({ ...prev, sync_wave: e.target.value }))}
+                placeholder="e.g. 1"
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500"
+              />
+            </div>
+            {addAddonError && (
+              <p className="text-sm text-red-600 dark:text-red-400">{addAddonError}</p>
+            )}
+            {addAddonResult && (
+              <p className="text-sm text-green-600 dark:text-green-400">{addAddonResult}</p>
+            )}
+          </div>
+          <DialogFooter>
+            <button
+              type="button"
+              onClick={() => setAddAddonOpen(false)}
+              disabled={addAddonSubmitting}
+              className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+            >
+              {addAddonResult ? 'Close' : 'Cancel'}
+            </button>
+            {!addAddonResult && (
+              <button
+                type="button"
+                onClick={handleAddAddon}
+                disabled={!addonForm.name.trim() || !addonForm.chart.trim() || !addonForm.repo_url.trim() || !addonForm.version.trim() || addAddonSubmitting}
+                className="inline-flex items-center gap-2 rounded-md bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-cyan-700 dark:hover:bg-cyan-600"
+              >
+                {addAddonSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
+                Register Add-on
+              </button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Summary stat cards — click to filter */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">

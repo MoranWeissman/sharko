@@ -11,13 +11,24 @@ import {
   Info,
   LayoutList,
   LayoutGrid,
+  Plus,
+  Loader2,
 } from 'lucide-react';
-import { api } from '@/services/api';
-import type { Cluster, ClusterHealthStats, ClustersResponse } from '@/services/models';
+import { api, registerCluster } from '@/services/api';
+import type { Cluster, ClusterHealthStats, ClustersResponse, AddonCatalogResponse } from '@/services/models';
 import { StatCard } from '@/components/StatCard';
 import { ConnectionStatus } from '@/components/ConnectionStatus';
 import { LoadingState } from '@/components/LoadingState';
 import { ErrorState } from '@/components/ErrorState';
+import { RoleGuard } from '@/components/RoleGuard';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog';
 
 type StatusFilter =
   | 'all'
@@ -52,6 +63,16 @@ export function ClustersOverview() {
   const [connectionDropdownOpen, setConnectionDropdownOpen] = useState(false);
   const navigate = useNavigate();
 
+  // Add Cluster dialog state
+  const [addClusterOpen, setAddClusterOpen] = useState(false);
+  const [addClusterName, setAddClusterName] = useState('');
+  const [addClusterRegion, setAddClusterRegion] = useState('');
+  const [addClusterSubmitting, setAddClusterSubmitting] = useState(false);
+  const [addClusterError, setAddClusterError] = useState<string | null>(null);
+  const [addClusterResult, setAddClusterResult] = useState<string | null>(null);
+  const [catalogAddons, setCatalogAddons] = useState<AddonCatalogResponse | null>(null);
+  const [selectedAddons, setSelectedAddons] = useState<Record<string, boolean>>({});
+
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
@@ -71,6 +92,40 @@ export function ClustersOverview() {
   useEffect(() => {
     void fetchData();
   }, [fetchData]);
+
+  const openAddCluster = useCallback(() => {
+    setAddClusterOpen(true);
+    setAddClusterError(null);
+    setAddClusterResult(null);
+    setAddClusterName('');
+    setAddClusterRegion('');
+    setSelectedAddons({});
+    // Fetch catalog for addon multi-select
+    if (!catalogAddons) {
+      api.getAddonCatalog().then(setCatalogAddons).catch(() => {});
+    }
+  }, [catalogAddons]);
+
+  const handleAddCluster = useCallback(async () => {
+    if (!addClusterName.trim()) return;
+    setAddClusterSubmitting(true);
+    setAddClusterError(null);
+    setAddClusterResult(null);
+    try {
+      const result = await registerCluster({
+        name: addClusterName.trim(),
+        region: addClusterRegion.trim() || undefined,
+        addons: Object.keys(selectedAddons).length > 0 ? selectedAddons : undefined,
+      });
+      const prUrl = result?.pr_url || result?.pull_request_url;
+      setAddClusterResult(prUrl ? `Cluster registered. PR: ${prUrl}` : 'Cluster registered successfully.');
+      void fetchData();
+    } catch (e: unknown) {
+      setAddClusterError(e instanceof Error ? e.message : 'Failed to register cluster');
+    } finally {
+      setAddClusterSubmitting(false);
+    }
+  }, [addClusterName, addClusterRegion, selectedAddons, fetchData]);
 
   const availableVersions = useMemo(() => {
     const versions = new Set(
@@ -207,12 +262,115 @@ export function ClustersOverview() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Clusters</h2>
-        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-          All Kubernetes clusters managed by ArgoCD. Click a cluster to see deployed add-ons, health status, and configuration.
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Clusters</h2>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            All Kubernetes clusters managed by ArgoCD. Click a cluster to see deployed add-ons, health status, and configuration.
+          </p>
+        </div>
+        <RoleGuard adminOnly>
+          <button
+            type="button"
+            onClick={openAddCluster}
+            className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-700 dark:bg-cyan-700 dark:hover:bg-cyan-600"
+          >
+            <Plus className="h-4 w-4" />
+            Add Cluster
+          </button>
+        </RoleGuard>
       </div>
+
+      {/* Add Cluster Dialog */}
+      <Dialog open={addClusterOpen} onOpenChange={(v) => { if (!v) setAddClusterOpen(false) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Register New Cluster</DialogTitle>
+            <DialogDescription>Add a new cluster to the Git catalog.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                Cluster Name <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={addClusterName}
+                onChange={(e) => setAddClusterName(e.target.value)}
+                placeholder="e.g. prod-us-east-1"
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                Region (optional)
+              </label>
+              <input
+                type="text"
+                value={addClusterRegion}
+                onChange={(e) => setAddClusterRegion(e.target.value)}
+                placeholder="e.g. us-east-1"
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500"
+              />
+            </div>
+            {catalogAddons && catalogAddons.addons.length > 0 && (
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  Enable Add-ons (optional)
+                </label>
+                <div className="max-h-40 space-y-1 overflow-y-auto rounded-md border border-gray-200 p-2 dark:border-gray-700">
+                  {catalogAddons.addons.map((addon) => (
+                    <label
+                      key={addon.addon_name}
+                      className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-sm hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-700"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={!!selectedAddons[addon.addon_name]}
+                        onChange={(e) =>
+                          setSelectedAddons((prev) => ({
+                            ...prev,
+                            [addon.addon_name]: e.target.checked,
+                          }))
+                        }
+                        className="rounded border-gray-300 dark:border-gray-600"
+                      />
+                      <span className="capitalize">{addon.addon_name}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+            {addClusterError && (
+              <p className="text-sm text-red-600 dark:text-red-400">{addClusterError}</p>
+            )}
+            {addClusterResult && (
+              <p className="text-sm text-green-600 dark:text-green-400">{addClusterResult}</p>
+            )}
+          </div>
+          <DialogFooter>
+            <button
+              type="button"
+              onClick={() => setAddClusterOpen(false)}
+              disabled={addClusterSubmitting}
+              className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+            >
+              {addClusterResult ? 'Close' : 'Cancel'}
+            </button>
+            {!addClusterResult && (
+              <button
+                type="button"
+                onClick={handleAddCluster}
+                disabled={!addClusterName.trim() || addClusterSubmitting}
+                className="inline-flex items-center gap-2 rounded-md bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-cyan-700 dark:hover:bg-cyan-600"
+              >
+                {addClusterSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
+                Register Cluster
+              </button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Health stat cards */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">

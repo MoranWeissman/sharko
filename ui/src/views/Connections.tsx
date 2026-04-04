@@ -14,7 +14,9 @@ import {
   Sparkles,
   CheckCircle,
   XCircle,
+  Play,
 } from 'lucide-react'
+import { initRepo } from '@/services/api'
 import { useConnections } from '@/hooks/useConnections'
 import { api } from '@/services/api'
 import { LoadingState } from '@/components/LoadingState'
@@ -211,6 +213,27 @@ export function Connections() {
   const [editSaving, setEditSaving] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
   const [editTestStatus, setEditTestStatus] = useState<TestStatus>({ git: 'idle', argocd: 'idle' })
+
+  // Initialize repo
+  const [initRunning, setInitRunning] = useState(false)
+  const [initResult, setInitResult] = useState<string | null>(null)
+  const [initError, setInitError] = useState<string | null>(null)
+
+  const handleInitRepo = useCallback(async () => {
+    setInitRunning(true)
+    setInitResult(null)
+    setInitError(null)
+    try {
+      const result = await initRepo({ bootstrap_argocd: true })
+      const prUrl = result?.pr_url || result?.pull_request_url
+      const status = result?.status || result?.message || 'initialized'
+      setInitResult(prUrl ? `Repository ${status}. PR: ${prUrl}` : `Repository ${status}.`)
+    } catch (e: unknown) {
+      setInitError(e instanceof Error ? e.message : 'Failed to initialize repository')
+    } finally {
+      setInitRunning(false)
+    }
+  }, [])
 
   const fetchHealth = useCallback(() => {
     setHealthLoading(true)
@@ -640,6 +663,42 @@ export function Connections() {
           </dl>
         </div>
       </section>
+
+      {/* Initialize Repository */}
+      {connections.length > 0 && (
+        <section className="space-y-4">
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+            Initialize Repository
+          </h3>
+          <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+            <p className="mb-4 text-sm text-gray-600 dark:text-gray-400">
+              Bootstrap the Git repository with the required Sharko directory structure and ArgoCD resources.
+              Safe to run on an already-initialized repository.
+            </p>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={handleInitRepo}
+                disabled={initRunning}
+                className="inline-flex items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-700 disabled:opacity-50 dark:bg-cyan-700 dark:hover:bg-cyan-600"
+              >
+                {initRunning ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Play className="h-4 w-4" />
+                )}
+                Initialize Repository
+              </button>
+            </div>
+            {initError && (
+              <p className="mt-3 text-sm text-red-600 dark:text-red-400">{initError}</p>
+            )}
+            {initResult && (
+              <p className="mt-3 text-sm text-green-600 dark:text-green-400">{initResult}</p>
+            )}
+          </div>
+        </section>
+      )}
 
       {/* AI Configuration */}
       <section className="space-y-4">
