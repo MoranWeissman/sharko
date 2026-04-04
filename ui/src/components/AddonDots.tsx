@@ -31,8 +31,11 @@ export function AddonDots({ addons }: AddonDotsProps) {
         {addons.map((addon) => (
           <Tooltip key={addon.name}>
             <TooltipTrigger asChild>
-              <div
-                className={`h-2.5 w-2.5 rounded-full transition-colors ${healthColor[addon.health] ?? 'bg-gray-400'}`}
+              <span
+                className={`inline-block h-2.5 w-2.5 rounded-full transition-colors ${healthColor[addon.health] ?? 'bg-gray-400'}`}
+                tabIndex={0}
+                role="img"
+                aria-label={`${addon.name}: ${addon.health}`}
               />
             </TooltipTrigger>
             <TooltipContent side="top" className="text-xs">

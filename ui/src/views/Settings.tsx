@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Connections } from '@/views/Connections'
@@ -10,6 +11,12 @@ export function Settings() {
   const { isAdmin } = useAuth()
   const tab = searchParams.get('tab') || 'connections'
   const setTab = (t: string) => setSearchParams({ tab: t }, { replace: true })
+
+  useEffect(() => {
+    if (!isAdmin && tab !== 'connections') {
+      setSearchParams({ tab: 'connections' }, { replace: true })
+    }
+  }, [isAdmin, tab, setSearchParams])
 
   return (
     <div className="space-y-6">

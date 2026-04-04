@@ -28,6 +28,9 @@ export function ClusterCard({
   return (
     <div
       onClick={() => navigate(`/clusters/${name}`)}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/clusters/${name}`) } }}
+      role="button"
+      tabIndex={0}
       className="group cursor-pointer rounded-xl border border-[#D6E5F5] bg-white p-4 shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:border-cyan-400 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-cyan-500"
     >
       <div className="mb-2 flex items-center gap-2">
