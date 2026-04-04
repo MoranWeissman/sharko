@@ -15,9 +15,30 @@ This project was extracted from an internal codebase. No references to the origi
 Sharko is an addon management server for Kubernetes fleets, built on ArgoCD.
 See `docs/superpowers/specs/2026-04-01-sharko-implementation-design.md` for the authoritative design spec.
 
+## Session Startup
+
+Every new session: read `.claude/team/tech-lead.md` and follow the startup procedure. This gets you oriented — current phase, next task, what to do — without the user needing to explain context.
+
+## Skills (Superpowers)
+
+The tech-lead playbook maps when to use each skill. Key ones for this project:
+
+- **`superpowers:write-plan`** — decompose a phase into tasks before coding
+- **`superpowers:execute-plan`** — run through tasks with checkpoints
+- **`superpowers:test-driven-development`** — for new packages and coverage gaps
+- **`superpowers:systematic-debugging`** — when something breaks, investigate before guessing
+- **`superpowers:requesting-code-review`** — after each logical chunk
+- **`superpowers:verification-before-completion`** — run tests, read output, never assume
+- **`superpowers:finishing-a-development-branch`** — wrap up phase branch for review
+- **`superpowers:dispatching-parallel-agents`** — for parallel phase work (e.g., Phase 3+4)
+- **`superpowers:brainstorming`** — when a design question isn't answered by the plan
+
 ## Agent Team
 
 When dispatching subagents, read the relevant role file from `.claude/team/` and include it as context. Update role files as the product evolves — they are living documents.
+
+**Orchestration:**
+- `.claude/team/tech-lead.md` — **read first every session**. Playbook for breaking down phases, dispatching agents, quality gates, when to stop vs. continue
 
 **Execution:**
 - `.claude/team/implementer.md` — writes code following plans, knows project patterns
@@ -25,6 +46,7 @@ When dispatching subagents, read the relevant role file from `.claude/team/` and
 - `.claude/team/k8s-expert.md` — ArgoCD, Helm, K8s providers, ApplicationSets
 - `.claude/team/frontend-expert.md` — React UI, shadcn/ui, Vite, TypeScript
 - `.claude/team/test-engineer.md` — writes tests, knows mock patterns, tracks coverage gaps
+- `.claude/team/docs-writer.md` — documentation, verifies all claims against codebase
 
 **Quality:**
 - `.claude/team/code-reviewer.md` — reviews for bugs, security, contract compliance
