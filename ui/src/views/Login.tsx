@@ -27,22 +27,19 @@ export function Login() {
 
   return (
     <div className="flex min-h-screen">
-      {/* Left side — login background with helm shark (desktop only) */}
-      <div className="hidden lg:flex lg:w-3/4 bg-[#0B1426] items-center justify-center overflow-hidden">
-        <img
-          src="/sharko-login-bg.png"
-          alt="Sharko — Let's get your addons deployed!"
-          className="h-full w-full object-cover"
-        />
-      </div>
+      {/* Left side — login background (desktop only, responsive to all screen sizes) */}
+      <div
+        className="hidden lg:block lg:flex-1 bg-[#0B1426] bg-cover bg-left bg-no-repeat"
+        style={{ backgroundImage: "url('/sharko-login-bg.png')" }}
+      />
 
       {/* Right side — login panel */}
-      <div className="flex w-full flex-col bg-gray-900 lg:w-1/4 lg:min-w-[320px]">
-        <div className="flex flex-1 flex-col items-center justify-center px-8 py-12">
+      <div className="flex w-full flex-col bg-gray-900 lg:w-[380px] lg:min-w-[380px] lg:max-w-[420px]">
+        <div className="flex flex-1 flex-col items-center justify-center px-10 py-12">
           {/* Brand header */}
-          <div className="mb-8 flex items-center gap-2">
-            <img src="/sharko-icon-32.png" alt="" className="h-8 w-8" />
-            <span className="font-semibold text-cyan-500 text-[28px]">sharko</span>
+          <div className="mb-10 flex items-center gap-3">
+            <img src="/sharko-icon-32.png" alt="" className="h-12 w-12" />
+            <span className="font-bold text-cyan-400 text-[36px] tracking-tight">sharko</span>
           </div>
 
           <form onSubmit={handleSubmit} className="w-full max-w-sm space-y-5">
