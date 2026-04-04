@@ -155,20 +155,16 @@ export function Layout() {
         } ${mobileOpen ? 'fixed inset-y-0 left-0 z-50 w-60' : 'hidden lg:flex'}`}
       >
         {/* Logo / title + mobile close */}
-        <div
-          className="flex h-14 cursor-pointer items-center gap-2 border-b border-slate-700 px-4 transition-colors hover:bg-slate-800"
-          onClick={() => { navigate('/'); setMobileOpen(false) }}
+        <Link
+          to="/dashboard"
+          className="flex h-14 items-center gap-2 border-b border-slate-700 px-4 transition-colors hover:bg-slate-800"
+          onClick={() => setMobileOpen(false)}
         >
-          <Package className="h-6 w-6 shrink-0 text-cyan-400" />
+          <img src="/sharko-icon-32.png" alt="" className="h-6 w-6 shrink-0" />
           {!collapsed && (
-            <div className="flex flex-col leading-tight">
-              <span className="text-sm font-bold text-white">Sharko</span>
-              <span className="text-[10px] text-slate-400">
-                Addon management for Kubernetes fleets
-              </span>
-            </div>
+            <span className="text-sm font-bold text-cyan-500">Sharko</span>
           )}
-        </div>
+        </Link>
 
         {/* Navigation */}
         <nav className="flex-1 overflow-y-auto px-2 py-3">
