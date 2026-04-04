@@ -1,290 +1,68 @@
-# Sharko - Makefile for development, testing, building, and deployment
+# Sharko — Makefile
 
-# Configuration
-K8S_NAMESPACE = sharko
-IMAGE_NAME    = sharko
-MINIKUBE_PROFILE = minikube
+.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go
 
-# Read version from VERSION file
-VERSION = $(shell cat VERSION 2>/dev/null || echo "0.0.0")
+PORT ?= 8080
 
-.PHONY: help dev run build-go test test-go lint build deploy update status logs undeploy
-.PHONY: create-secrets list-secrets version
-.PHONY: check-minikube ensure-namespace version-patch
-.PHONY: test-coverage pre-commit-install
-
-# Default target
-help: ## Show all available targets
-	@echo "Sharko - Available Targets"
-	@echo "=========================="
+help: ## Show available targets
 	@echo ""
-	@echo "Development:"
-	@echo "  make dev            Run Go backend + Vite dev server concurrently"
-	@echo "  make build-go       Build Go binary locally"
-	@echo "  make test           Run all tests (Go + UI)"
-	@echo "  make test-go        Run Go tests only"
-	@echo "  make lint           Run golangci-lint + eslint"
+	@echo "  🦈 Sharko"
 	@echo ""
-	@echo "Docker & Deployment:"
-	@echo "  make build          Build Docker image (auto-increment patch version)"
-	@echo "  make deploy         Build + deploy to minikube"
-	@echo "  make update         Quick update: build + restart deployment"
-	@echo "  make undeploy       Remove deployment from minikube"
+	@echo "  Quick Start:"
+	@echo "    make demo         Build UI + start with mock backends (http://localhost:$(PORT))"
+	@echo "    make dev          Hot-reload dev mode (http://localhost:5173)"
 	@echo ""
-	@echo "Kubernetes Status:"
-	@echo "  make status         Show deployment status"
-	@echo "  make logs           Show pod logs"
+	@echo "  Build & Test:"
+	@echo "    make build        Build Go binary + UI"
+	@echo "    make test         Run all tests (Go + UI)"
+	@echo "    make lint         Go vet + UI build check"
 	@echo ""
-	@echo "Secrets Management:"
-	@echo "  make create-secrets Create K8s secrets from .env.secrets"
-	@echo "  make list-secrets   List secrets in namespace"
-	@echo ""
-	@echo "Versioning:"
-	@echo "  make version        Show current version"
 
-# ---------------------------------------------------------------------------
-# Development
-# ---------------------------------------------------------------------------
+demo: ui-build ## Build UI + start server in demo mode
+	@echo ""
+	@echo "  🦈 Sharko Demo Mode"
+	@echo "  Open http://localhost:$(PORT)"
+	@echo "  Login: admin/admin (admin) or qa/sharko (viewer)"
+	@echo ""
+	go run ./cmd/sharko serve --demo --port $(PORT) --static ui/dist
 
-dev: ## Run Go backend + Vite dev server concurrently
-	@if [ ! -f config.yaml ]; then \
-		echo "Error: config.yaml not found."; \
-		echo "Copy the example and fill in your values:"; \
-		echo "  cp config.yaml.example config.yaml"; \
-		exit 1; \
-	fi
-	@echo "Loading secrets from .env.secrets (if exists)..."
-	@echo "Starting Go backend and Vite dev server..."
+dev: ## Start backend (demo) + frontend with hot reload
+	@echo ""
+	@echo "  🦈 Sharko Dev Mode (hot reload)"
+	@echo "  Backend: http://localhost:$(PORT) (demo mode)"
+	@echo "  Frontend: http://localhost:5173 ← open this"
+	@echo "  Login: admin/admin or qa/sharko"
+	@echo ""
 	@trap 'kill 0' EXIT; \
-		( [ -f .env.secrets ] && set -a && . ./.env.secrets && set +a; \
-		  go run ./cmd/sharko serve ) & \
-		( sleep 2 && cd ui && npm run dev ) & \
+		go run ./cmd/sharko serve --demo --port $(PORT) & \
+		cd ui && npm run dev & \
 		wait
 
-build-go: ## Build Go binary locally
-	@echo "Building Go binary..."
+build: ui-build build-go ## Build Go binary + UI
+
+build-go: ## Build Go binary
 	@mkdir -p bin
 	CGO_ENABLED=0 go build -o bin/sharko ./cmd/sharko
-	@echo "Binary built: bin/sharko"
+	@echo "Built: bin/sharko"
 
-run: build-go ## Build and run locally (loads .env.secrets)
-	@if [ ! -f config.yaml ]; then \
-		echo "Error: config.yaml not found. Run: cp config.yaml.example config.yaml"; \
-		exit 1; \
-	fi
-	@if [ -f .env.secrets ]; then set -a && . ./.env.secrets && set +a; fi && \
-		./bin/sharko serve --static ui/dist
+ui-build: ## Build the React UI
+	cd ui && npm run build
 
-# ---------------------------------------------------------------------------
-# Testing
-# ---------------------------------------------------------------------------
+ui-install: ## Install UI dependencies
+	cd ui && npm install
 
-test: test-go ## Run all tests (Go + UI)
-	@if [ -f ui/package.json ] && grep -q '"test"' ui/package.json; then \
-		echo "Running UI tests..."; \
-		cd ui && npm test -- --run 2>/dev/null || cd ui && npm test; \
-	else \
-		echo "No UI test script found, skipping."; \
-	fi
+test: test-go test-ui ## Run all tests
 
-test-go: ## Run Go tests only
-	@echo "Running Go tests..."
-	go test ./... -v
+test-go: ## Run Go tests
+	go clean -testcache
+	go test ./...
 
-# ---------------------------------------------------------------------------
-# Linting
-# ---------------------------------------------------------------------------
+test-ui: ## Run UI tests
+	cd ui && npm test -- --run
 
-lint: ## Run golangci-lint + eslint
-	@echo "Running Go linter..."
-	@if command -v golangci-lint >/dev/null 2>&1; then \
-		golangci-lint run ./...; \
-	else \
-		echo "golangci-lint not installed. Install: https://golangci-lint.run/usage/install/"; \
-	fi
-	@echo ""
-	@echo "Running ESLint..."
-	@if [ -f ui/package.json ]; then \
-		cd ui && npm run lint; \
-	else \
-		echo "No ui/package.json found, skipping ESLint."; \
-	fi
+lint: ## Go vet + UI build check
+	go vet ./...
+	cd ui && npm run build
 
-# ---------------------------------------------------------------------------
-# Versioning
-# ---------------------------------------------------------------------------
-
-version: ## Show current version
-	@echo "Current version: $(VERSION)"
-
-version-patch: ## Auto-increment patch version
-	@NEW_VERSION=$$(./scripts/version.sh patch) && echo "New version: $$NEW_VERSION"
-
-# ---------------------------------------------------------------------------
-# Docker Build
-# ---------------------------------------------------------------------------
-
-build: version-patch ## Build Docker image (auto-increment patch version)
-	$(eval BUILD_VERSION := $(shell cat VERSION))
-	@echo "Building Docker image $(IMAGE_NAME):$(BUILD_VERSION)..."
-	@eval $$(minikube docker-env) && \
-		docker build -t $(IMAGE_NAME):$(BUILD_VERSION) . && \
-		docker tag $(IMAGE_NAME):$(BUILD_VERSION) $(IMAGE_NAME):latest
-	@echo "Image built: $(IMAGE_NAME):$(BUILD_VERSION)"
-
-# ---------------------------------------------------------------------------
-# Minikube Helpers
-# ---------------------------------------------------------------------------
-
-check-minikube: ## Check if minikube is running
-	@if ! command -v minikube >/dev/null 2>&1; then \
-		echo "Error: minikube not found. Please install minikube first."; \
-		exit 1; \
-	fi
-	@if ! minikube status | grep -q "Running"; then \
-		echo "Error: minikube is not running. Start it with: minikube start"; \
-		exit 1; \
-	fi
-
-ensure-namespace: check-minikube ## Ensure namespace exists
-	@kubectl create namespace $(K8S_NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
-
-# ---------------------------------------------------------------------------
-# Deployment
-# ---------------------------------------------------------------------------
-
-deploy: build ensure-namespace ## Build + deploy to minikube (loads secrets from .env.secrets)
-	$(eval DEPLOY_VERSION := $(shell cat VERSION))
-	@echo "Deploying $(IMAGE_NAME):$(DEPLOY_VERSION) to minikube..."
-	@# Create config.yaml as a ConfigMap so the pod can read it
-	@if [ -f config.yaml ]; then \
-		kubectl create configmap sharko-config \
-			--from-file=config.yaml=config.yaml \
-			-n $(K8S_NAMESPACE) \
-			--dry-run=client -o yaml | kubectl apply -f -; \
-		echo "ConfigMap sharko-config created from config.yaml"; \
-	else \
-		echo "Warning: config.yaml not found. Pod will start without connections."; \
-	fi
-	@# Create secrets from .env.secrets so env vars resolve inside the pod
-	@if [ -f .env.secrets ]; then \
-		kubectl create secret generic sharko-env-secrets \
-			--from-env-file=.env.secrets \
-			-n $(K8S_NAMESPACE) \
-			--dry-run=client -o yaml | kubectl apply -f -; \
-		echo "Secret sharko-env-secrets created from .env.secrets"; \
-	else \
-		echo "Warning: .env.secrets not found. Env vars in config.yaml won't resolve."; \
-	fi
-	@kubectl apply -f k8s/namespace.yaml
-	@kubectl apply -f k8s/deployment.yaml
-	@kubectl apply -f k8s/service.yaml
-	@kubectl apply -f k8s/ingress.yaml 2>/dev/null || echo "Ingress not applied (controller may not be available)"
-	@echo ""
-	@echo "Deployment complete."
-	@echo "  Version:   $(DEPLOY_VERSION)"
-	@echo "  Namespace: $(K8S_NAMESPACE)"
-	@echo ""
-	@echo "Check status: make status"
-	@echo "Port-forward: kubectl port-forward -n $(K8S_NAMESPACE) service/sharko 8080:8080"
-
-update: build ensure-namespace ## Quick update: build + restart deployment
-	$(eval UPDATE_VERSION := $(shell cat VERSION))
-	@echo "Updating to $(IMAGE_NAME):$(UPDATE_VERSION)..."
-	@kubectl set image deployment/sharko sharko=$(IMAGE_NAME):$(UPDATE_VERSION) -n $(K8S_NAMESPACE)
-	@kubectl rollout restart deployment/sharko -n $(K8S_NAMESPACE)
-	@kubectl wait --for=condition=available --timeout=60s deployment/sharko -n $(K8S_NAMESPACE)
-	@echo "Update complete: $(IMAGE_NAME):$(UPDATE_VERSION)"
-
-undeploy: ## Remove deployment from minikube
-	@echo "Removing deployment from namespace $(K8S_NAMESPACE)..."
-	@kubectl delete -f k8s/ingress.yaml --ignore-not-found=true
-	@kubectl delete -f k8s/service.yaml --ignore-not-found=true
-	@kubectl delete -f k8s/deployment.yaml --ignore-not-found=true
-	@kubectl delete -f k8s/namespace.yaml --ignore-not-found=true
-	@echo "Deployment removed."
-
-# ---------------------------------------------------------------------------
-# Status & Logs
-# ---------------------------------------------------------------------------
-
-status: ## Show deployment status
-	@echo "Sharko - Deployment Status"
-	@echo "=========================="
-	@echo "Version: $(VERSION)"
-	@echo "Namespace: $(K8S_NAMESPACE)"
-	@echo ""
-	@echo "Pods:"
-	@kubectl get pods -n $(K8S_NAMESPACE) 2>/dev/null || echo "  No pods found"
-	@echo ""
-	@echo "Deployments:"
-	@kubectl get deployments -n $(K8S_NAMESPACE) 2>/dev/null || echo "  No deployments found"
-	@echo ""
-	@echo "Services:"
-	@kubectl get services -n $(K8S_NAMESPACE) 2>/dev/null || echo "  No services found"
-	@echo ""
-	@echo "Ingress:"
-	@kubectl get ingress -n $(K8S_NAMESPACE) 2>/dev/null || echo "  No ingress found"
-
-logs: ## Show pod logs
-	@kubectl logs -f deployment/sharko -n $(K8S_NAMESPACE)
-
-# ---------------------------------------------------------------------------
-# Secrets Management
-# ---------------------------------------------------------------------------
-
-create-secrets: ensure-namespace ## Create K8s secrets from .env.secrets
-	@if [ ! -f .env.secrets ]; then \
-		echo "Error: .env.secrets file not found."; \
-		echo "Create it with the following variables:"; \
-		echo "  AZURE_DEVOPS_PAT"; \
-		echo "  ARGOCD_NONPROD_SERVER_URL, ARGOCD_NONPROD_TOKEN, ARGOCD_NONPROD_NAMESPACE"; \
-		echo "  ARGOCD_PROD_SERVER_URL, ARGOCD_PROD_TOKEN, ARGOCD_PROD_NAMESPACE"; \
-		exit 1; \
-	fi
-	@echo "Creating secrets from .env.secrets..."
-	@set -a && source .env.secrets && set +a && \
-	kubectl create secret generic sharko-azure-devops \
-		--from-literal=pat="$$AZURE_DEVOPS_PAT" \
-		-n $(K8S_NAMESPACE) \
-		--dry-run=client -o yaml | kubectl apply -f -
-	@set -a && source .env.secrets && set +a && \
-	kubectl create secret generic sharko-argocd-nonprod \
-		--from-literal=server-url="$$ARGOCD_NONPROD_SERVER_URL" \
-		--from-literal=token="$$ARGOCD_NONPROD_TOKEN" \
-		--from-literal=namespace="$$ARGOCD_NONPROD_NAMESPACE" \
-		-n $(K8S_NAMESPACE) \
-		--dry-run=client -o yaml | kubectl apply -f -
-	@set -a && source .env.secrets && set +a && \
-	kubectl create secret generic sharko-argocd-prod \
-		--from-literal=server-url="$$ARGOCD_PROD_SERVER_URL" \
-		--from-literal=token="$$ARGOCD_PROD_TOKEN" \
-		--from-literal=namespace="$$ARGOCD_PROD_NAMESPACE" \
-		-n $(K8S_NAMESPACE) \
-		--dry-run=client -o yaml | kubectl apply -f -
-	@echo "Secrets created successfully."
-
-list-secrets: ## List secrets in namespace
-	@echo "Secrets in $(K8S_NAMESPACE):"
-	@kubectl get secrets -n $(K8S_NAMESPACE) 2>/dev/null || echo "  No secrets found"
-
-# ---------------------------------------------------------------------------
-# Code Quality
-# ---------------------------------------------------------------------------
-
-test-coverage: ## Run tests with coverage
-	@echo "Running Go tests with coverage..."
-	go test ./internal/... -coverprofile=coverage.out -covermode=atomic
-	go tool cover -func=coverage.out | tail -1
-	@echo ""
-	@echo "Running UI tests with coverage..."
-	@cd ui && npx vitest run --coverage 2>/dev/null || echo "Install @vitest/coverage-v8 for UI coverage"
-
-pre-commit-install: ## Install pre-commit hooks
-	@if command -v pre-commit >/dev/null 2>&1; then \
-		pre-commit install; \
-		pre-commit install --hook-type pre-push; \
-		echo "Pre-commit hooks installed."; \
-	else \
-		echo "pre-commit not installed. Install: pip install pre-commit"; \
-	fi
+clean: ## Remove build artifacts
+	rm -rf bin/ ui/dist/
