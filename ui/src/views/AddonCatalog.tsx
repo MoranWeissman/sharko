@@ -99,7 +99,7 @@ function AddonCard({ addon }: { addon: AddonCatalogItem }) {
   return (
     <div
       onClick={handleCardClick}
-      className="group flex cursor-pointer flex-col rounded-lg border border-gray-200 bg-white shadow-sm transition-all hover:-translate-y-1 hover:border-cyan-400 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-cyan-500"
+      className="group flex cursor-pointer flex-col rounded-lg border border-[#D6E5F5] bg-white shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:border-cyan-400 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-cyan-500"
     >
       <div className="flex flex-1 flex-col p-4">
         {/* Header */}
@@ -358,7 +358,7 @@ export function AddonCatalog() {
   const [catalogData, setCatalogData] = useState<AddonCatalogResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('list')
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
   const [search, setSearch] = useState('')
   const [filterType, setFilterType] = useState<FilterType>('all')
   const [sortBy, setSortBy] = useState<SortBy>('name')
