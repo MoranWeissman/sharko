@@ -247,6 +247,7 @@ func (c *Client) AddRepository(ctx context.Context, repoURL, username, password 
 		"username": username,
 		"password": password,
 		"type":     "git",
+		"upsert":   true,
 	}
 	jsonData, err := json.Marshal(body)
 	if err != nil {

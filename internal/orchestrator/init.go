@@ -134,6 +134,25 @@ func (o *Orchestrator) InitRepo(ctx context.Context, req InitRepoRequest) (*Init
 // waitForSync polls ArgoCD for an application's sync/health status.
 // Returns the final status ("synced", "failed", "timeout") and an optional error message.
 func (o *Orchestrator) waitForSync(ctx context.Context, appName string, timeout time.Duration) (string, string) {
+	check := func() (string, string, bool) {
+		app, err := o.argocd.GetApplication(ctx, appName)
+		if err != nil {
+			return "", "", false
+		}
+		if app.SyncStatus == "Synced" && app.HealthStatus == "Healthy" {
+			return "synced", "", true
+		}
+		if app.SyncStatus == "OutOfSync" && app.HealthStatus == "Degraded" {
+			return "failed", "application sync failed", true
+		}
+		return "", "", false
+	}
+
+	// Immediate first check before entering the polling loop.
+	if status, msg, done := check(); done {
+		return status, msg
+	}
+
 	deadline := time.After(timeout)
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
@@ -145,15 +164,8 @@ func (o *Orchestrator) waitForSync(ctx context.Context, appName string, timeout 
 		case <-ctx.Done():
 			return "timeout", "context cancelled"
 		case <-ticker.C:
-			app, err := o.argocd.GetApplication(ctx, appName)
-			if err != nil {
-				continue // ArgoCD may not have the app yet
-			}
-			if app.SyncStatus == "Synced" && app.HealthStatus == "Healthy" {
-				return "synced", ""
-			}
-			if app.SyncStatus == "OutOfSync" && app.HealthStatus == "Degraded" {
-				return "failed", "application sync failed"
+			if status, msg, done := check(); done {
+				return status, msg
 			}
 		}
 	}

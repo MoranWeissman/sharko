@@ -439,6 +439,34 @@ func TestInitRepo_WithBootstrapAndSync(t *testing.T) {
 	}
 }
 
+func TestInitRepo_AddRepositoryFails_PartialSuccess(t *testing.T) {
+	argocd := newMockArgocd()
+	argocd.addRepoErr = fmt.Errorf("ArgoCD returned 409")
+	git := newMockGitProvider()
+	cfg := autoMergeGitOps()
+	cfg.RepoURL = "https://github.com/example/addons"
+	orch := New(nil, defaultCreds(), argocd, git, cfg, defaultPaths(), testTemplateFS())
+
+	result, err := orch.InitRepo(context.Background(), InitRepoRequest{
+		BootstrapArgoCD: true,
+		GitUsername:     "x-access-token",
+		GitToken:        "test-token",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != "partial" {
+		t.Errorf("expected 'partial', got %q", result.Status)
+	}
+	if result.ArgoCD == nil || result.ArgoCD.Bootstrapped {
+		t.Error("expected Bootstrapped=false on AddRepository failure")
+	}
+	// PR should still have been created.
+	if result.Repo == nil || result.Repo.PRUrl == "" {
+		t.Error("expected PR URL in partial result")
+	}
+}
+
 func TestRegisterCluster_ManualPR(t *testing.T) {
 	argocd := newMockArgocd()
 	git := newMockGitProvider()
