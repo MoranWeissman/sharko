@@ -25,6 +25,7 @@ Use these whenever available to save tokens and improve reasoning:
 
 - **Serena MCP** — prefer for code operations (reading, searching, navigating code) when available
 - **Sequential Thinking MCP** — use for complex reasoning, multi-step decisions, architectural analysis
+- **Context7 MCP** — use whenever working with libraries, frameworks, or tools (React, Vite, Tailwind, shadcn/ui, Helm, Cobra, client-go, etc.). Fetch current docs instead of relying on training data. Include in agent dispatch prompts.
 
 ## Skills (Superpowers)
 
@@ -42,7 +43,7 @@ The tech-lead playbook maps when to use each skill. Key ones for this project:
 
 ## Agent Team
 
-When dispatching subagents, read the relevant role file from `.claude/team/` and include it as context. Update role files as the product evolves — they are living documents.
+**The tech lead NEVER writes code directly.** Every change — no matter how small — is dispatched to an agent with a role. Read the relevant role file from `.claude/team/` and include it as context. Update role files as the product evolves — they are living documents.
 
 **Orchestration:**
 - `.claude/team/tech-lead.md` — **read first every session**. Playbook for breaking down phases, dispatching agents, quality gates, when to stop vs. continue
@@ -53,7 +54,13 @@ When dispatching subagents, read the relevant role file from `.claude/team/` and
 - `.claude/team/k8s-expert.md` — ArgoCD, Helm, K8s providers, ApplicationSets
 - `.claude/team/frontend-expert.md` — React UI, shadcn/ui, Vite, TypeScript
 - `.claude/team/test-engineer.md` — writes tests, knows mock patterns, tracks coverage gaps
-- `.claude/team/docs-writer.md` — documentation, verifies all claims against codebase
+
+**Architecture & Infrastructure:**
+- `.claude/team/architect.md` — package design, interface contracts, dependency direction, trade-offs
+- `.claude/team/devops-agent.md` — CI/CD, Makefile, Docker, Helm packaging, GitHub Actions, releases
+
+**Documentation:**
+- `.claude/team/docs-writer.md` — all documentation: user guides, API refs, design specs, AND agent team files themselves
 
 **Quality:**
 - `.claude/team/code-reviewer.md` — reviews for bugs, security, contract compliance

@@ -336,8 +336,8 @@ export function AddonDetail() {
         open={removeModalOpen}
         onClose={() => setRemoveModalOpen(false)}
         onConfirm={handleRemoveAddon}
-        title={`Remove add-on "${name}"?`}
-        description="This will remove the add-on from the catalog. This action creates a pull request and cannot be undone."
+        title={`Remove addon "${name}"?`}
+        description="This will remove the addon from the catalog. This action creates a pull request and cannot be undone."
         confirmText="Remove"
         typeToConfirm={name}
         destructive
@@ -352,7 +352,7 @@ export function AddonDetail() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Upgrade {addon.addon_name}</DialogTitle>
-            <DialogDescription>Set a new version for this add-on.</DialogDescription>
+            <DialogDescription>Set a new version for this addon.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div>

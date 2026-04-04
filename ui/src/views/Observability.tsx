@@ -810,7 +810,7 @@ export function Observability() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Observability</h1>
         <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-          ArgoCD control plane health, add-on health per cluster, resource alerts, and sync activity timeline.
+          ArgoCD control plane health, addon health per cluster, resource alerts, and sync activity timeline.
         </p>
       </div>
       <ControlPlaneSection data={data.control_plane} />

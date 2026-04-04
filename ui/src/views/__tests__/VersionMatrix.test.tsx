@@ -87,7 +87,7 @@ describe('VersionMatrix', () => {
     await waitFor(() => {
       expect(screen.getByText('Addons Version Drift Detector')).toBeInTheDocument()
     })
-    expect(screen.getByPlaceholderText('Search add-on by name...')).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('Search addon by name...')).toBeInTheDocument()
   })
 
   it('shows drift badge when version drift exists', async () => {

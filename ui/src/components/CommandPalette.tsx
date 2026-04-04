@@ -136,7 +136,7 @@ export function CommandPalette() {
               value={query}
               onChange={e => setQuery(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Search pages, clusters, add-ons..."
+              placeholder="Search pages, clusters, addons..."
               className="w-full bg-transparent py-3.5 text-sm text-gray-900 placeholder-gray-400 outline-none dark:text-gray-100"
             />
             <kbd className="hidden shrink-0 rounded border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[10px] font-medium text-gray-400 sm:block dark:border-gray-700 dark:bg-gray-800">

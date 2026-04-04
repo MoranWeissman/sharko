@@ -25,7 +25,7 @@ function HealthBar({ title, subtitle, segments }: HealthBarProps) {
   if (total === 0) return null;
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+    <div className="rounded-xl border border-[#D6E5F5] bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
       <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">{title}</h3>
       <p className="mb-3 text-xs text-gray-500 dark:text-gray-400">{subtitle}</p>
       <div className="mb-3 flex h-3 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-700">
@@ -201,7 +201,7 @@ export function Dashboard() {
                 <button onClick={() => navigate('/version-matrix?drift=true')}
                   className="flex items-center gap-2 rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-xs text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:bg-gray-800 dark:text-amber-400">
                   <div className="h-2 w-2 rounded-full bg-amber-500" />
-                  {versionDrifts.length} add-on{versionDrifts.length !== 1 ? 's' : ''} with drift
+                  {versionDrifts.length} addon{versionDrifts.length !== 1 ? 's' : ''} with drift
                 </button>
               )}
             </div>
@@ -295,7 +295,7 @@ export function Dashboard() {
       {/* Bottom row: Quick Actions + Recent Activity + Version Drift */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         {/* Quick Actions */}
-        <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <div className="rounded-xl border border-[#D6E5F5] bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
           <h3 className="mb-3 text-sm font-semibold text-gray-900 dark:text-gray-100">Quick Actions</h3>
           <div className="space-y-2">
             <button onClick={() => navigate('/upgrade')}
@@ -314,7 +314,7 @@ export function Dashboard() {
         </div>
 
         {/* Recent Sync Activity */}
-        <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <div className="rounded-xl border border-[#D6E5F5] bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
           <div className="mb-3 flex items-center justify-between">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Recent Activity</h3>
             <button onClick={() => navigate('/observability')} className="text-xs text-cyan-600 hover:text-cyan-700 dark:text-cyan-400">
@@ -344,7 +344,7 @@ export function Dashboard() {
         </div>
 
         {/* Version Drift */}
-        <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <div className="rounded-xl border border-[#D6E5F5] bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
           <div className="mb-3 flex items-center justify-between">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Version Drift</h3>
             <button onClick={() => navigate('/version-matrix')} className="text-xs text-cyan-600 hover:text-cyan-700 dark:text-cyan-400">

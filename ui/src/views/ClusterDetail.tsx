@@ -310,7 +310,7 @@ export function ClusterDetail() {
         <div>
           <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{data.cluster.name}</h2>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            Kubernetes cluster managed by ArgoCD — deployed add-ons, health, and configuration overrides.
+            Kubernetes cluster managed by ArgoCD — deployed addons, health, and configuration overrides.
           </p>
         </div>
         <RoleGuard adminOnly>
@@ -413,7 +413,7 @@ export function ClusterDetail() {
             <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
               <h3 className="mb-3 text-base font-semibold text-gray-900 dark:text-gray-100">Manage Addons</h3>
               {Object.keys(addonToggles).length === 0 ? (
-                <p className="text-sm text-gray-400 dark:text-gray-500">No add-ons in catalog.</p>
+                <p className="text-sm text-gray-400 dark:text-gray-500">No addons in catalog.</p>
               ) : (
                 <div className="grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-3 lg:grid-cols-4">
                   {Object.keys(addonToggles).sort().map((addonName) => (
