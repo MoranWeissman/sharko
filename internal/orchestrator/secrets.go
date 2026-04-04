@@ -109,7 +109,8 @@ func (o *Orchestrator) deleteAddonSecrets(ctx context.Context, kubeconfig []byte
 		// Delete only the specific secret for this addon, not all managed secrets in the namespace.
 		err = client.CoreV1().Secrets(def.Namespace).Delete(ctx, def.SecretName, metav1.DeleteOptions{})
 		if err != nil && !apierrors.IsNotFound(err) {
-			return deleted, fmt.Errorf("deleting secret for addon %s: %w", addonName, err)
+			// Best-effort: continue deleting other addon secrets even if one fails.
+			continue
 		}
 		deleted = append(deleted, def.SecretName)
 	}
