@@ -29,7 +29,7 @@ export function Login() {
     <div className="flex min-h-screen">
       {/* Left side — background covers full area, mascot centered */}
       <div
-        className="hidden lg:block lg:flex-1 bg-[#0B1426] bg-cover bg-center bg-no-repeat"
+        className="hidden lg:block lg:flex-1 bg-[#0B1426] bg-contain bg-center bg-no-repeat"
         style={{ backgroundImage: "url('/sharko-login-bg.png')" }}
       />
 
@@ -38,8 +38,8 @@ export function Login() {
         <div className="flex flex-1 flex-col items-center justify-center px-10 py-12">
           {/* Brand header — icon + text, bigger */}
           <div className="mb-10 flex items-center gap-3">
-            <img src="/sharko-icon-64.png" alt="" className="h-10 w-10" />
-            <span className="font-bold text-cyan-400 text-[32px] tracking-tight">sharko</span>
+            <img src="/sharko-icon-256.png" alt="" className="h-14 w-14" />
+            <span className="font-bold text-cyan-400 text-[42px] tracking-tight">sharko</span>
           </div>
 
           <form onSubmit={handleSubmit} className="w-full space-y-5">
