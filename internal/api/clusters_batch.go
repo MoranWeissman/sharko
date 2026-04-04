@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
@@ -31,7 +32,7 @@ func (s *Server) handleBatchRegisterClusters(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if len(req.Clusters) > orchestrator.MaxBatchSize {
-		writeError(w, http.StatusBadRequest, "batch size exceeds maximum of 10 clusters")
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("batch size exceeds maximum of %d clusters", orchestrator.MaxBatchSize))
 		return
 	}
 
