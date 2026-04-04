@@ -137,6 +137,10 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("POST /api/v1/connections/test-credentials", srv.handleTestCredentials)
 	mux.HandleFunc("GET /api/v1/connections/discover-argocd", srv.handleDiscoverArgocd)
 
+	// Clusters — batch operations (registered before {name} wildcard routes)
+	mux.HandleFunc("POST /api/v1/clusters/batch", srv.handleBatchRegisterClusters)
+	mux.HandleFunc("GET /api/v1/clusters/available", srv.handleDiscoverClusters)
+
 	// Clusters (read)
 	mux.HandleFunc("GET /api/v1/clusters", srv.handleListClusters)
 	mux.HandleFunc("GET /api/v1/clusters/{name}/values", srv.handleGetClusterValues)
