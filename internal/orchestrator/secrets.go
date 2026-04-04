@@ -5,6 +5,8 @@ import (
 	"fmt"
 
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -104,11 +106,12 @@ func (o *Orchestrator) deleteAddonSecrets(ctx context.Context, kubeconfig []byte
 		if !ok {
 			continue
 		}
-		names, delErr := remoteclient.DeleteManagedSecrets(ctx, client, def.Namespace)
-		if delErr != nil {
-			return deleted, fmt.Errorf("deleting secrets for addon %s: %w", addonName, delErr)
+		// Delete only the specific secret for this addon, not all managed secrets in the namespace.
+		err = client.CoreV1().Secrets(def.Namespace).Delete(ctx, def.SecretName, metav1.DeleteOptions{})
+		if err != nil && !apierrors.IsNotFound(err) {
+			return deleted, fmt.Errorf("deleting secret for addon %s: %w", addonName, err)
 		}
-		deleted = append(deleted, names...)
+		deleted = append(deleted, def.SecretName)
 	}
 	return deleted, nil
 }

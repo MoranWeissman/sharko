@@ -8,6 +8,9 @@ import (
 )
 
 func (s *Server) handleListClusterSecrets(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	name := r.PathValue("name")
 	if name == "" {
 		writeError(w, http.StatusBadRequest, "cluster name is required")

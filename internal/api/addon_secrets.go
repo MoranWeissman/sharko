@@ -8,6 +8,9 @@ import (
 )
 
 func (s *Server) handleListAddonSecrets(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
 	writeJSON(w, http.StatusOK, s.addonSecretDefs)
 }
 
