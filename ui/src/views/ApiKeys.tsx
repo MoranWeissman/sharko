@@ -123,7 +123,7 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
         {!embedded && (
           <div>
             <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">API Keys</h2>
-            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
               Manage API tokens for programmatic access to Sharko.
             </p>
           </div>
@@ -141,7 +141,7 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
       {/* Token table */}
       <div className="overflow-x-auto rounded-xl border border-gray-200 bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
         <table className="w-full text-left text-sm">
-          <thead className="border-b border-gray-200 bg-[#d0e8f8] text-xs uppercase text-gray-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
+          <thead className="border-b border-gray-200 bg-[#d0e8f8] text-xs uppercase text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
             <tr>
               <th className="px-6 py-3">Name</th>
               <th className="px-6 py-3">Role</th>
@@ -155,7 +155,7 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
               <tr key={token.name} className="hover:bg-[#d6eeff] dark:hover:bg-gray-700">
                 <td className="px-6 py-3 font-medium text-gray-900 dark:text-gray-100">
                   <div className="flex items-center gap-2">
-                    <Key className="h-4 w-4 text-gray-400" />
+                    <Key className="h-4 w-4 text-[#3a6a8a]" />
                     {token.name}
                   </div>
                 </td>
@@ -170,10 +170,10 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
                     {token.role}
                   </span>
                 </td>
-                <td className="px-6 py-3 text-gray-500 dark:text-gray-400">
+                <td className="px-6 py-3 text-[#2a5a7a] dark:text-gray-400">
                   {formatDate(token.created_at)}
                 </td>
-                <td className="px-6 py-3 text-gray-500 dark:text-gray-400">
+                <td className="px-6 py-3 text-[#2a5a7a] dark:text-gray-400">
                   {formatDate(token.last_used_at)}
                 </td>
                 <td className="px-6 py-3">
@@ -190,7 +190,7 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
             ))}
             {tokens.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-6 py-8 text-center text-gray-400 dark:text-gray-500">
+                <td colSpan={5} className="px-6 py-8 text-center text-[#3a6a8a] dark:text-gray-500">
                   No API tokens yet. Create one to get started.
                 </td>
               </tr>
@@ -233,7 +233,7 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
                 <button
                   type="button"
                   onClick={handleCopy}
-                  className="shrink-0 rounded p-1 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700"
+                  className="shrink-0 rounded p-1 text-[#2a5a7a] hover:bg-gray-200 dark:hover:bg-gray-700"
                   title="Copy token"
                 >
                   {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}

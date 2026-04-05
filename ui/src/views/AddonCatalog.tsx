@@ -50,7 +50,7 @@ function HealthProgressBar({ healthy, total }: { healthy: number; total: number 
           style={{ width: `${pct}%` }}
         />
       </div>
-      <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+      <p className="mt-1 text-xs text-[#2a5a7a] dark:text-gray-400">
         {healthy}/{total} healthy ({Math.round(pct)}%)
       </p>
     </div>
@@ -108,7 +108,7 @@ function AddonCard({ addon }: { addon: AddonCatalogItem }) {
             <h3 className="truncate text-lg font-bold capitalize text-teal-700 dark:text-teal-400">
               {addon.addon_name}
             </h3>
-            <p className="truncate text-xs text-gray-500 dark:text-gray-400">
+            <p className="truncate text-xs text-[#2a5a7a] dark:text-gray-400">
               Namespace: {namespace}
             </p>
             {enabledApps > 0 ? (
@@ -127,7 +127,7 @@ function AddonCard({ addon }: { addon: AddonCatalogItem }) {
               e.stopPropagation()
               setExpanded((v) => !v)
             }}
-            className="ml-2 shrink-0 rounded p-1 text-gray-400 hover:bg-[#d6eeff] hover:text-gray-600 dark:hover:bg-gray-700 dark:hover:text-gray-300"
+            className="ml-2 shrink-0 rounded p-1 text-[#3a6a8a] hover:bg-[#d6eeff] hover:text-gray-600 dark:hover:bg-gray-700 dark:hover:text-gray-300"
             title={expanded ? 'Collapse details' : 'Expand details'}
           >
             {expanded ? (
@@ -139,7 +139,7 @@ function AddonCard({ addon }: { addon: AddonCatalogItem }) {
         </div>
 
         {/* Stats */}
-        <p className="mb-2 text-xs text-gray-500 dark:text-gray-400">
+        <p className="mb-2 text-xs text-[#2a5a7a] dark:text-gray-400">
           {enabledApps > 0
             ? `Deployed on ${enabledApps} ${enabledApps === 1 ? 'cluster' : 'clusters'}`
             : 'Not deployed on any cluster'}
@@ -199,7 +199,7 @@ function AddonCard({ addon }: { addon: AddonCatalogItem }) {
                         <td className="px-2 py-1 font-medium dark:text-gray-200">
                           {app.cluster_name}
                         </td>
-                        <td className="px-2 py-1 text-gray-500 dark:text-gray-400">
+                        <td className="px-2 py-1 text-[#2a5a7a] dark:text-gray-400">
                           {app.cluster_environment ?? 'unknown'}
                         </td>
                         <td className="px-2 py-1">
@@ -256,7 +256,7 @@ function PaginationControls({
         }, [])
         .map((item, idx) =>
           item === 'ellipsis' ? (
-            <span key={`e-${idx}`} className="px-1 text-gray-400">
+            <span key={`e-${idx}`} className="px-1 text-[#3a6a8a]">
               ...
             </span>
           ) : (
@@ -291,7 +291,7 @@ function AddonListTable({ addons }: { addons: AddonCatalogItem[] }) {
   return (
     <div className="overflow-x-auto rounded-xl border border-gray-200 bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
       <table className="w-full text-left text-sm">
-        <thead className="border-b border-gray-200 bg-[#d0e8f8] text-xs uppercase text-gray-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
+        <thead className="border-b border-gray-200 bg-[#d0e8f8] text-xs uppercase text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
           <tr>
             <th className="px-6 py-3">Addon Name</th>
             <th className="px-6 py-3">Version</th>
@@ -311,7 +311,7 @@ function AddonListTable({ addons }: { addons: AddonCatalogItem[] }) {
               <td className="px-6 py-3 font-medium capitalize text-gray-900 dark:text-gray-100">
                 {addon.addon_name}
               </td>
-              <td className="px-6 py-3 font-mono text-xs text-gray-500 dark:text-gray-400">
+              <td className="px-6 py-3 font-mono text-xs text-[#2a5a7a] dark:text-gray-400">
                 {addon.version}
               </td>
               <td className="px-6 py-3 text-gray-700 dark:text-gray-300">
@@ -516,7 +516,7 @@ export function AddonCatalog() {
     return (
       <div className="space-y-4">
         <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Addons Catalog</h2>
-        <p className="text-gray-500 dark:text-gray-400">No addon catalog data available.</p>
+        <p className="text-[#2a5a7a] dark:text-gray-400">No addon catalog data available.</p>
       </div>
     )
   }
@@ -527,7 +527,7 @@ export function AddonCatalog() {
       <div className="flex items-start justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Addons Catalog</h2>
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+          <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
             All addons defined in your Git catalog. See deployment coverage, health, and version per addon. <span className="font-medium text-amber-600 dark:text-amber-400">Catalog Only</span> means the addon is defined in your catalog but not yet enabled on any cluster.
           </p>
         </div>
@@ -655,7 +655,7 @@ export function AddonCatalog() {
       {/* Search & filter controls */}
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative flex-1" style={{ minWidth: 220, maxWidth: 350 }}>
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#3a6a8a]" />
           <input
             type="text"
             placeholder="Search addons by name, chart, or namespace..."
@@ -666,7 +666,7 @@ export function AddonCatalog() {
         </div>
 
         <div className="flex items-center gap-1">
-          <Filter className="h-4 w-4 text-gray-400" />
+          <Filter className="h-4 w-4 text-[#3a6a8a]" />
           <select
             value={filterType}
             onChange={(e) => setFilterType(e.target.value as FilterType)}
@@ -680,7 +680,7 @@ export function AddonCatalog() {
         </div>
 
         <div className="flex items-center gap-1">
-          <ArrowUpDown className="h-4 w-4 text-gray-400" />
+          <ArrowUpDown className="h-4 w-4 text-[#3a6a8a]" />
           <select
             value={sortBy}
             onChange={(e) => setSortBy(e.target.value as SortBy)}
@@ -709,7 +709,7 @@ export function AddonCatalog() {
             className={`rounded-l-lg p-2 ${
               viewMode === 'grid'
                 ? 'bg-teal-600 text-white'
-                : 'bg-[#f0f7ff] text-gray-500 hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
+                : 'bg-[#f0f7ff] text-[#2a5a7a] hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
             }`}
             aria-label="Grid view"
             title="Grid view"
@@ -722,7 +722,7 @@ export function AddonCatalog() {
             className={`rounded-r-lg p-2 ${
               viewMode === 'list'
                 ? 'bg-teal-600 text-white'
-                : 'bg-[#f0f7ff] text-gray-500 hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
+                : 'bg-[#f0f7ff] text-[#2a5a7a] hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
             }`}
             aria-label="List view"
             title="List view"
@@ -734,7 +734,7 @@ export function AddonCatalog() {
 
       {/* Results count + top pagination */}
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-gray-500 dark:text-gray-400">
+        <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
           {search
             ? `Showing ${filteredAddons.length} of ${catalogData.total_addons} addons`
             : `Showing ${filteredAddons.length} addons`}

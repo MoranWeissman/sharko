@@ -265,7 +265,7 @@ export function ClustersOverview() {
       <div className="flex items-start justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Clusters</h2>
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+          <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
             All Kubernetes clusters managed by ArgoCD. Click a cluster to see deployed addons, health status, and configuration.
           </p>
         </div>
@@ -392,7 +392,7 @@ export function ClustersOverview() {
         <div className="flex flex-wrap items-center gap-3">
           {/* Name search */}
           <div className="relative min-w-[200px] flex-1">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#3a6a8a]" />
             <input
               type="text"
               placeholder="Filter by name..."
@@ -433,7 +433,7 @@ export function ClustersOverview() {
                   </label>
                 ))}
                 {availableVersions.length === 0 && (
-                  <p className="px-3 py-2 text-sm text-gray-400">No versions</p>
+                  <p className="px-3 py-2 text-sm text-[#3a6a8a]">No versions</p>
                 )}
               </div>
             )}
@@ -468,7 +468,7 @@ export function ClustersOverview() {
                   </label>
                 ))}
                 {availableConnectionTypes.length === 0 && (
-                  <p className="px-3 py-2 text-sm text-gray-400">No statuses</p>
+                  <p className="px-3 py-2 text-sm text-[#3a6a8a]">No statuses</p>
                 )}
               </div>
             )}
@@ -493,7 +493,7 @@ export function ClustersOverview() {
               className={`rounded-l-md p-2 ${
                 viewMode === 'list'
                   ? 'bg-teal-600 text-white'
-                  : 'bg-[#f0f7ff] text-gray-500 hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
+                  : 'bg-[#f0f7ff] text-[#2a5a7a] hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
               }`}
               aria-label="List view"
               title="List view"
@@ -506,7 +506,7 @@ export function ClustersOverview() {
               className={`rounded-r-md p-2 ${
                 viewMode === 'grid'
                   ? 'bg-teal-600 text-white'
-                  : 'bg-[#f0f7ff] text-gray-500 hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
+                  : 'bg-[#f0f7ff] text-[#2a5a7a] hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
               }`}
               aria-label="Grid view"
               title="Grid view"
@@ -559,7 +559,7 @@ export function ClustersOverview() {
       {viewMode === 'list' ? (
         <div className="overflow-x-auto rounded-xl border border-gray-200 bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
           <table className="w-full text-left text-sm">
-            <thead className="border-b border-gray-200 bg-[#d0e8f8] text-xs uppercase text-gray-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
+            <thead className="border-b border-gray-200 bg-[#d0e8f8] text-xs uppercase text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
               <tr>
                 <th className="px-6 py-3">Name</th>
                 <th className="px-6 py-3">Connection Status</th>
@@ -602,10 +602,10 @@ export function ClustersOverview() {
                         status={cluster.connection_status ?? 'unknown'}
                       />
                     </td>
-                    <td className="px-6 py-3 font-mono text-xs text-gray-500 dark:text-gray-400">
+                    <td className="px-6 py-3 font-mono text-xs text-[#2a5a7a] dark:text-gray-400">
                       {cluster.server_version ?? '--'}
                     </td>
-                    <td className="px-6 py-3 text-gray-500 dark:text-gray-400">
+                    <td className="px-6 py-3 text-[#2a5a7a] dark:text-gray-400">
                       {Object.values(cluster.labels).filter((v) => v === 'enabled').length}
                     </td>
                   </tr>
@@ -615,7 +615,7 @@ export function ClustersOverview() {
                 <tr>
                   <td
                     colSpan={4}
-                    className="px-6 py-8 text-center text-gray-400 dark:text-gray-500"
+                    className="px-6 py-8 text-center text-[#3a6a8a] dark:text-gray-500"
                   >
                     No clusters match the current filters.
                   </td>
@@ -663,7 +663,7 @@ export function ClustersOverview() {
                     status={cluster.connection_status ?? 'unknown'}
                   />
                 </div>
-                <p className="mb-2 font-mono text-xs text-gray-500 dark:text-gray-400">
+                <p className="mb-2 font-mono text-xs text-[#2a5a7a] dark:text-gray-400">
                   {cluster.server_version ? `v${cluster.server_version}` : '--'}
                 </p>
                 {addonCount > 0 && (
@@ -675,7 +675,7 @@ export function ClustersOverview() {
             );
           })}
           {filteredClusters.length === 0 && (
-            <div className="col-span-full rounded-lg border border-gray-200 bg-[#f0f7ff] p-8 text-center text-gray-400 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-500">
+            <div className="col-span-full rounded-lg border border-gray-200 bg-[#f0f7ff] p-8 text-center text-[#3a6a8a] dark:border-gray-700 dark:bg-gray-800 dark:text-gray-500">
               No clusters match the current filters.
             </div>
           )}

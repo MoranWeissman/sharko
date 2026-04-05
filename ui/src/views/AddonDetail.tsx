@@ -39,7 +39,7 @@ function HealthProgressBar({ healthy, total }: { healthy: number; total: number 
     pct === 100 ? 'bg-green-500' : pct > 50 ? 'bg-yellow-500' : 'bg-red-500'
 
   return (
-    <div className="rounded-lg border bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800">
+    <div className="rounded-lg border border-[#90c8ee] bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800">
       <h3 className="mb-2 text-base font-semibold text-gray-900 dark:text-gray-100">Overall Health</h3>
       <div className="h-3 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
         <div
@@ -47,7 +47,7 @@ function HealthProgressBar({ healthy, total }: { healthy: number; total: number 
           style={{ width: `${pct}%` }}
         />
       </div>
-      <p className="mt-1.5 text-sm text-gray-500 dark:text-gray-400">
+      <p className="mt-1.5 text-sm text-[#2a5a7a] dark:text-gray-400">
         {healthy} of {total} applications are healthy ({Math.round(pct)}%)
       </p>
     </div>
@@ -275,7 +275,7 @@ export function AddonDetail() {
           </button>
           <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Addon Details</h2>
         </div>
-        <p className="text-gray-500 dark:text-gray-400">Addon not found.</p>
+        <p className="text-[#2a5a7a] dark:text-gray-400">Addon not found.</p>
       </div>
     )
   }
@@ -305,7 +305,7 @@ export function AddonDetail() {
           </button>
           <div>
             <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{addon.addon_name}</h1>
-            <p className="text-sm text-gray-500 dark:text-gray-400">
+            <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
               {addon.chart} &middot; Namespace: {namespace}
             </p>
           </div>
@@ -465,13 +465,13 @@ export function AddonDetail() {
 
         <TabsContent value="clusters" className="space-y-6">
           {/* Filter controls */}
-          <div className="rounded-lg border bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800">
+          <div className="rounded-lg border border-[#90c8ee] bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800">
             <h3 className="mb-3 text-base font-semibold text-gray-900 dark:text-gray-100">
               Filter Applications
             </h3>
             <div className="flex flex-wrap items-center gap-3">
               <div className="relative flex-1" style={{ minWidth: 200, maxWidth: 300 }}>
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#3a6a8a]" />
                 <input
                   type="text"
                   placeholder="Search clusters, environments, or apps..."
@@ -520,7 +520,7 @@ export function AddonDetail() {
                 ))}
               </select>
             </div>
-            <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+            <p className="mt-2 text-xs text-[#2a5a7a] dark:text-gray-400">
               Showing {filteredApps.length} of {enabledApps.length} applications
             </p>
           </div>
@@ -529,7 +529,7 @@ export function AddonDetail() {
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
             {/* Left: Environment Versions */}
             <div className="lg:col-span-4">
-              <div className="rounded-lg border bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800">
+              <div className="rounded-lg border border-[#90c8ee] bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800">
                 <h3 className="mb-3 text-base font-semibold text-gray-900 dark:text-gray-100">
                   Environment Versions
                 </h3>
@@ -548,14 +548,14 @@ export function AddonDetail() {
                     ))}
                   </div>
                 ) : (
-                  <p className="text-sm text-gray-400">No environment versions available.</p>
+                  <p className="text-sm text-[#3a6a8a]">No environment versions available.</p>
                 )}
               </div>
             </div>
 
             {/* Right: Cluster Applications Table */}
             <div className="lg:col-span-8">
-              <div className="rounded-lg border bg-[#f0f7ff] dark:border-gray-700 dark:bg-gray-800">
+              <div className="rounded-lg border border-[#90c8ee] bg-[#f0f7ff] dark:border-gray-700 dark:bg-gray-800">
                 <div className="border-b px-4 py-3 dark:border-gray-700">
                   <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">
                     Cluster Applications
@@ -563,7 +563,7 @@ export function AddonDetail() {
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
-                    <thead className="border-b bg-[#d0e8f8] text-xs uppercase text-gray-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
+                    <thead className="border-b bg-[#d0e8f8] text-xs uppercase text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
                       <tr>
                         <th className="px-4 py-3 text-left">Cluster</th>
                         <th className="px-4 py-3 text-left">Status</th>
@@ -610,12 +610,12 @@ export function AddonDetail() {
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 title={`Open ${app.application_name} in ArgoCD`}
-                                className="text-gray-500 hover:text-teal-600 dark:text-gray-400 dark:hover:text-teal-400"
+                                className="text-[#2a5a7a] hover:text-teal-600 dark:text-gray-400 dark:hover:text-teal-400"
                               >
                                 <ExternalLink className="h-4 w-4" />
                               </a>
                             ) : (
-                              <span className="text-xs text-gray-400">N/A</span>
+                              <span className="text-xs text-[#3a6a8a]">N/A</span>
                             )}
                           </td>
                         </tr>
@@ -624,7 +624,7 @@ export function AddonDetail() {
                         <tr>
                           <td
                             colSpan={5}
-                            className="px-4 py-8 text-center text-gray-400 dark:text-gray-500"
+                            className="px-4 py-8 text-center text-[#3a6a8a] dark:text-gray-500"
                           >
                             {enabledApps.length === 0
                               ? 'This addon is not currently deployed on any clusters.'
@@ -641,7 +641,7 @@ export function AddonDetail() {
 
           {/* Disabled clusters section */}
           {disabledApps.length > 0 && (
-            <div className="rounded-lg border bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800" id="disabled-clusters-section">
+            <div className="rounded-lg border border-[#90c8ee] bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800" id="disabled-clusters-section">
               <h3 className="mb-3 text-base font-semibold text-gray-900 dark:text-gray-100">
                 Disabled on {disabledApps.length} Clusters
               </h3>
@@ -662,10 +662,10 @@ export function AddonDetail() {
         </TabsContent>
 
         <TabsContent value="upgrade" className="space-y-6">
-          <RoleGuard adminOnly fallback={<p className="text-sm text-gray-500 dark:text-gray-400">Admin access required to upgrade addons.</p>}>
-            <div className="rounded-lg border border-gray-200 bg-[#f0f7ff] p-6 dark:border-gray-700 dark:bg-gray-800">
+          <RoleGuard adminOnly fallback={<p className="text-sm text-[#2a5a7a] dark:text-gray-400">Admin access required to upgrade addons.</p>}>
+            <div className="rounded-lg border border-[#90c8ee] bg-[#f0f7ff] p-6 dark:border-gray-700 dark:bg-gray-800">
               <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">Upgrade {addon.addon_name}</h3>
-              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
                 Current catalog version: <span className="font-mono font-medium">{addon.version}</span>
               </p>
               <button
