@@ -187,6 +187,7 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("GET /api/v1/clusters/{name}/values", srv.handleGetClusterValues)
 	mux.HandleFunc("GET /api/v1/clusters/{name}/config-diff", srv.handleGetConfigDiff)
 	mux.HandleFunc("GET /api/v1/clusters/{name}/comparison", srv.handleGetClusterComparison)
+	mux.HandleFunc("GET /api/v1/clusters/{name}/history", srv.handleGetClusterHistory)
 	mux.HandleFunc("GET /api/v1/clusters/{name}", srv.handleGetCluster)
 
 	// Clusters (write — orchestrator-backed)
@@ -227,6 +228,7 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("GET /api/v1/addons/catalog", srv.handleGetAddonCatalog)
 	mux.HandleFunc("GET /api/v1/addons/version-matrix", srv.handleGetVersionMatrix)
 	mux.HandleFunc("GET /api/v1/addons/{name}/values", srv.handleGetAddonValues)
+	mux.HandleFunc("GET /api/v1/addons/{name}/changelog", srv.handleGetAddonChangelog)
 	mux.HandleFunc("GET /api/v1/addons/{name}", srv.handleGetAddonDetail)
 
 	// Dashboard

@@ -15,9 +15,11 @@ import (
 
 // ChartVersion represents a version entry from a Helm repo index.
 type ChartVersion struct {
-	Version    string   `yaml:"version"`
-	URLs       []string `yaml:"urls"`
-	AppVersion string   `yaml:"appVersion,omitempty"`
+	Version     string   `yaml:"version"`
+	URLs        []string `yaml:"urls"`
+	AppVersion  string   `yaml:"appVersion,omitempty"`
+	Created     string   `yaml:"created,omitempty"`
+	Description string   `yaml:"description,omitempty"`
 }
 
 // repoIndex represents a Helm repository index.yaml.

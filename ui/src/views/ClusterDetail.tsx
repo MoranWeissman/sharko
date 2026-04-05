@@ -23,11 +23,12 @@ import {
   Clock,
 } from 'lucide-react';
 import { api, deregisterCluster, updateClusterAddons } from '@/services/api';
-import type { ClusterComparisonResponse, AddonComparisonStatus, ConfigDiffResponse } from '@/services/models';
+import type { ClusterComparisonResponse, AddonComparisonStatus, ConfigDiffResponse, SyncActivityEntry } from '@/services/models';
 import { StatCard } from '@/components/StatCard';
 import { StatusBadge } from '@/components/StatusBadge';
 import { LoadingState } from '@/components/LoadingState';
 import { ErrorState } from '@/components/ErrorState';
+import { EmptyState } from '@/components/EmptyState';
 import { YamlViewer } from '@/components/YamlViewer';
 import { RoleGuard } from '@/components/RoleGuard';
 import { ConfirmationModal } from '@/components/ConfirmationModal';
@@ -40,6 +41,53 @@ type StatusFilter =
   | 'missing_in_argocd'
   | 'untracked'
   | 'disabled_in_git';
+
+function ClusterHistorySection({ clusterName }: { clusterName: string }) {
+  const [history, setHistory] = useState<SyncActivityEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.getClusterHistory(clusterName)
+      .then(data => setHistory(data.history ?? []))
+      .catch(e => setError(e instanceof Error ? e.message : 'Failed to load history'))
+      .finally(() => setLoading(false));
+  }, [clusterName]);
+
+  if (loading) return <LoadingState message="Loading history..." />;
+  if (error) return <ErrorState message={error} />;
+
+  if (history.length === 0) {
+    return (
+      <EmptyState
+        title="No history yet"
+        description="Sync activity for this cluster will appear here."
+      />
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <h3 className="text-lg font-semibold text-[#0a2a4a]">Change History</h3>
+      <div className="space-y-2">
+        {history.map((entry, i) => (
+          <div key={i} className="flex items-center gap-3 rounded-lg bg-[#f0f7ff] ring-2 ring-[#6aade0] px-4 py-3">
+            <div className={`h-2.5 w-2.5 shrink-0 rounded-full ${
+              entry.status === 'Synced' || entry.status === 'Succeeded' ? 'bg-green-500' : 'bg-amber-500'
+            }`} />
+            <div className="min-w-0 flex-1">
+              <span className="font-medium text-[#0a2a4a]">{entry.addon_name}</span>
+              <span className="text-[#3a6a8a]"> — {entry.status}</span>
+            </div>
+            <span className="shrink-0 text-xs text-[#3a6a8a]">
+              {new Date(entry.timestamp).toLocaleDateString()} {new Date(entry.timestamp).toLocaleTimeString()}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function capitalizeAddonName(name: string): string {
   return name.charAt(0).toUpperCase() + name.slice(1);
@@ -594,18 +642,7 @@ export function ClusterDetail() {
 
           {/* History section */}
           {activeSection === 'history' && (
-            <div className="space-y-4">
-              <h3 className="text-lg font-semibold text-[#0a2a4a]">Change History</h3>
-              <p className="text-sm text-[#2a5a7a]">
-                Git PR history for this cluster will appear here. This feature uses the observability API to show
-                recent changes, addon additions/removals, and configuration updates.
-              </p>
-              <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-6 text-center">
-                <img src="/sharko-mascot.png" alt="" className="mx-auto h-16 w-auto opacity-60" />
-                <p className="mt-3 text-sm font-medium text-[#1a4a6a]">Coming soon</p>
-                <p className="mt-1 text-xs text-[#3a6a8a]">Change history tracking is being built.</p>
-              </div>
-            </div>
+            <ClusterHistorySection clusterName={name!} />
           )}
         </div>
       </div>

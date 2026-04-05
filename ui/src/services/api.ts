@@ -11,6 +11,7 @@ import type {
   DashboardStats,
   ObservabilityOverviewResponse,
   PullRequestsResponse,
+  SyncActivityEntry,
   UpgradeCheckResponse,
   VersionMatrixResponse,
 } from './models'
@@ -188,6 +189,7 @@ export const api = {
   getClusterComparison: (name: string) => fetchJSON<ClusterComparisonResponse>(`/clusters/${name}/comparison`),
   getClusterValues: (name: string) => fetchJSON<{ cluster_name: string; values_yaml: string }>(`/clusters/${name}/values`),
   getConfigDiff: (name: string) => fetchJSON<ConfigDiffResponse>(`/clusters/${name}/config-diff`),
+  getClusterHistory: (name: string) => fetchJSON<{ cluster_name: string; history: SyncActivityEntry[] }>(`/clusters/${name}/history`),
 
   // Addons
   getAddonCatalog: () => fetchJSON<AddonCatalogResponse>('/addons/catalog'),
