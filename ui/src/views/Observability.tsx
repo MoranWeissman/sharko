@@ -95,11 +95,11 @@ function ControlPlaneSection({
 }) {
   const healthData = useMemo(
     () =>
-      Object.entries(data.health_summary).map(([name, value]) => ({
+      Object.entries(data?.health_summary ?? {}).map(([name, value]) => ({
         name,
         value,
       })),
-    [data.health_summary],
+    [data?.health_summary],
   );
 
   const total = healthData.reduce((sum, d) => sum + d.value, 0);
@@ -274,7 +274,7 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
   // Pivot data: group by cluster instead of addon
   const clusterGroups = useMemo((): ClusterGroup[] => {
     const map = new Map<string, ClusterGroup>();
-    for (const group of groups) {
+    for (const group of groups ?? []) {
       for (const child of group.child_apps ?? []) {
         let cg = map.get(child.cluster_name);
         if (!cg) {
@@ -300,6 +300,12 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
     const copy = [...(groups ?? [])];
     if (sortMode === 'alpha') {
       copy.sort((a, b) => a.addon_name.localeCompare(b.addon_name));
+    } else {
+      copy.sort((a, b) => {
+        const aIssues = Object.entries(a.health_counts ?? {}).filter(([k]) => k.toLowerCase() !== 'healthy').reduce((s, [, v]) => s + v, 0);
+        const bIssues = Object.entries(b.health_counts ?? {}).filter(([k]) => k.toLowerCase() !== 'healthy').reduce((s, [, v]) => s + v, 0);
+        return bIssues - aIssues;
+      });
     }
     return copy;
   }, [groups, sortMode]);
@@ -653,17 +659,17 @@ function SyncActivitySection({
   const [clusterFilter, setClusterFilter] = useState('');
 
   const addonNames = useMemo(
-    () => [...new Set(syncs.map((s) => s.addon_name))].sort(),
+    () => [...new Set((syncs ?? []).map((s) => s.addon_name))].sort(),
     [syncs],
   );
   const clusterNames = useMemo(
-    () => [...new Set(syncs.map((s) => s.cluster_name))].sort(),
+    () => [...new Set((syncs ?? []).map((s) => s.cluster_name))].sort(),
     [syncs],
   );
 
   const filtered = useMemo(
     () =>
-      syncs.filter(
+      (syncs ?? []).filter(
         (s) =>
           (!addonFilter || s.addon_name === addonFilter) &&
           (!clusterFilter || s.cluster_name === clusterFilter),
@@ -676,7 +682,7 @@ function SyncActivitySection({
     const now = Date.now();
     const buckets: Record<number, number> = {};
     for (let i = 0; i < 24; i++) buckets[i] = 0;
-    for (const s of syncs) {
+    for (const s of syncs ?? []) {
       const hoursAgo = Math.floor((now - new Date(s.timestamp).getTime()) / 3600000);
       if (hoursAgo >= 0 && hoursAgo < 24) {
         buckets[hoursAgo]++;

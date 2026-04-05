@@ -175,10 +175,14 @@ export function Layout() {
         <Link
           to="/dashboard"
           aria-label="Sharko — go to dashboard"
-          className="flex items-center gap-2 border-b border-[#14466e] px-3 py-2.5 transition-colors hover:bg-[#14466e]"
+          className={`flex items-center border-b border-[#14466e] transition-colors hover:bg-[#14466e] ${
+            collapsed && !mobileOpen
+              ? 'justify-center px-2 py-3'
+              : 'gap-2 px-3 py-2.5'
+          }`}
           onClick={() => setMobileOpen(false)}
         >
-          <img src="/sharko-mascot.png" alt="" className={collapsed && !mobileOpen ? 'h-8 w-auto' : 'h-10 w-auto'} />
+          <img src="/sharko-mascot.png" alt="" className={collapsed && !mobileOpen ? 'h-12 w-auto mx-auto' : 'h-16 w-auto'} />
           {(!collapsed || mobileOpen) && (
             <div className="min-w-0">
               <span className="text-base font-bold text-blue-400">Sharko</span>
