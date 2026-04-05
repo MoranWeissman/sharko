@@ -6,7 +6,6 @@ import {
   Package,
   Activity,
   BarChart3,
-  BookOpen,
   Settings,
   ChevronLeft,
   ChevronRight,
@@ -17,7 +16,6 @@ import {
   User,
   Menu,
   Search,
-  MessageSquare,
 } from 'lucide-react'
 import { useConnections } from '@/hooks/useConnections'
 import { FloatingAssistant } from '@/components/FloatingAssistant'
@@ -60,13 +58,6 @@ const navSections: NavSection[] = [
       { to: '/settings', label: 'Settings', icon: Settings },
     ],
   },
-  {
-    label: 'Help',
-    items: [
-      { to: '/assistant', label: 'AI Assistant', icon: MessageSquare },
-      { to: '/docs', label: 'Docs', icon: BookOpen },
-    ],
-  },
 ]
 
 const routeLabels: Record<string, string> = {
@@ -76,9 +67,7 @@ const routeLabels: Record<string, string> = {
   'version-matrix': 'Version Drift Detector',
   observability: 'Observability',
   upgrade: 'Addon Upgrade Checker',
-  assistant: 'AI Assistant',
   dashboards: 'Dashboards',
-  docs: 'Docs',
   settings: 'Settings',
   users: 'User Management',
   'api-keys': 'API Keys',
@@ -151,12 +140,17 @@ export function Layout() {
         <Link
           to="/dashboard"
           aria-label="Sharko — go to dashboard"
-          className="flex h-14 items-center gap-2 border-b border-[#1A2D4A] px-4 transition-colors hover:bg-[#132038]"
+          className="flex items-center gap-3 border-b border-[#1A2D4A] px-4 py-3 transition-colors hover:bg-[#132038]"
           onClick={() => setMobileOpen(false)}
         >
-          <img src="/sharko-mascot.png" alt="" className="h-8 w-auto shrink-0" />
-          {!collapsed && (
-            <span className="text-sm font-bold text-cyan-400">Sharko</span>
+          <img src="/sharko-mascot.png" alt="" className={collapsed && !mobileOpen ? 'h-8 w-auto' : 'h-14 w-auto'} />
+          {(!collapsed || mobileOpen) && (
+            <div>
+              <span className="text-lg font-bold text-teal-400">Sharko</span>
+              {appVersion && (
+                <p className="text-[10px] text-[#5A7A9B]">v{appVersion}</p>
+              )}
+            </div>
           )}
         </Link>
 
@@ -179,7 +173,7 @@ export function Layout() {
                     className={({ isActive }) =>
                       `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
                         isActive
-                          ? 'border-l-[3px] border-cyan-400 bg-[#1A2D4A] text-white'
+                          ? 'border-l-[3px] border-teal-400 bg-[#1A2D4A] text-white'
                           : 'border-l-[3px] border-transparent text-[#94B8DB] hover:bg-[#132038] hover:text-white'
                       } ${collapsed && !mobileOpen ? 'justify-center px-0' : ''}`
                     }
@@ -194,13 +188,6 @@ export function Layout() {
           ))}
         </nav>
 
-        {/* Decorative mascot */}
-        {!collapsed && (
-          <div className="flex justify-center px-4 pb-2">
-            <img src="/sharko-mascot.png" alt="" className="h-20 w-auto opacity-60" />
-          </div>
-        )}
-
         {/* Collapse toggle */}
         <div className="border-t border-[#1A2D4A] p-2">
           <button
@@ -214,12 +201,6 @@ export function Layout() {
               <ChevronLeft className="h-5 w-5" />
             )}
           </button>
-
-          {appVersion && (
-            <p className="mt-1 text-center text-[10px] text-[#5A7A9B]" title={`Version ${appVersion}`}>
-              {collapsed ? `v${appVersion.split('.')[0]}` : `v${appVersion}`}
-            </p>
-          )}
         </div>
       </aside>
 

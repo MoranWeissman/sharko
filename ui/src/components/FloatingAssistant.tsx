@@ -11,7 +11,6 @@ const routeContext: Record<string, string> = {
   '/observability': 'the Observability page',
   '/upgrade': 'the Addon Upgrade Checker',
   '/settings': 'the Settings page',
-  '/docs': 'the Documentation',
 }
 
 function getPageContext(pathname: string): string | undefined {
