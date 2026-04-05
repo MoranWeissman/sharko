@@ -48,14 +48,14 @@ export function UserInfo() {
       <div className="max-w-lg">
         <button
           type="button"
-          className="mb-4 inline-flex items-center gap-2 rounded-lg bg-gray-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-gray-600 dark:bg-gray-600 dark:hover:bg-gray-500"
+          className="mb-4 inline-flex items-center gap-2 rounded-lg bg-gray-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-gray-600 dark:bg-gray-600 dark:hover:bg-[#d6eeff]0"
           onClick={() => document.getElementById('password-form')?.classList.toggle('hidden')}
         >
           <Lock className="h-4 w-4" />
           UPDATE PASSWORD
         </button>
 
-        <form id="password-form" onSubmit={handleUpdatePassword} className="hidden space-y-4 rounded-lg border border-gray-200 bg-gray-50 p-6 dark:border-gray-700 dark:bg-gray-800">
+        <form id="password-form" onSubmit={handleUpdatePassword} className="hidden space-y-4 rounded-lg border border-gray-200 bg-[#d0e8f8] p-6 dark:border-gray-700 dark:bg-gray-800">
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Current Password</label>
             <input
@@ -101,7 +101,7 @@ export function UserInfo() {
       </div>
 
       {/* User Details */}
-      <div className="max-w-lg rounded-lg bg-gray-50 p-6 dark:bg-gray-800">
+      <div className="max-w-lg rounded-lg bg-[#d0e8f8] p-6 dark:bg-gray-800">
         <div className="space-y-2 text-sm text-gray-600 dark:text-gray-400">
           <p><span className="font-medium text-gray-700 dark:text-gray-300">Username:</span> admin</p>
           <p><span className="font-medium text-gray-700 dark:text-gray-300">Issuer:</span> local</p>

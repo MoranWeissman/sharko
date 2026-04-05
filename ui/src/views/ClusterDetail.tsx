@@ -317,7 +317,7 @@ export function ClusterDetail() {
           <button
             type="button"
             onClick={() => { setRemoveError(null); setRemoveModalOpen(true); }}
-            className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-red-300 bg-white px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 dark:border-red-700 dark:bg-gray-800 dark:text-red-400 dark:hover:bg-red-900/20"
+            className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-red-300 bg-[#e0f0ff] px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 dark:border-red-700 dark:bg-gray-800 dark:text-red-400 dark:hover:bg-red-900/20"
           >
             <Trash2 className="h-4 w-4" />
             Remove Cluster
@@ -342,7 +342,7 @@ export function ClusterDetail() {
       {/* Cluster info stat cards */}
       <div className="flex flex-wrap gap-3">
         {data.cluster.server_version && (
-          <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-[#e0f0ff] px-4 py-3 shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <Tag className="h-4 w-4 text-teal-500" />
             <div>
               <p className="text-xs text-gray-500 dark:text-gray-400">Cluster Version</p>
@@ -368,7 +368,7 @@ export function ClusterDetail() {
             </div>
           </div>
         )}
-        <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-[#e0f0ff] px-4 py-3 shadow-sm dark:border-gray-700 dark:bg-gray-800">
           <Server className="h-4 w-4 text-teal-500" />
           <div>
             <p className="text-xs text-gray-500 dark:text-gray-400">Connection</p>
@@ -392,7 +392,7 @@ export function ClusterDetail() {
           </div>
           <button
             onClick={() => window.dispatchEvent(new CustomEvent('open-assistant', { detail: `Cluster ${name} is unreachable (${data.cluster_connection_state}). What could be wrong and how can I fix it?` }))}
-            className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-800 dark:text-red-400"
+            className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-200 bg-[#e0f0ff] px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-800 dark:text-red-400"
           >
             <MessageSquare className="h-3.5 w-3.5" />
             Ask AI
@@ -410,7 +410,7 @@ export function ClusterDetail() {
         <TabsContent value="addons" className="space-y-6">
           {/* Admin: Addon Enable/Disable Toggles */}
           <RoleGuard adminOnly>
-            <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+            <div className="rounded-lg border border-gray-200 bg-[#e0f0ff] p-4 dark:border-gray-700 dark:bg-gray-800">
               <h3 className="mb-3 text-base font-semibold text-gray-900 dark:text-gray-100">Manage Addons</h3>
               {Object.keys(addonToggles).length === 0 ? (
                 <p className="text-sm text-gray-400 dark:text-gray-500">No addons in catalog.</p>
@@ -431,7 +431,7 @@ export function ClusterDetail() {
                         }`}
                       >
                         <span
-                          className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-lg transition-transform ${
+                          className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-[#e0f0ff] shadow-lg transition-transform ${
                             addonToggles[addonName] ? 'translate-x-4' : 'translate-x-0'
                           }`}
                         />
@@ -458,7 +458,7 @@ export function ClusterDetail() {
                     type="button"
                     onClick={() => { setAddonToggles({ ...originalToggles }); setToggleError(null); setToggleResult(null); }}
                     disabled={applyingToggles}
-                    className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                    className="rounded-md border border-gray-300 bg-[#e0f0ff] px-4 py-2 text-sm font-medium text-gray-700 hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
                   >
                     Discard
                   </button>
@@ -488,9 +488,9 @@ export function ClusterDetail() {
           </div>
 
           {/* Comparison table */}
-          <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div className="overflow-x-auto rounded-xl border border-gray-200 bg-[#e0f0ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <table className="w-full text-left text-sm">
-              <thead className="border-b border-gray-200 bg-gray-50 text-xs uppercase text-gray-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
+              <thead className="border-b border-gray-200 bg-[#d0e8f8] text-xs uppercase text-gray-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
                 <tr>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">Addon Name</th>
@@ -564,7 +564,7 @@ function ComparisonRow({ addon, isExpanded, onToggleExpand, argocdBaseURL }: Com
     || addon.status === 'unknown_state';
 
   return (
-    <tr className="hover:bg-gray-50 dark:hover:bg-gray-700">
+    <tr className="hover:bg-[#d6eeff] dark:hover:bg-gray-700">
       <td className="px-4 py-3">
         {addon.status ? (
           <StatusBadge status={addon.status} />
@@ -665,7 +665,7 @@ function ConfigOverridesPanel({ data, loading, error, onRetry }: ConfigOverrides
 
   if (overriddenAddons.length === 0) {
     return (
-      <div className="rounded-xl border border-gray-200 bg-white p-8 text-center shadow-sm dark:border-gray-700 dark:bg-gray-800">
+      <div className="rounded-xl border border-gray-200 bg-[#e0f0ff] p-8 text-center shadow-sm dark:border-gray-700 dark:bg-gray-800">
         <p className="text-gray-500 dark:text-gray-400">
           This cluster uses all global defaults — no per-cluster overrides found.
         </p>
@@ -679,7 +679,7 @@ function ConfigOverridesPanel({ data, loading, error, onRetry }: ConfigOverrides
       {overriddenAddons.map((entry) => (
         <div
           key={entry.addon_name}
-          className="rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800"
+          className="rounded-xl border border-gray-200 bg-[#e0f0ff] shadow-sm dark:border-gray-700 dark:bg-gray-800"
         >
           <div className="flex items-center gap-2 border-b border-gray-200 px-4 py-3 dark:border-gray-700">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">

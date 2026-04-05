@@ -322,7 +322,7 @@ export function ClustersOverview() {
                   {catalogAddons.addons.map((addon) => (
                     <label
                       key={addon.addon_name}
-                      className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-sm hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-700"
+                      className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-sm hover:bg-[#d6eeff] dark:text-gray-300 dark:hover:bg-gray-700"
                     >
                       <input
                         type="checkbox"
@@ -353,7 +353,7 @@ export function ClustersOverview() {
               type="button"
               onClick={() => setAddClusterOpen(false)}
               disabled={addClusterSubmitting}
-              className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+              className="rounded-md border border-gray-300 bg-[#e0f0ff] px-4 py-2 text-sm font-medium text-gray-700 hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
             >
               {addClusterResult ? 'Close' : 'Cancel'}
             </button>
@@ -388,7 +388,7 @@ export function ClustersOverview() {
       </div>
 
       {/* Advanced filters */}
-      <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-900">
+      <div className="rounded-lg border border-gray-200 bg-[#d0e8f8] p-4 dark:border-gray-700 dark:bg-gray-900">
         <div className="flex flex-wrap items-center gap-3">
           {/* Name search */}
           <div className="relative min-w-[200px] flex-1">
@@ -412,16 +412,16 @@ export function ClustersOverview() {
                 setVersionDropdownOpen(!versionDropdownOpen);
                 setConnectionDropdownOpen(false);
               }}
-              className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+              className="rounded-md border border-gray-300 bg-[#e0f0ff] px-3 py-2 text-sm text-gray-700 hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
             >
               Version{filters.versions.length > 0 ? ` (${filters.versions.length})` : ''}
             </button>
             {versionDropdownOpen && (
-              <div className="absolute left-0 top-full z-10 mt-1 min-w-[180px] rounded-md border border-gray-200 bg-white py-1 shadow-lg dark:border-gray-600 dark:bg-gray-800">
+              <div className="absolute left-0 top-full z-10 mt-1 min-w-[180px] rounded-md border border-gray-200 bg-[#e0f0ff] py-1 shadow-lg dark:border-gray-600 dark:bg-gray-800">
                 {availableVersions.map((version) => (
                   <label
                     key={version}
-                    className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700"
+                    className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm hover:bg-[#d6eeff] dark:text-gray-200 dark:hover:bg-gray-700"
                   >
                     <input
                       type="checkbox"
@@ -447,16 +447,16 @@ export function ClustersOverview() {
                 setConnectionDropdownOpen(!connectionDropdownOpen);
                 setVersionDropdownOpen(false);
               }}
-              className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+              className="rounded-md border border-gray-300 bg-[#e0f0ff] px-3 py-2 text-sm text-gray-700 hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
             >
               Connection Status{filters.connectionTypes.length > 0 ? ` (${filters.connectionTypes.length})` : ''}
             </button>
             {connectionDropdownOpen && (
-              <div className="absolute left-0 top-full z-10 mt-1 min-w-[200px] rounded-md border border-gray-200 bg-white py-1 shadow-lg dark:border-gray-600 dark:bg-gray-800">
+              <div className="absolute left-0 top-full z-10 mt-1 min-w-[200px] rounded-md border border-gray-200 bg-[#e0f0ff] py-1 shadow-lg dark:border-gray-600 dark:bg-gray-800">
                 {availableConnectionTypes.map((type) => (
                   <label
                     key={type}
-                    className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700"
+                    className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm hover:bg-[#d6eeff] dark:text-gray-200 dark:hover:bg-gray-700"
                   >
                     <input
                       type="checkbox"
@@ -479,7 +479,7 @@ export function ClustersOverview() {
             <button
               type="button"
               onClick={clearFilters}
-              className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+              className="rounded-md border border-gray-300 bg-[#e0f0ff] px-3 py-2 text-sm text-gray-600 hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
             >
               Clear all
             </button>
@@ -493,7 +493,7 @@ export function ClustersOverview() {
               className={`rounded-l-md p-2 ${
                 viewMode === 'list'
                   ? 'bg-teal-600 text-white'
-                  : 'bg-white text-gray-500 hover:bg-gray-50 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
+                  : 'bg-[#e0f0ff] text-gray-500 hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
               }`}
               aria-label="List view"
               title="List view"
@@ -506,7 +506,7 @@ export function ClustersOverview() {
               className={`rounded-r-md p-2 ${
                 viewMode === 'grid'
                   ? 'bg-teal-600 text-white'
-                  : 'bg-white text-gray-500 hover:bg-gray-50 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
+                  : 'bg-[#e0f0ff] text-gray-500 hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
               }`}
               aria-label="Grid view"
               title="Grid view"
@@ -557,9 +557,9 @@ export function ClustersOverview() {
 
       {/* Cluster list / grid */}
       {viewMode === 'list' ? (
-        <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <div className="overflow-x-auto rounded-xl border border-gray-200 bg-[#e0f0ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
           <table className="w-full text-left text-sm">
-            <thead className="border-b border-gray-200 bg-gray-50 text-xs uppercase text-gray-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
+            <thead className="border-b border-gray-200 bg-[#d0e8f8] text-xs uppercase text-gray-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
               <tr>
                 <th className="px-6 py-3">Name</th>
                 <th className="px-6 py-3">Connection Status</th>
@@ -580,8 +580,8 @@ export function ClustersOverview() {
                     }
                     className={
                       isInCluster
-                        ? 'cursor-not-allowed bg-gray-50 opacity-70 dark:bg-gray-900'
-                        : 'cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700'
+                        ? 'cursor-not-allowed bg-[#d0e8f8] opacity-70 dark:bg-gray-900'
+                        : 'cursor-pointer hover:bg-[#d6eeff] dark:hover:bg-gray-700'
                     }
                     title={
                       isInCluster
@@ -637,7 +637,7 @@ export function ClustersOverview() {
                     ? undefined
                     : () => navigate(`/clusters/${cluster.name}`)
                 }
-                className={`rounded-lg border border-gray-200 bg-white p-4 shadow-sm transition-all dark:border-gray-700 dark:bg-gray-800 ${
+                className={`rounded-lg border border-gray-200 bg-[#e0f0ff] p-4 shadow-sm transition-all dark:border-gray-700 dark:bg-gray-800 ${
                   isInCluster
                     ? 'cursor-not-allowed opacity-70'
                     : 'cursor-pointer hover:-translate-y-0.5 hover:border-teal-400 hover:shadow-md dark:hover:border-teal-500'
@@ -675,7 +675,7 @@ export function ClustersOverview() {
             );
           })}
           {filteredClusters.length === 0 && (
-            <div className="col-span-full rounded-lg border border-gray-200 bg-white p-8 text-center text-gray-400 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-500">
+            <div className="col-span-full rounded-lg border border-gray-200 bg-[#e0f0ff] p-8 text-center text-gray-400 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-500">
               No clusters match the current filters.
             </div>
           )}

@@ -20,7 +20,7 @@ interface DetailNavPanelProps {
 
 export function DetailNavPanel({ sections, activeKey, onSelect }: DetailNavPanelProps) {
   return (
-    <div className="w-48 shrink-0 border-r border-[#90c8ee] bg-white dark:border-gray-700 dark:bg-gray-800">
+    <div className="w-48 shrink-0">
       <nav className="p-3 space-y-4">
         {sections.map((group, gi) => (
           <div key={gi}>
@@ -36,10 +36,10 @@ export function DetailNavPanel({ sections, activeKey, onSelect }: DetailNavPanel
                   onClick={() => onSelect(item.key)}
                   className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm transition-colors ${
                     activeKey === item.key
-                      ? 'border-l-[3px] border-[#0a2a4a] bg-[#e0f0ff] font-semibold text-[#0a2a4a] dark:border-blue-400 dark:bg-gray-700 dark:text-white'
+                      ? 'border-l-[3px] border-[#0a2a4a] bg-[#d6eeff] font-semibold text-[#0a2a4a] dark:border-blue-400 dark:bg-gray-700 dark:text-white'
                       : item.destructive
-                        ? 'border-l-[3px] border-transparent text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20'
-                        : 'border-l-[3px] border-transparent text-gray-600 hover:bg-gray-50 dark:text-gray-400 dark:hover:bg-gray-700'
+                        ? 'border-l-[3px] border-transparent text-red-600 hover:bg-[#d6eeff] dark:text-red-400 dark:hover:bg-red-900/20'
+                        : 'border-l-[3px] border-transparent text-gray-600 hover:bg-[#d6eeff] dark:text-gray-400 dark:hover:bg-gray-700'
                   }`}
                 >
                   <span>{item.label}</span>

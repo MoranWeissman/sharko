@@ -305,7 +305,7 @@ export function Layout() {
       {/* Right side: top bar + content */}
       <div className="flex flex-1 flex-col overflow-hidden">
         {/* Top bar */}
-        <header className="flex h-14 shrink-0 items-center justify-between border-b border-gray-200 bg-white px-4 dark:border-gray-700 dark:bg-gray-900">
+        <header className="flex h-14 shrink-0 items-center justify-between border-b border-[#90c8ee] bg-[#d6eeff] px-4 dark:border-gray-700 dark:bg-gray-900">
           {/* Left: mobile hamburger + breadcrumbs */}
           <div className="flex items-center gap-3">
             <button

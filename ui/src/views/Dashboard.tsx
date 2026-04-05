@@ -25,7 +25,7 @@ function HealthBar({ title, subtitle, segments }: HealthBarProps) {
   if (total === 0) return null;
 
   return (
-    <div className="rounded-xl border border-[#90c8ee] bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+    <div className="rounded-xl border border-[#90c8ee] bg-[#e0f0ff] p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
       <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">{title}</h3>
       <p className="mb-3 text-xs text-gray-500 dark:text-gray-400">{subtitle}</p>
       <div className="mb-3 flex h-3 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-700">
@@ -188,7 +188,7 @@ export function Dashboard() {
             <div className="flex flex-wrap gap-2">
               {attentionItems.length > 0 && (
                 <button onClick={() => setShowAttention(!showAttention)}
-                  className="flex items-center gap-2 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-800 dark:text-red-400">
+                  className="flex items-center gap-2 rounded-lg border border-red-200 bg-[#e0f0ff] px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-800 dark:text-red-400">
                   <div className="h-2 w-2 rounded-full bg-red-500" />
                   {attentionItems.length} app{attentionItems.length !== 1 ? 's' : ''} with issues
                   <ChevronRight className={`h-3 w-3 transition-transform ${showAttention ? 'rotate-90' : ''}`} />
@@ -196,14 +196,14 @@ export function Dashboard() {
               )}
               {disconnectedCount > 0 && (
                 <button onClick={() => navigate('/clusters?status=disconnected')}
-                  className="flex items-center gap-2 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-800 dark:text-red-400">
+                  className="flex items-center gap-2 rounded-lg border border-red-200 bg-[#e0f0ff] px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-800 dark:text-red-400">
                   <div className="h-2 w-2 rounded-full bg-red-500" />
                   {disconnectedCount} disconnected cluster{disconnectedCount !== 1 ? 's' : ''}
                 </button>
               )}
               {versionDrifts.length > 0 && (
                 <button onClick={() => navigate('/version-matrix?drift=true')}
-                  className="flex items-center gap-2 rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-xs text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:bg-gray-800 dark:text-amber-400">
+                  className="flex items-center gap-2 rounded-lg border border-amber-200 bg-[#e0f0ff] px-3 py-1.5 text-xs text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:bg-gray-800 dark:text-amber-400">
                   <div className="h-2 w-2 rounded-full bg-amber-500" />
                   {versionDrifts.length} addon{versionDrifts.length !== 1 ? 's' : ''} with drift
                 </button>
@@ -215,7 +215,7 @@ export function Dashboard() {
             <div className="border-t border-amber-200 p-4 dark:border-amber-700">
               <div className="max-h-64 overflow-y-auto space-y-1.5">
                 {attentionItems.map((item, i) => (
-                  <div key={i} className="flex items-start gap-3 rounded-lg bg-white px-3 py-2 text-xs dark:bg-gray-800">
+                  <div key={i} className="flex items-start gap-3 rounded-lg bg-[#e0f0ff] px-3 py-2 text-xs dark:bg-gray-800">
                     <div className={`mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full ${
                       item.health === 'Error' ? 'bg-red-500' : item.health === 'Degraded' ? 'bg-red-400' : 'bg-amber-500'
                     }`} />
@@ -307,17 +307,17 @@ export function Dashboard() {
       {/* Bottom row: Quick Actions + Recent Activity + Version Drift */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         {/* Quick Actions */}
-        <div className="rounded-xl border border-[#90c8ee] bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <div className="rounded-xl border border-[#90c8ee] bg-[#e0f0ff] p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
           <h3 className="mb-3 text-sm font-semibold text-gray-900 dark:text-gray-100">Quick Actions</h3>
           <div className="space-y-2">
             <button onClick={() => navigate('/upgrade')}
-              className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-gray-700 transition-colors hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-700">
+              className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-gray-700 transition-colors hover:bg-[#d6eeff] dark:text-gray-300 dark:hover:bg-gray-700">
               <ArrowUpCircle className="h-4 w-4 text-teal-500" />
               <span>Check Upgrade Impact</span>
               <ChevronRight className="ml-auto h-4 w-4 text-gray-400" />
             </button>
             <button onClick={() => navigate('/observability')}
-              className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-gray-700 transition-colors hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-700">
+              className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-gray-700 transition-colors hover:bg-[#d6eeff] dark:text-gray-300 dark:hover:bg-gray-700">
               <Activity className="h-4 w-4 text-green-500" />
               <span>View Observability</span>
               <ChevronRight className="ml-auto h-4 w-4 text-gray-400" />
@@ -326,7 +326,7 @@ export function Dashboard() {
         </div>
 
         {/* Recent Sync Activity */}
-        <div className="rounded-xl border border-[#90c8ee] bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <div className="rounded-xl border border-[#90c8ee] bg-[#e0f0ff] p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
           <div className="mb-3 flex items-center justify-between">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Recent Activity</h3>
             <button onClick={() => navigate('/observability')} className="text-xs text-teal-600 hover:text-teal-700 dark:text-teal-400">
@@ -356,7 +356,7 @@ export function Dashboard() {
         </div>
 
         {/* Version Drift */}
-        <div className="rounded-xl border border-[#90c8ee] bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <div className="rounded-xl border border-[#90c8ee] bg-[#e0f0ff] p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
           <div className="mb-3 flex items-center justify-between">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Version Drift</h3>
             <button onClick={() => navigate('/version-matrix')} className="text-xs text-teal-600 hover:text-teal-700 dark:text-teal-400">
@@ -373,7 +373,7 @@ export function Dashboard() {
               {versionDrifts.slice(0, 5).map((d) => (
                 <div key={d.addon}
                   onClick={() => navigate(`/addons/${d.addon}`)}
-                  className="flex cursor-pointer items-center justify-between rounded-lg px-3 py-2 text-xs transition-colors hover:bg-gray-50 dark:hover:bg-gray-700">
+                  className="flex cursor-pointer items-center justify-between rounded-lg px-3 py-2 text-xs transition-colors hover:bg-[#d6eeff] dark:hover:bg-gray-700">
                   <span className="font-medium text-gray-700 dark:text-gray-300">{d.addon}</span>
                   <span className="rounded-full bg-amber-100 px-2 py-0.5 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
                     {d.count} cluster{d.count !== 1 ? 's' : ''}

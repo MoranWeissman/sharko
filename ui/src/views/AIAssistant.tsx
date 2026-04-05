@@ -464,7 +464,7 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
             {messages.length > 0 && (
               <button
                 onClick={handleExport}
-                className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
+                className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:bg-[#d6eeff] dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
               >
                 <Download className="h-3.5 w-3.5" />
                 Export
@@ -472,7 +472,7 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
             )}
             <button
               onClick={handleNewConversation}
-              className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
+              className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:bg-[#d6eeff] dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
             >
               <RotateCcw className="h-3.5 w-3.5" />
               New
@@ -490,7 +490,7 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
             {messages.length > 0 && (
               <button
                 onClick={handleExport}
-                className="flex items-center gap-1 rounded px-2 py-1 text-[11px] text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800"
+                className="flex items-center gap-1 rounded px-2 py-1 text-[11px] text-gray-500 hover:bg-[#d6eeff] hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800"
               >
                 <Download className="h-3 w-3" />
                 Export
@@ -498,7 +498,7 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
             )}
             <button
               onClick={handleNewConversation}
-              className="flex items-center gap-1 rounded px-2 py-1 text-[11px] text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800"
+              className="flex items-center gap-1 rounded px-2 py-1 text-[11px] text-gray-500 hover:bg-[#d6eeff] hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800"
             >
               <RotateCcw className="h-3 w-3" />
               New Chat
@@ -597,7 +597,7 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
       </div>
 
       {/* Input area */}
-      <div className="border-t border-gray-200 bg-white px-4 py-3 dark:border-gray-700 dark:bg-gray-900">
+      <div className="border-t border-gray-200 bg-[#e0f0ff] px-4 py-3 dark:border-gray-700 dark:bg-gray-900">
         <div className="mx-auto flex max-w-3xl items-end gap-3">
           <textarea
             ref={textareaRef}
