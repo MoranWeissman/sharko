@@ -6,6 +6,15 @@ import (
 	"time"
 )
 
+// handleGetDashboardStats handles GET /api/v1/dashboard/stats
+//
+// @Summary Dashboard stats
+// @Description Returns dashboard statistics overview
+// @Tags dashboard
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{}
+// @Router /dashboard/stats [get]
 func (s *Server) handleGetDashboardStats(w http.ResponseWriter, r *http.Request) {
 	gp, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {

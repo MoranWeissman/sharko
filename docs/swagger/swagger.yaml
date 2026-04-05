@@ -1,0 +1,60 @@
+basePath: /api/v1
+host: localhost:8080
+info:
+  contact: {}
+  description: Addon management server for Kubernetes clusters, built on ArgoCD.
+  title: Sharko API
+  version: 1.0.0
+paths:
+  /clusters:
+    get:
+      description: Returns all registered clusters with health stats
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List clusters
+      tags:
+      - clusters
+  /dashboard/stats:
+    get:
+      description: Returns dashboard statistics overview
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Dashboard stats
+      tags:
+      - dashboard
+  /health:
+    get:
+      description: Returns server health status and version
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Health check
+      tags:
+      - system
+securityDefinitions:
+  BearerAuth:
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

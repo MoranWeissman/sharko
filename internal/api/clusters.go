@@ -4,6 +4,15 @@ import (
 	"net/http"
 )
 
+// handleListClusters handles GET /api/v1/clusters
+//
+// @Summary List clusters
+// @Description Returns all registered clusters with health stats
+// @Tags clusters
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{}
+// @Router /clusters [get]
 func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 	gp, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
