@@ -135,6 +135,34 @@ definitions:
       secret_name:
         type: string
     type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.ConfigureAddonRequest:
+    properties:
+      additional_sources:
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.AddonSource'
+        type: array
+      extra_helm_values:
+        additionalProperties:
+          type: string
+        type: object
+      ignore_differences:
+        items:
+          additionalProperties: true
+          type: object
+        type: array
+      name:
+        type: string
+      self_heal:
+        type: boolean
+      sync_options:
+        items:
+          type: string
+        type: array
+      sync_wave:
+        type: integer
+      version:
+        type: string
+    type: object
   github_com_MoranWeissman_sharko_internal_orchestrator.InitRepoRequest:
     properties:
       bootstrap_argocd:
@@ -463,6 +491,56 @@ paths:
       security:
       - BearerAuth: []
       summary: Get addon detail
+      tags:
+      - addons
+    patch:
+      consumes:
+      - application/json
+      description: Updates an addon's catalog configuration. Only provided fields
+        are modified (merge semantics).
+      parameters:
+      - description: Addon name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Configuration update
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.ConfigureAddonRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Addon configured
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Addon not found
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Gateway error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Configure addon
       tags:
       - addons
   /addons/{name}/changelog:

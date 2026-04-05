@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
@@ -148,6 +149,65 @@ func (s *Server) handleRemoveAddon(w http.ResponseWriter, r *http.Request) {
 	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
 	result, err := orch.RemoveAddon(r.Context(), name)
 	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, result)
+}
+
+// handleConfigureAddon godoc
+//
+// @Summary Configure addon
+// @Description Updates an addon's catalog configuration. Only provided fields are modified (merge semantics).
+// @Tags addons
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param name path string true "Addon name"
+// @Param body body orchestrator.ConfigureAddonRequest true "Configuration update"
+// @Success 200 {object} map[string]interface{} "Addon configured"
+// @Failure 400 {object} map[string]interface{} "Bad request"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 404 {object} map[string]interface{} "Addon not found"
+// @Failure 502 {object} map[string]interface{} "Gateway error"
+// @Router /addons/{name} [patch]
+func (s *Server) handleConfigureAddon(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	name := r.PathValue("name")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "addon name is required")
+		return
+	}
+
+	ac, err := s.connSvc.GetActiveArgocdClient()
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
+		return
+	}
+
+	git, err := s.connSvc.GetActiveGitProvider()
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
+		return
+	}
+
+	var req orchestrator.ConfigureAddonRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+	req.Name = name
+
+	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
+	result, err := orch.ConfigureAddon(r.Context(), req)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}

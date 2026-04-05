@@ -72,6 +72,18 @@ type AddAddonRequest struct {
 	ExtraHelmValues   map[string]string        `json:"extra_helm_values,omitempty"`
 }
 
+// ConfigureAddonRequest is the input for updating an addon's catalog configuration.
+type ConfigureAddonRequest struct {
+	Name              string                   `json:"name"`
+	Version           string                   `json:"version,omitempty"`
+	SyncWave          *int                     `json:"sync_wave,omitempty"`
+	SelfHeal          *bool                    `json:"self_heal,omitempty"`
+	SyncOptions       []string                 `json:"sync_options,omitempty"`
+	AdditionalSources []models.AddonSource     `json:"additional_sources,omitempty"`
+	IgnoreDifferences []map[string]interface{} `json:"ignore_differences,omitempty"`
+	ExtraHelmValues   map[string]string        `json:"extra_helm_values,omitempty"`
+}
+
 // InitRepoRequest is the input for initializing the addons repository.
 type InitRepoRequest struct {
 	BootstrapArgoCD bool   `json:"bootstrap_argocd"`

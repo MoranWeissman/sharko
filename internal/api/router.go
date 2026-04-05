@@ -215,6 +215,7 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("POST /api/v1/addons/{name}/upgrade", srv.handleUpgradeAddon)
 	mux.HandleFunc("POST /api/v1/addons", srv.handleAddAddon)
 	mux.HandleFunc("DELETE /api/v1/addons/{name}", srv.handleRemoveAddon)
+	mux.HandleFunc("PATCH /api/v1/addons/{name}", srv.handleConfigureAddon)
 
 	// Addon secrets (definition CRUD)
 	mux.HandleFunc("GET /api/v1/addon-secrets", srv.handleListAddonSecrets)
