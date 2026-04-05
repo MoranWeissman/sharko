@@ -46,8 +46,8 @@ function AppRoutes() {
           <Route path="upgrade" element={<UpgradeChecker />} />
           <Route path="dashboards" element={<Dashboards />} />
           <Route path="settings" element={<Settings />} />
-          <Route path="users" element={<Navigate to="/settings?tab=users" replace />} />
-          <Route path="api-keys" element={<Navigate to="/settings?tab=api-keys" replace />} />
+          <Route path="users" element={<Navigate to="/settings?section=users" replace />} />
+          <Route path="api-keys" element={<Navigate to="/settings?section=api-keys" replace />} />
           <Route path="user" element={<UserInfo />} />
         </Route>
       </Routes>

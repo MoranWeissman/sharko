@@ -46,3 +46,4 @@ coverage.out
 
 # Build
 *.tar.gz
+.superpowers/

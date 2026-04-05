@@ -9,6 +9,7 @@ import {
   Settings,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   Plug,
   Sun,
   Moon,
@@ -30,6 +31,7 @@ interface NavItem {
   to: string
   label: string
   icon: typeof LayoutDashboard
+  children?: { to: string; label: string }[]
 }
 
 interface NavSection {
@@ -44,7 +46,15 @@ const navSections: NavSection[] = [
     items: [
       { to: '/', label: 'Dashboard', icon: LayoutDashboard },
       { to: '/clusters', label: 'Clusters', icon: Server },
-      { to: '/addons', label: 'Addons Catalog', icon: Package },
+      {
+        to: '/addons',
+        label: 'Addons',
+        icon: Package,
+        children: [
+          { to: '/addons', label: 'Catalog' },
+          { to: '/version-matrix', label: 'Version Drift' },
+        ],
+      },
     ],
   },
   {
@@ -134,6 +144,7 @@ export function Layout() {
   const navigate = useNavigate()
   const location = useLocation()
   const [collapsed, setCollapsed] = useState(false)
+  const [addonsExpanded, setAddonsExpanded] = useState(true)
   const [aiPanelOpen, setAiPanelOpen] = useState(false)
   const { theme, toggleTheme } = useTheme()
   const { logout, isAdmin } = useAuth()
@@ -162,7 +173,7 @@ export function Layout() {
   }, [openAiPanel])
 
   return (
-    <div className="flex h-screen bg-[#F0F7FF] dark:bg-gray-950">
+    <div className="flex h-screen bg-[#bee0ff] dark:bg-gray-950">
       {/* Mobile overlay */}
       {mobileOpen && (
         <div className="fixed inset-0 z-40 bg-black/50 lg:hidden" onClick={() => setMobileOpen(false)} />
@@ -170,7 +181,7 @@ export function Layout() {
 
       {/* Sidebar — always dark */}
       <aside
-        className={`flex flex-col bg-[#0B1426] shadow-sm transition-all duration-200 ${
+        className={`flex flex-col bg-[#0a2a4a] shadow-sm transition-all duration-200 ${
           collapsed ? 'w-16' : 'w-52'
         } ${mobileOpen ? 'fixed inset-y-0 left-0 z-50 w-52' : 'hidden lg:flex'}`}
       >
@@ -178,7 +189,7 @@ export function Layout() {
         <Link
           to="/dashboard"
           aria-label="Sharko — go to dashboard"
-          className="flex items-center gap-2 border-b border-[#1A2D4A] px-3 py-2.5 transition-colors hover:bg-[#132038]"
+          className="flex items-center gap-2 border-b border-[#14466e] px-3 py-2.5 transition-colors hover:bg-[#14466e]"
           onClick={() => setMobileOpen(false)}
         >
           <img src="/sharko-mascot.png" alt="" className={collapsed && !mobileOpen ? 'h-8 w-auto' : 'h-10 w-auto'} />
@@ -186,7 +197,7 @@ export function Layout() {
             <div className="min-w-0">
               <span className="text-base font-bold text-blue-400">Sharko</span>
               {appVersion && (
-                <p className="text-[10px] text-[#5A7A9B]">v{appVersion}</p>
+                <p className="text-[10px] text-[#5a9ad0]">v{appVersion}</p>
               )}
             </div>
           )}
@@ -195,42 +206,91 @@ export function Layout() {
         {/* Navigation */}
         <nav className="flex-1 overflow-y-auto px-2 py-3">
           {navSections.filter(s => !s.adminOnly || isAdmin).map((section, si) => (
-            <div key={section.label} className={si > 0 ? 'mt-4 border-t border-[#1A2D4A] pt-3' : ''}>
+            <div key={section.label} className={si > 0 ? 'mt-4 border-t border-[#14466e] pt-3' : ''}>
               {!collapsed && (
-                <span className="mb-1 block px-3 text-[10px] font-semibold uppercase tracking-wider text-[#5A7A9B]">
+                <span className="mb-1 block px-3 text-[10px] font-semibold uppercase tracking-wider text-[#5a9ad0]">
                   {section.label}
                 </span>
               )}
               <div className="space-y-0.5">
-                {section.items.map((item) => (
-                  <NavLink
-                    key={item.to}
-                    to={item.to}
-                    end={item.to === '/'}
-                    onClick={() => setMobileOpen(false)}
-                    className={({ isActive }) =>
-                      `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-                        isActive
-                          ? 'border-l-[3px] border-teal-400 bg-[#1A2D4A] text-white'
-                          : 'border-l-[3px] border-transparent text-[#94B8DB] hover:bg-[#132038] hover:text-white'
-                      } ${collapsed && !mobileOpen ? 'justify-center px-0' : ''}`
-                    }
-                    title={collapsed && !mobileOpen ? item.label : undefined}
-                  >
-                    <item.icon className="h-5 w-5 shrink-0" />
-                    {(!collapsed || mobileOpen) && <span>{item.label}</span>}
-                  </NavLink>
-                ))}
+                {section.items.map((item) => {
+                  if (item.children) {
+                    const isParentActive = item.children.some(child =>
+                      location.pathname === child.to || location.pathname.startsWith(child.to + '/')
+                    )
+                    return (
+                      <div key={item.to}>
+                        <button
+                          onClick={() => setAddonsExpanded(e => !e)}
+                          className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                            isParentActive
+                              ? 'border-l-[3px] border-[#9fcffb] bg-[#14466e] text-white'
+                              : 'border-l-[3px] border-transparent text-[#7ab0d8] hover:bg-[#14466e] hover:text-white'
+                          } ${collapsed && !mobileOpen ? 'justify-center px-0' : ''}`}
+                          title={collapsed && !mobileOpen ? item.label : undefined}
+                        >
+                          <item.icon className="h-5 w-5 shrink-0" />
+                          {(!collapsed || mobileOpen) && (
+                            <>
+                              <span className="flex-1 text-left">{item.label}</span>
+                              <ChevronDown className={`h-4 w-4 shrink-0 transition-transform ${addonsExpanded ? 'rotate-180' : ''}`} />
+                            </>
+                          )}
+                        </button>
+                        {addonsExpanded && (!collapsed || mobileOpen) && (
+                          <div className="ml-4 mt-0.5 space-y-0.5 border-l border-[#14466e] pl-2">
+                            {item.children.map(child => (
+                              <NavLink
+                                key={child.to}
+                                to={child.to}
+                                end={child.to === '/addons'}
+                                onClick={() => setMobileOpen(false)}
+                                className={({ isActive }) =>
+                                  `block rounded-lg px-3 py-1.5 text-sm transition-colors ${
+                                    isActive
+                                      ? 'text-[#bee0ff] font-medium'
+                                      : 'text-[#5a9ad0] hover:text-[#bee0ff]'
+                                  }`
+                                }
+                              >
+                                {child.label}
+                              </NavLink>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  }
+                  return (
+                    <NavLink
+                      key={item.to}
+                      to={item.to}
+                      end={item.to === '/'}
+                      onClick={() => setMobileOpen(false)}
+                      className={({ isActive }) =>
+                        `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                          isActive
+                            ? 'border-l-[3px] border-[#9fcffb] bg-[#14466e] text-white'
+                            : 'border-l-[3px] border-transparent text-[#7ab0d8] hover:bg-[#14466e] hover:text-white'
+                        } ${collapsed && !mobileOpen ? 'justify-center px-0' : ''}`
+                      }
+                      title={collapsed && !mobileOpen ? item.label : undefined}
+                    >
+                      <item.icon className="h-5 w-5 shrink-0" />
+                      {(!collapsed || mobileOpen) && <span>{item.label}</span>}
+                    </NavLink>
+                  )
+                })}
               </div>
             </div>
           ))}
         </nav>
 
         {/* Collapse toggle */}
-        <div className="border-t border-[#1A2D4A] p-2">
+        <div className="border-t border-[#14466e] p-2">
           <button
             onClick={() => setCollapsed((c) => !c)}
-            className="flex w-full items-center justify-center rounded-lg p-2 text-[#6B8FB5] hover:bg-[#132038] hover:text-white"
+            className="flex w-full items-center justify-center rounded-lg p-2 text-[#5a9ad0] hover:bg-[#14466e] hover:text-white"
             aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           >
             {collapsed ? (
