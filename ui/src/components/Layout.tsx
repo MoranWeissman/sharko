@@ -16,12 +16,15 @@ import {
   User,
   Menu,
   Search,
+  Sparkles,
+  X,
 } from 'lucide-react'
 import { useConnections } from '@/hooks/useConnections'
 import { FloatingAssistant } from '@/components/FloatingAssistant'
 import { CommandPalette } from '@/components/CommandPalette'
 import { useTheme } from '@/hooks/useTheme'
 import { useAuth } from '@/hooks/useAuth'
+import { AIAssistant } from '@/views/AIAssistant'
 
 interface NavItem {
   to: string
@@ -105,9 +108,33 @@ function Breadcrumbs() {
   )
 }
 
+function getAIPageContext(pathname: string): string | undefined {
+  const routes: Record<string, string> = {
+    '/dashboard': 'the Dashboard (overview stats)',
+    '/clusters': 'the Clusters page',
+    '/addons': 'the Addons Catalog',
+    '/version-matrix': 'the Addons Version Drift Detector',
+    '/observability': 'the Observability page',
+    '/upgrade': 'the Addon Upgrade Checker',
+    '/settings': 'the Settings page',
+  }
+  if (routes[pathname]) return routes[pathname]
+  if (pathname.startsWith('/clusters/')) {
+    const name = pathname.split('/')[2]
+    return `the Cluster Detail page for "${name}"`
+  }
+  if (pathname.startsWith('/addons/')) {
+    const name = pathname.split('/')[2]
+    return `the Addon Detail page for "${name}"`
+  }
+  return undefined
+}
+
 export function Layout() {
   const navigate = useNavigate()
+  const location = useLocation()
   const [collapsed, setCollapsed] = useState(false)
+  const [aiPanelOpen, setAiPanelOpen] = useState(false)
   const { theme, toggleTheme } = useTheme()
   const { logout, isAdmin } = useAuth()
 
@@ -121,6 +148,12 @@ export function Layout() {
       .then((r) => r.json())
       .then((d) => setAppVersion(d.version ?? ''))
       .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    const handler = () => setAiPanelOpen(true)
+    window.addEventListener('open-assistant', handler)
+    return () => window.removeEventListener('open-assistant', handler)
   }, [])
 
   return (
@@ -204,6 +237,35 @@ export function Layout() {
         </div>
       </aside>
 
+      {/* AI Panel — Amazon Q style */}
+      {aiPanelOpen && (
+        <div className="flex w-[380px] shrink-0 flex-col border-r border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
+          {/* Panel header */}
+          <div className="flex h-14 items-center justify-between border-b border-gray-200 bg-gradient-to-r from-teal-600 to-blue-700 px-4 dark:border-gray-700">
+            <div className="flex items-center gap-2 text-white">
+              <Sparkles className="h-4 w-4" />
+              <div>
+                <span className="text-sm font-semibold">Sharko AI</span>
+                {getAIPageContext(location.pathname) && (
+                  <p className="text-[10px] text-teal-200">Viewing {getAIPageContext(location.pathname)}</p>
+                )}
+              </div>
+            </div>
+            <button
+              onClick={() => setAiPanelOpen(false)}
+              className="rounded-lg p-1 text-white/80 hover:bg-white/20 hover:text-white"
+              aria-label="Close AI panel"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          {/* Chat content */}
+          <div className="flex-1 overflow-hidden">
+            <AIAssistant embedded pageContext={getAIPageContext(location.pathname)} />
+          </div>
+        </div>
+      )}
+
       {/* Right side: top bar + content */}
       <div className="flex flex-1 flex-col overflow-hidden">
         {/* Top bar */}
@@ -222,6 +284,20 @@ export function Layout() {
 
           {/* Right: search + connection + user dropdown */}
           <div className="flex items-center gap-3">
+            {/* AI panel toggle */}
+            <button
+              onClick={() => setAiPanelOpen((o) => !o)}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs transition-colors ${
+                aiPanelOpen
+                  ? 'bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400'
+                  : 'border border-gray-200 bg-gray-50 text-gray-500 hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
+              }`}
+              aria-label="Toggle AI Assistant"
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              {!aiPanelOpen && <span className="hidden sm:inline">Ask AI</span>}
+            </button>
+
             {/* Search trigger */}
             <button
               onClick={() => { const e = new KeyboardEvent('keydown', { key: 'k', metaKey: true }); window.dispatchEvent(e) }}

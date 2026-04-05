@@ -36,10 +36,9 @@ export function Login() {
       {/* Right side — login panel */}
       <div className="flex w-full flex-col bg-[#1a2332] lg:w-[380px] lg:min-w-[340px]">
         <div className="flex flex-1 flex-col items-center justify-center px-10 py-12">
-          {/* Brand header — icon + text, bigger */}
-          <div className="mb-10 flex items-center gap-3">
-            <img src="/sharko-icon-256.png" alt="" className="h-14 w-14" />
-            <span className="font-bold text-teal-400 text-[42px] tracking-tight">sharko</span>
+          {/* Brand header — banner logo */}
+          <div className="mb-10 flex items-center justify-center">
+            <img src="/sharko-banner.png" alt="Sharko" className="h-20 w-auto" />
           </div>
 
           <form onSubmit={handleSubmit} className="w-full space-y-5">
