@@ -4,9 +4,7 @@ import {
   LayoutDashboard,
   Server,
   Package,
-  TableProperties,
   Activity,
-  ArrowUpCircle,
   BarChart3,
   BookOpen,
   Settings,
@@ -51,8 +49,6 @@ const navSections: NavSection[] = [
   {
     label: 'Manage',
     items: [
-      { to: '/version-matrix', label: 'Version Drift', icon: TableProperties },
-      { to: '/upgrade', label: 'Upgrade Checker', icon: ArrowUpCircle },
       { to: '/observability', label: 'Observability', icon: Activity },
       { to: '/dashboards', label: 'Dashboards', icon: BarChart3 },
     ],
@@ -158,7 +154,7 @@ export function Layout() {
           className="flex h-14 items-center gap-2 border-b border-[#1A2D4A] px-4 transition-colors hover:bg-[#132038]"
           onClick={() => setMobileOpen(false)}
         >
-          <img src="/sharko-mascot.png" alt="" className="h-7 w-auto shrink-0" />
+          <img src="/sharko-mascot.png" alt="" className="h-8 w-auto shrink-0" />
           {!collapsed && (
             <span className="text-sm font-bold text-cyan-400">Sharko</span>
           )}
@@ -197,6 +193,13 @@ export function Layout() {
             </div>
           ))}
         </nav>
+
+        {/* Decorative mascot */}
+        {!collapsed && (
+          <div className="flex justify-center px-4 pb-2">
+            <img src="/sharko-mascot.png" alt="" className="h-20 w-auto opacity-60" />
+          </div>
+        )}
 
         {/* Collapse toggle */}
         <div className="border-t border-[#1A2D4A] p-2">
