@@ -39,7 +39,7 @@ export function Login() {
           {/* Brand header — logo + name + description */}
           <div className="mb-10 flex flex-col items-center gap-2 text-center">
             <img src="/sharko-banner.png" alt="Sharko" className="h-16 w-auto" />
-            <h1 className="text-2xl font-bold text-[#0a2a4a]">Sharko</h1>
+            <h1 className="text-2xl text-[#0a2a4a]" style={{ fontFamily: '"Quicksand", sans-serif', fontWeight: 700 }}>Sharko</h1>
             <p className="text-sm text-[#4a8abf]">Addon management for Kubernetes clusters</p>
           </div>
 
