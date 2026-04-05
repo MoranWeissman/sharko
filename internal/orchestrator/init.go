@@ -12,7 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// InitRepo scaffolds the addons repository from the embedded starter templates.
+// InitRepo scaffolds the addons repository from the embedded bootstrap templates.
 // It collects all files from templateFS, commits them via a PR (using commitChanges),
 // optionally registers the repo in ArgoCD, creates the bootstrap project/application,
 // and polls for sync verification.
@@ -31,7 +31,7 @@ func (o *Orchestrator) InitRepo(ctx context.Context, req InitRepoRequest) (*Init
 
 	// Step 2 — Collect all files from templates.
 	files := make(map[string][]byte)
-	err := fs.WalkDir(o.templateFS, "starter", func(path string, d fs.DirEntry, err error) error {
+	err := fs.WalkDir(o.templateFS, "bootstrap", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -47,13 +47,13 @@ func (o *Orchestrator) InitRepo(ctx context.Context, req InitRepoRequest) (*Init
 		// Replace placeholder tokens with actual config values.
 		content = replacePlaceholdersFull(content, o.gitops, o.paths)
 
-		// Strip the "starter/" prefix — files go to the repo root.
-		repoPath := strings.TrimPrefix(path, "starter/")
+		// Strip the "bootstrap/" prefix — files go to the repo root.
+		repoPath := strings.TrimPrefix(path, "bootstrap/")
 		files[repoPath] = content
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("walking starter templates: %w", err)
+		return nil, fmt.Errorf("walking bootstrap templates: %w", err)
 	}
 
 	// Step 3 — Commit all files via PR (using commitChanges with shared mutex).
@@ -93,7 +93,7 @@ func (o *Orchestrator) InitRepo(ctx context.Context, req InitRepoRequest) (*Init
 		}
 
 		// Step 5 & 6 — Create AppProject and Application from root-app.yaml.
-		rootAppContent, readErr := fs.ReadFile(o.templateFS, "starter/bootstrap/root-app.yaml")
+		rootAppContent, readErr := fs.ReadFile(o.templateFS, "bootstrap/root-app.yaml")
 		if readErr != nil {
 			result.ArgoCD = &InitArgocdInfo{
 				Bootstrapped: false,
