@@ -16,6 +16,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/ai"
 	"github.com/MoranWeissman/sharko/internal/auth"
 	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/notifications"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/providers"
 	"github.com/MoranWeissman/sharko/internal/service"
@@ -54,6 +55,9 @@ type Server struct {
 	// Default addons (optional — set via SetDefaultAddons).
 	defaultAddons map[string]bool
 
+	// Notification store (always available — initialised in NewServer).
+	notificationStore *notifications.Store
+
 	// Template filesystem for POST /api/v1/init (always available).
 	templateFS fs.FS
 }
@@ -91,6 +95,7 @@ func NewServer(
 		authStore:         authStore,
 		aiConfigStore:     nil, // set via SetAIConfigStore
 		addonSecretDefs:   make(map[string]orchestrator.AddonSecretDefinition),
+		notificationStore: notifications.NewStore(100),
 	}
 }
 
@@ -134,6 +139,12 @@ func (s *Server) SetDefaultAddons(defaults map[string]bool) {
 // SetAddonSecretStore sets the persistent store for addon secret definitions.
 func (s *Server) SetAddonSecretStore(store config.AddonSecretStore) {
 	s.addonSecretStore = store
+}
+
+// NotificationStore returns the server's notification store so external
+// components (e.g. the background Checker) can push notifications into it.
+func (s *Server) NotificationStore() *notifications.Store {
+	return s.notificationStore
 }
 
 // SetDemoConnectionService replaces the server's connection service with one
@@ -187,6 +198,7 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("GET /api/v1/clusters/{name}/values", srv.handleGetClusterValues)
 	mux.HandleFunc("GET /api/v1/clusters/{name}/config-diff", srv.handleGetConfigDiff)
 	mux.HandleFunc("GET /api/v1/clusters/{name}/comparison", srv.handleGetClusterComparison)
+	mux.HandleFunc("GET /api/v1/clusters/{name}/history", srv.handleGetClusterHistory)
 	mux.HandleFunc("GET /api/v1/clusters/{name}", srv.handleGetCluster)
 
 	// Clusters (write — orchestrator-backed)
@@ -227,6 +239,7 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("GET /api/v1/addons/catalog", srv.handleGetAddonCatalog)
 	mux.HandleFunc("GET /api/v1/addons/version-matrix", srv.handleGetVersionMatrix)
 	mux.HandleFunc("GET /api/v1/addons/{name}/values", srv.handleGetAddonValues)
+	mux.HandleFunc("GET /api/v1/addons/{name}/changelog", srv.handleGetAddonChangelog)
 	mux.HandleFunc("GET /api/v1/addons/{name}", srv.handleGetAddonDetail)
 
 	// Dashboard
@@ -261,6 +274,10 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	// Documentation
 	mux.HandleFunc("GET /api/v1/docs/list", srv.handleDocsList)
 	mux.HandleFunc("GET /api/v1/docs/{slug}", srv.handleDocsGet)
+
+	// Notifications
+	mux.HandleFunc("GET /api/v1/notifications", srv.handleListNotifications)
+	mux.HandleFunc("POST /api/v1/notifications/read-all", srv.handleMarkAllNotificationsRead)
 
 	// Cluster info
 	mux.HandleFunc("GET /api/v1/cluster/nodes", srv.handleGetNodeInfo)

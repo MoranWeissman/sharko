@@ -11,6 +11,7 @@ import type {
   DashboardStats,
   ObservabilityOverviewResponse,
   PullRequestsResponse,
+  SyncActivityEntry,
   UpgradeCheckResponse,
   VersionMatrixResponse,
 } from './models'
@@ -188,6 +189,7 @@ export const api = {
   getClusterComparison: (name: string) => fetchJSON<ClusterComparisonResponse>(`/clusters/${name}/comparison`),
   getClusterValues: (name: string) => fetchJSON<{ cluster_name: string; values_yaml: string }>(`/clusters/${name}/values`),
   getConfigDiff: (name: string) => fetchJSON<ConfigDiffResponse>(`/clusters/${name}/config-diff`),
+  getClusterHistory: (name: string) => fetchJSON<{ cluster_name: string; history: SyncActivityEntry[] }>(`/clusters/${name}/history`),
 
   // Addons
   getAddonCatalog: () => fetchJSON<AddonCatalogResponse>('/addons/catalog'),
@@ -215,6 +217,18 @@ export const api = {
   // Upgrade
   getUpgradeVersions: (addonName: string) => fetchJSON<AvailableVersionsResponse>(`/upgrade/${addonName}/versions`),
   checkUpgrade: (addonName: string, targetVersion: string) => postJSON<UpgradeCheckResponse>('/upgrade/check', { addon_name: addonName, target_version: targetVersion }),
+  getAddonChangelog: (name: string, from?: string, to?: string) => {
+    const params = new URLSearchParams()
+    if (from) params.set('from', from)
+    if (to) params.set('to', to)
+    return fetchJSON<{
+      addon_name: string
+      current_version: string
+      target_version: string
+      versions: { version: string; app_version: string; created: string; description: string }[]
+      total_versions_between: number
+    }>(`/addons/${name}/changelog?${params.toString()}`)
+  },
 
   // AI
   getAIStatus: () => fetchJSON<{ enabled: boolean }>('/upgrade/ai-status'),
@@ -258,5 +272,13 @@ export const api = {
 
   // Providers
   getProviders: () => fetchJSON<{ configured_provider: { type: string; region: string; status: string } | null; available_types: string[] }>('/providers'),
+
+  // Notifications
+  getNotifications: () => fetchJSON<{
+    notifications: { id: string; type: string; title: string; description: string; timestamp: string; read: boolean }[]
+    unread_count: number
+  }>('/notifications'),
+
+  markAllNotificationsRead: () => postJSON<unknown>('/notifications/read-all'),
 
 }

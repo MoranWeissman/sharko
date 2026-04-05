@@ -124,6 +124,96 @@ function UpgradeVersionList({
   )
 }
 
+function CompareVersions({ addonName, currentVersion }: { addonName: string; currentVersion: string }) {
+  const [targetVersion, setTargetVersion] = useState('')
+  const [changelog, setChangelog] = useState<{ version: string; app_version: string; created: string; description: string }[] | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [availableVersions, setAvailableVersions] = useState<string[]>([])
+
+  // Fetch available versions on mount for the dropdown
+  useEffect(() => {
+    api.getAddonChangelog(addonName)
+      .then(data => {
+        const versions = (data.versions ?? []).map(v => v.version)
+        setAvailableVersions(versions)
+        if (versions.length > 0 && !targetVersion) {
+          setTargetVersion(versions[0]) // default to latest
+        }
+      })
+      .catch(() => {}) // silent fail for version list
+  }, [addonName])
+
+  const handleCompare = () => {
+    if (!targetVersion) return
+    setLoading(true)
+    setError(null)
+    api.getAddonChangelog(addonName, currentVersion, targetVersion)
+      .then(data => setChangelog(data.versions ?? []))
+      .catch(e => setError(e instanceof Error ? e.message : 'Failed to fetch changelog'))
+      .finally(() => setLoading(false))
+  }
+
+  return (
+    <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5">
+      <h3 className="mb-3 text-base font-semibold text-[#0a2a4a]">Compare Versions</h3>
+      <p className="mb-4 text-sm text-[#2a5a7a]">See what changed between your current version and a target.</p>
+
+      <div className="flex items-end gap-4 mb-4">
+        <div className="flex-1">
+          <label className="block text-xs font-medium text-[#1a4a6a] mb-1">From (current)</label>
+          <div className="rounded-lg bg-[#e0f0ff] px-3 py-2 font-mono text-sm text-[#0a2a4a]">{currentVersion}</div>
+        </div>
+        <div className="text-[#3a6a8a] text-lg">→</div>
+        <div className="flex-1">
+          <label className="block text-xs font-medium text-[#1a4a6a] mb-1">To (target)</label>
+          <select
+            value={targetVersion}
+            onChange={e => setTargetVersion(e.target.value)}
+            className="w-full rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm text-[#0a2a4a]"
+          >
+            {availableVersions.map(v => (
+              <option key={v} value={v}>{v}</option>
+            ))}
+          </select>
+        </div>
+        <button
+          onClick={handleCompare}
+          disabled={!targetVersion || loading}
+          className="rounded-lg bg-[#0a2a4a] px-4 py-2 text-sm font-medium text-white hover:bg-[#14466e] disabled:opacity-50"
+        >
+          {loading ? 'Loading...' : 'Compare'}
+        </button>
+      </div>
+
+      {error && <p className="text-sm text-red-600 mb-3">{error}</p>}
+
+      {changelog && changelog.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-xs text-[#3a6a8a] mb-2">{changelog.length} version{changelog.length !== 1 ? 's' : ''} between {currentVersion} and {targetVersion}</p>
+          {changelog.map(v => (
+            <div key={v.version} className="flex items-center justify-between rounded-lg bg-[#e0f0ff] px-4 py-3">
+              <div>
+                <span className="font-mono text-sm font-bold text-[#0a2a4a]">{v.version}</span>
+                {v.app_version && (
+                  <span className="ml-2 text-xs text-[#3a6a8a]">app: {v.app_version}</span>
+                )}
+              </div>
+              <span className="text-xs text-[#3a6a8a]">
+                {new Date(v.created).toLocaleDateString()}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {changelog && changelog.length === 0 && (
+        <p className="text-sm text-[#2a5a7a]">No versions found between {currentVersion} and {targetVersion}.</p>
+      )}
+    </div>
+  )
+}
+
 function HealthProgressBar({ healthy, total }: { healthy: number; total: number }) {
   if (total === 0) return null
   const pct = (healthy / total) * 100
@@ -774,6 +864,9 @@ export function AddonDetail() {
                   setUpgradeOpen(true)
                 }}
               />
+
+              {/* Compare versions */}
+              <CompareVersions addonName={addon.addon_name} currentVersion={addon.version} />
 
               {/* Per-cluster versions */}
               <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5">

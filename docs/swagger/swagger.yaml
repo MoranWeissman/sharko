@@ -427,6 +427,61 @@ paths:
       summary: Get addon detail
       tags:
       - addons
+  /addons/{name}/changelog:
+    get:
+      description: Returns chart versions between two semver versions for comparison
+      parameters:
+      - description: Addon name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Starting version (current) — exclusive lower bound
+        in: query
+        name: from
+        type: string
+      - description: Target version — inclusive upper bound
+        in: query
+        name: to
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Changelog between versions
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Addon not found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal error
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Service unavailable
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get addon version changelog
+      tags:
+      - addons
   /addons/{name}/upgrade:
     post:
       consumes:
@@ -1247,6 +1302,38 @@ paths:
       summary: Get cluster config diff
       tags:
       - clusters
+  /clusters/{name}/history:
+    get:
+      description: Returns recent sync activity and changes for a specific cluster
+      parameters:
+      - description: Cluster name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get cluster change history
+      tags:
+      - clusters
   /clusters/{name}/refresh:
     post:
       description: Rotates and re-syncs the cluster credentials from the secrets provider
@@ -2006,6 +2093,58 @@ paths:
       summary: Initialize addons repository
       tags:
       - init
+  /notifications:
+    get:
+      description: Returns recent notifications (upgrades, drift, security)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List notifications
+      tags:
+      - notifications
+  /notifications/read-all:
+    post:
+      description: Marks all notifications as read
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Mark all notifications as read
+      tags:
+      - notifications
   /observability/overview:
     get:
       description: Returns resource utilization alerts and health signals across all

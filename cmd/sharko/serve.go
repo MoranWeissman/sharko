@@ -16,6 +16,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/api"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/demo"
+	"github.com/MoranWeissman/sharko/internal/notifications"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/platform"
 	"github.com/MoranWeissman/sharko/internal/providers"
@@ -177,6 +178,12 @@ var serveCmd = &cobra.Command{
 		// Build server
 		srv := api.NewServer(connSvc, clusterSvc, addonSvc, dashboardSvc, observabilitySvc, upgradeSvc, aiClient)
 		srv.SetTemplateFS(templates.StarterFS) // Always available — init doesn't need a provider
+
+		// Start notification checker (background goroutine, checks every 30 min).
+		notifProvider := notifications.NewServiceProvider(connSvc, addonSvc)
+		notifChecker := notifications.NewChecker(srv.NotificationStore(), notifProvider, 30*time.Minute)
+		notifChecker.Start()
+		defer notifChecker.Stop()
 
 		// Demo mode: wire up mock backends and skip all real provider setup.
 		if demoMode {

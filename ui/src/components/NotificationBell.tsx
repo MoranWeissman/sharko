@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { Bell } from 'lucide-react'
+import { api } from '@/services/api'
 
 interface Notification {
   id: string
@@ -15,36 +16,22 @@ export function NotificationBell() {
   const [notifications, setNotifications] = useState<Notification[]>([])
   const ref = useRef<HTMLDivElement>(null)
 
-  // Mock notifications for now — will be replaced with real API
-  useEffect(() => {
-    // Simulated notifications based on common scenarios
-    setNotifications([
-      {
-        id: '1',
-        type: 'upgrade',
-        title: 'external-dns v1.15.0 available',
-        description: 'Minor version upgrade available (current: v1.14.3)',
-        timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
-        read: false,
-      },
-      {
-        id: '2',
-        type: 'security',
-        title: 'cert-manager security patch',
-        description: 'CVE-2026-1234 fix in v1.14.5',
-        timestamp: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
-        read: false,
-      },
-      {
-        id: '3',
-        type: 'drift',
-        title: 'Version drift on staging-eu',
-        description: 'istio-base running v1.20.1, catalog has v1.21.0',
-        timestamp: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
-        read: true,
-      },
-    ])
+  // Fetch notifications from API
+  const fetchNotifications = useCallback(() => {
+    api.getNotifications()
+      .then(data => {
+        setNotifications((data.notifications ?? []) as Notification[])
+      })
+      .catch(() => {
+        // API not available — keep whatever we have
+      })
   }, [])
+
+  useEffect(() => {
+    fetchNotifications()
+    const interval = setInterval(fetchNotifications, 60000) // poll every 60s
+    return () => clearInterval(interval)
+  }, [fetchNotifications])
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -60,7 +47,14 @@ export function NotificationBell() {
   const unreadCount = notifications.filter(n => !n.read).length
 
   const markAllRead = () => {
-    setNotifications(prev => prev.map(n => ({ ...n, read: true })))
+    api.markAllNotificationsRead()
+      .then(() => {
+        setNotifications(prev => prev.map(n => ({ ...n, read: true })))
+      })
+      .catch(() => {
+        // Optimistic — mark locally even if API fails
+        setNotifications(prev => prev.map(n => ({ ...n, read: true })))
+      })
   }
 
   const timeAgo = (ts: string) => {
