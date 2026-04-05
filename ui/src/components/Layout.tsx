@@ -9,7 +9,6 @@ import {
   Settings,
   ChevronLeft,
   ChevronRight,
-  ChevronDown,
   Plug,
   Sun,
   Moon,
@@ -19,8 +18,6 @@ import {
   Search,
   Sparkles,
   X,
-  LayoutGrid,
-  GitCompareArrows,
 } from 'lucide-react'
 import { useConnections } from '@/hooks/useConnections'
 import { FloatingAssistant } from '@/components/FloatingAssistant'
@@ -34,7 +31,6 @@ interface NavItem {
   to: string
   label: string
   icon: typeof LayoutDashboard
-  children?: { to: string; label: string; icon: typeof LayoutDashboard }[]
 }
 
 interface NavSection {
@@ -49,15 +45,7 @@ const navSections: NavSection[] = [
     items: [
       { to: '/', label: 'Dashboard', icon: LayoutDashboard },
       { to: '/clusters', label: 'Clusters', icon: Server },
-      {
-        to: '/addons',
-        label: 'Addons',
-        icon: Package,
-        children: [
-          { to: '/addons', label: 'Catalog', icon: LayoutGrid },
-          { to: '/version-matrix', label: 'Version Drift', icon: GitCompareArrows },
-        ],
-      },
+      { to: '/addons', label: 'Addons', icon: Package },
     ],
   },
   {
@@ -80,9 +68,7 @@ const routeLabels: Record<string, string> = {
   dashboard: 'Dashboard',
   clusters: 'Clusters',
   addons: 'Addons Catalog',
-  'version-matrix': 'Version Drift Detector',
   observability: 'Observability',
-  upgrade: 'Addon Upgrade Checker',
   dashboards: 'Dashboards',
   settings: 'Settings',
   users: 'User Management',
@@ -126,9 +112,7 @@ function getAIPageContext(pathname: string): string | undefined {
     '/dashboard': 'the Dashboard (overview stats)',
     '/clusters': 'the Clusters page',
     '/addons': 'the Addons Catalog',
-    '/version-matrix': 'the Addons Version Drift Detector',
     '/observability': 'the Observability page',
-    '/upgrade': 'the Addon Upgrade Checker',
     '/settings': 'the Settings page',
   }
   if (routes[pathname]) return routes[pathname]
@@ -147,7 +131,6 @@ export function Layout() {
   const navigate = useNavigate()
   const location = useLocation()
   const [collapsed, setCollapsed] = useState(false)
-  const [addonsExpanded, setAddonsExpanded] = useState(true)
   const [aiPanelOpen, setAiPanelOpen] = useState(false)
   const { theme, toggleTheme } = useTheme()
   const { logout, isAdmin } = useAuth()
@@ -216,77 +199,25 @@ export function Layout() {
                 </span>
               )}
               <div className="space-y-0.5">
-                {section.items.map((item) => {
-                  if (item.children) {
-                    const isParentActive = item.children.some(child =>
-                      location.pathname === child.to || location.pathname.startsWith(child.to + '/')
-                    )
-                    return (
-                      <div key={item.to}>
-                        <button
-                          onClick={() => setAddonsExpanded(e => !e)}
-                          className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-                            isParentActive
-                              ? 'border-l-[3px] border-[#9fcffb] bg-[#14466e] text-white'
-                              : 'border-l-[3px] border-transparent text-[#7ab0d8] hover:bg-[#14466e] hover:text-white'
-                          } ${collapsed && !mobileOpen ? 'justify-center px-0' : ''}`}
-                          title={collapsed && !mobileOpen ? item.label : undefined}
-                        >
-                          <item.icon className="h-5 w-5 shrink-0" />
-                          {(!collapsed || mobileOpen) && (
-                            <>
-                              <span className="flex-1 text-left">{item.label}</span>
-                              <ChevronDown className={`h-4 w-4 shrink-0 transition-transform ${addonsExpanded ? 'rotate-180' : ''}`} />
-                            </>
-                          )}
-                        </button>
-                        {addonsExpanded && (!collapsed || mobileOpen) && (
-                          <div className="ml-4 mt-0.5 space-y-0.5 border-l border-[#14466e] pl-2">
-                            {item.children.map(child => (
-                              <NavLink
-                                key={child.to}
-                                to={child.to}
-                                end={child.to === '/addons'}
-                                onClick={() => setMobileOpen(false)}
-                                className={({ isActive }) =>
-                                  `block rounded-lg px-3 py-1.5 text-sm transition-colors ${
-                                    isActive
-                                      ? 'text-[#bee0ff] font-medium'
-                                      : 'text-[#5a9ad0] hover:text-[#bee0ff]'
-                                  }`
-                                }
-                              >
-                                <span className="flex items-center gap-2">
-                                  <child.icon className="h-3.5 w-3.5 shrink-0" />
-                                  {child.label}
-                                </span>
-                              </NavLink>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )
-                  }
-                  return (
-                    <NavLink
-                      key={item.to}
-                      to={item.to}
-                      end={item.to === '/'}
-                      onClick={() => setMobileOpen(false)}
-                      className={({ isActive }) =>
-                        `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-                          isActive
-                            ? 'border-l-[3px] border-[#9fcffb] bg-[#14466e] text-white'
-                            : 'border-l-[3px] border-transparent text-[#7ab0d8] hover:bg-[#14466e] hover:text-white'
-                        } ${collapsed && !mobileOpen ? 'justify-center px-0' : ''}`
-                      }
-                      title={collapsed && !mobileOpen ? item.label : undefined}
-                    >
-                      <item.icon className="h-5 w-5 shrink-0" />
-                      {(!collapsed || mobileOpen) && <span>{item.label}</span>}
-                    </NavLink>
-                  )
-                })}
+                {section.items.map((item) => (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    end={item.to === '/'}
+                    onClick={() => setMobileOpen(false)}
+                    className={({ isActive }) =>
+                      `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                        isActive
+                          ? 'border-l-[3px] border-[#9fcffb] bg-[#14466e] text-white'
+                          : 'border-l-[3px] border-transparent text-[#7ab0d8] hover:bg-[#14466e] hover:text-white'
+                      } ${collapsed && !mobileOpen ? 'justify-center px-0' : ''}`
+                    }
+                    title={collapsed && !mobileOpen ? item.label : undefined}
+                  >
+                    <item.icon className="h-5 w-5 shrink-0" />
+                    {(!collapsed || mobileOpen) && <span>{item.label}</span>}
+                  </NavLink>
+                ))}
               </div>
             </div>
           ))}
