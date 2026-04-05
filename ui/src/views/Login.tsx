@@ -34,18 +34,18 @@ export function Login() {
       />
 
       {/* Right side — login panel */}
-      <div className="flex w-full flex-col bg-[#0d3558] lg:w-[440px] lg:min-w-[400px]">
+      <div className="flex w-full flex-col bg-[#f0f7ff] lg:w-[440px] lg:min-w-[400px]">
         <div className="flex flex-1 flex-col items-center justify-center px-10 py-12">
           {/* Brand header — logo + name + description */}
           <div className="mb-10 flex flex-col items-center gap-2 text-center">
             <img src="/sharko-banner.png" alt="Sharko" className="h-16 w-auto" />
-            <h1 className="text-2xl font-bold text-white">Sharko</h1>
-            <p className="text-sm text-gray-400">Addon management for Kubernetes clusters</p>
+            <h1 className="text-2xl font-bold text-[#0a2a4a]">Sharko</h1>
+            <p className="text-sm text-[#4a8abf]">Addon management for Kubernetes clusters</p>
           </div>
 
           <form onSubmit={handleSubmit} className="w-full space-y-5">
             <div>
-              <label htmlFor="username" className="block text-xs text-gray-400 mb-1.5">
+              <label htmlFor="username" className="block text-xs text-[#4a8abf] mb-1.5">
                 Username
               </label>
               <input
@@ -55,13 +55,13 @@ export function Login() {
                 onChange={(e) => setUsername(e.target.value)}
                 autoComplete="username"
                 autoFocus
-                className="block w-full rounded-md border border-gray-600 bg-gray-800/50 px-3 py-2.5 text-sm text-white placeholder-gray-500 focus:border-[#9fcffb] focus:outline-none focus:ring-1 focus:ring-[#9fcffb]"
+                className="block w-full rounded-md border border-[#90c8ee] bg-[#e0f0ff] px-3 py-2.5 text-sm text-[#0a2a4a] placeholder-[#7ab0d8] focus:border-[#9fcffb] focus:outline-none focus:ring-1 focus:ring-[#9fcffb]"
                 placeholder="admin"
               />
             </div>
 
             <div>
-              <label htmlFor="password" className="block text-xs text-gray-400 mb-1.5">
+              <label htmlFor="password" className="block text-xs text-[#4a8abf] mb-1.5">
                 Password
               </label>
               <input
@@ -70,7 +70,7 @@ export function Login() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 autoComplete="current-password"
-                className="block w-full rounded-md border border-gray-600 bg-gray-800/50 px-3 py-2.5 text-sm text-white placeholder-gray-500 focus:border-[#9fcffb] focus:outline-none focus:ring-1 focus:ring-[#9fcffb]"
+                className="block w-full rounded-md border border-[#90c8ee] bg-[#e0f0ff] px-3 py-2.5 text-sm text-[#0a2a4a] placeholder-[#7ab0d8] focus:border-[#9fcffb] focus:outline-none focus:ring-1 focus:ring-[#9fcffb]"
                 placeholder="Password"
               />
             </div>
@@ -90,7 +90,7 @@ export function Login() {
         </div>
 
         {/* Footer */}
-        <p className="pb-4 text-center text-[10px] text-gray-600">
+        <p className="pb-4 text-center text-[10px] text-[#4a8abf]">
           Sharko v1.0.0
         </p>
       </div>
