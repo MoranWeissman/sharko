@@ -19,7 +19,10 @@ import (
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/providers"
 	"github.com/MoranWeissman/sharko/internal/service"
+	httpSwagger "github.com/swaggo/http-swagger"
 	"golang.org/x/crypto/bcrypt"
+
+	_ "github.com/MoranWeissman/sharko/docs/swagger" // swagger docs
 )
 
 // Server holds the HTTP handlers and their dependencies.
@@ -156,6 +159,11 @@ func (s *Server) AddDemoUser(username, password, role string) error {
 func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	startSessionCleanup()
 	mux := http.NewServeMux()
+
+	// Swagger UI
+	mux.Handle("/swagger/", httpSwagger.Handler(
+		httpSwagger.URL("/swagger/doc.json"),
+	))
 
 	// Health
 	mux.HandleFunc("GET /api/v1/health", srv.handleHealth)

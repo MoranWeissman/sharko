@@ -64,6 +64,7 @@ export function ClusterDetail() {
   const [configDiffLoading, setConfigDiffLoading] = useState(false);
   const [configDiffError, setConfigDiffError] = useState<string | null>(null);
   const [clusterValuesYaml, setClusterValuesYaml] = useState<string | null>(null);
+  const [configFetched, setConfigFetched] = useState(false);
   const [nodeInfo, setNodeInfo] = useState<{ total: number; ready: number; not_ready: number } | null>(null);
   const [argocdBaseURL, setArgocdBaseURL] = useState<string>('');
 
@@ -174,10 +175,9 @@ export function ClusterDetail() {
   }, [fetchData]);
 
   useEffect(() => {
-    if (activeSection === 'config' && !configDiff && !configDiffLoading) {
+    if (activeSection === 'config' && !configFetched && name) {
+      setConfigFetched(true);
       void fetchConfigDiff();
-    }
-    if (activeSection === 'config' && clusterValuesYaml === null && name) {
       api
         .getClusterValues(name)
         .then((res) => setClusterValuesYaml(res.values_yaml))
@@ -185,7 +185,7 @@ export function ClusterDetail() {
           // Cluster values file may not exist — that's OK
         });
     }
-  }, [activeSection, configDiff, configDiffLoading, fetchConfigDiff, clusterValuesYaml, name]);
+  }, [activeSection, configFetched, name, fetchConfigDiff]);
 
   const filteredAddons = useMemo(() => {
     if (!data) return [];
@@ -564,17 +564,32 @@ export function ClusterDetail() {
 
           {/* Config section */}
           {activeSection === 'config' && (
-            <>
+            <div className="space-y-6">
+              {configDiffLoading && <LoadingState message="Loading config..." />}
+              {configDiffError && (
+                <ErrorState
+                  message={configDiffError}
+                  onRetry={() => {
+                    setConfigDiffError(null);
+                    setConfigFetched(false);
+                  }}
+                />
+              )}
               {clusterValuesYaml && (
                 <YamlViewer yaml={clusterValuesYaml} title="Cluster Values" />
               )}
-              <ConfigOverridesPanel
-                data={configDiff}
-                loading={configDiffLoading}
-                error={configDiffError}
-                onRetry={fetchConfigDiff}
-              />
-            </>
+              {configDiff && (
+                <ConfigOverridesPanel
+                  data={configDiff}
+                  loading={false}
+                  error={null}
+                  onRetry={fetchConfigDiff}
+                />
+              )}
+              {!configDiffLoading && !configDiffError && !configDiff && !clusterValuesYaml && (
+                <p className="text-sm text-[#2a5a7a]">No configuration overrides for this cluster.</p>
+              )}
+            </div>
           )}
 
           {/* History section */}

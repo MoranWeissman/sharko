@@ -32,6 +32,15 @@ func init() {
 	rootCmd.AddCommand(serveCmd)
 }
 
+// @title Sharko API
+// @version 1.0.0
+// @description Addon management server for Kubernetes clusters, built on ArgoCD.
+// @host localhost:8080
+// @BasePath /api/v1
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
+
 var serveCmd = &cobra.Command{
 	Use:   "serve",
 	Short: "Start the Sharko API server",

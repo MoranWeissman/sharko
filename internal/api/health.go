@@ -22,6 +22,14 @@ func readVersionFile() string {
 	return "dev"
 }
 
+// handleHealth handles GET /api/v1/health
+//
+// @Summary Health check
+// @Description Returns server health status and version
+// @Tags system
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Router /health [get]
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	mode := platform.Detect()
 	deploymentMode := "Local Development"
