@@ -141,6 +141,12 @@ func (s *Server) SetAddonSecretStore(store config.AddonSecretStore) {
 	s.addonSecretStore = store
 }
 
+// NotificationStore returns the server's notification store so external
+// components (e.g. the background Checker) can push notifications into it.
+func (s *Server) NotificationStore() *notifications.Store {
+	return s.notificationStore
+}
+
 // SetDemoConnectionService replaces the server's connection service with one
 // backed by the provided in-memory store. Used by demo mode only.
 func (s *Server) SetDemoConnectionService(store config.Store) {

@@ -11,6 +11,8 @@ import (
 // @Produce json
 // @Security BearerAuth
 // @Success 200 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 500 {object} map[string]interface{} "Internal error"
 // @Router /notifications [get]
 func (s *Server) handleListNotifications(w http.ResponseWriter, r *http.Request) {
 	if s.notificationStore == nil {
@@ -33,6 +35,8 @@ func (s *Server) handleListNotifications(w http.ResponseWriter, r *http.Request)
 // @Produce json
 // @Security BearerAuth
 // @Success 200 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 500 {object} map[string]interface{} "Internal error"
 // @Router /notifications/read-all [post]
 func (s *Server) handleMarkAllNotificationsRead(w http.ResponseWriter, r *http.Request) {
 	if s.notificationStore != nil {

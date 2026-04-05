@@ -6,6 +6,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -29,6 +30,7 @@ type Checker struct {
 	provider VersionProvider
 	interval time.Duration
 	stopCh   chan struct{}
+	stopOnce sync.Once
 }
 
 // NewChecker creates a Checker that is not yet running.
@@ -62,9 +64,12 @@ func (c *Checker) Start() {
 	}()
 }
 
-// Stop signals the background goroutine to exit.
+// Stop signals the background goroutine to exit. It is safe to call Stop
+// multiple times; the channel is closed exactly once.
 func (c *Checker) Stop() {
-	close(c.stopCh)
+	c.stopOnce.Do(func() {
+		close(c.stopCh)
+	})
 }
 
 func (c *Checker) check() {

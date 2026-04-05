@@ -143,6 +143,7 @@ These endpoints are already implemented and working. Listed here for completenes
 | GET | `/api/v1/clusters/{name}/values` | Raw cluster values YAML |
 | GET | `/api/v1/clusters/{name}/config-diff` | Config diff: cluster overrides vs global defaults |
 | GET | `/api/v1/clusters/{name}/comparison` | Git vs ArgoCD comparison for this cluster |
+| GET | `/api/v1/clusters/{name}/history` | Recent sync activity for a specific cluster |
 
 **Response: `GET /api/v1/clusters`**
 ```json
@@ -201,6 +202,7 @@ These endpoints are already implemented and working. Listed here for completenes
 | GET | `/api/v1/addons/version-matrix` | Version matrix: addon x cluster grid |
 | GET | `/api/v1/addons/{name}/values` | Raw global values YAML for an addon |
 | GET | `/api/v1/addons/{name}` | Addon detail: which clusters have it, version spread |
+| GET | `/api/v1/addons/{name}/changelog` | Chart versions between two semver bounds |
 
 ### Dashboard
 
@@ -241,6 +243,13 @@ These endpoints are already implemented and working. Listed here for completenes
 | POST | `/api/v1/ai/provider` | Set active AI provider |
 | POST | `/api/v1/ai/test` | Test AI connectivity |
 | POST | `/api/v1/ai/test-config` | Test AI config without saving |
+
+### Notifications
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/notifications` | List all notifications (upgrades, drift, security) |
+| POST | `/api/v1/notifications/read-all` | Mark all notifications as read |
 
 ### Other
 
@@ -1199,100 +1208,126 @@ Partial success lets the user decide: retry the failed step, or explicitly clean
 
 ---
 
-## 8. Planned Endpoints (PLANNED)
+## 8. History, Changelog & Notifications API
 
-The following endpoints are planned for future implementation. They are NOT yet available.
+### GET /api/v1/clusters/{name}/history — Cluster Sync History
 
-### GET /api/v1/addons/{name}/changelog?from=v1&to=v2 — Addon Changelog (PLANNED)
-
-Returns version entries between the `from` and `to` versions, extracted from the Helm repo index metadata. Useful for showing what changed between addon versions before upgrading.
-
-**Query Parameters:**
-- `from` — starting version (inclusive)
-- `to` — ending version (inclusive)
-
-**Planned Response (200 OK):**
-```json
-{
-  "addon": "cert-manager",
-  "from": "1.14.0",
-  "to": "1.15.0",
-  "entries": [
-    {
-      "version": "1.15.0",
-      "created": "2026-03-15T00:00:00Z",
-      "description": "Bug fixes and performance improvements",
-      "app_version": "1.15.0"
-    },
-    {
-      "version": "1.14.5",
-      "created": "2026-02-01T00:00:00Z",
-      "description": "Security patch",
-      "app_version": "1.14.5"
-    }
-  ]
-}
-```
-
----
-
-### GET /api/v1/clusters/{name}/history — Cluster Sync History (PLANNED)
-
-Returns filtered observability sync data for a specific cluster. Shows recent ArgoCD sync events, health transitions, and addon deployment history.
+Returns recent ArgoCD sync activity filtered to a specific cluster.
 
 **Path Parameters:**
 - `name` — cluster name
 
-**Planned Response (200 OK):**
+**Response (200 OK):**
 ```json
 {
-  "cluster": "prod-eu",
-  "events": [
+  "cluster_name": "prod-eu",
+  "history": [
     {
       "timestamp": "2026-04-05T10:30:00Z",
-      "type": "sync",
-      "addon": "monitoring",
-      "from_status": "OutOfSync",
-      "to_status": "Synced",
-      "version": "56.6.2"
+      "duration": "1m2s",
+      "duration_secs": 62.0,
+      "app_name": "prod-eu-monitoring",
+      "addon_name": "monitoring",
+      "cluster_name": "prod-eu",
+      "revision": "abc1234",
+      "status": "Succeeded"
     }
   ]
 }
 ```
 
+`history` is an empty array when no sync events exist for the cluster. Each entry reflects a single ArgoCD application sync operation.
+
+**Error Responses:**
+| Code | Condition |
+|------|-----------|
+| 400 | Cluster name missing |
+| 503 | ArgoCD connection unavailable |
+| 500 | Observability service error |
+
 ---
 
-### GET /api/v1/notifications — List Notifications (PLANNED)
+### GET /api/v1/addons/{name}/changelog — Addon Version Changelog
 
-Returns notifications for the current user. Notification types include: upgrade available, version drift detected, security advisory, sync failure.
+Returns chart versions from the Helm repo between two semver bounds. Useful for reviewing what changed before upgrading an addon.
 
-**Planned Response (200 OK):**
+**Path Parameters:**
+- `name` — addon name (must exist in the addons catalog)
+
+**Query Parameters:**
+- `from` — lower bound version (exclusive). Defaults to the addon's current catalog version if omitted.
+- `to` — upper bound version (inclusive). If omitted, all versions above `from` are returned.
+
+Both parameters accept semver strings with or without a leading `v` (e.g. `1.14.0` or `v1.14.0`).
+
+**Response (200 OK):**
+```json
+{
+  "addon_name": "cert-manager",
+  "current_version": "1.14.0",
+  "target_version": "1.15.0",
+  "total_versions_between": 2,
+  "versions": [
+    {
+      "version": "1.15.0",
+      "app_version": "1.15.0",
+      "created": "2026-03-15T00:00:00Z",
+      "description": "Bug fixes and performance improvements"
+    },
+    {
+      "version": "1.14.5",
+      "app_version": "1.14.5",
+      "created": "2026-02-01T00:00:00Z",
+      "description": "Security patch"
+    }
+  ]
+}
+```
+
+`versions` is an empty array when no versions fall in the specified range. `app_version`, `created`, and `description` are omitted when not present in the Helm repo index.
+
+**Error Responses:**
+| Code | Condition |
+|------|-----------|
+| 400 | Invalid semver for `from` or `to` |
+| 404 | Addon not found in catalog |
+| 503 | Git provider unavailable |
+| 500 | Helm repo fetch or catalog parse error |
+
+---
+
+### GET /api/v1/notifications — List Notifications
+
+Returns all in-memory notifications, newest first. Notification types: `upgrade`, `security`, `drift`.
+
+**Response (200 OK):**
 ```json
 {
   "notifications": [
     {
       "id": "abc123",
-      "type": "upgrade_available",
+      "type": "upgrade",
       "title": "cert-manager 1.15.0 available",
       "description": "Current: 1.14.5. New version 1.15.0 is available in the Helm repo.",
-      "addon": "cert-manager",
-      "created_at": "2026-04-05T08:00:00Z",
+      "timestamp": "2026-04-05T08:00:00Z",
       "read": false
     }
   ],
-  "unread_count": 3
+  "unread_count": 1
 }
 ```
 
+Returns `{"notifications": [], "unread_count": 0}` when no notifications exist.
+
 ---
 
-### POST /api/v1/notifications/read-all — Mark All Notifications Read (PLANNED)
+### POST /api/v1/notifications/read-all — Mark All Notifications Read
 
-Marks all notifications as read for the current user.
+Marks every notification in the store as read.
 
-**Planned Response (200 OK):**
+**Request body:** none
+
+**Response (200 OK):**
 ```json
-{
-  "marked_read": 3
-}
+{"status": "ok"}
 ```
