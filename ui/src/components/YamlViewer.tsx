@@ -158,7 +158,7 @@ export function YamlViewer({ yaml: yamlString, title, defaultView = 'raw' }: Yam
   }
 
   return (
-    <div className="rounded-xl border border-[#6aade0] bg-[#f0f7ff] shadow-sm dark:border-[#1a3a5a] dark:bg-gray-800">
+    <div className="rounded-xl border-2 border-[#6aade0] bg-[#f0f7ff] shadow-sm dark:border-[#1a3a5a] dark:bg-gray-800">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-[#6aade0] px-4 py-3 dark:border-[#1a3a5a]">
         <div>

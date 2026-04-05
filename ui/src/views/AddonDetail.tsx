@@ -39,7 +39,7 @@ function HealthProgressBar({ healthy, total }: { healthy: number; total: number 
     pct === 100 ? 'bg-green-500' : pct > 50 ? 'bg-yellow-500' : 'bg-red-500'
 
   return (
-    <div className="rounded-lg border border-[#6aade0] bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800">
+    <div className="rounded-lg border-2 border-[#6aade0] bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800">
       <h3 className="mb-2 text-base font-semibold text-[#0a2a4a] dark:text-gray-100">Overall Health</h3>
       <div className="h-3 w-full overflow-hidden rounded-full bg-[#c0ddf0] dark:bg-gray-700">
         <div
@@ -465,7 +465,7 @@ export function AddonDetail() {
 
         <TabsContent value="clusters" className="space-y-6">
           {/* Filter controls */}
-          <div className="rounded-lg border border-[#6aade0] bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800">
+          <div className="rounded-lg border-2 border-[#6aade0] bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800">
             <h3 className="mb-3 text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
               Filter Applications
             </h3>
@@ -529,7 +529,7 @@ export function AddonDetail() {
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
             {/* Left: Environment Versions */}
             <div className="lg:col-span-4">
-              <div className="rounded-lg border border-[#6aade0] bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800">
+              <div className="rounded-lg border-2 border-[#6aade0] bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800">
                 <h3 className="mb-3 text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
                   Environment Versions
                 </h3>
@@ -538,7 +538,7 @@ export function AddonDetail() {
                     {envVersions.map(({ env, version }) => (
                       <div
                         key={env}
-                        className="flex items-center justify-between rounded border border-[#6aade0] px-3 py-2 dark:border-gray-700"
+                        className="flex items-center justify-between rounded border-2 border-[#6aade0] px-3 py-2 dark:border-gray-700"
                       >
                         <span className="rounded-full border border-teal-200 bg-teal-50 px-2 py-0.5 text-xs font-medium text-teal-700 dark:border-teal-600 dark:bg-teal-900/30 dark:text-teal-400">
                           {env}
@@ -555,7 +555,7 @@ export function AddonDetail() {
 
             {/* Right: Cluster Applications Table */}
             <div className="lg:col-span-8">
-              <div className="rounded-lg border border-[#6aade0] bg-[#f0f7ff] dark:border-gray-700 dark:bg-gray-800">
+              <div className="rounded-lg border-2 border-[#6aade0] bg-[#f0f7ff] dark:border-gray-700 dark:bg-gray-800">
                 <div className="border-b px-4 py-3 dark:border-gray-700">
                   <h3 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
                     Cluster Applications
@@ -641,7 +641,7 @@ export function AddonDetail() {
 
           {/* Disabled clusters section */}
           {disabledApps.length > 0 && (
-            <div className="rounded-lg border border-[#6aade0] bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800" id="disabled-clusters-section">
+            <div className="rounded-lg border-2 border-[#6aade0] bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800" id="disabled-clusters-section">
               <h3 className="mb-3 text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
                 Disabled on {disabledApps.length} Clusters
               </h3>
@@ -650,7 +650,7 @@ export function AddonDetail() {
                   <Link
                     key={app.cluster_name}
                     to={`/clusters/${app.cluster_name}`}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-[#6aade0] bg-[#d0e8f8] px-3 py-1 text-xs font-medium text-[#1a4a6a] transition-colors hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+                    className="inline-flex items-center gap-1.5 rounded-full border-2 border-[#6aade0] bg-[#d0e8f8] px-3 py-1 text-xs font-medium text-[#1a4a6a] transition-colors hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
                   >
                     <Ban className="h-3 w-3" />
                     {app.cluster_name}
@@ -663,7 +663,7 @@ export function AddonDetail() {
 
         <TabsContent value="upgrade" className="space-y-6">
           <RoleGuard adminOnly fallback={<p className="text-sm text-[#2a5a7a] dark:text-gray-400">Admin access required to upgrade addons.</p>}>
-            <div className="rounded-lg border border-[#6aade0] bg-[#f0f7ff] p-6 dark:border-gray-700 dark:bg-gray-800">
+            <div className="rounded-lg border-2 border-[#6aade0] bg-[#f0f7ff] p-6 dark:border-gray-700 dark:bg-gray-800">
               <h3 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">Upgrade {addon.addon_name}</h3>
               <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
                 Current catalog version: <span className="font-mono font-medium">{addon.version}</span>

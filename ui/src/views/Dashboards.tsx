@@ -80,7 +80,7 @@ function DashboardForm({
   return (
     <form
       onSubmit={handleSubmit}
-      className="rounded-xl border border-[#6aade0] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900"
+      className="rounded-xl border-2 border-[#6aade0] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900"
     >
       <div className="mb-4 flex items-center justify-between">
         <h3 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
@@ -314,7 +314,7 @@ export function Dashboards() {
           {effectiveSelected ? (
             <div className="space-y-3">
               {/* Toolbar */}
-              <div className="flex items-center justify-between rounded-lg border border-[#6aade0] bg-[#f0f7ff] px-4 py-2.5 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+              <div className="flex items-center justify-between rounded-lg border-2 border-[#6aade0] bg-[#f0f7ff] px-4 py-2.5 shadow-sm dark:border-gray-700 dark:bg-gray-900">
                 <span className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
                   {effectiveSelected.name}
                 </span>
@@ -346,7 +346,7 @@ export function Dashboards() {
               </div>
 
               {/* Iframe */}
-              <div className="overflow-hidden rounded-xl border border-[#6aade0] shadow-md dark:border-gray-700">
+              <div className="overflow-hidden rounded-xl border-2 border-[#6aade0] shadow-md dark:border-gray-700">
                 <iframe
                   src={resolveUrl(effectiveSelected)}
                   title={effectiveSelected.name}

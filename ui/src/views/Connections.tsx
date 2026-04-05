@@ -502,7 +502,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
             {connections.map((conn) => (
               <div key={conn.name}>
                 <div
-                  className={`rounded-xl border border-[#6aade0] bg-[#f0f7ff] p-6 shadow-sm dark:bg-gray-800 ${
+                  className={`rounded-xl border-2 border-[#6aade0] bg-[#f0f7ff] p-6 shadow-sm dark:bg-gray-800 ${
                     conn.is_active
                       ? 'border-teal-500 ring-2 ring-teal-100 dark:ring-teal-900/50'
                       : 'border-[#6aade0] dark:border-gray-700'
@@ -679,7 +679,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
         <h3 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
           Platform Info
         </h3>
-        <div className="rounded-xl border border-[#6aade0] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <div className="rounded-xl border-2 border-[#6aade0] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
           <dl className="grid grid-cols-1 gap-6 sm:grid-cols-2">
             {/* Deployment Mode */}
             <div>
@@ -745,7 +745,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
         <h3 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
           Secrets Provider
         </h3>
-        <div className="rounded-xl border border-[#6aade0] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <div className="rounded-xl border-2 border-[#6aade0] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
           {providerInfo ? (
             <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <div>
@@ -796,7 +796,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
           <h3 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
             Initialize Repository
           </h3>
-          <div className="rounded-xl border border-[#6aade0] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div className="rounded-xl border-2 border-[#6aade0] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <p className="mb-4 text-sm text-[#1a4a6a] dark:text-gray-400">
               Bootstrap the Git repository with the required Sharko directory structure and ArgoCD resources.
               Safe to run on an already-initialized repository.
@@ -954,7 +954,7 @@ function AIConfigSection() {
   }
 
   return (
-    <div className="rounded-xl border border-[#6aade0] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+    <div className="rounded-xl border-2 border-[#6aade0] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
       {/* Header */}
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-3">
