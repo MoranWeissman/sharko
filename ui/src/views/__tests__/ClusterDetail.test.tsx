@@ -88,9 +88,12 @@ const comparisonResponse = {
   total_disabled_in_git: 0,
 };
 
-function renderView() {
+function renderView(section?: string) {
+  const initialEntry = section
+    ? `/clusters/prod-eu?section=${section}`
+    : '/clusters/prod-eu';
   return render(
-    <MemoryRouter initialEntries={['/clusters/prod-eu']}>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <Routes>
         <Route path="/clusters/:name" element={<ClusterDetail />} />
       </Routes>
@@ -119,8 +122,28 @@ describe('ClusterDetail', () => {
     });
   });
 
-  it('renders cluster detail with stat cards and comparison table', async () => {
+  it('renders cluster name in header', async () => {
     renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    });
+  });
+
+  it('shows overview section by default with cluster info', async () => {
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    });
+
+    // Overview section shows cluster version and connection info
+    expect(screen.getByText('Cluster Version')).toBeInTheDocument();
+    expect(screen.getByText('1.28')).toBeInTheDocument();
+  });
+
+  it('renders cluster detail with stat cards and comparison table on addons section', async () => {
+    renderView('addons');
 
     await waitFor(() => {
       expect(screen.getByText('prod-eu')).toBeInTheDocument();
@@ -156,7 +179,7 @@ describe('ClusterDetail', () => {
   });
 
   it('filters addons by clicking stat card', async () => {
-    renderView();
+    renderView('addons');
 
     await waitFor(() => {
       expect(screen.getByText('Ingress-nginx')).toBeInTheDocument();
@@ -185,7 +208,7 @@ describe('ClusterDetail', () => {
   });
 
   it('shows expand/collapse for long issues', async () => {
-    renderView();
+    renderView('addons');
 
     await waitFor(() => {
       expect(screen.getByText('Cert-manager')).toBeInTheDocument();
@@ -195,5 +218,38 @@ describe('ClusterDetail', () => {
     expect(
       screen.getByText('Addon is configured in Git but not deployed in ArgoCD'),
     ).toBeInTheDocument();
+  });
+
+  it('shows nav panel with section items', async () => {
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    });
+
+    // Nav panel items should be visible
+    expect(screen.getByText('Overview')).toBeInTheDocument();
+    expect(screen.getByText('Addons')).toBeInTheDocument();
+    expect(screen.getByText('Config')).toBeInTheDocument();
+  });
+
+  it('switches to addons section when clicking Addons in nav', async () => {
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    });
+
+    // Initially on overview — cluster info cards visible, not addons table
+    expect(screen.queryByText('All Addons')).not.toBeInTheDocument();
+
+    // Click Addons in nav panel
+    fireEvent.click(screen.getByText('Addons'));
+
+    await waitFor(() => {
+      expect(screen.getByText('All Addons')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText('Ingress-nginx')).toBeInTheDocument();
   });
 });

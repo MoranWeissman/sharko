@@ -1,6 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import {
   ArrowLeft,
   List,
@@ -17,8 +16,10 @@ import {
   WifiOff,
   MessageSquare,
   Tag,
-  Trash2,
   Loader2,
+  LayoutGrid,
+  Package,
+  FileCode,
 } from 'lucide-react';
 import { api, deregisterCluster, updateClusterAddons } from '@/services/api';
 import type { ClusterComparisonResponse, AddonComparisonStatus, ConfigDiffResponse } from '@/services/models';
@@ -29,6 +30,7 @@ import { ErrorState } from '@/components/ErrorState';
 import { YamlViewer } from '@/components/YamlViewer';
 import { RoleGuard } from '@/components/RoleGuard';
 import { ConfirmationModal } from '@/components/ConfirmationModal';
+import { DetailNavPanel } from '@/components/DetailNavPanel';
 
 type StatusFilter =
   | 'all'
@@ -55,8 +57,8 @@ export function ClusterDetail() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [searchParams, setSearchParams] = useSearchParams();
-  const activeTab = searchParams.get('tab') || 'addons';
-  const setActiveTab = (tab: string) => setSearchParams({ tab }, { replace: true });
+  const activeSection = searchParams.get('section') || 'overview';
+  const setActiveSection = (s: string) => setSearchParams({ section: s }, { replace: true });
   const [configDiff, setConfigDiff] = useState<ConfigDiffResponse | null>(null);
   const [configDiffLoading, setConfigDiffLoading] = useState(false);
   const [configDiffError, setConfigDiffError] = useState<string | null>(null);
@@ -171,10 +173,10 @@ export function ClusterDetail() {
   }, [fetchData]);
 
   useEffect(() => {
-    if (activeTab === 'config-overrides' && !configDiff && !configDiffLoading) {
+    if (activeSection === 'config' && !configDiff && !configDiffLoading) {
       void fetchConfigDiff();
     }
-    if (activeTab === 'config-overrides' && clusterValuesYaml === null && name) {
+    if (activeSection === 'config' && clusterValuesYaml === null && name) {
       api
         .getClusterValues(name)
         .then((res) => setClusterValuesYaml(res.values_yaml))
@@ -182,7 +184,7 @@ export function ClusterDetail() {
           // Cluster values file may not exist — that's OK
         });
     }
-  }, [activeTab, configDiff, configDiffLoading, fetchConfigDiff, clusterValuesYaml, name]);
+  }, [activeSection, configDiff, configDiffLoading, fetchConfigDiff, clusterValuesYaml, name]);
 
   const filteredAddons = useMemo(() => {
     if (!data) return [];
@@ -293,6 +295,21 @@ export function ClusterDetail() {
     },
   ];
 
+  const navSections = [
+    {
+      items: [
+        { key: 'overview', label: 'Overview', icon: LayoutGrid },
+        { key: 'addons', label: 'Addons', badge: data ? data.addon_comparisons.length : undefined, icon: Package },
+        { key: 'config', label: 'Config', icon: FileCode },
+      ],
+    },
+    {
+      items: [
+        { key: 'remove', label: 'Remove Cluster', destructive: true },
+      ],
+    },
+  ];
+
   return (
     <div className="space-y-6">
       {/* Back button */}
@@ -306,23 +323,11 @@ export function ClusterDetail() {
       </button>
 
       {/* Heading + cluster meta */}
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">{data.cluster.name}</h2>
-          <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
-            Kubernetes cluster managed by ArgoCD — deployed addons, health, and configuration overrides.
-          </p>
-        </div>
-        <RoleGuard adminOnly>
-          <button
-            type="button"
-            onClick={() => { setRemoveError(null); setRemoveModalOpen(true); }}
-            className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-red-300 bg-[#f0f7ff] px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 dark:border-red-700 dark:bg-gray-800 dark:text-red-400 dark:hover:bg-red-900/20"
-          >
-            <Trash2 className="h-4 w-4" />
-            Remove Cluster
-          </button>
-        </RoleGuard>
+      <div>
+        <h2 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">{data.cluster.name}</h2>
+        <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
+          Kubernetes cluster managed by ArgoCD — deployed addons, health, and configuration overrides.
+        </p>
       </div>
 
       <ConfirmationModal
@@ -339,204 +344,238 @@ export function ClusterDetail() {
         <p className="text-sm text-red-600 dark:text-red-400">{removeError}</p>
       )}
 
-      {/* Cluster info stat cards */}
-      <div className="flex flex-wrap gap-3">
-        {data.cluster.server_version && (
-          <div className="flex items-center gap-2 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] px-4 py-3 shadow-sm dark:border-gray-700 dark:bg-gray-800">
-            <Tag className="h-4 w-4 text-teal-500" />
-            <div>
-              <p className="text-xs text-[#2a5a7a] dark:text-gray-400">Cluster Version</p>
-              <p className="font-mono text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">{data.cluster.server_version}</p>
-            </div>
-          </div>
-        )}
-        {nodeInfo && nodeInfo.total > 0 && (
-          <div className={`flex items-center gap-2 rounded-lg border px-4 py-3 shadow-sm ${
-            nodeInfo.not_ready > 0
-              ? 'border-red-200 bg-red-50 dark:border-red-700 dark:bg-red-900/20'
-              : 'border-green-200 bg-green-50 dark:border-green-700 dark:bg-green-900/20'
-          }`}>
-            <Cpu className={`h-4 w-4 ${nodeInfo.not_ready > 0 ? 'text-red-500' : 'text-green-500'}`} />
-            <div>
-              <p className="text-xs text-[#2a5a7a] dark:text-gray-400">Nodes Ready</p>
-              <p className={`text-sm font-semibold ${nodeInfo.not_ready > 0 ? 'text-red-700 dark:text-red-400' : 'text-green-700 dark:text-green-400'}`}>
-                {nodeInfo.ready} / {nodeInfo.total}
-                {nodeInfo.not_ready > 0 && (
-                  <span className="ml-1.5 text-xs font-normal">({nodeInfo.not_ready} not ready)</span>
+      {/* Main layout: nav panel + content */}
+      <div className="flex gap-6">
+        <RoleGuard
+          adminOnly
+          fallback={
+            <DetailNavPanel
+              sections={[navSections[0]]}
+              activeKey={activeSection}
+              onSelect={(key) => {
+                setActiveSection(key);
+              }}
+            />
+          }
+        >
+          <DetailNavPanel
+            sections={navSections}
+            activeKey={activeSection}
+            onSelect={(key) => {
+              if (key === 'remove') {
+                setRemoveError(null);
+                setRemoveModalOpen(true);
+              } else {
+                setActiveSection(key);
+              }
+            }}
+          />
+        </RoleGuard>
+
+        <div className="flex-1 space-y-6">
+          {/* Overview section */}
+          {activeSection === 'overview' && (
+            <>
+              {/* Cluster info stat cards */}
+              <div className="flex flex-wrap gap-3">
+                {data.cluster.server_version && (
+                  <div className="flex items-center gap-2 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] px-4 py-3 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+                    <Tag className="h-4 w-4 text-teal-500" />
+                    <div>
+                      <p className="text-xs text-[#2a5a7a] dark:text-gray-400">Cluster Version</p>
+                      <p className="font-mono text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">{data.cluster.server_version}</p>
+                    </div>
+                  </div>
                 )}
-              </p>
-            </div>
-          </div>
-        )}
-        <div className="flex items-center gap-2 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] px-4 py-3 shadow-sm dark:border-gray-700 dark:bg-gray-800">
-          <Server className="h-4 w-4 text-teal-500" />
-          <div>
-            <p className="text-xs text-[#2a5a7a] dark:text-gray-400">Connection</p>
-            <p className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
-              {data.cluster_connection_state || 'Unknown'}
-            </p>
-          </div>
+                {nodeInfo && nodeInfo.total > 0 && (
+                  <div className={`flex items-center gap-2 rounded-lg border px-4 py-3 shadow-sm ${
+                    nodeInfo.not_ready > 0
+                      ? 'border-red-200 bg-red-50 dark:border-red-700 dark:bg-red-900/20'
+                      : 'border-green-200 bg-green-50 dark:border-green-700 dark:bg-green-900/20'
+                  }`}>
+                    <Cpu className={`h-4 w-4 ${nodeInfo.not_ready > 0 ? 'text-red-500' : 'text-green-500'}`} />
+                    <div>
+                      <p className="text-xs text-[#2a5a7a] dark:text-gray-400">Nodes Ready</p>
+                      <p className={`text-sm font-semibold ${nodeInfo.not_ready > 0 ? 'text-red-700 dark:text-red-400' : 'text-green-700 dark:text-green-400'}`}>
+                        {nodeInfo.ready} / {nodeInfo.total}
+                        {nodeInfo.not_ready > 0 && (
+                          <span className="ml-1.5 text-xs font-normal">({nodeInfo.not_ready} not ready)</span>
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                )}
+                <div className="flex items-center gap-2 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] px-4 py-3 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+                  <Server className="h-4 w-4 text-teal-500" />
+                  <div>
+                    <p className="text-xs text-[#2a5a7a] dark:text-gray-400">Connection</p>
+                    <p className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
+                      {data.cluster_connection_state || 'Unknown'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Connection status banner */}
+              {data.cluster_connection_state && data.cluster_connection_state !== 'Successful' && (
+                <div className="flex items-center justify-between rounded-xl border-2 border-red-300 bg-red-50 px-5 py-3 dark:border-red-700 dark:bg-red-900/20">
+                  <div className="flex items-center gap-2 text-red-700 dark:text-red-400">
+                    <WifiOff className="h-5 w-5 shrink-0" />
+                    <div>
+                      <span className="text-sm font-semibold">Cluster unreachable</span>
+                      <span className="ml-2 text-xs text-red-600 dark:text-red-400">({data.cluster_connection_state})</span>
+                      <p className="text-xs text-red-600 dark:text-red-400">Addon health data below reflects the last known state and may be stale.</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => window.dispatchEvent(new CustomEvent('open-assistant', { detail: `Cluster ${name} is unreachable (${data.cluster_connection_state}). What could be wrong and how can I fix it?` }))}
+                    className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-800 dark:text-red-400"
+                  >
+                    <MessageSquare className="h-3.5 w-3.5" />
+                    Ask AI
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* Addons section */}
+          {activeSection === 'addons' && (
+            <>
+              {/* Admin: Addon Enable/Disable Toggles */}
+              <RoleGuard adminOnly>
+                <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800">
+                  <h3 className="mb-3 text-base font-semibold text-[#0a2a4a] dark:text-gray-100">Manage Addons</h3>
+                  {Object.keys(addonToggles).length === 0 ? (
+                    <p className="text-sm text-[#3a6a8a] dark:text-gray-500">No addons in catalog.</p>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-3 lg:grid-cols-4">
+                      {Object.keys(addonToggles).sort().map((addonName) => (
+                        <label key={addonName} className="flex cursor-pointer items-center gap-2 text-sm">
+                          <div
+                            role="switch"
+                            aria-checked={addonToggles[addonName]}
+                            onClick={() =>
+                              setAddonToggles((prev) => ({ ...prev, [addonName]: !prev[addonName] }))
+                            }
+                            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none ${
+                              addonToggles[addonName]
+                                ? 'bg-teal-600'
+                                : 'bg-[#c0ddf0] dark:bg-gray-600'
+                            }`}
+                          >
+                            <span
+                              className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-[#f0f7ff] shadow-lg transition-transform ${
+                                addonToggles[addonName] ? 'translate-x-4' : 'translate-x-0'
+                              }`}
+                            />
+                          </div>
+                          <span className={`capitalize ${addonToggles[addonName] !== originalToggles[addonName] ? 'font-semibold text-teal-600 dark:text-teal-400' : 'text-[#0a3a5a] dark:text-gray-300'}`}>
+                            {addonName}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                  {hasToggleChanges && (
+                    <div className="mt-4 flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={handleApplyToggles}
+                        disabled={applyingToggles}
+                        className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
+                      >
+                        {applyingToggles && <Loader2 className="h-4 w-4 animate-spin" />}
+                        Apply Changes
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setAddonToggles({ ...originalToggles }); setToggleError(null); setToggleResult(null); }}
+                        disabled={applyingToggles}
+                        className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                      >
+                        Discard
+                      </button>
+                    </div>
+                  )}
+                  {toggleError && <p className="mt-2 text-sm text-red-600 dark:text-red-400">{toggleError}</p>}
+                  {toggleResult && <p className="mt-2 text-sm text-green-600 dark:text-green-400">{toggleResult}</p>}
+                </div>
+              </RoleGuard>
+
+              {/* Status filter cards — hide zero-count categories */}
+              <div className="flex flex-wrap gap-4">
+                {statItems
+                  .filter((item) => item.key === 'all' || item.value > 0)
+                  .map((item) => (
+                    <div key={item.key} className="min-w-[140px] flex-1">
+                      <StatCard
+                        title={item.title}
+                        value={item.value}
+                        icon={item.icon}
+                        color={item.color}
+                        selected={statusFilter === item.key}
+                        onClick={() => handleStatusFilter(item.key)}
+                      />
+                    </div>
+                  ))}
+              </div>
+
+              {/* Comparison table */}
+              <div className="overflow-x-auto rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
+                <table className="w-full text-left text-sm">
+                  <thead className="border-b border-[#6aade0] bg-[#d0e8f8] text-xs uppercase text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
+                    <tr>
+                      <th className="px-4 py-3">Status</th>
+                      <th className="px-4 py-3">Addon Name</th>
+                      <th className="px-4 py-3">Git Version</th>
+                      <th className="px-4 py-3">ArgoCD Version</th>
+                      <th className="px-4 py-3">Namespace</th>
+                      <th className="px-4 py-3">Issues</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#6aade0] dark:divide-gray-700">
+                    {filteredAddons.map((addon) => (
+                      <ComparisonRow
+                        key={addon.addon_name}
+                        addon={addon}
+                        isExpanded={expandedRows.has(addon.addon_name)}
+                        onToggleExpand={() => toggleExpanded(addon.addon_name)}
+                        argocdBaseURL={argocdBaseURL}
+                      />
+                    ))}
+                    {filteredAddons.length === 0 && (
+                      <tr>
+                        <td
+                          colSpan={6}
+                          className="px-6 py-8 text-center text-[#3a6a8a] dark:text-gray-500"
+                        >
+                          No addons match the current filter.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+
+          {/* Config section */}
+          {activeSection === 'config' && (
+            <>
+              {clusterValuesYaml && (
+                <YamlViewer yaml={clusterValuesYaml} title="Cluster Values" />
+              )}
+              <ConfigOverridesPanel
+                data={configDiff}
+                loading={configDiffLoading}
+                error={configDiffError}
+                onRetry={fetchConfigDiff}
+              />
+            </>
+          )}
         </div>
       </div>
-
-      {/* Connection status banner */}
-      {data.cluster_connection_state && data.cluster_connection_state !== 'Successful' && (
-        <div className="flex items-center justify-between rounded-xl border-2 border-red-300 bg-red-50 px-5 py-3 dark:border-red-700 dark:bg-red-900/20">
-          <div className="flex items-center gap-2 text-red-700 dark:text-red-400">
-            <WifiOff className="h-5 w-5 shrink-0" />
-            <div>
-              <span className="text-sm font-semibold">Cluster unreachable</span>
-              <span className="ml-2 text-xs text-red-600 dark:text-red-400">({data.cluster_connection_state})</span>
-              <p className="text-xs text-red-600 dark:text-red-400">Addon health data below reflects the last known state and may be stale.</p>
-            </div>
-          </div>
-          <button
-            onClick={() => window.dispatchEvent(new CustomEvent('open-assistant', { detail: `Cluster ${name} is unreachable (${data.cluster_connection_state}). What could be wrong and how can I fix it?` }))}
-            className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-800 dark:text-red-400"
-          >
-            <MessageSquare className="h-3.5 w-3.5" />
-            Ask AI
-          </button>
-        </div>
-      )}
-
-      {/* Tabs */}
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList variant="line">
-          <TabsTrigger value="addons">Addons</TabsTrigger>
-          <TabsTrigger value="config-overrides">Values: Global vs. Cluster</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="addons" className="space-y-6">
-          {/* Admin: Addon Enable/Disable Toggles */}
-          <RoleGuard adminOnly>
-            <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800">
-              <h3 className="mb-3 text-base font-semibold text-[#0a2a4a] dark:text-gray-100">Manage Addons</h3>
-              {Object.keys(addonToggles).length === 0 ? (
-                <p className="text-sm text-[#3a6a8a] dark:text-gray-500">No addons in catalog.</p>
-              ) : (
-                <div className="grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-3 lg:grid-cols-4">
-                  {Object.keys(addonToggles).sort().map((addonName) => (
-                    <label key={addonName} className="flex cursor-pointer items-center gap-2 text-sm">
-                      <div
-                        role="switch"
-                        aria-checked={addonToggles[addonName]}
-                        onClick={() =>
-                          setAddonToggles((prev) => ({ ...prev, [addonName]: !prev[addonName] }))
-                        }
-                        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none ${
-                          addonToggles[addonName]
-                            ? 'bg-teal-600'
-                            : 'bg-[#c0ddf0] dark:bg-gray-600'
-                        }`}
-                      >
-                        <span
-                          className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-[#f0f7ff] shadow-lg transition-transform ${
-                            addonToggles[addonName] ? 'translate-x-4' : 'translate-x-0'
-                          }`}
-                        />
-                      </div>
-                      <span className={`capitalize ${addonToggles[addonName] !== originalToggles[addonName] ? 'font-semibold text-teal-600 dark:text-teal-400' : 'text-[#0a3a5a] dark:text-gray-300'}`}>
-                        {addonName}
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              )}
-              {hasToggleChanges && (
-                <div className="mt-4 flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={handleApplyToggles}
-                    disabled={applyingToggles}
-                    className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
-                  >
-                    {applyingToggles && <Loader2 className="h-4 w-4 animate-spin" />}
-                    Apply Changes
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setAddonToggles({ ...originalToggles }); setToggleError(null); setToggleResult(null); }}
-                    disabled={applyingToggles}
-                    className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
-                  >
-                    Discard
-                  </button>
-                </div>
-              )}
-              {toggleError && <p className="mt-2 text-sm text-red-600 dark:text-red-400">{toggleError}</p>}
-              {toggleResult && <p className="mt-2 text-sm text-green-600 dark:text-green-400">{toggleResult}</p>}
-            </div>
-          </RoleGuard>
-
-          {/* Status filter cards — hide zero-count categories */}
-          <div className="flex flex-wrap gap-4">
-            {statItems
-              .filter((item) => item.key === 'all' || item.value > 0)
-              .map((item) => (
-                <div key={item.key} className="min-w-[140px] flex-1">
-                  <StatCard
-                    title={item.title}
-                    value={item.value}
-                    icon={item.icon}
-                    color={item.color}
-                    selected={statusFilter === item.key}
-                    onClick={() => handleStatusFilter(item.key)}
-                  />
-                </div>
-              ))}
-          </div>
-
-          {/* Comparison table */}
-          <div className="overflow-x-auto rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
-            <table className="w-full text-left text-sm">
-              <thead className="border-b border-[#6aade0] bg-[#d0e8f8] text-xs uppercase text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
-                <tr>
-                  <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3">Addon Name</th>
-                  <th className="px-4 py-3">Git Version</th>
-                  <th className="px-4 py-3">ArgoCD Version</th>
-                  <th className="px-4 py-3">Namespace</th>
-                  <th className="px-4 py-3">Issues</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#6aade0] dark:divide-gray-700">
-                {filteredAddons.map((addon) => (
-                  <ComparisonRow
-                    key={addon.addon_name}
-                    addon={addon}
-                    isExpanded={expandedRows.has(addon.addon_name)}
-                    onToggleExpand={() => toggleExpanded(addon.addon_name)}
-                    argocdBaseURL={argocdBaseURL}
-                  />
-                ))}
-                {filteredAddons.length === 0 && (
-                  <tr>
-                    <td
-                      colSpan={6}
-                      className="px-6 py-8 text-center text-[#3a6a8a] dark:text-gray-500"
-                    >
-                      No addons match the current filter.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </TabsContent>
-
-        <TabsContent value="config-overrides" className="space-y-6">
-          {clusterValuesYaml && (
-            <YamlViewer yaml={clusterValuesYaml} title="Cluster Values" />
-          )}
-          <ConfigOverridesPanel
-            data={configDiff}
-            loading={configDiffLoading}
-            error={configDiffError}
-            onRetry={fetchConfigDiff}
-          />
-        </TabsContent>
-      </Tabs>
     </div>
   );
 }
