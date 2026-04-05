@@ -183,7 +183,7 @@ export function Layout() {
           <img src="/sharko-mascot.png" alt="" className="h-16 w-auto shrink-0" />
           {(!collapsed || mobileOpen) && (
             <div className="min-w-0">
-              <span className="text-xl font-black text-blue-400 leading-tight">Sharko</span>
+              <span className="text-xl leading-tight text-blue-400" style={{ fontFamily: '"Quicksand", sans-serif', fontWeight: 700 }}>Sharko</span>
               {appVersion && (
                 <p className="text-[10px] text-[#5a9ad0] leading-tight">v{appVersion}</p>
               )}
