@@ -217,7 +217,7 @@ function StreamingMessage({ content, onDone }: { content: string; onDone: () => 
 
 const toolSteps = [
   { icon: Search, text: 'Analyzing your question...', color: 'text-blue-500' },
-  { icon: Database, text: 'Querying cluster data...', color: 'text-cyan-500' },
+  { icon: Database, text: 'Querying cluster data...', color: 'text-teal-500' },
   { icon: Wrench, text: 'Calling list_clusters...', color: 'text-violet-500' },
   { icon: Shield, text: 'Checking addon health...', color: 'text-green-500' },
   { icon: Wrench, text: 'Calling get_addon_values...', color: 'text-violet-500' },
@@ -427,7 +427,7 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
         </h2>
         <p className="max-w-md text-gray-500 dark:text-gray-400">
           Go to{' '}
-          <a href="/settings" className="font-medium text-cyan-600 underline hover:text-cyan-700 dark:text-cyan-400 dark:hover:text-cyan-300">
+          <a href="/settings" className="font-medium text-teal-600 underline hover:text-teal-700 dark:text-teal-400 dark:hover:text-teal-300">
             Settings
           </a>{' '}
           to configure an AI provider.
@@ -526,7 +526,7 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
                 <button
                   key={prompt}
                   onClick={() => sendMessage(prompt)}
-                  className="rounded-lg border border-gray-200 px-4 py-3 text-left text-sm text-gray-600 transition-colors hover:border-cyan-300 hover:bg-cyan-50 dark:border-gray-600 dark:text-gray-300 dark:hover:border-cyan-700 dark:hover:bg-cyan-900/20"
+                  className="rounded-lg border border-gray-200 px-4 py-3 text-left text-sm text-gray-600 transition-colors hover:border-teal-300 hover:bg-teal-50 dark:border-gray-600 dark:text-gray-300 dark:hover:border-teal-700 dark:hover:bg-teal-900/20"
                 >
                   {prompt}
                 </button>
@@ -544,12 +544,12 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
                 <div
                   className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
                     msg.role === 'user'
-                      ? 'bg-cyan-100 dark:bg-cyan-900/40'
+                      ? 'bg-teal-100 dark:bg-teal-900/40'
                       : 'bg-violet-100 dark:bg-violet-900/40'
                   }`}
                 >
                   {msg.role === 'user' ? (
-                    <User className="h-4 w-4 text-cyan-600 dark:text-cyan-400" />
+                    <User className="h-4 w-4 text-teal-600 dark:text-teal-400" />
                   ) : (
                     <Sparkles className="h-4 w-4 text-violet-600 dark:text-violet-400" />
                   )}
@@ -559,7 +559,7 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
                 <div
                   className={`max-w-[75%] overflow-hidden rounded-2xl px-4 py-2.5 text-sm ${
                     msg.role === 'user'
-                      ? 'bg-cyan-600 text-white dark:bg-cyan-700'
+                      ? 'bg-teal-600 text-white dark:bg-teal-700'
                       : 'border border-gray-200 bg-gray-100 text-gray-800 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200'
                   }`}
                 >
@@ -578,7 +578,7 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
                   <p
                     className={`mt-1.5 text-[10px] ${
                       msg.role === 'user'
-                        ? 'text-cyan-200'
+                        ? 'text-teal-200'
                         : 'text-gray-400 dark:text-gray-500'
                     }`}
                   >
@@ -607,12 +607,12 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
             placeholder="Ask about your addons, clusters, or upgrades..."
             disabled={loading || aiEnabled === null}
             rows={1}
-            className="max-h-32 min-h-[2.5rem] flex-1 resize-none rounded-xl border border-gray-300 bg-gray-50 px-4 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500 dark:focus:border-cyan-500"
+            className="max-h-32 min-h-[2.5rem] flex-1 resize-none rounded-xl border border-gray-300 bg-gray-50 px-4 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500 dark:focus:border-teal-500"
           />
           <button
             onClick={() => sendMessage(input)}
             disabled={!input.trim() || loading || aiEnabled === null}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-cyan-600 text-white transition-colors hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-cyan-700 dark:hover:bg-cyan-600"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-teal-600 text-white transition-colors hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-teal-700 dark:hover:bg-teal-600"
             aria-label="Send message"
           >
             <Send className="h-4 w-4" />

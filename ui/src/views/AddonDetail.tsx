@@ -315,7 +315,7 @@ export function AddonDetail() {
             <button
               type="button"
               onClick={() => { setUpgradeVersion(''); setUpgradeCluster(''); setUpgradeError(null); setUpgradeResult(null); setUpgradeOpen(true) }}
-              className="inline-flex items-center gap-2 rounded-lg border border-cyan-300 bg-white px-3 py-2 text-sm font-medium text-cyan-700 hover:bg-cyan-50 dark:border-cyan-700 dark:bg-gray-800 dark:text-cyan-400 dark:hover:bg-cyan-900/20"
+              className="inline-flex items-center gap-2 rounded-lg border border-teal-300 bg-white px-3 py-2 text-sm font-medium text-teal-700 hover:bg-teal-50 dark:border-teal-700 dark:bg-gray-800 dark:text-teal-400 dark:hover:bg-teal-900/20"
             >
               <ArrowUpCircle className="h-4 w-4" />
               Upgrade
@@ -364,7 +364,7 @@ export function AddonDetail() {
                 value={upgradeVersion}
                 onChange={(e) => setUpgradeVersion(e.target.value)}
                 placeholder="e.g. 4.9.0"
-                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500"
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500"
               />
             </div>
             <div>
@@ -374,7 +374,7 @@ export function AddonDetail() {
               <select
                 value={upgradeCluster}
                 onChange={(e) => setUpgradeCluster(e.target.value)}
-                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
               >
                 <option value="">All clusters (global)</option>
                 {enabledApps.map((app) => (
@@ -401,7 +401,7 @@ export function AddonDetail() {
                 type="button"
                 onClick={handleUpgrade}
                 disabled={!upgradeVersion.trim() || upgradeSubmitting}
-                className="inline-flex items-center gap-2 rounded-md bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-cyan-700 dark:hover:bg-cyan-600"
+                className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
               >
                 {upgradeSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
                 Upgrade
@@ -477,14 +477,14 @@ export function AddonDetail() {
                   placeholder="Search clusters, environments, or apps..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  className="w-full rounded-lg border border-gray-300 py-2 pl-10 pr-4 text-sm focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200 dark:placeholder-gray-500"
+                  className="w-full rounded-lg border border-gray-300 py-2 pl-10 pr-4 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200 dark:placeholder-gray-500"
                 />
               </div>
 
               <select
                 value={envFilter}
                 onChange={(e) => setEnvFilter(e.target.value)}
-                className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200"
+                className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200"
               >
                 <option value="all">All Environments</option>
                 {uniqueEnvironments.map((env) => (
@@ -497,7 +497,7 @@ export function AddonDetail() {
               <select
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
-                className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200"
+                className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200"
               >
                 <option value="all">All Status</option>
                 {uniqueStatuses.map((s) => (
@@ -510,7 +510,7 @@ export function AddonDetail() {
               <select
                 value={healthFilter}
                 onChange={(e) => setHealthFilter(e.target.value)}
-                className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200"
+                className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200"
               >
                 <option value="all">All Health</option>
                 {uniqueHealthStatuses.map((h) => (
@@ -540,7 +540,7 @@ export function AddonDetail() {
                         key={env}
                         className="flex items-center justify-between rounded border border-gray-100 px-3 py-2 dark:border-gray-700"
                       >
-                        <span className="rounded-full border border-cyan-200 bg-cyan-50 px-2 py-0.5 text-xs font-medium text-cyan-700 dark:border-cyan-600 dark:bg-cyan-900/30 dark:text-cyan-400">
+                        <span className="rounded-full border border-teal-200 bg-teal-50 px-2 py-0.5 text-xs font-medium text-teal-700 dark:border-teal-600 dark:bg-teal-900/30 dark:text-teal-400">
                           {env}
                         </span>
                         <span className="font-mono text-sm text-gray-600 dark:text-gray-400">{version}</span>
@@ -578,7 +578,7 @@ export function AddonDetail() {
                           <td className="px-4 py-3">
                             <Link
                               to={`/clusters/${app.cluster_name}`}
-                              className="font-medium text-cyan-600 hover:text-cyan-800 hover:underline dark:text-cyan-400 dark:hover:text-cyan-300"
+                              className="font-medium text-teal-600 hover:text-teal-800 hover:underline dark:text-teal-400 dark:hover:text-teal-300"
                             >
                               {app.cluster_name}
                             </Link>
@@ -610,7 +610,7 @@ export function AddonDetail() {
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 title={`Open ${app.application_name} in ArgoCD`}
-                                className="text-gray-500 hover:text-cyan-600 dark:text-gray-400 dark:hover:text-cyan-400"
+                                className="text-gray-500 hover:text-teal-600 dark:text-gray-400 dark:hover:text-teal-400"
                               >
                                 <ExternalLink className="h-4 w-4" />
                               </a>
@@ -671,7 +671,7 @@ export function AddonDetail() {
               <button
                 type="button"
                 onClick={() => { setUpgradeVersion(''); setUpgradeCluster(''); setUpgradeError(null); setUpgradeResult(null); setUpgradeOpen(true) }}
-                className="mt-4 inline-flex items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-700 dark:bg-cyan-700 dark:hover:bg-cyan-600"
+                className="mt-4 inline-flex items-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-600"
               >
                 <ArrowUpCircle className="h-4 w-4" />
                 Upgrade Version

@@ -30,7 +30,7 @@ export function StatCard({
   const isClickable = Boolean(onClick);
 
   const selectedClass = selected
-    ? 'ring-2 ring-cyan-500 ring-offset-1 shadow-md dark:ring-offset-gray-900'
+    ? 'ring-2 ring-teal-500 ring-offset-1 shadow-md dark:ring-offset-gray-900'
     : '';
 
   const interactiveClass = isClickable

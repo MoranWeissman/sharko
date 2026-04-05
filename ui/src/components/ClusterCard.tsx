@@ -31,10 +31,10 @@ export function ClusterCard({
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/clusters/${name}`) } }}
       role="button"
       tabIndex={0}
-      className="group cursor-pointer rounded-xl border border-[#D6E5F5] bg-white p-4 shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:border-cyan-400 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-cyan-500"
+      className="group cursor-pointer rounded-xl border border-[#D6E5F5] bg-white p-4 shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:border-teal-400 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-teal-500"
     >
       <div className="mb-2 flex items-center gap-2">
-        <Server className="h-4 w-4 text-cyan-600 dark:text-cyan-400" />
+        <Server className="h-4 w-4 text-teal-600 dark:text-teal-400" />
         <h3 className="truncate text-sm font-bold text-gray-900 dark:text-gray-100">{name}</h3>
       </div>
       <div className="mb-2 flex items-center gap-1.5">

@@ -24,6 +24,6 @@ describe('StatCard', () => {
     );
     const card = container.firstChild as HTMLElement;
     expect(card.className).toContain('ring-2');
-    expect(card.className).toContain('ring-cyan-500');
+    expect(card.className).toContain('ring-teal-500');
   });
 });

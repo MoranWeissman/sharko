@@ -22,7 +22,7 @@ export function ErrorFallback({ error, resetErrorBoundary }: ErrorFallbackProps)
         <button
           type="button"
           onClick={resetErrorBoundary}
-          className="rounded-md bg-cyan-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:ring-offset-2 dark:ring-offset-gray-800"
+          className="rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-400 focus:ring-offset-2 dark:ring-offset-gray-800"
         >
           Try again
         </button>

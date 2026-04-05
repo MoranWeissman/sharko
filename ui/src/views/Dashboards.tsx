@@ -110,7 +110,7 @@ function DashboardForm({
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. Cluster Monitoring - NonProd"
-            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500"
+            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500"
             required
           />
         </div>
@@ -128,7 +128,7 @@ function DashboardForm({
             onChange={(e) =>
               setProvider(e.target.value as EmbeddedDashboard['provider'])
             }
-            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
           >
             <option value="datadog">Datadog</option>
             <option value="grafana">Grafana</option>
@@ -150,7 +150,7 @@ function DashboardForm({
               onChange={(e) => setUrl(e.target.value)}
               placeholder={'Paste a URL:\nhttps://app.datadoghq.eu/graph/embed?token=...\n\nOr paste the full embed code:\n<iframe src="https://app.datadoghq.eu/graph/embed?token=..." ...></iframe>'}
               rows={4}
-              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 font-mono text-xs text-gray-900 placeholder-gray-400 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500"
+              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 font-mono text-xs text-gray-900 placeholder-gray-400 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500"
               required
             />
           ) : (
@@ -160,7 +160,7 @@ function DashboardForm({
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               placeholder={provider === 'grafana' ? 'https://grafana.example.com/d/abc123/my-dashboard' : 'https://...'}
-              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500"
+              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500"
               required
             />
           )}
@@ -171,7 +171,7 @@ function DashboardForm({
 
         <button
           type="submit"
-          className="w-full rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900"
+          className="w-full rounded-lg bg-teal-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900"
         >
           {submitLabel}
         </button>
@@ -234,7 +234,7 @@ export function Dashboards() {
       {/* Header */}
       <div>
         <h1 className="flex items-center gap-2 text-2xl font-bold text-gray-900 dark:text-gray-100">
-          <BarChart3 className="h-7 w-7 text-cyan-500" />
+          <BarChart3 className="h-7 w-7 text-teal-500" />
           External Dashboards
         </h1>
         <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
@@ -251,7 +251,7 @@ export function Dashboards() {
                 setShowForm(true);
                 setEditingId(null);
               }}
-              className="flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed border-gray-300 px-3 py-2 text-sm font-medium text-gray-500 transition-colors hover:border-cyan-400 hover:text-cyan-600 dark:border-gray-600 dark:text-gray-400 dark:hover:border-cyan-500 dark:hover:text-cyan-400"
+              className="flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed border-gray-300 px-3 py-2 text-sm font-medium text-gray-500 transition-colors hover:border-teal-400 hover:text-teal-600 dark:border-gray-600 dark:text-gray-400 dark:hover:border-teal-500 dark:hover:text-teal-400"
             >
               <Plus className="h-4 w-4" />
               Add Dashboard
@@ -267,7 +267,7 @@ export function Dashboards() {
                 onClick={() => setSelectedId(d.id)}
                 className={`flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors ${
                   isActive
-                    ? 'border-l-[3px] border-cyan-400 bg-cyan-50 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300'
+                    ? 'border-l-[3px] border-teal-400 bg-teal-50 text-teal-700 dark:bg-teal-900/30 dark:text-teal-300'
                     : 'border-l-[3px] border-transparent text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'
                 }`}
               >
@@ -373,7 +373,7 @@ export function Dashboards() {
               </p>
               <button
                 onClick={() => setShowForm(true)}
-                className="mt-6 flex items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-cyan-700"
+                className="mt-6 flex items-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-teal-700"
               >
                 <Plus className="h-4 w-4" />
                 Add your first dashboard

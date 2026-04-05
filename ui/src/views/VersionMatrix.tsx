@@ -436,7 +436,7 @@ export function VersionMatrix() {
             placeholder="Search addon by name..."
             value={search}
             onChange={e => setSearch(e.target.value)}
-            className="w-56 rounded-lg border border-gray-300 py-2 pl-10 pr-3 text-sm focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500"
+            className="w-56 rounded-lg border border-gray-300 py-2 pl-10 pr-3 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500"
           />
         </div>
         <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700 hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-400 dark:hover:bg-amber-900/30">
@@ -448,17 +448,17 @@ export function VersionMatrix() {
         {/* View mode toggle */}
         <div className="ml-auto flex items-center rounded-lg border border-gray-300 dark:border-gray-600">
           <button type="button" onClick={() => setViewMode('heatmap')}
-            className={`rounded-l-lg p-2 ${viewMode === 'heatmap' ? 'bg-cyan-600 text-white' : 'bg-white text-gray-500 hover:bg-gray-50 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'}`}
+            className={`rounded-l-lg p-2 ${viewMode === 'heatmap' ? 'bg-teal-600 text-white' : 'bg-white text-gray-500 hover:bg-gray-50 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'}`}
             aria-label="Heatmap view" title="Heatmap (compact)">
             <Grid3X3 className="h-4 w-4" />
           </button>
           <button type="button" onClick={() => setViewMode('table')}
-            className={`p-2 ${viewMode === 'table' ? 'bg-cyan-600 text-white' : 'bg-white text-gray-500 hover:bg-gray-50 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'}`}
+            className={`p-2 ${viewMode === 'table' ? 'bg-teal-600 text-white' : 'bg-white text-gray-500 hover:bg-gray-50 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'}`}
             aria-label="Table view" title="Table matrix">
             <Table2 className="h-4 w-4" />
           </button>
           <button type="button" onClick={() => setViewMode('cards')}
-            className={`rounded-r-lg p-2 ${viewMode === 'cards' ? 'bg-cyan-600 text-white' : 'bg-white text-gray-500 hover:bg-gray-50 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'}`}
+            className={`rounded-r-lg p-2 ${viewMode === 'cards' ? 'bg-teal-600 text-white' : 'bg-white text-gray-500 hover:bg-gray-50 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'}`}
             aria-label="Card view" title="Card view">
             <LayoutGrid className="h-4 w-4" />
           </button>

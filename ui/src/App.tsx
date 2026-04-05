@@ -22,7 +22,7 @@ function AppRoutes() {
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-gray-50 dark:bg-gray-900">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-cyan-600 dark:border-gray-700 dark:border-t-cyan-500" />
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-teal-600 dark:border-gray-700 dark:border-t-teal-500" />
       </div>
     )
   }

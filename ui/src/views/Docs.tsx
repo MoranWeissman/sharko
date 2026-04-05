@@ -99,7 +99,7 @@ export function Docs() {
   return (
     <div>
       <div className="mb-6 flex items-center gap-3">
-        <BookOpen className="h-7 w-7 text-cyan-600 dark:text-cyan-400" />
+        <BookOpen className="h-7 w-7 text-teal-600 dark:text-teal-400" />
         <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
           Documentation
         </h1>
@@ -116,14 +116,14 @@ export function Docs() {
               placeholder="Search docs..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-3 text-sm text-gray-900 placeholder-gray-400 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+              className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-3 text-sm text-gray-900 placeholder-gray-400 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
             />
           </div>
 
           {/* Search results */}
           {searchResults && (
-            <div className="rounded-lg border border-cyan-200 bg-cyan-50 p-3 dark:border-cyan-800 dark:bg-cyan-900/20">
-              <p className="mb-2 text-xs font-medium text-cyan-700 dark:text-cyan-400">
+            <div className="rounded-lg border border-teal-200 bg-teal-50 p-3 dark:border-teal-800 dark:bg-teal-900/20">
+              <p className="mb-2 text-xs font-medium text-teal-700 dark:text-teal-400">
                 {searchResults.length} result{searchResults.length !== 1 ? 's' : ''}
               </p>
               {searchResults.length === 0 ? (
@@ -136,7 +136,7 @@ export function Docs() {
                         onClick={() => { setActiveSlug(r.slug); setSearch('') }}
                         className="block w-full text-left"
                       >
-                        <span className="text-xs font-medium text-cyan-700 dark:text-cyan-400">{r.title}</span>
+                        <span className="text-xs font-medium text-teal-700 dark:text-teal-400">{r.title}</span>
                         <span className="block truncate text-xs text-gray-500">{r.snippet}</span>
                       </button>
                     </li>
@@ -156,7 +156,7 @@ export function Docs() {
                     onClick={() => { setActiveSlug(page.slug); setSearch('') }}
                     className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors ${
                       isActive
-                        ? 'bg-cyan-50 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400'
+                        ? 'bg-teal-50 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400'
                         : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200'
                     }`}
                   >
@@ -170,7 +170,7 @@ export function Docs() {
 
         {/* Right content area */}
         <div className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-white p-8 shadow-sm dark:border-gray-700 dark:bg-gray-900">
-          <article className="prose prose-gray max-w-none dark:prose-invert prose-headings:text-gray-900 dark:prose-headings:text-white prose-a:text-cyan-600 dark:prose-a:text-cyan-400 prose-code:rounded prose-code:bg-gray-100 prose-code:px-1.5 prose-code:py-0.5 prose-code:text-sm dark:prose-code:bg-gray-800 prose-pre:bg-gray-900 prose-pre:text-gray-100">
+          <article className="prose prose-gray max-w-none dark:prose-invert prose-headings:text-gray-900 dark:prose-headings:text-white prose-a:text-teal-600 dark:prose-a:text-teal-400 prose-code:rounded prose-code:bg-gray-100 prose-code:px-1.5 prose-code:py-0.5 prose-code:text-sm dark:prose-code:bg-gray-800 prose-pre:bg-gray-900 prose-pre:text-gray-100">
             <Markdown remarkPlugins={[remarkGfm]}>{content}</Markdown>
           </article>
         </div>

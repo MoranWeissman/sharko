@@ -140,7 +140,7 @@ export function Layout() {
         <Link
           to="/dashboard"
           aria-label="Sharko — go to dashboard"
-          className="flex items-center gap-3 border-b border-[#1A2D4A] px-4 py-3 transition-colors hover:bg-[#132038]"
+          className="flex items-center gap-2 border-b border-[#1A2D4A] px-4 py-3 transition-colors hover:bg-[#132038]"
           onClick={() => setMobileOpen(false)}
         >
           <img src="/sharko-mascot.png" alt="" className={collapsed && !mobileOpen ? 'h-8 w-auto' : 'h-14 w-auto'} />
@@ -244,7 +244,7 @@ export function Layout() {
             <div className="relative">
               <button
                 onClick={() => setUserMenuOpen((o) => !o)}
-                className="flex h-8 w-8 items-center justify-center rounded-full bg-cyan-600 text-sm font-bold text-white hover:bg-cyan-700"
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-teal-600 text-sm font-bold text-white hover:bg-teal-700"
                 aria-label="User menu"
               >
                 <User className="h-4 w-4" />
