@@ -171,20 +171,20 @@ export function Layout() {
       {/* Sidebar — always dark */}
       <aside
         className={`flex flex-col bg-[#0B1426] shadow-sm transition-all duration-200 ${
-          collapsed ? 'w-16' : 'w-60'
-        } ${mobileOpen ? 'fixed inset-y-0 left-0 z-50 w-60' : 'hidden lg:flex'}`}
+          collapsed ? 'w-16' : 'w-52'
+        } ${mobileOpen ? 'fixed inset-y-0 left-0 z-50 w-52' : 'hidden lg:flex'}`}
       >
         {/* Logo / title + mobile close */}
         <Link
           to="/dashboard"
           aria-label="Sharko — go to dashboard"
-          className="flex items-center gap-2 border-b border-[#1A2D4A] px-4 py-3 transition-colors hover:bg-[#132038]"
+          className="flex items-center gap-2 border-b border-[#1A2D4A] px-3 py-2.5 transition-colors hover:bg-[#132038]"
           onClick={() => setMobileOpen(false)}
         >
-          <img src="/sharko-mascot.png" alt="" className={collapsed && !mobileOpen ? 'h-8 w-auto' : 'h-14 w-auto'} />
+          <img src="/sharko-mascot.png" alt="" className={collapsed && !mobileOpen ? 'h-8 w-auto' : 'h-10 w-auto'} />
           {(!collapsed || mobileOpen) && (
-            <div>
-              <span className="text-lg font-bold text-blue-400">Sharko</span>
+            <div className="min-w-0">
+              <span className="text-base font-bold text-blue-400">Sharko</span>
               {appVersion && (
                 <p className="text-[10px] text-[#5A7A9B]">v{appVersion}</p>
               )}
