@@ -10,11 +10,9 @@ import { ClusterDetail } from '@/views/ClusterDetail'
 import { AddonCatalog } from '@/views/AddonCatalog'
 import { AddonDetail } from '@/views/AddonDetail'
 import { VersionMatrix } from '@/views/VersionMatrix'
-import { Docs } from '@/views/Docs'
 import { Observability } from '@/views/Observability'
 import { Dashboards } from '@/views/Dashboards'
 import { UpgradeChecker } from '@/views/UpgradeChecker'
-import { AIAssistant } from '@/views/AIAssistant'
 import { UserInfo } from '@/views/UserInfo'
 import { Settings } from '@/views/Settings'
 
@@ -46,9 +44,7 @@ function AppRoutes() {
           <Route path="version-matrix" element={<VersionMatrix />} />
           <Route path="observability" element={<Observability />} />
           <Route path="upgrade" element={<UpgradeChecker />} />
-          <Route path="assistant" element={<AIAssistant />} />
           <Route path="dashboards" element={<Dashboards />} />
-          <Route path="docs" element={<Docs />} />
           <Route path="settings" element={<Settings />} />
           <Route path="users" element={<Navigate to="/settings?tab=users" replace />} />
           <Route path="api-keys" element={<Navigate to="/settings?tab=api-keys" replace />} />
