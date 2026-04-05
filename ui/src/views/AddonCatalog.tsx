@@ -154,6 +154,23 @@ function AddonCard({ addon }: { addon: AddonCatalogItem }) {
           <StatusChip label="Not Deployed" count={addon.missing_applications} color="red" />
         </div>
 
+        {/* Version drift indicator */}
+        {(() => {
+          const driftCount = addon.applications.filter(
+            a => a.enabled && a.deployed_version && a.deployed_version !== addon.version
+          ).length
+          if (driftCount > 0) {
+            return (
+              <div className="mt-2">
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700">
+                  ⚠ {driftCount} drifted
+                </span>
+              </div>
+            )
+          }
+          return null
+        })()}
+
         {/* View Details button */}
         <button
           type="button"

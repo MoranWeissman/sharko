@@ -458,7 +458,7 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
                           <th className="pb-2 font-medium">Last Reconciled</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
+                      <tbody className="divide-y divide-[#d6eeff] dark:divide-gray-800">
                         {group.child_apps.map((child) => {
                           return (
                             <tr
@@ -479,13 +479,13 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
                                 </span>
                               </td>
                               <td className="py-2 pr-3 text-[#2a5a7a] dark:text-gray-400">
-                                {child.resource_summary.total_pods > 0 && (
+                                {child.resource_summary?.total_pods > 0 && (
                                   <span>{child.resource_summary.running_pods}/{child.resource_summary.total_pods} pods</span>
                                 )}
-                                {child.resource_summary.total_pods === 0 && child.resource_summary.total_containers > 0 && (
+                                {(child.resource_summary?.total_pods ?? 0) === 0 && (child.resource_summary?.total_containers ?? 0) > 0 && (
                                   <span>{child.resource_summary.total_containers} workloads</span>
                                 )}
-                                {child.resource_summary.total_pods === 0 && child.resource_summary.total_containers === 0 && (
+                                {(child.resource_summary?.total_pods ?? 0) === 0 && (child.resource_summary?.total_containers ?? 0) === 0 && (
                                   <span className="text-[#3a6a8a]">--</span>
                                 )}
                               </td>
@@ -579,7 +579,7 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
                             <th className="pb-2 font-medium">Last Reconciled</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
+                        <tbody className="divide-y divide-[#d6eeff] dark:divide-gray-800">
                           {cg.addons.map((addon) => {
                             return (
                               <tr
@@ -600,13 +600,13 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
                                   </span>
                                 </td>
                                 <td className="py-2 pr-3 text-[#2a5a7a] dark:text-gray-400">
-                                  {addon.resource_summary.total_pods > 0 && (
+                                  {addon.resource_summary?.total_pods > 0 && (
                                     <span>{addon.resource_summary.running_pods}/{addon.resource_summary.total_pods} pods</span>
                                   )}
-                                  {addon.resource_summary.total_pods === 0 && addon.resource_summary.total_containers > 0 && (
+                                  {(addon.resource_summary?.total_pods ?? 0) === 0 && (addon.resource_summary?.total_containers ?? 0) > 0 && (
                                     <span>{addon.resource_summary.total_containers} workloads</span>
                                   )}
-                                  {addon.resource_summary.total_pods === 0 && addon.resource_summary.total_containers === 0 && (
+                                  {(addon.resource_summary?.total_pods ?? 0) === 0 && (addon.resource_summary?.total_containers ?? 0) === 0 && (
                                     <span className="text-[#3a6a8a]">--</span>
                                   )}
                                 </td>

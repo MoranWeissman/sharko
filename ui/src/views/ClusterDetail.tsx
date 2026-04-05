@@ -20,6 +20,7 @@ import {
   LayoutGrid,
   Package,
   FileCode,
+  Clock,
 } from 'lucide-react';
 import { api, deregisterCluster, updateClusterAddons } from '@/services/api';
 import type { ClusterComparisonResponse, AddonComparisonStatus, ConfigDiffResponse } from '@/services/models';
@@ -301,6 +302,7 @@ export function ClusterDetail() {
         { key: 'overview', label: 'Overview', icon: LayoutGrid },
         { key: 'addons', label: 'Addons', badge: data ? data.addon_comparisons.length : undefined, icon: Package },
         { key: 'config', label: 'Config', icon: FileCode },
+        { key: 'history', label: 'History', icon: Clock },
       ],
     },
     {
@@ -573,6 +575,22 @@ export function ClusterDetail() {
                 onRetry={fetchConfigDiff}
               />
             </>
+          )}
+
+          {/* History section */}
+          {activeSection === 'history' && (
+            <div className="space-y-4">
+              <h3 className="text-lg font-semibold text-[#0a2a4a]">Change History</h3>
+              <p className="text-sm text-[#2a5a7a]">
+                Git PR history for this cluster will appear here. This feature uses the observability API to show
+                recent changes, addon additions/removals, and configuration updates.
+              </p>
+              <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-6 text-center">
+                <img src="/sharko-mascot.png" alt="" className="mx-auto h-16 w-auto opacity-60" />
+                <p className="mt-3 text-sm font-medium text-[#1a4a6a]">Coming soon</p>
+                <p className="mt-1 text-xs text-[#3a6a8a]">Change history tracking is being built.</p>
+              </div>
+            </div>
           )}
         </div>
       </div>
