@@ -26,7 +26,7 @@ demo: ## Build UI + start server in demo mode
 	@echo "  🦈 Sharko Demo Mode"
 	@echo "  Building UI..."
 	@rm -rf ui/dist
-	@cd ui && npm run build 2>&1 | tail -1
+	@cd ui && npm run build 2>&1 | grep -v "PLUGIN_TIMINGS\|chunks are larger\|dynamic import\|codeSplitting\|chunkSizeWarningLimit\|rolldown.rs"
 	@echo "  Open http://localhost:$(PORT)"
 	@echo "  Login: admin/admin (admin) or qa/sharko (viewer)"
 	@echo ""
