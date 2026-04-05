@@ -28,6 +28,7 @@ import { CommandPalette } from '@/components/CommandPalette'
 import { useTheme } from '@/hooks/useTheme'
 import { useAuth } from '@/hooks/useAuth'
 import { AIAssistant } from '@/views/AIAssistant'
+import { NotificationBell } from '@/components/NotificationBell'
 
 interface NavItem {
   to: string
@@ -344,6 +345,8 @@ export function Layout() {
               <Sparkles className="h-3.5 w-3.5" />
               {!aiPanelOpen && <span className="hidden sm:inline">Ask AI</span>}
             </button>
+
+            <NotificationBell />
 
             {/* Search trigger */}
             <button
