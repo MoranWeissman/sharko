@@ -23,7 +23,8 @@ Thumbs.db
 
 # Secrets
 secrets.env
-.env.secrets
+.env
+.env.*
 *.pem
 *.key
 
@@ -42,6 +43,7 @@ aap-server
 
 # Test
 coverage.out
+coverage/
 *.test
 
 # Build
