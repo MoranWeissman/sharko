@@ -138,3 +138,8 @@ func apiGet(path string) ([]byte, int, error) {
 func apiPost(path string, body interface{}) ([]byte, int, error) {
 	return apiRequest(http.MethodPost, path, body)
 }
+
+// apiPatch is a convenience wrapper for PATCH requests.
+func apiPatch(path string, body interface{}) ([]byte, int, error) {
+	return apiRequest(http.MethodPatch, path, body)
+}
