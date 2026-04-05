@@ -34,11 +34,13 @@ export function Login() {
       />
 
       {/* Right side — login panel */}
-      <div className="flex w-full flex-col bg-[#1a2332] lg:w-[380px] lg:min-w-[340px]">
+      <div className="flex w-full flex-col bg-[#1a2332] lg:w-[440px] lg:min-w-[400px]">
         <div className="flex flex-1 flex-col items-center justify-center px-10 py-12">
-          {/* Brand header — banner logo */}
-          <div className="mb-10 flex items-center justify-center">
-            <img src="/sharko-banner.png" alt="Sharko" className="h-20 w-auto" />
+          {/* Brand header — logo + name + description */}
+          <div className="mb-10 flex flex-col items-center gap-2 text-center">
+            <img src="/sharko-banner.png" alt="Sharko" className="h-16 w-auto" />
+            <h1 className="text-2xl font-bold text-white">Sharko</h1>
+            <p className="text-sm text-gray-400">Addon management for Kubernetes clusters</p>
           </div>
 
           <form onSubmit={handleSubmit} className="w-full space-y-5">
