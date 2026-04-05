@@ -159,7 +159,7 @@ export function Dashboard() {
           <img
             src="/sharko-banner.png"
             alt="Sharko"
-            className="hidden h-24 w-auto sm:block"
+            className="hidden h-32 w-auto sm:block"
           />
           <div>
             <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
@@ -260,9 +260,19 @@ export function Dashboard() {
       {/* Cluster Cards */}
       {clusters.length > 0 && (
         <div>
-          <h2 className="mb-3 text-lg font-semibold text-gray-900 dark:text-gray-100">Clusters</h2>
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Clusters</h2>
+            {clusters.length > 6 && (
+              <button
+                onClick={() => navigate('/clusters')}
+                className="text-sm text-cyan-600 hover:text-cyan-700 dark:text-cyan-400"
+              >
+                View all {clusters.length} clusters
+              </button>
+            )}
+          </div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {clusters.map((cluster) => (
+            {clusters.slice(0, 6).map((cluster) => (
               <ClusterCard
                 key={cluster.name}
                 name={cluster.name}
