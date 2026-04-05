@@ -126,7 +126,7 @@ export function CommandPalette() {
 
       {/* Modal */}
       <div className="fixed left-1/2 top-[20%] z-[60] w-full max-w-lg -translate-x-1/2">
-        <div className="overflow-hidden rounded-xl border border-[#90c8ee] bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900">
+        <div className="overflow-hidden rounded-xl border border-[#90c8ee] bg-[#f0f7ff] shadow-2xl dark:border-gray-700 dark:bg-gray-900">
           {/* Search input */}
           <div className="flex items-center gap-3 border-b border-[#90c8ee] px-4 dark:border-gray-700">
             <Search className="h-5 w-5 shrink-0 text-[#3a6a8a]" />

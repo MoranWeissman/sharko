@@ -352,7 +352,7 @@ export function Layout() {
             >
               <Search className="h-3.5 w-3.5" />
               <span>Search...</span>
-              <kbd className="ml-2 rounded border border-[#80b8e0] bg-white px-1 py-0.5 text-[9px] font-medium dark:border-gray-600 dark:bg-gray-700">
+              <kbd className="ml-2 rounded border border-[#80b8e0] bg-[#e8f4ff] px-1 py-0.5 text-[9px] font-medium dark:border-gray-600 dark:bg-gray-700">
                 {navigator.platform?.includes('Mac') ? '⌘' : 'Ctrl'}K
               </kbd>
             </button>
@@ -375,7 +375,7 @@ export function Layout() {
               {userMenuOpen && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setUserMenuOpen(false)} />
-                  <div className="absolute right-0 top-10 z-50 w-48 rounded-lg border border-[#90c8ee] bg-white py-1 shadow-lg dark:border-gray-700 dark:bg-gray-800">
+                  <div className="absolute right-0 top-10 z-50 w-48 rounded-lg border border-[#90c8ee] bg-[#f0f7ff] py-1 shadow-lg dark:border-gray-700 dark:bg-gray-800">
                     <button
                       onClick={() => { navigate('/user'); setUserMenuOpen(false) }}
                       className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-[#0a3a5a] hover:bg-[#d6eeff] dark:text-gray-300 dark:hover:bg-gray-700"
@@ -415,7 +415,7 @@ export function Layout() {
 
       {/* AI Panel — right side */}
       {aiPanelOpen && (
-        <div className="flex w-[380px] shrink-0 flex-col border-l border-[#90c8ee] bg-white dark:border-gray-700 dark:bg-gray-900">
+        <div className="flex w-[380px] shrink-0 flex-col border-l border-[#90c8ee] bg-[#f0f7ff] dark:border-gray-700 dark:bg-gray-900">
           {/* Panel header */}
           <div className="flex h-14 items-center justify-between border-b border-[#90c8ee] bg-gradient-to-r from-teal-600 to-blue-700 px-4 dark:border-gray-700">
             <div className="flex items-center gap-2 text-white">

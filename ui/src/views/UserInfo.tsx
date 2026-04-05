@@ -48,7 +48,7 @@ export function UserInfo() {
       <div className="max-w-lg">
         <button
           type="button"
-          className="mb-4 inline-flex items-center gap-2 rounded-lg bg-gray-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-gray-600 dark:bg-gray-600 dark:hover:bg-[#d6eeff]0"
+          className="mb-4 inline-flex items-center gap-2 rounded-lg bg-[#0a2a4a] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#14466e] dark:bg-gray-600 dark:hover:bg-[#d6eeff]"
           onClick={() => document.getElementById('password-form')?.classList.toggle('hidden')}
         >
           <Lock className="h-4 w-4" />
