@@ -74,7 +74,7 @@ function renderDetail() {
 
 function renderDetailClustersTab() {
   return render(
-    <MemoryRouter initialEntries={['/addons/ingress-nginx?tab=clusters']}>
+    <MemoryRouter initialEntries={['/addons/ingress-nginx?section=clusters']}>
       <Routes>
         <Route path="/addons/:name" element={<AddonDetail />} />
       </Routes>
@@ -125,13 +125,14 @@ describe('AddonDetail', () => {
   })
 
   it('renders environment versions', async () => {
-    renderDetailClustersTab()
+    // Environment versions are shown in the overview section (default)
+    renderDetail()
 
     await waitFor(() => {
       expect(screen.getByText('Environment Versions')).toBeInTheDocument()
     })
 
-    // env names appear in both env versions card and filter dropdown, so use getAllByText
+    // env names appear in env versions card
     expect(screen.getAllByText('prod').length).toBeGreaterThanOrEqual(1)
     expect(screen.getAllByText('dev').length).toBeGreaterThanOrEqual(1)
     expect(screen.getAllByText('staging').length).toBeGreaterThanOrEqual(1)

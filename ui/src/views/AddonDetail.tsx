@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom'
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { DetailNavPanel } from '@/components/DetailNavPanel'
 import {
   ArrowLeft,
   Search,
@@ -13,6 +13,9 @@ import {
   Trash2,
   ArrowUpCircle,
   Loader2,
+  LayoutGrid,
+  Server,
+  FileCode,
 } from 'lucide-react'
 import { api, removeAddon, upgradeAddon } from '@/services/api'
 import type { AddonCatalogItem, ConnectionsListResponse } from '@/services/models'
@@ -61,8 +64,8 @@ export function AddonDetail() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [searchParams, setSearchParams] = useSearchParams()
-  const activeTab = searchParams.get('tab') || 'overview'
-  const setActiveTab = (tab: string) => setSearchParams({ tab }, { replace: true })
+  const activeSection = searchParams.get('section') || 'overview'
+  const setActiveSection = (s: string) => setSearchParams({ section: s }, { replace: true })
 
   const [valuesYaml, setValuesYaml] = useState<string | null>(null)
   const [argocdBaseURL, setArgocdBaseURL] = useState<string>('')
@@ -411,129 +414,69 @@ export function AddonDetail() {
         </DialogContent>
       </Dialog>
 
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList variant="line">
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="clusters">Clusters ({enabledApps.length})</TabsTrigger>
-          <TabsTrigger value="upgrade">Upgrade</TabsTrigger>
-        </TabsList>
+      <div className="flex gap-6">
+        <DetailNavPanel
+          sections={[
+            {
+              items: [
+                { key: 'overview', label: 'Overview', icon: LayoutGrid },
+                { key: 'clusters', label: 'Clusters', badge: enabledApps.length, icon: Server },
+                { key: 'upgrade', label: 'Upgrade', icon: ArrowUpCircle },
+                { key: 'config', label: 'Config', icon: FileCode },
+              ],
+            },
+          ]}
+          activeKey={activeSection}
+          onSelect={setActiveSection}
+        />
 
-        <TabsContent value="overview" className="space-y-6">
-          {/* Summary stat cards */}
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
-            <StatCard
-              title="Active Apps"
-              value={`${addon.enabled_clusters} / ${addon.total_clusters}`}
-              icon={<Activity className="h-5 w-5" />}
-            />
-            <StatCard
-              title="Healthy"
-              value={`${addon.healthy_applications} (${healthPct}%)`}
-              icon={<CheckCircle className="h-5 w-5" />}
-              color="success"
-            />
-            <StatCard
-              title="Degraded"
-              value={addon.degraded_applications}
-              icon={<AlertTriangle className="h-5 w-5" />}
-              color={addon.degraded_applications > 0 ? 'warning' : 'default'}
-            />
-            <StatCard
-              title="Not Deployed"
-              value={addon.missing_applications}
-              icon={<XCircle className="h-5 w-5" />}
-              color={addon.missing_applications > 0 ? 'error' : 'default'}
-            />
-            <StatCard
-              title="Disabled in Git"
-              value={disabledApps.length}
-              icon={<Ban className="h-5 w-5" />}
-            />
-          </div>
-
-          {/* Overall health progress bar */}
-          <HealthProgressBar
-            healthy={addon.healthy_applications}
-            total={addon.enabled_clusters}
-          />
-
-          {/* Global default values */}
-          {valuesYaml && (
-            <YamlViewer yaml={valuesYaml} title="Global Default Values" />
-          )}
-        </TabsContent>
-
-        <TabsContent value="clusters" className="space-y-6">
-          {/* Filter controls */}
-          <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800">
-            <h3 className="mb-3 text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
-              Filter Applications
-            </h3>
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="relative flex-1" style={{ minWidth: 200, maxWidth: 300 }}>
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#3a6a8a]" />
-                <input
-                  type="text"
-                  placeholder="Search clusters, environments, or apps..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  className="w-full rounded-lg border border-[#5a9dd0] py-2 pl-10 pr-4 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200 dark:placeholder-[#5a8aaa]"
+        <div className="flex-1 space-y-6">
+          {activeSection === 'overview' && (
+            <>
+              {/* Summary stat cards */}
+              <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+                <StatCard
+                  title="Active Apps"
+                  value={`${addon.enabled_clusters} / ${addon.total_clusters}`}
+                  icon={<Activity className="h-5 w-5" />}
+                />
+                <StatCard
+                  title="Healthy"
+                  value={`${addon.healthy_applications} (${healthPct}%)`}
+                  icon={<CheckCircle className="h-5 w-5" />}
+                  color="success"
+                />
+                <StatCard
+                  title="Degraded"
+                  value={addon.degraded_applications}
+                  icon={<AlertTriangle className="h-5 w-5" />}
+                  color={addon.degraded_applications > 0 ? 'warning' : 'default'}
+                />
+                <StatCard
+                  title="Not Deployed"
+                  value={addon.missing_applications}
+                  icon={<XCircle className="h-5 w-5" />}
+                  color={addon.missing_applications > 0 ? 'error' : 'default'}
+                />
+                <StatCard
+                  title="Disabled in Git"
+                  value={disabledApps.length}
+                  icon={<Ban className="h-5 w-5" />}
                 />
               </div>
 
-              <select
-                value={envFilter}
-                onChange={(e) => setEnvFilter(e.target.value)}
-                className="rounded-lg border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200"
-              >
-                <option value="all">All Environments</option>
-                {uniqueEnvironments.map((env) => (
-                  <option key={env} value={env}>
-                    {env}
-                  </option>
-                ))}
-              </select>
+              {/* Overall health progress bar */}
+              <HealthProgressBar
+                healthy={addon.healthy_applications}
+                total={addon.enabled_clusters}
+              />
 
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className="rounded-lg border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200"
-              >
-                <option value="all">All Status</option>
-                {uniqueStatuses.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
-
-              <select
-                value={healthFilter}
-                onChange={(e) => setHealthFilter(e.target.value)}
-                className="rounded-lg border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200"
-              >
-                <option value="all">All Health</option>
-                {uniqueHealthStatuses.map((h) => (
-                  <option key={h} value={h}>
-                    {h}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <p className="mt-2 text-xs text-[#2a5a7a] dark:text-gray-400">
-              Showing {filteredApps.length} of {enabledApps.length} applications
-            </p>
-          </div>
-
-          {/* Two-column layout: env versions + cluster table */}
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
-            {/* Left: Environment Versions */}
-            <div className="lg:col-span-4">
-              <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800">
-                <h3 className="mb-3 text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
-                  Environment Versions
-                </h3>
-                {envVersions.length > 0 ? (
+              {/* Environment Versions */}
+              {envVersions.length > 0 && (
+                <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800">
+                  <h3 className="mb-3 text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
+                    Environment Versions
+                  </h3>
                   <div className="space-y-2">
                     {envVersions.map(({ env, version }) => (
                       <div
@@ -547,14 +490,75 @@ export function AddonDetail() {
                       </div>
                     ))}
                   </div>
-                ) : (
-                  <p className="text-sm text-[#3a6a8a]">No environment versions available.</p>
-                )}
-              </div>
-            </div>
+                </div>
+              )}
+            </>
+          )}
 
-            {/* Right: Cluster Applications Table */}
-            <div className="lg:col-span-8">
+          {activeSection === 'clusters' && (
+            <>
+              {/* Filter controls */}
+              <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800">
+                <h3 className="mb-3 text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
+                  Filter Applications
+                </h3>
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="relative flex-1" style={{ minWidth: 200, maxWidth: 300 }}>
+                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#3a6a8a]" />
+                    <input
+                      type="text"
+                      placeholder="Search clusters, environments, or apps..."
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      className="w-full rounded-lg border border-[#5a9dd0] py-2 pl-10 pr-4 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200 dark:placeholder-[#5a8aaa]"
+                    />
+                  </div>
+
+                  <select
+                    value={envFilter}
+                    onChange={(e) => setEnvFilter(e.target.value)}
+                    className="rounded-lg border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200"
+                  >
+                    <option value="all">All Environments</option>
+                    {uniqueEnvironments.map((env) => (
+                      <option key={env} value={env}>
+                        {env}
+                      </option>
+                    ))}
+                  </select>
+
+                  <select
+                    value={statusFilter}
+                    onChange={(e) => setStatusFilter(e.target.value)}
+                    className="rounded-lg border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200"
+                  >
+                    <option value="all">All Status</option>
+                    {uniqueStatuses.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+
+                  <select
+                    value={healthFilter}
+                    onChange={(e) => setHealthFilter(e.target.value)}
+                    className="rounded-lg border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200"
+                  >
+                    <option value="all">All Health</option>
+                    {uniqueHealthStatuses.map((h) => (
+                      <option key={h} value={h}>
+                        {h}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <p className="mt-2 text-xs text-[#2a5a7a] dark:text-gray-400">
+                  Showing {filteredApps.length} of {enabledApps.length} applications
+                </p>
+              </div>
+
+              {/* Cluster Applications Table */}
               <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] dark:border-gray-700 dark:bg-gray-800">
                 <div className="border-b px-4 py-3 dark:border-gray-700">
                   <h3 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
@@ -636,50 +640,62 @@ export function AddonDetail() {
                   </table>
                 </div>
               </div>
-            </div>
-          </div>
 
-          {/* Disabled clusters section */}
-          {disabledApps.length > 0 && (
-            <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800" id="disabled-clusters-section">
-              <h3 className="mb-3 text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
-                Disabled on {disabledApps.length} Clusters
-              </h3>
-              <div className="flex flex-wrap gap-2">
-                {disabledApps.map((app) => (
-                  <Link
-                    key={app.cluster_name}
-                    to={`/clusters/${app.cluster_name}`}
-                    className="inline-flex items-center gap-1.5 rounded-full ring-2 ring-[#6aade0] bg-[#d0e8f8] px-3 py-1 text-xs font-medium text-[#1a4a6a] transition-colors hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
-                  >
-                    <Ban className="h-3 w-3" />
-                    {app.cluster_name}
-                  </Link>
-                ))}
-              </div>
-            </div>
+              {/* Disabled clusters section */}
+              {disabledApps.length > 0 && (
+                <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800" id="disabled-clusters-section">
+                  <h3 className="mb-3 text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
+                    Disabled on {disabledApps.length} Clusters
+                  </h3>
+                  <div className="flex flex-wrap gap-2">
+                    {disabledApps.map((app) => (
+                      <Link
+                        key={app.cluster_name}
+                        to={`/clusters/${app.cluster_name}`}
+                        className="inline-flex items-center gap-1.5 rounded-full ring-2 ring-[#6aade0] bg-[#d0e8f8] px-3 py-1 text-xs font-medium text-[#1a4a6a] transition-colors hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+                      >
+                        <Ban className="h-3 w-3" />
+                        {app.cluster_name}
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
           )}
-        </TabsContent>
 
-        <TabsContent value="upgrade" className="space-y-6">
-          <RoleGuard adminOnly fallback={<p className="text-sm text-[#2a5a7a] dark:text-gray-400">Admin access required to upgrade addons.</p>}>
-            <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-6 dark:border-gray-700 dark:bg-gray-800">
-              <h3 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">Upgrade {addon.addon_name}</h3>
-              <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
-                Current catalog version: <span className="font-mono font-medium">{addon.version}</span>
-              </p>
-              <button
-                type="button"
-                onClick={() => { setUpgradeVersion(''); setUpgradeCluster(''); setUpgradeError(null); setUpgradeResult(null); setUpgradeOpen(true) }}
-                className="mt-4 inline-flex items-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-600"
-              >
-                <ArrowUpCircle className="h-4 w-4" />
-                Upgrade Version
-              </button>
-            </div>
-          </RoleGuard>
-        </TabsContent>
-      </Tabs>
+          {activeSection === 'upgrade' && (
+            <>
+              <RoleGuard adminOnly fallback={<p className="text-sm text-[#2a5a7a] dark:text-gray-400">Admin access required to upgrade addons.</p>}>
+                <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-6 dark:border-gray-700 dark:bg-gray-800">
+                  <h3 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">Upgrade {addon.addon_name}</h3>
+                  <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
+                    Current catalog version: <span className="font-mono font-medium">{addon.version}</span>
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => { setUpgradeVersion(''); setUpgradeCluster(''); setUpgradeError(null); setUpgradeResult(null); setUpgradeOpen(true) }}
+                    className="mt-4 inline-flex items-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-600"
+                  >
+                    <ArrowUpCircle className="h-4 w-4" />
+                    Upgrade Version
+                  </button>
+                </div>
+              </RoleGuard>
+            </>
+          )}
+
+          {activeSection === 'config' && (
+            <>
+              {valuesYaml ? (
+                <YamlViewer yaml={valuesYaml} title="Global Default Values" />
+              ) : (
+                <p className="text-sm text-[#2a5a7a]">No default values template found for this addon.</p>
+              )}
+            </>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
