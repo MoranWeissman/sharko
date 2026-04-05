@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { NavLink, Outlet, useNavigate, useLocation, Link } from 'react-router-dom'
 import {
   LayoutDashboard,
@@ -150,11 +150,16 @@ export function Layout() {
       .catch(() => {})
   }, [])
 
+  const openAiPanel = useCallback(() => {
+    setAiPanelOpen(true)
+    setCollapsed(true)
+  }, [])
+
   useEffect(() => {
-    const handler = () => setAiPanelOpen(true)
+    const handler = () => openAiPanel()
     window.addEventListener('open-assistant', handler)
     return () => window.removeEventListener('open-assistant', handler)
-  }, [])
+  }, [openAiPanel])
 
   return (
     <div className="flex h-screen bg-[#F0F7FF] dark:bg-gray-950">
@@ -179,7 +184,7 @@ export function Layout() {
           <img src="/sharko-mascot.png" alt="" className={collapsed && !mobileOpen ? 'h-8 w-auto' : 'h-14 w-auto'} />
           {(!collapsed || mobileOpen) && (
             <div>
-              <span className="text-lg font-bold text-teal-400">Sharko</span>
+              <span className="text-lg font-bold text-blue-400">Sharko</span>
               {appVersion && (
                 <p className="text-[10px] text-[#5A7A9B]">v{appVersion}</p>
               )}
@@ -237,35 +242,6 @@ export function Layout() {
         </div>
       </aside>
 
-      {/* AI Panel — Amazon Q style */}
-      {aiPanelOpen && (
-        <div className="flex w-[380px] shrink-0 flex-col border-r border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
-          {/* Panel header */}
-          <div className="flex h-14 items-center justify-between border-b border-gray-200 bg-gradient-to-r from-teal-600 to-blue-700 px-4 dark:border-gray-700">
-            <div className="flex items-center gap-2 text-white">
-              <Sparkles className="h-4 w-4" />
-              <div>
-                <span className="text-sm font-semibold">Sharko AI</span>
-                {getAIPageContext(location.pathname) && (
-                  <p className="text-[10px] text-teal-200">Viewing {getAIPageContext(location.pathname)}</p>
-                )}
-              </div>
-            </div>
-            <button
-              onClick={() => setAiPanelOpen(false)}
-              className="rounded-lg p-1 text-white/80 hover:bg-white/20 hover:text-white"
-              aria-label="Close AI panel"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-          {/* Chat content */}
-          <div className="flex-1 overflow-hidden">
-            <AIAssistant embedded pageContext={getAIPageContext(location.pathname)} />
-          </div>
-        </div>
-      )}
-
       {/* Right side: top bar + content */}
       <div className="flex flex-1 flex-col overflow-hidden">
         {/* Top bar */}
@@ -286,7 +262,13 @@ export function Layout() {
           <div className="flex items-center gap-3">
             {/* AI panel toggle */}
             <button
-              onClick={() => setAiPanelOpen((o) => !o)}
+              onClick={() => {
+                if (aiPanelOpen) {
+                  setAiPanelOpen(false)
+                } else {
+                  openAiPanel()
+                }
+              }}
               className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs transition-colors ${
                 aiPanelOpen
                   ? 'bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400'
@@ -365,6 +347,35 @@ export function Layout() {
           </div>
         </main>
       </div>
+
+      {/* AI Panel — right side */}
+      {aiPanelOpen && (
+        <div className="flex w-[380px] shrink-0 flex-col border-l border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
+          {/* Panel header */}
+          <div className="flex h-14 items-center justify-between border-b border-gray-200 bg-gradient-to-r from-teal-600 to-blue-700 px-4 dark:border-gray-700">
+            <div className="flex items-center gap-2 text-white">
+              <Sparkles className="h-4 w-4" />
+              <div>
+                <span className="text-sm font-semibold">Sharko AI</span>
+                {getAIPageContext(location.pathname) && (
+                  <p className="text-[10px] text-teal-200">Viewing {getAIPageContext(location.pathname)}</p>
+                )}
+              </div>
+            </div>
+            <button
+              onClick={() => setAiPanelOpen(false)}
+              className="rounded-lg p-1 text-white/80 hover:bg-white/20 hover:text-white"
+              aria-label="Close AI panel"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          {/* Chat content */}
+          <div className="flex-1 overflow-hidden">
+            <AIAssistant embedded pageContext={getAIPageContext(location.pathname)} />
+          </div>
+        </div>
+      )}
 
       {/* Floating AI Assistant */}
       <FloatingAssistant />
