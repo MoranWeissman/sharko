@@ -84,7 +84,7 @@ function PaginatedList({ items, renderItem, emptyMessage }: { items: ValueDiffEn
       {remaining > 0 && (
         <button
           onClick={() => setShowCount(c => c + PAGE_SIZE)}
-          className="w-full border-t border-[#a0d0f0] px-4 py-3 text-center text-sm font-medium text-teal-600 hover:bg-[#d6eeff] dark:border-gray-800 dark:text-teal-400 dark:hover:bg-gray-800"
+          className="w-full border-t border-[#6aade0] px-4 py-3 text-center text-sm font-medium text-teal-600 hover:bg-[#d6eeff] dark:border-gray-800 dark:text-teal-400 dark:hover:bg-gray-800"
         >
           Show {Math.min(remaining, PAGE_SIZE)} more ({remaining} remaining)
         </button>
@@ -170,9 +170,9 @@ function ReleaseNotesSection({ notes }: { notes: string }) {
   const totalLines = notes.split('\n').length;
 
   return (
-    <div className="rounded-xl border border-[#90c8ee] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-900">
+    <div className="rounded-xl border border-[#6aade0] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-900">
       <div
-        className="flex cursor-pointer items-center justify-between border-b border-[#a0d0f0] px-6 py-3 dark:border-gray-800"
+        className="flex cursor-pointer items-center justify-between border-b border-[#6aade0] px-6 py-3 dark:border-gray-800"
         onClick={() => setExpanded((e) => !e)}
       >
         <div className="flex items-center gap-2">
@@ -401,7 +401,7 @@ export function UpgradeChecker() {
       </div>
 
       {/* Step 1: Addon Selection */}
-      <div className="rounded-xl border border-[#90c8ee] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+      <div className="rounded-xl border border-[#6aade0] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900">
         <h2 className="mb-4 flex items-center gap-2 text-lg font-semibold text-[#0a2a4a] dark:text-white">
           <span className="flex h-6 w-6 items-center justify-center rounded-full bg-teal-100 text-xs font-bold text-teal-700 dark:bg-teal-900 dark:text-teal-300">
             1
@@ -411,7 +411,7 @@ export function UpgradeChecker() {
 
         <div className="relative max-w-md">
           <div
-            className="flex cursor-pointer items-center justify-between rounded-lg border border-[#80b8e0] bg-[#f0f7ff] px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-800"
+            className="flex cursor-pointer items-center justify-between rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-800"
             onClick={() => setAddonDropdownOpen((o) => !o)}
             role="combobox"
             aria-expanded={addonDropdownOpen}
@@ -426,9 +426,9 @@ export function UpgradeChecker() {
           </div>
 
           {addonDropdownOpen && (
-            <div className="absolute z-20 mt-1 w-full rounded-lg border border-[#90c8ee] bg-[#f0f7ff] shadow-lg dark:border-gray-600 dark:bg-gray-800">
-              <div className="border-b border-[#a0d0f0] p-2 dark:border-gray-700">
-                <div className="flex items-center gap-2 rounded-md border border-[#90c8ee] bg-[#d0e8f8] px-2 dark:border-gray-600 dark:bg-gray-700">
+            <div className="absolute z-20 mt-1 w-full rounded-lg border border-[#6aade0] bg-[#f0f7ff] shadow-lg dark:border-gray-600 dark:bg-gray-800">
+              <div className="border-b border-[#6aade0] p-2 dark:border-gray-700">
+                <div className="flex items-center gap-2 rounded-md border border-[#6aade0] bg-[#d0e8f8] px-2 dark:border-gray-600 dark:bg-gray-700">
                   <Search className="h-4 w-4 text-[#3a6a8a]" />
                   <input
                     type="text"
@@ -470,7 +470,7 @@ export function UpgradeChecker() {
 
       {/* Step 2: Version Selection */}
       {selectedAddon && (
-        <div className="rounded-xl border border-[#90c8ee] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+        <div className="rounded-xl border border-[#6aade0] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900">
           <h2 className="mb-4 flex items-center gap-2 text-lg font-semibold text-[#0a2a4a] dark:text-white">
             <span className="flex h-6 w-6 items-center justify-center rounded-full bg-teal-100 text-xs font-bold text-teal-700 dark:bg-teal-900 dark:text-teal-300">
               2
@@ -490,7 +490,7 @@ export function UpgradeChecker() {
                 </label>
                 <select
                   id="version-select"
-                  className="w-full rounded-lg border border-[#80b8e0] bg-[#f0f7ff] px-3 py-2 text-sm text-[#0a2a4a] dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+                  className="w-full rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm text-[#0a2a4a] dark:border-gray-600 dark:bg-gray-800 dark:text-white"
                   value={selectedVersion}
                   onChange={(e) => {
                     setSelectedVersion(e.target.value);
@@ -631,7 +631,7 @@ export function UpgradeChecker() {
                         const trimmed = line.trim();
                         if (trimmed === '') return <div key={i} className="h-3" />;
                         if (trimmed.startsWith('## '))
-                          return <h3 key={i} className="mt-5 mb-2 text-base font-bold text-[#0a2a4a] dark:text-white border-b border-[#90c8ee] dark:border-gray-700 pb-1.5">{trimmed.slice(3)}</h3>;
+                          return <h3 key={i} className="mt-5 mb-2 text-base font-bold text-[#0a2a4a] dark:text-white border-b border-[#6aade0] dark:border-gray-700 pb-1.5">{trimmed.slice(3)}</h3>;
                         if (trimmed.startsWith('### '))
                           return <h4 key={i} className="mt-4 mb-1.5 text-sm font-bold text-[#0a3a5a] dark:text-gray-200">{trimmed.slice(4)}</h4>;
                         if (trimmed.startsWith('**') && trimmed.includes('**')) {
@@ -647,7 +647,7 @@ export function UpgradeChecker() {
                         return <p key={i} className="mt-1.5">{line}</p>;
                       })}
                     </div>
-                    <p className="mt-5 border-t border-[#a0d0f0] pt-3 text-[10px] text-[#3a6a8a] dark:border-gray-800 dark:text-gray-600">
+                    <p className="mt-5 border-t border-[#6aade0] pt-3 text-[10px] text-[#3a6a8a] dark:border-gray-800 dark:text-gray-600">
                       Powered by {aiProvider === 'ollama' ? 'Ollama (local)' : aiProvider === 'gemini' ? 'Google Gemini' : aiProvider === 'claude' ? 'Claude (Anthropic)' : aiProvider === 'openai' ? 'OpenAI' : 'AI'}
                     </p>
                   </div>
@@ -658,7 +658,7 @@ export function UpgradeChecker() {
               </div>
             </div>
           ) : (
-            <div className="flex items-center gap-2 rounded-lg border border-[#90c8ee] bg-[#d0e8f8] px-4 py-3 text-sm text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-800/50 dark:text-gray-400">
+            <div className="flex items-center gap-2 rounded-lg border border-[#6aade0] bg-[#d0e8f8] px-4 py-3 text-sm text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-800/50 dark:text-gray-400">
               <Sparkles className="h-4 w-4 shrink-0 text-[#3a6a8a]" />
               <span>
                 Enable an AI provider in{' '}
@@ -675,8 +675,8 @@ export function UpgradeChecker() {
 
           {/* Changes tabs */}
           {result.total_changes > 0 && (
-            <div className="rounded-xl border border-[#90c8ee] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-900">
-              <div className="flex border-b border-[#90c8ee] dark:border-gray-700">
+            <div className="rounded-xl border border-[#6aade0] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-900">
+              <div className="flex border-b border-[#6aade0] dark:border-gray-700">
                 {([
                   { key: 'added' as ChangeTab, label: 'Added Fields', count: result.added.length, color: 'text-green-600 dark:text-green-400' },
                   { key: 'removed' as ChangeTab, label: 'Removed Fields', count: result.removed.length, color: 'text-red-600 dark:text-red-400' },

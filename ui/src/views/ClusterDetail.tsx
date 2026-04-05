@@ -342,7 +342,7 @@ export function ClusterDetail() {
       {/* Cluster info stat cards */}
       <div className="flex flex-wrap gap-3">
         {data.cluster.server_version && (
-          <div className="flex items-center gap-2 rounded-lg border border-[#90c8ee] bg-[#f0f7ff] px-4 py-3 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div className="flex items-center gap-2 rounded-lg border border-[#6aade0] bg-[#f0f7ff] px-4 py-3 shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <Tag className="h-4 w-4 text-teal-500" />
             <div>
               <p className="text-xs text-[#2a5a7a] dark:text-gray-400">Cluster Version</p>
@@ -368,7 +368,7 @@ export function ClusterDetail() {
             </div>
           </div>
         )}
-        <div className="flex items-center gap-2 rounded-lg border border-[#90c8ee] bg-[#f0f7ff] px-4 py-3 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <div className="flex items-center gap-2 rounded-lg border border-[#6aade0] bg-[#f0f7ff] px-4 py-3 shadow-sm dark:border-gray-700 dark:bg-gray-800">
           <Server className="h-4 w-4 text-teal-500" />
           <div>
             <p className="text-xs text-[#2a5a7a] dark:text-gray-400">Connection</p>
@@ -410,7 +410,7 @@ export function ClusterDetail() {
         <TabsContent value="addons" className="space-y-6">
           {/* Admin: Addon Enable/Disable Toggles */}
           <RoleGuard adminOnly>
-            <div className="rounded-lg border border-[#90c8ee] bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800">
+            <div className="rounded-lg border border-[#6aade0] bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800">
               <h3 className="mb-3 text-base font-semibold text-[#0a2a4a] dark:text-gray-100">Manage Addons</h3>
               {Object.keys(addonToggles).length === 0 ? (
                 <p className="text-sm text-[#3a6a8a] dark:text-gray-500">No addons in catalog.</p>
@@ -458,7 +458,7 @@ export function ClusterDetail() {
                     type="button"
                     onClick={() => { setAddonToggles({ ...originalToggles }); setToggleError(null); setToggleResult(null); }}
                     disabled={applyingToggles}
-                    className="rounded-md border border-[#80b8e0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                    className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
                   >
                     Discard
                   </button>
@@ -488,9 +488,9 @@ export function ClusterDetail() {
           </div>
 
           {/* Comparison table */}
-          <div className="overflow-x-auto rounded-xl border border-[#90c8ee] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div className="overflow-x-auto rounded-xl border border-[#6aade0] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <table className="w-full text-left text-sm">
-              <thead className="border-b border-[#90c8ee] bg-[#d0e8f8] text-xs uppercase text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
+              <thead className="border-b border-[#6aade0] bg-[#d0e8f8] text-xs uppercase text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
                 <tr>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">Addon Name</th>
@@ -500,7 +500,7 @@ export function ClusterDetail() {
                   <th className="px-4 py-3">Issues</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[#90c8ee] dark:divide-gray-700">
+              <tbody className="divide-y divide-[#6aade0] dark:divide-gray-700">
                 {filteredAddons.map((addon) => (
                   <ComparisonRow
                     key={addon.addon_name}
@@ -665,7 +665,7 @@ function ConfigOverridesPanel({ data, loading, error, onRetry }: ConfigOverrides
 
   if (overriddenAddons.length === 0) {
     return (
-      <div className="rounded-xl border border-[#90c8ee] bg-[#f0f7ff] p-8 text-center shadow-sm dark:border-gray-700 dark:bg-gray-800">
+      <div className="rounded-xl border border-[#6aade0] bg-[#f0f7ff] p-8 text-center shadow-sm dark:border-gray-700 dark:bg-gray-800">
         <p className="text-[#2a5a7a] dark:text-gray-400">
           This cluster uses all global defaults — no per-cluster overrides found.
         </p>
@@ -679,9 +679,9 @@ function ConfigOverridesPanel({ data, loading, error, onRetry }: ConfigOverrides
       {overriddenAddons.map((entry) => (
         <div
           key={entry.addon_name}
-          className="rounded-xl border border-[#90c8ee] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800"
+          className="rounded-xl border border-[#6aade0] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800"
         >
-          <div className="flex items-center gap-2 border-b border-[#90c8ee] px-4 py-3 dark:border-gray-700">
+          <div className="flex items-center gap-2 border-b border-[#6aade0] px-4 py-3 dark:border-gray-700">
             <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
               {capitalizeAddonName(entry.addon_name)}
             </h3>
@@ -689,7 +689,7 @@ function ConfigOverridesPanel({ data, loading, error, onRetry }: ConfigOverrides
               Custom overrides
             </span>
           </div>
-          <div className="grid grid-cols-1 divide-y md:grid-cols-2 md:divide-x md:divide-y-0 divide-[#90c8ee] dark:divide-gray-700">
+          <div className="grid grid-cols-1 divide-y md:grid-cols-2 md:divide-x md:divide-y-0 divide-[#6aade0] dark:divide-gray-700">
             <div className="p-4">
               <YamlViewer yaml={entry.global_values || ''} title="Global Default" defaultView="tree" />
             </div>

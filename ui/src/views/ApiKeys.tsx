@@ -139,9 +139,9 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
       </div>
 
       {/* Token table */}
-      <div className="overflow-x-auto rounded-xl border border-[#90c8ee] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
+      <div className="overflow-x-auto rounded-xl border border-[#6aade0] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
         <table className="w-full text-left text-sm">
-          <thead className="border-b border-[#90c8ee] bg-[#d0e8f8] text-xs uppercase text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
+          <thead className="border-b border-[#6aade0] bg-[#d0e8f8] text-xs uppercase text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
             <tr>
               <th className="px-6 py-3">Name</th>
               <th className="px-6 py-3">Role</th>
@@ -150,7 +150,7 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
               <th className="px-6 py-3">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-[#90c8ee] dark:divide-gray-700">
+          <tbody className="divide-y divide-[#6aade0] dark:divide-gray-700">
             {tokens.map((token) => (
               <tr key={token.name} className="hover:bg-[#d6eeff] dark:hover:bg-gray-700">
                 <td className="px-6 py-3 font-medium text-[#0a2a4a] dark:text-gray-100">
@@ -228,7 +228,7 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
           </DialogHeader>
           {createdToken ? (
             <div className="space-y-3 py-2">
-              <div className="flex items-center gap-2 rounded-md border border-[#90c8ee] bg-[#d0e8f8] px-3 py-2 dark:border-gray-700 dark:bg-gray-900">
+              <div className="flex items-center gap-2 rounded-md border border-[#6aade0] bg-[#d0e8f8] px-3 py-2 dark:border-gray-700 dark:bg-gray-900">
                 <code className="flex-1 break-all text-xs text-[#0a3a5a] dark:text-gray-200">{createdToken}</code>
                 <button
                   type="button"
@@ -254,7 +254,7 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
                   placeholder="e.g. ci-deploy"
-                  className="w-full rounded-md border border-[#80b8e0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
+                  className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
                 />
               </div>
               <div>
@@ -264,7 +264,7 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
                 <select
                   value={newRole}
                   onChange={(e) => setNewRole(e.target.value)}
-                  className="w-full rounded-md border border-[#80b8e0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
+                  className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
                 >
                   <option value="viewer">viewer</option>
                   <option value="operator">operator</option>
@@ -279,7 +279,7 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
               type="button"
               onClick={() => setCreateOpen(false)}
               disabled={creating}
-              className="rounded-md border border-[#80b8e0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+              className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
             >
               {createdToken ? 'Done' : 'Cancel'}
             </button>

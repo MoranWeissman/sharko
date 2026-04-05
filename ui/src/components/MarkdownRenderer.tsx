@@ -109,7 +109,7 @@ export function MarkdownRenderer({ content }: { content: string }) {
       elements.push(
         <h3
           key={elements.length}
-          className="mt-5 mb-2 border-b border-[#90c8ee] pb-1.5 text-base font-bold text-[#0a2a4a] dark:border-gray-700 dark:text-white"
+          className="mt-5 mb-2 border-b border-[#6aade0] pb-1.5 text-base font-bold text-[#0a2a4a] dark:border-gray-700 dark:text-white"
         >
           {formatInlineMarkdown(trimmed.slice(3))}
         </h3>,

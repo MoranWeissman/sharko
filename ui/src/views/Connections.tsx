@@ -90,9 +90,9 @@ function formFromConnection(conn: ConnectionResponse): ConnectionFormData {
 const labelCls =
   'block text-sm font-medium text-[#0a3a5a] dark:text-gray-300'
 const inputCls =
-  'mt-1 block w-full rounded-lg border border-[#80b8e0] bg-[#f0f7ff] px-3 py-2 text-sm text-[#0a2a4a] shadow-sm placeholder:text-[#3a6a8a] focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder:text-[#2a5a7a]'
+  'mt-1 block w-full rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm text-[#0a2a4a] shadow-sm placeholder:text-[#3a6a8a] focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder:text-[#2a5a7a]'
 const selectCls =
-  'mt-1 block w-full rounded-lg border border-[#80b8e0] bg-[#f0f7ff] px-3 py-2 text-sm text-[#0a2a4a] shadow-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100'
+  'mt-1 block w-full rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm text-[#0a2a4a] shadow-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100'
 
 interface TestStatus {
   git: 'idle' | 'testing' | 'ok' | 'error'
@@ -141,7 +141,7 @@ function ConnectionFormFields({
         </div>
         <div className="mt-3 flex items-center gap-3">
           <button type="button" onClick={onTestGit} disabled={testStatus.git === 'testing' || !form.git_url}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-[#80b8e0] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">
+            className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">
             {testStatus.git === 'testing' ? <Loader2 className="h-3 w-3 animate-spin" /> : <GitBranch className="h-3 w-3" />}
             Test Git
           </button>
@@ -177,7 +177,7 @@ function ConnectionFormFields({
         </div>
         <div className="mt-3 flex items-center gap-3">
           <button type="button" onClick={onTestArgocd} disabled={testStatus.argocd === 'testing'}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-[#80b8e0] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">
+            className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">
             {testStatus.argocd === 'testing' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Server className="h-3 w-3" />}
             Test ArgoCD
           </button>
@@ -423,32 +423,27 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
           <h3 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
             Active Connections
           </h3>
-          <div className="text-right">
-            <button
-              onClick={async () => {
-                const opening = !showAddForm
-                setShowAddForm(opening)
-                setAddForm({ ...emptyForm })
-                setAddError(null)
-                setAddTestStatus({ git: 'idle', argocd: 'idle' })
-                if (opening) {
-                  try {
-                    const disc = await api.discoverArgocd()
-                    if (disc.server_url) {
-                      setAddForm(prev => ({ ...prev, argocd_server_url: disc.server_url }))
-                    }
-                  } catch { /* ignore — user can enter manually */ }
-                }
-              }}
-              className="inline-flex items-center gap-2 rounded-lg border border-[#90c8ee] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a2a4a] hover:bg-[#e0f0ff] transition-colors dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
-            >
-              <Plus className="h-4 w-4" />
-              Add Connection
-            </button>
-            <p className="mt-1 text-xs text-[#3a6a8a] dark:text-gray-400">
-              Manage Sharko infrastructure connections — ArgoCD, Git provider, and secrets provider.
-            </p>
-          </div>
+          <button
+            onClick={async () => {
+              const opening = !showAddForm
+              setShowAddForm(opening)
+              setAddForm({ ...emptyForm })
+              setAddError(null)
+              setAddTestStatus({ git: 'idle', argocd: 'idle' })
+              if (opening) {
+                try {
+                  const disc = await api.discoverArgocd()
+                  if (disc.server_url) {
+                    setAddForm(prev => ({ ...prev, argocd_server_url: disc.server_url }))
+                  }
+                } catch { /* ignore — user can enter manually */ }
+              }
+            }}
+            className="inline-flex items-center gap-2 rounded-lg border-2 border-dashed border-[#6aade0] px-5 py-2.5 text-sm font-medium text-[#0a2a4a] hover:bg-[#d6eeff] hover:border-solid transition-all dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
+          >
+            <Plus className="h-4 w-4" />
+            Add Connection
+          </button>
         </div>
 
         {/* Add Connection Form */}
@@ -507,10 +502,10 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
             {connections.map((conn) => (
               <div key={conn.name}>
                 <div
-                  className={`rounded-xl border border-[#90c8ee] bg-[#f0f7ff] p-6 shadow-sm dark:bg-gray-800 ${
+                  className={`rounded-xl border border-[#6aade0] bg-[#f0f7ff] p-6 shadow-sm dark:bg-gray-800 ${
                     conn.is_active
                       ? 'border-teal-500 ring-2 ring-teal-100 dark:ring-teal-900/50'
-                      : 'border-[#90c8ee] dark:border-gray-700'
+                      : 'border-[#6aade0] dark:border-gray-700'
                   }`}
                 >
                   {/* Name + badges */}
@@ -684,7 +679,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
         <h3 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
           Platform Info
         </h3>
-        <div className="rounded-xl border border-[#90c8ee] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <div className="rounded-xl border border-[#6aade0] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
           <dl className="grid grid-cols-1 gap-6 sm:grid-cols-2">
             {/* Deployment Mode */}
             <div>
@@ -750,7 +745,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
         <h3 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
           Secrets Provider
         </h3>
-        <div className="rounded-xl border border-[#90c8ee] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <div className="rounded-xl border border-[#6aade0] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
           {providerInfo ? (
             <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <div>
@@ -801,7 +796,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
           <h3 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
             Initialize Repository
           </h3>
-          <div className="rounded-xl border border-[#90c8ee] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div className="rounded-xl border border-[#6aade0] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <p className="mb-4 text-sm text-[#1a4a6a] dark:text-gray-400">
               Bootstrap the Git repository with the required Sharko directory structure and ArgoCD resources.
               Safe to run on an already-initialized repository.
@@ -959,7 +954,7 @@ function AIConfigSection() {
   }
 
   return (
-    <div className="rounded-xl border border-[#90c8ee] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+    <div className="rounded-xl border border-[#6aade0] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
       {/* Header */}
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-3">
@@ -991,7 +986,7 @@ function AIConfigSection() {
           {isEnabled && (
             <>
               <button onClick={handleTest} disabled={testing}
-                className="rounded-lg border border-[#80b8e0] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">
+                className="rounded-lg border border-[#5a9dd0] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">
                 {testing ? 'Testing...' : 'Test'}
               </button>
               <button onClick={handleDisable}
@@ -1078,7 +1073,7 @@ function AIConfigSection() {
           </div>
           <div className="mt-3 flex items-center gap-3">
             <button onClick={handleFormTest} disabled={formTestStatus === 'testing'}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-[#80b8e0] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">
               {formTestStatus === 'testing' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
               Test AI
             </button>

@@ -441,7 +441,7 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
       {/* Header */}
       {/* Header — hidden when embedded (floating panel has its own header) */}
       {!embedded && (
-        <div className="flex items-center justify-between border-b border-[#90c8ee] pb-4 dark:border-gray-700">
+        <div className="flex items-center justify-between border-b border-[#6aade0] pb-4 dark:border-gray-700">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-violet-100 dark:bg-violet-900/40">
               <Sparkles className="h-5 w-5 text-violet-600 dark:text-violet-400" />
@@ -464,7 +464,7 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
             {messages.length > 0 && (
               <button
                 onClick={handleExport}
-                className="flex items-center gap-1.5 rounded-lg border border-[#90c8ee] px-3 py-1.5 text-xs font-medium text-[#1a4a6a] transition-colors hover:bg-[#d6eeff] dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
+                className="flex items-center gap-1.5 rounded-lg border border-[#6aade0] px-3 py-1.5 text-xs font-medium text-[#1a4a6a] transition-colors hover:bg-[#d6eeff] dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
               >
                 <Download className="h-3.5 w-3.5" />
                 Export
@@ -472,7 +472,7 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
             )}
             <button
               onClick={handleNewConversation}
-              className="flex items-center gap-1.5 rounded-lg border border-[#90c8ee] px-3 py-1.5 text-xs font-medium text-[#1a4a6a] transition-colors hover:bg-[#d6eeff] dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
+              className="flex items-center gap-1.5 rounded-lg border border-[#6aade0] px-3 py-1.5 text-xs font-medium text-[#1a4a6a] transition-colors hover:bg-[#d6eeff] dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
             >
               <RotateCcw className="h-3.5 w-3.5" />
               New
@@ -482,7 +482,7 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
       )}
       {/* Embedded mini toolbar — always visible when embedded */}
       {embedded && (
-        <div className="flex items-center justify-between border-b border-[#90c8ee] px-3 py-1.5 dark:border-gray-700">
+        <div className="flex items-center justify-between border-b border-[#6aade0] px-3 py-1.5 dark:border-gray-700">
           <span className="text-[10px] text-[#3a6a8a] dark:text-gray-500">
             {messages.length > 0 ? `${messages.length} messages` : ''}
           </span>
@@ -526,7 +526,7 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
                 <button
                   key={prompt}
                   onClick={() => sendMessage(prompt)}
-                  className="rounded-lg border border-[#90c8ee] px-4 py-3 text-left text-sm text-[#1a4a6a] transition-colors hover:border-teal-300 hover:bg-teal-50 dark:border-gray-600 dark:text-gray-300 dark:hover:border-teal-700 dark:hover:bg-teal-900/20"
+                  className="rounded-lg border border-[#6aade0] px-4 py-3 text-left text-sm text-[#1a4a6a] transition-colors hover:border-teal-300 hover:bg-teal-50 dark:border-gray-600 dark:text-gray-300 dark:hover:border-teal-700 dark:hover:bg-teal-900/20"
                 >
                   {prompt}
                 </button>
@@ -560,7 +560,7 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
                   className={`max-w-[75%] overflow-hidden rounded-2xl px-4 py-2.5 text-sm ${
                     msg.role === 'user'
                       ? 'bg-teal-600 text-white dark:bg-teal-700'
-                      : 'border border-[#90c8ee] bg-[#e8f4ff] text-[#0a3a5a] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200'
+                      : 'border border-[#6aade0] bg-[#e8f4ff] text-[#0a3a5a] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200'
                   }`}
                 >
                   {msg.role === 'assistant' ? (
@@ -597,7 +597,7 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
       </div>
 
       {/* Input area */}
-      <div className="border-t border-[#90c8ee] bg-[#f0f7ff] px-4 py-3 dark:border-gray-700 dark:bg-gray-900">
+      <div className="border-t border-[#6aade0] bg-[#f0f7ff] px-4 py-3 dark:border-gray-700 dark:bg-gray-900">
         <div className="mx-auto flex max-w-3xl items-end gap-3">
           <textarea
             ref={textareaRef}
@@ -607,7 +607,7 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
             placeholder="Ask about your addons, clusters, or upgrades..."
             disabled={loading || aiEnabled === null}
             rows={1}
-            className="max-h-32 min-h-[2.5rem] flex-1 resize-none rounded-xl border border-[#80b8e0] bg-[#f0f7ff] px-4 py-2.5 text-sm text-[#0a2a4a] placeholder-[#5a8aaa] focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500 dark:focus:border-teal-500"
+            className="max-h-32 min-h-[2.5rem] flex-1 resize-none rounded-xl border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2.5 text-sm text-[#0a2a4a] placeholder-[#5a8aaa] focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500 dark:focus:border-teal-500"
           />
           <button
             onClick={() => sendMessage(input)}

@@ -59,7 +59,7 @@ function MatrixCell({ cell, cluster, addonName }: { cell: VersionMatrixCell | un
 
   if (!cell || cell.health === 'not_enabled') {
     return (
-      <td className="border-r border-[#a0d0f0] px-2 py-2 text-center dark:border-gray-700">
+      <td className="border-r border-[#6aade0] px-2 py-2 text-center dark:border-gray-700">
         <span className="text-[10px] text-[#5a8aaa] dark:text-gray-600">—</span>
       </td>
     )
@@ -69,7 +69,7 @@ function MatrixCell({ cell, cluster, addonName }: { cell: VersionMatrixCell | un
 
   return (
     <td
-      className={`border-r border-[#a0d0f0] px-1.5 py-1.5 dark:border-gray-700 ${isDrift ? 'bg-amber-50/50 dark:bg-amber-900/10' : ''}`}
+      className={`border-r border-[#6aade0] px-1.5 py-1.5 dark:border-gray-700 ${isDrift ? 'bg-amber-50/50 dark:bg-amber-900/10' : ''}`}
     >
       <button
         type="button"
@@ -89,17 +89,17 @@ function MatrixCell({ cell, cluster, addonName }: { cell: VersionMatrixCell | un
 /* Transposed matrix: clusters as rows, addons as columns */
 function MatrixTable({ addons, clusters }: { addons: VersionMatrixRow[]; clusters: string[] }) {
   return (
-    <div className="overflow-x-auto rounded-xl border border-[#90c8ee] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
+    <div className="overflow-x-auto rounded-xl border border-[#6aade0] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
       <table className="w-full text-left text-sm">
-        <thead className="border-b border-[#90c8ee] bg-[#d0e8f8] dark:border-gray-700 dark:bg-gray-900">
+        <thead className="border-b border-[#6aade0] bg-[#d0e8f8] dark:border-gray-700 dark:bg-gray-900">
           <tr>
-            <th className="sticky left-0 z-10 min-w-[200px] border-r border-[#90c8ee] bg-[#d0e8f8] px-4 py-3 text-xs font-semibold uppercase text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
+            <th className="sticky left-0 z-10 min-w-[200px] border-r border-[#6aade0] bg-[#d0e8f8] px-4 py-3 text-xs font-semibold uppercase text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
               Cluster
             </th>
             {addons.map((row) => (
               <th
                 key={row.addon_name}
-                className="border-r border-[#a0d0f0] px-2 py-3 text-center dark:border-gray-700"
+                className="border-r border-[#6aade0] px-2 py-3 text-center dark:border-gray-700"
               >
                 <div className="text-[11px] font-medium text-[#0a3a5a] dark:text-gray-300">
                   {row.addon_name}
@@ -121,7 +121,7 @@ function MatrixTable({ addons, clusters }: { addons: VersionMatrixRow[]; cluster
 
             return (
               <tr key={cluster} className="hover:bg-[#d6eeff]/50 dark:hover:bg-gray-800">
-                <td className="sticky left-0 z-10 border-r border-[#90c8ee] bg-[#f0f7ff] px-4 py-2 dark:border-gray-700 dark:bg-gray-800">
+                <td className="sticky left-0 z-10 border-r border-[#6aade0] bg-[#f0f7ff] px-4 py-2 dark:border-gray-700 dark:bg-gray-800">
                   <span className="text-sm font-medium text-[#0a2a4a] dark:text-white">
                     {cluster.replace(/-eks$/, '')}
                   </span>
@@ -169,7 +169,7 @@ function ClusterChip({ cluster, cell, addonName }: { cluster: string; cell: Vers
       className={`group inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs transition-all hover:shadow-md
         ${isDrift
           ? 'border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-900/20'
-          : 'border-[#90c8ee] bg-[#f0f7ff] dark:border-gray-700 dark:bg-gray-800'
+          : 'border-[#6aade0] bg-[#f0f7ff] dark:border-gray-700 dark:bg-gray-800'
         }
         hover:ring-2 ${healthRing(cell.health)}
       `}
@@ -204,7 +204,7 @@ function AddonRow({ row, clusters }: { row: VersionMatrixRow; clusters: string[]
   const driftCount = activeCells.filter(e => e.cell.drift_from_catalog).length
 
   return (
-    <div className="rounded-lg border border-[#90c8ee] bg-[#f0f7ff] dark:border-gray-700 dark:bg-gray-800/50">
+    <div className="rounded-lg border border-[#6aade0] bg-[#f0f7ff] dark:border-gray-700 dark:bg-gray-800/50">
       <button
         type="button"
         onClick={() => setExpanded(v => !v)}
@@ -247,14 +247,14 @@ function AddonRow({ row, clusters }: { row: VersionMatrixRow; clusters: string[]
       </button>
 
       {expanded && activeCells.length > 0 && (
-        <div className="flex flex-wrap gap-2 border-t border-[#a0d0f0] px-4 py-3 dark:border-gray-700">
+        <div className="flex flex-wrap gap-2 border-t border-[#6aade0] px-4 py-3 dark:border-gray-700">
           {activeCells.map(({ cluster, cell }) => (
             <ClusterChip key={cluster} cluster={cluster} cell={cell} addonName={row.addon_name} />
           ))}
         </div>
       )}
       {expanded && activeCells.length === 0 && (
-        <div className="border-t border-[#a0d0f0] px-4 py-2 text-xs text-[#3a6a8a] dark:border-gray-700 dark:text-gray-500">
+        <div className="border-t border-[#6aade0] px-4 py-2 text-xs text-[#3a6a8a] dark:border-gray-700 dark:text-gray-500">
           Not deployed on any cluster
         </div>
       )}
@@ -281,7 +281,7 @@ function HeatmapView({ addons, clusters }: { addons: VersionMatrixRow[]; cluster
         const isExpanded = expanded === row.addon_name
 
         return (
-          <div key={row.addon_name} className="rounded-lg border border-[#90c8ee] bg-[#f0f7ff] dark:border-gray-700 dark:bg-gray-800/50">
+          <div key={row.addon_name} className="rounded-lg border border-[#6aade0] bg-[#f0f7ff] dark:border-gray-700 dark:bg-gray-800/50">
             {/* Compact row: addon name + dot grid */}
             <button
               type="button"
@@ -327,7 +327,7 @@ function HeatmapView({ addons, clusters }: { addons: VersionMatrixRow[]; cluster
 
             {/* Expanded: cluster detail table */}
             {isExpanded && activeCells.length > 0 && (
-              <div className="border-t border-[#a0d0f0] p-3 dark:border-gray-700">
+              <div className="border-t border-[#6aade0] p-3 dark:border-gray-700">
                 <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
                   {activeCells.map(({ cluster, cell }) => (
                     <button
@@ -337,7 +337,7 @@ function HeatmapView({ addons, clusters }: { addons: VersionMatrixRow[]; cluster
                       className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-left text-xs transition-colors hover:shadow-sm ${
                         cell.drift_from_catalog
                           ? 'border-amber-200 bg-amber-50/50 dark:border-amber-800 dark:bg-amber-900/10'
-                          : 'border-[#90c8ee] bg-[#d0e8f8] dark:border-gray-700 dark:bg-gray-800'
+                          : 'border-[#6aade0] bg-[#d0e8f8] dark:border-gray-700 dark:bg-gray-800'
                       }`}
                     >
                       <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${healthColor(cell.health)}`} />
@@ -355,7 +355,7 @@ function HeatmapView({ addons, clusters }: { addons: VersionMatrixRow[]; cluster
               </div>
             )}
             {isExpanded && activeCells.length === 0 && (
-              <div className="border-t border-[#a0d0f0] px-4 py-2 text-xs text-[#3a6a8a] dark:border-gray-700 dark:text-gray-500">
+              <div className="border-t border-[#6aade0] px-4 py-2 text-xs text-[#3a6a8a] dark:border-gray-700 dark:text-gray-500">
                 Not deployed on any cluster
               </div>
             )}
@@ -363,7 +363,7 @@ function HeatmapView({ addons, clusters }: { addons: VersionMatrixRow[]; cluster
         )
       })}
       {addons.length === 0 && (
-        <div className="rounded-lg border border-[#90c8ee] bg-[#f0f7ff] p-8 text-center text-sm text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-800">
+        <div className="rounded-lg border border-[#6aade0] bg-[#f0f7ff] p-8 text-center text-sm text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-800">
           No addons match the current filters.
         </div>
       )}
@@ -436,7 +436,7 @@ export function VersionMatrix() {
             placeholder="Search addon by name..."
             value={search}
             onChange={e => setSearch(e.target.value)}
-            className="w-56 rounded-lg border border-[#80b8e0] py-2 pl-10 pr-3 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
+            className="w-56 rounded-lg border border-[#5a9dd0] py-2 pl-10 pr-3 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
           />
         </div>
         <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700 hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-400 dark:hover:bg-amber-900/30">
@@ -446,7 +446,7 @@ export function VersionMatrix() {
         </label>
 
         {/* View mode toggle */}
-        <div className="ml-auto flex items-center rounded-lg border border-[#80b8e0] dark:border-gray-600">
+        <div className="ml-auto flex items-center rounded-lg border border-[#5a9dd0] dark:border-gray-600">
           <button type="button" onClick={() => setViewMode('heatmap')}
             className={`rounded-l-lg p-2 ${viewMode === 'heatmap' ? 'bg-teal-600 text-white' : 'bg-[#f0f7ff] text-[#2a5a7a] hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'}`}
             aria-label="Heatmap view" title="Heatmap (compact)">
@@ -473,7 +473,7 @@ export function VersionMatrix() {
       ) : (
         <div className="space-y-3">
           {filteredAddons.length === 0 ? (
-            <div className="rounded-lg border border-[#90c8ee] bg-[#f0f7ff] p-8 text-center text-sm text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400">
+            <div className="rounded-lg border border-[#6aade0] bg-[#f0f7ff] p-8 text-center text-sm text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400">
               No addons match the current filters.
             </div>
           ) : (

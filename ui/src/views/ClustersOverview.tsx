@@ -298,7 +298,7 @@ export function ClustersOverview() {
                 value={addClusterName}
                 onChange={(e) => setAddClusterName(e.target.value)}
                 placeholder="e.g. prod-us-east-1"
-                className="w-full rounded-md border border-[#80b8e0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
+                className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
               />
             </div>
             <div>
@@ -310,7 +310,7 @@ export function ClustersOverview() {
                 value={addClusterRegion}
                 onChange={(e) => setAddClusterRegion(e.target.value)}
                 placeholder="e.g. us-east-1"
-                className="w-full rounded-md border border-[#80b8e0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
+                className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
               />
             </div>
             {catalogAddons && catalogAddons.addons.length > 0 && (
@@ -318,7 +318,7 @@ export function ClustersOverview() {
                 <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
                   Enable Addons (optional)
                 </label>
-                <div className="max-h-40 space-y-1 overflow-y-auto rounded-md border border-[#90c8ee] p-2 dark:border-gray-700">
+                <div className="max-h-40 space-y-1 overflow-y-auto rounded-md border border-[#6aade0] p-2 dark:border-gray-700">
                   {catalogAddons.addons.map((addon) => (
                     <label
                       key={addon.addon_name}
@@ -333,7 +333,7 @@ export function ClustersOverview() {
                             [addon.addon_name]: e.target.checked,
                           }))
                         }
-                        className="rounded border-[#80b8e0] dark:border-gray-600"
+                        className="rounded border-[#5a9dd0] dark:border-gray-600"
                       />
                       <span className="capitalize">{addon.addon_name}</span>
                     </label>
@@ -353,7 +353,7 @@ export function ClustersOverview() {
               type="button"
               onClick={() => setAddClusterOpen(false)}
               disabled={addClusterSubmitting}
-              className="rounded-md border border-[#80b8e0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+              className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
             >
               {addClusterResult ? 'Close' : 'Cancel'}
             </button>
@@ -388,7 +388,7 @@ export function ClustersOverview() {
       </div>
 
       {/* Advanced filters */}
-      <div className="rounded-lg border border-[#90c8ee] bg-[#d0e8f8] p-4 dark:border-gray-700 dark:bg-gray-900">
+      <div className="rounded-lg border border-[#6aade0] bg-[#d0e8f8] p-4 dark:border-gray-700 dark:bg-gray-900">
         <div className="flex flex-wrap items-center gap-3">
           {/* Name search */}
           <div className="relative min-w-[200px] flex-1">
@@ -400,7 +400,7 @@ export function ClustersOverview() {
               onChange={(e) =>
                 setFilters((prev) => ({ ...prev, name: e.target.value }))
               }
-              className="w-full rounded-md border border-[#80b8e0] bg-[#f0f7ff] py-2 pl-10 pr-4 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:placeholder-[#5a8aaa]"
+              className="w-full rounded-md border border-[#5a9dd0] bg-[#f0f7ff] py-2 pl-10 pr-4 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:placeholder-[#5a8aaa]"
             />
           </div>
 
@@ -412,12 +412,12 @@ export function ClustersOverview() {
                 setVersionDropdownOpen(!versionDropdownOpen);
                 setConnectionDropdownOpen(false);
               }}
-              className="rounded-md border border-[#80b8e0] bg-[#f0f7ff] px-3 py-2 text-sm text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+              className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
             >
               Version{filters.versions.length > 0 ? ` (${filters.versions.length})` : ''}
             </button>
             {versionDropdownOpen && (
-              <div className="absolute left-0 top-full z-10 mt-1 min-w-[180px] rounded-md border border-[#90c8ee] bg-[#f0f7ff] py-1 shadow-lg dark:border-gray-600 dark:bg-gray-800">
+              <div className="absolute left-0 top-full z-10 mt-1 min-w-[180px] rounded-md border border-[#6aade0] bg-[#f0f7ff] py-1 shadow-lg dark:border-gray-600 dark:bg-gray-800">
                 {availableVersions.map((version) => (
                   <label
                     key={version}
@@ -427,7 +427,7 @@ export function ClustersOverview() {
                       type="checkbox"
                       checked={filters.versions.includes(version)}
                       onChange={() => toggleVersion(version)}
-                      className="rounded border-[#80b8e0] dark:border-gray-600"
+                      className="rounded border-[#5a9dd0] dark:border-gray-600"
                     />
                     {version}
                   </label>
@@ -447,12 +447,12 @@ export function ClustersOverview() {
                 setConnectionDropdownOpen(!connectionDropdownOpen);
                 setVersionDropdownOpen(false);
               }}
-              className="rounded-md border border-[#80b8e0] bg-[#f0f7ff] px-3 py-2 text-sm text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+              className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
             >
               Connection Status{filters.connectionTypes.length > 0 ? ` (${filters.connectionTypes.length})` : ''}
             </button>
             {connectionDropdownOpen && (
-              <div className="absolute left-0 top-full z-10 mt-1 min-w-[200px] rounded-md border border-[#90c8ee] bg-[#f0f7ff] py-1 shadow-lg dark:border-gray-600 dark:bg-gray-800">
+              <div className="absolute left-0 top-full z-10 mt-1 min-w-[200px] rounded-md border border-[#6aade0] bg-[#f0f7ff] py-1 shadow-lg dark:border-gray-600 dark:bg-gray-800">
                 {availableConnectionTypes.map((type) => (
                   <label
                     key={type}
@@ -462,7 +462,7 @@ export function ClustersOverview() {
                       type="checkbox"
                       checked={filters.connectionTypes.includes(type)}
                       onChange={() => toggleConnectionType(type)}
-                      className="rounded border-[#80b8e0] dark:border-gray-600"
+                      className="rounded border-[#5a9dd0] dark:border-gray-600"
                     />
                     {type}
                   </label>
@@ -479,14 +479,14 @@ export function ClustersOverview() {
             <button
               type="button"
               onClick={clearFilters}
-              className="rounded-md border border-[#80b8e0] bg-[#f0f7ff] px-3 py-2 text-sm text-[#1a4a6a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+              className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm text-[#1a4a6a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
             >
               Clear all
             </button>
           )}
 
           {/* View mode toggle */}
-          <div className="ml-auto flex items-center rounded-md border border-[#80b8e0] dark:border-gray-600">
+          <div className="ml-auto flex items-center rounded-md border border-[#5a9dd0] dark:border-gray-600">
             <button
               type="button"
               onClick={() => setViewMode('list')}
@@ -557,9 +557,9 @@ export function ClustersOverview() {
 
       {/* Cluster list / grid */}
       {viewMode === 'list' ? (
-        <div className="overflow-x-auto rounded-xl border border-[#90c8ee] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <div className="overflow-x-auto rounded-xl border border-[#6aade0] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
           <table className="w-full text-left text-sm">
-            <thead className="border-b border-[#90c8ee] bg-[#d0e8f8] text-xs uppercase text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
+            <thead className="border-b border-[#6aade0] bg-[#d0e8f8] text-xs uppercase text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
               <tr>
                 <th className="px-6 py-3">Name</th>
                 <th className="px-6 py-3">Connection Status</th>
@@ -567,7 +567,7 @@ export function ClustersOverview() {
                 <th className="px-6 py-3">Addons Installed</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[#90c8ee] dark:divide-gray-700">
+            <tbody className="divide-y divide-[#6aade0] dark:divide-gray-700">
               {filteredClusters.map((cluster) => {
                 const isInCluster = cluster.name === 'in-cluster';
                 return (
@@ -637,7 +637,7 @@ export function ClustersOverview() {
                     ? undefined
                     : () => navigate(`/clusters/${cluster.name}`)
                 }
-                className={`rounded-lg border border-[#90c8ee] bg-[#f0f7ff] p-4 shadow-sm transition-all dark:border-gray-700 dark:bg-gray-800 ${
+                className={`rounded-lg border border-[#6aade0] bg-[#f0f7ff] p-4 shadow-sm transition-all dark:border-gray-700 dark:bg-gray-800 ${
                   isInCluster
                     ? 'cursor-not-allowed opacity-70'
                     : 'cursor-pointer hover:-translate-y-0.5 hover:border-teal-400 hover:shadow-md dark:hover:border-teal-500'
@@ -675,7 +675,7 @@ export function ClustersOverview() {
             );
           })}
           {filteredClusters.length === 0 && (
-            <div className="col-span-full rounded-lg border border-[#90c8ee] bg-[#f0f7ff] p-8 text-center text-[#3a6a8a] dark:border-gray-700 dark:bg-gray-800 dark:text-gray-500">
+            <div className="col-span-full rounded-lg border border-[#6aade0] bg-[#f0f7ff] p-8 text-center text-[#3a6a8a] dark:border-gray-700 dark:bg-gray-800 dark:text-gray-500">
               No clusters match the current filters.
             </div>
           )}

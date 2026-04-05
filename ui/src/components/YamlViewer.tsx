@@ -158,9 +158,9 @@ export function YamlViewer({ yaml: yamlString, title, defaultView = 'raw' }: Yam
   }
 
   return (
-    <div className="rounded-xl border border-[#90c8ee] bg-[#f0f7ff] shadow-sm dark:border-[#1a3a5a] dark:bg-gray-800">
+    <div className="rounded-xl border border-[#6aade0] bg-[#f0f7ff] shadow-sm dark:border-[#1a3a5a] dark:bg-gray-800">
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-[#90c8ee] px-4 py-3 dark:border-[#1a3a5a]">
+      <div className="flex items-center justify-between border-b border-[#6aade0] px-4 py-3 dark:border-[#1a3a5a]">
         <div>
           {title && (
             <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
@@ -173,7 +173,7 @@ export function YamlViewer({ yaml: yamlString, title, defaultView = 'raw' }: Yam
           <button
             type="button"
             onClick={handleCopy}
-            className="inline-flex items-center gap-1 rounded-md border border-[#80b8e0] px-2 py-1 text-xs font-medium text-[#1a4a6a] transition-colors hover:bg-[#d6eeff] dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-700"
+            className="inline-flex items-center gap-1 rounded-md border border-[#5a9dd0] px-2 py-1 text-xs font-medium text-[#1a4a6a] transition-colors hover:bg-[#d6eeff] dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-700"
             aria-label="Copy YAML"
           >
             {copied ? (
@@ -190,7 +190,7 @@ export function YamlViewer({ yaml: yamlString, title, defaultView = 'raw' }: Yam
           </button>
 
           {/* View mode toggle */}
-          <div className="flex rounded-md border border-[#80b8e0] dark:border-gray-600">
+          <div className="flex rounded-md border border-[#5a9dd0] dark:border-gray-600">
             <button
               type="button"
               onClick={() => setMode('raw')}

@@ -80,7 +80,7 @@ function DashboardForm({
   return (
     <form
       onSubmit={handleSubmit}
-      className="rounded-xl border border-[#90c8ee] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900"
+      className="rounded-xl border border-[#6aade0] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900"
     >
       <div className="mb-4 flex items-center justify-between">
         <h3 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
@@ -110,7 +110,7 @@ function DashboardForm({
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. Cluster Monitoring - NonProd"
-            className="w-full rounded-lg border border-[#80b8e0] bg-[#f0f7ff] px-3 py-2 text-sm text-[#0a2a4a] placeholder-[#5a8aaa] focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
+            className="w-full rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm text-[#0a2a4a] placeholder-[#5a8aaa] focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
             required
           />
         </div>
@@ -128,7 +128,7 @@ function DashboardForm({
             onChange={(e) =>
               setProvider(e.target.value as EmbeddedDashboard['provider'])
             }
-            className="w-full rounded-lg border border-[#80b8e0] bg-[#f0f7ff] px-3 py-2 text-sm text-[#0a2a4a] focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+            className="w-full rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm text-[#0a2a4a] focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
           >
             <option value="datadog">Datadog</option>
             <option value="grafana">Grafana</option>
@@ -150,7 +150,7 @@ function DashboardForm({
               onChange={(e) => setUrl(e.target.value)}
               placeholder={'Paste a URL:\nhttps://app.datadoghq.eu/graph/embed?token=...\n\nOr paste the full embed code:\n<iframe src="https://app.datadoghq.eu/graph/embed?token=..." ...></iframe>'}
               rows={4}
-              className="w-full rounded-lg border border-[#80b8e0] bg-[#f0f7ff] px-3 py-2 font-mono text-xs text-[#0a2a4a] placeholder-[#5a8aaa] focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
+              className="w-full rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 font-mono text-xs text-[#0a2a4a] placeholder-[#5a8aaa] focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
               required
             />
           ) : (
@@ -160,7 +160,7 @@ function DashboardForm({
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               placeholder={provider === 'grafana' ? 'https://grafana.example.com/d/abc123/my-dashboard' : 'https://...'}
-              className="w-full rounded-lg border border-[#80b8e0] bg-[#f0f7ff] px-3 py-2 text-sm text-[#0a2a4a] placeholder-[#5a8aaa] focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
+              className="w-full rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm text-[#0a2a4a] placeholder-[#5a8aaa] focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
               required
             />
           )}
@@ -251,7 +251,7 @@ export function Dashboards() {
                 setShowForm(true);
                 setEditingId(null);
               }}
-              className="flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed border-[#80b8e0] px-3 py-2 text-sm font-medium text-[#2a5a7a] transition-colors hover:border-teal-400 hover:text-teal-600 dark:border-gray-600 dark:text-gray-400 dark:hover:border-teal-500 dark:hover:text-teal-400"
+              className="flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed border-[#5a9dd0] px-3 py-2 text-sm font-medium text-[#2a5a7a] transition-colors hover:border-teal-400 hover:text-teal-600 dark:border-gray-600 dark:text-gray-400 dark:hover:border-teal-500 dark:hover:text-teal-400"
             >
               <Plus className="h-4 w-4" />
               Add Dashboard
@@ -314,7 +314,7 @@ export function Dashboards() {
           {effectiveSelected ? (
             <div className="space-y-3">
               {/* Toolbar */}
-              <div className="flex items-center justify-between rounded-lg border border-[#90c8ee] bg-[#f0f7ff] px-4 py-2.5 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+              <div className="flex items-center justify-between rounded-lg border border-[#6aade0] bg-[#f0f7ff] px-4 py-2.5 shadow-sm dark:border-gray-700 dark:bg-gray-900">
                 <span className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
                   {effectiveSelected.name}
                 </span>
@@ -346,7 +346,7 @@ export function Dashboards() {
               </div>
 
               {/* Iframe */}
-              <div className="overflow-hidden rounded-xl border border-[#90c8ee] shadow-md dark:border-gray-700">
+              <div className="overflow-hidden rounded-xl border border-[#6aade0] shadow-md dark:border-gray-700">
                 <iframe
                   src={resolveUrl(effectiveSelected)}
                   title={effectiveSelected.name}
@@ -362,7 +362,7 @@ export function Dashboards() {
             </div>
           ) : !showForm && !editingId ? (
             /* Empty state — only show when form is not open */
-            <div className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-[#80b8e0] py-20 dark:border-gray-700">
+            <div className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-[#5a9dd0] py-20 dark:border-gray-700">
               <BarChart3 className="h-12 w-12 text-[#5a8aaa] dark:text-gray-600" />
               <h3 className="mt-4 text-lg font-semibold text-[#0a3a5a] dark:text-gray-300">
                 No dashboards configured
