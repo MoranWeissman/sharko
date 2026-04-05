@@ -342,7 +342,7 @@ export function ClusterDetail() {
       {/* Cluster info stat cards */}
       <div className="flex flex-wrap gap-3">
         {data.cluster.server_version && (
-          <div className="flex items-center gap-2 rounded-lg border-2 border-[#6aade0] bg-[#f0f7ff] px-4 py-3 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div className="flex items-center gap-2 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] px-4 py-3 shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <Tag className="h-4 w-4 text-teal-500" />
             <div>
               <p className="text-xs text-[#2a5a7a] dark:text-gray-400">Cluster Version</p>
@@ -368,7 +368,7 @@ export function ClusterDetail() {
             </div>
           </div>
         )}
-        <div className="flex items-center gap-2 rounded-lg border-2 border-[#6aade0] bg-[#f0f7ff] px-4 py-3 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <div className="flex items-center gap-2 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] px-4 py-3 shadow-sm dark:border-gray-700 dark:bg-gray-800">
           <Server className="h-4 w-4 text-teal-500" />
           <div>
             <p className="text-xs text-[#2a5a7a] dark:text-gray-400">Connection</p>
@@ -410,7 +410,7 @@ export function ClusterDetail() {
         <TabsContent value="addons" className="space-y-6">
           {/* Admin: Addon Enable/Disable Toggles */}
           <RoleGuard adminOnly>
-            <div className="rounded-lg border-2 border-[#6aade0] bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800">
+            <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800">
               <h3 className="mb-3 text-base font-semibold text-[#0a2a4a] dark:text-gray-100">Manage Addons</h3>
               {Object.keys(addonToggles).length === 0 ? (
                 <p className="text-sm text-[#3a6a8a] dark:text-gray-500">No addons in catalog.</p>
@@ -488,7 +488,7 @@ export function ClusterDetail() {
           </div>
 
           {/* Comparison table */}
-          <div className="overflow-x-auto rounded-xl border-2 border-[#6aade0] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div className="overflow-x-auto rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <table className="w-full text-left text-sm">
               <thead className="border-b border-[#6aade0] bg-[#d0e8f8] text-xs uppercase text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
                 <tr>
@@ -665,7 +665,7 @@ function ConfigOverridesPanel({ data, loading, error, onRetry }: ConfigOverrides
 
   if (overriddenAddons.length === 0) {
     return (
-      <div className="rounded-xl border-2 border-[#6aade0] bg-[#f0f7ff] p-8 text-center shadow-sm dark:border-gray-700 dark:bg-gray-800">
+      <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-8 text-center shadow-sm dark:border-gray-700 dark:bg-gray-800">
         <p className="text-[#2a5a7a] dark:text-gray-400">
           This cluster uses all global defaults — no per-cluster overrides found.
         </p>
@@ -679,7 +679,7 @@ function ConfigOverridesPanel({ data, loading, error, onRetry }: ConfigOverrides
       {overriddenAddons.map((entry) => (
         <div
           key={entry.addon_name}
-          className="rounded-xl border-2 border-[#6aade0] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800"
+          className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800"
         >
           <div className="flex items-center gap-2 border-b border-[#6aade0] px-4 py-3 dark:border-gray-700">
             <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">

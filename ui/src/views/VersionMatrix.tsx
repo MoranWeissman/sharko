@@ -89,7 +89,7 @@ function MatrixCell({ cell, cluster, addonName }: { cell: VersionMatrixCell | un
 /* Transposed matrix: clusters as rows, addons as columns */
 function MatrixTable({ addons, clusters }: { addons: VersionMatrixRow[]; clusters: string[] }) {
   return (
-    <div className="overflow-x-auto rounded-xl border-2 border-[#6aade0] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
+    <div className="overflow-x-auto rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
       <table className="w-full text-left text-sm">
         <thead className="border-b border-[#6aade0] bg-[#d0e8f8] dark:border-gray-700 dark:bg-gray-900">
           <tr>
@@ -204,7 +204,7 @@ function AddonRow({ row, clusters }: { row: VersionMatrixRow; clusters: string[]
   const driftCount = activeCells.filter(e => e.cell.drift_from_catalog).length
 
   return (
-    <div className="rounded-lg border-2 border-[#6aade0] bg-[#f0f7ff] dark:border-gray-700 dark:bg-gray-800/50">
+    <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] dark:border-gray-700 dark:bg-gray-800/50">
       <button
         type="button"
         onClick={() => setExpanded(v => !v)}
@@ -281,7 +281,7 @@ function HeatmapView({ addons, clusters }: { addons: VersionMatrixRow[]; cluster
         const isExpanded = expanded === row.addon_name
 
         return (
-          <div key={row.addon_name} className="rounded-lg border-2 border-[#6aade0] bg-[#f0f7ff] dark:border-gray-700 dark:bg-gray-800/50">
+          <div key={row.addon_name} className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] dark:border-gray-700 dark:bg-gray-800/50">
             {/* Compact row: addon name + dot grid */}
             <button
               type="button"
@@ -363,7 +363,7 @@ function HeatmapView({ addons, clusters }: { addons: VersionMatrixRow[]; cluster
         )
       })}
       {addons.length === 0 && (
-        <div className="rounded-lg border-2 border-[#6aade0] bg-[#f0f7ff] p-8 text-center text-sm text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-800">
+        <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-8 text-center text-sm text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-800">
           No addons match the current filters.
         </div>
       )}
@@ -473,7 +473,7 @@ export function VersionMatrix() {
       ) : (
         <div className="space-y-3">
           {filteredAddons.length === 0 ? (
-            <div className="rounded-lg border-2 border-[#6aade0] bg-[#f0f7ff] p-8 text-center text-sm text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400">
+            <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-8 text-center text-sm text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400">
               No addons match the current filters.
             </div>
           ) : (

@@ -99,7 +99,7 @@ function AddonCard({ addon }: { addon: AddonCatalogItem }) {
   return (
     <div
       onClick={handleCardClick}
-      className="group flex cursor-pointer flex-col rounded-lg border-2 border-[#6aade0] bg-[#f0f7ff] shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:border-teal-400 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-teal-500"
+      className="group flex cursor-pointer flex-col rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:border-teal-400 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-teal-500"
     >
       <div className="flex flex-1 flex-col p-4">
         {/* Header */}
@@ -289,7 +289,7 @@ function PaginationControls({
 function AddonListTable({ addons }: { addons: AddonCatalogItem[] }) {
   const navigate = useNavigate()
   return (
-    <div className="overflow-x-auto rounded-xl border-2 border-[#6aade0] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
+    <div className="overflow-x-auto rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
       <table className="w-full text-left text-sm">
         <thead className="border-b border-[#6aade0] bg-[#d0e8f8] text-xs uppercase text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
           <tr>

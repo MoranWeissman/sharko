@@ -337,7 +337,7 @@ export function Layout() {
               className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs transition-colors ${
                 aiPanelOpen
                   ? 'bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400'
-                  : 'border-2 border-[#6aade0] bg-[#e8f4ff] text-[#2a5a7a] hover:bg-[#d6eeff] dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
+                  : 'ring-2 ring-[#6aade0] bg-[#e8f4ff] text-[#2a5a7a] hover:bg-[#d6eeff] dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
               }`}
               aria-label="Toggle AI Assistant"
             >
@@ -348,7 +348,7 @@ export function Layout() {
             {/* Search trigger */}
             <button
               onClick={() => { const e = new KeyboardEvent('keydown', { key: 'k', metaKey: true }); window.dispatchEvent(e) }}
-              className="hidden items-center gap-1.5 rounded-lg border-2 border-[#6aade0] bg-[#e8f4ff] px-3 py-1.5 text-xs text-[#3a6a8a] transition-colors hover:bg-[#d6eeff] sm:flex dark:border-gray-700 dark:bg-gray-800 dark:hover:bg-gray-700"
+              className="hidden items-center gap-1.5 rounded-lg ring-2 ring-[#6aade0] bg-[#e8f4ff] px-3 py-1.5 text-xs text-[#3a6a8a] transition-colors hover:bg-[#d6eeff] sm:flex dark:border-gray-700 dark:bg-gray-800 dark:hover:bg-gray-700"
             >
               <Search className="h-3.5 w-3.5" />
               <span>Search...</span>
@@ -357,7 +357,7 @@ export function Layout() {
               </kbd>
             </button>
             {!loading && activeConnection && (
-              <div className="hidden items-center gap-2 rounded-lg border-2 border-[#6aade0] bg-[#e8f4ff] px-3 py-1.5 text-xs text-[#2a5a7a] sm:flex dark:border-gray-600 dark:bg-gray-800 dark:text-gray-400">
+              <div className="hidden items-center gap-2 rounded-lg ring-2 ring-[#6aade0] bg-[#e8f4ff] px-3 py-1.5 text-xs text-[#2a5a7a] sm:flex dark:border-gray-600 dark:bg-gray-800 dark:text-gray-400">
                 <Plug className="h-3.5 w-3.5" />
                 <span>{activeConnection}</span>
               </div>
@@ -375,7 +375,7 @@ export function Layout() {
               {userMenuOpen && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setUserMenuOpen(false)} />
-                  <div className="absolute right-0 top-10 z-50 w-48 rounded-lg border-2 border-[#6aade0] bg-[#f0f7ff] py-1 shadow-lg dark:border-gray-700 dark:bg-gray-800">
+                  <div className="absolute right-0 top-10 z-50 w-48 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] py-1 shadow-lg dark:border-gray-700 dark:bg-gray-800">
                     <button
                       onClick={() => { navigate('/user'); setUserMenuOpen(false) }}
                       className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-[#0a3a5a] hover:bg-[#d6eeff] dark:text-gray-300 dark:hover:bg-gray-700"

@@ -170,7 +170,7 @@ function ReleaseNotesSection({ notes }: { notes: string }) {
   const totalLines = notes.split('\n').length;
 
   return (
-    <div className="rounded-xl border-2 border-[#6aade0] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-900">
+    <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-900">
       <div
         className="flex cursor-pointer items-center justify-between border-b border-[#6aade0] px-6 py-3 dark:border-gray-800"
         onClick={() => setExpanded((e) => !e)}
@@ -401,7 +401,7 @@ export function UpgradeChecker() {
       </div>
 
       {/* Step 1: Addon Selection */}
-      <div className="rounded-xl border-2 border-[#6aade0] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+      <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900">
         <h2 className="mb-4 flex items-center gap-2 text-lg font-semibold text-[#0a2a4a] dark:text-white">
           <span className="flex h-6 w-6 items-center justify-center rounded-full bg-teal-100 text-xs font-bold text-teal-700 dark:bg-teal-900 dark:text-teal-300">
             1
@@ -426,9 +426,9 @@ export function UpgradeChecker() {
           </div>
 
           {addonDropdownOpen && (
-            <div className="absolute z-20 mt-1 w-full rounded-lg border-2 border-[#6aade0] bg-[#f0f7ff] shadow-lg dark:border-gray-600 dark:bg-gray-800">
+            <div className="absolute z-20 mt-1 w-full rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-lg dark:border-gray-600 dark:bg-gray-800">
               <div className="border-b border-[#6aade0] p-2 dark:border-gray-700">
-                <div className="flex items-center gap-2 rounded-md border-2 border-[#6aade0] bg-[#d0e8f8] px-2 dark:border-gray-600 dark:bg-gray-700">
+                <div className="flex items-center gap-2 rounded-md ring-2 ring-[#6aade0] bg-[#d0e8f8] px-2 dark:border-gray-600 dark:bg-gray-700">
                   <Search className="h-4 w-4 text-[#3a6a8a]" />
                   <input
                     type="text"
@@ -470,7 +470,7 @@ export function UpgradeChecker() {
 
       {/* Step 2: Version Selection */}
       {selectedAddon && (
-        <div className="rounded-xl border-2 border-[#6aade0] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+        <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900">
           <h2 className="mb-4 flex items-center gap-2 text-lg font-semibold text-[#0a2a4a] dark:text-white">
             <span className="flex h-6 w-6 items-center justify-center rounded-full bg-teal-100 text-xs font-bold text-teal-700 dark:bg-teal-900 dark:text-teal-300">
               2
@@ -658,7 +658,7 @@ export function UpgradeChecker() {
               </div>
             </div>
           ) : (
-            <div className="flex items-center gap-2 rounded-lg border-2 border-[#6aade0] bg-[#d0e8f8] px-4 py-3 text-sm text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-800/50 dark:text-gray-400">
+            <div className="flex items-center gap-2 rounded-lg ring-2 ring-[#6aade0] bg-[#d0e8f8] px-4 py-3 text-sm text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-800/50 dark:text-gray-400">
               <Sparkles className="h-4 w-4 shrink-0 text-[#3a6a8a]" />
               <span>
                 Enable an AI provider in{' '}
@@ -675,7 +675,7 @@ export function UpgradeChecker() {
 
           {/* Changes tabs */}
           {result.total_changes > 0 && (
-            <div className="rounded-xl border-2 border-[#6aade0] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-900">
+            <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-900">
               <div className="flex border-b border-[#6aade0] dark:border-gray-700">
                 {([
                   { key: 'added' as ChangeTab, label: 'Added Fields', count: result.added.length, color: 'text-green-600 dark:text-green-400' },
