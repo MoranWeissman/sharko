@@ -55,14 +55,14 @@ export function UserInfo() {
           UPDATE PASSWORD
         </button>
 
-        <form id="password-form" onSubmit={handleUpdatePassword} className="hidden space-y-4 rounded-lg border border-[#90c8ee] bg-[#d0e8f8] p-6 dark:border-gray-700 dark:bg-gray-800">
+        <form id="password-form" onSubmit={handleUpdatePassword} className="hidden space-y-4 rounded-lg border border-[#6aade0] bg-[#d0e8f8] p-6 dark:border-gray-700 dark:bg-gray-800">
           <div>
             <label className="block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">Current Password</label>
             <input
               type="password"
               value={currentPassword}
               onChange={(e) => setCurrentPassword(e.target.value)}
-              className="mt-1 block w-full rounded-lg border border-[#80b8e0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-900 dark:text-white"
+              className="mt-1 block w-full rounded-lg border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-900 dark:text-white"
             />
           </div>
           <div>
@@ -71,7 +71,7 @@ export function UserInfo() {
               type="password"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
-              className="mt-1 block w-full rounded-lg border border-[#80b8e0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-900 dark:text-white"
+              className="mt-1 block w-full rounded-lg border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-900 dark:text-white"
             />
           </div>
           <div>
@@ -80,7 +80,7 @@ export function UserInfo() {
               type="password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
-              className="mt-1 block w-full rounded-lg border border-[#80b8e0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-900 dark:text-white"
+              className="mt-1 block w-full rounded-lg border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-900 dark:text-white"
             />
           </div>
 

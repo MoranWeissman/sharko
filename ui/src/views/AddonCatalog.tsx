@@ -99,7 +99,7 @@ function AddonCard({ addon }: { addon: AddonCatalogItem }) {
   return (
     <div
       onClick={handleCardClick}
-      className="group flex cursor-pointer flex-col rounded-lg border border-[#90c8ee] bg-[#f0f7ff] shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:border-teal-400 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-teal-500"
+      className="group flex cursor-pointer flex-col rounded-lg border border-[#6aade0] bg-[#f0f7ff] shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:border-teal-400 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-teal-500"
     >
       <div className="flex flex-1 flex-col p-4">
         {/* Header */}
@@ -169,7 +169,7 @@ function AddonCard({ addon }: { addon: AddonCatalogItem }) {
 
         {/* Expanded section */}
         {expanded && (
-          <div className="mt-3 border-t border-[#90c8ee] pt-3 dark:border-gray-700">
+          <div className="mt-3 border-t border-[#6aade0] pt-3 dark:border-gray-700">
             <h4 className="mb-2 text-xs font-semibold text-[#0a3a5a] dark:text-gray-300">
               Cluster Deployments
             </h4>
@@ -289,9 +289,9 @@ function PaginationControls({
 function AddonListTable({ addons }: { addons: AddonCatalogItem[] }) {
   const navigate = useNavigate()
   return (
-    <div className="overflow-x-auto rounded-xl border border-[#90c8ee] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
+    <div className="overflow-x-auto rounded-xl border border-[#6aade0] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
       <table className="w-full text-left text-sm">
-        <thead className="border-b border-[#90c8ee] bg-[#d0e8f8] text-xs uppercase text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
+        <thead className="border-b border-[#6aade0] bg-[#d0e8f8] text-xs uppercase text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
           <tr>
             <th className="px-6 py-3">Addon Name</th>
             <th className="px-6 py-3">Version</th>
@@ -301,7 +301,7 @@ function AddonListTable({ addons }: { addons: AddonCatalogItem[] }) {
             <th className="px-6 py-3">Not Deployed</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-[#90c8ee] dark:divide-gray-700">
+        <tbody className="divide-y divide-[#6aade0] dark:divide-gray-700">
           {addons.map((addon) => (
             <tr
               key={addon.addon_name}
@@ -569,7 +569,7 @@ export function AddonCatalog() {
                     : field === 'namespace' ? 'optional, defaults to addon name'
                     : ''
                   }
-                  className="w-full rounded-md border border-[#80b8e0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
+                  className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
                 />
               </div>
             ))}
@@ -582,7 +582,7 @@ export function AddonCatalog() {
                 value={addonForm.sync_wave}
                 onChange={(e) => setAddonForm((prev) => ({ ...prev, sync_wave: e.target.value }))}
                 placeholder="e.g. 1"
-                className="w-full rounded-md border border-[#80b8e0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
+                className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
               />
             </div>
             {addAddonError && (
@@ -597,7 +597,7 @@ export function AddonCatalog() {
               type="button"
               onClick={() => setAddAddonOpen(false)}
               disabled={addAddonSubmitting}
-              className="rounded-md border border-[#80b8e0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+              className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
             >
               {addAddonResult ? 'Close' : 'Cancel'}
             </button>
@@ -661,7 +661,7 @@ export function AddonCatalog() {
             placeholder="Search addons by name, chart, or namespace..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full rounded-lg border border-[#80b8e0] py-2 pl-10 pr-4 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:placeholder-[#5a8aaa]"
+            className="w-full rounded-lg border border-[#5a9dd0] py-2 pl-10 pr-4 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:placeholder-[#5a8aaa]"
           />
         </div>
 
@@ -670,7 +670,7 @@ export function AddonCatalog() {
           <select
             value={filterType}
             onChange={(e) => setFilterType(e.target.value as FilterType)}
-            className="rounded-lg border border-[#80b8e0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
+            className="rounded-lg border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
           >
             <option value="all">All Addons</option>
             <option value="healthy">Healthy Only</option>
@@ -684,7 +684,7 @@ export function AddonCatalog() {
           <select
             value={sortBy}
             onChange={(e) => setSortBy(e.target.value as SortBy)}
-            className="rounded-lg border border-[#80b8e0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
+            className="rounded-lg border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
           >
             <option value="name">A-Z</option>
             <option value="applications">Most Apps</option>
@@ -694,7 +694,7 @@ export function AddonCatalog() {
         <select
           value={pageSize}
           onChange={(e) => setPageSize(Number(e.target.value) as PageSize)}
-          className="rounded-lg border border-[#80b8e0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
+          className="rounded-lg border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
         >
           <option value={15}>15 per page</option>
           <option value={30}>30 per page</option>
@@ -702,7 +702,7 @@ export function AddonCatalog() {
         </select>
 
         {/* View mode toggle */}
-        <div className="ml-auto flex items-center rounded-lg border border-[#80b8e0] dark:border-gray-600">
+        <div className="ml-auto flex items-center rounded-lg border border-[#5a9dd0] dark:border-gray-600">
           <button
             type="button"
             onClick={() => setViewMode('grid')}

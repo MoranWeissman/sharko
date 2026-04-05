@@ -138,7 +138,7 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
       )}
 
       {/* Role legend */}
-      <div className="flex flex-wrap gap-4 rounded-xl border border-[#90c8ee] bg-[#f0f7ff] p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+      <div className="flex flex-wrap gap-4 rounded-xl border border-[#6aade0] bg-[#f0f7ff] p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
         <div className="text-xs font-medium text-[#2a5a7a] dark:text-gray-400">Roles:</div>
         <div className="flex items-center gap-1.5 text-xs">
           <Shield className="h-3.5 w-3.5 text-red-500" />
@@ -158,8 +158,8 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
       </div>
 
       {/* Users table */}
-      <div className="rounded-xl border border-[#90c8ee] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
-        <div className="flex items-center justify-between border-b border-[#90c8ee] p-4 dark:border-gray-700">
+      <div className="rounded-xl border border-[#6aade0] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <div className="flex items-center justify-between border-b border-[#6aade0] p-4 dark:border-gray-700">
           <h3 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
             Users ({users.length})
           </h3>
@@ -171,7 +171,7 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
 
         {/* Add user form */}
         {showAddForm && (
-          <div className="border-b border-[#90c8ee] bg-[#d0e8f8] p-4 dark:border-gray-700 dark:bg-gray-900/50">
+          <div className="border-b border-[#6aade0] bg-[#d0e8f8] p-4 dark:border-gray-700 dark:bg-gray-900/50">
             <div className="flex items-end gap-3">
               <div className="flex-1">
                 <label className="mb-1 block text-xs font-medium text-[#1a4a6a] dark:text-gray-400">Username</label>
@@ -180,7 +180,7 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
                   value={newUsername}
                   onChange={(e) => setNewUsername(e.target.value)}
                   placeholder="e.g. john.doe"
-                  className="w-full rounded-lg border border-[#80b8e0] bg-[#f0f7ff] px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                  className="w-full rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
                   autoFocus
                 />
               </div>
@@ -189,7 +189,7 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
                 <select
                   value={newRole}
                   onChange={(e) => setNewRole(e.target.value)}
-                  className="w-full rounded-lg border border-[#80b8e0] bg-[#f0f7ff] px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                  className="w-full rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
                 >
                   <option value="viewer">Viewer</option>
                   <option value="operator">Operator</option>
