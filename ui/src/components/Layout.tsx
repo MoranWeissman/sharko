@@ -19,6 +19,8 @@ import {
   Search,
   Sparkles,
   X,
+  LayoutGrid,
+  GitCompareArrows,
 } from 'lucide-react'
 import { useConnections } from '@/hooks/useConnections'
 import { FloatingAssistant } from '@/components/FloatingAssistant'
@@ -31,7 +33,7 @@ interface NavItem {
   to: string
   label: string
   icon: typeof LayoutDashboard
-  children?: { to: string; label: string }[]
+  children?: { to: string; label: string; icon: typeof LayoutDashboard }[]
 }
 
 interface NavSection {
@@ -51,8 +53,8 @@ const navSections: NavSection[] = [
         label: 'Addons',
         icon: Package,
         children: [
-          { to: '/addons', label: 'Catalog' },
-          { to: '/version-matrix', label: 'Version Drift' },
+          { to: '/addons', label: 'Catalog', icon: LayoutGrid },
+          { to: '/version-matrix', label: 'Version Drift', icon: GitCompareArrows },
         ],
       },
     ],
@@ -253,7 +255,10 @@ export function Layout() {
                                   }`
                                 }
                               >
-                                {child.label}
+                                <span className="flex items-center gap-2">
+                                  <child.icon className="h-3.5 w-3.5 shrink-0" />
+                                  {child.label}
+                                </span>
                               </NavLink>
                             ))}
                           </div>
