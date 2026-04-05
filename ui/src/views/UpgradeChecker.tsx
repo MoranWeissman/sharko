@@ -394,7 +394,7 @@ export function UpgradeChecker() {
           <div>
             <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Addon Upgrade Checker</h1>
             <p className="text-sm text-gray-500 dark:text-gray-400">
-              Analyze the impact of upgrading an add-on to a new version
+              Analyze the impact of upgrading an addon to a new version
             </p>
           </div>
         </div>

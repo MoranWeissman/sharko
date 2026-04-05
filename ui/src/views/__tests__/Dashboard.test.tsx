@@ -20,6 +20,7 @@ vi.mock('@/services/api', () => ({
     getObservability: vi.fn().mockResolvedValue(null),
     getVersionMatrix: vi.fn().mockResolvedValue(null),
     getAttentionItems: vi.fn().mockResolvedValue([]),
+    getClusters: vi.fn().mockResolvedValue({ clusters: [] }),
     getDashboardStats: vi.fn().mockResolvedValue({
       connections: { total: 1, active: 'dev' },
       clusters: { total: 10, connected_to_argocd: 8, disconnected_from_argocd: 2 },

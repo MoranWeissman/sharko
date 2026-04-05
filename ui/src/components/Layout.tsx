@@ -20,7 +20,6 @@ import {
   Menu,
   Search,
   MessageSquare,
-  Key,
 } from 'lucide-react'
 import { useConnections } from '@/hooks/useConnections'
 import { FloatingAssistant } from '@/components/FloatingAssistant'
@@ -42,19 +41,19 @@ interface NavSection {
 
 const navSections: NavSection[] = [
   {
-    label: 'Monitor',
+    label: 'Overview',
     items: [
       { to: '/', label: 'Dashboard', icon: LayoutDashboard },
       { to: '/clusters', label: 'Clusters', icon: Server },
       { to: '/addons', label: 'Addons Catalog', icon: Package },
-      { to: '/version-matrix', label: 'Version Drift Detector', icon: TableProperties },
-      { to: '/observability', label: 'Observability', icon: Activity },
     ],
   },
   {
-    label: 'Operate',
+    label: 'Manage',
     items: [
-      { to: '/upgrade', label: 'Addon Upgrade Checker', icon: ArrowUpCircle },
+      { to: '/version-matrix', label: 'Version Drift', icon: TableProperties },
+      { to: '/upgrade', label: 'Upgrade Checker', icon: ArrowUpCircle },
+      { to: '/observability', label: 'Observability', icon: Activity },
       { to: '/dashboards', label: 'Dashboards', icon: BarChart3 },
     ],
   },
@@ -63,8 +62,6 @@ const navSections: NavSection[] = [
     adminOnly: true,
     items: [
       { to: '/settings', label: 'Settings', icon: Settings },
-      { to: '/users', label: 'User Management', icon: User },
-      { to: '/api-keys', label: 'API Keys', icon: Key },
     ],
   },
   {
@@ -142,7 +139,7 @@ export function Layout() {
   }, [])
 
   return (
-    <div className="flex h-screen bg-gray-50 dark:bg-gray-950">
+    <div className="flex h-screen bg-[#F0F7FF] dark:bg-gray-950">
       {/* Mobile overlay */}
       {mobileOpen && (
         <div className="fixed inset-0 z-40 bg-black/50 lg:hidden" onClick={() => setMobileOpen(false)} />
@@ -150,7 +147,7 @@ export function Layout() {
 
       {/* Sidebar — always dark */}
       <aside
-        className={`flex flex-col bg-slate-900 shadow-sm transition-all duration-200 ${
+        className={`flex flex-col bg-[#0B1426] shadow-sm transition-all duration-200 ${
           collapsed ? 'w-16' : 'w-60'
         } ${mobileOpen ? 'fixed inset-y-0 left-0 z-50 w-60' : 'hidden lg:flex'}`}
       >
@@ -158,21 +155,21 @@ export function Layout() {
         <Link
           to="/dashboard"
           aria-label="Sharko — go to dashboard"
-          className="flex h-14 items-center gap-2 border-b border-slate-700 px-4 transition-colors hover:bg-slate-800"
+          className="flex h-14 items-center gap-2 border-b border-[#1A2D4A] px-4 transition-colors hover:bg-[#132038]"
           onClick={() => setMobileOpen(false)}
         >
-          <img src="/sharko-icon-32.png" alt="" className="h-6 w-6 shrink-0" />
+          <img src="/sharko-mascot.png" alt="" className="h-7 w-auto shrink-0" />
           {!collapsed && (
-            <span className="text-sm font-bold text-cyan-500">Sharko</span>
+            <span className="text-sm font-bold text-cyan-400">Sharko</span>
           )}
         </Link>
 
         {/* Navigation */}
         <nav className="flex-1 overflow-y-auto px-2 py-3">
           {navSections.filter(s => !s.adminOnly || isAdmin).map((section, si) => (
-            <div key={section.label} className={si > 0 ? 'mt-4 border-t border-slate-700 pt-3' : ''}>
+            <div key={section.label} className={si > 0 ? 'mt-4 border-t border-[#1A2D4A] pt-3' : ''}>
               {!collapsed && (
-                <span className="mb-1 block px-3 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                <span className="mb-1 block px-3 text-[10px] font-semibold uppercase tracking-wider text-[#5A7A9B]">
                   {section.label}
                 </span>
               )}
@@ -186,8 +183,8 @@ export function Layout() {
                     className={({ isActive }) =>
                       `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
                         isActive
-                          ? 'border-l-[3px] border-cyan-400 bg-slate-700 text-white'
-                          : 'border-l-[3px] border-transparent text-slate-300 hover:bg-slate-800 hover:text-white'
+                          ? 'border-l-[3px] border-cyan-400 bg-[#1A2D4A] text-white'
+                          : 'border-l-[3px] border-transparent text-[#94B8DB] hover:bg-[#132038] hover:text-white'
                       } ${collapsed && !mobileOpen ? 'justify-center px-0' : ''}`
                     }
                     title={collapsed && !mobileOpen ? item.label : undefined}
@@ -202,10 +199,10 @@ export function Layout() {
         </nav>
 
         {/* Collapse toggle */}
-        <div className="border-t border-slate-700 p-2">
+        <div className="border-t border-[#1A2D4A] p-2">
           <button
             onClick={() => setCollapsed((c) => !c)}
-            className="flex w-full items-center justify-center rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white"
+            className="flex w-full items-center justify-center rounded-lg p-2 text-[#6B8FB5] hover:bg-[#132038] hover:text-white"
             aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           >
             {collapsed ? (
@@ -216,7 +213,7 @@ export function Layout() {
           </button>
 
           {appVersion && (
-            <p className="mt-1 text-center text-[10px] text-slate-500" title={`Version ${appVersion}`}>
+            <p className="mt-1 text-center text-[10px] text-[#5A7A9B]" title={`Version ${appVersion}`}>
               {collapsed ? `v${appVersion.split('.')[0]}` : `v${appVersion}`}
             </p>
           )}

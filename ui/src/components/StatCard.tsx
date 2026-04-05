@@ -52,7 +52,7 @@ export function StatCard({
             }
           : undefined
       }
-      className={`relative rounded-lg border border-l-4 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800 ${borderClass} ${selectedClass} ${interactiveClass}`}
+      className={`relative rounded-lg border border-[#D6E5F5] border-l-4 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800 ${borderClass} ${selectedClass} ${interactiveClass}`}
     >
       {icon && (
         <div className="absolute right-4 top-4 text-gray-400 dark:text-gray-500">{icon}</div>

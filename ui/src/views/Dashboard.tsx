@@ -5,8 +5,10 @@ import {
   ArrowUpCircle, Activity, Clock, ChevronRight
 } from 'lucide-react';
 import { api } from '@/services/api';
-import type { DashboardStats, SyncActivityEntry } from '@/services/models';
+import type { DashboardStats, SyncActivityEntry, ClustersResponse } from '@/services/models';
 import { StatCard } from '@/components/StatCard';
+import { ClusterCard } from '@/components/ClusterCard';
+import { WaveDecoration } from '@/components/WaveDecoration';
 import { LoadingState } from '@/components/LoadingState';
 import { ErrorState } from '@/components/ErrorState';
 
@@ -23,7 +25,7 @@ function HealthBar({ title, subtitle, segments }: HealthBarProps) {
   if (total === 0) return null;
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+    <div className="rounded-xl border border-[#D6E5F5] bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
       <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">{title}</h3>
       <p className="mb-3 text-xs text-gray-500 dark:text-gray-400">{subtitle}</p>
       <div className="mb-3 flex h-3 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-700">
@@ -70,16 +72,18 @@ export function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [attentionItems, setAttentionItems] = useState<{ app_name: string; addon_name: string; cluster: string; health: string; sync: string; error?: string; error_type?: string }[]>([]);
   const [showAttention, setShowAttention] = useState(false);
+  const [clusters, setClusters] = useState<{ name: string; connectionStatus: string; addons: { name: string; health: string }[]; healthy: number; total: number }[]>([]);
 
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
-      const [statsData, obsData, matrixData, attention] = await Promise.all([
+      const [statsData, obsData, matrixData, attention, clustersData] = await Promise.all([
         api.getDashboardStats(),
         api.getObservability().catch(() => null),
         api.getVersionMatrix().catch(() => null),
         api.getAttentionItems().catch(() => []),
+        api.getClusters().catch(() => null),
       ]);
       setStats(statsData);
       setAttentionItems(attention || []);
@@ -102,6 +106,27 @@ export function Dashboard() {
           }
         }
         setVersionDrifts(drifts);
+      }
+
+      // Build cluster cards
+      const typedClusters = clustersData as ClustersResponse | null
+      if (typedClusters?.clusters && matrixData?.addons) {
+        const cards = typedClusters.clusters.map(c => {
+          const addons: { name: string; health: string }[] = []
+          let healthy = 0
+          let total = 0
+          for (const row of matrixData.addons) {
+            const cell = row.cells?.[c.name]
+            if (cell) {
+              total++
+              const health = cell.health || 'Unknown'
+              if (health === 'Healthy') healthy++
+              addons.push({ name: row.addon_name, health })
+            }
+          }
+          return { name: c.name, connectionStatus: c.connection_status || 'Unknown', addons, healthy, total }
+        })
+        setClusters(cards)
       }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to load dashboard');
@@ -129,14 +154,23 @@ export function Dashboard() {
   return (
     <div className="mx-auto max-w-screen-xl space-y-6">
       {/* Hero Section */}
-      <div className="rounded-2xl bg-gradient-to-r from-cyan-600 to-blue-700 px-8 py-10 text-white shadow-lg dark:from-cyan-800 dark:to-blue-900">
-        <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">
-          Sharko
-        </h1>
-        <p className="mt-2 max-w-2xl text-lg text-cyan-100">
-          Centralized visibility into add-on deployments, health status, and
-          configurations across all your Kubernetes clusters.
-        </p>
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-cyan-700 to-blue-800 px-8 py-8 text-white shadow-lg dark:from-cyan-900 dark:to-blue-950">
+        <div className="flex items-center gap-6">
+          <img
+            src="/sharko-banner.png"
+            alt="Sharko"
+            className="hidden h-24 w-auto sm:block"
+          />
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
+              Sharko
+            </h1>
+            <p className="mt-1 max-w-2xl text-sm text-cyan-100 sm:text-base">
+              Addon management across all your Kubernetes clusters.
+            </p>
+          </div>
+        </div>
+        <WaveDecoration />
       </div>
 
       {/* Needs Attention */}
@@ -167,7 +201,7 @@ export function Dashboard() {
                 <button onClick={() => navigate('/version-matrix?drift=true')}
                   className="flex items-center gap-2 rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-xs text-amber-700 hover:bg-amber-50 dark:border-amber-800 dark:bg-gray-800 dark:text-amber-400">
                   <div className="h-2 w-2 rounded-full bg-amber-500" />
-                  {versionDrifts.length} add-on{versionDrifts.length !== 1 ? 's' : ''} with drift
+                  {versionDrifts.length} addon{versionDrifts.length !== 1 ? 's' : ''} with drift
                 </button>
               )}
             </div>
@@ -223,6 +257,25 @@ export function Dashboard() {
           icon={<Rocket className="h-6 w-6" />} color="warning" onClick={() => navigate('/version-matrix')} />
       </div>
 
+      {/* Cluster Cards */}
+      {clusters.length > 0 && (
+        <div>
+          <h2 className="mb-3 text-lg font-semibold text-gray-900 dark:text-gray-100">Clusters</h2>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {clusters.map((cluster) => (
+              <ClusterCard
+                key={cluster.name}
+                name={cluster.name}
+                connectionStatus={cluster.connectionStatus}
+                addonSummary={cluster.addons}
+                healthyCount={cluster.healthy}
+                totalCount={cluster.total}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Health Bars */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <HealthBar title="Application Health" subtitle="Operational health of deployed applications"
@@ -242,7 +295,7 @@ export function Dashboard() {
       {/* Bottom row: Quick Actions + Recent Activity + Version Drift */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         {/* Quick Actions */}
-        <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <div className="rounded-xl border border-[#D6E5F5] bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
           <h3 className="mb-3 text-sm font-semibold text-gray-900 dark:text-gray-100">Quick Actions</h3>
           <div className="space-y-2">
             <button onClick={() => navigate('/upgrade')}
@@ -261,9 +314,9 @@ export function Dashboard() {
         </div>
 
         {/* Recent Sync Activity */}
-        <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <div className="rounded-xl border border-[#D6E5F5] bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
           <div className="mb-3 flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Recent Syncs</h3>
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Recent Activity</h3>
             <button onClick={() => navigate('/observability')} className="text-xs text-cyan-600 hover:text-cyan-700 dark:text-cyan-400">
               View all
             </button>
@@ -291,7 +344,7 @@ export function Dashboard() {
         </div>
 
         {/* Version Drift */}
-        <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <div className="rounded-xl border border-[#D6E5F5] bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
           <div className="mb-3 flex items-center justify-between">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Version Drift</h3>
             <button onClick={() => navigate('/version-matrix')} className="text-xs text-cyan-600 hover:text-cyan-700 dark:text-cyan-400">

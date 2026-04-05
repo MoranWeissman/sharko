@@ -72,6 +72,16 @@ function renderDetail() {
   )
 }
 
+function renderDetailClustersTab() {
+  return render(
+    <MemoryRouter initialEntries={['/addons/ingress-nginx?tab=clusters']}>
+      <Routes>
+        <Route path="/addons/:name" element={<AddonDetail />} />
+      </Routes>
+    </MemoryRouter>,
+  )
+}
+
 describe('AddonDetail', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -102,7 +112,7 @@ describe('AddonDetail', () => {
   })
 
   it('renders cluster applications table', async () => {
-    renderDetail()
+    renderDetailClustersTab()
 
     await waitFor(() => {
       expect(screen.getByText('Cluster Applications')).toBeInTheDocument()
@@ -115,7 +125,7 @@ describe('AddonDetail', () => {
   })
 
   it('renders environment versions', async () => {
-    renderDetail()
+    renderDetailClustersTab()
 
     await waitFor(() => {
       expect(screen.getByText('Environment Versions')).toBeInTheDocument()
@@ -128,7 +138,7 @@ describe('AddonDetail', () => {
   })
 
   it('renders disabled clusters section', async () => {
-    renderDetail()
+    renderDetailClustersTab()
 
     await waitFor(() => {
       expect(screen.getByText('Disabled on 1 Clusters')).toBeInTheDocument()
@@ -138,7 +148,7 @@ describe('AddonDetail', () => {
   })
 
   it('renders filter controls', async () => {
-    renderDetail()
+    renderDetailClustersTab()
 
     await waitFor(() => {
       expect(screen.getByText('Filter Applications')).toBeInTheDocument()

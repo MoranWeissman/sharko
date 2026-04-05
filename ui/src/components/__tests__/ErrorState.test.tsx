@@ -12,13 +12,13 @@ describe('ErrorState', () => {
     const handleRetry = vi.fn();
     render(<ErrorState message="Error" onRetry={handleRetry} />);
 
-    const retryButton = screen.getByRole('button', { name: 'Retry' });
+    const retryButton = screen.getByRole('button', { name: 'Try Again' });
     fireEvent.click(retryButton);
     expect(handleRetry).toHaveBeenCalledTimes(1);
   });
 
   it('retry button is not shown when onRetry is not provided', () => {
     render(<ErrorState message="Error" />);
-    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Try Again' })).not.toBeInTheDocument();
   });
 });

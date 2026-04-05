@@ -451,7 +451,7 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
                 AI Assistant
               </h1>
               <p className="text-xs text-gray-500 dark:text-gray-400">
-                Ask questions about your add-on deployments
+                Ask questions about your addon deployments
               </p>
             </div>
           </div>
