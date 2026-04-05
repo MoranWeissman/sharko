@@ -3,6 +3,8 @@
 > This document defines every API endpoint, request/response shape, error code, and
 > orchestration behavior. It is the single source of truth for v1.0.0 implementation.
 > CLI commands, UI write features, and IDP integrations all derive from this contract.
+>
+> **Swagger UI** is available at `/swagger/index.html` for interactive API exploration.
 
 ---
 
@@ -346,9 +348,9 @@ Register a new cluster: fetch credentials from the secrets provider, verify conn
 | 502 | Secrets provider, ArgoCD, or Git unreachable |
 
 **Rollback Rules:**
-- Steps 1-3 fail → no cleanup needed (nothing was created)
-- Step 4 fails → no cleanup needed (ArgoCD registration didn't happen)
-- Steps 5-7 fail → **DO NOT auto-rollback ArgoCD registration.** Return partial success. ArgoCD may have already started deploying addons; deregistering could trigger cascade deletion.
+- Steps 1-3 fail -> no cleanup needed (nothing was created)
+- Step 4 fails -> no cleanup needed (ArgoCD registration didn't happen)
+- Steps 5-7 fail -> **DO NOT auto-rollback ArgoCD registration.** Return partial success. ArgoCD may have already started deploying addons; deregistering could trigger cascade deletion.
 
 ---
 
@@ -759,7 +761,7 @@ Upgrade multiple addons in a single PR. All upgrades are applied to the global c
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| upgrades | map[string]string | yes | Map of addon name → target version. At least one required. |
+| upgrades | map[string]string | yes | Map of addon name -> target version. At least one required. |
 
 **Success Response (200 OK):**
 ```json
@@ -803,7 +805,7 @@ Define how secrets for a specific addon should be fetched from the secrets provi
 | addon_name | string | yes | The addon this secret belongs to. Must match an addon in the catalog. |
 | secret_name | string | yes | Name of the Kubernetes Secret to create on remote clusters. |
 | namespace | string | yes | Namespace to create the secret in on remote clusters. |
-| keys | map[string]string | yes | Map of K8s secret data key → provider path (e.g. AWS SM path or K8s secret name). |
+| keys | map[string]string | yes | Map of K8s secret data key -> provider path (e.g. AWS SM path or K8s secret name). |
 
 **Success Response (201 Created):**
 ```json
@@ -1194,3 +1196,103 @@ Run 'sharko status' to watch progress.
 When a cluster is registered in ArgoCD (step 4 of register), the ApplicationSet controller may immediately detect the new cluster and start deploying addons. If we auto-deregister the cluster because a later step (Git commit) failed, ArgoCD may cascade-delete the addons it just started deploying. This causes more damage than the original failure.
 
 Partial success lets the user decide: retry the failed step, or explicitly clean up with `sharko remove-cluster`.
+
+---
+
+## 8. Planned Endpoints (PLANNED)
+
+The following endpoints are planned for future implementation. They are NOT yet available.
+
+### GET /api/v1/addons/{name}/changelog?from=v1&to=v2 — Addon Changelog (PLANNED)
+
+Returns version entries between the `from` and `to` versions, extracted from the Helm repo index metadata. Useful for showing what changed between addon versions before upgrading.
+
+**Query Parameters:**
+- `from` — starting version (inclusive)
+- `to` — ending version (inclusive)
+
+**Planned Response (200 OK):**
+```json
+{
+  "addon": "cert-manager",
+  "from": "1.14.0",
+  "to": "1.15.0",
+  "entries": [
+    {
+      "version": "1.15.0",
+      "created": "2026-03-15T00:00:00Z",
+      "description": "Bug fixes and performance improvements",
+      "app_version": "1.15.0"
+    },
+    {
+      "version": "1.14.5",
+      "created": "2026-02-01T00:00:00Z",
+      "description": "Security patch",
+      "app_version": "1.14.5"
+    }
+  ]
+}
+```
+
+---
+
+### GET /api/v1/clusters/{name}/history — Cluster Sync History (PLANNED)
+
+Returns filtered observability sync data for a specific cluster. Shows recent ArgoCD sync events, health transitions, and addon deployment history.
+
+**Path Parameters:**
+- `name` — cluster name
+
+**Planned Response (200 OK):**
+```json
+{
+  "cluster": "prod-eu",
+  "events": [
+    {
+      "timestamp": "2026-04-05T10:30:00Z",
+      "type": "sync",
+      "addon": "monitoring",
+      "from_status": "OutOfSync",
+      "to_status": "Synced",
+      "version": "56.6.2"
+    }
+  ]
+}
+```
+
+---
+
+### GET /api/v1/notifications — List Notifications (PLANNED)
+
+Returns notifications for the current user. Notification types include: upgrade available, version drift detected, security advisory, sync failure.
+
+**Planned Response (200 OK):**
+```json
+{
+  "notifications": [
+    {
+      "id": "abc123",
+      "type": "upgrade_available",
+      "title": "cert-manager 1.15.0 available",
+      "description": "Current: 1.14.5. New version 1.15.0 is available in the Helm repo.",
+      "addon": "cert-manager",
+      "created_at": "2026-04-05T08:00:00Z",
+      "read": false
+    }
+  ],
+  "unread_count": 3
+}
+```
+
+---
+
+### POST /api/v1/notifications/read-all — Mark All Notifications Read (PLANNED)
+
+Marks all notifications as read for the current user.
+
+**Planned Response (200 OK):**
+```json
+{
+  "marked_read": 3
+}
+```
