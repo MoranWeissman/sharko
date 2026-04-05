@@ -2093,6 +2093,38 @@ paths:
       summary: Initialize addons repository
       tags:
       - init
+  /notifications:
+    get:
+      description: Returns recent notifications (upgrades, drift, security)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List notifications
+      tags:
+      - notifications
+  /notifications/read-all:
+    post:
+      description: Marks all notifications as read
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Mark all notifications as read
+      tags:
+      - notifications
   /observability/overview:
     get:
       description: Returns resource utilization alerts and health signals across all

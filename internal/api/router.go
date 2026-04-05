@@ -16,6 +16,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/ai"
 	"github.com/MoranWeissman/sharko/internal/auth"
 	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/notifications"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/providers"
 	"github.com/MoranWeissman/sharko/internal/service"
@@ -54,6 +55,9 @@ type Server struct {
 	// Default addons (optional — set via SetDefaultAddons).
 	defaultAddons map[string]bool
 
+	// Notification store (always available — initialised in NewServer).
+	notificationStore *notifications.Store
+
 	// Template filesystem for POST /api/v1/init (always available).
 	templateFS fs.FS
 }
@@ -91,6 +95,7 @@ func NewServer(
 		authStore:         authStore,
 		aiConfigStore:     nil, // set via SetAIConfigStore
 		addonSecretDefs:   make(map[string]orchestrator.AddonSecretDefinition),
+		notificationStore: notifications.NewStore(100),
 	}
 }
 
@@ -263,6 +268,10 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	// Documentation
 	mux.HandleFunc("GET /api/v1/docs/list", srv.handleDocsList)
 	mux.HandleFunc("GET /api/v1/docs/{slug}", srv.handleDocsGet)
+
+	// Notifications
+	mux.HandleFunc("GET /api/v1/notifications", srv.handleListNotifications)
+	mux.HandleFunc("POST /api/v1/notifications/read-all", srv.handleMarkAllNotificationsRead)
 
 	// Cluster info
 	mux.HandleFunc("GET /api/v1/cluster/nodes", srv.handleGetNodeInfo)

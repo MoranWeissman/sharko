@@ -217,6 +217,18 @@ export const api = {
   // Upgrade
   getUpgradeVersions: (addonName: string) => fetchJSON<AvailableVersionsResponse>(`/upgrade/${addonName}/versions`),
   checkUpgrade: (addonName: string, targetVersion: string) => postJSON<UpgradeCheckResponse>('/upgrade/check', { addon_name: addonName, target_version: targetVersion }),
+  getAddonChangelog: (name: string, from?: string, to?: string) => {
+    const params = new URLSearchParams()
+    if (from) params.set('from', from)
+    if (to) params.set('to', to)
+    return fetchJSON<{
+      addon_name: string
+      current_version: string
+      target_version: string
+      versions: { version: string; app_version: string; created: string; description: string }[]
+      total_versions_between: number
+    }>(`/addons/${name}/changelog?${params.toString()}`)
+  },
 
   // AI
   getAIStatus: () => fetchJSON<{ enabled: boolean }>('/upgrade/ai-status'),
