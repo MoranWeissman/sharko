@@ -25,8 +25,18 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      - name: Test
-        run: go test ./...
+      - name: Test with coverage
+        run: go test -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Show coverage summary
+        run: go tool cover -func=coverage.out | tail -1
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-coverage
+          path: coverage.out
+          retention-days: 14
 
   ui-build-test:
     name: UI Build & Test
@@ -50,6 +60,7 @@ jobs:
       - name: Build
         run: npm run build
 
+      # To enable coverage, install @vitest/coverage-v8 and add --coverage flag
       - name: Test
         run: npm test -- --run
 
