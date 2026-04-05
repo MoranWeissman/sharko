@@ -3,7 +3,7 @@
 > Supersedes `2026-04-05-ui-redesign-ocean-vibe.md`. This is the authoritative UI design spec.
 
 **Date:** 2026-04-05
-**Status:** In progress — brainstorming ongoing
+**Status:** Approved — ready for implementation planning
 
 ---
 
@@ -346,7 +346,7 @@ This means:
 
 ---
 
-## 13. What We Are NOT Doing (renumbered)
+## 13. What We Are NOT Doing
 
 - No separate Upgrade Checker page (lives inside addon detail)
 - No separate Version Drift page route (lives in sidebar sub-nav + addon detail)
@@ -355,28 +355,26 @@ This means:
 - No light sidebar theme
 - No custom fonts (Inter works)
 - No mobile-specific layouts beyond responsive breakpoints
+- No notification for patch-level addon updates (unless security fix)
 
 ---
 
-## 13. Still To Brainstorm
+## 14. Implementation Order
 
-- Addon detail layout — exact left nav panel design and content per section
-- Cluster detail layout — exact tab content
-- Notification system — what events generate notifications, persistence
-- Addon upgrade UX — how release notes/changelog comparison works
-- AI-parsed release notes — scope and feasibility
-- Dark mode refinements with the new sky-blue palette
-
----
-
-## 14. Implementation Order (preliminary)
-
-1. **Color palette** — CSS variables, sidebar colors, content background
-2. **Sidebar** — expandable Addons group, compact width, remove old items
-3. **Login page** — wider panel, banner + name + description
-4. **Dashboard** — remove all-cluster cards, add problem-only cards with cap
-5. **Prominent action buttons** — restyle across all pages
-6. **Settings** — convert to left nav panel layout
+1. **Color palette** — CSS variables for sky-blue theme, sidebar navy, card borders
+2. **Sidebar** — expandable Addons group, compact width, version under logo
+3. **Left nav panel component** — reusable component for detail pages
+4. **Login page** — wider panel, banner + name + description
+5. **Dashboard** — remove all-cluster cards, problem-only cards capped at 5-6
+6. **Prominent action buttons** — restyle across all pages
+7. **Settings** — convert from tabs to left nav panel layout
+8. **Addon detail** — left nav panel (Overview/Clusters/Upgrade/Config)
+9. **Addon upgrade view** — version list + compare mode + per-cluster actions
+10. **Cluster detail** — left nav panel (Overview/Addons/Config/History)
+11. **Addons catalog** — upgrade badges on cards
+12. **Notification bell** — top bar component with dropdown
+13. **AI panel** — finalize right-side drawer behavior
+14. **Polish** — hover effects, transitions, final color tuning
 7. **Addon detail** — left nav panel with Overview/Clusters/Upgrade/Config
 8. **Notification bell** — top bar component with dropdown
 9. **AI panel** — move to right side, auto-collapse sidebar
