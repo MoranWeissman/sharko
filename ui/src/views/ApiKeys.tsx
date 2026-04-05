@@ -139,7 +139,7 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
       </div>
 
       {/* Token table */}
-      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-[#e0f0ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
+      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
         <table className="w-full text-left text-sm">
           <thead className="border-b border-gray-200 bg-[#d0e8f8] text-xs uppercase text-gray-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
             <tr>
@@ -180,7 +180,7 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
                   <button
                     type="button"
                     onClick={() => { setRevokeError(null); setRevokeTarget(token.name) }}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-red-300 bg-[#e0f0ff] px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 dark:border-red-700 dark:bg-gray-800 dark:text-red-400 dark:hover:bg-red-900/20"
+                    className="inline-flex items-center gap-1.5 rounded-md border border-red-300 bg-[#f0f7ff] px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 dark:border-red-700 dark:bg-gray-800 dark:text-red-400 dark:hover:bg-red-900/20"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                     Revoke
@@ -279,7 +279,7 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
               type="button"
               onClick={() => setCreateOpen(false)}
               disabled={creating}
-              className="rounded-md border border-gray-300 bg-[#e0f0ff] px-4 py-2 text-sm font-medium text-gray-700 hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+              className="rounded-md border border-gray-300 bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-gray-700 hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
             >
               {createdToken ? 'Done' : 'Cancel'}
             </button>

@@ -138,7 +138,7 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
       )}
 
       {/* Role legend */}
-      <div className="flex flex-wrap gap-4 rounded-xl border border-gray-200 bg-[#e0f0ff] p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+      <div className="flex flex-wrap gap-4 rounded-xl border border-gray-200 bg-[#f0f7ff] p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
         <div className="text-xs font-medium text-gray-500 dark:text-gray-400">Roles:</div>
         <div className="flex items-center gap-1.5 text-xs">
           <Shield className="h-3.5 w-3.5 text-red-500" />
@@ -158,7 +158,7 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
       </div>
 
       {/* Users table */}
-      <div className="rounded-xl border border-gray-200 bg-[#e0f0ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
+      <div className="rounded-xl border border-gray-200 bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
         <div className="flex items-center justify-between border-b border-gray-200 p-4 dark:border-gray-700">
           <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
             Users ({users.length})
@@ -180,7 +180,7 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
                   value={newUsername}
                   onChange={(e) => setNewUsername(e.target.value)}
                   placeholder="e.g. john.doe"
-                  className="w-full rounded-lg border border-gray-300 bg-[#e0f0ff] px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                  className="w-full rounded-lg border border-gray-300 bg-[#f0f7ff] px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
                   autoFocus
                 />
               </div>
@@ -189,7 +189,7 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
                 <select
                   value={newRole}
                   onChange={(e) => setNewRole(e.target.value)}
-                  className="w-full rounded-lg border border-gray-300 bg-[#e0f0ff] px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                  className="w-full rounded-lg border border-gray-300 bg-[#f0f7ff] px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
                 >
                   <option value="viewer">Viewer</option>
                   <option value="operator">Operator</option>

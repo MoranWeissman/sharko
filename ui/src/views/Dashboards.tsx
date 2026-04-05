@@ -80,7 +80,7 @@ function DashboardForm({
   return (
     <form
       onSubmit={handleSubmit}
-      className="rounded-xl border border-gray-200 bg-[#e0f0ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900"
+      className="rounded-xl border border-gray-200 bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900"
     >
       <div className="mb-4 flex items-center justify-between">
         <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
@@ -110,7 +110,7 @@ function DashboardForm({
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. Cluster Monitoring - NonProd"
-            className="w-full rounded-lg border border-gray-300 bg-[#e0f0ff] px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500"
+            className="w-full rounded-lg border border-gray-300 bg-[#f0f7ff] px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500"
             required
           />
         </div>
@@ -128,7 +128,7 @@ function DashboardForm({
             onChange={(e) =>
               setProvider(e.target.value as EmbeddedDashboard['provider'])
             }
-            className="w-full rounded-lg border border-gray-300 bg-[#e0f0ff] px-3 py-2 text-sm text-gray-900 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+            className="w-full rounded-lg border border-gray-300 bg-[#f0f7ff] px-3 py-2 text-sm text-gray-900 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
           >
             <option value="datadog">Datadog</option>
             <option value="grafana">Grafana</option>
@@ -150,7 +150,7 @@ function DashboardForm({
               onChange={(e) => setUrl(e.target.value)}
               placeholder={'Paste a URL:\nhttps://app.datadoghq.eu/graph/embed?token=...\n\nOr paste the full embed code:\n<iframe src="https://app.datadoghq.eu/graph/embed?token=..." ...></iframe>'}
               rows={4}
-              className="w-full rounded-lg border border-gray-300 bg-[#e0f0ff] px-3 py-2 font-mono text-xs text-gray-900 placeholder-gray-400 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500"
+              className="w-full rounded-lg border border-gray-300 bg-[#f0f7ff] px-3 py-2 font-mono text-xs text-gray-900 placeholder-gray-400 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500"
               required
             />
           ) : (
@@ -160,7 +160,7 @@ function DashboardForm({
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               placeholder={provider === 'grafana' ? 'https://grafana.example.com/d/abc123/my-dashboard' : 'https://...'}
-              className="w-full rounded-lg border border-gray-300 bg-[#e0f0ff] px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500"
+              className="w-full rounded-lg border border-gray-300 bg-[#f0f7ff] px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500"
               required
             />
           )}
@@ -314,7 +314,7 @@ export function Dashboards() {
           {effectiveSelected ? (
             <div className="space-y-3">
               {/* Toolbar */}
-              <div className="flex items-center justify-between rounded-lg border border-gray-200 bg-[#e0f0ff] px-4 py-2.5 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+              <div className="flex items-center justify-between rounded-lg border border-gray-200 bg-[#f0f7ff] px-4 py-2.5 shadow-sm dark:border-gray-700 dark:bg-gray-900">
                 <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
                   {effectiveSelected.name}
                 </span>
@@ -350,7 +350,7 @@ export function Dashboards() {
                 <iframe
                   src={resolveUrl(effectiveSelected)}
                   title={effectiveSelected.name}
-                  className="w-full bg-[#e0f0ff] dark:bg-gray-950"
+                  className="w-full bg-[#f0f7ff] dark:bg-gray-950"
                   style={{ height: 'calc(100vh - 280px)' }}
                   sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-popups-to-escape-sandbox"
                 />

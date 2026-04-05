@@ -116,7 +116,7 @@ export function Docs() {
               placeholder="Search docs..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full rounded-lg border border-gray-200 bg-[#e0f0ff] py-2 pl-9 pr-3 text-sm text-gray-900 placeholder-gray-400 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+              className="w-full rounded-lg border border-gray-200 bg-[#f0f7ff] py-2 pl-9 pr-3 text-sm text-gray-900 placeholder-gray-400 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
             />
           </div>
 
@@ -169,7 +169,7 @@ export function Docs() {
         </nav>
 
         {/* Right content area */}
-        <div className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-[#e0f0ff] p-8 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+        <div className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-[#f0f7ff] p-8 shadow-sm dark:border-gray-700 dark:bg-gray-900">
           <article className="prose prose-gray max-w-none dark:prose-invert prose-headings:text-gray-900 dark:prose-headings:text-white prose-a:text-teal-600 dark:prose-a:text-teal-400 prose-code:rounded prose-code:bg-gray-100 prose-code:px-1.5 prose-code:py-0.5 prose-code:text-sm dark:prose-code:bg-gray-800 prose-pre:bg-gray-900 prose-pre:text-gray-100">
             <Markdown remarkPlugins={[remarkGfm]}>{content}</Markdown>
           </article>
