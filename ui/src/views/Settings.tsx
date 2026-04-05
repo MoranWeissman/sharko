@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
+import { Plug, Users, Key, Bot } from 'lucide-react'
 import { DetailNavPanel } from '@/components/DetailNavPanel'
 import { Connections } from '@/views/Connections'
 import { UserManagement } from '@/views/UserManagement'
@@ -21,22 +22,22 @@ export function Settings() {
   const sections = [
     {
       label: 'Connections',
-      items: [{ key: 'connections', label: 'Connections' }],
+      items: [{ key: 'connections', label: 'Connections', icon: Plug }],
     },
     ...(isAdmin
       ? [
           {
             label: 'Access',
             items: [
-              { key: 'users', label: 'Users' },
-              { key: 'api-keys', label: 'API Keys' },
+              { key: 'users', label: 'Users', icon: Users },
+              { key: 'api-keys', label: 'API Keys', icon: Key },
             ],
           },
         ]
       : []),
     {
       label: 'Platform',
-      items: [{ key: 'ai', label: 'AI Provider' }],
+      items: [{ key: 'ai', label: 'AI Provider', icon: Bot }],
     },
   ]
 
@@ -44,7 +45,7 @@ export function Settings() {
     <div className="space-y-4">
       <div>
         <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Settings</h1>
-        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+        <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
           Manage connections, users, API keys, and platform configuration.
         </p>
       </div>
@@ -60,7 +61,7 @@ export function Settings() {
           {section === 'users' && isAdmin && <UserManagement embedded />}
           {section === 'api-keys' && isAdmin && <ApiKeys embedded />}
           {section === 'ai' && (
-            <div className="text-sm text-gray-500 dark:text-gray-400">
+            <div className="text-sm text-[#2a5a7a] dark:text-gray-400">
               AI Provider configuration coming soon.
             </div>
           )}

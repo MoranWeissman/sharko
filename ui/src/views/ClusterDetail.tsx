@@ -309,7 +309,7 @@ export function ClusterDetail() {
       <div className="flex items-start justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{data.cluster.name}</h2>
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+          <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
             Kubernetes cluster managed by ArgoCD — deployed addons, health, and configuration overrides.
           </p>
         </div>
@@ -342,10 +342,10 @@ export function ClusterDetail() {
       {/* Cluster info stat cards */}
       <div className="flex flex-wrap gap-3">
         {data.cluster.server_version && (
-          <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-[#f0f7ff] px-4 py-3 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div className="flex items-center gap-2 rounded-lg border border-[#90c8ee] bg-[#f0f7ff] px-4 py-3 shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <Tag className="h-4 w-4 text-teal-500" />
             <div>
-              <p className="text-xs text-gray-500 dark:text-gray-400">Cluster Version</p>
+              <p className="text-xs text-[#2a5a7a] dark:text-gray-400">Cluster Version</p>
               <p className="font-mono text-sm font-semibold text-gray-900 dark:text-gray-100">{data.cluster.server_version}</p>
             </div>
           </div>
@@ -358,7 +358,7 @@ export function ClusterDetail() {
           }`}>
             <Cpu className={`h-4 w-4 ${nodeInfo.not_ready > 0 ? 'text-red-500' : 'text-green-500'}`} />
             <div>
-              <p className="text-xs text-gray-500 dark:text-gray-400">Nodes Ready</p>
+              <p className="text-xs text-[#2a5a7a] dark:text-gray-400">Nodes Ready</p>
               <p className={`text-sm font-semibold ${nodeInfo.not_ready > 0 ? 'text-red-700 dark:text-red-400' : 'text-green-700 dark:text-green-400'}`}>
                 {nodeInfo.ready} / {nodeInfo.total}
                 {nodeInfo.not_ready > 0 && (
@@ -368,10 +368,10 @@ export function ClusterDetail() {
             </div>
           </div>
         )}
-        <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-[#f0f7ff] px-4 py-3 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <div className="flex items-center gap-2 rounded-lg border border-[#90c8ee] bg-[#f0f7ff] px-4 py-3 shadow-sm dark:border-gray-700 dark:bg-gray-800">
           <Server className="h-4 w-4 text-teal-500" />
           <div>
-            <p className="text-xs text-gray-500 dark:text-gray-400">Connection</p>
+            <p className="text-xs text-[#2a5a7a] dark:text-gray-400">Connection</p>
             <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">
               {data.cluster_connection_state || 'Unknown'}
             </p>
@@ -410,10 +410,10 @@ export function ClusterDetail() {
         <TabsContent value="addons" className="space-y-6">
           {/* Admin: Addon Enable/Disable Toggles */}
           <RoleGuard adminOnly>
-            <div className="rounded-lg border border-gray-200 bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800">
+            <div className="rounded-lg border border-[#90c8ee] bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800">
               <h3 className="mb-3 text-base font-semibold text-gray-900 dark:text-gray-100">Manage Addons</h3>
               {Object.keys(addonToggles).length === 0 ? (
-                <p className="text-sm text-gray-400 dark:text-gray-500">No addons in catalog.</p>
+                <p className="text-sm text-[#3a6a8a] dark:text-gray-500">No addons in catalog.</p>
               ) : (
                 <div className="grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-3 lg:grid-cols-4">
                   {Object.keys(addonToggles).sort().map((addonName) => (
@@ -488,9 +488,9 @@ export function ClusterDetail() {
           </div>
 
           {/* Comparison table */}
-          <div className="overflow-x-auto rounded-xl border border-gray-200 bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div className="overflow-x-auto rounded-xl border border-[#90c8ee] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <table className="w-full text-left text-sm">
-              <thead className="border-b border-gray-200 bg-[#d0e8f8] text-xs uppercase text-gray-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
+              <thead className="border-b border-gray-200 bg-[#d0e8f8] text-xs uppercase text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
                 <tr>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">Addon Name</th>
@@ -514,7 +514,7 @@ export function ClusterDetail() {
                   <tr>
                     <td
                       colSpan={6}
-                      className="px-6 py-8 text-center text-gray-400 dark:text-gray-500"
+                      className="px-6 py-8 text-center text-[#3a6a8a] dark:text-gray-500"
                     >
                       No addons match the current filter.
                     </td>
@@ -569,7 +569,7 @@ function ComparisonRow({ addon, isExpanded, onToggleExpand, argocdBaseURL }: Com
         {addon.status ? (
           <StatusBadge status={addon.status} />
         ) : (
-          <span className="text-gray-400 dark:text-gray-500">--</span>
+          <span className="text-[#3a6a8a] dark:text-gray-500">--</span>
         )}
       </td>
       <td className="px-4 py-3 font-medium text-gray-900 dark:text-gray-100">
@@ -581,7 +581,7 @@ function ComparisonRow({ addon, isExpanded, onToggleExpand, argocdBaseURL }: Com
               target="_blank"
               rel="noopener noreferrer"
               onClick={(e) => e.stopPropagation()}
-              className="text-gray-400 hover:text-teal-600 dark:hover:text-teal-400"
+              className="text-[#3a6a8a] hover:text-teal-600 dark:hover:text-teal-400"
               title={`Open ${addon.argocd_application_name} in ArgoCD`}
             >
               <ExternalLink className="h-3.5 w-3.5" />
@@ -665,8 +665,8 @@ function ConfigOverridesPanel({ data, loading, error, onRetry }: ConfigOverrides
 
   if (overriddenAddons.length === 0) {
     return (
-      <div className="rounded-xl border border-gray-200 bg-[#f0f7ff] p-8 text-center shadow-sm dark:border-gray-700 dark:bg-gray-800">
-        <p className="text-gray-500 dark:text-gray-400">
+      <div className="rounded-xl border border-[#90c8ee] bg-[#f0f7ff] p-8 text-center shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <p className="text-[#2a5a7a] dark:text-gray-400">
           This cluster uses all global defaults — no per-cluster overrides found.
         </p>
       </div>
@@ -679,7 +679,7 @@ function ConfigOverridesPanel({ data, loading, error, onRetry }: ConfigOverrides
       {overriddenAddons.map((entry) => (
         <div
           key={entry.addon_name}
-          className="rounded-xl border border-gray-200 bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800"
+          className="rounded-xl border border-[#90c8ee] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800"
         >
           <div className="flex items-center gap-2 border-b border-gray-200 px-4 py-3 dark:border-gray-700">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">

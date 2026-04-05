@@ -107,7 +107,7 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
           <Users className="h-7 w-7 text-teal-600 dark:text-teal-400" />
           <div>
             <h1 className="text-2xl font-bold text-gray-900 dark:text-white">User Management</h1>
-            <p className="text-sm text-gray-500 dark:text-gray-400">Manage user accounts, roles, and access</p>
+            <p className="text-sm text-[#2a5a7a] dark:text-gray-400">Manage user accounts, roles, and access</p>
           </div>
         </div>
       )}
@@ -139,21 +139,21 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
 
       {/* Role legend */}
       <div className="flex flex-wrap gap-4 rounded-xl border border-gray-200 bg-[#f0f7ff] p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
-        <div className="text-xs font-medium text-gray-500 dark:text-gray-400">Roles:</div>
+        <div className="text-xs font-medium text-[#2a5a7a] dark:text-gray-400">Roles:</div>
         <div className="flex items-center gap-1.5 text-xs">
           <Shield className="h-3.5 w-3.5 text-red-500" />
           <span className="font-medium text-gray-700 dark:text-gray-300">Admin</span>
-          <span className="text-gray-400">— full access, user management</span>
+          <span className="text-[#3a6a8a]">— full access, user management</span>
         </div>
         <div className="flex items-center gap-1.5 text-xs">
           <Wrench className="h-3.5 w-3.5 text-blue-500" />
           <span className="font-medium text-gray-700 dark:text-gray-300">Operator</span>
-          <span className="text-gray-400">— all except user management</span>
+          <span className="text-[#3a6a8a]">— all except user management</span>
         </div>
         <div className="flex items-center gap-1.5 text-xs">
-          <Eye className="h-3.5 w-3.5 text-gray-500" />
+          <Eye className="h-3.5 w-3.5 text-[#2a5a7a]" />
           <span className="font-medium text-gray-700 dark:text-gray-300">Viewer</span>
-          <span className="text-gray-400">— read-only access</span>
+          <span className="text-[#3a6a8a]">— read-only access</span>
         </div>
       </div>
 
@@ -212,7 +212,7 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
         ) : error ? (
           <ErrorState message={error} onRetry={fetchUsers} />
         ) : users.length === 0 ? (
-          <div className="py-12 text-center text-gray-500">
+          <div className="py-12 text-center text-[#2a5a7a]">
             <Users className="mx-auto mb-3 h-10 w-10 text-gray-300 dark:text-gray-600" />
             <p className="text-lg font-medium">No users configured</p>
             <p className="mt-1 text-sm">Add your first user above.</p>
@@ -226,7 +226,7 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
                   <div className={`flex h-9 w-9 items-center justify-center rounded-full text-sm font-bold ${
                     user.enabled
                       ? 'bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-400'
-                      : 'bg-gray-100 text-gray-400 dark:bg-gray-800'
+                      : 'bg-gray-100 text-[#3a6a8a] dark:bg-gray-800'
                   }`}>
                     {user.username.charAt(0).toUpperCase()}
                   </div>
@@ -234,11 +234,11 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
                   {/* Name + status */}
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className={`text-sm font-medium ${user.enabled ? 'text-gray-900 dark:text-gray-100' : 'text-gray-400 line-through'}`}>
+                      <span className={`text-sm font-medium ${user.enabled ? 'text-gray-900 dark:text-gray-100' : 'text-[#3a6a8a] line-through'}`}>
                         {user.username}
                       </span>
                       {!user.enabled && (
-                        <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500 dark:bg-gray-800">disabled</span>
+                        <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-[#2a5a7a] dark:bg-gray-800">disabled</span>
                       )}
                     </div>
                   </div>
@@ -258,21 +258,21 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => handleToggleEnabled(user)}
-                      className="rounded-lg p-2 text-gray-400 hover:bg-[#d6eeff] hover:text-gray-600 dark:hover:bg-gray-700"
+                      className="rounded-lg p-2 text-[#3a6a8a] hover:bg-[#d6eeff] hover:text-gray-600 dark:hover:bg-gray-700"
                       title={user.enabled ? 'Disable user' : 'Enable user'}
                     >
                       {user.enabled ? <X className="h-4 w-4" /> : <Check className="h-4 w-4" />}
                     </button>
                     <button
                       onClick={() => handleResetPassword(user.username)}
-                      className="rounded-lg p-2 text-gray-400 hover:bg-[#d6eeff] hover:text-gray-600 dark:hover:bg-gray-700"
+                      className="rounded-lg p-2 text-[#3a6a8a] hover:bg-[#d6eeff] hover:text-gray-600 dark:hover:bg-gray-700"
                       title="Reset password"
                     >
                       <Key className="h-4 w-4" />
                     </button>
                     <button
                       onClick={() => handleDelete(user.username)}
-                      className="rounded-lg p-2 text-gray-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
+                      className="rounded-lg p-2 text-[#3a6a8a] hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
                       title="Delete user"
                     >
                       <Trash2 className="h-4 w-4" />

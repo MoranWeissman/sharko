@@ -90,7 +90,7 @@ function formFromConnection(conn: ConnectionResponse): ConnectionFormData {
 const labelCls =
   'block text-sm font-medium text-gray-700 dark:text-gray-300'
 const inputCls =
-  'mt-1 block w-full rounded-lg border border-gray-300 bg-[#f0f7ff] px-3 py-2 text-sm text-gray-900 shadow-sm placeholder:text-gray-400 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder:text-gray-500'
+  'mt-1 block w-full rounded-lg border border-gray-300 bg-[#f0f7ff] px-3 py-2 text-sm text-gray-900 shadow-sm placeholder:text-[#3a6a8a] focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder:text-[#2a5a7a]'
 const selectCls =
   'mt-1 block w-full rounded-lg border border-gray-300 bg-[#f0f7ff] px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100'
 
@@ -123,7 +123,7 @@ function ConnectionFormFields({
       {/* Git Configuration */}
       <div>
         <div className="mb-3 flex items-center gap-2">
-          <GitBranch className="h-4 w-4 text-gray-500" />
+          <GitBranch className="h-4 w-4 text-[#2a5a7a]" />
           <h5 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Git Repository</h5>
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -131,7 +131,7 @@ function ConnectionFormFields({
             <label className={labelCls}>Repository URL</label>
             <input className={inputCls} value={form.git_url} onChange={(e) => onChange({ git_url: e.target.value })}
               placeholder="https://github.com/org/repo" required />
-            <p className="mt-1 text-[10px] text-gray-400">GitHub, GitHub Enterprise, or Azure DevOps (auto-detected from URL)</p>
+            <p className="mt-1 text-[10px] text-[#3a6a8a]">GitHub, GitHub Enterprise, or Azure DevOps (auto-detected from URL)</p>
           </div>
           <div>
             <label className={labelCls}>Token</label>
@@ -153,7 +153,7 @@ function ConnectionFormFields({
       {/* ArgoCD Configuration */}
       <div>
         <div className="mb-3 flex items-center gap-2">
-          <Server className="h-4 w-4 text-gray-500" />
+          <Server className="h-4 w-4 text-[#2a5a7a]" />
           <h5 className="text-sm font-semibold text-gray-900 dark:text-gray-100">ArgoCD</h5>
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -161,13 +161,13 @@ function ConnectionFormFields({
             <label className={labelCls}>Server URL</label>
             <input className={inputCls} value={form.argocd_server_url} onChange={(e) => onChange({ argocd_server_url: e.target.value })}
               placeholder="Auto-discovered from cluster" />
-            <p className="mt-1 text-[10px] text-gray-400">Auto-filled for in-cluster. Override for external ArgoCD.</p>
+            <p className="mt-1 text-[10px] text-[#3a6a8a]">Auto-filled for in-cluster. Override for external ArgoCD.</p>
           </div>
           <div>
             <label className={labelCls}>Token</label>
             <input className={inputCls} type="password" value={form.argocd_token} onChange={(e) => onChange({ argocd_token: e.target.value })}
               placeholder={isEdit ? 'Leave blank to keep existing' : 'ArgoCD API token'} />
-            <p className="mt-1 text-[10px] text-gray-400">ArgoCD account token (e.g. sharko-api-user). Falls back to ARGOCD_TOKEN env var.</p>
+            <p className="mt-1 text-[10px] text-[#3a6a8a]">ArgoCD account token (e.g. sharko-api-user). Falls back to ARGOCD_TOKEN env var.</p>
           </div>
           <div>
             <label className={labelCls}>Namespace</label>
@@ -411,7 +411,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
           <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
             Settings
           </h2>
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+          <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
             Manage connections and view platform information.
           </p>
         </div>
@@ -423,27 +423,32 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
           <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
             Active Connections
           </h3>
-          <button
-            onClick={async () => {
-              const opening = !showAddForm
-              setShowAddForm(opening)
-              setAddForm({ ...emptyForm })
-              setAddError(null)
-              setAddTestStatus({ git: 'idle', argocd: 'idle' })
-              if (opening) {
-                try {
-                  const disc = await api.discoverArgocd()
-                  if (disc.server_url) {
-                    setAddForm(prev => ({ ...prev, argocd_server_url: disc.server_url }))
-                  }
-                } catch { /* ignore — user can enter manually */ }
-              }
-            }}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2 dark:bg-teal-700 dark:hover:bg-teal-600 dark:focus:ring-offset-gray-900"
-          >
-            <Plus className="h-4 w-4" />
-            Add Connection
-          </button>
+          <div className="text-right">
+            <button
+              onClick={async () => {
+                const opening = !showAddForm
+                setShowAddForm(opening)
+                setAddForm({ ...emptyForm })
+                setAddError(null)
+                setAddTestStatus({ git: 'idle', argocd: 'idle' })
+                if (opening) {
+                  try {
+                    const disc = await api.discoverArgocd()
+                    if (disc.server_url) {
+                      setAddForm(prev => ({ ...prev, argocd_server_url: disc.server_url }))
+                    }
+                  } catch { /* ignore — user can enter manually */ }
+                }
+              }}
+              className="inline-flex items-center gap-2 rounded-lg border border-[#90c8ee] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a2a4a] hover:bg-[#e0f0ff] transition-colors dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+            >
+              <Plus className="h-4 w-4" />
+              Add Connection
+            </button>
+            <p className="mt-1 text-xs text-[#3a6a8a] dark:text-gray-400">
+              Connect to additional ArgoCD instances
+            </p>
+          </div>
         </div>
 
         {/* Add Connection Form */}
@@ -494,7 +499,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
         )}
 
         {connections.length === 0 ? (
-          <p className="py-8 text-center text-gray-400 dark:text-gray-500">
+          <p className="py-8 text-center text-[#3a6a8a] dark:text-gray-500">
             No connections configured.
           </p>
         ) : (
@@ -502,7 +507,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
             {connections.map((conn) => (
               <div key={conn.name}>
                 <div
-                  className={`rounded-xl border bg-[#f0f7ff] p-6 shadow-sm dark:bg-gray-800 ${
+                  className={`rounded-xl border border-[#90c8ee] bg-[#f0f7ff] p-6 shadow-sm dark:bg-gray-800 ${
                     conn.is_active
                       ? 'border-teal-500 ring-2 ring-teal-100 dark:ring-teal-900/50'
                       : 'border-gray-200 dark:border-gray-700'
@@ -529,7 +534,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
                     <div className="flex items-center gap-2">
                       <button
                         onClick={() => handleEditStart(conn)}
-                        className="inline-flex items-center gap-1 text-xs font-medium text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                        className="inline-flex items-center gap-1 text-xs font-medium text-[#2a5a7a] hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
                       >
                         <Pencil className="h-3 w-3" />
                         Edit
@@ -553,21 +558,21 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
                   {/* Live status badges (active connection only) */}
                   {conn.is_active && (
                     <div className="mb-3 flex items-center gap-3">
-                      <span className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
+                      <span className="flex items-center gap-1 text-xs text-[#2a5a7a] dark:text-gray-400">
                         <GitBranch className="h-3 w-3" />
                         Git:
-                        {liveStatus.git === 'testing' && <Loader2 className="h-3 w-3 animate-spin text-gray-400" />}
+                        {liveStatus.git === 'testing' && <Loader2 className="h-3 w-3 animate-spin text-[#3a6a8a]" />}
                         {liveStatus.git === 'ok' && <CheckCircle className="h-3.5 w-3.5 text-green-500" />}
                         {liveStatus.git === 'error' && <XCircle className="h-3.5 w-3.5 text-red-500" />}
-                        {liveStatus.git === 'idle' && <span className="text-gray-400">—</span>}
+                        {liveStatus.git === 'idle' && <span className="text-[#3a6a8a]">—</span>}
                       </span>
-                      <span className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
+                      <span className="flex items-center gap-1 text-xs text-[#2a5a7a] dark:text-gray-400">
                         <Server className="h-3 w-3" />
                         ArgoCD:
-                        {liveStatus.argocd === 'testing' && <Loader2 className="h-3 w-3 animate-spin text-gray-400" />}
+                        {liveStatus.argocd === 'testing' && <Loader2 className="h-3 w-3 animate-spin text-[#3a6a8a]" />}
                         {liveStatus.argocd === 'ok' && <CheckCircle className="h-3.5 w-3.5 text-green-500" />}
                         {liveStatus.argocd === 'error' && <XCircle className="h-3.5 w-3.5 text-red-500" />}
-                        {liveStatus.argocd === 'idle' && <span className="text-gray-400">—</span>}
+                        {liveStatus.argocd === 'idle' && <span className="text-[#3a6a8a]">—</span>}
                       </span>
                     </div>
                   )}
@@ -575,7 +580,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
                   {/* Details */}
                   <dl className="space-y-2 text-sm">
                     <div className="flex items-center justify-between">
-                      <dt className="flex items-center gap-1.5 text-gray-500 dark:text-gray-400">
+                      <dt className="flex items-center gap-1.5 text-[#2a5a7a] dark:text-gray-400">
                         <GitBranch className="h-3.5 w-3.5" />
                         Git Provider
                       </dt>
@@ -584,7 +589,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
                       </dd>
                     </div>
                     <div className="flex items-center justify-between">
-                      <dt className="flex items-center gap-1.5 text-gray-500 dark:text-gray-400">
+                      <dt className="flex items-center gap-1.5 text-[#2a5a7a] dark:text-gray-400">
                         <GitBranch className="h-3.5 w-3.5" />
                         Repository
                       </dt>
@@ -593,7 +598,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
                       </dd>
                     </div>
                     <div className="flex items-start justify-between gap-2">
-                      <dt className="flex shrink-0 items-center gap-1.5 text-gray-500 dark:text-gray-400">
+                      <dt className="flex shrink-0 items-center gap-1.5 text-[#2a5a7a] dark:text-gray-400">
                         <Server className="h-3.5 w-3.5" />
                         ArgoCD URL
                       </dt>
@@ -602,7 +607,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
                       </dd>
                     </div>
                     <div className="flex items-center justify-between">
-                      <dt className="flex items-center gap-1.5 text-gray-500 dark:text-gray-400">
+                      <dt className="flex items-center gap-1.5 text-[#2a5a7a] dark:text-gray-400">
                         <Shield className="h-3.5 w-3.5" />
                         Namespace
                       </dt>
@@ -626,7 +631,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
                       <button
                         type="button"
                         onClick={() => setEditingName(null)}
-                        className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                        className="text-[#3a6a8a] hover:text-gray-600 dark:hover:text-gray-200"
                       >
                         <X className="h-4 w-4" />
                       </button>
@@ -679,11 +684,11 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
         <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
           Platform Info
         </h3>
-        <div className="rounded-xl border border-gray-200 bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <div className="rounded-xl border border-[#90c8ee] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
           <dl className="grid grid-cols-1 gap-6 sm:grid-cols-2">
             {/* Deployment Mode */}
             <div>
-              <dt className="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400">
+              <dt className="flex items-center gap-1.5 text-sm text-[#2a5a7a] dark:text-gray-400">
                 <Monitor className="h-3.5 w-3.5" />
                 Deployment Mode
               </dt>
@@ -694,13 +699,13 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
 
             {/* API Health */}
             <div>
-              <dt className="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400">
+              <dt className="flex items-center gap-1.5 text-sm text-[#2a5a7a] dark:text-gray-400">
                 <Activity className="h-3.5 w-3.5" />
                 API Health
               </dt>
               <dd className="mt-1 flex items-center gap-2 text-sm font-medium">
                 {healthLoading ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400 dark:text-gray-500" />
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-[#3a6a8a] dark:text-gray-500" />
                 ) : platformInfo?.status === 'ok' || platformInfo?.status === 'healthy' ? (
                   <>
                     <span className="inline-block h-2.5 w-2.5 rounded-full bg-green-500" />
@@ -717,7 +722,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
 
             {/* Git Provider */}
             <div>
-              <dt className="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400">
+              <dt className="flex items-center gap-1.5 text-sm text-[#2a5a7a] dark:text-gray-400">
                 <GitBranch className="h-3.5 w-3.5" />
                 Git Provider
               </dt>
@@ -728,7 +733,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
 
             {/* ArgoCD Server */}
             <div>
-              <dt className="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400">
+              <dt className="flex items-center gap-1.5 text-sm text-[#2a5a7a] dark:text-gray-400">
                 <Globe className="h-3.5 w-3.5" />
                 ArgoCD Server
               </dt>
@@ -745,11 +750,11 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
         <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
           Secrets Provider
         </h3>
-        <div className="rounded-xl border border-gray-200 bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <div className="rounded-xl border border-[#90c8ee] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
           {providerInfo ? (
             <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <div>
-                <dt className="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400">
+                <dt className="flex items-center gap-1.5 text-sm text-[#2a5a7a] dark:text-gray-400">
                   <Shield className="h-3.5 w-3.5" />
                   Type
                 </dt>
@@ -758,7 +763,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
                 </dd>
               </div>
               <div>
-                <dt className="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400">
+                <dt className="flex items-center gap-1.5 text-sm text-[#2a5a7a] dark:text-gray-400">
                   <Globe className="h-3.5 w-3.5" />
                   Region
                 </dt>
@@ -767,7 +772,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
                 </dd>
               </div>
               <div>
-                <dt className="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400">
+                <dt className="flex items-center gap-1.5 text-sm text-[#2a5a7a] dark:text-gray-400">
                   <Activity className="h-3.5 w-3.5" />
                   Status
                 </dt>
@@ -783,7 +788,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
               </div>
             </dl>
           ) : (
-            <p className="text-sm text-gray-500 dark:text-gray-400">
+            <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
               No secrets provider configured. Set <code className="rounded bg-gray-100 px-1 py-0.5 text-xs dark:bg-gray-700">SHARKO_PROVIDER_TYPE</code> to enable.
             </p>
           )}
@@ -796,7 +801,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
           <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
             Initialize Repository
           </h3>
-          <div className="rounded-xl border border-gray-200 bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div className="rounded-xl border border-[#90c8ee] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <p className="mb-4 text-sm text-gray-600 dark:text-gray-400">
               Bootstrap the Git repository with the required Sharko directory structure and ArgoCD resources.
               Safe to run on an already-initialized repository.
@@ -954,12 +959,12 @@ function AIConfigSection() {
   }
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+    <div className="rounded-xl border border-[#90c8ee] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
       {/* Header */}
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-3">
           <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${isEnabled ? 'bg-purple-100 dark:bg-purple-900/30' : 'bg-gray-100 dark:bg-gray-700'}`}>
-            <Sparkles className={`h-5 w-5 ${isEnabled ? 'text-purple-600 dark:text-purple-400' : 'text-gray-400'}`} />
+            <Sparkles className={`h-5 w-5 ${isEnabled ? 'text-purple-600 dark:text-purple-400' : 'text-[#3a6a8a]'}`} />
           </div>
           <div>
             <h4 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
@@ -970,12 +975,12 @@ function AIConfigSection() {
                   Active
                 </span>
               ) : (
-                <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-500 dark:bg-gray-700 dark:text-gray-400">
+                <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-[#2a5a7a] dark:bg-gray-700 dark:text-gray-400">
                   Not Configured
                 </span>
               )}
             </h4>
-            <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+            <p className="mt-0.5 text-xs text-[#2a5a7a] dark:text-gray-400">
               {isEnabled && activeProvider
                 ? `Using ${activeProvider.name}${activeProvider.model ? ` — ${activeProvider.model}` : ''}`
                 : 'Configure an AI provider for upgrade analysis and migration assistance'}
@@ -1017,7 +1022,7 @@ function AIConfigSection() {
         <div className="mt-4 rounded-lg border border-purple-200 bg-purple-50/50 p-4 dark:border-purple-800 dark:bg-purple-950/20">
           <div className="mb-3 flex items-center justify-between">
             <h5 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Configure AI Provider</h5>
-            <button onClick={() => setShowForm(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
+            <button onClick={() => setShowForm(false)} className="text-[#3a6a8a] hover:text-gray-600 dark:hover:text-gray-200">
               <X className="h-4 w-4" />
             </button>
           </div>

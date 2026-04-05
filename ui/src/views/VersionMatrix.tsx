@@ -93,7 +93,7 @@ function MatrixTable({ addons, clusters }: { addons: VersionMatrixRow[]; cluster
       <table className="w-full text-left text-sm">
         <thead className="border-b border-gray-200 bg-[#d0e8f8] dark:border-gray-700 dark:bg-gray-900">
           <tr>
-            <th className="sticky left-0 z-10 min-w-[200px] border-r border-gray-200 bg-[#d0e8f8] px-4 py-3 text-xs font-semibold uppercase text-gray-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
+            <th className="sticky left-0 z-10 min-w-[200px] border-r border-gray-200 bg-[#d0e8f8] px-4 py-3 text-xs font-semibold uppercase text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
               Cluster
             </th>
             {addons.map((row) => (
@@ -104,7 +104,7 @@ function MatrixTable({ addons, clusters }: { addons: VersionMatrixRow[]; cluster
                 <div className="text-[11px] font-medium text-gray-700 dark:text-gray-300">
                   {row.addon_name}
                 </div>
-                <div className="mt-0.5 font-mono text-[9px] text-gray-400 dark:text-gray-500">
+                <div className="mt-0.5 font-mono text-[9px] text-[#3a6a8a] dark:text-gray-500">
                   v{row.catalog_version}
                 </div>
               </th>
@@ -141,7 +141,7 @@ function MatrixTable({ addons, clusters }: { addons: VersionMatrixRow[]; cluster
             <tr>
               <td
                 colSpan={addons.length + 1}
-                className="px-6 py-8 text-center text-gray-400 dark:text-gray-500"
+                className="px-6 py-8 text-center text-[#3a6a8a] dark:text-gray-500"
               >
                 No addons match the current filters.
               </td>
@@ -178,7 +178,7 @@ function ClusterChip({ cluster, cell, addonName }: { cluster: string; cell: Vers
       <span className="max-w-[140px] truncate font-medium text-gray-700 dark:text-gray-300 group-hover:text-gray-900 dark:group-hover:text-white">
         {cluster.replace(/-eks$/, '')}
       </span>
-      <span className={`font-mono text-[10px] ${isDrift ? 'font-bold text-amber-600 dark:text-amber-400' : 'text-gray-400 dark:text-gray-500'}`}>
+      <span className={`font-mono text-[10px] ${isDrift ? 'font-bold text-amber-600 dark:text-amber-400' : 'text-[#3a6a8a] dark:text-gray-500'}`}>
         {cell.version}
       </span>
     </button>
@@ -211,19 +211,19 @@ function AddonRow({ row, clusters }: { row: VersionMatrixRow; clusters: string[]
         className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-[#d6eeff] dark:hover:bg-gray-800"
       >
         {expanded
-          ? <ChevronDown className="h-4 w-4 shrink-0 text-gray-400" />
-          : <ChevronRight className="h-4 w-4 shrink-0 text-gray-400" />
+          ? <ChevronDown className="h-4 w-4 shrink-0 text-[#3a6a8a]" />
+          : <ChevronRight className="h-4 w-4 shrink-0 text-[#3a6a8a]" />
         }
         <div className="min-w-0 flex-1">
           <span className="text-sm font-semibold text-gray-900 dark:text-white">{row.addon_name}</span>
-          <span className="ml-2 text-xs text-gray-400 dark:text-gray-500">v{row.catalog_version}</span>
+          <span className="ml-2 text-xs text-[#3a6a8a] dark:text-gray-500">v{row.catalog_version}</span>
         </div>
         <div className="flex items-center gap-3 text-xs">
           {activeCells.length === 0 ? (
-            <span className="text-gray-400 dark:text-gray-500">Not deployed</span>
+            <span className="text-[#3a6a8a] dark:text-gray-500">Not deployed</span>
           ) : (
             <>
-              <span className="flex items-center gap-1 text-gray-500 dark:text-gray-400">
+              <span className="flex items-center gap-1 text-[#2a5a7a] dark:text-gray-400">
                 <span className="inline-block h-2 w-2 rounded-full bg-green-500" />
                 {healthyCount}
               </span>
@@ -238,7 +238,7 @@ function AddonRow({ row, clusters }: { row: VersionMatrixRow; clusters: string[]
                   {driftCount} drift
                 </span>
               )}
-              <span className="text-gray-400 dark:text-gray-500">
+              <span className="text-[#3a6a8a] dark:text-gray-500">
                 {activeCells.length} cluster{activeCells.length !== 1 ? 's' : ''}
               </span>
             </>
@@ -254,7 +254,7 @@ function AddonRow({ row, clusters }: { row: VersionMatrixRow; clusters: string[]
         </div>
       )}
       {expanded && activeCells.length === 0 && (
-        <div className="border-t border-gray-100 px-4 py-2 text-xs text-gray-400 dark:border-gray-700 dark:text-gray-500">
+        <div className="border-t border-gray-100 px-4 py-2 text-xs text-[#3a6a8a] dark:border-gray-700 dark:text-gray-500">
           Not deployed on any cluster
         </div>
       )}
@@ -289,12 +289,12 @@ function HeatmapView({ addons, clusters }: { addons: VersionMatrixRow[]; cluster
               className="flex w-full items-center gap-4 px-4 py-2.5 text-left hover:bg-[#d6eeff] dark:hover:bg-gray-800"
             >
               {isExpanded
-                ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-gray-400" />
-                : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+                ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-[#3a6a8a]" />
+                : <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#3a6a8a]" />
               }
               <div className="w-36 shrink-0">
                 <span className="text-sm font-medium text-gray-900 dark:text-white">{row.addon_name}</span>
-                <span className="ml-1.5 text-[10px] text-gray-400">v{row.catalog_version}</span>
+                <span className="ml-1.5 text-[10px] text-[#3a6a8a]">v{row.catalog_version}</span>
               </div>
 
               {/* Dot grid */}
@@ -309,13 +309,13 @@ function HeatmapView({ addons, clusters }: { addons: VersionMatrixRow[]; cluster
                   ))}
                 </div>
               ) : (
-                <span className="text-xs text-gray-400 dark:text-gray-500">Not deployed anywhere</span>
+                <span className="text-xs text-[#3a6a8a] dark:text-gray-500">Not deployed anywhere</span>
               )}
 
               {/* Summary badges */}
               {activeCells.length > 0 && (
                 <div className="ml-auto flex shrink-0 items-center gap-2 text-[10px]">
-                  <span className="text-gray-400">{healthyCount}/{activeCells.length}</span>
+                  <span className="text-[#3a6a8a]">{healthyCount}/{activeCells.length}</span>
                   {driftCount > 0 && (
                     <span className="rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
                       {driftCount} drift
@@ -345,7 +345,7 @@ function HeatmapView({ addons, clusters }: { addons: VersionMatrixRow[]; cluster
                         {cluster.replace(/-eks$/, '')}
                       </span>
                       <span className={`shrink-0 font-mono text-[10px] ${
-                        cell.drift_from_catalog ? 'font-bold text-amber-600 dark:text-amber-400' : 'text-gray-400'
+                        cell.drift_from_catalog ? 'font-bold text-amber-600 dark:text-amber-400' : 'text-[#3a6a8a]'
                       }`}>
                         {cell.version}
                       </span>
@@ -355,7 +355,7 @@ function HeatmapView({ addons, clusters }: { addons: VersionMatrixRow[]; cluster
               </div>
             )}
             {isExpanded && activeCells.length === 0 && (
-              <div className="border-t border-gray-100 px-4 py-2 text-xs text-gray-400 dark:border-gray-700 dark:text-gray-500">
+              <div className="border-t border-gray-100 px-4 py-2 text-xs text-[#3a6a8a] dark:border-gray-700 dark:text-gray-500">
                 Not deployed on any cluster
               </div>
             )}
@@ -363,7 +363,7 @@ function HeatmapView({ addons, clusters }: { addons: VersionMatrixRow[]; cluster
         )
       })}
       {addons.length === 0 && (
-        <div className="rounded-lg border border-gray-200 bg-[#f0f7ff] p-8 text-center text-sm text-gray-500 dark:border-gray-700 dark:bg-gray-800">
+        <div className="rounded-lg border border-gray-200 bg-[#f0f7ff] p-8 text-center text-sm text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-800">
           No addons match the current filters.
         </div>
       )}
@@ -417,7 +417,7 @@ export function VersionMatrix() {
     <div className="space-y-5">
       <div>
         <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Addons Version Drift Detector</h1>
-        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+        <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
           Identify version drift across your clusters — spot addons running a different version than the catalog baseline. Use the drift filter to focus on inconsistencies.
           {totalDrifts > 0 && (
             <span className="ml-2 rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
@@ -430,7 +430,7 @@ export function VersionMatrix() {
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#3a6a8a]" />
           <input
             type="text"
             placeholder="Search addon by name..."
@@ -448,17 +448,17 @@ export function VersionMatrix() {
         {/* View mode toggle */}
         <div className="ml-auto flex items-center rounded-lg border border-gray-300 dark:border-gray-600">
           <button type="button" onClick={() => setViewMode('heatmap')}
-            className={`rounded-l-lg p-2 ${viewMode === 'heatmap' ? 'bg-teal-600 text-white' : 'bg-[#f0f7ff] text-gray-500 hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'}`}
+            className={`rounded-l-lg p-2 ${viewMode === 'heatmap' ? 'bg-teal-600 text-white' : 'bg-[#f0f7ff] text-[#2a5a7a] hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'}`}
             aria-label="Heatmap view" title="Heatmap (compact)">
             <Grid3X3 className="h-4 w-4" />
           </button>
           <button type="button" onClick={() => setViewMode('table')}
-            className={`p-2 ${viewMode === 'table' ? 'bg-teal-600 text-white' : 'bg-[#f0f7ff] text-gray-500 hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'}`}
+            className={`p-2 ${viewMode === 'table' ? 'bg-teal-600 text-white' : 'bg-[#f0f7ff] text-[#2a5a7a] hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'}`}
             aria-label="Table view" title="Table matrix">
             <Table2 className="h-4 w-4" />
           </button>
           <button type="button" onClick={() => setViewMode('cards')}
-            className={`rounded-r-lg p-2 ${viewMode === 'cards' ? 'bg-teal-600 text-white' : 'bg-[#f0f7ff] text-gray-500 hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'}`}
+            className={`rounded-r-lg p-2 ${viewMode === 'cards' ? 'bg-teal-600 text-white' : 'bg-[#f0f7ff] text-[#2a5a7a] hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'}`}
             aria-label="Card view" title="Card view">
             <LayoutGrid className="h-4 w-4" />
           </button>
@@ -473,7 +473,7 @@ export function VersionMatrix() {
       ) : (
         <div className="space-y-3">
           {filteredAddons.length === 0 ? (
-            <div className="rounded-lg border border-gray-200 bg-[#f0f7ff] p-8 text-center text-sm text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400">
+            <div className="rounded-lg border border-gray-200 bg-[#f0f7ff] p-8 text-center text-sm text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400">
               No addons match the current filters.
             </div>
           ) : (
@@ -485,7 +485,7 @@ export function VersionMatrix() {
       )}
 
       {/* Legend */}
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-[#2a5a7a] dark:text-gray-400">
         <span className="flex items-center gap-1.5">
           <span className="inline-block h-2.5 w-2.5 rounded-full bg-green-500" /> Healthy
         </span>

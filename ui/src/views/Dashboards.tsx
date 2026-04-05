@@ -89,7 +89,7 @@ function DashboardForm({
         <button
           type="button"
           onClick={onCancel}
-          className="rounded-lg p-1 text-gray-400 hover:bg-[#d6eeff] hover:text-gray-600 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+          className="rounded-lg p-1 text-[#3a6a8a] hover:bg-[#d6eeff] hover:text-gray-600 dark:hover:bg-gray-800 dark:hover:text-gray-200"
           aria-label="Close form"
         >
           <X className="h-5 w-5" />
@@ -164,7 +164,7 @@ function DashboardForm({
               required
             />
           )}
-          <p className="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+          <p className="mt-1.5 text-xs text-[#2a5a7a] dark:text-gray-400">
             {providerHelpText[provider]}
           </p>
         </div>
@@ -237,7 +237,7 @@ export function Dashboards() {
           <BarChart3 className="h-7 w-7 text-teal-500" />
           External Dashboards
         </h1>
-        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+        <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
           Embed Datadog and other monitoring dashboards
         </p>
       </div>
@@ -251,7 +251,7 @@ export function Dashboards() {
                 setShowForm(true);
                 setEditingId(null);
               }}
-              className="flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed border-gray-300 px-3 py-2 text-sm font-medium text-gray-500 transition-colors hover:border-teal-400 hover:text-teal-600 dark:border-gray-600 dark:text-gray-400 dark:hover:border-teal-500 dark:hover:text-teal-400"
+              className="flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed border-gray-300 px-3 py-2 text-sm font-medium text-[#2a5a7a] transition-colors hover:border-teal-400 hover:text-teal-600 dark:border-gray-600 dark:text-gray-400 dark:hover:border-teal-500 dark:hover:text-teal-400"
             >
               <Plus className="h-4 w-4" />
               Add Dashboard
@@ -356,7 +356,7 @@ export function Dashboards() {
                 />
               </div>
 
-              <p className="text-center text-xs text-gray-400 dark:text-gray-500">
+              <p className="text-center text-xs text-[#3a6a8a] dark:text-gray-500">
                 Dashboard requires authentication with the provider
               </p>
             </div>
@@ -367,7 +367,7 @@ export function Dashboards() {
               <h3 className="mt-4 text-lg font-semibold text-gray-700 dark:text-gray-300">
                 No dashboards configured
               </h3>
-              <p className="mt-1 max-w-sm text-center text-sm text-gray-500 dark:text-gray-400">
+              <p className="mt-1 max-w-sm text-center text-sm text-[#2a5a7a] dark:text-gray-400">
                 Embed monitoring dashboards from Datadog, Grafana, or any
                 provider that supports iframe embedding.
               </p>
@@ -378,7 +378,7 @@ export function Dashboards() {
                 <Plus className="h-4 w-4" />
                 Add your first dashboard
               </button>
-              <p className="mt-3 text-xs text-gray-400 dark:text-gray-500">
+              <p className="mt-3 text-xs text-[#3a6a8a] dark:text-gray-500">
                 Supports Datadog, Grafana, and custom dashboard URLs
               </p>
             </div>

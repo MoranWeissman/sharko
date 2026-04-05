@@ -71,7 +71,7 @@ function PaginatedList({ items, renderItem, emptyMessage }: { items: ValueDiffEn
   const [showCount, setShowCount] = useState(PAGE_SIZE);
 
   if (items.length === 0)
-    return <p className="py-4 text-center text-sm text-gray-500 dark:text-gray-400">{emptyMessage}</p>;
+    return <p className="py-4 text-center text-sm text-[#2a5a7a] dark:text-gray-400">{emptyMessage}</p>;
 
   const visible = items.slice(0, showCount);
   const remaining = items.length - showCount;
@@ -151,7 +151,7 @@ function ChangedFields({ items }: { items: ValueDiffEntry[] }) {
               <code className="rounded bg-red-100 px-1 text-red-700 dark:bg-red-900/40 dark:text-red-400">
                 {entry.old_value ?? '(empty)'}
               </code>
-              <span className="text-gray-400">&rarr;</span>
+              <span className="text-[#3a6a8a]">&rarr;</span>
               <code className="rounded bg-green-100 px-1 text-green-700 dark:bg-green-900/40 dark:text-green-400">
                 {entry.new_value ?? '(empty)'}
               </code>
@@ -179,7 +179,7 @@ function ReleaseNotesSection({ notes }: { notes: string }) {
           <FileText className="h-4 w-4 text-blue-500" />
           <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Release Notes</h3>
         </div>
-        <ChevronDown className={`h-4 w-4 text-gray-400 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+        <ChevronDown className={`h-4 w-4 text-[#3a6a8a] transition-transform ${expanded ? 'rotate-180' : ''}`} />
       </div>
       <div className="px-6 py-4">
         <MarkdownRenderer content={displayText} />
@@ -393,7 +393,7 @@ export function UpgradeChecker() {
           <ArrowUpCircle className="h-8 w-8 text-teal-500" />
           <div>
             <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Addon Upgrade Checker</h1>
-            <p className="text-sm text-gray-500 dark:text-gray-400">
+            <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
               Analyze the impact of upgrading an addon to a new version
             </p>
           </div>
@@ -417,23 +417,23 @@ export function UpgradeChecker() {
             aria-expanded={addonDropdownOpen}
             aria-label="Select addon"
           >
-            <span className={selectedAddon ? 'text-gray-900 dark:text-white' : 'text-gray-400'}>
+            <span className={selectedAddon ? 'text-gray-900 dark:text-white' : 'text-[#3a6a8a]'}>
               {selectedAddon
                 ? `${selectedAddon} (v${currentVersion})`
                 : 'Choose an addon...'}
             </span>
-            <ChevronDown className="h-4 w-4 text-gray-400" />
+            <ChevronDown className="h-4 w-4 text-[#3a6a8a]" />
           </div>
 
           {addonDropdownOpen && (
             <div className="absolute z-20 mt-1 w-full rounded-lg border border-gray-200 bg-[#f0f7ff] shadow-lg dark:border-gray-600 dark:bg-gray-800">
               <div className="border-b border-gray-100 p-2 dark:border-gray-700">
                 <div className="flex items-center gap-2 rounded-md border border-gray-200 bg-[#d0e8f8] px-2 dark:border-gray-600 dark:bg-gray-700">
-                  <Search className="h-4 w-4 text-gray-400" />
+                  <Search className="h-4 w-4 text-[#3a6a8a]" />
                   <input
                     type="text"
                     placeholder="Search addons..."
-                    className="w-full border-0 bg-transparent py-1.5 text-sm text-gray-900 outline-none placeholder:text-gray-400 dark:text-white"
+                    className="w-full border-0 bg-transparent py-1.5 text-sm text-gray-900 outline-none placeholder:text-[#3a6a8a] dark:text-white"
                     value={addonSearch}
                     onChange={(e) => setAddonSearch(e.target.value)}
                     autoFocus
@@ -442,7 +442,7 @@ export function UpgradeChecker() {
               </div>
               <div className="max-h-60 overflow-y-auto py-1">
                 {filteredAddons.length === 0 && (
-                  <p className="px-4 py-2 text-sm text-gray-500">No addons found.</p>
+                  <p className="px-4 py-2 text-sm text-[#2a5a7a]">No addons found.</p>
                 )}
                 {filteredAddons.map((addon) => (
                   <button
@@ -459,7 +459,7 @@ export function UpgradeChecker() {
                     }}
                   >
                     <span>{addon.addon_name}</span>
-                    <span className="text-xs text-gray-400">v{addon.version}</span>
+                    <span className="text-xs text-[#3a6a8a]">v{addon.version}</span>
                   </button>
                 ))}
               </div>
@@ -479,9 +479,9 @@ export function UpgradeChecker() {
           </h2>
 
           {versionsLoading ? (
-            <p className="text-sm text-gray-500 dark:text-gray-400">Loading versions...</p>
+            <p className="text-sm text-[#2a5a7a] dark:text-gray-400">Loading versions...</p>
           ) : availableVersions.length === 0 ? (
-            <p className="text-sm text-gray-500 dark:text-gray-400">No other versions available.</p>
+            <p className="text-sm text-[#2a5a7a] dark:text-gray-400">No other versions available.</p>
           ) : (
             <div className="flex flex-wrap items-end gap-4">
               <div className="w-64">
@@ -563,7 +563,7 @@ export function UpgradeChecker() {
                       </span>
                     </div>
                     {result.conflicts.length === 0 && (
-                      <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      <p className="mt-1 text-xs text-[#2a5a7a] dark:text-gray-400">
                         None of the changed defaults conflict with your global or per-cluster overrides. Safe to upgrade from a values perspective.
                       </p>
                     )}
@@ -614,7 +614,7 @@ export function UpgradeChecker() {
               </div>
               <div className="px-6 py-5">
                 {aiLoading && (
-                  <div className="flex items-center gap-3 text-sm text-gray-500 dark:text-gray-400">
+                  <div className="flex items-center gap-3 text-sm text-[#2a5a7a] dark:text-gray-400">
                     <RefreshCw className="h-4 w-4 animate-spin" />
                     Analyzing with AI ({aiProvider || 'loading'})...
                   </div>
@@ -647,19 +647,19 @@ export function UpgradeChecker() {
                         return <p key={i} className="mt-1.5">{line}</p>;
                       })}
                     </div>
-                    <p className="mt-5 border-t border-gray-100 pt-3 text-[10px] text-gray-400 dark:border-gray-800 dark:text-gray-600">
+                    <p className="mt-5 border-t border-gray-100 pt-3 text-[10px] text-[#3a6a8a] dark:border-gray-800 dark:text-gray-600">
                       Powered by {aiProvider === 'ollama' ? 'Ollama (local)' : aiProvider === 'gemini' ? 'Google Gemini' : aiProvider === 'claude' ? 'Claude (Anthropic)' : aiProvider === 'openai' ? 'OpenAI' : 'AI'}
                     </p>
                   </div>
                 )}
                 {!aiSummary && !aiLoading && !aiError && (
-                  <p className="text-xs text-gray-400 dark:text-gray-500">Click "Analyze with AI" for a detailed summary of changes, risk assessment, and action items.</p>
+                  <p className="text-xs text-[#3a6a8a] dark:text-gray-500">Click "Analyze with AI" for a detailed summary of changes, risk assessment, and action items.</p>
                 )}
               </div>
             </div>
           ) : (
-            <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-[#d0e8f8] px-4 py-3 text-sm text-gray-500 dark:border-gray-700 dark:bg-gray-800/50 dark:text-gray-400">
-              <Sparkles className="h-4 w-4 shrink-0 text-gray-400" />
+            <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-[#d0e8f8] px-4 py-3 text-sm text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-800/50 dark:text-gray-400">
+              <Sparkles className="h-4 w-4 shrink-0 text-[#3a6a8a]" />
               <span>
                 Enable an AI provider in{' '}
                 <a
@@ -688,7 +688,7 @@ export function UpgradeChecker() {
                     className={`flex items-center gap-2 border-b-2 px-5 py-3 text-sm font-medium transition-colors ${
                       activeTab === tab.key
                         ? 'border-teal-500 text-teal-700 dark:text-teal-400'
-                        : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
+                        : 'border-transparent text-[#2a5a7a] hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
                     }`}
                   >
                     {tab.label}
