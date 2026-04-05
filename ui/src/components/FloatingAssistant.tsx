@@ -51,13 +51,15 @@ export function FloatingAssistant() {
       {open && (
         <div className="fixed bottom-20 right-6 z-50 flex h-[600px] w-[420px] flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900">
           {/* Header */}
-          <div className="flex items-center justify-between border-b border-gray-200 bg-gradient-to-r from-cyan-600 to-blue-700 px-4 py-3 dark:border-gray-700">
+          <div className="flex items-center justify-between border-b border-gray-200 bg-gradient-to-r from-teal-600 to-blue-700 px-4 py-3 dark:border-gray-700">
             <div className="flex items-center gap-2 text-white">
               <Sparkles className="h-4 w-4" />
-              <span className="text-sm font-semibold">AI Assistant</span>
-              {pageContext && (
-                <span className="text-[10px] text-cyan-200">on {pageContext}</span>
-              )}
+              <div>
+                <span className="text-sm font-semibold">Sharko AI</span>
+                {pageContext && (
+                  <p className="text-[10px] text-teal-200">Viewing {pageContext}</p>
+                )}
+              </div>
             </div>
             <button
               onClick={() => setOpen(false)}
@@ -80,7 +82,7 @@ export function FloatingAssistant() {
         className={`fixed bottom-6 right-6 z-50 flex h-14 w-14 items-center justify-center rounded-full shadow-lg transition-all duration-200 ${
           open
             ? 'bg-gray-600 hover:bg-gray-700'
-            : 'bg-gradient-to-br from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700'
+            : 'bg-gradient-to-br from-teal-500 to-blue-600 hover:from-teal-600 hover:to-blue-700'
         }`}
         aria-label={open ? 'Close AI Assistant' : 'Open AI Assistant'}
       >

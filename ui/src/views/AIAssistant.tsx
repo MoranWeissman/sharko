@@ -480,12 +480,30 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
           </div>
         </div>
       )}
-      {/* Embedded mini toolbar */}
-      {embedded && messages.length > 0 && (
-        <div className="flex items-center justify-end gap-2 border-b border-gray-200 px-3 py-1.5 dark:border-gray-700">
-          <button onClick={handleNewConversation} className="text-[10px] text-gray-500 hover:text-gray-700 dark:text-gray-400">
-            <RotateCcw className="inline h-3 w-3" /> New
-          </button>
+      {/* Embedded mini toolbar — always visible when embedded */}
+      {embedded && (
+        <div className="flex items-center justify-between border-b border-gray-200 px-3 py-1.5 dark:border-gray-700">
+          <span className="text-[10px] text-gray-400 dark:text-gray-500">
+            {messages.length > 0 ? `${messages.length} messages` : ''}
+          </span>
+          <div className="flex items-center gap-2">
+            {messages.length > 0 && (
+              <button
+                onClick={handleExport}
+                className="flex items-center gap-1 rounded px-2 py-1 text-[11px] text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800"
+              >
+                <Download className="h-3 w-3" />
+                Export
+              </button>
+            )}
+            <button
+              onClick={handleNewConversation}
+              className="flex items-center gap-1 rounded px-2 py-1 text-[11px] text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800"
+            >
+              <RotateCcw className="h-3 w-3" />
+              New Chat
+            </button>
+          </div>
         </div>
       )}
 
