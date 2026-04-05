@@ -176,14 +176,14 @@ export function Layout() {
           to="/dashboard"
           aria-label="Sharko — go to dashboard"
           className={`flex items-center border-b border-[#14466e] transition-colors hover:bg-[#14466e] ${
-            collapsed && !mobileOpen ? 'justify-center px-2 py-3' : 'gap-1.5 px-3 py-2'
+            collapsed && !mobileOpen ? 'justify-center px-2 py-3' : 'gap-0.5 px-3 py-2'
           }`}
           onClick={() => setMobileOpen(false)}
         >
-          <img src="/sharko-mascot.png" alt="" className="h-16 w-auto shrink-0" />
+          <img src="/sharko-mascot.png" alt="" className={collapsed && !mobileOpen ? 'h-16 w-16 object-contain' : 'h-16 w-auto shrink-0'} />
           {(!collapsed || mobileOpen) && (
             <div className="min-w-0">
-              <span className="text-xl leading-tight text-blue-400" style={{ fontFamily: '"Quicksand", sans-serif', fontWeight: 700 }}>Sharko</span>
+              <span className="text-2xl leading-tight text-blue-400" style={{ fontFamily: '"Quicksand", sans-serif', fontWeight: 700 }}>Sharko</span>
               {appVersion && (
                 <p className="text-[10px] text-[#5a9ad0] leading-tight">v{appVersion}</p>
               )}
@@ -357,7 +357,7 @@ export function Layout() {
             <div className="flex items-center gap-2 text-white">
               <Sparkles className="h-4 w-4" />
               <div>
-                <span className="text-sm font-semibold">Sharko AI</span>
+                <span className="text-sm font-semibold" style={{ fontFamily: '"Quicksand", sans-serif', fontWeight: 700 }}>Sharko AI</span>
                 {getAIPageContext(location.pathname) && (
                   <p className="text-[10px] text-teal-200">Viewing {getAIPageContext(location.pathname)}</p>
                 )}
