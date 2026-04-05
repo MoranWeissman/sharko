@@ -273,4 +273,12 @@ export const api = {
   // Providers
   getProviders: () => fetchJSON<{ configured_provider: { type: string; region: string; status: string } | null; available_types: string[] }>('/providers'),
 
+  // Notifications
+  getNotifications: () => fetchJSON<{
+    notifications: { id: string; type: string; title: string; description: string; timestamp: string; read: boolean }[]
+    unread_count: number
+  }>('/notifications'),
+
+  markAllNotificationsRead: () => postJSON<unknown>('/notifications/read-all'),
+
 }
