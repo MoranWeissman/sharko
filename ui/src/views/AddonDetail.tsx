@@ -35,6 +35,95 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 
+function UpgradeVersionList({
+  addonName,
+  currentVersion,
+  onUpgrade,
+}: {
+  addonName: string
+  currentVersion: string
+  onUpgrade: (version: string) => void
+}) {
+  const [versions, setVersions] = useState<{ version: string; app_version?: string }[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    api
+      .getUpgradeVersions(addonName)
+      .then((data) => {
+        // Filter out the current version — only show newer/different versions
+        const available = (data.versions ?? []).filter((v) => v.version !== currentVersion)
+        setVersions(available)
+      })
+      .catch(() => {
+        setError('Could not check for available upgrades')
+      })
+      .finally(() => setLoading(false))
+  }, [addonName, currentVersion])
+
+  if (loading) return <LoadingState message="Checking for upgrades..." />
+
+  if (error) {
+    return (
+      <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5">
+        <h3 className="text-base font-semibold text-[#0a2a4a]">Available Upgrades</h3>
+        <p className="mt-2 text-sm text-[#2a5a7a]">{error}</p>
+        <p className="mt-1 text-xs text-[#3a6a8a]">
+          The upgrade versions API may not be configured. You can still upgrade manually using the
+          dialog above.
+        </p>
+      </div>
+    )
+  }
+
+  if (versions.length === 0) {
+    return (
+      <div className="rounded-xl ring-2 ring-green-300 bg-green-50 p-5">
+        <h3 className="text-base font-semibold text-green-800">Up to date</h3>
+        <p className="mt-1 text-sm text-green-700">
+          No newer versions available for {addonName}.
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5">
+      <h3 className="mb-3 text-base font-semibold text-[#0a2a4a]">Available Upgrades</h3>
+      <div className="space-y-2">
+        {versions.map((v, i) => (
+          <div
+            key={v.version}
+            className="flex items-center justify-between rounded-lg bg-[#e0f0ff] px-4 py-3"
+          >
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-sm font-bold text-[#0a2a4a]">{v.version}</span>
+              {i === 0 && (
+                <span className="rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-semibold text-green-700">
+                  LATEST
+                </span>
+              )}
+              {v.app_version && (
+                <span className="text-xs text-[#3a6a8a]">app {v.app_version}</span>
+              )}
+            </div>
+            <RoleGuard adminOnly>
+              <button
+                type="button"
+                onClick={() => onUpgrade(v.version)}
+                className="rounded-lg bg-[#0a2a4a] px-4 py-1.5 text-xs font-medium text-white hover:bg-[#14466e]"
+              >
+                Upgrade
+              </button>
+            </RoleGuard>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function HealthProgressBar({ healthy, total }: { healthy: number; total: number }) {
   if (total === 0) return null
   const pct = (healthy / total) * 100
@@ -665,24 +754,81 @@ export function AddonDetail() {
           )}
 
           {activeSection === 'upgrade' && (
-            <>
-              <RoleGuard adminOnly fallback={<p className="text-sm text-[#2a5a7a] dark:text-gray-400">Admin access required to upgrade addons.</p>}>
-                <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-6 dark:border-gray-700 dark:bg-gray-800">
-                  <h3 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">Upgrade {addon.addon_name}</h3>
-                  <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
-                    Current catalog version: <span className="font-mono font-medium">{addon.version}</span>
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => { setUpgradeVersion(''); setUpgradeCluster(''); setUpgradeError(null); setUpgradeResult(null); setUpgradeOpen(true) }}
-                    className="mt-4 inline-flex items-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-600"
-                  >
-                    <ArrowUpCircle className="h-4 w-4" />
-                    Upgrade Version
-                  </button>
-                </div>
-              </RoleGuard>
-            </>
+            <div className="space-y-6">
+              {/* Current version */}
+              <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5">
+                <h3 className="text-base font-semibold text-[#0a2a4a]">Current Catalog Version</h3>
+                <p className="mt-1 font-mono text-lg font-bold text-[#0a2a4a]">{addon.version}</p>
+                <p className="mt-1 text-sm text-[#2a5a7a]">Chart: {addon.chart}</p>
+              </div>
+
+              {/* Available versions */}
+              <UpgradeVersionList
+                addonName={addon.addon_name}
+                currentVersion={addon.version}
+                onUpgrade={(version) => {
+                  setUpgradeVersion(version)
+                  setUpgradeCluster('')
+                  setUpgradeError(null)
+                  setUpgradeResult(null)
+                  setUpgradeOpen(true)
+                }}
+              />
+
+              {/* Per-cluster versions */}
+              <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5">
+                <h3 className="mb-3 text-base font-semibold text-[#0a2a4a]">Per-Cluster Versions</h3>
+                {enabledApps.length === 0 ? (
+                  <p className="text-sm text-[#2a5a7a]">No clusters have this addon enabled.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {enabledApps.map((app) => {
+                      const deployedVersion =
+                        app.deployed_version ?? app.configured_version ?? 'N/A'
+                      const isDrifted =
+                        deployedVersion !== addon.version && deployedVersion !== 'N/A'
+                      return (
+                        <div
+                          key={app.cluster_name}
+                          className="flex items-center justify-between rounded-lg bg-[#e0f0ff] px-4 py-2.5"
+                        >
+                          <div className="flex items-center gap-3">
+                            <Link
+                              to={`/clusters/${app.cluster_name}`}
+                              className="text-sm font-medium text-[#0a6aaa] hover:underline"
+                            >
+                              {app.cluster_name}
+                            </Link>
+                            <span className="font-mono text-sm text-[#1a4a6a]">
+                              {deployedVersion}
+                            </span>
+                          </div>
+                          {isDrifted ? (
+                            <RoleGuard adminOnly>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setUpgradeVersion(addon.version)
+                                  setUpgradeCluster(app.cluster_name)
+                                  setUpgradeError(null)
+                                  setUpgradeResult(null)
+                                  setUpgradeOpen(true)
+                                }}
+                                className="rounded-lg bg-[#0a2a4a] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#14466e]"
+                              >
+                                Upgrade to {addon.version}
+                              </button>
+                            </RoleGuard>
+                          ) : (
+                            <span className="text-xs text-green-600">✓ Current</span>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
           )}
 
           {activeSection === 'config' && (

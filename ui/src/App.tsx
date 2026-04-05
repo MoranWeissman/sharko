@@ -9,10 +9,8 @@ import { ClustersOverview } from '@/views/ClustersOverview'
 import { ClusterDetail } from '@/views/ClusterDetail'
 import { AddonCatalog } from '@/views/AddonCatalog'
 import { AddonDetail } from '@/views/AddonDetail'
-import { VersionMatrix } from '@/views/VersionMatrix'
 import { Observability } from '@/views/Observability'
 import { Dashboards } from '@/views/Dashboards'
-import { UpgradeChecker } from '@/views/UpgradeChecker'
 import { UserInfo } from '@/views/UserInfo'
 import { Settings } from '@/views/Settings'
 
@@ -41,9 +39,9 @@ function AppRoutes() {
           <Route path="clusters/:name" element={<ClusterDetail />} />
           <Route path="addons" element={<AddonCatalog />} />
           <Route path="addons/:name" element={<AddonDetail />} />
-          <Route path="version-matrix" element={<VersionMatrix />} />
+          <Route path="version-matrix" element={<Navigate to="/addons" replace />} />
           <Route path="observability" element={<Observability />} />
-          <Route path="upgrade" element={<UpgradeChecker />} />
+          <Route path="upgrade" element={<Navigate to="/addons" replace />} />
           <Route path="dashboards" element={<Dashboards />} />
           <Route path="settings" element={<Settings />} />
           <Route path="users" element={<Navigate to="/settings?section=users" replace />} />
