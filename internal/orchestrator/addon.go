@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"path"
 	"strings"
+
+	"github.com/MoranWeissman/sharko/internal/models"
+	"gopkg.in/yaml.v3"
 )
 
 // AddAddon adds a new addon to the catalog and generates its global values file.
@@ -61,19 +64,33 @@ func (o *Orchestrator) RemoveAddon(ctx context.Context, name string) (*GitResult
 
 // generateAddonCatalogEntry creates the YAML catalog entry for an addon.
 func generateAddonCatalogEntry(req AddAddonRequest) []byte {
-	var b strings.Builder
-	b.WriteString(fmt.Sprintf("# Addon catalog entry for %s\n", req.Name))
-	b.WriteString(fmt.Sprintf("name: %s\n", req.Name))
-	b.WriteString(fmt.Sprintf("chart: %s\n", req.Chart))
-	b.WriteString(fmt.Sprintf("repoURL: %s\n", req.RepoURL))
-	b.WriteString(fmt.Sprintf("version: %s\n", req.Version))
-	if req.Namespace != "" {
-		b.WriteString(fmt.Sprintf("namespace: %s\n", req.Namespace))
+	entry := models.AddonCatalogEntry{
+		AppName:           req.Name,
+		RepoURL:           req.RepoURL,
+		Chart:             req.Chart,
+		Version:           req.Version,
+		Namespace:         req.Namespace,
+		SyncWave:          req.SyncWave,
+		SelfHeal:          req.SelfHeal,
+		SyncOptions:       req.SyncOptions,
+		AdditionalSources: req.AdditionalSources,
+		IgnoreDifferences: req.IgnoreDifferences,
+		ExtraHelmValues:   req.ExtraHelmValues,
 	}
-	if req.SyncWave != 0 {
-		b.WriteString(fmt.Sprintf("syncWave: %d\n", req.SyncWave))
+
+	data, err := yaml.Marshal(entry)
+	if err != nil {
+		// Fallback
+		var b strings.Builder
+		b.WriteString(fmt.Sprintf("appName: %s\n", req.Name))
+		b.WriteString(fmt.Sprintf("chart: %s\n", req.Chart))
+		b.WriteString(fmt.Sprintf("repoURL: %s\n", req.RepoURL))
+		b.WriteString(fmt.Sprintf("version: %s\n", req.Version))
+		return []byte(b.String())
 	}
-	return []byte(b.String())
+
+	header := fmt.Sprintf("# Addon catalog entry for %s\n", req.Name)
+	return append([]byte(header), data...)
 }
 
 // generateAddonGlobalValues creates the default global values YAML for an addon.
