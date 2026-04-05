@@ -149,13 +149,11 @@ Grid of addon cards. Each card shows:
 **Nav items:**
 - **Overview** — addon info, stat cards, health progress bar, chart info
 - **Clusters** — which clusters have this addon, per-cluster health/version, enable/disable toggles
-- **Upgrade** — THE upgrader (not a separate page). Shows:
-  - Current catalog version
-  - Available newer versions (fetched from Helm repo)
-  - Per-version: release notes, changelog, security fixes (AI-parsed if available)
-  - One-click upgrade button per version
-  - Option to upgrade globally or per-cluster
-  - Comparison: what changes between current and target version
+- **Upgrade** — THE upgrader (not a separate page). Two modes:
+  - **Default: Recent versions list** — shows available newer versions vertically. Each version has: badges (LATEST, SECURITY, PATCH), one-line summary, changelog link, one-click upgrade button (global). Quick scanning.
+  - **Compare mode** — triggered by clicking "Compare" or selecting a specific version. Shows FROM→TO comparison: security fixes, new features, bug fixes. With AI: parsed release notes, security analysis. Without AI: raw changelog from Helm chart (still useful). Choose scope (all clusters or specific).
+  - **Per-cluster versions** — shown below the version list. Each cluster shows its current version. **Drifted clusters are actionable** — "Upgrade to v1.14.3" button appears next to any cluster running an older version than catalog. One click to fix drift for that specific cluster.
+  - API endpoints: `GET /api/v1/addons/:name/upgrades` (available versions), `GET /api/v1/addons/:name/changelog?from=v1&to=v2` (comparison)
 - **Config** — global default values (YAML viewer), per-cluster overrides
 
 ### Upgrade Availability on Catalog
