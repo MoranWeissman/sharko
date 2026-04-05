@@ -30,7 +30,7 @@ function formatInlineMarkdown(text: string): ReactNode {
       parts.push(
         <code
           key={keyIdx++}
-          className="rounded bg-gray-200 px-1 py-0.5 text-xs dark:bg-gray-700"
+          className="rounded bg-[#c0ddf0] px-1 py-0.5 text-xs dark:bg-gray-700"
         >
           {codeMatch[1]}
         </code>,
@@ -77,7 +77,7 @@ export function MarkdownRenderer({ content }: { content: string }) {
       elements.push(
         <pre
           key={elements.length}
-          className="my-2 overflow-x-auto rounded-lg bg-gray-900 p-3 text-xs leading-relaxed text-gray-300"
+          className="my-2 overflow-x-auto rounded-lg bg-[#071828] p-3 text-xs leading-relaxed text-[#5a8aaa]"
         >
           <code>{codeLines.join('\n')}</code>
         </pre>,
@@ -97,7 +97,7 @@ export function MarkdownRenderer({ content }: { content: string }) {
       elements.push(
         <h4
           key={elements.length}
-          className="mt-4 mb-1.5 text-sm font-bold text-gray-800 dark:text-gray-200"
+          className="mt-4 mb-1.5 text-sm font-bold text-[#0a3a5a] dark:text-gray-200"
         >
           {formatInlineMarkdown(trimmed.slice(4))}
         </h4>,
@@ -109,7 +109,7 @@ export function MarkdownRenderer({ content }: { content: string }) {
       elements.push(
         <h3
           key={elements.length}
-          className="mt-5 mb-2 border-b border-gray-200 pb-1.5 text-base font-bold text-gray-900 dark:border-gray-700 dark:text-white"
+          className="mt-5 mb-2 border-b border-[#90c8ee] pb-1.5 text-base font-bold text-[#0a2a4a] dark:border-gray-700 dark:text-white"
         >
           {formatInlineMarkdown(trimmed.slice(3))}
         </h3>,
@@ -121,7 +121,7 @@ export function MarkdownRenderer({ content }: { content: string }) {
       elements.push(
         <h3
           key={elements.length}
-          className="mt-4 text-lg font-bold text-gray-900 dark:text-white"
+          className="mt-4 text-lg font-bold text-[#0a2a4a] dark:text-white"
         >
           {formatInlineMarkdown(trimmed.slice(2))}
         </h3>,
@@ -162,7 +162,7 @@ export function MarkdownRenderer({ content }: { content: string }) {
 
     // Regular paragraph
     elements.push(
-      <p key={elements.length} className="mt-1.5 text-sm text-gray-700 dark:text-gray-300">
+      <p key={elements.length} className="mt-1.5 text-sm text-[#0a3a5a] dark:text-gray-300">
         {formatInlineMarkdown(trimmed)}
       </p>,
     );

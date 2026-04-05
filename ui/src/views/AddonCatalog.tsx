@@ -44,7 +44,7 @@ function HealthProgressBar({ healthy, total }: { healthy: number; total: number 
 
   return (
     <div>
-      <div className="h-2 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
+      <div className="h-2 w-full overflow-hidden rounded-full bg-[#c0ddf0] dark:bg-gray-700">
         <div
           className={`h-full rounded-full transition-all ${barColor}`}
           style={{ width: `${pct}%` }}
@@ -127,7 +127,7 @@ function AddonCard({ addon }: { addon: AddonCatalogItem }) {
               e.stopPropagation()
               setExpanded((v) => !v)
             }}
-            className="ml-2 shrink-0 rounded p-1 text-[#3a6a8a] hover:bg-[#d6eeff] hover:text-gray-600 dark:hover:bg-gray-700 dark:hover:text-gray-300"
+            className="ml-2 shrink-0 rounded p-1 text-[#3a6a8a] hover:bg-[#d6eeff] hover:text-[#1a4a6a] dark:hover:bg-gray-700 dark:hover:text-[#5a8aaa]"
             title={expanded ? 'Collapse details' : 'Expand details'}
           >
             {expanded ? (
@@ -169,29 +169,29 @@ function AddonCard({ addon }: { addon: AddonCatalogItem }) {
 
         {/* Expanded section */}
         {expanded && (
-          <div className="mt-3 border-t border-gray-200 pt-3 dark:border-gray-700">
-            <h4 className="mb-2 text-xs font-semibold text-gray-700 dark:text-gray-300">
+          <div className="mt-3 border-t border-[#90c8ee] pt-3 dark:border-gray-700">
+            <h4 className="mb-2 text-xs font-semibold text-[#0a3a5a] dark:text-gray-300">
               Cluster Deployments
             </h4>
             <div className="max-h-60 overflow-auto rounded border text-xs dark:border-gray-700">
               <table className="w-full">
                 <thead className="sticky top-0 bg-[#d0e8f8] dark:bg-gray-900">
                   <tr>
-                    <th className="px-2 py-1 text-left font-medium text-gray-600 dark:text-gray-400">
+                    <th className="px-2 py-1 text-left font-medium text-[#1a4a6a] dark:text-gray-400">
                       Cluster
                     </th>
-                    <th className="px-2 py-1 text-left font-medium text-gray-600 dark:text-gray-400">
+                    <th className="px-2 py-1 text-left font-medium text-[#1a4a6a] dark:text-gray-400">
                       Env
                     </th>
-                    <th className="px-2 py-1 text-left font-medium text-gray-600 dark:text-gray-400">
+                    <th className="px-2 py-1 text-left font-medium text-[#1a4a6a] dark:text-gray-400">
                       Health
                     </th>
-                    <th className="px-2 py-1 text-left font-medium text-gray-600 dark:text-gray-400">
+                    <th className="px-2 py-1 text-left font-medium text-[#1a4a6a] dark:text-gray-400">
                       Version
                     </th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                <tbody className="divide-y divide-[#a0d0f0] dark:divide-gray-700">
                   {addon.applications
                     .filter((a) => a.enabled)
                     .map((app) => (
@@ -236,7 +236,7 @@ function PaginationControls({
         type="button"
         disabled={page <= 1}
         onClick={() => onPageChange(page - 1)}
-        className="rounded border px-3 py-1 text-sm font-medium text-gray-700 transition-colors hover:bg-[#d6eeff] disabled:cursor-not-allowed disabled:opacity-40 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+        className="rounded border px-3 py-1 text-sm font-medium text-[#0a3a5a] transition-colors hover:bg-[#d6eeff] disabled:cursor-not-allowed disabled:opacity-40 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
       >
         Prev
       </button>
@@ -267,7 +267,7 @@ function PaginationControls({
               className={`rounded px-3 py-1 text-sm font-medium transition-colors ${
                 item === page
                   ? 'bg-teal-600 text-white'
-                  : 'text-gray-700 hover:bg-[#d6eeff] dark:text-gray-300 dark:hover:bg-gray-700'
+                  : 'text-[#0a3a5a] hover:bg-[#d6eeff] dark:text-gray-300 dark:hover:bg-gray-700'
               }`}
             >
               {item}
@@ -278,7 +278,7 @@ function PaginationControls({
         type="button"
         disabled={page >= totalPages}
         onClick={() => onPageChange(page + 1)}
-        className="rounded border px-3 py-1 text-sm font-medium text-gray-700 transition-colors hover:bg-[#d6eeff] disabled:cursor-not-allowed disabled:opacity-40 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+        className="rounded border px-3 py-1 text-sm font-medium text-[#0a3a5a] transition-colors hover:bg-[#d6eeff] disabled:cursor-not-allowed disabled:opacity-40 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
       >
         Next
       </button>
@@ -289,9 +289,9 @@ function PaginationControls({
 function AddonListTable({ addons }: { addons: AddonCatalogItem[] }) {
   const navigate = useNavigate()
   return (
-    <div className="overflow-x-auto rounded-xl border border-gray-200 bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
+    <div className="overflow-x-auto rounded-xl border border-[#90c8ee] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
       <table className="w-full text-left text-sm">
-        <thead className="border-b border-gray-200 bg-[#d0e8f8] text-xs uppercase text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
+        <thead className="border-b border-[#90c8ee] bg-[#d0e8f8] text-xs uppercase text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
           <tr>
             <th className="px-6 py-3">Addon Name</th>
             <th className="px-6 py-3">Version</th>
@@ -301,20 +301,20 @@ function AddonListTable({ addons }: { addons: AddonCatalogItem[] }) {
             <th className="px-6 py-3">Not Deployed</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+        <tbody className="divide-y divide-[#90c8ee] dark:divide-gray-700">
           {addons.map((addon) => (
             <tr
               key={addon.addon_name}
               onClick={() => navigate(`/addons/${addon.addon_name}`)}
               className="cursor-pointer hover:bg-[#d6eeff] dark:hover:bg-gray-700"
             >
-              <td className="px-6 py-3 font-medium capitalize text-gray-900 dark:text-gray-100">
+              <td className="px-6 py-3 font-medium capitalize text-[#0a2a4a] dark:text-gray-100">
                 {addon.addon_name}
               </td>
               <td className="px-6 py-3 font-mono text-xs text-[#2a5a7a] dark:text-gray-400">
                 {addon.version}
               </td>
-              <td className="px-6 py-3 text-gray-700 dark:text-gray-300">
+              <td className="px-6 py-3 text-[#0a3a5a] dark:text-gray-300">
                 {addon.enabled_clusters === 0 ? (
                   <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
                     Not Deployed
@@ -497,7 +497,7 @@ export function AddonCatalog() {
   if (loading) {
     return (
       <div className="space-y-4">
-        <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Addons Catalog</h2>
+        <h2 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">Addons Catalog</h2>
         <LoadingState message="Loading addon catalog..." />
       </div>
     )
@@ -506,7 +506,7 @@ export function AddonCatalog() {
   if (error) {
     return (
       <div className="space-y-4">
-        <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Addons Catalog</h2>
+        <h2 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">Addons Catalog</h2>
         <ErrorState message={error} />
       </div>
     )
@@ -515,7 +515,7 @@ export function AddonCatalog() {
   if (!catalogData) {
     return (
       <div className="space-y-4">
-        <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Addons Catalog</h2>
+        <h2 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">Addons Catalog</h2>
         <p className="text-[#2a5a7a] dark:text-gray-400">No addon catalog data available.</p>
       </div>
     )
@@ -526,7 +526,7 @@ export function AddonCatalog() {
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Addons Catalog</h2>
+          <h2 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">Addons Catalog</h2>
           <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
             All addons defined in your Git catalog. See deployment coverage, health, and version per addon. <span className="font-medium text-amber-600 dark:text-amber-400">Catalog Only</span> means the addon is defined in your catalog but not yet enabled on any cluster.
           </p>
@@ -553,7 +553,7 @@ export function AddonCatalog() {
           <div className="space-y-3 py-2">
             {(['name', 'chart', 'repo_url', 'version', 'namespace'] as const).map((field) => (
               <div key={field}>
-                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300 capitalize">
+                <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300 capitalize">
                   {field.replace('_', ' ')}
                   {['name', 'chart', 'repo_url', 'version'].includes(field) && (
                     <span className="text-red-500"> *</span>
@@ -569,12 +569,12 @@ export function AddonCatalog() {
                     : field === 'namespace' ? 'optional, defaults to addon name'
                     : ''
                   }
-                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500"
+                  className="w-full rounded-md border border-[#80b8e0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
                 />
               </div>
             ))}
             <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+              <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
                 Sync Wave (optional)
               </label>
               <input
@@ -582,7 +582,7 @@ export function AddonCatalog() {
                 value={addonForm.sync_wave}
                 onChange={(e) => setAddonForm((prev) => ({ ...prev, sync_wave: e.target.value }))}
                 placeholder="e.g. 1"
-                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500"
+                className="w-full rounded-md border border-[#80b8e0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
               />
             </div>
             {addAddonError && (
@@ -597,7 +597,7 @@ export function AddonCatalog() {
               type="button"
               onClick={() => setAddAddonOpen(false)}
               disabled={addAddonSubmitting}
-              className="rounded-md border border-gray-300 bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-gray-700 hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+              className="rounded-md border border-[#80b8e0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
             >
               {addAddonResult ? 'Close' : 'Cancel'}
             </button>
@@ -661,7 +661,7 @@ export function AddonCatalog() {
             placeholder="Search addons by name, chart, or namespace..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full rounded-lg border border-gray-300 py-2 pl-10 pr-4 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:placeholder-gray-500"
+            className="w-full rounded-lg border border-[#80b8e0] py-2 pl-10 pr-4 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:placeholder-[#5a8aaa]"
           />
         </div>
 
@@ -670,7 +670,7 @@ export function AddonCatalog() {
           <select
             value={filterType}
             onChange={(e) => setFilterType(e.target.value as FilterType)}
-            className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
+            className="rounded-lg border border-[#80b8e0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
           >
             <option value="all">All Addons</option>
             <option value="healthy">Healthy Only</option>
@@ -684,7 +684,7 @@ export function AddonCatalog() {
           <select
             value={sortBy}
             onChange={(e) => setSortBy(e.target.value as SortBy)}
-            className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
+            className="rounded-lg border border-[#80b8e0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
           >
             <option value="name">A-Z</option>
             <option value="applications">Most Apps</option>
@@ -694,7 +694,7 @@ export function AddonCatalog() {
         <select
           value={pageSize}
           onChange={(e) => setPageSize(Number(e.target.value) as PageSize)}
-          className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
+          className="rounded-lg border border-[#80b8e0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
         >
           <option value={15}>15 per page</option>
           <option value={30}>30 per page</option>
@@ -702,7 +702,7 @@ export function AddonCatalog() {
         </select>
 
         {/* View mode toggle */}
-        <div className="ml-auto flex items-center rounded-lg border border-gray-300 dark:border-gray-600">
+        <div className="ml-auto flex items-center rounded-lg border border-[#80b8e0] dark:border-gray-600">
           <button
             type="button"
             onClick={() => setViewMode('grid')}

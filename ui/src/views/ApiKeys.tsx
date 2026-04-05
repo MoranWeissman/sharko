@@ -122,7 +122,7 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
       <div className="flex items-start justify-between gap-4">
         {!embedded && (
           <div>
-            <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">API Keys</h2>
+            <h2 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">API Keys</h2>
             <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
               Manage API tokens for programmatic access to Sharko.
             </p>
@@ -139,9 +139,9 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
       </div>
 
       {/* Token table */}
-      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
+      <div className="overflow-x-auto rounded-xl border border-[#90c8ee] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
         <table className="w-full text-left text-sm">
-          <thead className="border-b border-gray-200 bg-[#d0e8f8] text-xs uppercase text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
+          <thead className="border-b border-[#90c8ee] bg-[#d0e8f8] text-xs uppercase text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
             <tr>
               <th className="px-6 py-3">Name</th>
               <th className="px-6 py-3">Role</th>
@@ -150,10 +150,10 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
               <th className="px-6 py-3">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+          <tbody className="divide-y divide-[#90c8ee] dark:divide-gray-700">
             {tokens.map((token) => (
               <tr key={token.name} className="hover:bg-[#d6eeff] dark:hover:bg-gray-700">
-                <td className="px-6 py-3 font-medium text-gray-900 dark:text-gray-100">
+                <td className="px-6 py-3 font-medium text-[#0a2a4a] dark:text-gray-100">
                   <div className="flex items-center gap-2">
                     <Key className="h-4 w-4 text-[#3a6a8a]" />
                     {token.name}
@@ -165,7 +165,7 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
                       ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
                       : token.role === 'operator'
                       ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
-                      : 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-400'
+                      : 'bg-[#d6eeff] text-[#0a3a5a] dark:bg-gray-700 dark:text-gray-400'
                   }`}>
                     {token.role}
                   </span>
@@ -228,12 +228,12 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
           </DialogHeader>
           {createdToken ? (
             <div className="space-y-3 py-2">
-              <div className="flex items-center gap-2 rounded-md border border-gray-200 bg-[#d0e8f8] px-3 py-2 dark:border-gray-700 dark:bg-gray-900">
-                <code className="flex-1 break-all text-xs text-gray-800 dark:text-gray-200">{createdToken}</code>
+              <div className="flex items-center gap-2 rounded-md border border-[#90c8ee] bg-[#d0e8f8] px-3 py-2 dark:border-gray-700 dark:bg-gray-900">
+                <code className="flex-1 break-all text-xs text-[#0a3a5a] dark:text-gray-200">{createdToken}</code>
                 <button
                   type="button"
                   onClick={handleCopy}
-                  className="shrink-0 rounded p-1 text-[#2a5a7a] hover:bg-gray-200 dark:hover:bg-gray-700"
+                  className="shrink-0 rounded p-1 text-[#2a5a7a] hover:bg-[#c0ddf0] dark:hover:bg-gray-700"
                   title="Copy token"
                 >
                   {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
@@ -246,7 +246,7 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
           ) : (
             <div className="space-y-4 py-2">
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
                   Name <span className="text-red-500">*</span>
                 </label>
                 <input
@@ -254,17 +254,17 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
                   placeholder="e.g. ci-deploy"
-                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500"
+                  className="w-full rounded-md border border-[#80b8e0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
                 />
               </div>
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
                   Role
                 </label>
                 <select
                   value={newRole}
                   onChange={(e) => setNewRole(e.target.value)}
-                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
+                  className="w-full rounded-md border border-[#80b8e0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
                 >
                   <option value="viewer">viewer</option>
                   <option value="operator">operator</option>
@@ -279,7 +279,7 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
               type="button"
               onClick={() => setCreateOpen(false)}
               disabled={creating}
-              className="rounded-md border border-gray-300 bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-gray-700 hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+              className="rounded-md border border-[#80b8e0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
             >
               {createdToken ? 'Done' : 'Cancel'}
             </button>

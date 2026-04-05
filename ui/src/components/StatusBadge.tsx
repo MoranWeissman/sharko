@@ -19,13 +19,13 @@ function getStatusColor(status: string): { dot: string; bg: string; text: string
     return { dot: 'bg-amber-500', bg: 'bg-amber-50 dark:bg-amber-900/30', text: 'text-amber-700 dark:text-amber-400' };
   }
   if (['cancelled'].includes(s)) {
-    return { dot: 'bg-gray-500', bg: 'bg-gray-100 dark:bg-gray-700', text: 'text-gray-600 dark:text-gray-400' };
+    return { dot: 'bg-[#2a5a7a]', bg: 'bg-[#d6eeff] dark:bg-gray-700', text: 'text-[#1a4a6a] dark:text-gray-400' };
   }
   if (['untracked_in_argocd', 'not_in_git'].includes(s)) {
     return { dot: 'bg-purple-500', bg: 'bg-purple-50 dark:bg-purple-900/30', text: 'text-purple-700 dark:text-purple-400' };
   }
 
-  return { dot: 'bg-gray-400', bg: 'bg-gray-100 dark:bg-gray-700', text: 'text-gray-600 dark:text-gray-300' };
+  return { dot: 'bg-[#3a6a8a]', bg: 'bg-[#d6eeff] dark:bg-gray-700', text: 'text-[#1a4a6a] dark:text-gray-300' };
 }
 
 const statusDisplayNames: Record<string, string> = {

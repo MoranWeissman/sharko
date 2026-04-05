@@ -29,8 +29,8 @@ const providerStyles: Record<
     label: 'Grafana',
   },
   custom: {
-    bg: 'bg-gray-100 dark:bg-gray-700',
-    text: 'text-gray-600 dark:text-gray-300',
+    bg: 'bg-[#d6eeff] dark:bg-gray-700',
+    text: 'text-[#1a4a6a] dark:text-gray-300',
     label: 'Custom',
   },
 };
@@ -80,16 +80,16 @@ function DashboardForm({
   return (
     <form
       onSubmit={handleSubmit}
-      className="rounded-xl border border-gray-200 bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900"
+      className="rounded-xl border border-[#90c8ee] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900"
     >
       <div className="mb-4 flex items-center justify-between">
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+        <h3 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
           {title}
         </h3>
         <button
           type="button"
           onClick={onCancel}
-          className="rounded-lg p-1 text-[#3a6a8a] hover:bg-[#d6eeff] hover:text-gray-600 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+          className="rounded-lg p-1 text-[#3a6a8a] hover:bg-[#d6eeff] hover:text-[#1a4a6a] dark:hover:bg-gray-800 dark:hover:text-gray-200"
           aria-label="Close form"
         >
           <X className="h-5 w-5" />
@@ -100,7 +100,7 @@ function DashboardForm({
         <div>
           <label
             htmlFor="dashboard-name"
-            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+            className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300"
           >
             Name
           </label>
@@ -110,7 +110,7 @@ function DashboardForm({
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. Cluster Monitoring - NonProd"
-            className="w-full rounded-lg border border-gray-300 bg-[#f0f7ff] px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500"
+            className="w-full rounded-lg border border-[#80b8e0] bg-[#f0f7ff] px-3 py-2 text-sm text-[#0a2a4a] placeholder-[#5a8aaa] focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
             required
           />
         </div>
@@ -118,7 +118,7 @@ function DashboardForm({
         <div>
           <label
             htmlFor="dashboard-provider"
-            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+            className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300"
           >
             Provider
           </label>
@@ -128,7 +128,7 @@ function DashboardForm({
             onChange={(e) =>
               setProvider(e.target.value as EmbeddedDashboard['provider'])
             }
-            className="w-full rounded-lg border border-gray-300 bg-[#f0f7ff] px-3 py-2 text-sm text-gray-900 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+            className="w-full rounded-lg border border-[#80b8e0] bg-[#f0f7ff] px-3 py-2 text-sm text-[#0a2a4a] focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
           >
             <option value="datadog">Datadog</option>
             <option value="grafana">Grafana</option>
@@ -139,7 +139,7 @@ function DashboardForm({
         <div>
           <label
             htmlFor="dashboard-url"
-            className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300"
+            className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300"
           >
             URL
           </label>
@@ -150,7 +150,7 @@ function DashboardForm({
               onChange={(e) => setUrl(e.target.value)}
               placeholder={'Paste a URL:\nhttps://app.datadoghq.eu/graph/embed?token=...\n\nOr paste the full embed code:\n<iframe src="https://app.datadoghq.eu/graph/embed?token=..." ...></iframe>'}
               rows={4}
-              className="w-full rounded-lg border border-gray-300 bg-[#f0f7ff] px-3 py-2 font-mono text-xs text-gray-900 placeholder-gray-400 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500"
+              className="w-full rounded-lg border border-[#80b8e0] bg-[#f0f7ff] px-3 py-2 font-mono text-xs text-[#0a2a4a] placeholder-[#5a8aaa] focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
               required
             />
           ) : (
@@ -160,7 +160,7 @@ function DashboardForm({
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               placeholder={provider === 'grafana' ? 'https://grafana.example.com/d/abc123/my-dashboard' : 'https://...'}
-              className="w-full rounded-lg border border-gray-300 bg-[#f0f7ff] px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500"
+              className="w-full rounded-lg border border-[#80b8e0] bg-[#f0f7ff] px-3 py-2 text-sm text-[#0a2a4a] placeholder-[#5a8aaa] focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
               required
             />
           )}
@@ -233,7 +233,7 @@ export function Dashboards() {
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <h1 className="flex items-center gap-2 text-2xl font-bold text-gray-900 dark:text-gray-100">
+        <h1 className="flex items-center gap-2 text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">
           <BarChart3 className="h-7 w-7 text-teal-500" />
           External Dashboards
         </h1>
@@ -251,7 +251,7 @@ export function Dashboards() {
                 setShowForm(true);
                 setEditingId(null);
               }}
-              className="flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed border-gray-300 px-3 py-2 text-sm font-medium text-[#2a5a7a] transition-colors hover:border-teal-400 hover:text-teal-600 dark:border-gray-600 dark:text-gray-400 dark:hover:border-teal-500 dark:hover:text-teal-400"
+              className="flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed border-[#80b8e0] px-3 py-2 text-sm font-medium text-[#2a5a7a] transition-colors hover:border-teal-400 hover:text-teal-600 dark:border-gray-600 dark:text-gray-400 dark:hover:border-teal-500 dark:hover:text-teal-400"
             >
               <Plus className="h-4 w-4" />
               Add Dashboard
@@ -268,7 +268,7 @@ export function Dashboards() {
                 className={`flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors ${
                   isActive
                     ? 'border-l-[3px] border-teal-400 bg-teal-50 text-teal-700 dark:bg-teal-900/30 dark:text-teal-300'
-                    : 'border-l-[3px] border-transparent text-gray-700 hover:bg-[#d6eeff] dark:text-gray-300 dark:hover:bg-gray-800'
+                    : 'border-l-[3px] border-transparent text-[#0a3a5a] hover:bg-[#d6eeff] dark:text-gray-300 dark:hover:bg-gray-800'
                 }`}
               >
                 <span className="min-w-0 flex-1 text-sm leading-tight">{d.name}</span>
@@ -314,8 +314,8 @@ export function Dashboards() {
           {effectiveSelected ? (
             <div className="space-y-3">
               {/* Toolbar */}
-              <div className="flex items-center justify-between rounded-lg border border-gray-200 bg-[#f0f7ff] px-4 py-2.5 shadow-sm dark:border-gray-700 dark:bg-gray-900">
-                <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+              <div className="flex items-center justify-between rounded-lg border border-[#90c8ee] bg-[#f0f7ff] px-4 py-2.5 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+                <span className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
                   {effectiveSelected.name}
                 </span>
                 <div className="flex items-center gap-2">
@@ -323,14 +323,14 @@ export function Dashboards() {
                     href={effectiveSelected.url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium text-gray-600 hover:bg-[#d6eeff] dark:text-gray-400 dark:hover:bg-gray-800"
+                    className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium text-[#1a4a6a] hover:bg-[#d6eeff] dark:text-gray-400 dark:hover:bg-gray-800"
                   >
                     <ExternalLink className="h-3.5 w-3.5" />
                     Open in new tab
                   </a>
                   <button
                     onClick={() => handleEdit(effectiveSelected.id)}
-                    className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium text-gray-600 hover:bg-[#d6eeff] dark:text-gray-400 dark:hover:bg-gray-800"
+                    className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium text-[#1a4a6a] hover:bg-[#d6eeff] dark:text-gray-400 dark:hover:bg-gray-800"
                   >
                     <Pencil className="h-3.5 w-3.5" />
                     Edit
@@ -346,7 +346,7 @@ export function Dashboards() {
               </div>
 
               {/* Iframe */}
-              <div className="overflow-hidden rounded-xl border border-gray-200 shadow-md dark:border-gray-700">
+              <div className="overflow-hidden rounded-xl border border-[#90c8ee] shadow-md dark:border-gray-700">
                 <iframe
                   src={resolveUrl(effectiveSelected)}
                   title={effectiveSelected.name}
@@ -362,9 +362,9 @@ export function Dashboards() {
             </div>
           ) : !showForm && !editingId ? (
             /* Empty state — only show when form is not open */
-            <div className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-gray-300 py-20 dark:border-gray-700">
-              <BarChart3 className="h-12 w-12 text-gray-300 dark:text-gray-600" />
-              <h3 className="mt-4 text-lg font-semibold text-gray-700 dark:text-gray-300">
+            <div className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-[#80b8e0] py-20 dark:border-gray-700">
+              <BarChart3 className="h-12 w-12 text-[#5a8aaa] dark:text-gray-600" />
+              <h3 className="mt-4 text-lg font-semibold text-[#0a3a5a] dark:text-gray-300">
                 No dashboards configured
               </h3>
               <p className="mt-1 max-w-sm text-center text-sm text-[#2a5a7a] dark:text-gray-400">

@@ -103,16 +103,16 @@ function Breadcrumbs() {
   }
 
   return (
-    <nav className="flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400">
+    <nav className="flex items-center gap-1.5 text-sm text-[#2a5a7a] dark:text-gray-400">
       {crumbs.map((crumb, i) => (
         <span key={crumb.path} className="flex items-center gap-1.5">
-          {i > 0 && <span className="text-gray-300 dark:text-gray-600">/</span>}
+          {i > 0 && <span className="text-[#5a8aaa] dark:text-gray-600">/</span>}
           {i < crumbs.length - 1 ? (
-            <Link to={crumb.path} className="hover:text-gray-700 dark:hover:text-gray-200">
+            <Link to={crumb.path} className="hover:text-[#0a3a5a] dark:hover:text-gray-200">
               {crumb.label}
             </Link>
           ) : (
-            <span className="font-medium text-gray-900 dark:text-gray-100">{crumb.label}</span>
+            <span className="font-medium text-[#0a2a4a] dark:text-gray-100">{crumb.label}</span>
           )}
         </span>
       ))}
@@ -315,7 +315,7 @@ export function Layout() {
           <div className="flex items-center gap-3">
             <button
               onClick={() => setMobileOpen(true)}
-              className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 lg:hidden dark:text-gray-400 dark:hover:bg-gray-800"
+              className="rounded-lg p-2 text-[#2a5a7a] hover:bg-[#d6eeff] lg:hidden dark:text-gray-400 dark:hover:bg-gray-800"
               aria-label="Open menu"
             >
               <Menu className="h-5 w-5" />
@@ -337,7 +337,7 @@ export function Layout() {
               className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs transition-colors ${
                 aiPanelOpen
                   ? 'bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400'
-                  : 'border border-gray-200 bg-gray-50 text-gray-500 hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
+                  : 'border border-[#90c8ee] bg-[#e8f4ff] text-[#2a5a7a] hover:bg-[#d6eeff] dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
               }`}
               aria-label="Toggle AI Assistant"
             >
@@ -348,16 +348,16 @@ export function Layout() {
             {/* Search trigger */}
             <button
               onClick={() => { const e = new KeyboardEvent('keydown', { key: 'k', metaKey: true }); window.dispatchEvent(e) }}
-              className="hidden items-center gap-1.5 rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs text-gray-400 transition-colors hover:bg-gray-100 sm:flex dark:border-gray-700 dark:bg-gray-800 dark:hover:bg-gray-700"
+              className="hidden items-center gap-1.5 rounded-lg border border-[#90c8ee] bg-[#e8f4ff] px-3 py-1.5 text-xs text-[#3a6a8a] transition-colors hover:bg-[#d6eeff] sm:flex dark:border-gray-700 dark:bg-gray-800 dark:hover:bg-gray-700"
             >
               <Search className="h-3.5 w-3.5" />
               <span>Search...</span>
-              <kbd className="ml-2 rounded border border-gray-300 bg-white px-1 py-0.5 text-[9px] font-medium dark:border-gray-600 dark:bg-gray-700">
+              <kbd className="ml-2 rounded border border-[#80b8e0] bg-white px-1 py-0.5 text-[9px] font-medium dark:border-gray-600 dark:bg-gray-700">
                 {navigator.platform?.includes('Mac') ? '⌘' : 'Ctrl'}K
               </kbd>
             </button>
             {!loading && activeConnection && (
-              <div className="hidden items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs text-gray-500 sm:flex dark:border-gray-600 dark:bg-gray-800 dark:text-gray-400">
+              <div className="hidden items-center gap-2 rounded-lg border border-[#90c8ee] bg-[#e8f4ff] px-3 py-1.5 text-xs text-[#2a5a7a] sm:flex dark:border-gray-600 dark:bg-gray-800 dark:text-gray-400">
                 <Plug className="h-3.5 w-3.5" />
                 <span>{activeConnection}</span>
               </div>
@@ -375,25 +375,25 @@ export function Layout() {
               {userMenuOpen && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setUserMenuOpen(false)} />
-                  <div className="absolute right-0 top-10 z-50 w-48 rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-gray-700 dark:bg-gray-800">
+                  <div className="absolute right-0 top-10 z-50 w-48 rounded-lg border border-[#90c8ee] bg-white py-1 shadow-lg dark:border-gray-700 dark:bg-gray-800">
                     <button
                       onClick={() => { navigate('/user'); setUserMenuOpen(false) }}
-                      className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
+                      className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-[#0a3a5a] hover:bg-[#d6eeff] dark:text-gray-300 dark:hover:bg-gray-700"
                     >
                       <User className="h-4 w-4" />
                       Account
                     </button>
                     <button
                       onClick={() => { toggleTheme(); setUserMenuOpen(false) }}
-                      className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
+                      className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-[#0a3a5a] hover:bg-[#d6eeff] dark:text-gray-300 dark:hover:bg-gray-700"
                     >
                       {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
                       {theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
                     </button>
-                    <div className="my-1 border-t border-gray-200 dark:border-gray-700" />
+                    <div className="my-1 border-t border-[#90c8ee] dark:border-gray-700" />
                     <button
                       onClick={logout}
-                      className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-red-600 hover:bg-gray-100 dark:text-red-400 dark:hover:bg-gray-700"
+                      className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-red-600 hover:bg-[#d6eeff] dark:text-red-400 dark:hover:bg-gray-700"
                     >
                       <LogOut className="h-4 w-4" />
                       Log out
@@ -415,9 +415,9 @@ export function Layout() {
 
       {/* AI Panel — right side */}
       {aiPanelOpen && (
-        <div className="flex w-[380px] shrink-0 flex-col border-l border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
+        <div className="flex w-[380px] shrink-0 flex-col border-l border-[#90c8ee] bg-white dark:border-gray-700 dark:bg-gray-900">
           {/* Panel header */}
-          <div className="flex h-14 items-center justify-between border-b border-gray-200 bg-gradient-to-r from-teal-600 to-blue-700 px-4 dark:border-gray-700">
+          <div className="flex h-14 items-center justify-between border-b border-[#90c8ee] bg-gradient-to-r from-teal-600 to-blue-700 px-4 dark:border-gray-700">
             <div className="flex items-center gap-2 text-white">
               <Sparkles className="h-4 w-4" />
               <div>
