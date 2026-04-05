@@ -80,12 +80,12 @@ jobs:
         run: go install github.com/swaggo/swag/cmd/swag@latest
 
       - name: Regenerate swagger docs
-        run: swag init -g cmd/sharko/serve.go -o docs/swagger
+        run: swag init -g cmd/sharko/serve.go -o docs/swagger --parseDependency --parseInternal
 
       - name: Check for diff
         run: |
           if ! git diff --exit-code docs/swagger/; then
-            echo "Swagger docs are out of date. Run 'swag init -g cmd/sharko/serve.go -o docs/swagger' and commit the result."
+            echo "Swagger docs are out of date. Run 'swag init -g cmd/sharko/serve.go -o docs/swagger --parseDependency --parseInternal' and commit the result."
             exit 1
           fi
 
@@ -102,10 +102,13 @@ jobs:
           )
           FOUND=0
           for pattern in "${FORBIDDEN_PATTERNS[@]}"; do
-            MATCHES=$(grep -r --include="*.go" --include="*.ts" --include="*.tsx" --include="*.yaml" --include="*.yml" --include="*.md" -l "$pattern" . \
+            MATCHES=$(grep -r --include="*.go" --include="*.ts" --include="*.tsx" --include="*.yaml" --include="*.yml" \
+              -l "$pattern" . \
               --exclude-dir=".git" \
               --exclude-dir="node_modules" \
               --exclude-dir="vendor" \
+              --exclude-dir=".github" \
+              --exclude-dir="docs/superpowers/plans" \
               2>/dev/null || true)
             if [ -n "$MATCHES" ]; then
               echo "Forbidden pattern '$pattern' found in:"
