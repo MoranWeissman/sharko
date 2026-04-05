@@ -37,6 +37,17 @@ func (s *Server) handleGetDashboardStats(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// handleGetAttentionItems godoc
+//
+// @Summary Get attention items
+// @Description Returns ArgoCD applications that are unhealthy or have conditions requiring attention
+// @Tags dashboard
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{} "Attention items"
+// @Failure 500 {object} map[string]interface{} "Internal error"
+// @Failure 503 {object} map[string]interface{} "Service unavailable"
+// @Router /dashboard/attention [get]
 func (s *Server) handleGetAttentionItems(w http.ResponseWriter, r *http.Request) {
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {
@@ -99,6 +110,17 @@ func (s *Server) handleGetAttentionItems(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, items)
 }
 
+// handleGetPullRequests godoc
+//
+// @Summary Get pull requests
+// @Description Returns open pull requests from the GitOps repository
+// @Tags dashboard
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{} "Pull requests"
+// @Failure 500 {object} map[string]interface{} "Internal error"
+// @Failure 503 {object} map[string]interface{} "Service unavailable"
+// @Router /dashboard/pull-requests [get]
 func (s *Server) handleGetPullRequests(w http.ResponseWriter, r *http.Request) {
 	gp, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {

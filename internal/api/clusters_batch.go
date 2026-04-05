@@ -9,6 +9,21 @@ import (
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
 )
 
+// handleBatchRegisterClusters godoc
+//
+// @Summary Batch register clusters
+// @Description Registers multiple clusters in a single operation
+// @Tags clusters
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param body body map[string]interface{} true "Batch registration request with clusters array"
+// @Success 200 {object} map[string]interface{} "All clusters registered"
+// @Success 207 {object} map[string]interface{} "Partial success"
+// @Failure 400 {object} map[string]interface{} "Bad request"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 502 {object} map[string]interface{} "Gateway error"
+// @Router /clusters/batch [post]
 // handleBatchRegisterClusters handles POST /api/v1/clusters/batch — register multiple clusters.
 func (s *Server) handleBatchRegisterClusters(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {

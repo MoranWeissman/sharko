@@ -8,6 +8,15 @@ import (
 	"github.com/MoranWeissman/sharko/internal/providers"
 )
 
+// handleGetProviders godoc
+//
+// @Summary Get providers
+// @Description Returns the configured credentials provider type and connection status
+// @Tags system
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{} "Provider info"
+// @Router /providers [get]
 // handleGetProviders handles GET /api/v1/providers — return provider configuration.
 func (s *Server) handleGetProviders(w http.ResponseWriter, r *http.Request) {
 	availableTypes := []string{"aws-sm", "k8s-secrets"}
@@ -40,6 +49,19 @@ func (s *Server) handleGetProviders(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleTestProvider godoc
+//
+// @Summary Test provider connectivity
+// @Description Tests the configured or provided credentials provider connectivity
+// @Tags system
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param body body map[string]interface{} false "Optional provider type and region to test"
+// @Success 200 {object} map[string]interface{} "Test result"
+// @Failure 400 {object} map[string]interface{} "Bad request"
+// @Failure 501 {object} map[string]interface{} "No provider configured"
+// @Router /providers/test [post]
 // handleTestProvider handles POST /api/v1/providers/test — test provider connectivity.
 // Reads optional type/region from request body. If empty, tests the configured provider.
 func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
@@ -95,6 +117,18 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleTestProviderConfig godoc
+//
+// @Summary Test ad-hoc provider config
+// @Description Tests an arbitrary provider configuration without saving it
+// @Tags system
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param body body map[string]interface{} true "Provider config to test"
+// @Success 200 {object} map[string]interface{} "Test result"
+// @Failure 400 {object} map[string]interface{} "Bad request"
+// @Router /providers/test-config [post]
 // handleTestProviderConfig tests an ad-hoc provider configuration.
 func (s *Server) handleTestProviderConfig(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -137,6 +171,15 @@ func (s *Server) handleTestProviderConfig(w http.ResponseWriter, r *http.Request
 	})
 }
 
+// handleGetConfig godoc
+//
+// @Summary Get server config
+// @Description Returns non-sensitive server configuration including repo paths, GitOps settings, and ArgoCD status
+// @Tags system
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{} "Server configuration"
+// @Router /config [get]
 // handleGetConfig handles GET /api/v1/config — return non-sensitive server configuration.
 func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	cfg := map[string]interface{}{

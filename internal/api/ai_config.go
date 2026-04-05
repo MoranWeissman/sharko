@@ -20,6 +20,15 @@ type aiConfigResponse struct {
 	AvailableProviders []aiProviderInfo `json:"available_providers"`
 }
 
+// handleGetAIConfig godoc
+//
+// @Summary Get AI configuration
+// @Description Returns the current AI provider configuration and available providers
+// @Tags ai
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} aiConfigResponse "AI configuration"
+// @Router /ai/config [get]
 func (s *Server) handleGetAIConfig(w http.ResponseWriter, r *http.Request) {
 	cfg := s.aiClient.GetConfig()
 
@@ -85,6 +94,20 @@ type saveAIConfigRequest struct {
 	OllamaURL string `json:"ollama_url,omitempty"`
 }
 
+// handleSaveAIConfig godoc
+//
+// @Summary Save AI configuration
+// @Description Saves and applies new AI provider configuration (admin only)
+// @Tags ai
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param body body saveAIConfigRequest true "AI config to save"
+// @Success 200 {object} map[string]interface{} "Configuration saved"
+// @Failure 400 {object} map[string]interface{} "Bad request or unsupported provider"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 500 {object} map[string]interface{} "Internal error"
+// @Router /ai/config [post]
 func (s *Server) handleSaveAIConfig(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) { return }
 	var req saveAIConfigRequest
@@ -139,6 +162,18 @@ func (s *Server) handleSaveAIConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "provider": req.Provider})
 }
 
+// handleTestAIConfig godoc
+//
+// @Summary Test AI configuration
+// @Description Tests an AI provider configuration without saving it
+// @Tags ai
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param body body saveAIConfigRequest true "AI config to test"
+// @Success 200 {object} map[string]interface{} "Test result with status and response"
+// @Failure 400 {object} map[string]interface{} "Bad request"
+// @Router /ai/test-config [post]
 func (s *Server) handleTestAIConfig(w http.ResponseWriter, r *http.Request) {
 	var req saveAIConfigRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -175,6 +210,19 @@ func (s *Server) handleTestAIConfig(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleSetAIProvider godoc
+//
+// @Summary Set AI provider
+// @Description Switches the active AI provider without changing other configuration (admin only)
+// @Tags ai
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param body body map[string]interface{} true "Provider selection with provider name"
+// @Success 200 {object} map[string]interface{} "Provider set"
+// @Failure 400 {object} map[string]interface{} "Bad request or unsupported provider"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Router /ai/provider [post]
 func (s *Server) handleSetAIProvider(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
 		return
@@ -200,6 +248,17 @@ func (s *Server) handleSetAIProvider(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "provider": req.Provider})
 }
 
+// handleTestAI godoc
+//
+// @Summary Test active AI connection
+// @Description Tests the currently active AI provider by sending a simple prompt
+// @Tags ai
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{} "Test result with status and response"
+// @Failure 500 {object} map[string]interface{} "Internal error"
+// @Failure 503 {object} map[string]interface{} "AI not configured"
+// @Router /ai/test [post]
 func (s *Server) handleTestAI(w http.ResponseWriter, r *http.Request) {
 	if !s.aiClient.IsEnabled() {
 		writeError(w, http.StatusServiceUnavailable, "AI not configured")

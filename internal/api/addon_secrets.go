@@ -8,6 +8,16 @@ import (
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
+// handleListAddonSecrets godoc
+//
+// @Summary List addon secret definitions
+// @Description Returns all registered addon secret definitions
+// @Tags addons
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{} "Addon secret definitions"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Router /addon-secrets [get]
 func (s *Server) handleListAddonSecrets(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
 		return
@@ -22,6 +32,19 @@ func (s *Server) handleListAddonSecrets(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, defs)
 }
 
+// handleCreateAddonSecret godoc
+//
+// @Summary Create addon secret definition
+// @Description Registers a new addon secret definition for remote cluster secret propagation
+// @Tags addons
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param body body orchestrator.AddonSecretDefinition true "Addon secret definition"
+// @Success 201 {object} map[string]interface{} "Secret definition created"
+// @Failure 400 {object} map[string]interface{} "Bad request"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Router /addon-secrets [post]
 func (s *Server) handleCreateAddonSecret(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
 		return
@@ -54,6 +77,19 @@ func (s *Server) handleCreateAddonSecret(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusCreated, def)
 }
 
+// handleDeleteAddonSecret godoc
+//
+// @Summary Delete addon secret definition
+// @Description Removes the secret definition for a specific addon
+// @Tags addons
+// @Produce json
+// @Security BearerAuth
+// @Param addon path string true "Addon name"
+// @Success 200 {object} map[string]interface{} "Secret definition deleted"
+// @Failure 400 {object} map[string]interface{} "Bad request"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 404 {object} map[string]interface{} "Not found"
+// @Router /addon-secrets/{addon} [delete]
 func (s *Server) handleDeleteAddonSecret(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
 		return

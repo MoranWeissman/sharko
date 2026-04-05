@@ -14,6 +14,22 @@ import (
 
 var validClusterNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]*$`)
 
+// handleRegisterCluster godoc
+//
+// @Summary Register cluster
+// @Description Registers a new cluster in ArgoCD and creates its GitOps configuration
+// @Tags clusters
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param body body orchestrator.RegisterClusterRequest true "Cluster registration request"
+// @Success 201 {object} map[string]interface{} "Cluster registered"
+// @Success 207 {object} map[string]interface{} "Partial success"
+// @Failure 400 {object} map[string]interface{} "Bad request"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 409 {object} map[string]interface{} "Cluster already exists"
+// @Failure 502 {object} map[string]interface{} "Gateway error"
+// @Router /clusters [post]
 // handleRegisterCluster handles POST /api/v1/clusters — register a new cluster.
 func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
@@ -72,6 +88,21 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, status, result)
 }
 
+// handleDeregisterCluster godoc
+//
+// @Summary Deregister cluster
+// @Description Removes a cluster from ArgoCD and deletes its GitOps configuration
+// @Tags clusters
+// @Produce json
+// @Security BearerAuth
+// @Param name path string true "Cluster name"
+// @Success 200 {object} map[string]interface{} "Cluster deregistered"
+// @Success 207 {object} map[string]interface{} "Partial success"
+// @Failure 400 {object} map[string]interface{} "Bad request"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 404 {object} map[string]interface{} "Cluster not found"
+// @Failure 502 {object} map[string]interface{} "Gateway error"
+// @Router /clusters/{name} [delete]
 // handleDeregisterCluster handles DELETE /api/v1/clusters/{name} — remove a cluster.
 func (s *Server) handleDeregisterCluster(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
@@ -120,6 +151,23 @@ func (s *Server) handleDeregisterCluster(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, status, result)
 }
 
+// handleUpdateClusterAddons godoc
+//
+// @Summary Update cluster addons
+// @Description Updates the addon selections (enabled/disabled) for a specific cluster
+// @Tags clusters
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param name path string true "Cluster name"
+// @Param body body map[string]interface{} true "Addon update request with addons map"
+// @Success 200 {object} map[string]interface{} "Addons updated"
+// @Success 207 {object} map[string]interface{} "Partial success"
+// @Failure 400 {object} map[string]interface{} "Bad request"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 404 {object} map[string]interface{} "Cluster not found"
+// @Failure 502 {object} map[string]interface{} "Gateway error"
+// @Router /clusters/{name} [patch]
 // handleUpdateClusterAddons handles PATCH /api/v1/clusters/{name} — update addon labels.
 func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
@@ -178,6 +226,20 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, status, result)
 }
 
+// handleRefreshClusterCredentials godoc
+//
+// @Summary Refresh cluster credentials
+// @Description Rotates and re-syncs the cluster credentials from the secrets provider to ArgoCD
+// @Tags clusters
+// @Produce json
+// @Security BearerAuth
+// @Param name path string true "Cluster name"
+// @Success 200 {object} map[string]interface{} "Credentials refreshed"
+// @Failure 400 {object} map[string]interface{} "Bad request"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 404 {object} map[string]interface{} "Cluster not found"
+// @Failure 502 {object} map[string]interface{} "Gateway error"
+// @Router /clusters/{name}/refresh [post]
 // handleRefreshClusterCredentials handles POST /api/v1/clusters/{name}/refresh.
 func (s *Server) handleRefreshClusterCredentials(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {

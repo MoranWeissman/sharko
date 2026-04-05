@@ -28,6 +28,20 @@ var (
 	agentMu       sync.Mutex
 )
 
+// handleAgentChat godoc
+//
+// @Summary AI agent chat
+// @Description Sends a message to the AI agent and returns a response with tool-call capabilities
+// @Tags ai
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param body body map[string]interface{} true "Chat request with session_id, message, and optional page_context"
+// @Success 200 {object} map[string]interface{} "Agent response with session_id"
+// @Failure 400 {object} map[string]interface{} "Bad request"
+// @Failure 500 {object} map[string]interface{} "Internal error"
+// @Failure 503 {object} map[string]interface{} "Service unavailable"
+// @Router /agent/chat [post]
 func (s *Server) handleAgentChat(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		SessionID   string `json:"session_id"`
@@ -95,6 +109,18 @@ func (s *Server) handleAgentChat(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleAgentReset godoc
+//
+// @Summary Reset agent session
+// @Description Clears the conversation history for the specified agent session
+// @Tags ai
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param body body map[string]interface{} true "Reset request with session_id"
+// @Success 200 {object} map[string]interface{} "Session reset"
+// @Failure 400 {object} map[string]interface{} "Bad request"
+// @Router /agent/reset [post]
 func (s *Server) handleAgentReset(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		SessionID string `json:"session_id"`

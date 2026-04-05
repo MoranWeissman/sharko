@@ -28,6 +28,16 @@ type fleetStatusResponse struct {
 	Clusters             []fleetClusterSummary `json:"clusters"`
 }
 
+// handleGetFleetStatus godoc
+//
+// @Summary Get fleet status
+// @Description Returns aggregated health and addon deployment status across all clusters
+// @Tags clusters
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} fleetStatusResponse "Fleet status"
+// @Failure 502 {object} map[string]interface{} "Gateway error"
+// @Router /fleet/status [get]
 // handleGetFleetStatus handles GET /api/v1/fleet/status — read-only cluster status aggregation.
 func (s *Server) handleGetFleetStatus(w http.ResponseWriter, r *http.Request) {
 	gp, err := s.connSvc.GetActiveGitProvider()

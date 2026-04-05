@@ -5,6 +5,20 @@ import (
 	"net/http"
 )
 
+// handleCreateToken godoc
+//
+// @Summary Create API token
+// @Description Creates a new long-lived API token for programmatic access (admin only)
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param body body map[string]interface{} true "Token name and role"
+// @Success 201 {object} map[string]interface{} "Created token (shown only once)"
+// @Failure 400 {object} map[string]interface{} "Bad request"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 403 {object} map[string]interface{} "Forbidden"
+// @Router /tokens [post]
 func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
 		return
@@ -36,6 +50,17 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleListTokens godoc
+//
+// @Summary List API tokens
+// @Description Returns all active API tokens without their secret values (admin only)
+// @Tags auth
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{} "Token list"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 403 {object} map[string]interface{} "Forbidden"
+// @Router /tokens [get]
 func (s *Server) handleListTokens(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
 		return
@@ -45,6 +70,19 @@ func (s *Server) handleListTokens(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, tokens)
 }
 
+// handleRevokeToken godoc
+//
+// @Summary Revoke API token
+// @Description Permanently revokes an API token by name (admin only)
+// @Tags auth
+// @Produce json
+// @Security BearerAuth
+// @Param name path string true "Token name"
+// @Success 200 {object} map[string]interface{} "Token revoked"
+// @Failure 400 {object} map[string]interface{} "Bad request"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 403 {object} map[string]interface{} "Forbidden"
+// @Router /tokens/{name} [delete]
 func (s *Server) handleRevokeToken(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
 		return
