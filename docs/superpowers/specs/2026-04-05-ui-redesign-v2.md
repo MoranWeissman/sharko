@@ -258,14 +258,28 @@ Admin-only sections (Users, API Keys) hidden for non-admin users.
 
 **Pattern from:** Akuity (Image 35)
 
-Top bar notification bell icon with:
-- Badge count for unread notifications
-- Dropdown showing recent notifications:
-  - Addon upgrade available ("external-dns v6.0.0 available")
-  - Cluster disconnected alerts
-  - PR merge confirmations
-- "Mark all as read"
-- Link to full notification history (future)
+Top bar notification bell icon with badge count for unread notifications. Dropdown shows recent notifications with "Mark all as read".
+
+### Notification Types (MVP)
+
+| Type | Trigger | Semver Rule |
+|------|---------|-------------|
+| **Addon Upgrade Available** | New version detected in Helm repo | Major and minor only (not patches). Exception: patches WITH security fixes always notify. |
+| **Security Advisory** | CVE or security fix detected in release notes | Always notify, regardless of semver level |
+| **Version Drift Detected** | Cluster running older version than catalog | Notify once when drift first detected, not repeatedly |
+
+### Semver Notification Logic
+
+- `v1.14.3 → v1.14.4` (patch, no security) → **no notification** (visible in upgrade view)
+- `v1.14.3 → v1.15.0` (minor) → **notification**
+- `v1.14.3 → v2.0.0` (major) → **notification** with breaking change warning
+- `v1.14.3 → v1.14.4` (patch WITH CVE) → **security notification** (always)
+
+### API
+
+- `GET /api/v1/notifications` — list notifications (paginated)
+- `POST /api/v1/notifications/read` — mark as read
+- Notifications are generated server-side by a periodic check (configurable interval)
 
 ---
 
