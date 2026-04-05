@@ -166,7 +166,7 @@ export function Dashboard() {
             className="hidden h-32 w-auto sm:block"
           />
           <div>
-            <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
+            <h1 className="text-2xl font-bold tracking-tight sm:text-3xl" style={{ fontFamily: '"Quicksand", sans-serif', fontWeight: 700 }}>
               Sharko
             </h1>
             <p className="mt-1 max-w-2xl text-sm text-teal-100 sm:text-base">

@@ -732,7 +732,7 @@ function SyncActivitySection({
       </div>
 
       {/* Sync frequency chart */}
-      {syncs.length > 0 && (
+      {(syncs ?? []).length > 0 && (
         <div className="mb-5 h-32" style={{ minWidth: 0, minHeight: 0 }}>
           <ResponsiveContainer width="100%" height={128} minWidth={100}>
             <BarChart data={hourlyData}>
@@ -819,10 +819,10 @@ export function Observability() {
           ArgoCD control plane health, addon health per cluster, resource alerts, and sync activity timeline.
         </p>
       </div>
-      <ControlPlaneSection data={data.control_plane} />
-      <ResourceAlertsSection alerts={data.resource_alerts} />
-      <AddonGroupsSection groups={data.addon_groups} />
-      <SyncActivitySection syncs={data.recent_syncs} />
+      <ControlPlaneSection data={data.control_plane ?? { health_summary: {}, total_applications: 0, synced: 0, out_of_sync: 0 }} />
+      <ResourceAlertsSection alerts={data.resource_alerts ?? []} />
+      <AddonGroupsSection groups={data.addon_groups ?? []} />
+      <SyncActivitySection syncs={data.recent_syncs ?? []} />
     </div>
   );
 }
