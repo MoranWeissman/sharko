@@ -55,7 +55,7 @@ export function UserInfo() {
           UPDATE PASSWORD
         </button>
 
-        <form id="password-form" onSubmit={handleUpdatePassword} className="hidden space-y-4 rounded-lg border-2 border-[#6aade0] bg-[#d0e8f8] p-6 dark:border-gray-700 dark:bg-gray-800">
+        <form id="password-form" onSubmit={handleUpdatePassword} className="hidden space-y-4 rounded-lg ring-2 ring-[#6aade0] bg-[#d0e8f8] p-6 dark:border-gray-700 dark:bg-gray-800">
           <div>
             <label className="block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">Current Password</label>
             <input

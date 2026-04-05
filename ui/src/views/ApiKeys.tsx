@@ -139,7 +139,7 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
       </div>
 
       {/* Token table */}
-      <div className="overflow-x-auto rounded-xl border-2 border-[#6aade0] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
+      <div className="overflow-x-auto rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
         <table className="w-full text-left text-sm">
           <thead className="border-b border-[#6aade0] bg-[#d0e8f8] text-xs uppercase text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
             <tr>
@@ -228,7 +228,7 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
           </DialogHeader>
           {createdToken ? (
             <div className="space-y-3 py-2">
-              <div className="flex items-center gap-2 rounded-md border-2 border-[#6aade0] bg-[#d0e8f8] px-3 py-2 dark:border-gray-700 dark:bg-gray-900">
+              <div className="flex items-center gap-2 rounded-md ring-2 ring-[#6aade0] bg-[#d0e8f8] px-3 py-2 dark:border-gray-700 dark:bg-gray-900">
                 <code className="flex-1 break-all text-xs text-[#0a3a5a] dark:text-gray-200">{createdToken}</code>
                 <button
                   type="button"

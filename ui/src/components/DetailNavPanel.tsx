@@ -22,7 +22,7 @@ interface DetailNavPanelProps {
 
 export function DetailNavPanel({ sections, activeKey, onSelect }: DetailNavPanelProps) {
   return (
-    <div className="w-48 shrink-0">
+    <div className="w-48 shrink-0 rounded-lg ring-2 ring-[#6aade0] bg-[#e0f0ff] p-1">
       <nav className="p-3 space-y-4">
         {sections.map((group, gi) => (
           <div key={gi}>

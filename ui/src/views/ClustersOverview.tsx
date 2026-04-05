@@ -318,7 +318,7 @@ export function ClustersOverview() {
                 <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
                   Enable Addons (optional)
                 </label>
-                <div className="max-h-40 space-y-1 overflow-y-auto rounded-md border-2 border-[#6aade0] p-2 dark:border-gray-700">
+                <div className="max-h-40 space-y-1 overflow-y-auto rounded-md ring-2 ring-[#6aade0] p-2 dark:border-gray-700">
                   {catalogAddons.addons.map((addon) => (
                     <label
                       key={addon.addon_name}
@@ -388,7 +388,7 @@ export function ClustersOverview() {
       </div>
 
       {/* Advanced filters */}
-      <div className="rounded-lg border-2 border-[#6aade0] bg-[#d0e8f8] p-4 dark:border-gray-700 dark:bg-gray-900">
+      <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#d0e8f8] p-4 dark:border-gray-700 dark:bg-gray-900">
         <div className="flex flex-wrap items-center gap-3">
           {/* Name search */}
           <div className="relative min-w-[200px] flex-1">
@@ -417,7 +417,7 @@ export function ClustersOverview() {
               Version{filters.versions.length > 0 ? ` (${filters.versions.length})` : ''}
             </button>
             {versionDropdownOpen && (
-              <div className="absolute left-0 top-full z-10 mt-1 min-w-[180px] rounded-md border-2 border-[#6aade0] bg-[#f0f7ff] py-1 shadow-lg dark:border-gray-600 dark:bg-gray-800">
+              <div className="absolute left-0 top-full z-10 mt-1 min-w-[180px] rounded-md ring-2 ring-[#6aade0] bg-[#f0f7ff] py-1 shadow-lg dark:border-gray-600 dark:bg-gray-800">
                 {availableVersions.map((version) => (
                   <label
                     key={version}
@@ -452,7 +452,7 @@ export function ClustersOverview() {
               Connection Status{filters.connectionTypes.length > 0 ? ` (${filters.connectionTypes.length})` : ''}
             </button>
             {connectionDropdownOpen && (
-              <div className="absolute left-0 top-full z-10 mt-1 min-w-[200px] rounded-md border-2 border-[#6aade0] bg-[#f0f7ff] py-1 shadow-lg dark:border-gray-600 dark:bg-gray-800">
+              <div className="absolute left-0 top-full z-10 mt-1 min-w-[200px] rounded-md ring-2 ring-[#6aade0] bg-[#f0f7ff] py-1 shadow-lg dark:border-gray-600 dark:bg-gray-800">
                 {availableConnectionTypes.map((type) => (
                   <label
                     key={type}
@@ -557,7 +557,7 @@ export function ClustersOverview() {
 
       {/* Cluster list / grid */}
       {viewMode === 'list' ? (
-        <div className="overflow-x-auto rounded-xl border-2 border-[#6aade0] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <div className="overflow-x-auto rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
           <table className="w-full text-left text-sm">
             <thead className="border-b border-[#6aade0] bg-[#d0e8f8] text-xs uppercase text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
               <tr>
@@ -637,7 +637,7 @@ export function ClustersOverview() {
                     ? undefined
                     : () => navigate(`/clusters/${cluster.name}`)
                 }
-                className={`rounded-lg border-2 border-[#6aade0] bg-[#f0f7ff] p-4 shadow-sm transition-all dark:border-gray-700 dark:bg-gray-800 ${
+                className={`rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 shadow-sm transition-all dark:border-gray-700 dark:bg-gray-800 ${
                   isInCluster
                     ? 'cursor-not-allowed opacity-70'
                     : 'cursor-pointer hover:-translate-y-0.5 hover:border-teal-400 hover:shadow-md dark:hover:border-teal-500'
@@ -675,7 +675,7 @@ export function ClustersOverview() {
             );
           })}
           {filteredClusters.length === 0 && (
-            <div className="col-span-full rounded-lg border-2 border-[#6aade0] bg-[#f0f7ff] p-8 text-center text-[#3a6a8a] dark:border-gray-700 dark:bg-gray-800 dark:text-gray-500">
+            <div className="col-span-full rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-8 text-center text-[#3a6a8a] dark:border-gray-700 dark:bg-gray-800 dark:text-gray-500">
               No clusters match the current filters.
             </div>
           )}

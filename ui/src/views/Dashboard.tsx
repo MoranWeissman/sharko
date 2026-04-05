@@ -25,7 +25,7 @@ function HealthBar({ title, subtitle, segments }: HealthBarProps) {
   if (total === 0) return null;
 
   return (
-    <div className="rounded-xl border-2 border-[#6aade0] bg-[#f0f7ff] p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+    <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
       <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">{title}</h3>
       <p className="mb-3 text-xs text-[#2a5a7a] dark:text-gray-400">{subtitle}</p>
       <div className="mb-3 flex h-3 overflow-hidden rounded-full bg-[#d6eeff] dark:bg-gray-700">
@@ -307,7 +307,7 @@ export function Dashboard() {
       {/* Bottom row: Quick Actions + Recent Activity + Version Drift */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         {/* Quick Actions */}
-        <div className="rounded-xl border-2 border-[#6aade0] bg-[#f0f7ff] p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
           <h3 className="mb-3 text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Quick Actions</h3>
           <div className="space-y-2">
             <button onClick={() => navigate('/upgrade')}
@@ -326,7 +326,7 @@ export function Dashboard() {
         </div>
 
         {/* Recent Sync Activity */}
-        <div className="rounded-xl border-2 border-[#6aade0] bg-[#f0f7ff] p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
           <div className="mb-3 flex items-center justify-between">
             <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Recent Activity</h3>
             <button onClick={() => navigate('/observability')} className="text-xs text-teal-600 hover:text-teal-700 dark:text-teal-400">
@@ -356,7 +356,7 @@ export function Dashboard() {
         </div>
 
         {/* Version Drift */}
-        <div className="rounded-xl border-2 border-[#6aade0] bg-[#f0f7ff] p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
           <div className="mb-3 flex items-center justify-between">
             <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Version Drift</h3>
             <button onClick={() => navigate('/version-matrix')} className="text-xs text-teal-600 hover:text-teal-700 dark:text-teal-400">

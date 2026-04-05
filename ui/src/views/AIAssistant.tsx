@@ -464,7 +464,7 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
             {messages.length > 0 && (
               <button
                 onClick={handleExport}
-                className="flex items-center gap-1.5 rounded-lg border-2 border-[#6aade0] px-3 py-1.5 text-xs font-medium text-[#1a4a6a] transition-colors hover:bg-[#d6eeff] dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
+                className="flex items-center gap-1.5 rounded-lg ring-2 ring-[#6aade0] px-3 py-1.5 text-xs font-medium text-[#1a4a6a] transition-colors hover:bg-[#d6eeff] dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
               >
                 <Download className="h-3.5 w-3.5" />
                 Export
@@ -472,7 +472,7 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
             )}
             <button
               onClick={handleNewConversation}
-              className="flex items-center gap-1.5 rounded-lg border-2 border-[#6aade0] px-3 py-1.5 text-xs font-medium text-[#1a4a6a] transition-colors hover:bg-[#d6eeff] dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
+              className="flex items-center gap-1.5 rounded-lg ring-2 ring-[#6aade0] px-3 py-1.5 text-xs font-medium text-[#1a4a6a] transition-colors hover:bg-[#d6eeff] dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
             >
               <RotateCcw className="h-3.5 w-3.5" />
               New
@@ -526,7 +526,7 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
                 <button
                   key={prompt}
                   onClick={() => sendMessage(prompt)}
-                  className="rounded-lg border-2 border-[#6aade0] px-4 py-3 text-left text-sm text-[#1a4a6a] transition-colors hover:border-teal-300 hover:bg-teal-50 dark:border-gray-600 dark:text-gray-300 dark:hover:border-teal-700 dark:hover:bg-teal-900/20"
+                  className="rounded-lg ring-2 ring-[#6aade0] px-4 py-3 text-left text-sm text-[#1a4a6a] transition-colors hover:border-teal-300 hover:bg-teal-50 dark:border-gray-600 dark:text-gray-300 dark:hover:border-teal-700 dark:hover:bg-teal-900/20"
                 >
                   {prompt}
                 </button>
@@ -560,7 +560,7 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
                   className={`max-w-[75%] overflow-hidden rounded-2xl px-4 py-2.5 text-sm ${
                     msg.role === 'user'
                       ? 'bg-teal-600 text-white dark:bg-teal-700'
-                      : 'border-2 border-[#6aade0] bg-[#e8f4ff] text-[#0a3a5a] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200'
+                      : 'ring-2 ring-[#6aade0] bg-[#e8f4ff] text-[#0a3a5a] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200'
                   }`}
                 >
                   {msg.role === 'assistant' ? (
