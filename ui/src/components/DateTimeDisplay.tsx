@@ -23,7 +23,7 @@ export function DateTimeDisplay() {
   return (
     <time
       dateTime={now.toISOString()}
-      className="text-xs text-gray-500"
+      className="text-xs text-[#2a5a7a]"
     >
       {formatter.format(now)}
     </time>

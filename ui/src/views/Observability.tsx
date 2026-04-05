@@ -55,7 +55,7 @@ function healthBadgeCls(health: string): string {
     return 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300';
   if (h === 'progressing')
     return 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300';
-  return 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400';
+  return 'bg-[#d6eeff] text-[#1a4a6a] dark:bg-gray-800 dark:text-gray-400';
 }
 
 function syncBadgeCls(sync: string): string {
@@ -64,7 +64,7 @@ function syncBadgeCls(sync: string): string {
     return 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300';
   if (s === 'outofsync' || s === 'out_of_sync')
     return 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300';
-  return 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400';
+  return 'bg-[#d6eeff] text-[#1a4a6a] dark:bg-gray-800 dark:text-gray-400';
 }
 
 const HEALTH_COLORS: Record<string, string> = {
@@ -105,18 +105,18 @@ function ControlPlaneSection({
   const total = healthData.reduce((sum, d) => sum + d.value, 0);
 
   return (
-    <section className="rounded-xl border border-gray-200 bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+    <section className="rounded-xl border border-[#90c8ee] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900">
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+        <h2 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
           Control Plane
         </h2>
         <span className="rounded-full bg-teal-100 px-2.5 py-0.5 text-xs font-medium text-teal-800 dark:bg-teal-900/40 dark:text-teal-300">
           ArgoCD {data.argocd_version}
         </span>
-        <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-400">
+        <span className="rounded-full bg-[#d6eeff] px-2.5 py-0.5 text-xs font-medium text-[#1a4a6a] dark:bg-gray-800 dark:text-gray-400">
           Helm {data.helm_version}
         </span>
-        <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-400">
+        <span className="rounded-full bg-[#d6eeff] px-2.5 py-0.5 text-xs font-medium text-[#1a4a6a] dark:bg-gray-800 dark:text-gray-400">
           kubectl {data.kubectl_version}
         </span>
       </div>
@@ -152,7 +152,7 @@ function ControlPlaneSection({
           {healthData.map((d) => (
             <span
               key={d.name}
-              className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400"
+              className="flex items-center gap-1.5 text-xs text-[#1a4a6a] dark:text-gray-400"
             >
               <span
                 className="inline-block h-2.5 w-2.5 rounded-full"
@@ -177,11 +177,11 @@ function StatBlock({
   sub?: string;
 }) {
   return (
-    <div className="rounded-lg border border-gray-100 bg-[#d0e8f8] p-4 dark:border-gray-700 dark:bg-gray-800">
+    <div className="rounded-lg border border-[#a0d0f0] bg-[#d0e8f8] p-4 dark:border-gray-700 dark:bg-gray-800">
       <p className="text-xs font-medium uppercase tracking-wide text-[#2a5a7a] dark:text-gray-400">
         {label}
       </p>
-      <p className="mt-1 text-2xl font-bold text-gray-900 dark:text-gray-100">
+      <p className="mt-1 text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">
         {value}
         {sub && (
           <span className="text-base font-normal text-[#3a6a8a]"> {sub}</span>
@@ -223,7 +223,7 @@ function ResourceAlertsSection({ alerts }: { alerts: ResourceAlert[] }) {
             <div className="flex items-center gap-3">
               <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
               <div>
-                <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                <span className="text-sm font-medium text-[#0a2a4a] dark:text-gray-100">
                   {alert.addon_name}
                 </span>
                 <p className="text-xs text-[#2a5a7a] dark:text-gray-400">
@@ -345,13 +345,13 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
   return (
     <section>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-900 dark:text-gray-100">
+        <h2 className="flex items-center gap-2 text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
           <Server className="h-5 w-5 text-teal-500" />
           Addon Health
         </h2>
         <div className="flex items-center gap-3">
           {/* Group by toggle */}
-          <div className="flex rounded-md border border-gray-300 dark:border-gray-600">
+          <div className="flex rounded-md border border-[#80b8e0] dark:border-gray-600">
             {(['addon', 'cluster'] as const).map((m) => (
               <button
                 key={m}
@@ -396,7 +396,7 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
             return (
               <div
                 key={group.addon_name}
-                className="rounded-xl border border-gray-200 bg-[#f0f7ff] shadow-sm transition-shadow hover:shadow-md dark:border-gray-700 dark:bg-gray-900"
+                className="rounded-xl border border-[#90c8ee] bg-[#f0f7ff] shadow-sm transition-shadow hover:shadow-md dark:border-gray-700 dark:bg-gray-900"
               >
                 <button
                   onClick={() => toggle(group.addon_name)}
@@ -405,10 +405,10 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
                 >
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-3">
-                      <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                      <span className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
                         {group.addon_name}
                       </span>
-                      <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-[#2a5a7a] dark:bg-gray-800 dark:text-gray-400">
+                      <span className="rounded-full bg-[#d6eeff] px-2 py-0.5 text-xs text-[#2a5a7a] dark:bg-gray-800 dark:text-gray-400">
                         {total} app{total !== 1 ? 's' : ''}
                       </span>
                     </div>
@@ -447,7 +447,7 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
                 </button>
 
                 {isExpanded && group.child_apps && group.child_apps.length > 0 && (
-                  <div className="border-t border-gray-100 px-4 pb-4 dark:border-gray-700">
+                  <div className="border-t border-[#a0d0f0] px-4 pb-4 dark:border-gray-700">
                     <table className="mt-3 w-full text-xs">
                       <thead>
                         <tr className="text-left text-[#2a5a7a] dark:text-gray-400">
@@ -465,7 +465,7 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
                               key={child.app_name}
                               className="hover:bg-[#d6eeff] dark:hover:bg-gray-800"
                             >
-                              <td className="py-2 pr-3 font-medium text-gray-800 dark:text-gray-200">
+                              <td className="py-2 pr-3 font-medium text-[#0a3a5a] dark:text-gray-200">
                                 {child.cluster_name}
                               </td>
                               <td className="py-2 pr-3">
@@ -505,7 +505,7 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
         ) : (
           /* ---- Group by Cluster ---- */
           sortedClusterGroups.length === 0 ? (
-            <div className="rounded-lg border border-gray-200 bg-[#f0f7ff] p-8 text-center text-sm text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400">
+            <div className="rounded-lg border border-[#90c8ee] bg-[#f0f7ff] p-8 text-center text-sm text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400">
               No cluster data available.
             </div>
           ) : (
@@ -517,7 +517,7 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
               return (
                 <div
                   key={cg.cluster_name}
-                  className="rounded-xl border border-gray-200 bg-[#f0f7ff] shadow-sm transition-shadow hover:shadow-md dark:border-gray-700 dark:bg-gray-900"
+                  className="rounded-xl border border-[#90c8ee] bg-[#f0f7ff] shadow-sm transition-shadow hover:shadow-md dark:border-gray-700 dark:bg-gray-900"
                 >
                   <button
                     onClick={() => toggle(cg.cluster_name)}
@@ -526,10 +526,10 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
                   >
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-3">
-                        <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                        <span className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
                           {cg.cluster_name}
                         </span>
-                        <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-[#2a5a7a] dark:bg-gray-800 dark:text-gray-400">
+                        <span className="rounded-full bg-[#d6eeff] px-2 py-0.5 text-xs text-[#2a5a7a] dark:bg-gray-800 dark:text-gray-400">
                           {total} addon{total !== 1 ? 's' : ''}
                         </span>
                       </div>
@@ -568,7 +568,7 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
                   </button>
 
                   {isExpanded && (
-                    <div className="border-t border-gray-100 px-4 pb-4 dark:border-gray-700">
+                    <div className="border-t border-[#a0d0f0] px-4 pb-4 dark:border-gray-700">
                       <table className="mt-3 w-full text-xs">
                         <thead>
                           <tr className="text-left text-[#2a5a7a] dark:text-gray-400">
@@ -586,7 +586,7 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
                                 key={addon.app_name}
                                 className="hover:bg-[#d6eeff] dark:hover:bg-gray-800"
                               >
-                                <td className="py-2 pr-3 font-medium text-gray-800 dark:text-gray-200">
+                                <td className="py-2 pr-3 font-medium text-[#0a3a5a] dark:text-gray-200">
                                   {addon.addon_name}
                                 </td>
                                 <td className="py-2 pr-3">
@@ -631,7 +631,7 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
       {groupBy === 'addon' && sortedAddonGroups.length > visibleCount && (
         <button
           onClick={() => setVisibleCount(v => v + 10)}
-          className="w-full rounded-lg border border-gray-200 bg-[#f0f7ff] py-2 text-center text-sm text-teal-600 hover:bg-[#d6eeff] dark:border-gray-700 dark:bg-gray-800 dark:text-teal-400"
+          className="w-full rounded-lg border border-[#90c8ee] bg-[#f0f7ff] py-2 text-center text-sm text-teal-600 hover:bg-[#d6eeff] dark:border-gray-700 dark:bg-gray-800 dark:text-teal-400"
         >
           Show more ({sortedAddonGroups.length - visibleCount} remaining)
         </button>
@@ -689,9 +689,9 @@ function SyncActivitySection({
   }, [syncs]);
 
   return (
-    <section className="rounded-xl border border-gray-200 bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+    <section className="rounded-xl border border-[#90c8ee] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-900 dark:text-gray-100">
+        <h2 className="flex items-center gap-2 text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
           <Activity className="h-5 w-5 text-teal-500" />
           Sync Activity
         </h2>
@@ -699,7 +699,7 @@ function SyncActivitySection({
           <select
             value={addonFilter}
             onChange={(e) => setAddonFilter(e.target.value)}
-            className="rounded-md border border-gray-200 bg-[#f0f7ff] px-2 py-1 text-xs text-gray-700 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300"
+            className="rounded-md border border-[#90c8ee] bg-[#f0f7ff] px-2 py-1 text-xs text-[#0a3a5a] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300"
             aria-label="Filter by addon"
           >
             <option value="">All Addons</option>
@@ -712,7 +712,7 @@ function SyncActivitySection({
           <select
             value={clusterFilter}
             onChange={(e) => setClusterFilter(e.target.value)}
-            className="rounded-md border border-gray-200 bg-[#f0f7ff] px-2 py-1 text-xs text-gray-700 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300"
+            className="rounded-md border border-[#90c8ee] bg-[#f0f7ff] px-2 py-1 text-xs text-[#0a3a5a] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300"
             aria-label="Filter by cluster"
           >
             <option value="">All Clusters</option>
@@ -756,7 +756,7 @@ function SyncActivitySection({
             <span className="w-16 shrink-0 text-xs text-[#3a6a8a]">
               {timeAgo(s.timestamp)}
             </span>
-            <span className="min-w-0 flex-1 truncate text-sm font-medium text-gray-900 dark:text-gray-100">
+            <span className="min-w-0 flex-1 truncate text-sm font-medium text-[#0a2a4a] dark:text-gray-100">
               {s.addon_name}
             </span>
             <span className="hidden truncate text-xs text-[#2a5a7a] sm:inline dark:text-gray-400">
@@ -808,7 +808,7 @@ export function Observability() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Observability</h1>
+        <h1 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">Observability</h1>
         <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
           ArgoCD control plane health, addon health per cluster, resource alerts, and sync activity timeline.
         </p>

@@ -308,7 +308,7 @@ export function ClusterDetail() {
       {/* Heading + cluster meta */}
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{data.cluster.name}</h2>
+          <h2 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">{data.cluster.name}</h2>
           <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
             Kubernetes cluster managed by ArgoCD — deployed addons, health, and configuration overrides.
           </p>
@@ -346,7 +346,7 @@ export function ClusterDetail() {
             <Tag className="h-4 w-4 text-teal-500" />
             <div>
               <p className="text-xs text-[#2a5a7a] dark:text-gray-400">Cluster Version</p>
-              <p className="font-mono text-sm font-semibold text-gray-900 dark:text-gray-100">{data.cluster.server_version}</p>
+              <p className="font-mono text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">{data.cluster.server_version}</p>
             </div>
           </div>
         )}
@@ -372,7 +372,7 @@ export function ClusterDetail() {
           <Server className="h-4 w-4 text-teal-500" />
           <div>
             <p className="text-xs text-[#2a5a7a] dark:text-gray-400">Connection</p>
-            <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+            <p className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
               {data.cluster_connection_state || 'Unknown'}
             </p>
           </div>
@@ -411,7 +411,7 @@ export function ClusterDetail() {
           {/* Admin: Addon Enable/Disable Toggles */}
           <RoleGuard adminOnly>
             <div className="rounded-lg border border-[#90c8ee] bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800">
-              <h3 className="mb-3 text-base font-semibold text-gray-900 dark:text-gray-100">Manage Addons</h3>
+              <h3 className="mb-3 text-base font-semibold text-[#0a2a4a] dark:text-gray-100">Manage Addons</h3>
               {Object.keys(addonToggles).length === 0 ? (
                 <p className="text-sm text-[#3a6a8a] dark:text-gray-500">No addons in catalog.</p>
               ) : (
@@ -427,7 +427,7 @@ export function ClusterDetail() {
                         className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none ${
                           addonToggles[addonName]
                             ? 'bg-teal-600'
-                            : 'bg-gray-200 dark:bg-gray-600'
+                            : 'bg-[#c0ddf0] dark:bg-gray-600'
                         }`}
                       >
                         <span
@@ -436,7 +436,7 @@ export function ClusterDetail() {
                           }`}
                         />
                       </div>
-                      <span className={`capitalize ${addonToggles[addonName] !== originalToggles[addonName] ? 'font-semibold text-teal-600 dark:text-teal-400' : 'text-gray-700 dark:text-gray-300'}`}>
+                      <span className={`capitalize ${addonToggles[addonName] !== originalToggles[addonName] ? 'font-semibold text-teal-600 dark:text-teal-400' : 'text-[#0a3a5a] dark:text-gray-300'}`}>
                         {addonName}
                       </span>
                     </label>
@@ -458,7 +458,7 @@ export function ClusterDetail() {
                     type="button"
                     onClick={() => { setAddonToggles({ ...originalToggles }); setToggleError(null); setToggleResult(null); }}
                     disabled={applyingToggles}
-                    className="rounded-md border border-gray-300 bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-gray-700 hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                    className="rounded-md border border-[#80b8e0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
                   >
                     Discard
                   </button>
@@ -490,7 +490,7 @@ export function ClusterDetail() {
           {/* Comparison table */}
           <div className="overflow-x-auto rounded-xl border border-[#90c8ee] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <table className="w-full text-left text-sm">
-              <thead className="border-b border-gray-200 bg-[#d0e8f8] text-xs uppercase text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
+              <thead className="border-b border-[#90c8ee] bg-[#d0e8f8] text-xs uppercase text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
                 <tr>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">Addon Name</th>
@@ -500,7 +500,7 @@ export function ClusterDetail() {
                   <th className="px-4 py-3">Issues</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+              <tbody className="divide-y divide-[#90c8ee] dark:divide-gray-700">
                 {filteredAddons.map((addon) => (
                   <ComparisonRow
                     key={addon.addon_name}
@@ -572,7 +572,7 @@ function ComparisonRow({ addon, isExpanded, onToggleExpand, argocdBaseURL }: Com
           <span className="text-[#3a6a8a] dark:text-gray-500">--</span>
         )}
       </td>
-      <td className="px-4 py-3 font-medium text-gray-900 dark:text-gray-100">
+      <td className="px-4 py-3 font-medium text-[#0a2a4a] dark:text-gray-100">
         <div className="flex items-center gap-2">
           {capitalizeAddonName(addon.addon_name)}
           {addon.argocd_application_name && argocdBaseURL && (
@@ -589,21 +589,21 @@ function ComparisonRow({ addon, isExpanded, onToggleExpand, argocdBaseURL }: Com
           )}
         </div>
       </td>
-      <td className="px-4 py-3 font-mono text-xs text-gray-600 dark:text-gray-400">
+      <td className="px-4 py-3 font-mono text-xs text-[#1a4a6a] dark:text-gray-400">
         {addon.has_version_override
           ? (addon.custom_version ?? addon.environment_version ?? addon.git_version ?? '--')
           : (addon.environment_version ?? addon.git_version ?? '--')}
       </td>
-      <td className="px-4 py-3 font-mono text-xs text-gray-600 dark:text-gray-400">
+      <td className="px-4 py-3 font-mono text-xs text-[#1a4a6a] dark:text-gray-400">
         {addon.argocd_deployed_version ?? '--'}
       </td>
-      <td className="px-4 py-3 text-gray-600 dark:text-gray-400">
+      <td className="px-4 py-3 text-[#1a4a6a] dark:text-gray-400">
         {addon.argocd_namespace ?? '--'}
       </td>
       <td className="px-4 py-3">
         {allIssues.length > 0 ? (
           <div>
-            <ul className="space-y-0.5 text-xs text-gray-600 dark:text-gray-400">
+            <ul className="space-y-0.5 text-xs text-[#1a4a6a] dark:text-gray-400">
               {displayedIssues.map((issue, i) => (
                 <li key={i}>{issue}</li>
               ))}
@@ -681,15 +681,15 @@ function ConfigOverridesPanel({ data, loading, error, onRetry }: ConfigOverrides
           key={entry.addon_name}
           className="rounded-xl border border-[#90c8ee] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800"
         >
-          <div className="flex items-center gap-2 border-b border-gray-200 px-4 py-3 dark:border-gray-700">
-            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+          <div className="flex items-center gap-2 border-b border-[#90c8ee] px-4 py-3 dark:border-gray-700">
+            <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
               {capitalizeAddonName(entry.addon_name)}
             </h3>
             <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-400">
               Custom overrides
             </span>
           </div>
-          <div className="grid grid-cols-1 divide-y md:grid-cols-2 md:divide-x md:divide-y-0 divide-gray-200 dark:divide-gray-700">
+          <div className="grid grid-cols-1 divide-y md:grid-cols-2 md:divide-x md:divide-y-0 divide-[#90c8ee] dark:divide-gray-700">
             <div className="p-4">
               <YamlViewer yaml={entry.global_values || ''} title="Global Default" defaultView="tree" />
             </div>

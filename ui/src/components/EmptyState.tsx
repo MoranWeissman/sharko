@@ -15,9 +15,9 @@ export function EmptyState({ title, description, action }: EmptyStateProps) {
         className="h-20 w-auto opacity-80"
       />
       <div>
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">{title}</h3>
+        <h3 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">{title}</h3>
         {description && (
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{description}</p>
+          <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">{description}</p>
         )}
       </div>
       {action}

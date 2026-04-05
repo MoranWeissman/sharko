@@ -69,7 +69,7 @@ export function SearchableSelect({
         )}
         {value && !disabled ? (
           <X
-            className="h-4 w-4 shrink-0 cursor-pointer text-gray-400 hover:text-gray-600"
+            className="h-4 w-4 shrink-0 cursor-pointer text-[#3a6a8a] hover:text-[#1a4a6a]"
             onClick={(e) => {
               e.stopPropagation()
               onChange('')
@@ -77,16 +77,16 @@ export function SearchableSelect({
             }}
           />
         ) : (
-          <ChevronDown className="h-4 w-4 shrink-0 text-gray-400" />
+          <ChevronDown className="h-4 w-4 shrink-0 text-[#3a6a8a]" />
         )}
       </div>
 
       {open && (
-        <div className="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-md border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-800">
+        <div className="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-md border border-[#90c8ee] bg-white shadow-lg dark:border-gray-700 dark:bg-gray-800">
           {loading ? (
-            <div className="px-3 py-2 text-sm text-gray-500">Loading...</div>
+            <div className="px-3 py-2 text-sm text-[#2a5a7a]">Loading...</div>
           ) : filtered.length === 0 ? (
-            <div className="px-3 py-2 text-sm text-gray-500">
+            <div className="px-3 py-2 text-sm text-[#2a5a7a]">
               {search ? 'No matches found' : 'No options available'}
             </div>
           ) : (
@@ -94,8 +94,8 @@ export function SearchableSelect({
               <div
                 key={option}
                 className={cn(
-                  'cursor-pointer px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700',
-                  option === value && 'bg-gray-100 font-medium dark:bg-gray-700'
+                  'cursor-pointer px-3 py-2 text-sm hover:bg-[#d6eeff] dark:hover:bg-gray-700',
+                  option === value && 'bg-[#d6eeff] font-medium dark:bg-gray-700'
                 )}
                 onClick={() => {
                   onChange(option)

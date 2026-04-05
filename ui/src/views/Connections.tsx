@@ -88,11 +88,11 @@ function formFromConnection(conn: ConnectionResponse): ConnectionFormData {
 /* ------------------------------------------------------------------ */
 
 const labelCls =
-  'block text-sm font-medium text-gray-700 dark:text-gray-300'
+  'block text-sm font-medium text-[#0a3a5a] dark:text-gray-300'
 const inputCls =
-  'mt-1 block w-full rounded-lg border border-gray-300 bg-[#f0f7ff] px-3 py-2 text-sm text-gray-900 shadow-sm placeholder:text-[#3a6a8a] focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder:text-[#2a5a7a]'
+  'mt-1 block w-full rounded-lg border border-[#80b8e0] bg-[#f0f7ff] px-3 py-2 text-sm text-[#0a2a4a] shadow-sm placeholder:text-[#3a6a8a] focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder:text-[#2a5a7a]'
 const selectCls =
-  'mt-1 block w-full rounded-lg border border-gray-300 bg-[#f0f7ff] px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100'
+  'mt-1 block w-full rounded-lg border border-[#80b8e0] bg-[#f0f7ff] px-3 py-2 text-sm text-[#0a2a4a] shadow-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100'
 
 interface TestStatus {
   git: 'idle' | 'testing' | 'ok' | 'error'
@@ -124,7 +124,7 @@ function ConnectionFormFields({
       <div>
         <div className="mb-3 flex items-center gap-2">
           <GitBranch className="h-4 w-4 text-[#2a5a7a]" />
-          <h5 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Git Repository</h5>
+          <h5 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Git Repository</h5>
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div className="sm:col-span-2">
@@ -141,7 +141,7 @@ function ConnectionFormFields({
         </div>
         <div className="mt-3 flex items-center gap-3">
           <button type="button" onClick={onTestGit} disabled={testStatus.git === 'testing' || !form.git_url}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">
+            className="inline-flex items-center gap-1.5 rounded-lg border border-[#80b8e0] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">
             {testStatus.git === 'testing' ? <Loader2 className="h-3 w-3 animate-spin" /> : <GitBranch className="h-3 w-3" />}
             Test Git
           </button>
@@ -154,7 +154,7 @@ function ConnectionFormFields({
       <div>
         <div className="mb-3 flex items-center gap-2">
           <Server className="h-4 w-4 text-[#2a5a7a]" />
-          <h5 className="text-sm font-semibold text-gray-900 dark:text-gray-100">ArgoCD</h5>
+          <h5 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">ArgoCD</h5>
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
@@ -177,7 +177,7 @@ function ConnectionFormFields({
         </div>
         <div className="mt-3 flex items-center gap-3">
           <button type="button" onClick={onTestArgocd} disabled={testStatus.argocd === 'testing'}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">
+            className="inline-flex items-center gap-1.5 rounded-lg border border-[#80b8e0] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">
             {testStatus.argocd === 'testing' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Server className="h-3 w-3" />}
             Test ArgoCD
           </button>
@@ -408,7 +408,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
       {/* Header */}
       {!embedded && (
         <div>
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+          <h2 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">
             Settings
           </h2>
           <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
@@ -420,7 +420,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
       {/* Active Connections */}
       <section className="space-y-4">
         <div className="flex items-center justify-between">
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+          <h3 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
             Active Connections
           </h3>
           <div className="text-right">
@@ -446,7 +446,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
               Add Connection
             </button>
             <p className="mt-1 text-xs text-[#3a6a8a] dark:text-gray-400">
-              Connect to additional ArgoCD instances
+              Manage Sharko infrastructure connections — ArgoCD, Git provider, and secrets provider.
             </p>
           </div>
         </div>
@@ -457,7 +457,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
             onSubmit={handleAddSubmit}
             className="rounded-xl border border-teal-200 bg-teal-50/50 p-6 shadow-sm dark:border-teal-800 dark:bg-teal-950/20"
           >
-            <h4 className="mb-4 text-base font-semibold text-gray-900 dark:text-gray-100">
+            <h4 className="mb-4 text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
               New Connection
             </h4>
             <ConnectionFormFields
@@ -490,7 +490,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
               <button
                 type="button"
                 onClick={() => setShowAddForm(false)}
-                className="rounded-lg px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200"
+                className="rounded-lg px-4 py-2 text-sm font-medium text-[#1a4a6a] hover:text-[#0a3a5a] dark:text-gray-400 dark:hover:text-gray-200"
               >
                 Cancel
               </button>
@@ -510,13 +510,13 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
                   className={`rounded-xl border border-[#90c8ee] bg-[#f0f7ff] p-6 shadow-sm dark:bg-gray-800 ${
                     conn.is_active
                       ? 'border-teal-500 ring-2 ring-teal-100 dark:ring-teal-900/50'
-                      : 'border-gray-200 dark:border-gray-700'
+                      : 'border-[#90c8ee] dark:border-gray-700'
                   }`}
                 >
                   {/* Name + badges */}
                   <div className="mb-4 flex items-center justify-between">
                     <div className="flex flex-wrap items-center gap-2">
-                      <h4 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                      <h4 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
                         {conn.name}
                       </h4>
                       {conn.is_default && (
@@ -534,7 +534,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
                     <div className="flex items-center gap-2">
                       <button
                         onClick={() => handleEditStart(conn)}
-                        className="inline-flex items-center gap-1 text-xs font-medium text-[#2a5a7a] hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                        className="inline-flex items-center gap-1 text-xs font-medium text-[#2a5a7a] hover:text-[#0a3a5a] dark:text-gray-400 dark:hover:text-gray-200"
                       >
                         <Pencil className="h-3 w-3" />
                         Edit
@@ -584,7 +584,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
                         <GitBranch className="h-3.5 w-3.5" />
                         Git Provider
                       </dt>
-                      <dd className="font-medium capitalize text-gray-900 dark:text-gray-100">
+                      <dd className="font-medium capitalize text-[#0a2a4a] dark:text-gray-100">
                         {conn.git_provider}
                       </dd>
                     </div>
@@ -593,7 +593,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
                         <GitBranch className="h-3.5 w-3.5" />
                         Repository
                       </dt>
-                      <dd className="font-mono text-xs text-gray-700 dark:text-gray-300">
+                      <dd className="font-mono text-xs text-[#0a3a5a] dark:text-gray-300">
                         {conn.git_repo_identifier}
                       </dd>
                     </div>
@@ -602,7 +602,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
                         <Server className="h-3.5 w-3.5" />
                         ArgoCD URL
                       </dt>
-                      <dd className="break-all text-right font-mono text-xs text-gray-700 dark:text-gray-300">
+                      <dd className="break-all text-right font-mono text-xs text-[#0a3a5a] dark:text-gray-300">
                         {conn.argocd_server_url}
                       </dd>
                     </div>
@@ -611,7 +611,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
                         <Shield className="h-3.5 w-3.5" />
                         Namespace
                       </dt>
-                      <dd className="font-mono text-xs text-gray-700 dark:text-gray-300">
+                      <dd className="font-mono text-xs text-[#0a3a5a] dark:text-gray-300">
                         {conn.argocd_namespace}
                       </dd>
                     </div>
@@ -625,13 +625,13 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
                     className="mt-2 rounded-xl border border-amber-200 bg-amber-50/50 p-6 shadow-sm dark:border-amber-800 dark:bg-amber-950/20"
                   >
                     <div className="mb-4 flex items-center justify-between">
-                      <h4 className="text-base font-semibold text-gray-900 dark:text-gray-100">
+                      <h4 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
                         Edit Connection
                       </h4>
                       <button
                         type="button"
                         onClick={() => setEditingName(null)}
-                        className="text-[#3a6a8a] hover:text-gray-600 dark:hover:text-gray-200"
+                        className="text-[#3a6a8a] hover:text-[#1a4a6a] dark:hover:text-gray-200"
                       >
                         <X className="h-4 w-4" />
                       </button>
@@ -666,7 +666,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
                       <button
                         type="button"
                         onClick={() => setEditingName(null)}
-                        className="rounded-lg px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200"
+                        className="rounded-lg px-4 py-2 text-sm font-medium text-[#1a4a6a] hover:text-[#0a3a5a] dark:text-gray-400 dark:hover:text-gray-200"
                       >
                         Cancel
                       </button>
@@ -681,7 +681,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
 
       {/* Platform Info */}
       <section className="space-y-4">
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+        <h3 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
           Platform Info
         </h3>
         <div className="rounded-xl border border-[#90c8ee] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
@@ -692,7 +692,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
                 <Monitor className="h-3.5 w-3.5" />
                 Deployment Mode
               </dt>
-              <dd className="mt-1 text-sm font-medium text-gray-900 dark:text-gray-100">
+              <dd className="mt-1 text-sm font-medium text-[#0a2a4a] dark:text-gray-100">
                 {platformInfo?.mode ?? 'Unknown'}
               </dd>
             </div>
@@ -726,7 +726,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
                 <GitBranch className="h-3.5 w-3.5" />
                 Git Provider
               </dt>
-              <dd className="mt-1 text-sm font-medium capitalize text-gray-900 dark:text-gray-100">
+              <dd className="mt-1 text-sm font-medium capitalize text-[#0a2a4a] dark:text-gray-100">
                 {activeConn?.git_provider ?? 'N/A'}
               </dd>
             </div>
@@ -737,7 +737,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
                 <Globe className="h-3.5 w-3.5" />
                 ArgoCD Server
               </dt>
-              <dd className="mt-1 break-all font-mono text-sm text-gray-900 dark:text-gray-100">
+              <dd className="mt-1 break-all font-mono text-sm text-[#0a2a4a] dark:text-gray-100">
                 {activeConn?.argocd_server_url ?? 'N/A'}
               </dd>
             </div>
@@ -747,7 +747,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
 
       {/* Secrets Provider */}
       <section className="space-y-4">
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+        <h3 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
           Secrets Provider
         </h3>
         <div className="rounded-xl border border-[#90c8ee] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
@@ -758,7 +758,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
                   <Shield className="h-3.5 w-3.5" />
                   Type
                 </dt>
-                <dd className="mt-1 font-mono text-sm font-medium text-gray-900 dark:text-gray-100">
+                <dd className="mt-1 font-mono text-sm font-medium text-[#0a2a4a] dark:text-gray-100">
                   {providerInfo.type}
                 </dd>
               </div>
@@ -767,7 +767,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
                   <Globe className="h-3.5 w-3.5" />
                   Region
                 </dt>
-                <dd className="mt-1 font-mono text-sm font-medium text-gray-900 dark:text-gray-100">
+                <dd className="mt-1 font-mono text-sm font-medium text-[#0a2a4a] dark:text-gray-100">
                   {providerInfo.region || '—'}
                 </dd>
               </div>
@@ -789,7 +789,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
             </dl>
           ) : (
             <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
-              No secrets provider configured. Set <code className="rounded bg-gray-100 px-1 py-0.5 text-xs dark:bg-gray-700">SHARKO_PROVIDER_TYPE</code> to enable.
+              No secrets provider configured. Set <code className="rounded bg-[#d6eeff] px-1 py-0.5 text-xs dark:bg-gray-700">SHARKO_PROVIDER_TYPE</code> to enable.
             </p>
           )}
         </div>
@@ -798,11 +798,11 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
       {/* Initialize Repository */}
       {connections.length > 0 && (
         <section className="space-y-4">
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+          <h3 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
             Initialize Repository
           </h3>
           <div className="rounded-xl border border-[#90c8ee] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
-            <p className="mb-4 text-sm text-gray-600 dark:text-gray-400">
+            <p className="mb-4 text-sm text-[#1a4a6a] dark:text-gray-400">
               Bootstrap the Git repository with the required Sharko directory structure and ArgoCD resources.
               Safe to run on an already-initialized repository.
             </p>
@@ -833,7 +833,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
 
       {/* AI Configuration */}
       <section className="space-y-4">
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+        <h3 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
           AI Configuration
         </h3>
         <AIConfigSection />
@@ -963,11 +963,11 @@ function AIConfigSection() {
       {/* Header */}
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-3">
-          <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${isEnabled ? 'bg-purple-100 dark:bg-purple-900/30' : 'bg-gray-100 dark:bg-gray-700'}`}>
+          <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${isEnabled ? 'bg-purple-100 dark:bg-purple-900/30' : 'bg-[#d6eeff] dark:bg-gray-700'}`}>
             <Sparkles className={`h-5 w-5 ${isEnabled ? 'text-purple-600 dark:text-purple-400' : 'text-[#3a6a8a]'}`} />
           </div>
           <div>
-            <h4 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+            <h4 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
               AI Analysis
               {loading ? '' : isEnabled ? (
                 <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">
@@ -975,7 +975,7 @@ function AIConfigSection() {
                   Active
                 </span>
               ) : (
-                <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-[#2a5a7a] dark:bg-gray-700 dark:text-gray-400">
+                <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-[#d6eeff] px-2 py-0.5 text-xs font-medium text-[#2a5a7a] dark:bg-gray-700 dark:text-gray-400">
                   Not Configured
                 </span>
               )}
@@ -991,7 +991,7 @@ function AIConfigSection() {
           {isEnabled && (
             <>
               <button onClick={handleTest} disabled={testing}
-                className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-[#d6eeff] dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">
+                className="rounded-lg border border-[#80b8e0] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">
                 {testing ? 'Testing...' : 'Test'}
               </button>
               <button onClick={handleDisable}
@@ -1021,8 +1021,8 @@ function AIConfigSection() {
       {showForm && (
         <div className="mt-4 rounded-lg border border-purple-200 bg-purple-50/50 p-4 dark:border-purple-800 dark:bg-purple-950/20">
           <div className="mb-3 flex items-center justify-between">
-            <h5 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Configure AI Provider</h5>
-            <button onClick={() => setShowForm(false)} className="text-[#3a6a8a] hover:text-gray-600 dark:hover:text-gray-200">
+            <h5 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Configure AI Provider</h5>
+            <button onClick={() => setShowForm(false)} className="text-[#3a6a8a] hover:text-[#1a4a6a] dark:hover:text-gray-200">
               <X className="h-4 w-4" />
             </button>
           </div>
@@ -1078,7 +1078,7 @@ function AIConfigSection() {
           </div>
           <div className="mt-3 flex items-center gap-3">
             <button onClick={handleFormTest} disabled={formTestStatus === 'testing'}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[#80b8e0] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">
               {formTestStatus === 'testing' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
               Test AI
             </button>
@@ -1092,7 +1092,7 @@ function AIConfigSection() {
               {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               Save
             </button>
-            <button onClick={() => setShowForm(false)} className="rounded-lg px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200">
+            <button onClick={() => setShowForm(false)} className="rounded-lg px-4 py-2 text-sm font-medium text-[#1a4a6a] hover:text-[#0a3a5a] dark:text-gray-400 dark:hover:text-gray-200">
               Cancel
             </button>
           </div>

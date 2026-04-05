@@ -42,7 +42,7 @@ export function UserInfo() {
 
   return (
     <div className="space-y-6">
-      <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">User Info</h2>
+      <h2 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">User Info</h2>
 
       {/* Update Password */}
       <div className="max-w-lg">
@@ -55,32 +55,32 @@ export function UserInfo() {
           UPDATE PASSWORD
         </button>
 
-        <form id="password-form" onSubmit={handleUpdatePassword} className="hidden space-y-4 rounded-lg border border-gray-200 bg-[#d0e8f8] p-6 dark:border-gray-700 dark:bg-gray-800">
+        <form id="password-form" onSubmit={handleUpdatePassword} className="hidden space-y-4 rounded-lg border border-[#90c8ee] bg-[#d0e8f8] p-6 dark:border-gray-700 dark:bg-gray-800">
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Current Password</label>
+            <label className="block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">Current Password</label>
             <input
               type="password"
               value={currentPassword}
               onChange={(e) => setCurrentPassword(e.target.value)}
-              className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-900 dark:text-white"
+              className="mt-1 block w-full rounded-lg border border-[#80b8e0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-900 dark:text-white"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">New Password</label>
+            <label className="block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">New Password</label>
             <input
               type="password"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
-              className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-900 dark:text-white"
+              className="mt-1 block w-full rounded-lg border border-[#80b8e0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-900 dark:text-white"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Confirm New Password</label>
+            <label className="block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">Confirm New Password</label>
             <input
               type="password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
-              className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-900 dark:text-white"
+              className="mt-1 block w-full rounded-lg border border-[#80b8e0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-900 dark:text-white"
             />
           </div>
 
@@ -102,9 +102,9 @@ export function UserInfo() {
 
       {/* User Details */}
       <div className="max-w-lg rounded-lg bg-[#d0e8f8] p-6 dark:bg-gray-800">
-        <div className="space-y-2 text-sm text-gray-600 dark:text-gray-400">
-          <p><span className="font-medium text-gray-700 dark:text-gray-300">Username:</span> admin</p>
-          <p><span className="font-medium text-gray-700 dark:text-gray-300">Issuer:</span> local</p>
+        <div className="space-y-2 text-sm text-[#1a4a6a] dark:text-gray-400">
+          <p><span className="font-medium text-[#0a3a5a] dark:text-gray-300">Username:</span> admin</p>
+          <p><span className="font-medium text-[#0a3a5a] dark:text-gray-300">Issuer:</span> local</p>
         </div>
       </div>
     </div>

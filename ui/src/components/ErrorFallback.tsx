@@ -5,7 +5,7 @@ interface ErrorFallbackProps {
 
 export function ErrorFallback({ error, resetErrorBoundary }: ErrorFallbackProps) {
   return (
-    <div className="mx-auto max-w-lg rounded-lg border border-gray-200 bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
+    <div className="mx-auto max-w-lg rounded-lg border border-[#90c8ee] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
       <div className="h-1 rounded-t-lg bg-red-500" />
       <div className="flex flex-col items-center gap-4 p-6 text-center">
         <img
@@ -13,10 +13,10 @@ export function ErrorFallback({ error, resetErrorBoundary }: ErrorFallbackProps)
           alt=""
           className="h-16 w-auto opacity-70"
         />
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+        <h2 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
           Something went wrong
         </h2>
-        <pre className="w-full overflow-auto rounded-md bg-gray-100 p-3 text-left font-mono text-sm text-gray-700 dark:bg-gray-700 dark:text-gray-200">
+        <pre className="w-full overflow-auto rounded-md bg-[#d6eeff] p-3 text-left font-mono text-sm text-[#0a3a5a] dark:bg-gray-700 dark:text-gray-200">
           {error.message}
         </pre>
         <button

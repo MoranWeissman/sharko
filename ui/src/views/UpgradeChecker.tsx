@@ -78,13 +78,13 @@ function PaginatedList({ items, renderItem, emptyMessage }: { items: ValueDiffEn
 
   return (
     <div>
-      <div className="divide-y divide-gray-100 dark:divide-gray-800">
+      <div className="divide-y divide-[#a0d0f0] dark:divide-gray-800">
         {visible.map(renderItem)}
       </div>
       {remaining > 0 && (
         <button
           onClick={() => setShowCount(c => c + PAGE_SIZE)}
-          className="w-full border-t border-gray-100 px-4 py-3 text-center text-sm font-medium text-teal-600 hover:bg-[#d6eeff] dark:border-gray-800 dark:text-teal-400 dark:hover:bg-gray-800"
+          className="w-full border-t border-[#a0d0f0] px-4 py-3 text-center text-sm font-medium text-teal-600 hover:bg-[#d6eeff] dark:border-gray-800 dark:text-teal-400 dark:hover:bg-gray-800"
         >
           Show {Math.min(remaining, PAGE_SIZE)} more ({remaining} remaining)
         </button>
@@ -102,7 +102,7 @@ function AddedFields({ items }: { items: ValueDiffEntry[] }) {
         <div key={entry.path} className="flex items-start gap-3 px-4 py-3">
           <Plus className="mt-0.5 h-4 w-4 shrink-0 text-green-500" />
           <div className="min-w-0 flex-1">
-            <code className="text-sm font-medium text-gray-900 dark:text-gray-100">{entry.path}</code>
+            <code className="text-sm font-medium text-[#0a2a4a] dark:text-gray-100">{entry.path}</code>
             {entry.new_value != null && (
               <p className="mt-0.5 text-sm text-green-600 dark:text-green-400">
                 Default: <code className="rounded bg-green-100 px-1 dark:bg-green-900/40">{entry.new_value}</code>
@@ -124,7 +124,7 @@ function RemovedFields({ items }: { items: ValueDiffEntry[] }) {
         <div key={entry.path} className="flex items-start gap-3 px-4 py-3">
           <Minus className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
           <div className="min-w-0 flex-1">
-            <code className="text-sm font-medium text-gray-900 dark:text-gray-100">{entry.path}</code>
+            <code className="text-sm font-medium text-[#0a2a4a] dark:text-gray-100">{entry.path}</code>
             {entry.old_value != null && (
               <p className="mt-0.5 text-sm text-red-600 dark:text-red-400">
                 Was: <code className="rounded bg-red-100 px-1 line-through dark:bg-red-900/40">{entry.old_value}</code>
@@ -146,7 +146,7 @@ function ChangedFields({ items }: { items: ValueDiffEntry[] }) {
         <div key={entry.path} className="flex items-start gap-3 px-4 py-3">
           <RefreshCw className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
           <div className="min-w-0 flex-1">
-            <code className="text-sm font-medium text-gray-900 dark:text-gray-100">{entry.path}</code>
+            <code className="text-sm font-medium text-[#0a2a4a] dark:text-gray-100">{entry.path}</code>
             <p className="mt-0.5 flex flex-wrap items-center gap-1 text-sm">
               <code className="rounded bg-red-100 px-1 text-red-700 dark:bg-red-900/40 dark:text-red-400">
                 {entry.old_value ?? '(empty)'}
@@ -170,14 +170,14 @@ function ReleaseNotesSection({ notes }: { notes: string }) {
   const totalLines = notes.split('\n').length;
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-900">
+    <div className="rounded-xl border border-[#90c8ee] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-900">
       <div
-        className="flex cursor-pointer items-center justify-between border-b border-gray-100 px-6 py-3 dark:border-gray-800"
+        className="flex cursor-pointer items-center justify-between border-b border-[#a0d0f0] px-6 py-3 dark:border-gray-800"
         onClick={() => setExpanded((e) => !e)}
       >
         <div className="flex items-center gap-2">
           <FileText className="h-4 w-4 text-blue-500" />
-          <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Release Notes</h3>
+          <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-white">Release Notes</h3>
         </div>
         <ChevronDown className={`h-4 w-4 text-[#3a6a8a] transition-transform ${expanded ? 'rotate-180' : ''}`} />
       </div>
@@ -226,7 +226,7 @@ function ConflictsSection({ conflicts }: { conflicts: ConflictCheckEntry[] }) {
             {conflicts.map((c) => (
               <tr key={`${c.path}-${c.source}`}>
                 <td className="whitespace-nowrap px-6 py-3">
-                  <code className="text-gray-900 dark:text-gray-100">{c.path}</code>
+                  <code className="text-[#0a2a4a] dark:text-gray-100">{c.path}</code>
                 </td>
                 <td className="px-6 py-3">
                   <code className="rounded bg-blue-100 px-1 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
@@ -234,7 +234,7 @@ function ConflictsSection({ conflicts }: { conflicts: ConflictCheckEntry[] }) {
                   </code>
                 </td>
                 <td className="px-6 py-3">
-                  <code className="rounded bg-gray-100 px-1 text-gray-600 dark:bg-gray-800 dark:text-gray-400">
+                  <code className="rounded bg-[#d6eeff] px-1 text-[#1a4a6a] dark:bg-gray-800 dark:text-gray-400">
                     {c.old_default}
                   </code>
                 </td>
@@ -243,7 +243,7 @@ function ConflictsSection({ conflicts }: { conflicts: ConflictCheckEntry[] }) {
                     {c.new_default}
                   </code>
                 </td>
-                <td className="px-6 py-3 text-gray-600 dark:text-gray-400">{c.source}</td>
+                <td className="px-6 py-3 text-[#1a4a6a] dark:text-gray-400">{c.source}</td>
               </tr>
             ))}
           </tbody>
@@ -392,7 +392,7 @@ export function UpgradeChecker() {
         <div className="flex items-center gap-3">
           <ArrowUpCircle className="h-8 w-8 text-teal-500" />
           <div>
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Addon Upgrade Checker</h1>
+            <h1 className="text-2xl font-bold text-[#0a2a4a] dark:text-white">Addon Upgrade Checker</h1>
             <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
               Analyze the impact of upgrading an addon to a new version
             </p>
@@ -401,8 +401,8 @@ export function UpgradeChecker() {
       </div>
 
       {/* Step 1: Addon Selection */}
-      <div className="rounded-xl border border-gray-200 bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900">
-        <h2 className="mb-4 flex items-center gap-2 text-lg font-semibold text-gray-900 dark:text-white">
+      <div className="rounded-xl border border-[#90c8ee] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+        <h2 className="mb-4 flex items-center gap-2 text-lg font-semibold text-[#0a2a4a] dark:text-white">
           <span className="flex h-6 w-6 items-center justify-center rounded-full bg-teal-100 text-xs font-bold text-teal-700 dark:bg-teal-900 dark:text-teal-300">
             1
           </span>
@@ -411,13 +411,13 @@ export function UpgradeChecker() {
 
         <div className="relative max-w-md">
           <div
-            className="flex cursor-pointer items-center justify-between rounded-lg border border-gray-300 bg-[#f0f7ff] px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-800"
+            className="flex cursor-pointer items-center justify-between rounded-lg border border-[#80b8e0] bg-[#f0f7ff] px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-800"
             onClick={() => setAddonDropdownOpen((o) => !o)}
             role="combobox"
             aria-expanded={addonDropdownOpen}
             aria-label="Select addon"
           >
-            <span className={selectedAddon ? 'text-gray-900 dark:text-white' : 'text-[#3a6a8a]'}>
+            <span className={selectedAddon ? 'text-[#0a2a4a] dark:text-white' : 'text-[#3a6a8a]'}>
               {selectedAddon
                 ? `${selectedAddon} (v${currentVersion})`
                 : 'Choose an addon...'}
@@ -426,14 +426,14 @@ export function UpgradeChecker() {
           </div>
 
           {addonDropdownOpen && (
-            <div className="absolute z-20 mt-1 w-full rounded-lg border border-gray-200 bg-[#f0f7ff] shadow-lg dark:border-gray-600 dark:bg-gray-800">
-              <div className="border-b border-gray-100 p-2 dark:border-gray-700">
-                <div className="flex items-center gap-2 rounded-md border border-gray-200 bg-[#d0e8f8] px-2 dark:border-gray-600 dark:bg-gray-700">
+            <div className="absolute z-20 mt-1 w-full rounded-lg border border-[#90c8ee] bg-[#f0f7ff] shadow-lg dark:border-gray-600 dark:bg-gray-800">
+              <div className="border-b border-[#a0d0f0] p-2 dark:border-gray-700">
+                <div className="flex items-center gap-2 rounded-md border border-[#90c8ee] bg-[#d0e8f8] px-2 dark:border-gray-600 dark:bg-gray-700">
                   <Search className="h-4 w-4 text-[#3a6a8a]" />
                   <input
                     type="text"
                     placeholder="Search addons..."
-                    className="w-full border-0 bg-transparent py-1.5 text-sm text-gray-900 outline-none placeholder:text-[#3a6a8a] dark:text-white"
+                    className="w-full border-0 bg-transparent py-1.5 text-sm text-[#0a2a4a] outline-none placeholder:text-[#3a6a8a] dark:text-white"
                     value={addonSearch}
                     onChange={(e) => setAddonSearch(e.target.value)}
                     autoFocus
@@ -450,7 +450,7 @@ export function UpgradeChecker() {
                     className={`flex w-full items-center justify-between px-4 py-2 text-left text-sm hover:bg-[#d6eeff] dark:hover:bg-gray-700 ${
                       addon.addon_name === selectedAddon
                         ? 'bg-teal-50 font-medium text-teal-700 dark:bg-teal-900/30 dark:text-teal-400'
-                        : 'text-gray-700 dark:text-gray-200'
+                        : 'text-[#0a3a5a] dark:text-gray-200'
                     }`}
                     onClick={() => {
                       setSelectedAddon(addon.addon_name);
@@ -470,8 +470,8 @@ export function UpgradeChecker() {
 
       {/* Step 2: Version Selection */}
       {selectedAddon && (
-        <div className="rounded-xl border border-gray-200 bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900">
-          <h2 className="mb-4 flex items-center gap-2 text-lg font-semibold text-gray-900 dark:text-white">
+        <div className="rounded-xl border border-[#90c8ee] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+          <h2 className="mb-4 flex items-center gap-2 text-lg font-semibold text-[#0a2a4a] dark:text-white">
             <span className="flex h-6 w-6 items-center justify-center rounded-full bg-teal-100 text-xs font-bold text-teal-700 dark:bg-teal-900 dark:text-teal-300">
               2
             </span>
@@ -485,12 +485,12 @@ export function UpgradeChecker() {
           ) : (
             <div className="flex flex-wrap items-end gap-4">
               <div className="w-64">
-                <label htmlFor="version-select" className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                <label htmlFor="version-select" className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
                   Target version
                 </label>
                 <select
                   id="version-select"
-                  className="w-full rounded-lg border border-gray-300 bg-[#f0f7ff] px-3 py-2 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+                  className="w-full rounded-lg border border-[#80b8e0] bg-[#f0f7ff] px-3 py-2 text-sm text-[#0a2a4a] dark:border-gray-600 dark:bg-gray-800 dark:text-white"
                   value={selectedVersion}
                   onChange={(e) => {
                     setSelectedVersion(e.target.value);
@@ -540,7 +540,7 @@ export function UpgradeChecker() {
               <div className={`rounded-xl border-2 p-6 ${riskStyles(risk)}`}>
                 <div className="flex items-center justify-between">
                   <div>
-                    <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                    <h2 className="text-lg font-semibold text-[#0a2a4a] dark:text-white">
                       Upgrading <span className="font-bold">{result.addon_name}</span>{' '}
                       from <code className="text-sm">v{result.current_version}</code>{' '}
                       to <code className="text-sm">v{result.target_version}</code>
@@ -570,7 +570,7 @@ export function UpgradeChecker() {
                   </div>
                   <div className="flex items-center gap-2">
                     {riskIcon(risk)}
-                    <span className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+                    <span className="text-sm font-semibold text-[#0a3a5a] dark:text-gray-300">
                       {riskLabel(risk)}
                     </span>
                   </div>
@@ -600,7 +600,7 @@ export function UpgradeChecker() {
               <div className="flex items-center justify-between border-b border-purple-100 px-6 py-3 dark:border-purple-900">
                 <div className="flex items-center gap-2">
                   <Sparkles className="h-4 w-4 text-purple-500" />
-                  <h3 className="text-sm font-semibold text-gray-900 dark:text-white">AI Analysis</h3>
+                  <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-white">AI Analysis</h3>
                 </div>
                 {!aiSummary && !aiLoading && (
                   <button
@@ -626,19 +626,19 @@ export function UpgradeChecker() {
                 )}
                 {aiSummary && (
                   <div>
-                    <div className="prose-sm max-w-none text-sm leading-relaxed text-gray-700 dark:text-gray-300">
+                    <div className="prose-sm max-w-none text-sm leading-relaxed text-[#0a3a5a] dark:text-gray-300">
                       {aiSummary.split('\n').map((line, i) => {
                         const trimmed = line.trim();
                         if (trimmed === '') return <div key={i} className="h-3" />;
                         if (trimmed.startsWith('## '))
-                          return <h3 key={i} className="mt-5 mb-2 text-base font-bold text-gray-900 dark:text-white border-b border-gray-200 dark:border-gray-700 pb-1.5">{trimmed.slice(3)}</h3>;
+                          return <h3 key={i} className="mt-5 mb-2 text-base font-bold text-[#0a2a4a] dark:text-white border-b border-[#90c8ee] dark:border-gray-700 pb-1.5">{trimmed.slice(3)}</h3>;
                         if (trimmed.startsWith('### '))
-                          return <h4 key={i} className="mt-4 mb-1.5 text-sm font-bold text-gray-800 dark:text-gray-200">{trimmed.slice(4)}</h4>;
+                          return <h4 key={i} className="mt-4 mb-1.5 text-sm font-bold text-[#0a3a5a] dark:text-gray-200">{trimmed.slice(4)}</h4>;
                         if (trimmed.startsWith('**') && trimmed.includes('**')) {
                           const content = trimmed.replace(/\*\*/g, '');
                           if (trimmed.endsWith('**'))
-                            return <h4 key={i} className="mt-4 mb-1.5 text-sm font-bold text-gray-900 dark:text-white">{content}</h4>;
-                          return <p key={i} className="mt-2"><strong className="text-gray-900 dark:text-white">{content.split(':')[0]}:</strong>{content.includes(':') ? content.slice(content.indexOf(':') + 1) : ''}</p>;
+                            return <h4 key={i} className="mt-4 mb-1.5 text-sm font-bold text-[#0a2a4a] dark:text-white">{content}</h4>;
+                          return <p key={i} className="mt-2"><strong className="text-[#0a2a4a] dark:text-white">{content.split(':')[0]}:</strong>{content.includes(':') ? content.slice(content.indexOf(':') + 1) : ''}</p>;
                         }
                         if (/^\d+\.\s/.test(trimmed))
                           return <div key={i} className="ml-4 mt-1.5 flex gap-2.5"><span className="shrink-0 font-bold text-teal-600 dark:text-teal-400">{trimmed.match(/^\d+/)?.[0]}.</span><span className="flex-1">{trimmed.replace(/^\d+\.\s*/, '')}</span></div>;
@@ -647,7 +647,7 @@ export function UpgradeChecker() {
                         return <p key={i} className="mt-1.5">{line}</p>;
                       })}
                     </div>
-                    <p className="mt-5 border-t border-gray-100 pt-3 text-[10px] text-[#3a6a8a] dark:border-gray-800 dark:text-gray-600">
+                    <p className="mt-5 border-t border-[#a0d0f0] pt-3 text-[10px] text-[#3a6a8a] dark:border-gray-800 dark:text-gray-600">
                       Powered by {aiProvider === 'ollama' ? 'Ollama (local)' : aiProvider === 'gemini' ? 'Google Gemini' : aiProvider === 'claude' ? 'Claude (Anthropic)' : aiProvider === 'openai' ? 'OpenAI' : 'AI'}
                     </p>
                   </div>
@@ -658,7 +658,7 @@ export function UpgradeChecker() {
               </div>
             </div>
           ) : (
-            <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-[#d0e8f8] px-4 py-3 text-sm text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-800/50 dark:text-gray-400">
+            <div className="flex items-center gap-2 rounded-lg border border-[#90c8ee] bg-[#d0e8f8] px-4 py-3 text-sm text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-800/50 dark:text-gray-400">
               <Sparkles className="h-4 w-4 shrink-0 text-[#3a6a8a]" />
               <span>
                 Enable an AI provider in{' '}
@@ -675,8 +675,8 @@ export function UpgradeChecker() {
 
           {/* Changes tabs */}
           {result.total_changes > 0 && (
-            <div className="rounded-xl border border-gray-200 bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-900">
-              <div className="flex border-b border-gray-200 dark:border-gray-700">
+            <div className="rounded-xl border border-[#90c8ee] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-900">
+              <div className="flex border-b border-[#90c8ee] dark:border-gray-700">
                 {([
                   { key: 'added' as ChangeTab, label: 'Added Fields', count: result.added.length, color: 'text-green-600 dark:text-green-400' },
                   { key: 'removed' as ChangeTab, label: 'Removed Fields', count: result.removed.length, color: 'text-red-600 dark:text-red-400' },
@@ -688,7 +688,7 @@ export function UpgradeChecker() {
                     className={`flex items-center gap-2 border-b-2 px-5 py-3 text-sm font-medium transition-colors ${
                       activeTab === tab.key
                         ? 'border-teal-500 text-teal-700 dark:text-teal-400'
-                        : 'border-transparent text-[#2a5a7a] hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
+                        : 'border-transparent text-[#2a5a7a] hover:text-[#0a3a5a] dark:text-gray-400 dark:hover:text-gray-200'
                     }`}
                   >
                     {tab.label}
@@ -696,7 +696,7 @@ export function UpgradeChecker() {
                       className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
                         activeTab === tab.key
                           ? 'bg-teal-100 text-teal-700 dark:bg-teal-900 dark:text-teal-300'
-                          : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'
+                          : 'bg-[#d6eeff] text-[#1a4a6a] dark:bg-gray-800 dark:text-gray-400'
                       }`}
                     >
                       {tab.count}

@@ -55,12 +55,12 @@ export function StatCard({
       className={`relative rounded-lg border border-[#90c8ee] border-l-4 bg-[#f0f7ff] p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800 ${borderClass} ${selectedClass} ${interactiveClass}`}
     >
       {icon && (
-        <div className="absolute right-4 top-4 text-gray-400 dark:text-gray-500">{icon}</div>
+        <div className="absolute right-4 top-4 text-[#3a6a8a] dark:text-gray-500">{icon}</div>
       )}
-      <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">{value}</div>
-      <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">{title}</div>
+      <div className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">{value}</div>
+      <div className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">{title}</div>
       {subtitle && (
-        <div className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">{subtitle}</div>
+        <div className="mt-0.5 text-xs text-[#3a6a8a] dark:text-gray-500">{subtitle}</div>
       )}
     </div>
   );
