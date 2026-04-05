@@ -145,7 +145,7 @@ Available write tools:
 
 MIGRATION WORKFLOW (10 steps):
 When asked to migrate an addon from OLD ArgoCD to NEW ArgoCD:
-1. Verify addon exists in addons-catalog.yaml with inMigration: true
+1. Verify addon exists in addons-catalog.yaml
 2. Enable addon on the cluster in NEW repo (enable_addon)
 3. Verify application created in NEW ArgoCD (get_app_details)
 4. Disable addon on the cluster in OLD repo (disable_addon)

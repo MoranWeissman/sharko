@@ -1,14 +1,39 @@
 package models
 
+// AddonSource represents an additional Helm chart or manifest source for an addon.
+type AddonSource struct {
+	RepoURL    string            `json:"repoURL,omitempty" yaml:"repoURL,omitempty"`
+	Path       string            `json:"path,omitempty" yaml:"path,omitempty"`
+	Chart      string            `json:"chart,omitempty" yaml:"chart,omitempty"`
+	Version    string            `json:"version,omitempty" yaml:"version,omitempty"`
+	Parameters map[string]string `json:"parameters,omitempty" yaml:"parameters,omitempty"`
+	ValueFiles []string          `json:"valueFiles,omitempty" yaml:"valueFiles,omitempty"`
+}
+
 // AddonCatalogEntry represents an addon definition from addons-catalog.yaml.
 type AddonCatalogEntry struct {
-	AppName            string                   `json:"appName" yaml:"appName"`
-	RepoURL            string                   `json:"repoURL" yaml:"repoURL"`
-	Chart              string                   `json:"chart" yaml:"chart"`
-	Version            string                   `json:"version" yaml:"version"`
-	Namespace          string                   `json:"namespace,omitempty" yaml:"namespace,omitempty"`
-	InMigration        bool                     `json:"inMigration,omitempty" yaml:"inMigration,omitempty"`
-	IgnoreDifferences  []map[string]interface{} `json:"ignoreDifferences,omitempty" yaml:"ignoreDifferences,omitempty"`
+	// Basic (required)
+	AppName string `json:"appName" yaml:"appName"`
+	RepoURL string `json:"repoURL" yaml:"repoURL"`
+	Chart   string `json:"chart" yaml:"chart"`
+	Version string `json:"version" yaml:"version"`
+
+	// Basic (optional)
+	Namespace string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
+
+	// Advanced — deployment behavior
+	SyncWave    int      `json:"syncWave,omitempty" yaml:"syncWave,omitempty"`
+	SelfHeal    *bool    `json:"selfHeal,omitempty" yaml:"selfHeal,omitempty"`
+	SyncOptions []string `json:"syncOptions,omitempty" yaml:"syncOptions,omitempty"`
+
+	// Advanced — additional sources
+	AdditionalSources []AddonSource `json:"additionalSources,omitempty" yaml:"additionalSources,omitempty"`
+
+	// Advanced — ArgoCD behavior
+	IgnoreDifferences []map[string]interface{} `json:"ignoreDifferences,omitempty" yaml:"ignoreDifferences,omitempty"`
+
+	// Advanced — extra Helm configuration
+	ExtraHelmValues map[string]string `json:"extraHelmValues,omitempty" yaml:"extraHelmValues,omitempty"`
 }
 
 // AddonDeploymentInfo holds information about an addon's deployment in a specific cluster.
@@ -30,12 +55,11 @@ type AddonDeploymentInfo struct {
 
 // AddonCatalogItem is the catalog view of an addon with stats across clusters.
 type AddonCatalogItem struct {
-	AddonName   string `json:"addon_name"`
-	Chart       string `json:"chart"`
-	RepoURL     string `json:"repo_url"`
-	Namespace   string `json:"namespace,omitempty"`
-	Version     string `json:"version"`
-	InMigration bool   `json:"in_migration,omitempty"`
+	AddonName string `json:"addon_name"`
+	Chart     string `json:"chart"`
+	RepoURL   string `json:"repo_url"`
+	Namespace string `json:"namespace,omitempty"`
+	Version   string `json:"version"`
 
 	// Stats
 	TotalClusters        int `json:"total_clusters"`
