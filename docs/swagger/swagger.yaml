@@ -1,4 +1,207 @@
 basePath: /api/v1
+definitions:
+  github_com_MoranWeissman_sharko_internal_models.ArgocdConfig:
+    properties:
+      insecure:
+        type: boolean
+      namespace:
+        type: string
+      server_url:
+        type: string
+      token:
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_models.CreateConnectionRequest:
+    properties:
+      argocd:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.ArgocdConfig'
+      description:
+        type: string
+      git:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.GitRepoConfig'
+      name:
+        type: string
+      set_as_default:
+        type: boolean
+    type: object
+  github_com_MoranWeissman_sharko_internal_models.GitProviderType:
+    enum:
+    - github
+    - azuredevops
+    type: string
+    x-enum-varnames:
+    - GitProviderGitHub
+    - GitProviderAzureDevOps
+  github_com_MoranWeissman_sharko_internal_models.GitRepoConfig:
+    properties:
+      organization:
+        description: Azure DevOps fields
+        type: string
+      owner:
+        description: GitHub fields
+        type: string
+      pat:
+        type: string
+      project:
+        type: string
+      provider:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.GitProviderType'
+      repo:
+        type: string
+      repo_url:
+        description: URL-based input (parsed into owner/repo or org/project/repo)
+        type: string
+      repository:
+        type: string
+      token:
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_models.SetActiveConnectionRequest:
+    properties:
+      connection_name:
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_models.UpgradeCheckRequest:
+    properties:
+      addon_name:
+        type: string
+      target_version:
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.AddAddonRequest:
+    properties:
+      chart:
+        type: string
+      name:
+        type: string
+      namespace:
+        type: string
+      repo_url:
+        type: string
+      sync_wave:
+        type: integer
+      version:
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.AddonSecretDefinition:
+    properties:
+      addon_name:
+        type: string
+      keys:
+        additionalProperties:
+          type: string
+        description: secret data key → provider path (e.g. "api-key" → "secrets/datadog/api-key")
+        type: object
+      namespace:
+        type: string
+      secret_name:
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.InitRepoRequest:
+    properties:
+      bootstrap_argocd:
+        type: boolean
+      git_token:
+        type: string
+      git_username:
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.RegisterClusterRequest:
+    properties:
+      addons:
+        additionalProperties:
+          type: boolean
+        type: object
+      name:
+        type: string
+      region:
+        type: string
+    type: object
+  internal_api.aiConfigResponse:
+    properties:
+      available_providers:
+        items:
+          $ref: '#/definitions/internal_api.aiProviderInfo'
+        type: array
+      current_provider:
+        type: string
+    type: object
+  internal_api.aiProviderInfo:
+    properties:
+      configured:
+        type: boolean
+      id:
+        type: string
+      model:
+        type: string
+      name:
+        type: string
+    type: object
+  internal_api.embeddedDashboard:
+    properties:
+      id:
+        type: string
+      name:
+        type: string
+      provider:
+        description: '"datadog", "grafana", "custom"'
+        type: string
+      url:
+        type: string
+    type: object
+  internal_api.fleetClusterSummary:
+    properties:
+      connection_status:
+        type: string
+      degraded_addons:
+        type: integer
+      healthy_addons:
+        type: integer
+      name:
+        type: string
+      total_addons:
+        type: integer
+    type: object
+  internal_api.fleetStatusResponse:
+    properties:
+      addon_data_unavailable:
+        type: boolean
+      clusters:
+        items:
+          $ref: '#/definitions/internal_api.fleetClusterSummary'
+        type: array
+      degraded_clusters:
+        type: integer
+      degraded_deployments:
+        type: integer
+      disconnected_clusters:
+        type: integer
+      healthy_clusters:
+        type: integer
+      healthy_deployments:
+        type: integer
+      out_of_sync_deployments:
+        type: integer
+      total_addons:
+        type: integer
+      total_clusters:
+        type: integer
+      total_deployments:
+        type: integer
+    type: object
+  internal_api.saveAIConfigRequest:
+    properties:
+      api_key:
+        type: string
+      base_url:
+        type: string
+      model:
+        type: string
+      ollama_url:
+        type: string
+      provider:
+        type: string
+    type: object
 host: localhost:8080
 info:
   contact: {}
@@ -6,6 +209,770 @@ info:
   title: Sharko API
   version: 1.0.0
 paths:
+  /addon-secrets:
+    get:
+      description: Returns all registered addon secret definitions
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Addon secret definitions
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List addon secret definitions
+      tags:
+      - addons
+    post:
+      consumes:
+      - application/json
+      description: Registers a new addon secret definition for remote cluster secret
+        propagation
+      parameters:
+      - description: Addon secret definition
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.AddonSecretDefinition'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Secret definition created
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create addon secret definition
+      tags:
+      - addons
+  /addon-secrets/{addon}:
+    delete:
+      description: Removes the secret definition for a specific addon
+      parameters:
+      - description: Addon name
+        in: path
+        name: addon
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Secret definition deleted
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not found
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete addon secret definition
+      tags:
+      - addons
+  /addons:
+    post:
+      consumes:
+      - application/json
+      description: Adds a new addon to the catalog by creating its ApplicationSet
+        in the GitOps repo
+      parameters:
+      - description: Add addon request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.AddAddonRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Addon created
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Gateway error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Add addon
+      tags:
+      - addons
+  /addons/{name}:
+    delete:
+      description: Removes an addon from the catalog. Without ?confirm=true returns
+        a dry-run impact report.
+      parameters:
+      - description: Addon name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Set to 'true' to confirm destructive removal
+        in: query
+        name: confirm
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Addon removed
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Confirmation required or bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Addon not found
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Gateway error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Remove addon
+      tags:
+      - addons
+    get:
+      description: Returns detailed information for a specific addon including deployment
+        status across clusters
+      parameters:
+      - description: Addon name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Addon detail
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Addon not found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get addon detail
+      tags:
+      - addons
+  /addons/{name}/upgrade:
+    post:
+      consumes:
+      - application/json
+      description: Upgrades an addon to a new version globally or for a specific cluster
+      parameters:
+      - description: Addon name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Upgrade request with version and optional cluster
+        in: body
+        name: body
+        required: true
+        schema:
+          additionalProperties: true
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Upgrade result
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Gateway error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Upgrade addon
+      tags:
+      - addons
+  /addons/{name}/values:
+    get:
+      description: Returns the default Helm values file for a specific addon
+      parameters:
+      - description: Addon name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Addon values
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get addon values
+      tags:
+      - addons
+  /addons/catalog:
+    get:
+      description: Returns the full addon catalog with per-cluster deployment status
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Addon catalog
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal error
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Service unavailable
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get addon catalog
+      tags:
+      - addons
+  /addons/list:
+    get:
+      description: Returns all addon ApplicationSets defined in the GitOps repository
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Addon list
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Service unavailable
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List addons
+      tags:
+      - addons
+  /addons/upgrade-batch:
+    post:
+      consumes:
+      - application/json
+      description: Upgrades multiple addons in a single atomic GitOps commit
+      parameters:
+      - description: Batch upgrade request with upgrades map of addon->version
+        in: body
+        name: body
+        required: true
+        schema:
+          additionalProperties: true
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Batch upgrade result
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Gateway error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Batch upgrade addons
+      tags:
+      - addons
+  /addons/version-matrix:
+    get:
+      description: Returns a matrix of addon versions deployed across all clusters
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Version matrix
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal error
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Service unavailable
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get version matrix
+      tags:
+      - addons
+  /agent/chat:
+    post:
+      consumes:
+      - application/json
+      description: Sends a message to the AI agent and returns a response with tool-call
+        capabilities
+      parameters:
+      - description: Chat request with session_id, message, and optional page_context
+        in: body
+        name: body
+        required: true
+        schema:
+          additionalProperties: true
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Agent response with session_id
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal error
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Service unavailable
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: AI agent chat
+      tags:
+      - ai
+  /agent/reset:
+    post:
+      consumes:
+      - application/json
+      description: Clears the conversation history for the specified agent session
+      parameters:
+      - description: Reset request with session_id
+        in: body
+        name: body
+        required: true
+        schema:
+          additionalProperties: true
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Session reset
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Reset agent session
+      tags:
+      - ai
+  /ai/config:
+    get:
+      description: Returns the current AI provider configuration and available providers
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: AI configuration
+          schema:
+            $ref: '#/definitions/internal_api.aiConfigResponse'
+      security:
+      - BearerAuth: []
+      summary: Get AI configuration
+      tags:
+      - ai
+    post:
+      consumes:
+      - application/json
+      description: Saves and applies new AI provider configuration (admin only)
+      parameters:
+      - description: AI config to save
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_api.saveAIConfigRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Configuration saved
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request or unsupported provider
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Save AI configuration
+      tags:
+      - ai
+  /ai/provider:
+    post:
+      consumes:
+      - application/json
+      description: Switches the active AI provider without changing other configuration
+        (admin only)
+      parameters:
+      - description: Provider selection with provider name
+        in: body
+        name: body
+        required: true
+        schema:
+          additionalProperties: true
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Provider set
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request or unsupported provider
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Set AI provider
+      tags:
+      - ai
+  /ai/test:
+    post:
+      description: Tests the currently active AI provider by sending a simple prompt
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Test result with status and response
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal error
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: AI not configured
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Test active AI connection
+      tags:
+      - ai
+  /ai/test-config:
+    post:
+      consumes:
+      - application/json
+      description: Tests an AI provider configuration without saving it
+      parameters:
+      - description: AI config to test
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_api.saveAIConfigRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Test result with status and response
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Test AI configuration
+      tags:
+      - ai
+  /auth/hash:
+    post:
+      consumes:
+      - application/json
+      description: Generates a bcrypt hash from a plaintext password. Only available
+        when auth is disabled.
+      parameters:
+      - description: Password to hash
+        in: body
+        name: body
+        required: true
+        schema:
+          additionalProperties: true
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Bcrypt hash
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden when auth is enabled
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Hash password
+      tags:
+      - auth
+  /auth/login:
+    post:
+      consumes:
+      - application/json
+      description: Validates credentials and returns a session token for use in subsequent
+        requests
+      parameters:
+      - description: Login credentials with username and password
+        in: body
+        name: body
+        required: true
+        schema:
+          additionalProperties: true
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Session token, username, and role
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Invalid credentials
+          schema:
+            additionalProperties: true
+            type: object
+        "429":
+          description: Too many login attempts
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Login
+      tags:
+      - auth
+  /auth/update-password:
+    post:
+      consumes:
+      - application/json
+      description: Changes the current user's password after verifying the existing
+        password
+      parameters:
+      - description: Current and new password
+        in: body
+        name: body
+        required: true
+        schema:
+          additionalProperties: true
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Password updated
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request or weak password
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Current password incorrect
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update password
+      tags:
+      - auth
+  /cluster/nodes:
+    get:
+      description: Returns Kubernetes node capacity, allocatable resources, and readiness
+        status (in-cluster only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Node info with capacity and status
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get node info
+      tags:
+      - system
   /clusters:
     get:
       description: Returns all registered clusters with health stats
@@ -22,6 +989,823 @@ paths:
       summary: List clusters
       tags:
       - clusters
+    post:
+      consumes:
+      - application/json
+      description: Registers a new cluster in ArgoCD and creates its GitOps configuration
+      parameters:
+      - description: Cluster registration request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.RegisterClusterRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Cluster registered
+          schema:
+            additionalProperties: true
+            type: object
+        "207":
+          description: Partial success
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: Cluster already exists
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Gateway error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Register cluster
+      tags:
+      - clusters
+  /clusters/{name}:
+    delete:
+      description: Removes a cluster from ArgoCD and deletes its GitOps configuration
+      parameters:
+      - description: Cluster name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Cluster deregistered
+          schema:
+            additionalProperties: true
+            type: object
+        "207":
+          description: Partial success
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Cluster not found
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Gateway error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Deregister cluster
+      tags:
+      - clusters
+    get:
+      description: Returns details for a single registered cluster
+      parameters:
+      - description: Cluster name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Cluster detail
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Cluster not found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get cluster
+      tags:
+      - clusters
+    patch:
+      consumes:
+      - application/json
+      description: Updates the addon selections (enabled/disabled) for a specific
+        cluster
+      parameters:
+      - description: Cluster name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Addon update request with addons map
+        in: body
+        name: body
+        required: true
+        schema:
+          additionalProperties: true
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Addons updated
+          schema:
+            additionalProperties: true
+            type: object
+        "207":
+          description: Partial success
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Cluster not found
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Gateway error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update cluster addons
+      tags:
+      - clusters
+  /clusters/{name}/comparison:
+    get:
+      description: Compares the cluster's Git state against ArgoCD live state
+      parameters:
+      - description: Cluster name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Comparison result
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Cluster not found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get cluster comparison
+      tags:
+      - clusters
+  /clusters/{name}/config-diff:
+    get:
+      description: Returns a diff of the cluster's current config versus the desired
+        state
+      parameters:
+      - description: Cluster name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Config diff
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get cluster config diff
+      tags:
+      - clusters
+  /clusters/{name}/refresh:
+    post:
+      description: Rotates and re-syncs the cluster credentials from the secrets provider
+        to ArgoCD
+      parameters:
+      - description: Cluster name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Credentials refreshed
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Cluster not found
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Gateway error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Refresh cluster credentials
+      tags:
+      - clusters
+  /clusters/{name}/secrets:
+    get:
+      description: Lists managed addon secrets on a remote cluster
+      parameters:
+      - description: Cluster name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Cluster secrets
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "501":
+          description: Provider not configured
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Gateway error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List cluster secrets
+      tags:
+      - clusters
+  /clusters/{name}/secrets/refresh:
+    post:
+      description: Re-creates all managed addon secrets on a remote cluster
+      parameters:
+      - description: Cluster name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Secrets refreshed
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "501":
+          description: Provider not configured
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Gateway error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Refresh cluster secrets
+      tags:
+      - clusters
+  /clusters/{name}/values:
+    get:
+      description: Returns the Helm values file for a specific cluster
+      parameters:
+      - description: Cluster name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Cluster values
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get cluster values
+      tags:
+      - clusters
+  /clusters/available:
+    get:
+      description: Lists clusters from the credentials provider and marks which are
+        registered in ArgoCD
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Available clusters
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "501":
+          description: Provider not configured
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Gateway error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Discover available clusters
+      tags:
+      - clusters
+  /clusters/batch:
+    post:
+      consumes:
+      - application/json
+      description: Registers multiple clusters in a single operation
+      parameters:
+      - description: Batch registration request with clusters array
+        in: body
+        name: body
+        required: true
+        schema:
+          additionalProperties: true
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: All clusters registered
+          schema:
+            additionalProperties: true
+            type: object
+        "207":
+          description: Partial success
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Gateway error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Batch register clusters
+      tags:
+      - clusters
+  /config:
+    get:
+      description: Returns non-sensitive server configuration including repo paths,
+        GitOps settings, and ArgoCD status
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Server configuration
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get server config
+      tags:
+      - system
+  /connections/:
+    get:
+      description: Returns all configured Git and ArgoCD connections
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Connection list
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List connections
+      tags:
+      - connections
+    post:
+      consumes:
+      - application/json
+      description: Creates a new Git and ArgoCD connection configuration
+      parameters:
+      - description: Connection request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.CreateConnectionRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Connection created
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create connection
+      tags:
+      - connections
+  /connections/{name}:
+    delete:
+      description: Permanently removes a connection configuration
+      parameters:
+      - description: Connection name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Connection deleted
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete connection
+      tags:
+      - connections
+    put:
+      consumes:
+      - application/json
+      description: Updates an existing connection configuration; empty token fields
+        retain their saved values
+      parameters:
+      - description: Connection name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Updated connection request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.CreateConnectionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Connection updated
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update connection
+      tags:
+      - connections
+  /connections/active:
+    post:
+      consumes:
+      - application/json
+      description: Sets the specified connection as the active one used by all API
+        operations
+      parameters:
+      - description: Set active connection request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.SetActiveConnectionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Active connection set
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Set active connection
+      tags:
+      - connections
+  /connections/discover-argocd:
+    get:
+      description: Attempts to auto-discover the ArgoCD server URL from the Kubernetes
+        cluster
+      parameters:
+      - description: 'Kubernetes namespace to search (default: argocd)'
+        in: query
+        name: namespace
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Discovered ArgoCD URL
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Discover ArgoCD URL
+      tags:
+      - connections
+  /connections/test:
+    post:
+      description: Tests the currently active Git and ArgoCD connection
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Connection test result
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Test active connection
+      tags:
+      - connections
+  /connections/test-credentials:
+    post:
+      consumes:
+      - application/json
+      description: Tests Git and ArgoCD credentials from a connection request without
+        saving
+      parameters:
+      - description: Connection credentials to test
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.CreateConnectionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Credential test result
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Test connection credentials
+      tags:
+      - connections
+  /dashboard/attention:
+    get:
+      description: Returns ArgoCD applications that are unhealthy or have conditions
+        requiring attention
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Attention items
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal error
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Service unavailable
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get attention items
+      tags:
+      - dashboard
+  /dashboard/pull-requests:
+    get:
+      description: Returns open pull requests from the GitOps repository
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Pull requests
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal error
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Service unavailable
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get pull requests
+      tags:
+      - dashboard
   /dashboard/stats:
     get:
       description: Returns dashboard statistics overview
@@ -38,6 +1822,136 @@ paths:
       summary: Dashboard stats
       tags:
       - dashboard
+  /docs/{slug}:
+    get:
+      description: Returns the Markdown content for a specific documentation page
+        by slug
+      parameters:
+      - description: Documentation page slug
+        in: path
+        name: slug
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Page slug and markdown content
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid slug
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Document not found
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get documentation page
+      tags:
+      - docs
+  /docs/list:
+    get:
+      description: Returns an ordered list of available documentation pages with slugs
+        and titles
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Documentation page list
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List documentation pages
+      tags:
+      - docs
+  /embedded-dashboards:
+    get:
+      description: Returns all saved embedded dashboard configurations (Grafana, Datadog,
+        etc.)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Embedded dashboards
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List embedded dashboards
+      tags:
+      - dashboard
+    post:
+      consumes:
+      - application/json
+      description: Persists the full list of embedded dashboard configurations to
+        Kubernetes ConfigMap
+      parameters:
+      - description: Dashboard list
+        in: body
+        name: body
+        required: true
+        schema:
+          items:
+            $ref: '#/definitions/internal_api.embeddedDashboard'
+          type: array
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Saved dashboards
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Save embedded dashboards
+      tags:
+      - dashboard
+  /fleet/status:
+    get:
+      description: Returns aggregated health and addon deployment status across all
+        clusters
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Fleet status
+          schema:
+            $ref: '#/definitions/internal_api.fleetStatusResponse'
+        "502":
+          description: Gateway error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get fleet status
+      tags:
+      - clusters
   /health:
     get:
       description: Returns server health status and version
@@ -52,6 +1966,577 @@ paths:
       summary: Health check
       tags:
       - system
+  /init:
+    post:
+      consumes:
+      - application/json
+      description: Creates the GitOps repository structure and bootstraps ArgoCD with
+        initial addon ApplicationSets
+      parameters:
+      - description: Init request (defaults to bootstrap mode)
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.InitRepoRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Repository initialized
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: Already initialized
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Gateway error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Initialize addons repository
+      tags:
+      - init
+  /observability/overview:
+    get:
+      description: Returns resource utilization alerts and health signals across all
+        clusters
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Observability overview
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal error
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Service unavailable
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get observability overview
+      tags:
+      - observability
+  /providers:
+    get:
+      description: Returns the configured credentials provider type and connection
+        status
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Provider info
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get providers
+      tags:
+      - system
+  /providers/test:
+    post:
+      consumes:
+      - application/json
+      description: Tests the configured or provided credentials provider connectivity
+      parameters:
+      - description: Optional provider type and region to test
+        in: body
+        name: body
+        schema:
+          additionalProperties: true
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Test result
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "501":
+          description: No provider configured
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Test provider connectivity
+      tags:
+      - system
+  /providers/test-config:
+    post:
+      consumes:
+      - application/json
+      description: Tests an arbitrary provider configuration without saving it
+      parameters:
+      - description: Provider config to test
+        in: body
+        name: body
+        required: true
+        schema:
+          additionalProperties: true
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Test result
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Test ad-hoc provider config
+      tags:
+      - system
+  /tokens:
+    get:
+      description: Returns all active API tokens without their secret values (admin
+        only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Token list
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List API tokens
+      tags:
+      - auth
+    post:
+      consumes:
+      - application/json
+      description: Creates a new long-lived API token for programmatic access (admin
+        only)
+      parameters:
+      - description: Token name and role
+        in: body
+        name: body
+        required: true
+        schema:
+          additionalProperties: true
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created token (shown only once)
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create API token
+      tags:
+      - auth
+  /tokens/{name}:
+    delete:
+      description: Permanently revokes an API token by name (admin only)
+      parameters:
+      - description: Token name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Token revoked
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Revoke API token
+      tags:
+      - auth
+  /upgrade/{addonName}/versions:
+    get:
+      description: Returns available versions for an addon from the Helm repository
+      parameters:
+      - description: Addon name
+        in: path
+        name: addonName
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Available versions
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal error
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Service unavailable
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List upgrade versions
+      tags:
+      - upgrade
+  /upgrade/ai-status:
+    get:
+      description: Returns whether the AI integration is currently enabled and configured
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: AI status
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get AI status
+      tags:
+      - upgrade
+  /upgrade/ai-summary:
+    post:
+      consumes:
+      - application/json
+      description: Generates an AI-written plain-language summary of the upgrade impact
+        analysis
+      parameters:
+      - description: Upgrade check request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.UpgradeCheckRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: AI summary
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get AI upgrade summary
+      tags:
+      - upgrade
+  /upgrade/check:
+    post:
+      consumes:
+      - application/json
+      description: Analyzes the impact of upgrading an addon to a target version (changelog
+        diff, values changes)
+      parameters:
+      - description: Upgrade check request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.UpgradeCheckRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Upgrade impact analysis
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal error
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Service unavailable
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Check upgrade impact
+      tags:
+      - upgrade
+  /users:
+    get:
+      description: Returns all configured users (admin only)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: User list
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List users
+      tags:
+      - auth
+    post:
+      consumes:
+      - application/json
+      description: Creates a new user with a generated temporary password (admin only)
+      parameters:
+      - description: Create user request with username and role
+        in: body
+        name: body
+        required: true
+        schema:
+          additionalProperties: true
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: User created with temp password
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create user
+      tags:
+      - auth
+  /users/{username}:
+    delete:
+      description: Permanently deletes a user account (admin only)
+      parameters:
+      - description: Username
+        in: path
+        name: username
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: User deleted
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete user
+      tags:
+      - auth
+    put:
+      consumes:
+      - application/json
+      description: Updates a user's role and enabled status (admin only)
+      parameters:
+      - description: Username
+        in: path
+        name: username
+        required: true
+        type: string
+      - description: Update user request with enabled flag and role
+        in: body
+        name: body
+        required: true
+        schema:
+          additionalProperties: true
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Updated user
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update user
+      tags:
+      - auth
+  /users/{username}/reset-password:
+    post:
+      description: Resets a user's password and returns a new temporary password (admin
+        only)
+      parameters:
+      - description: Username
+        in: path
+        name: username
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Temp password
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Reset user password
+      tags:
+      - auth
 securityDefinitions:
   BearerAuth:
     in: header

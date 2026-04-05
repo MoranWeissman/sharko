@@ -22,6 +22,16 @@ type nodeInfo struct {
 	AllocatableMemory string `json:"allocatable_memory"`
 }
 
+// handleGetNodeInfo godoc
+//
+// @Summary Get node info
+// @Description Returns Kubernetes node capacity, allocatable resources, and readiness status (in-cluster only)
+// @Tags system
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{} "Node info with capacity and status"
+// @Failure 500 {object} map[string]interface{} "Internal error"
+// @Router /cluster/nodes [get]
 func (s *Server) handleGetNodeInfo(w http.ResponseWriter, r *http.Request) {
 	config, err := rest.InClusterConfig()
 	if err != nil {

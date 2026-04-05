@@ -96,6 +96,15 @@ func saveDashboardsToK8s(ctx context.Context, dashboards []embeddedDashboard) er
 
 // API handlers
 
+// handleListDashboards godoc
+//
+// @Summary List embedded dashboards
+// @Description Returns all saved embedded dashboard configurations (Grafana, Datadog, etc.)
+// @Tags dashboard
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{} "Embedded dashboards"
+// @Router /embedded-dashboards [get]
 func (s *Server) handleListDashboards(w http.ResponseWriter, r *http.Request) {
 	dashboards, err := loadDashboardsFromK8s(r.Context())
 	if err != nil {
@@ -106,6 +115,20 @@ func (s *Server) handleListDashboards(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, dashboards)
 }
 
+// handleSaveDashboards godoc
+//
+// @Summary Save embedded dashboards
+// @Description Persists the full list of embedded dashboard configurations to Kubernetes ConfigMap
+// @Tags dashboard
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param body body []embeddedDashboard true "Dashboard list"
+// @Success 200 {object} map[string]interface{} "Saved dashboards"
+// @Failure 400 {object} map[string]interface{} "Bad request"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 500 {object} map[string]interface{} "Internal error"
+// @Router /embedded-dashboards [post]
 func (s *Server) handleSaveDashboards(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
 		return

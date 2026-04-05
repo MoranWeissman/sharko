@@ -447,6 +447,19 @@ func getSessionUser(token string) string {
 	return sess.Username
 }
 
+// handleLogin godoc
+//
+// @Summary Login
+// @Description Validates credentials and returns a session token for use in subsequent requests
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param body body map[string]interface{} true "Login credentials with username and password"
+// @Success 200 {object} map[string]interface{} "Session token, username, and role"
+// @Failure 400 {object} map[string]interface{} "Bad request"
+// @Failure 401 {object} map[string]interface{} "Invalid credentials"
+// @Failure 429 {object} map[string]interface{} "Too many login attempts"
+// @Router /auth/login [post]
 // handleLogin validates credentials and returns a session token.
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -537,6 +550,19 @@ func (s *Server) basicAuthMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// handleUpdatePassword godoc
+//
+// @Summary Update password
+// @Description Changes the current user's password after verifying the existing password
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param body body map[string]interface{} true "Current and new password"
+// @Success 200 {object} map[string]interface{} "Password updated"
+// @Failure 400 {object} map[string]interface{} "Bad request or weak password"
+// @Failure 401 {object} map[string]interface{} "Current password incorrect"
+// @Router /auth/update-password [post]
 // handleUpdatePassword allows changing the password. Verifies current password first.
 func (s *Server) handleUpdatePassword(w http.ResponseWriter, r *http.Request) {
 	if !s.authStore.HasUsers() {
@@ -579,6 +605,18 @@ func (s *Server) handleUpdatePassword(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "password updated"})
 }
 
+// handleHashPassword godoc
+//
+// @Summary Hash password
+// @Description Generates a bcrypt hash from a plaintext password. Only available when auth is disabled.
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param body body map[string]interface{} true "Password to hash"
+// @Success 200 {object} map[string]interface{} "Bcrypt hash"
+// @Failure 400 {object} map[string]interface{} "Bad request"
+// @Failure 403 {object} map[string]interface{} "Forbidden when auth is enabled"
+// @Router /auth/hash [post]
 // handleHashPassword generates a bcrypt hash from a plaintext password.
 // Only available when auth is disabled (no users configured) for initial setup.
 func (s *Server) handleHashPassword(w http.ResponseWriter, r *http.Request) {

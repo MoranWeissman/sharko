@@ -10,6 +10,20 @@ import (
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
+// handleInit godoc
+//
+// @Summary Initialize addons repository
+// @Description Creates the GitOps repository structure and bootstraps ArgoCD with initial addon ApplicationSets
+// @Tags init
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param body body orchestrator.InitRepoRequest false "Init request (defaults to bootstrap mode)"
+// @Success 201 {object} map[string]interface{} "Repository initialized"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 409 {object} map[string]interface{} "Already initialized"
+// @Failure 502 {object} map[string]interface{} "Gateway error"
+// @Router /init [post]
 // handleInit handles POST /api/v1/init — initialize the addons repository.
 func (s *Server) handleInit(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {

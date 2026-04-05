@@ -7,6 +7,19 @@ import (
 	"github.com/MoranWeissman/sharko/internal/models"
 )
 
+// handleListUpgradeVersions godoc
+//
+// @Summary List upgrade versions
+// @Description Returns available versions for an addon from the Helm repository
+// @Tags upgrade
+// @Produce json
+// @Security BearerAuth
+// @Param addonName path string true "Addon name"
+// @Success 200 {object} map[string]interface{} "Available versions"
+// @Failure 400 {object} map[string]interface{} "Bad request"
+// @Failure 500 {object} map[string]interface{} "Internal error"
+// @Failure 503 {object} map[string]interface{} "Service unavailable"
+// @Router /upgrade/{addonName}/versions [get]
 func (s *Server) handleListUpgradeVersions(w http.ResponseWriter, r *http.Request) {
 	addonName := r.PathValue("addonName")
 	if addonName == "" {
@@ -29,6 +42,20 @@ func (s *Server) handleListUpgradeVersions(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// handleCheckUpgrade godoc
+//
+// @Summary Check upgrade impact
+// @Description Analyzes the impact of upgrading an addon to a target version (changelog diff, values changes)
+// @Tags upgrade
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param body body models.UpgradeCheckRequest true "Upgrade check request"
+// @Success 200 {object} map[string]interface{} "Upgrade impact analysis"
+// @Failure 400 {object} map[string]interface{} "Bad request"
+// @Failure 500 {object} map[string]interface{} "Internal error"
+// @Failure 503 {object} map[string]interface{} "Service unavailable"
+// @Router /upgrade/check [post]
 func (s *Server) handleCheckUpgrade(w http.ResponseWriter, r *http.Request) {
 	var req models.UpgradeCheckRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -56,6 +83,19 @@ func (s *Server) handleCheckUpgrade(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// handleGetAISummary godoc
+//
+// @Summary Get AI upgrade summary
+// @Description Generates an AI-written plain-language summary of the upgrade impact analysis
+// @Tags upgrade
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param body body models.UpgradeCheckRequest true "Upgrade check request"
+// @Success 200 {object} map[string]interface{} "AI summary"
+// @Failure 400 {object} map[string]interface{} "Bad request"
+// @Failure 500 {object} map[string]interface{} "Internal error"
+// @Router /upgrade/ai-summary [post]
 func (s *Server) handleGetAISummary(w http.ResponseWriter, r *http.Request) {
 	var req models.UpgradeCheckRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -85,6 +125,15 @@ func (s *Server) handleGetAISummary(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"summary": summary})
 }
 
+// handleGetAIStatus godoc
+//
+// @Summary Get AI status
+// @Description Returns whether the AI integration is currently enabled and configured
+// @Tags upgrade
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{} "AI status"
+// @Router /upgrade/ai-status [get]
 func (s *Server) handleGetAIStatus(w http.ResponseWriter, r *http.Request) {
 	enabled := s.upgradeSvc.IsAIEnabled()
 	writeJSON(w, http.StatusOK, map[string]interface{}{"enabled": enabled})

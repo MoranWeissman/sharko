@@ -7,6 +7,20 @@ import (
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
+// handleAddAddon godoc
+//
+// @Summary Add addon
+// @Description Adds a new addon to the catalog by creating its ApplicationSet in the GitOps repo
+// @Tags addons
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param body body orchestrator.AddAddonRequest true "Add addon request"
+// @Success 201 {object} map[string]interface{} "Addon created"
+// @Failure 400 {object} map[string]interface{} "Bad request"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 502 {object} map[string]interface{} "Gateway error"
+// @Router /addons [post]
 // handleAddAddon handles POST /api/v1/addons — add a new addon to the catalog.
 func (s *Server) handleAddAddon(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
@@ -56,6 +70,21 @@ func (s *Server) handleAddAddon(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, result)
 }
 
+// handleRemoveAddon godoc
+//
+// @Summary Remove addon
+// @Description Removes an addon from the catalog. Without ?confirm=true returns a dry-run impact report.
+// @Tags addons
+// @Produce json
+// @Security BearerAuth
+// @Param name path string true "Addon name"
+// @Param confirm query string false "Set to 'true' to confirm destructive removal"
+// @Success 200 {object} map[string]interface{} "Addon removed"
+// @Failure 400 {object} map[string]interface{} "Confirmation required or bad request"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 404 {object} map[string]interface{} "Addon not found"
+// @Failure 502 {object} map[string]interface{} "Gateway error"
+// @Router /addons/{name} [delete]
 // handleRemoveAddon handles DELETE /api/v1/addons/{name} — remove an addon.
 // Requires ?confirm=true query parameter. Without it, returns a dry-run impact report.
 func (s *Server) handleRemoveAddon(w http.ResponseWriter, r *http.Request) {

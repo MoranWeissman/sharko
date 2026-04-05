@@ -8,6 +8,21 @@ import (
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
 )
 
+// handleUpgradeAddon godoc
+//
+// @Summary Upgrade addon
+// @Description Upgrades an addon to a new version globally or for a specific cluster
+// @Tags addons
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param name path string true "Addon name"
+// @Param body body map[string]interface{} true "Upgrade request with version and optional cluster"
+// @Success 200 {object} map[string]interface{} "Upgrade result"
+// @Failure 400 {object} map[string]interface{} "Bad request"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 502 {object} map[string]interface{} "Gateway error"
+// @Router /addons/{name}/upgrade [post]
 // handleUpgradeAddon handles POST /api/v1/addons/{name}/upgrade — upgrade an addon version.
 // Body: {"version": "1.15.0"} for global, {"version": "1.15.0", "cluster": "prod-eu"} for per-cluster.
 func (s *Server) handleUpgradeAddon(w http.ResponseWriter, r *http.Request) {
@@ -64,6 +79,20 @@ func (s *Server) handleUpgradeAddon(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+// handleUpgradeAddonsBatch godoc
+//
+// @Summary Batch upgrade addons
+// @Description Upgrades multiple addons in a single atomic GitOps commit
+// @Tags addons
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param body body map[string]interface{} true "Batch upgrade request with upgrades map of addon->version"
+// @Success 200 {object} map[string]interface{} "Batch upgrade result"
+// @Failure 400 {object} map[string]interface{} "Bad request"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 502 {object} map[string]interface{} "Gateway error"
+// @Router /addons/upgrade-batch [post]
 // handleUpgradeAddonsBatch handles POST /api/v1/addons/upgrade-batch — upgrade multiple addons.
 // Body: {"upgrades": {"cert-manager": "1.15.0", "metrics-server": "0.7.1"}}
 func (s *Server) handleUpgradeAddonsBatch(w http.ResponseWriter, r *http.Request) {

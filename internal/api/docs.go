@@ -30,6 +30,15 @@ type docEntry struct {
 	Order int    `json:"order"`
 }
 
+// handleDocsList godoc
+//
+// @Summary List documentation pages
+// @Description Returns an ordered list of available documentation pages with slugs and titles
+// @Tags docs
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{} "Documentation page list"
+// @Router /docs/list [get]
 func (s *Server) handleDocsList(w http.ResponseWriter, _ *http.Request) {
 	entries, err := os.ReadDir(docsDir)
 	if err != nil {
@@ -67,6 +76,18 @@ func (s *Server) handleDocsList(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, docs)
 }
 
+// handleDocsGet godoc
+//
+// @Summary Get documentation page
+// @Description Returns the Markdown content for a specific documentation page by slug
+// @Tags docs
+// @Produce json
+// @Security BearerAuth
+// @Param slug path string true "Documentation page slug"
+// @Success 200 {object} map[string]interface{} "Page slug and markdown content"
+// @Failure 400 {object} map[string]interface{} "Invalid slug"
+// @Failure 404 {object} map[string]interface{} "Document not found"
+// @Router /docs/{slug} [get]
 func (s *Server) handleDocsGet(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
 	if slug == "" {

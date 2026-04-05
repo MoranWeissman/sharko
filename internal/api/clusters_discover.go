@@ -11,6 +11,18 @@ type discoverClusterEntry struct {
 	Registered bool   `json:"registered"`
 }
 
+// handleDiscoverClusters godoc
+//
+// @Summary Discover available clusters
+// @Description Lists clusters from the credentials provider and marks which are registered in ArgoCD
+// @Tags clusters
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{} "Available clusters"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 501 {object} map[string]interface{} "Provider not configured"
+// @Failure 502 {object} map[string]interface{} "Gateway error"
+// @Router /clusters/available [get]
 // handleDiscoverClusters handles GET /api/v1/clusters/available — list provider clusters
 // and mark which are already registered in ArgoCD.
 func (s *Server) handleDiscoverClusters(w http.ResponseWriter, r *http.Request) {
