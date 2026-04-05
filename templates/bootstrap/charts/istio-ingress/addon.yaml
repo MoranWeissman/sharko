@@ -1,0 +1,7 @@
+# Addon catalog entry for istio-ingress
+appName: istio-ingress
+repoURL: https://istio-release.storage.googleapis.com/charts
+chart: gateway
+version: "1.24.3"
+namespace: istio-ingress
+syncWave: 1

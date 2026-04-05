@@ -92,6 +92,15 @@ export interface AddonDeploymentInfo {
   status: string
 }
 
+export interface AddonSource {
+  repoURL?: string
+  path?: string
+  chart?: string
+  version?: string
+  parameters?: Record<string, string>
+  valueFiles?: string[]
+}
+
 export interface AddonCatalogItem {
   addon_name: string
   chart: string
@@ -104,6 +113,12 @@ export interface AddonCatalogItem {
   degraded_applications: number
   missing_applications: number
   applications: AddonDeploymentInfo[]
+  syncWave?: number
+  selfHeal?: boolean
+  syncOptions?: string[]
+  additionalSources?: AddonSource[]
+  ignoreDifferences?: Record<string, unknown>[]
+  extraHelmValues?: Record<string, string>
 }
 
 export interface AddonCatalogResponse {

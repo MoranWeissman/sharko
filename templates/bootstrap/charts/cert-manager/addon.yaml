@@ -1,0 +1,7 @@
+# Addon catalog entry for cert-manager
+appName: cert-manager
+repoURL: https://charts.jetstack.io
+chart: cert-manager
+version: "1.16.3"
+namespace: cert-manager
+syncWave: -1

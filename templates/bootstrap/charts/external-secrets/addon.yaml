@@ -1,0 +1,7 @@
+# Addon catalog entry for external-secrets
+appName: external-secrets
+repoURL: https://charts.external-secrets.io
+chart: external-secrets
+version: "0.12.1"
+namespace: external-secrets
+syncWave: -1
