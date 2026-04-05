@@ -21,8 +21,7 @@ type clusterEntry struct {
 
 // addonsCatalogFile represents the structure of addons-catalog.yaml.
 type addonsCatalogFile struct {
-	ApplicationSets           []models.AddonCatalogEntry `yaml:"applicationsets"`
-	MigrationIgnoreDifferences []map[string]interface{}  `yaml:"migrationIgnoreDifferences,omitempty"`
+	ApplicationSets []models.AddonCatalogEntry `yaml:"applicationsets"`
 }
 
 // clusterValuesFile represents a per-cluster values file.

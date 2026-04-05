@@ -57,18 +57,15 @@ applicationsets:
     repoURL: https://helm.datadoghq.com
     chart: datadog
     version: 3.160.1
-    inMigration: true
   - appName: keda
     repoURL: https://kedacore.github.io/charts
     chart: keda
     version: 2.14.2
-    inMigration: true
   - appName: istio-base
     repoURL: https://istio-release.storage.googleapis.com/charts
     chart: base
     version: 1.28.0
     namespace: istio-system
-    inMigration: true
 `)
 
 	parser := NewParser()

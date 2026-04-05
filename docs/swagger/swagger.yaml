@@ -1,5 +1,24 @@
 basePath: /api/v1
 definitions:
+  github_com_MoranWeissman_sharko_internal_models.AddonSource:
+    properties:
+      chart:
+        type: string
+      parameters:
+        additionalProperties:
+          type: string
+        type: object
+      path:
+        type: string
+      repoURL:
+        type: string
+      valueFiles:
+        items:
+          type: string
+        type: array
+      version:
+        type: string
+    type: object
   github_com_MoranWeissman_sharko_internal_models.ArgocdConfig:
     properties:
       insecure:
@@ -70,14 +89,33 @@ definitions:
     type: object
   github_com_MoranWeissman_sharko_internal_orchestrator.AddAddonRequest:
     properties:
+      additional_sources:
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.AddonSource'
+        type: array
       chart:
         type: string
+      extra_helm_values:
+        additionalProperties:
+          type: string
+        type: object
+      ignore_differences:
+        items:
+          additionalProperties: true
+          type: object
+        type: array
       name:
         type: string
       namespace:
         type: string
       repo_url:
         type: string
+      self_heal:
+        type: boolean
+      sync_options:
+        items:
+          type: string
+        type: array
       sync_wave:
         type: integer
       version:

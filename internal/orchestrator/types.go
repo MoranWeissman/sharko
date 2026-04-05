@@ -1,5 +1,7 @@
 package orchestrator
 
+import "github.com/MoranWeissman/sharko/internal/models"
+
 // GitOpsConfig holds gitops preferences (from server Helm values).
 type GitOpsConfig struct {
 	PRAutoMerge  bool   // true = auto-merge PRs after creation; false = manual approval
@@ -57,12 +59,17 @@ type GitResult struct {
 
 // AddAddonRequest is the input for adding an addon to the catalog.
 type AddAddonRequest struct {
-	Name      string `json:"name"`
-	Chart     string `json:"chart"`
-	RepoURL   string `json:"repo_url"`
-	Version   string `json:"version"`
-	Namespace string `json:"namespace"`
-	SyncWave  int    `json:"sync_wave,omitempty"`
+	Name              string                   `json:"name"`
+	Chart             string                   `json:"chart"`
+	RepoURL           string                   `json:"repo_url"`
+	Version           string                   `json:"version"`
+	Namespace         string                   `json:"namespace"`
+	SyncWave          int                      `json:"sync_wave,omitempty"`
+	SelfHeal          *bool                    `json:"self_heal,omitempty"`
+	SyncOptions       []string                 `json:"sync_options,omitempty"`
+	AdditionalSources []models.AddonSource     `json:"additional_sources,omitempty"`
+	IgnoreDifferences []map[string]interface{} `json:"ignore_differences,omitempty"`
+	ExtraHelmValues   map[string]string        `json:"extra_helm_values,omitempty"`
 }
 
 // InitRepoRequest is the input for initializing the addons repository.

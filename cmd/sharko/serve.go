@@ -177,7 +177,7 @@ var serveCmd = &cobra.Command{
 
 		// Build server
 		srv := api.NewServer(connSvc, clusterSvc, addonSvc, dashboardSvc, observabilitySvc, upgradeSvc, aiClient)
-		srv.SetTemplateFS(templates.StarterFS) // Always available — init doesn't need a provider
+		srv.SetTemplateFS(templates.TemplateFS) // Always available — init doesn't need a provider
 
 		// Start notification checker (background goroutine, checks every 30 min).
 		notifProvider := notifications.NewServiceProvider(connSvc, addonSvc)
@@ -395,7 +395,7 @@ var serveCmd = &cobra.Command{
 					}
 				}
 
-				orch := orchestrator.New(nil, nil, ac, git, gitopsCfg, repoPaths, templates.StarterFS)
+				orch := orchestrator.New(nil, nil, ac, git, gitopsCfg, repoPaths, templates.TemplateFS)
 				result, initErr := orch.InitRepo(context.Background(), req)
 				if initErr != nil {
 					log.Printf("auto-bootstrap: failed — %v", initErr)

@@ -3730,6 +3730,35 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "github_com_MoranWeissman_sharko_internal_models.AddonSource": {
+            "type": "object",
+            "properties": {
+                "chart": {
+                    "type": "string"
+                },
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "path": {
+                    "type": "string"
+                },
+                "repoURL": {
+                    "type": "string"
+                },
+                "valueFiles": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_MoranWeissman_sharko_internal_models.ArgocdConfig": {
             "type": "object",
             "properties": {
@@ -3835,8 +3864,27 @@ const docTemplate = `{
         "github_com_MoranWeissman_sharko_internal_orchestrator.AddAddonRequest": {
             "type": "object",
             "properties": {
+                "additional_sources": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.AddonSource"
+                    }
+                },
                 "chart": {
                     "type": "string"
+                },
+                "extra_helm_values": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "ignore_differences": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": true
+                    }
                 },
                 "name": {
                     "type": "string"
@@ -3846,6 +3894,15 @@ const docTemplate = `{
                 },
                 "repo_url": {
                     "type": "string"
+                },
+                "self_heal": {
+                    "type": "boolean"
+                },
+                "sync_options": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "sync_wave": {
                     "type": "integer"

@@ -89,7 +89,7 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 
 	// Step 5: Generate cluster values file and commit to Git via PR.
 	// Values file must exist before ArgoCD labels trigger ApplicationSet deployment.
-	valuesContent := generateClusterValues(req.Name, req.Region, req.Addons)
+	valuesContent := generateClusterValues(req.Name, req.Region, req.Addons, nil)
 	valuesPath := path.Join(o.paths.ClusterValues, req.Name+".yaml")
 
 	files := map[string][]byte{
@@ -287,7 +287,7 @@ func (o *Orchestrator) UpdateClusterAddons(ctx context.Context, name string, ser
 	}
 
 	// Step 4: Update values file in Git.
-	valuesContent := generateClusterValues(name, region, addons)
+	valuesContent := generateClusterValues(name, region, addons, nil)
 	valuesPath := path.Join(o.paths.ClusterValues, name+".yaml")
 
 	files := map[string][]byte{

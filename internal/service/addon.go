@@ -105,12 +105,11 @@ func (s *AddonService) GetCatalog(ctx context.Context, gp gitprovider.GitProvide
 
 	for _, addon := range repoCfg.Addons {
 		item := models.AddonCatalogItem{
-			AddonName:   addon.AppName,
-			Chart:       addon.Chart,
-			RepoURL:     addon.RepoURL,
-			Namespace:   addon.Namespace,
-			Version:     addon.Version,
-			InMigration: addon.InMigration,
+			AddonName: addon.AppName,
+			Chart:     addon.Chart,
+			RepoURL:   addon.RepoURL,
+			Namespace: addon.Namespace,
+			Version:   addon.Version,
 		}
 
 		// Check which clusters have this addon

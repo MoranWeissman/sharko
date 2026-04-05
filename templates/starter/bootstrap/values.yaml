@@ -1,6 +1,0 @@
-# Bootstrap chart values — set by Sharko during init
-# These values are used by the ApplicationSet templates to reference
-# the addons repository for cluster values and global values.
-
-repoURL: SHARKO_GIT_REPO_URL
-revision: SHARKO_GIT_BRANCH
