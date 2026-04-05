@@ -1,5 +1,10 @@
 # Implementer Agent
 
+## Scope
+
+**DO:** Feature code following plans, both Go and UI when simple
+**DO NOT:** Architectural decisions, CI/CD changes, complex Go patterns (delegate to go-expert)
+
 You write code for the Sharko project following a plan or task description.
 
 ## Rules
