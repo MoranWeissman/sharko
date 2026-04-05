@@ -80,7 +80,7 @@ function DashboardForm({
   return (
     <form
       onSubmit={handleSubmit}
-      className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900"
+      className="rounded-xl border border-gray-200 bg-[#e0f0ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900"
     >
       <div className="mb-4 flex items-center justify-between">
         <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
@@ -89,7 +89,7 @@ function DashboardForm({
         <button
           type="button"
           onClick={onCancel}
-          className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+          className="rounded-lg p-1 text-gray-400 hover:bg-[#d6eeff] hover:text-gray-600 dark:hover:bg-gray-800 dark:hover:text-gray-200"
           aria-label="Close form"
         >
           <X className="h-5 w-5" />
@@ -110,7 +110,7 @@ function DashboardForm({
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. Cluster Monitoring - NonProd"
-            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500"
+            className="w-full rounded-lg border border-gray-300 bg-[#e0f0ff] px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500"
             required
           />
         </div>
@@ -128,7 +128,7 @@ function DashboardForm({
             onChange={(e) =>
               setProvider(e.target.value as EmbeddedDashboard['provider'])
             }
-            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+            className="w-full rounded-lg border border-gray-300 bg-[#e0f0ff] px-3 py-2 text-sm text-gray-900 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
           >
             <option value="datadog">Datadog</option>
             <option value="grafana">Grafana</option>
@@ -150,7 +150,7 @@ function DashboardForm({
               onChange={(e) => setUrl(e.target.value)}
               placeholder={'Paste a URL:\nhttps://app.datadoghq.eu/graph/embed?token=...\n\nOr paste the full embed code:\n<iframe src="https://app.datadoghq.eu/graph/embed?token=..." ...></iframe>'}
               rows={4}
-              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 font-mono text-xs text-gray-900 placeholder-gray-400 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500"
+              className="w-full rounded-lg border border-gray-300 bg-[#e0f0ff] px-3 py-2 font-mono text-xs text-gray-900 placeholder-gray-400 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500"
               required
             />
           ) : (
@@ -160,7 +160,7 @@ function DashboardForm({
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               placeholder={provider === 'grafana' ? 'https://grafana.example.com/d/abc123/my-dashboard' : 'https://...'}
-              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500"
+              className="w-full rounded-lg border border-gray-300 bg-[#e0f0ff] px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500"
               required
             />
           )}
@@ -268,7 +268,7 @@ export function Dashboards() {
                 className={`flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors ${
                   isActive
                     ? 'border-l-[3px] border-teal-400 bg-teal-50 text-teal-700 dark:bg-teal-900/30 dark:text-teal-300'
-                    : 'border-l-[3px] border-transparent text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'
+                    : 'border-l-[3px] border-transparent text-gray-700 hover:bg-[#d6eeff] dark:text-gray-300 dark:hover:bg-gray-800'
                 }`}
               >
                 <span className="min-w-0 flex-1 text-sm leading-tight">{d.name}</span>
@@ -314,7 +314,7 @@ export function Dashboards() {
           {effectiveSelected ? (
             <div className="space-y-3">
               {/* Toolbar */}
-              <div className="flex items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-2.5 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+              <div className="flex items-center justify-between rounded-lg border border-gray-200 bg-[#e0f0ff] px-4 py-2.5 shadow-sm dark:border-gray-700 dark:bg-gray-900">
                 <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
                   {effectiveSelected.name}
                 </span>
@@ -323,14 +323,14 @@ export function Dashboards() {
                     href={effectiveSelected.url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
+                    className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium text-gray-600 hover:bg-[#d6eeff] dark:text-gray-400 dark:hover:bg-gray-800"
                   >
                     <ExternalLink className="h-3.5 w-3.5" />
                     Open in new tab
                   </a>
                   <button
                     onClick={() => handleEdit(effectiveSelected.id)}
-                    className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
+                    className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium text-gray-600 hover:bg-[#d6eeff] dark:text-gray-400 dark:hover:bg-gray-800"
                   >
                     <Pencil className="h-3.5 w-3.5" />
                     Edit
@@ -350,7 +350,7 @@ export function Dashboards() {
                 <iframe
                   src={resolveUrl(effectiveSelected)}
                   title={effectiveSelected.name}
-                  className="w-full bg-white dark:bg-gray-950"
+                  className="w-full bg-[#e0f0ff] dark:bg-gray-950"
                   style={{ height: 'calc(100vh - 280px)' }}
                   sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-popups-to-escape-sandbox"
                 />

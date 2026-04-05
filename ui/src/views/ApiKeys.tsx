@@ -139,9 +139,9 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
       </div>
 
       {/* Token table */}
-      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800">
+      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-[#e0f0ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
         <table className="w-full text-left text-sm">
-          <thead className="border-b border-gray-200 bg-gray-50 text-xs uppercase text-gray-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
+          <thead className="border-b border-gray-200 bg-[#d0e8f8] text-xs uppercase text-gray-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
             <tr>
               <th className="px-6 py-3">Name</th>
               <th className="px-6 py-3">Role</th>
@@ -152,7 +152,7 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
           </thead>
           <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
             {tokens.map((token) => (
-              <tr key={token.name} className="hover:bg-gray-50 dark:hover:bg-gray-700">
+              <tr key={token.name} className="hover:bg-[#d6eeff] dark:hover:bg-gray-700">
                 <td className="px-6 py-3 font-medium text-gray-900 dark:text-gray-100">
                   <div className="flex items-center gap-2">
                     <Key className="h-4 w-4 text-gray-400" />
@@ -180,7 +180,7 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
                   <button
                     type="button"
                     onClick={() => { setRevokeError(null); setRevokeTarget(token.name) }}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-red-300 bg-white px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 dark:border-red-700 dark:bg-gray-800 dark:text-red-400 dark:hover:bg-red-900/20"
+                    className="inline-flex items-center gap-1.5 rounded-md border border-red-300 bg-[#e0f0ff] px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-50 dark:border-red-700 dark:bg-gray-800 dark:text-red-400 dark:hover:bg-red-900/20"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                     Revoke
@@ -228,7 +228,7 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
           </DialogHeader>
           {createdToken ? (
             <div className="space-y-3 py-2">
-              <div className="flex items-center gap-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 dark:border-gray-700 dark:bg-gray-900">
+              <div className="flex items-center gap-2 rounded-md border border-gray-200 bg-[#d0e8f8] px-3 py-2 dark:border-gray-700 dark:bg-gray-900">
                 <code className="flex-1 break-all text-xs text-gray-800 dark:text-gray-200">{createdToken}</code>
                 <button
                   type="button"
@@ -279,7 +279,7 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
               type="button"
               onClick={() => setCreateOpen(false)}
               disabled={creating}
-              className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+              className="rounded-md border border-gray-300 bg-[#e0f0ff] px-4 py-2 text-sm font-medium text-gray-700 hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
             >
               {createdToken ? 'Done' : 'Cancel'}
             </button>

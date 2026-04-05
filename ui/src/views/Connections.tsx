@@ -90,9 +90,9 @@ function formFromConnection(conn: ConnectionResponse): ConnectionFormData {
 const labelCls =
   'block text-sm font-medium text-gray-700 dark:text-gray-300'
 const inputCls =
-  'mt-1 block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm placeholder:text-gray-400 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder:text-gray-500'
+  'mt-1 block w-full rounded-lg border border-gray-300 bg-[#e0f0ff] px-3 py-2 text-sm text-gray-900 shadow-sm placeholder:text-gray-400 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder:text-gray-500'
 const selectCls =
-  'mt-1 block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100'
+  'mt-1 block w-full rounded-lg border border-gray-300 bg-[#e0f0ff] px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100'
 
 interface TestStatus {
   git: 'idle' | 'testing' | 'ok' | 'error'
@@ -141,7 +141,7 @@ function ConnectionFormFields({
         </div>
         <div className="mt-3 flex items-center gap-3">
           <button type="button" onClick={onTestGit} disabled={testStatus.git === 'testing' || !form.git_url}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">
+            className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">
             {testStatus.git === 'testing' ? <Loader2 className="h-3 w-3 animate-spin" /> : <GitBranch className="h-3 w-3" />}
             Test Git
           </button>
@@ -177,7 +177,7 @@ function ConnectionFormFields({
         </div>
         <div className="mt-3 flex items-center gap-3">
           <button type="button" onClick={onTestArgocd} disabled={testStatus.argocd === 'testing'}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">
+            className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">
             {testStatus.argocd === 'testing' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Server className="h-3 w-3" />}
             Test ArgoCD
           </button>
@@ -502,7 +502,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
             {connections.map((conn) => (
               <div key={conn.name}>
                 <div
-                  className={`rounded-xl border bg-white p-6 shadow-sm dark:bg-gray-800 ${
+                  className={`rounded-xl border bg-[#e0f0ff] p-6 shadow-sm dark:bg-gray-800 ${
                     conn.is_active
                       ? 'border-teal-500 ring-2 ring-teal-100 dark:ring-teal-900/50'
                       : 'border-gray-200 dark:border-gray-700'
@@ -679,7 +679,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
         <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
           Platform Info
         </h3>
-        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <div className="rounded-xl border border-gray-200 bg-[#e0f0ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
           <dl className="grid grid-cols-1 gap-6 sm:grid-cols-2">
             {/* Deployment Mode */}
             <div>
@@ -745,7 +745,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
         <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
           Secrets Provider
         </h3>
-        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <div className="rounded-xl border border-gray-200 bg-[#e0f0ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
           {providerInfo ? (
             <dl className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <div>
@@ -796,7 +796,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
           <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
             Initialize Repository
           </h3>
-          <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div className="rounded-xl border border-gray-200 bg-[#e0f0ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
             <p className="mb-4 text-sm text-gray-600 dark:text-gray-400">
               Bootstrap the Git repository with the required Sharko directory structure and ArgoCD resources.
               Safe to run on an already-initialized repository.
@@ -954,7 +954,7 @@ function AIConfigSection() {
   }
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+    <div className="rounded-xl border border-gray-200 bg-[#e0f0ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
       {/* Header */}
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-3">
@@ -986,7 +986,7 @@ function AIConfigSection() {
           {isEnabled && (
             <>
               <button onClick={handleTest} disabled={testing}
-                className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">
+                className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-[#d6eeff] dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">
                 {testing ? 'Testing...' : 'Test'}
               </button>
               <button onClick={handleDisable}
@@ -1073,7 +1073,7 @@ function AIConfigSection() {
           </div>
           <div className="mt-3 flex items-center gap-3">
             <button onClick={handleFormTest} disabled={formTestStatus === 'testing'}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">
+              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700">
               {formTestStatus === 'testing' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
               Test AI
             </button>

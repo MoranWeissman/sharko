@@ -49,13 +49,13 @@ export function Settings() {
         </p>
       </div>
 
-      <div className="flex gap-0 rounded-xl border border-[#90c8ee] bg-white overflow-hidden dark:border-gray-700 dark:bg-gray-800">
+      <div className="flex gap-6 mt-4">
         <DetailNavPanel
           sections={sections}
           activeKey={section}
           onSelect={setSection}
         />
-        <div className="flex-1 p-6">
+        <div className="flex-1">
           {section === 'connections' && <Connections embedded />}
           {section === 'users' && isAdmin && <UserManagement embedded />}
           {section === 'api-keys' && isAdmin && <ApiKeys embedded />}

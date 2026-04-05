@@ -39,7 +39,7 @@ function HealthProgressBar({ healthy, total }: { healthy: number; total: number 
     pct === 100 ? 'bg-green-500' : pct > 50 ? 'bg-yellow-500' : 'bg-red-500'
 
   return (
-    <div className="rounded-lg border bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+    <div className="rounded-lg border bg-[#e0f0ff] p-4 dark:border-gray-700 dark:bg-gray-800">
       <h3 className="mb-2 text-base font-semibold text-gray-900 dark:text-gray-100">Overall Health</h3>
       <div className="h-3 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
         <div
@@ -233,7 +233,7 @@ export function AddonDetail() {
           <button
             type="button"
             onClick={() => navigate('/addons')}
-            className="rounded-md p-2 hover:bg-gray-100 dark:hover:bg-gray-700"
+            className="rounded-md p-2 hover:bg-[#d6eeff] dark:hover:bg-gray-700"
           >
             <ArrowLeft className="h-5 w-5 dark:text-gray-300" />
           </button>
@@ -251,7 +251,7 @@ export function AddonDetail() {
           <button
             type="button"
             onClick={() => navigate('/addons')}
-            className="rounded-md p-2 hover:bg-gray-100 dark:hover:bg-gray-700"
+            className="rounded-md p-2 hover:bg-[#d6eeff] dark:hover:bg-gray-700"
           >
             <ArrowLeft className="h-5 w-5 dark:text-gray-300" />
           </button>
@@ -269,7 +269,7 @@ export function AddonDetail() {
           <button
             type="button"
             onClick={() => navigate('/addons')}
-            className="rounded-md p-2 hover:bg-gray-100 dark:hover:bg-gray-700"
+            className="rounded-md p-2 hover:bg-[#d6eeff] dark:hover:bg-gray-700"
           >
             <ArrowLeft className="h-5 w-5 dark:text-gray-300" />
           </button>
@@ -298,7 +298,7 @@ export function AddonDetail() {
           <button
             type="button"
             onClick={() => navigate('/addons')}
-            className="rounded-md p-2 hover:bg-gray-100 dark:hover:bg-gray-700"
+            className="rounded-md p-2 hover:bg-[#d6eeff] dark:hover:bg-gray-700"
             aria-label="Back to addons"
           >
             <ArrowLeft className="h-5 w-5 dark:text-gray-300" />
@@ -315,7 +315,7 @@ export function AddonDetail() {
             <button
               type="button"
               onClick={() => { setUpgradeVersion(''); setUpgradeCluster(''); setUpgradeError(null); setUpgradeResult(null); setUpgradeOpen(true) }}
-              className="inline-flex items-center gap-2 rounded-lg border border-teal-300 bg-white px-3 py-2 text-sm font-medium text-teal-700 hover:bg-teal-50 dark:border-teal-700 dark:bg-gray-800 dark:text-teal-400 dark:hover:bg-teal-900/20"
+              className="inline-flex items-center gap-2 rounded-lg border border-teal-300 bg-[#e0f0ff] px-3 py-2 text-sm font-medium text-teal-700 hover:bg-teal-50 dark:border-teal-700 dark:bg-gray-800 dark:text-teal-400 dark:hover:bg-teal-900/20"
             >
               <ArrowUpCircle className="h-4 w-4" />
               Upgrade
@@ -323,7 +323,7 @@ export function AddonDetail() {
             <button
               type="button"
               onClick={() => { setRemoveError(null); setRemoveModalOpen(true) }}
-              className="inline-flex items-center gap-2 rounded-lg border border-red-300 bg-white px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 dark:border-red-700 dark:bg-gray-800 dark:text-red-400 dark:hover:bg-red-900/20"
+              className="inline-flex items-center gap-2 rounded-lg border border-red-300 bg-[#e0f0ff] px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 dark:border-red-700 dark:bg-gray-800 dark:text-red-400 dark:hover:bg-red-900/20"
             >
               <Trash2 className="h-4 w-4" />
               Remove
@@ -392,7 +392,7 @@ export function AddonDetail() {
               type="button"
               onClick={() => setUpgradeOpen(false)}
               disabled={upgradeSubmitting}
-              className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+              className="rounded-md border border-gray-300 bg-[#e0f0ff] px-4 py-2 text-sm font-medium text-gray-700 hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
             >
               {upgradeResult ? 'Close' : 'Cancel'}
             </button>
@@ -465,7 +465,7 @@ export function AddonDetail() {
 
         <TabsContent value="clusters" className="space-y-6">
           {/* Filter controls */}
-          <div className="rounded-lg border bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+          <div className="rounded-lg border bg-[#e0f0ff] p-4 dark:border-gray-700 dark:bg-gray-800">
             <h3 className="mb-3 text-base font-semibold text-gray-900 dark:text-gray-100">
               Filter Applications
             </h3>
@@ -529,7 +529,7 @@ export function AddonDetail() {
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
             {/* Left: Environment Versions */}
             <div className="lg:col-span-4">
-              <div className="rounded-lg border bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+              <div className="rounded-lg border bg-[#e0f0ff] p-4 dark:border-gray-700 dark:bg-gray-800">
                 <h3 className="mb-3 text-base font-semibold text-gray-900 dark:text-gray-100">
                   Environment Versions
                 </h3>
@@ -555,7 +555,7 @@ export function AddonDetail() {
 
             {/* Right: Cluster Applications Table */}
             <div className="lg:col-span-8">
-              <div className="rounded-lg border bg-white dark:border-gray-700 dark:bg-gray-800">
+              <div className="rounded-lg border bg-[#e0f0ff] dark:border-gray-700 dark:bg-gray-800">
                 <div className="border-b px-4 py-3 dark:border-gray-700">
                   <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">
                     Cluster Applications
@@ -563,7 +563,7 @@ export function AddonDetail() {
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
-                    <thead className="border-b bg-gray-50 text-xs uppercase text-gray-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
+                    <thead className="border-b bg-[#d0e8f8] text-xs uppercase text-gray-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
                       <tr>
                         <th className="px-4 py-3 text-left">Cluster</th>
                         <th className="px-4 py-3 text-left">Status</th>
@@ -574,7 +574,7 @@ export function AddonDetail() {
                     </thead>
                     <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                       {filteredApps.map((app) => (
-                        <tr key={app.cluster_name} className="hover:bg-gray-50 dark:hover:bg-gray-700">
+                        <tr key={app.cluster_name} className="hover:bg-[#d6eeff] dark:hover:bg-gray-700">
                           <td className="px-4 py-3">
                             <Link
                               to={`/clusters/${app.cluster_name}`}
@@ -641,7 +641,7 @@ export function AddonDetail() {
 
           {/* Disabled clusters section */}
           {disabledApps.length > 0 && (
-            <div className="rounded-lg border bg-white p-4 dark:border-gray-700 dark:bg-gray-800" id="disabled-clusters-section">
+            <div className="rounded-lg border bg-[#e0f0ff] p-4 dark:border-gray-700 dark:bg-gray-800" id="disabled-clusters-section">
               <h3 className="mb-3 text-base font-semibold text-gray-900 dark:text-gray-100">
                 Disabled on {disabledApps.length} Clusters
               </h3>
@@ -650,7 +650,7 @@ export function AddonDetail() {
                   <Link
                     key={app.cluster_name}
                     to={`/clusters/${app.cluster_name}`}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-100 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+                    className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-[#d0e8f8] px-3 py-1 text-xs font-medium text-gray-600 transition-colors hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
                   >
                     <Ban className="h-3 w-3" />
                     {app.cluster_name}
@@ -663,7 +663,7 @@ export function AddonDetail() {
 
         <TabsContent value="upgrade" className="space-y-6">
           <RoleGuard adminOnly fallback={<p className="text-sm text-gray-500 dark:text-gray-400">Admin access required to upgrade addons.</p>}>
-            <div className="rounded-lg border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-gray-800">
+            <div className="rounded-lg border border-gray-200 bg-[#e0f0ff] p-6 dark:border-gray-700 dark:bg-gray-800">
               <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">Upgrade {addon.addon_name}</h3>
               <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
                 Current catalog version: <span className="font-mono font-medium">{addon.version}</span>

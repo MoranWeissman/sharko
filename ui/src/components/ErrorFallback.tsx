@@ -5,7 +5,7 @@ interface ErrorFallbackProps {
 
 export function ErrorFallback({ error, resetErrorBoundary }: ErrorFallbackProps) {
   return (
-    <div className="mx-auto max-w-lg rounded-lg border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800">
+    <div className="mx-auto max-w-lg rounded-lg border border-gray-200 bg-[#e0f0ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
       <div className="h-1 rounded-t-lg bg-red-500" />
       <div className="flex flex-col items-center gap-4 p-6 text-center">
         <img

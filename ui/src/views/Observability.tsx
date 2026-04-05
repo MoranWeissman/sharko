@@ -105,7 +105,7 @@ function ControlPlaneSection({
   const total = healthData.reduce((sum, d) => sum + d.value, 0);
 
   return (
-    <section className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+    <section className="rounded-xl border border-gray-200 bg-[#e0f0ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900">
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
           Control Plane
@@ -177,7 +177,7 @@ function StatBlock({
   sub?: string;
 }) {
   return (
-    <div className="rounded-lg border border-gray-100 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800">
+    <div className="rounded-lg border border-gray-100 bg-[#d0e8f8] p-4 dark:border-gray-700 dark:bg-gray-800">
       <p className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
         {label}
       </p>
@@ -218,7 +218,7 @@ function ResourceAlertsSection({ alerts }: { alerts: ResourceAlert[] }) {
         {alerts.map((alert) => (
           <div
             key={`${alert.addon_name}-${alert.alert_type}`}
-            className="flex items-center justify-between rounded-lg bg-white px-4 py-3 dark:bg-gray-900"
+            className="flex items-center justify-between rounded-lg bg-[#e0f0ff] px-4 py-3 dark:bg-gray-900"
           >
             <div className="flex items-center gap-3">
               <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
@@ -359,7 +359,7 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
                 className={`px-2.5 py-1 text-xs font-medium transition-colors ${
                   groupBy === m
                     ? 'bg-teal-600 text-white'
-                    : 'text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800'
+                    : 'text-gray-500 hover:bg-[#d6eeff] dark:text-gray-400 dark:hover:bg-gray-800'
                 } ${m === 'addon' ? 'rounded-l-md' : 'rounded-r-md'}`}
               >
                 By {m === 'addon' ? 'Addon' : 'Cluster'}
@@ -375,7 +375,7 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
                 className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                   sortMode === m
                     ? 'bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300'
-                    : 'text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800'
+                    : 'text-gray-500 hover:bg-[#d6eeff] dark:text-gray-400 dark:hover:bg-gray-800'
                 }`}
               >
                 {m === 'issues' ? 'Most Issues' : 'A-Z'}
@@ -396,7 +396,7 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
             return (
               <div
                 key={group.addon_name}
-                className="rounded-xl border border-gray-200 bg-white shadow-sm transition-shadow hover:shadow-md dark:border-gray-700 dark:bg-gray-900"
+                className="rounded-xl border border-gray-200 bg-[#e0f0ff] shadow-sm transition-shadow hover:shadow-md dark:border-gray-700 dark:bg-gray-900"
               >
                 <button
                   onClick={() => toggle(group.addon_name)}
@@ -463,7 +463,7 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
                           return (
                             <tr
                               key={child.app_name}
-                              className="hover:bg-gray-50 dark:hover:bg-gray-800"
+                              className="hover:bg-[#d6eeff] dark:hover:bg-gray-800"
                             >
                               <td className="py-2 pr-3 font-medium text-gray-800 dark:text-gray-200">
                                 {child.cluster_name}
@@ -505,7 +505,7 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
         ) : (
           /* ---- Group by Cluster ---- */
           sortedClusterGroups.length === 0 ? (
-            <div className="rounded-lg border border-gray-200 bg-white p-8 text-center text-sm text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400">
+            <div className="rounded-lg border border-gray-200 bg-[#e0f0ff] p-8 text-center text-sm text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400">
               No cluster data available.
             </div>
           ) : (
@@ -517,7 +517,7 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
               return (
                 <div
                   key={cg.cluster_name}
-                  className="rounded-xl border border-gray-200 bg-white shadow-sm transition-shadow hover:shadow-md dark:border-gray-700 dark:bg-gray-900"
+                  className="rounded-xl border border-gray-200 bg-[#e0f0ff] shadow-sm transition-shadow hover:shadow-md dark:border-gray-700 dark:bg-gray-900"
                 >
                   <button
                     onClick={() => toggle(cg.cluster_name)}
@@ -584,7 +584,7 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
                             return (
                               <tr
                                 key={addon.app_name}
-                                className="hover:bg-gray-50 dark:hover:bg-gray-800"
+                                className="hover:bg-[#d6eeff] dark:hover:bg-gray-800"
                               >
                                 <td className="py-2 pr-3 font-medium text-gray-800 dark:text-gray-200">
                                   {addon.addon_name}
@@ -631,7 +631,7 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
       {groupBy === 'addon' && sortedAddonGroups.length > visibleCount && (
         <button
           onClick={() => setVisibleCount(v => v + 10)}
-          className="w-full rounded-lg border border-gray-200 bg-white py-2 text-center text-sm text-teal-600 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-teal-400"
+          className="w-full rounded-lg border border-gray-200 bg-[#e0f0ff] py-2 text-center text-sm text-teal-600 hover:bg-[#d6eeff] dark:border-gray-700 dark:bg-gray-800 dark:text-teal-400"
         >
           Show more ({sortedAddonGroups.length - visibleCount} remaining)
         </button>
@@ -689,7 +689,7 @@ function SyncActivitySection({
   }, [syncs]);
 
   return (
-    <section className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+    <section className="rounded-xl border border-gray-200 bg-[#e0f0ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-900 dark:text-gray-100">
           <Activity className="h-5 w-5 text-teal-500" />
@@ -699,7 +699,7 @@ function SyncActivitySection({
           <select
             value={addonFilter}
             onChange={(e) => setAddonFilter(e.target.value)}
-            className="rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300"
+            className="rounded-md border border-gray-200 bg-[#e0f0ff] px-2 py-1 text-xs text-gray-700 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300"
             aria-label="Filter by addon"
           >
             <option value="">All Addons</option>
@@ -712,7 +712,7 @@ function SyncActivitySection({
           <select
             value={clusterFilter}
             onChange={(e) => setClusterFilter(e.target.value)}
-            className="rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300"
+            className="rounded-md border border-gray-200 bg-[#e0f0ff] px-2 py-1 text-xs text-gray-700 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300"
             aria-label="Filter by cluster"
           >
             <option value="">All Clusters</option>
@@ -750,7 +750,7 @@ function SyncActivitySection({
         {filtered.map((s, idx) => (
           <div
             key={`${s.timestamp}-${s.app_name}-${idx}`}
-            className="flex items-center gap-3 rounded-lg px-3 py-2 transition-colors hover:bg-gray-50 dark:hover:bg-gray-800"
+            className="flex items-center gap-3 rounded-lg px-3 py-2 transition-colors hover:bg-[#d6eeff] dark:hover:bg-gray-800"
           >
             {statusIcon(s.status)}
             <span className="w-16 shrink-0 text-xs text-gray-400">
