@@ -27,6 +27,7 @@ Sharko Server (in-cluster):
   +-- Secrets provider (AWS SM, K8s Secrets)
   +-- Remote client (deliver secrets to remote clusters)
   +-- AI assistant (multi-provider)
+  +-- Swagger UI (/swagger/index.html)
 ```
 
 **Why server-first:**
@@ -84,7 +85,7 @@ Handlers are thin glue code. They validate input, construct the orchestrator wit
 
 ## Git Mutex Pattern
 
-All Git operations are serialized by a single `sync.Mutex` (`gitMu`) that lives on the `Server` struct and is passed to every orchestrator instance. The mutex is held for the duration of each Git write operation (branch creation → file commit → PR creation → optional merge).
+All Git operations are serialized by a single `sync.Mutex` (`gitMu`) that lives on the `Server` struct and is passed to every orchestrator instance. The mutex is held for the duration of each Git write operation (branch creation -> file commit -> PR creation -> optional merge).
 
 This prevents race conditions when multiple concurrent API requests attempt to create Git branches based on the same base commit:
 
@@ -153,6 +154,163 @@ The user decides whether to retry the failed step or clean up with `sharko remov
 
 ---
 
+## Swagger / OpenAPI Integration
+
+Sharko uses **swaggo/swag** (v1.16.6) for auto-generated OpenAPI 2.0 documentation. This provides:
+
+1. **Machine-readable API spec** at `docs/swagger/swagger.json` and `docs/swagger/swagger.yaml`
+2. **Interactive Swagger UI** at `/swagger/index.html` for API exploration
+3. **Self-documenting handlers** — every HTTP handler has inline annotations
+
+### How It Works
+
+Each handler function in `internal/api/*.go` has swaggo annotations:
+
+```go
+// @Summary List clusters
+// @Description Returns all registered clusters with health stats
+// @Tags clusters
+// @Produce json
+// @Success 200 {object} ListClustersResponse
+// @Router /clusters [get]
+func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
+```
+
+The `swag init` command reads these annotations and generates three files in `docs/swagger/`:
+- `docs.go` — Go init() function that registers the spec
+- `swagger.json` — OpenAPI 2.0 JSON
+- `swagger.yaml` — OpenAPI 2.0 YAML
+
+The generated `docs.go` is imported as a blank import in `internal/api/router.go`:
+```go
+import _ "github.com/MoranWeissman/sharko/docs/swagger"
+```
+
+And the Swagger UI is served via `http-swagger`:
+```go
+mux.Handle("/swagger/", httpSwagger.Handler(
+    httpSwagger.URL("/swagger/doc.json"),
+))
+```
+
+### Current State
+
+- **71 annotated endpoints** across 25 handler files
+- Annotations cover all Tags: clusters, addons, connections, system, auth, ai, dashboard, observability, upgrade, agent, docs
+- Regeneration command: `swag init -g cmd/sharko/serve.go -o docs/swagger --parseDependency --parseInternal`
+- **NEVER edit `docs/swagger/` manually** — always regenerate
+
+---
+
+## UI Component Architecture
+
+The React UI follows a consistent component architecture pattern.
+
+### DetailNavPanel Pattern
+
+The `DetailNavPanel` component (`ui/src/components/DetailNavPanel.tsx`) is a reusable left navigation panel that provides consistent detail page layout across the app. It renders a vertical list of tabs/sections with icons, and the selected section determines which content panel is displayed.
+
+```
++------------------+-----------------------------------+
+| DetailNavPanel   | Content Area                      |
+|                  |                                   |
+| > Overview       | (Selected section content)        |
+|   Addons         |                                   |
+|   Config Diff    |                                   |
+|   Comparison     |                                   |
++------------------+-----------------------------------+
+```
+
+**Used by 3 pages:**
+- `AddonDetail` — Overview, Version Matrix, Upgrade Checker
+- `ClusterDetail` — Overview, Addons, Config Diff, Comparison
+- `Settings` — Connections, Users, API Keys, AI Provider
+
+This pattern ensures:
+- Consistent navigation UX across all detail pages
+- Single component to update for navigation style changes
+- Left panel + content area layout that works on all screen sizes
+
+### Component Categories
+
+| Category | Count | Examples |
+|----------|-------|---------|
+| Views | 17 | Dashboard, ClusterDetail, AddonDetail, Settings, Login |
+| Custom components | 21 | Layout, DetailNavPanel, NotificationBell, FloatingAssistant, ClusterCard |
+| shadcn/ui components | 13 | button, card, dialog, table, tabs, badge |
+| Hooks | 5 | useAuth, useTheme, useConnections, useDashboards, use-mobile |
+
+---
+
+## Color System
+
+The UI uses a sky-blue color palette with hardcoded hex values. This was chosen over CSS custom properties for simplicity and directness.
+
+### Design Principles
+
+1. **Zero gray in light mode** — all text, backgrounds, and borders use blue-tinted colors
+2. **Always-dark sidebar** — the sidebar uses `bg-[#1a3d5c]` regardless of theme
+3. **Card borders via `ring`** — standard `border` is overridden by CSS reset; `ring-2 ring-[#6aade0]` uses `box-shadow` which bypasses the reset
+4. **Dark mode uses Tailwind gray scale** — `dark:bg-gray-*`, `dark:text-gray-*` with standard dark: prefix
+
+### Key Colors
+
+| Hex | Usage |
+|-----|-------|
+| `#bee0ff` | Main background |
+| `#1a3d5c` | Sidebar background |
+| `#14466e` | Sidebar borders and active states |
+| `#f0f7ff` | Card/panel backgrounds, top bar |
+| `#e0f0ff` / `#d6eeff` | Hover/active states |
+| `#e8f4ff` | Input fields, tag backgrounds |
+| `#6aade0` | Card borders (ring), dividers |
+| `#0a2a4a` | Heading text |
+| `#2a5a7a` | Body text |
+| `#3a6a8a` | Muted text |
+| `#5a9ad0` | Sidebar labels |
+
+---
+
+## Notification System (PLANNED)
+
+A notification system is planned to provide proactive alerts about cluster and addon state changes.
+
+### Architecture
+
+```
+NotificationChecker (goroutine)
+  |
+  +-- Runs every N minutes
+  +-- Checks Helm repo index for new addon versions (semver comparison)
+  +-- Compares version matrix for drift across clusters
+  +-- Checks ArgoCD sync status for failures
+  |
+  v
+NotificationStore (in-memory)
+  |
+  +-- Stores notifications with read/unread state
+  +-- Exposes via GET /api/v1/notifications
+  +-- POST /api/v1/notifications/read-all to mark all as read
+  |
+  v
+UI NotificationBell (already implemented)
+  |
+  +-- Shows unread count badge
+  +-- Dropdown list with notification items
+  +-- Currently uses mock data, will connect to API
+```
+
+### Notification Types
+
+| Type | Trigger |
+|------|---------|
+| `upgrade_available` | New version found in Helm repo index for a catalog addon |
+| `version_drift` | Same addon has different versions across clusters |
+| `sync_failure` | ArgoCD reports sync failure for an addon on a cluster |
+| `security_advisory` | (Future) Security vulnerability in an addon version |
+
+---
+
 ## Remote Cluster Secret Management
 
 Sharko can deliver secrets from the secrets provider to remote clusters as Kubernetes Secrets. This is used for addons that need API keys or credentials at runtime (e.g., Datadog agent API keys).
@@ -179,7 +337,7 @@ type AddonSecretDefinition struct {
     AddonName  string            `json:"addon_name"`
     SecretName string            `json:"secret_name"`
     Namespace  string            `json:"namespace"`
-    Keys       map[string]string `json:"keys"` // K8s data key → provider path
+    Keys       map[string]string `json:"keys"` // K8s data key -> provider path
 }
 ```
 
@@ -296,6 +454,30 @@ Directory paths are configurable via server-side environment variables:
 | `SHARKO_REPO_PATH_GLOBAL_VALUES` | `configuration/addons-global-values` |
 | `SHARKO_REPO_PATH_CHARTS` | `charts/` |
 | `SHARKO_REPO_PATH_BOOTSTRAP` | `bootstrap/` |
+
+---
+
+## Agent Team
+
+Sharko development is coordinated by 13 specialized agent roles, each with a defined responsibility:
+
+| Role | File | Responsibility |
+|------|------|---------------|
+| **Tech Lead** | `.claude/team/tech-lead.md` | Orchestration, phase breakdown, dispatch, quality gates |
+| **Implementer** | `.claude/team/implementer.md` | Writes code following plans, knows project patterns |
+| **Go Expert** | `.claude/team/go-expert.md` | Complex Go work, interfaces, testing, stdlib patterns |
+| **K8s Expert** | `.claude/team/k8s-expert.md` | ArgoCD, Helm, K8s providers, ApplicationSets |
+| **Frontend Expert** | `.claude/team/frontend-expert.md` | React UI, shadcn/ui, Vite, TypeScript |
+| **Test Engineer** | `.claude/team/test-engineer.md` | Test writing, mock patterns, coverage tracking |
+| **Architect** | `.claude/team/architect.md` | Package design, interface contracts, dependency direction |
+| **DevOps** | `.claude/team/devops-agent.md` | CI/CD, Makefile, Docker, Helm packaging, releases |
+| **Docs Writer** | `.claude/team/docs-writer.md` | All documentation: user guides, API refs, agent files |
+| **Code Reviewer** | `.claude/team/code-reviewer.md` | Reviews for bugs, security, contract compliance |
+| **Security Auditor** | `.claude/team/security-auditor.md` | Security sweeps, forbidden content, auth checks |
+| **Product Manager** | `.claude/team/product-manager.md` | Product vision, user needs, feature prioritization |
+| **Project Manager** | `.claude/team/project-manager.md` | Progress tracking, build sequence, quality gates |
+
+The tech lead NEVER writes code directly — every change is dispatched to an agent with the appropriate role. Agent files are living documents updated after each phase to reflect new patterns, file paths, and dependencies.
 
 ---
 

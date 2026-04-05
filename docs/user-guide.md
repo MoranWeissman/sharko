@@ -63,7 +63,7 @@ sharko login --server https://sharko.your-cluster.com
 # Enter: admin / <initial-password>
 ```
 
-Or open the UI in a browser and use the same credentials. You will be prompted to change the password on first login.
+Or open the UI in a browser and use the same credentials. The login page displays the Sharko banner with a product description. You will be prompted to change the password on first login.
 
 ---
 
@@ -72,10 +72,11 @@ Or open the UI in a browser and use the same credentials. You will be prompted t
 Sharko manages connections to ArgoCD and Git providers through the Settings UI. After install:
 
 1. Open the Sharko UI in your browser
-2. Navigate to **Settings**
-3. Add an **ArgoCD connection**: provide the ArgoCD server URL and an account token
-4. Add a **Git connection**: select GitHub (or Azure DevOps), provide the token and repo URL
-5. Set both connections as **active**
+2. Navigate to **Settings** (left sidebar, Configure section — admin only)
+3. Select the **Connections** tab in the left navigation panel
+4. Add an **ArgoCD connection**: provide the ArgoCD server URL and an account token
+5. Add a **Git connection**: select GitHub (or Azure DevOps), provide the token and repo URL
+6. Set both connections as **active**
 
 You can test each connection from the Settings page before activating it. Connections are stored in an encrypted Kubernetes Secret.
 
@@ -401,28 +402,71 @@ The PR URL is included in every write operation response and CLI output, so you 
 
 ---
 
-## Dashboard
+## Dashboard (UI)
 
-The Sharko UI is a React-based dashboard accessible via the Sharko service URL. It provides:
+The Sharko UI is a React-based dashboard accessible via the Sharko service URL. It provides a sky-blue themed interface with a dark sidebar and light content area.
+
+### Login Page
+
+The login page displays the Sharko mascot and brand banner with a description of the product. Enter your username and password to authenticate.
+
+### Navigation
+
+The left sidebar provides navigation organized into sections:
+- **Overview**: Dashboard, Clusters, Addons
+- **Manage**: Observability, Dashboards
+- **Configure** (admin only): Settings
+
+The sidebar can be collapsed to show only icons.
+
+### Dashboard
+
+The main dashboard shows aggregated stats: total clusters, healthy/degraded counts, total addons, sync status breakdown, and recent pull requests.
 
 ### Clusters View
 
-- List of all registered clusters with health status (healthy, degraded, unknown)
-- Per-cluster detail: deployed addons, sync status, server version
-- Config diff view: compare a cluster's values against global defaults
-- Register clusters, update addon assignments, and trigger credential refreshes from the UI
+- List of all registered clusters displayed as cards with health status indicators
+- Click a cluster to open the **Cluster Detail** page
+- Cluster Detail uses a **left navigation panel** with tabs: Overview, Addons, Config Diff, Comparison, etc.
+- Register clusters, update addon assignments, and trigger credential refreshes from the detail page
 
 ### Addon Catalog
 
-- All addons available across your clusters with chart, version, and deployment count
-- Per-addon detail: which clusters have it deployed, version distribution
-- Add addons to the catalog and trigger upgrades from the UI
+- All addons with chart name, version, and deployment count across clusters
+- Click an addon to open the **Addon Detail** page
+- Addon Detail uses a **left navigation panel** with tabs: Overview, Version Matrix, Upgrade Checker, etc.
+- Version drift and upgrade checking are inside the addon detail page (no separate pages)
+- Add addons to the catalog and trigger upgrades from the detail page
 
-### Version Matrix
+### Settings Page
 
-- Grid view: addons (rows) x clusters (columns)
-- Color-coded cells showing version alignment and drift
-- Quickly identify which clusters are behind on a specific addon
+The Settings page uses a **left navigation panel** with sections:
+- **Connections**: ArgoCD and Git connection management (add, test, activate, delete)
+- **Users**: User management (admin only) — create, edit, delete users
+- **API Keys**: API key management — create, list, revoke keys
+- **AI Provider**: AI assistant configuration (provider, model, API key)
+
+Previously separate pages for Users and API Keys now redirect to the Settings page with the appropriate section selected.
+
+### Notification Bell
+
+A bell icon in the top bar shows notifications with an unread count badge. Click it to see a dropdown list of notifications including:
+- Upgrade available alerts
+- Version drift warnings
+- Security advisories
+- Sync failure alerts
+
+Currently populated with mock data; will be connected to the notification API when implemented.
+
+### AI Assistant
+
+The AI assistant is accessed via:
+- **Floating button** in the bottom-right corner of every page
+- **"Ask AI" button** in the top bar
+
+Both open a right-side panel (not a separate page) that provides a chat interface. The AI is context-aware — it knows which page you are viewing and can answer questions about the current cluster, addon, or dashboard data.
+
+There is no dedicated AI page. The AI is always available as a side panel from any page.
 
 ### Observability
 
@@ -430,11 +474,16 @@ The Sharko UI is a React-based dashboard accessible via the Sharko service URL. 
 - Sync activity timeline
 - Attention items: clusters or addons that need action
 
-### Dashboard Stats
+### Embedded Dashboards
 
-- Total clusters, healthy count, degraded count
-- Total addons, sync status breakdown
-- Recent pull requests created by Sharko
+Embed external dashboards (Grafana, Datadog, etc.) in the UI:
+1. Navigate to **Dashboards** in the sidebar
+2. Add a dashboard URL (e.g., a Grafana iframe URL)
+3. Dashboards are persisted in a Kubernetes ConfigMap
+
+### Swagger UI
+
+Interactive API documentation is available at `/swagger/index.html`. This provides a browsable interface for all 71+ API endpoints with request/response schemas, parameter descriptions, and try-it-out functionality.
 
 ---
 
@@ -479,7 +528,7 @@ ai:
 
 ### Runtime Configuration
 
-The AI provider can also be configured at runtime via the Settings UI without redeploying. Runtime settings are persisted in an encrypted Kubernetes Secret and override Helm values.
+The AI provider can also be configured at runtime via the Settings UI (AI Provider tab) without redeploying. Runtime settings are persisted in an encrypted Kubernetes Secret and override Helm values.
 
 ---
 
@@ -488,7 +537,7 @@ The AI provider can also be configured at runtime via the Settings UI without re
 Sharko supports embedding external dashboards (Grafana, Datadog, etc.) in the UI.
 
 1. Open the Sharko UI
-2. Navigate to **Embedded Dashboards**
+2. Navigate to **Dashboards** in the sidebar
 3. Add a dashboard URL (e.g., a Grafana dashboard iframe URL)
 4. Dashboards are persisted in a Kubernetes ConfigMap
 
@@ -499,10 +548,10 @@ Sharko supports embedding external dashboards (Grafana, Datadog, etc.) in the UI
 ### Common Errors
 
 **"no active ArgoCD connection"**
-No ArgoCD connection is configured or set as active. Go to Settings and add/activate an ArgoCD connection.
+No ArgoCD connection is configured or set as active. Go to Settings > Connections and add/activate an ArgoCD connection.
 
 **"no active Git connection"**
-Same as above, but for Git. Configure a Git connection in Settings.
+Same as above, but for Git. Configure a Git connection in Settings > Connections.
 
 **"secrets provider not configured"**
 The `SHARKO_PROVIDER_TYPE` environment variable is not set. Set it via Helm values (`extraEnv`) or configure a provider.
@@ -537,7 +586,7 @@ A new random admin password will be generated. Retrieve it with the `kubectl get
 
 If ArgoCD or Git connections fail:
 
-1. Test the connection from the Settings UI (click "Test")
+1. Test the connection from the Settings UI (Connections tab, click "Test")
 2. Check that the ArgoCD account token has sufficient permissions
 3. Verify the GitHub PAT has `repo` scope
 4. Check network connectivity from the Sharko pod to ArgoCD/GitHub
