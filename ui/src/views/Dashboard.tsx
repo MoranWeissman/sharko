@@ -154,7 +154,7 @@ export function Dashboard() {
   return (
     <div className="mx-auto max-w-screen-xl space-y-6">
       {/* Hero Section */}
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-cyan-700 to-blue-800 px-8 py-8 text-white shadow-lg dark:from-cyan-900 dark:to-blue-950">
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-teal-700 to-blue-800 px-8 py-8 text-white shadow-lg dark:from-teal-900 dark:to-blue-950">
         <div className="flex items-center gap-6">
           <img
             src="/sharko-banner.png"
@@ -165,7 +165,7 @@ export function Dashboard() {
             <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
               Sharko
             </h1>
-            <p className="mt-1 max-w-2xl text-sm text-cyan-100 sm:text-base">
+            <p className="mt-1 max-w-2xl text-sm text-teal-100 sm:text-base">
               Addon management across all your Kubernetes clusters.
             </p>
           </div>
@@ -265,7 +265,7 @@ export function Dashboard() {
             {clusters.length > 6 && (
               <button
                 onClick={() => navigate('/clusters')}
-                className="text-sm text-cyan-600 hover:text-cyan-700 dark:text-cyan-400"
+                className="text-sm text-teal-600 hover:text-teal-700 dark:text-teal-400"
               >
                 View all {clusters.length} clusters
               </button>
@@ -310,7 +310,7 @@ export function Dashboard() {
           <div className="space-y-2">
             <button onClick={() => navigate('/upgrade')}
               className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-gray-700 transition-colors hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-700">
-              <ArrowUpCircle className="h-4 w-4 text-cyan-500" />
+              <ArrowUpCircle className="h-4 w-4 text-teal-500" />
               <span>Check Upgrade Impact</span>
               <ChevronRight className="ml-auto h-4 w-4 text-gray-400" />
             </button>
@@ -327,7 +327,7 @@ export function Dashboard() {
         <div className="rounded-xl border border-[#D6E5F5] bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
           <div className="mb-3 flex items-center justify-between">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Recent Activity</h3>
-            <button onClick={() => navigate('/observability')} className="text-xs text-cyan-600 hover:text-cyan-700 dark:text-cyan-400">
+            <button onClick={() => navigate('/observability')} className="text-xs text-teal-600 hover:text-teal-700 dark:text-teal-400">
               View all
             </button>
           </div>
@@ -357,7 +357,7 @@ export function Dashboard() {
         <div className="rounded-xl border border-[#D6E5F5] bg-white p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
           <div className="mb-3 flex items-center justify-between">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Version Drift</h3>
-            <button onClick={() => navigate('/version-matrix')} className="text-xs text-cyan-600 hover:text-cyan-700 dark:text-cyan-400">
+            <button onClick={() => navigate('/version-matrix')} className="text-xs text-teal-600 hover:text-teal-700 dark:text-teal-400">
               View matrix
             </button>
           </div>

@@ -110,7 +110,7 @@ function ControlPlaneSection({
         <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
           Control Plane
         </h2>
-        <span className="rounded-full bg-cyan-100 px-2.5 py-0.5 text-xs font-medium text-cyan-800 dark:bg-cyan-900/40 dark:text-cyan-300">
+        <span className="rounded-full bg-teal-100 px-2.5 py-0.5 text-xs font-medium text-teal-800 dark:bg-teal-900/40 dark:text-teal-300">
           ArgoCD {data.argocd_version}
         </span>
         <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-400">
@@ -346,7 +346,7 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
     <section>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-900 dark:text-gray-100">
-          <Server className="h-5 w-5 text-cyan-500" />
+          <Server className="h-5 w-5 text-teal-500" />
           Addon Health
         </h2>
         <div className="flex items-center gap-3">
@@ -358,7 +358,7 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
                 onClick={() => handleGroupByChange(m)}
                 className={`px-2.5 py-1 text-xs font-medium transition-colors ${
                   groupBy === m
-                    ? 'bg-cyan-600 text-white'
+                    ? 'bg-teal-600 text-white'
                     : 'text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800'
                 } ${m === 'addon' ? 'rounded-l-md' : 'rounded-r-md'}`}
               >
@@ -374,7 +374,7 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
                 onClick={() => setSortMode(m)}
                 className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                   sortMode === m
-                    ? 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900/40 dark:text-cyan-300'
+                    ? 'bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300'
                     : 'text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800'
                 }`}
               >
@@ -631,7 +631,7 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
       {groupBy === 'addon' && sortedAddonGroups.length > visibleCount && (
         <button
           onClick={() => setVisibleCount(v => v + 10)}
-          className="w-full rounded-lg border border-gray-200 bg-white py-2 text-center text-sm text-cyan-600 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-cyan-400"
+          className="w-full rounded-lg border border-gray-200 bg-white py-2 text-center text-sm text-teal-600 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-teal-400"
         >
           Show more ({sortedAddonGroups.length - visibleCount} remaining)
         </button>
@@ -692,7 +692,7 @@ function SyncActivitySection({
     <section className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-900 dark:text-gray-100">
-          <Activity className="h-5 w-5 text-cyan-500" />
+          <Activity className="h-5 w-5 text-teal-500" />
           Sync Activity
         </h2>
         <div className="flex gap-2">

@@ -90,9 +90,9 @@ function formFromConnection(conn: ConnectionResponse): ConnectionFormData {
 const labelCls =
   'block text-sm font-medium text-gray-700 dark:text-gray-300'
 const inputCls =
-  'mt-1 block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm placeholder:text-gray-400 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder:text-gray-500'
+  'mt-1 block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm placeholder:text-gray-400 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder:text-gray-500'
 const selectCls =
-  'mt-1 block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100'
+  'mt-1 block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100'
 
 interface TestStatus {
   git: 'idle' | 'testing' | 'ok' | 'error'
@@ -439,7 +439,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
                 } catch { /* ignore — user can enter manually */ }
               }
             }}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-cyan-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:ring-offset-2 dark:bg-cyan-700 dark:hover:bg-cyan-600 dark:focus:ring-offset-gray-900"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2 dark:bg-teal-700 dark:hover:bg-teal-600 dark:focus:ring-offset-gray-900"
           >
             <Plus className="h-4 w-4" />
             Add Connection
@@ -450,7 +450,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
         {showAddForm && (
           <form
             onSubmit={handleAddSubmit}
-            className="rounded-xl border border-cyan-200 bg-cyan-50/50 p-6 shadow-sm dark:border-cyan-800 dark:bg-cyan-950/20"
+            className="rounded-xl border border-teal-200 bg-teal-50/50 p-6 shadow-sm dark:border-teal-800 dark:bg-teal-950/20"
           >
             <h4 className="mb-4 text-base font-semibold text-gray-900 dark:text-gray-100">
               New Connection
@@ -475,7 +475,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
               <button
                 type="submit"
                 disabled={addSaving}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-cyan-700 disabled:opacity-50 dark:bg-cyan-700 dark:hover:bg-cyan-600"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-teal-700 disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
               >
                 {addSaving && (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -504,7 +504,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
                 <div
                   className={`rounded-xl border bg-white p-6 shadow-sm dark:bg-gray-800 ${
                     conn.is_active
-                      ? 'border-cyan-500 ring-2 ring-cyan-100 dark:ring-cyan-900/50'
+                      ? 'border-teal-500 ring-2 ring-teal-100 dark:ring-teal-900/50'
                       : 'border-gray-200 dark:border-gray-700'
                   }`}
                 >
@@ -520,7 +520,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
                         </Badge>
                       )}
                       {conn.is_active && (
-                        <Badge className="bg-cyan-100 text-xs text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400">
+                        <Badge className="bg-teal-100 text-xs text-teal-700 dark:bg-teal-900/30 dark:text-teal-400">
                           Active
                         </Badge>
                       )}
@@ -538,7 +538,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
                         <button
                           onClick={() => handleSwitch(conn.name)}
                           disabled={switchingTo === conn.name}
-                          className="text-xs font-medium text-cyan-600 hover:text-cyan-700 disabled:opacity-50 dark:text-cyan-400 dark:hover:text-cyan-300"
+                          className="text-xs font-medium text-teal-600 hover:text-teal-700 disabled:opacity-50 dark:text-teal-400 dark:hover:text-teal-300"
                         >
                           {switchingTo === conn.name ? (
                             <Loader2 className="inline h-3 w-3 animate-spin" />
@@ -806,7 +806,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
                 type="button"
                 onClick={handleInitRepo}
                 disabled={initRunning}
-                className="inline-flex items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-700 disabled:opacity-50 dark:bg-cyan-700 dark:hover:bg-cyan-600"
+                className="inline-flex items-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
               >
                 {initRunning ? (
                   <Loader2 className="h-4 w-4 animate-spin" />

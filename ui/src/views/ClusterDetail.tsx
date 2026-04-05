@@ -299,7 +299,7 @@ export function ClusterDetail() {
       <button
         type="button"
         onClick={() => navigate('/clusters')}
-        className="inline-flex items-center gap-1.5 text-sm font-medium text-cyan-600 hover:text-cyan-800 dark:text-cyan-400 dark:hover:text-cyan-300"
+        className="inline-flex items-center gap-1.5 text-sm font-medium text-teal-600 hover:text-teal-800 dark:text-teal-400 dark:hover:text-teal-300"
       >
         <ArrowLeft className="h-4 w-4" />
         Back to Clusters Overview
@@ -343,7 +343,7 @@ export function ClusterDetail() {
       <div className="flex flex-wrap gap-3">
         {data.cluster.server_version && (
           <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm dark:border-gray-700 dark:bg-gray-800">
-            <Tag className="h-4 w-4 text-cyan-500" />
+            <Tag className="h-4 w-4 text-teal-500" />
             <div>
               <p className="text-xs text-gray-500 dark:text-gray-400">Cluster Version</p>
               <p className="font-mono text-sm font-semibold text-gray-900 dark:text-gray-100">{data.cluster.server_version}</p>
@@ -369,7 +369,7 @@ export function ClusterDetail() {
           </div>
         )}
         <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm dark:border-gray-700 dark:bg-gray-800">
-          <Server className="h-4 w-4 text-cyan-500" />
+          <Server className="h-4 w-4 text-teal-500" />
           <div>
             <p className="text-xs text-gray-500 dark:text-gray-400">Connection</p>
             <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">
@@ -426,7 +426,7 @@ export function ClusterDetail() {
                         }
                         className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none ${
                           addonToggles[addonName]
-                            ? 'bg-cyan-600'
+                            ? 'bg-teal-600'
                             : 'bg-gray-200 dark:bg-gray-600'
                         }`}
                       >
@@ -436,7 +436,7 @@ export function ClusterDetail() {
                           }`}
                         />
                       </div>
-                      <span className={`capitalize ${addonToggles[addonName] !== originalToggles[addonName] ? 'font-semibold text-cyan-600 dark:text-cyan-400' : 'text-gray-700 dark:text-gray-300'}`}>
+                      <span className={`capitalize ${addonToggles[addonName] !== originalToggles[addonName] ? 'font-semibold text-teal-600 dark:text-teal-400' : 'text-gray-700 dark:text-gray-300'}`}>
                         {addonName}
                       </span>
                     </label>
@@ -449,7 +449,7 @@ export function ClusterDetail() {
                     type="button"
                     onClick={handleApplyToggles}
                     disabled={applyingToggles}
-                    className="inline-flex items-center gap-2 rounded-md bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-700 disabled:opacity-50 dark:bg-cyan-700 dark:hover:bg-cyan-600"
+                    className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
                   >
                     {applyingToggles && <Loader2 className="h-4 w-4 animate-spin" />}
                     Apply Changes
@@ -581,7 +581,7 @@ function ComparisonRow({ addon, isExpanded, onToggleExpand, argocdBaseURL }: Com
               target="_blank"
               rel="noopener noreferrer"
               onClick={(e) => e.stopPropagation()}
-              className="text-gray-400 hover:text-cyan-600 dark:hover:text-cyan-400"
+              className="text-gray-400 hover:text-teal-600 dark:hover:text-teal-400"
               title={`Open ${addon.argocd_application_name} in ArgoCD`}
             >
               <ExternalLink className="h-3.5 w-3.5" />
@@ -615,7 +615,7 @@ function ComparisonRow({ addon, isExpanded, onToggleExpand, argocdBaseURL }: Com
                   e.stopPropagation();
                   onToggleExpand();
                 }}
-                className="mt-1 inline-flex items-center gap-0.5 text-xs font-medium text-cyan-600 hover:text-cyan-800 dark:text-cyan-400 dark:hover:text-cyan-300"
+                className="mt-1 inline-flex items-center gap-0.5 text-xs font-medium text-teal-600 hover:text-teal-800 dark:text-teal-400 dark:hover:text-teal-300"
               >
                 {isExpanded ? (
                   <>

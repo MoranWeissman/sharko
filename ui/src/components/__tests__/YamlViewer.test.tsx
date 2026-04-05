@@ -17,7 +17,7 @@ describe('YamlViewer', () => {
     expect(screen.getByText('Test Values')).toBeInTheDocument();
     // The Raw button should be active
     const rawButton = screen.getByText('Raw');
-    expect(rawButton.className).toContain('bg-cyan-500');
+    expect(rawButton.className).toContain('bg-teal-500');
     // Content should be rendered (check for a key from the YAML)
     expect(screen.getByText(/my-addon/)).toBeInTheDocument();
   });
@@ -27,7 +27,7 @@ describe('YamlViewer', () => {
     const treeButton = screen.getByText('Tree');
     fireEvent.click(treeButton);
     // Tree button should now be active
-    expect(treeButton.className).toContain('bg-cyan-500');
+    expect(treeButton.className).toContain('bg-teal-500');
     // Should render tree nodes — keys have ":" appended, so use partial match
     expect(screen.getByText(/^name/)).toBeInTheDocument();
     expect(screen.getByText(/^config/)).toBeInTheDocument();

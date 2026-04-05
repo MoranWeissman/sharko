@@ -84,7 +84,7 @@ function PaginatedList({ items, renderItem, emptyMessage }: { items: ValueDiffEn
       {remaining > 0 && (
         <button
           onClick={() => setShowCount(c => c + PAGE_SIZE)}
-          className="w-full border-t border-gray-100 px-4 py-3 text-center text-sm font-medium text-cyan-600 hover:bg-gray-50 dark:border-gray-800 dark:text-cyan-400 dark:hover:bg-gray-800"
+          className="w-full border-t border-gray-100 px-4 py-3 text-center text-sm font-medium text-teal-600 hover:bg-gray-50 dark:border-gray-800 dark:text-teal-400 dark:hover:bg-gray-800"
         >
           Show {Math.min(remaining, PAGE_SIZE)} more ({remaining} remaining)
         </button>
@@ -186,7 +186,7 @@ function ReleaseNotesSection({ notes }: { notes: string }) {
         {!expanded && totalLines > 8 && (
           <button
             onClick={(e) => { e.stopPropagation(); setExpanded(true); }}
-            className="mt-2 text-xs font-medium text-cyan-600 hover:text-cyan-700 dark:text-cyan-400"
+            className="mt-2 text-xs font-medium text-teal-600 hover:text-teal-700 dark:text-teal-400"
           >
             Show all ({totalLines} lines)
           </button>
@@ -390,7 +390,7 @@ export function UpgradeChecker() {
       {/* Header */}
       <div>
         <div className="flex items-center gap-3">
-          <ArrowUpCircle className="h-8 w-8 text-cyan-500" />
+          <ArrowUpCircle className="h-8 w-8 text-teal-500" />
           <div>
             <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Addon Upgrade Checker</h1>
             <p className="text-sm text-gray-500 dark:text-gray-400">
@@ -403,7 +403,7 @@ export function UpgradeChecker() {
       {/* Step 1: Addon Selection */}
       <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900">
         <h2 className="mb-4 flex items-center gap-2 text-lg font-semibold text-gray-900 dark:text-white">
-          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-cyan-100 text-xs font-bold text-cyan-700 dark:bg-cyan-900 dark:text-cyan-300">
+          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-teal-100 text-xs font-bold text-teal-700 dark:bg-teal-900 dark:text-teal-300">
             1
           </span>
           Select Addon
@@ -449,7 +449,7 @@ export function UpgradeChecker() {
                     key={addon.addon_name}
                     className={`flex w-full items-center justify-between px-4 py-2 text-left text-sm hover:bg-gray-50 dark:hover:bg-gray-700 ${
                       addon.addon_name === selectedAddon
-                        ? 'bg-cyan-50 font-medium text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400'
+                        ? 'bg-teal-50 font-medium text-teal-700 dark:bg-teal-900/30 dark:text-teal-400'
                         : 'text-gray-700 dark:text-gray-200'
                     }`}
                     onClick={() => {
@@ -472,7 +472,7 @@ export function UpgradeChecker() {
       {selectedAddon && (
         <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900">
           <h2 className="mb-4 flex items-center gap-2 text-lg font-semibold text-gray-900 dark:text-white">
-            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-cyan-100 text-xs font-bold text-cyan-700 dark:bg-cyan-900 dark:text-cyan-300">
+            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-teal-100 text-xs font-bold text-teal-700 dark:bg-teal-900 dark:text-teal-300">
               2
             </span>
             Select Target Version
@@ -510,7 +510,7 @@ export function UpgradeChecker() {
               <button
                 disabled={!selectedVersion || analyzing}
                 onClick={handleAnalyze}
-                className="inline-flex items-center gap-2 rounded-lg bg-cyan-600 px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex items-center gap-2 rounded-lg bg-teal-600 px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {analyzing ? (
                   <RefreshCw className="h-4 w-4 animate-spin" />
@@ -641,9 +641,9 @@ export function UpgradeChecker() {
                           return <p key={i} className="mt-2"><strong className="text-gray-900 dark:text-white">{content.split(':')[0]}:</strong>{content.includes(':') ? content.slice(content.indexOf(':') + 1) : ''}</p>;
                         }
                         if (/^\d+\.\s/.test(trimmed))
-                          return <div key={i} className="ml-4 mt-1.5 flex gap-2.5"><span className="shrink-0 font-bold text-cyan-600 dark:text-cyan-400">{trimmed.match(/^\d+/)?.[0]}.</span><span className="flex-1">{trimmed.replace(/^\d+\.\s*/, '')}</span></div>;
+                          return <div key={i} className="ml-4 mt-1.5 flex gap-2.5"><span className="shrink-0 font-bold text-teal-600 dark:text-teal-400">{trimmed.match(/^\d+/)?.[0]}.</span><span className="flex-1">{trimmed.replace(/^\d+\.\s*/, '')}</span></div>;
                         if (trimmed.startsWith('- ') || trimmed.startsWith('* '))
-                          return <div key={i} className="ml-4 mt-1.5 flex gap-2.5"><span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-cyan-500" /><span className="flex-1">{trimmed.slice(2)}</span></div>;
+                          return <div key={i} className="ml-4 mt-1.5 flex gap-2.5"><span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-teal-500" /><span className="flex-1">{trimmed.slice(2)}</span></div>;
                         return <p key={i} className="mt-1.5">{line}</p>;
                       })}
                     </div>
@@ -664,7 +664,7 @@ export function UpgradeChecker() {
                 Enable an AI provider in{' '}
                 <a
                   href="/settings"
-                  className="font-medium text-cyan-600 underline hover:text-cyan-700 dark:text-cyan-400 dark:hover:text-cyan-300"
+                  className="font-medium text-teal-600 underline hover:text-teal-700 dark:text-teal-400 dark:hover:text-teal-300"
                 >
                   Settings
                 </a>{' '}
@@ -687,7 +687,7 @@ export function UpgradeChecker() {
                     onClick={() => setActiveTab(tab.key)}
                     className={`flex items-center gap-2 border-b-2 px-5 py-3 text-sm font-medium transition-colors ${
                       activeTab === tab.key
-                        ? 'border-cyan-500 text-cyan-700 dark:text-cyan-400'
+                        ? 'border-teal-500 text-teal-700 dark:text-teal-400'
                         : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
                     }`}
                   >
@@ -695,7 +695,7 @@ export function UpgradeChecker() {
                     <span
                       className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
                         activeTab === tab.key
-                          ? 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900 dark:text-cyan-300'
+                          ? 'bg-teal-100 text-teal-700 dark:bg-teal-900 dark:text-teal-300'
                           : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'
                       }`}
                     >

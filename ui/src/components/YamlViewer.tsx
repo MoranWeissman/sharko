@@ -32,7 +32,7 @@ function highlightYaml(raw: string): string {
         } else if (/^(null|~)$/i.test(value)) {
           valueHtml = `<span class="text-gray-500">${escapeHtml(value)}</span>`
         }
-        return `${escapeHtml(indent)}<span class="text-cyan-400">${escapeHtml(key)}</span>${escapeHtml(colon)}${valueHtml}`
+        return `${escapeHtml(indent)}<span class="text-teal-400">${escapeHtml(key)}</span>${escapeHtml(colon)}${valueHtml}`
       }
       // Array items
       const arrayMatch = line.match(/^(\s*-\s)(.*)$/)
@@ -61,7 +61,7 @@ function TreeNode({ name, value, defaultExpanded = true }: { name: string; value
     return (
       <div className="flex items-center gap-1 py-0.5">
         <span className="w-4" />
-        <span className="font-semibold text-cyan-400">{name}:</span>
+        <span className="font-semibold text-teal-400">{name}:</span>
         <span className="text-gray-500">null</span>
       </div>
     )
@@ -81,7 +81,7 @@ function TreeNode({ name, value, defaultExpanded = true }: { name: string; value
           ) : (
             <ChevronRight className="h-3.5 w-3.5 text-gray-500 shrink-0" />
           )}
-          <span className="font-semibold text-cyan-400">{name}</span>
+          <span className="font-semibold text-teal-400">{name}</span>
           {!expanded && (
             <span className="text-gray-400 text-xs ml-1">({entries.length} keys)</span>
           )}
@@ -110,7 +110,7 @@ function TreeNode({ name, value, defaultExpanded = true }: { name: string; value
           ) : (
             <ChevronRight className="h-3.5 w-3.5 text-gray-500 shrink-0" />
           )}
-          <span className="font-semibold text-cyan-400">{name}</span>
+          <span className="font-semibold text-teal-400">{name}</span>
           <span className="text-gray-400 text-xs ml-1">[{value.length}]</span>
         </button>
         {expanded && (
@@ -131,7 +131,7 @@ function TreeNode({ name, value, defaultExpanded = true }: { name: string; value
   return (
     <div className="flex items-center gap-1 py-0.5">
       <span className="w-4 shrink-0" />
-      <span className="font-semibold text-cyan-400">{name}:</span>
+      <span className="font-semibold text-teal-400">{name}:</span>
       <span className={valueClass}>{String(value)}</span>
     </div>
   )
@@ -196,7 +196,7 @@ export function YamlViewer({ yaml: yamlString, title, defaultView = 'raw' }: Yam
               onClick={() => setMode('raw')}
               className={`px-2 py-1 text-xs font-medium transition-colors ${
                 mode === 'raw'
-                  ? 'bg-cyan-500 text-white'
+                  ? 'bg-teal-500 text-white'
                   : 'text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700'
               } rounded-l-md`}
             >
@@ -207,7 +207,7 @@ export function YamlViewer({ yaml: yamlString, title, defaultView = 'raw' }: Yam
               onClick={() => setMode('tree')}
               className={`px-2 py-1 text-xs font-medium transition-colors ${
                 mode === 'tree'
-                  ? 'bg-cyan-500 text-white'
+                  ? 'bg-teal-500 text-white'
                   : 'text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700'
               } rounded-r-md`}
             >

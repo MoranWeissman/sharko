@@ -44,7 +44,7 @@ function formatInlineMarkdown(text: string): ReactNode {
           href={linkMatch[2]}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-cyan-600 underline hover:text-cyan-700 dark:text-cyan-400"
+          className="text-teal-600 underline hover:text-teal-700 dark:text-teal-400"
         >
           {linkMatch[1]}
         </a>,
@@ -134,7 +134,7 @@ export function MarkdownRenderer({ content }: { content: string }) {
     if (/^\d+\.\s/.test(trimmed)) {
       elements.push(
         <div key={elements.length} className="ml-4 mt-1.5 flex gap-2.5">
-          <span className="shrink-0 font-bold text-cyan-600 dark:text-cyan-400">
+          <span className="shrink-0 font-bold text-teal-600 dark:text-teal-400">
             {trimmed.match(/^\d+/)?.[0]}.
           </span>
           <span className="flex-1">
@@ -150,7 +150,7 @@ export function MarkdownRenderer({ content }: { content: string }) {
     if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
       elements.push(
         <div key={elements.length} className="ml-4 mt-1.5 flex gap-2.5">
-          <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-cyan-500" />
+          <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-teal-500" />
           <span className="flex-1">
             {formatInlineMarkdown(trimmed.slice(2))}
           </span>

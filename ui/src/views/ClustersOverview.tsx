@@ -273,7 +273,7 @@ export function ClustersOverview() {
           <button
             type="button"
             onClick={openAddCluster}
-            className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-700 dark:bg-cyan-700 dark:hover:bg-cyan-600"
+            className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-600"
           >
             <Plus className="h-4 w-4" />
             Add Cluster
@@ -298,7 +298,7 @@ export function ClustersOverview() {
                 value={addClusterName}
                 onChange={(e) => setAddClusterName(e.target.value)}
                 placeholder="e.g. prod-us-east-1"
-                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500"
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500"
               />
             </div>
             <div>
@@ -310,7 +310,7 @@ export function ClustersOverview() {
                 value={addClusterRegion}
                 onChange={(e) => setAddClusterRegion(e.target.value)}
                 placeholder="e.g. us-east-1"
-                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500"
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500"
               />
             </div>
             {catalogAddons && catalogAddons.addons.length > 0 && (
@@ -362,7 +362,7 @@ export function ClustersOverview() {
                 type="button"
                 onClick={handleAddCluster}
                 disabled={!addClusterName.trim() || addClusterSubmitting}
-                className="inline-flex items-center gap-2 rounded-md bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-cyan-700 dark:hover:bg-cyan-600"
+                className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
               >
                 {addClusterSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
                 Register Cluster
@@ -400,7 +400,7 @@ export function ClustersOverview() {
               onChange={(e) =>
                 setFilters((prev) => ({ ...prev, name: e.target.value }))
               }
-              className="w-full rounded-md border border-gray-300 py-2 pl-10 pr-4 text-sm focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:placeholder-gray-500"
+              className="w-full rounded-md border border-gray-300 py-2 pl-10 pr-4 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:placeholder-gray-500"
             />
           </div>
 
@@ -492,7 +492,7 @@ export function ClustersOverview() {
               onClick={() => setViewMode('list')}
               className={`rounded-l-md p-2 ${
                 viewMode === 'list'
-                  ? 'bg-cyan-600 text-white'
+                  ? 'bg-teal-600 text-white'
                   : 'bg-white text-gray-500 hover:bg-gray-50 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
               }`}
               aria-label="List view"
@@ -505,7 +505,7 @@ export function ClustersOverview() {
               onClick={() => setViewMode('grid')}
               className={`rounded-r-md p-2 ${
                 viewMode === 'grid'
-                  ? 'bg-cyan-600 text-white'
+                  ? 'bg-teal-600 text-white'
                   : 'bg-white text-gray-500 hover:bg-gray-50 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
               }`}
               aria-label="Grid view"
@@ -522,13 +522,13 @@ export function ClustersOverview() {
             {filters.versions.map((version) => (
               <span
                 key={`v-${version}`}
-                className="inline-flex items-center gap-1 rounded-full bg-cyan-100 px-2.5 py-0.5 text-xs font-medium text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400"
+                className="inline-flex items-center gap-1 rounded-full bg-teal-100 px-2.5 py-0.5 text-xs font-medium text-teal-700 dark:bg-teal-900/30 dark:text-teal-400"
               >
                 {version}
                 <button
                   type="button"
                   onClick={() => toggleVersion(version)}
-                  className="ml-0.5 rounded-full p-0.5 hover:bg-cyan-200 dark:hover:bg-cyan-800"
+                  className="ml-0.5 rounded-full p-0.5 hover:bg-teal-200 dark:hover:bg-teal-800"
                   aria-label={`Remove version filter ${version}`}
                 >
                   <X className="h-3 w-3" />
@@ -640,7 +640,7 @@ export function ClustersOverview() {
                 className={`rounded-lg border border-gray-200 bg-white p-4 shadow-sm transition-all dark:border-gray-700 dark:bg-gray-800 ${
                   isInCluster
                     ? 'cursor-not-allowed opacity-70'
-                    : 'cursor-pointer hover:-translate-y-0.5 hover:border-cyan-400 hover:shadow-md dark:hover:border-cyan-500'
+                    : 'cursor-pointer hover:-translate-y-0.5 hover:border-teal-400 hover:shadow-md dark:hover:border-teal-500'
                 }`}
                 title={
                   isInCluster

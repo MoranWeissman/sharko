@@ -39,7 +39,7 @@ export function Login() {
           {/* Brand header — icon + text, bigger */}
           <div className="mb-10 flex items-center gap-3">
             <img src="/sharko-icon-256.png" alt="" className="h-14 w-14" />
-            <span className="font-bold text-cyan-400 text-[42px] tracking-tight">sharko</span>
+            <span className="font-bold text-teal-400 text-[42px] tracking-tight">sharko</span>
           </div>
 
           <form onSubmit={handleSubmit} className="w-full space-y-5">
@@ -54,7 +54,7 @@ export function Login() {
                 onChange={(e) => setUsername(e.target.value)}
                 autoComplete="username"
                 autoFocus
-                className="block w-full rounded-md border border-gray-600 bg-gray-800/50 px-3 py-2.5 text-sm text-white placeholder-gray-500 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                className="block w-full rounded-md border border-gray-600 bg-gray-800/50 px-3 py-2.5 text-sm text-white placeholder-gray-500 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
                 placeholder="admin"
               />
             </div>
@@ -69,7 +69,7 @@ export function Login() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 autoComplete="current-password"
-                className="block w-full rounded-md border border-gray-600 bg-gray-800/50 px-3 py-2.5 text-sm text-white placeholder-gray-500 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                className="block w-full rounded-md border border-gray-600 bg-gray-800/50 px-3 py-2.5 text-sm text-white placeholder-gray-500 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
                 placeholder="Password"
               />
             </div>
@@ -81,7 +81,7 @@ export function Login() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full rounded-full bg-cyan-500 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-cyan-600 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:ring-offset-2 focus:ring-offset-gray-900 disabled:opacity-50"
+              className="w-full rounded-full bg-teal-500 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-teal-600 focus:outline-none focus:ring-2 focus:ring-teal-400 focus:ring-offset-2 focus:ring-offset-gray-900 disabled:opacity-50"
             >
               {loading ? 'Signing in...' : 'Sign In'}
             </button>

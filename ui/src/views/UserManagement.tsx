@@ -104,7 +104,7 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
     <div className="mx-auto max-w-screen-lg space-y-6">
       {!embedded && (
         <div className="flex items-center gap-3">
-          <Users className="h-7 w-7 text-cyan-600 dark:text-cyan-400" />
+          <Users className="h-7 w-7 text-teal-600 dark:text-teal-400" />
           <div>
             <h1 className="text-2xl font-bold text-gray-900 dark:text-white">User Management</h1>
             <p className="text-sm text-gray-500 dark:text-gray-400">Manage user accounts, roles, and access</p>
@@ -225,7 +225,7 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
                   {/* Avatar */}
                   <div className={`flex h-9 w-9 items-center justify-center rounded-full text-sm font-bold ${
                     user.enabled
-                      ? 'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-400'
+                      ? 'bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-400'
                       : 'bg-gray-100 text-gray-400 dark:bg-gray-800'
                   }`}>
                     {user.username.charAt(0).toUpperCase()}

@@ -131,7 +131,7 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
         <button
           type="button"
           onClick={openCreate}
-          className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-700 dark:bg-cyan-700 dark:hover:bg-cyan-600"
+          className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-600"
         >
           <Plus className="h-4 w-4" />
           Create API Key
@@ -254,7 +254,7 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
                   placeholder="e.g. ci-deploy"
-                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500"
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500"
                 />
               </div>
               <div>
@@ -264,7 +264,7 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
                 <select
                   value={newRole}
                   onChange={(e) => setNewRole(e.target.value)}
-                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
                 >
                   <option value="viewer">viewer</option>
                   <option value="operator">operator</option>
@@ -288,7 +288,7 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
                 type="button"
                 onClick={handleCreate}
                 disabled={!newName.trim() || creating}
-                className="inline-flex items-center gap-2 rounded-md bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-cyan-700 dark:hover:bg-cyan-600"
+                className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
               >
                 {creating && <Loader2 className="h-4 w-4 animate-spin" />}
                 Create Key
