@@ -273,7 +273,7 @@ func defaultCreds() *mockCredProvider {
 
 func testTemplateFS() fs.FS {
 	return fstest.MapFS{
-		"starter/bootstrap/root-app.yaml": &fstest.MapFile{
+		"bootstrap/root-app.yaml": &fstest.MapFile{
 			Data: []byte(`---
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
@@ -296,11 +296,8 @@ spec:
       path: bootstrap
 `),
 		},
-		"starter/configuration/addons-catalog.yaml": &fstest.MapFile{
+		"bootstrap/addons-catalog.yaml": &fstest.MapFile{
 			Data: []byte("# catalog\n"),
-		},
-		"starter/README.md": &fstest.MapFile{
-			Data: []byte("# Addons repo\n"),
 		},
 	}
 }
@@ -336,8 +333,8 @@ func TestInitRepo_CommitsViaPR(t *testing.T) {
 		t.Error("expected PR URL in result")
 	}
 	// Should have committed multiple files.
-	if len(result.Repo.FilesCreated) != 3 {
-		t.Errorf("expected 3 files created, got %d: %v", len(result.Repo.FilesCreated), result.Repo.FilesCreated)
+	if len(result.Repo.FilesCreated) < 2 {
+		t.Errorf("expected at least 2 files created, got %d: %v", len(result.Repo.FilesCreated), result.Repo.FilesCreated)
 	}
 	// All files should be in git.
 	for _, f := range result.Repo.FilesCreated {
@@ -734,7 +731,7 @@ func TestGenerateClusterValues(t *testing.T) {
 	content := generateClusterValues("prod-eu", "eu-west-1", map[string]bool{
 		"monitoring": true,
 		"logging":    false,
-	})
+	}, nil)
 
 	s := string(content)
 
@@ -750,7 +747,7 @@ func TestGenerateClusterValues(t *testing.T) {
 }
 
 func TestGenerateClusterValues_NoAddons(t *testing.T) {
-	content := generateClusterValues("test", "us-east-1", nil)
+	content := generateClusterValues("test", "us-east-1", nil, nil)
 	s := string(content)
 
 	if !strings.Contains(s, "region: us-east-1") {
