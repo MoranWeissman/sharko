@@ -1,3 +1,4 @@
+import type { ComponentType } from 'react'
 import { useSearchParams } from 'react-router-dom'
 
 interface NavGroup {
@@ -8,6 +9,7 @@ interface NavGroup {
 interface NavPanelItem {
   key: string
   label: string
+  icon?: ComponentType<{ className?: string }>
   badge?: string | number
   destructive?: boolean
 }
@@ -42,7 +44,10 @@ export function DetailNavPanel({ sections, activeKey, onSelect }: DetailNavPanel
                         : 'border-l-[3px] border-transparent text-gray-600 hover:bg-[#d6eeff] dark:text-gray-400 dark:hover:bg-gray-700'
                   }`}
                 >
-                  <span>{item.label}</span>
+                  <span className="flex items-center gap-2">
+                    {item.icon && <item.icon className="h-4 w-4 shrink-0" />}
+                    <span>{item.label}</span>
+                  </span>
                   {item.badge !== undefined && (
                     <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500 dark:bg-gray-700 dark:text-gray-400">
                       {item.badge}

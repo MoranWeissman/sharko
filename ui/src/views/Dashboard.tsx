@@ -27,7 +27,7 @@ function HealthBar({ title, subtitle, segments }: HealthBarProps) {
   return (
     <div className="rounded-xl border border-[#90c8ee] bg-[#f0f7ff] p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
       <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">{title}</h3>
-      <p className="mb-3 text-xs text-gray-500 dark:text-gray-400">{subtitle}</p>
+      <p className="mb-3 text-xs text-[#2a5a7a] dark:text-gray-400">{subtitle}</p>
       <div className="mb-3 flex h-3 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-700">
         {segments.filter(s => s.value > 0).map((seg) => (
           <div
@@ -43,7 +43,7 @@ function HealthBar({ title, subtitle, segments }: HealthBarProps) {
           <div key={seg.label} className="flex items-center gap-1.5 text-xs">
             <div className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: seg.color }} />
             <span className="font-medium text-gray-700 dark:text-gray-300">{seg.value}/{total}</span>
-            <span className="text-gray-500 dark:text-gray-400">{seg.label}</span>
+            <span className="text-[#2a5a7a] dark:text-gray-400">{seg.label}</span>
           </div>
         ))}
       </div>
@@ -227,10 +227,10 @@ export function Dashboard() {
                             : item.health === 'Degraded' ? 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'
                               : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
                         }`}>{item.health}</span>
-                        {item.cluster && <span className="text-gray-400">on {item.cluster}</span>}
+                        {item.cluster && <span className="text-[#3a6a8a]">on {item.cluster}</span>}
                       </div>
                       {item.error && (
-                        <p className="mt-1 truncate text-gray-500 dark:text-gray-400" title={item.error}>
+                        <p className="mt-1 truncate text-[#2a5a7a] dark:text-gray-400" title={item.error}>
                           {item.error_type && <span className="font-medium text-red-600 dark:text-red-400">{item.error_type}: </span>}
                           {item.error.length > 120 ? item.error.slice(0, 120) + '...' : item.error}
                         </p>
@@ -314,13 +314,13 @@ export function Dashboard() {
               className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-gray-700 transition-colors hover:bg-[#d6eeff] dark:text-gray-300 dark:hover:bg-gray-700">
               <ArrowUpCircle className="h-4 w-4 text-teal-500" />
               <span>Check Upgrade Impact</span>
-              <ChevronRight className="ml-auto h-4 w-4 text-gray-400" />
+              <ChevronRight className="ml-auto h-4 w-4 text-[#3a6a8a]" />
             </button>
             <button onClick={() => navigate('/observability')}
               className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-gray-700 transition-colors hover:bg-[#d6eeff] dark:text-gray-300 dark:hover:bg-gray-700">
               <Activity className="h-4 w-4 text-green-500" />
               <span>View Observability</span>
-              <ChevronRight className="ml-auto h-4 w-4 text-gray-400" />
+              <ChevronRight className="ml-auto h-4 w-4 text-[#3a6a8a]" />
             </button>
           </div>
         </div>
@@ -334,7 +334,7 @@ export function Dashboard() {
             </button>
           </div>
           {recentSyncs.length === 0 ? (
-            <p className="py-4 text-center text-xs text-gray-500">No recent sync activity</p>
+            <p className="py-4 text-center text-xs text-[#2a5a7a]">No recent sync activity</p>
           ) : (
             <div className="space-y-2">
               {recentSyncs.map((sync, i) => (
@@ -342,10 +342,10 @@ export function Dashboard() {
                   <div className={`h-2 w-2 shrink-0 rounded-full ${sync.status === 'Synced' || sync.status === 'Succeeded' ? 'bg-green-500' : 'bg-amber-500'}`} />
                   <div className="min-w-0 flex-1">
                     <span className="font-medium text-gray-700 dark:text-gray-300">{sync.addon_name}</span>
-                    <span className="text-gray-400"> on </span>
-                    <span className="text-gray-500 dark:text-gray-400">{sync.cluster_name}</span>
+                    <span className="text-[#3a6a8a]"> on </span>
+                    <span className="text-[#2a5a7a] dark:text-gray-400">{sync.cluster_name}</span>
                   </div>
-                  <span className="shrink-0 text-gray-400 flex items-center gap-1">
+                  <span className="shrink-0 text-[#3a6a8a] flex items-center gap-1">
                     <Clock className="h-3 w-3" />
                     {timeAgo(sync.timestamp)}
                   </span>
