@@ -99,7 +99,7 @@ function AddonCard({ addon }: { addon: AddonCatalogItem }) {
   return (
     <div
       onClick={handleCardClick}
-      className="group flex cursor-pointer flex-col rounded-lg border border-[#D6E5F5] bg-white shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:border-teal-400 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-teal-500"
+      className="group flex cursor-pointer flex-col rounded-lg border border-[#90c8ee] bg-white shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:border-teal-400 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-teal-500"
     >
       <div className="flex flex-1 flex-col p-4">
         {/* Header */}
