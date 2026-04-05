@@ -184,13 +184,31 @@ Table/card view of all clusters (toggle between views). Each entry shows:
 
 ### Cluster Detail (`/clusters/:name`)
 
-**Top tab bar** (Backstage/Akuity pattern): Overview | Addons | Config
+**Left secondary nav panel** (same pattern as addon detail — consistent across the app):
 
-- **Overview** — cluster info, connection status, node count, labels
+```
+┌─────────────────────────────────────────────────────────┐
+│  ← Clusters                                              │
+│  prod-eu                                                 │
+│─────────────────────────────────────────────────────────│
+│  ┌──────────┐  ┌──────────────────────────────────────┐ │
+│  │ Overview  │  │  [Main content area]                 │ │
+│  │ Addons(5) │  │                                      │ │
+│  │ Config    │  │  Connected · K8s v1.28.4 · 3 nodes   │ │
+│  │ History   │  │                                      │ │
+│  │           │  │  Stats cards, cluster info grid       │ │
+│  │ ───────── │  │                                      │ │
+│  │ Remove    │  │                                      │ │
+│  └──────────┘  └──────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Nav items:**
+- **Overview** — cluster info (ArgoCD server, region, labels), stat cards (addons healthy, nodes ready, K8s version), connection status
 - **Addons** — table of addons on this cluster with health, version, drift. Enable/disable toggles. This is where per-cluster addon operations happen (in context).
 - **Config** — cluster values YAML, global vs cluster config diff
-
-Prominent [Remove Cluster] button in header (admin only, with confirmation).
+- **History** — Git PR history for this cluster (commits, merges, changes)
+- **Remove Cluster** — destructive action at bottom of nav (admin only, with confirmation)
 
 ---
 
@@ -282,15 +300,15 @@ Core operations are NOT hidden in small corner buttons. They are:
 
 ---
 
-## 11. Top Tab Bar for Detail Pages
+## 11. Left Nav Panel — Consistent Detail Pattern
 
-**Pattern from:** Akuity (Summary | Clusters | Audit | Security)
+**All detail pages use the same left secondary nav panel pattern:**
 
-Used on:
-- Cluster detail: Overview | Addons | Config
-- (Addon detail uses left nav panel instead — more items, needs categories)
+- Addon detail: Overview | Clusters | Upgrade | Config
+- Cluster detail: Overview | Addons | Config | History
+- Settings: Connections | Users | API Keys | AI Provider
 
-Tab state synced to URL params (`?tab=addons`) for bookmarkability.
+This creates a consistent experience — every time you drill into a detail view, you get a left nav for sub-sections. Nav state synced to URL params (`?section=upgrade`) for bookmarkability.
 
 ---
 
