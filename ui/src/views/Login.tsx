@@ -29,12 +29,12 @@ export function Login() {
     <div className="flex min-h-screen">
       {/* Left side — background covers full area, mascot centered */}
       <div
-        className="hidden lg:block lg:flex-1 bg-[#0B1426] bg-contain bg-center bg-no-repeat"
+        className="hidden lg:block lg:flex-1 bg-[#0a2a4a] bg-contain bg-center bg-no-repeat"
         style={{ backgroundImage: "url('/sharko-login-bg.png')" }}
       />
 
       {/* Right side — login panel */}
-      <div className="flex w-full flex-col bg-[#1a2332] lg:w-[440px] lg:min-w-[400px]">
+      <div className="flex w-full flex-col bg-[#0d3558] lg:w-[440px] lg:min-w-[400px]">
         <div className="flex flex-1 flex-col items-center justify-center px-10 py-12">
           {/* Brand header — logo + name + description */}
           <div className="mb-10 flex flex-col items-center gap-2 text-center">
@@ -55,7 +55,7 @@ export function Login() {
                 onChange={(e) => setUsername(e.target.value)}
                 autoComplete="username"
                 autoFocus
-                className="block w-full rounded-md border border-gray-600 bg-gray-800/50 px-3 py-2.5 text-sm text-white placeholder-gray-500 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
+                className="block w-full rounded-md border border-gray-600 bg-gray-800/50 px-3 py-2.5 text-sm text-white placeholder-gray-500 focus:border-[#9fcffb] focus:outline-none focus:ring-1 focus:ring-[#9fcffb]"
                 placeholder="admin"
               />
             </div>
@@ -70,7 +70,7 @@ export function Login() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 autoComplete="current-password"
-                className="block w-full rounded-md border border-gray-600 bg-gray-800/50 px-3 py-2.5 text-sm text-white placeholder-gray-500 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
+                className="block w-full rounded-md border border-gray-600 bg-gray-800/50 px-3 py-2.5 text-sm text-white placeholder-gray-500 focus:border-[#9fcffb] focus:outline-none focus:ring-1 focus:ring-[#9fcffb]"
                 placeholder="Password"
               />
             </div>
@@ -82,7 +82,7 @@ export function Login() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full rounded-full bg-teal-500 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-teal-600 focus:outline-none focus:ring-2 focus:ring-teal-400 focus:ring-offset-2 focus:ring-offset-gray-900 disabled:opacity-50"
+              className="w-full rounded-full bg-[#0a2a4a] px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#14466e] focus:outline-none focus:ring-2 focus:ring-[#9fcffb] focus:ring-offset-2 focus:ring-offset-gray-900 disabled:opacity-50"
             >
               {loading ? 'Signing in...' : 'Sign In'}
             </button>
