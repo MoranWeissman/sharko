@@ -183,7 +183,7 @@ export function Layout() {
 
       {/* Sidebar — always dark */}
       <aside
-        className={`flex flex-col border-r-2 border-[#14466e] bg-[#0a2a4a] transition-all duration-200 ${
+        className={`flex flex-col border-r-2 border-[#14466e] bg-[#1a3d5c] transition-all duration-200 ${
           collapsed ? 'w-16' : 'w-52'
         } ${mobileOpen ? 'fixed inset-y-0 left-0 z-50 w-52' : 'hidden lg:flex'}`}
       >
