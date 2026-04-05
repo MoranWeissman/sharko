@@ -18,15 +18,23 @@ help: ## Show available targets
 	@echo "    make lint         Go vet + UI build check"
 	@echo ""
 
-demo: ui-build ## Build UI + start server in demo mode
+demo: ## Build UI + start server in demo mode
+	@# Kill any existing sharko demo server
+	@-pkill -f "sharko serve --demo" 2>/dev/null || true
+	@sleep 0.5
 	@echo ""
 	@echo "  🦈 Sharko Demo Mode"
+	@echo "  Building UI..."
+	@rm -rf ui/dist
+	@cd ui && npm run build --silent
 	@echo "  Open http://localhost:$(PORT)"
 	@echo "  Login: admin/admin (admin) or qa/sharko (viewer)"
 	@echo ""
 	go run ./cmd/sharko serve --demo --port $(PORT) --static ui/dist
 
 dev: ## Start backend (demo) + frontend with hot reload
+	@-pkill -f "sharko serve --demo" 2>/dev/null || true
+	@sleep 0.5
 	@echo ""
 	@echo "  🦈 Sharko Dev Mode (hot reload)"
 	@echo "  Backend: http://localhost:$(PORT) (demo mode)"
