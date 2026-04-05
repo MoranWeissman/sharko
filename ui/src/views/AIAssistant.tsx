@@ -102,7 +102,7 @@ function renderFormattedContent(content: string) {
         parts.push(
           <code
             key={match.index}
-            className="break-all rounded bg-gray-200 px-1 py-0.5 text-xs dark:bg-gray-700"
+            className="break-all rounded bg-[#d6eeff] px-1 py-0.5 text-xs dark:bg-gray-700"
           >
             {match[3]}
           </code>,
@@ -257,7 +257,7 @@ function ThinkingProcess() {
           const step = toolSteps[si]
           const StepIcon = step.icon
           return (
-            <div key={si} className="flex items-center gap-2 text-xs text-gray-400 dark:text-gray-500">
+            <div key={si} className="flex items-center gap-2 text-xs text-[#5a8aaa] dark:text-gray-500">
               <StepIcon className="h-3 w-3" />
               <span className="line-through">{step.text}</span>
             </div>
@@ -421,11 +421,11 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
   if (aiEnabled === false) {
     return (
       <div className={`flex flex-col items-center justify-center gap-4 text-center ${embedded ? 'h-full p-6' : 'h-[calc(100vh-7rem)]'}`}>
-        <Sparkles className="h-12 w-12 text-gray-400" />
-        <h2 className="text-xl font-semibold text-gray-700 dark:text-gray-300">
+        <Sparkles className="h-12 w-12 text-[#3a6a8a]" />
+        <h2 className="text-xl font-semibold text-[#0a3a5a] dark:text-gray-300">
           AI not configured
         </h2>
-        <p className="max-w-md text-gray-500 dark:text-gray-400">
+        <p className="max-w-md text-[#2a5a7a] dark:text-gray-400">
           Go to{' '}
           <a href="/settings" className="font-medium text-teal-600 underline hover:text-teal-700 dark:text-teal-400 dark:hover:text-teal-300">
             Settings
@@ -441,30 +441,30 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
       {/* Header */}
       {/* Header — hidden when embedded (floating panel has its own header) */}
       {!embedded && (
-        <div className="flex items-center justify-between border-b border-gray-200 pb-4 dark:border-gray-700">
+        <div className="flex items-center justify-between border-b border-[#90c8ee] pb-4 dark:border-gray-700">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-violet-100 dark:bg-violet-900/40">
               <Sparkles className="h-5 w-5 text-violet-600 dark:text-violet-400" />
             </div>
             <div>
-              <h1 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+              <h1 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
                 AI Assistant
               </h1>
-              <p className="text-xs text-gray-500 dark:text-gray-400">
+              <p className="text-xs text-[#2a5a7a] dark:text-gray-400">
                 Ask questions about your addon deployments
               </p>
             </div>
           </div>
           <div className="flex items-center gap-3">
             {messages.length > 0 && (
-              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] text-gray-500 dark:bg-gray-800 dark:text-gray-400">
+              <span className="rounded-full bg-[#d6eeff] px-2 py-0.5 text-[10px] text-[#2a5a7a] dark:bg-gray-800 dark:text-gray-400">
                 {messages.length} messages
               </span>
             )}
             {messages.length > 0 && (
               <button
                 onClick={handleExport}
-                className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:bg-[#d6eeff] dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
+                className="flex items-center gap-1.5 rounded-lg border border-[#90c8ee] px-3 py-1.5 text-xs font-medium text-[#1a4a6a] transition-colors hover:bg-[#d6eeff] dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
               >
                 <Download className="h-3.5 w-3.5" />
                 Export
@@ -472,7 +472,7 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
             )}
             <button
               onClick={handleNewConversation}
-              className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:bg-[#d6eeff] dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
+              className="flex items-center gap-1.5 rounded-lg border border-[#90c8ee] px-3 py-1.5 text-xs font-medium text-[#1a4a6a] transition-colors hover:bg-[#d6eeff] dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
             >
               <RotateCcw className="h-3.5 w-3.5" />
               New
@@ -482,8 +482,8 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
       )}
       {/* Embedded mini toolbar — always visible when embedded */}
       {embedded && (
-        <div className="flex items-center justify-between border-b border-gray-200 px-3 py-1.5 dark:border-gray-700">
-          <span className="text-[10px] text-gray-400 dark:text-gray-500">
+        <div className="flex items-center justify-between border-b border-[#90c8ee] px-3 py-1.5 dark:border-gray-700">
+          <span className="text-[10px] text-[#3a6a8a] dark:text-gray-500">
             {messages.length > 0 ? `${messages.length} messages` : ''}
           </span>
           <div className="flex items-center gap-2">
@@ -514,10 +514,10 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
           <div className="flex h-full flex-col items-center justify-center gap-6 px-4">
             <div className="text-center">
               <Sparkles className="mx-auto mb-3 h-10 w-10 text-violet-400" />
-              <h2 className="text-lg font-medium text-gray-700 dark:text-gray-300">
+              <h2 className="text-lg font-medium text-[#0a3a5a] dark:text-gray-300">
                 How can I help you?
               </h2>
-              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
                 Try one of these suggestions or ask your own question
               </p>
             </div>
@@ -526,7 +526,7 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
                 <button
                   key={prompt}
                   onClick={() => sendMessage(prompt)}
-                  className="rounded-lg border border-gray-200 px-4 py-3 text-left text-sm text-gray-600 transition-colors hover:border-teal-300 hover:bg-teal-50 dark:border-gray-600 dark:text-gray-300 dark:hover:border-teal-700 dark:hover:bg-teal-900/20"
+                  className="rounded-lg border border-[#90c8ee] px-4 py-3 text-left text-sm text-[#1a4a6a] transition-colors hover:border-teal-300 hover:bg-teal-50 dark:border-gray-600 dark:text-gray-300 dark:hover:border-teal-700 dark:hover:bg-teal-900/20"
                 >
                   {prompt}
                 </button>
@@ -560,7 +560,7 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
                   className={`max-w-[75%] overflow-hidden rounded-2xl px-4 py-2.5 text-sm ${
                     msg.role === 'user'
                       ? 'bg-teal-600 text-white dark:bg-teal-700'
-                      : 'border border-gray-200 bg-gray-100 text-gray-800 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200'
+                      : 'border border-[#90c8ee] bg-[#e8f4ff] text-[#0a3a5a] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200'
                   }`}
                 >
                   {msg.role === 'assistant' ? (
@@ -579,7 +579,7 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
                     className={`mt-1.5 text-[10px] ${
                       msg.role === 'user'
                         ? 'text-teal-200'
-                        : 'text-gray-400 dark:text-gray-500'
+                        : 'text-[#5a8aaa] dark:text-gray-500'
                     }`}
                   >
                     {formatRelativeTime(msg.timestamp)}
@@ -597,7 +597,7 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
       </div>
 
       {/* Input area */}
-      <div className="border-t border-gray-200 bg-[#f0f7ff] px-4 py-3 dark:border-gray-700 dark:bg-gray-900">
+      <div className="border-t border-[#90c8ee] bg-[#f0f7ff] px-4 py-3 dark:border-gray-700 dark:bg-gray-900">
         <div className="mx-auto flex max-w-3xl items-end gap-3">
           <textarea
             ref={textareaRef}
@@ -607,7 +607,7 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
             placeholder="Ask about your addons, clusters, or upgrades..."
             disabled={loading || aiEnabled === null}
             rows={1}
-            className="max-h-32 min-h-[2.5rem] flex-1 resize-none rounded-xl border border-gray-300 bg-gray-50 px-4 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500 dark:focus:border-teal-500"
+            className="max-h-32 min-h-[2.5rem] flex-1 resize-none rounded-xl border border-[#80b8e0] bg-[#f0f7ff] px-4 py-2.5 text-sm text-[#0a2a4a] placeholder-[#5a8aaa] focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500 dark:focus:border-teal-500"
           />
           <button
             onClick={() => sendMessage(input)}

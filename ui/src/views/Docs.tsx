@@ -170,7 +170,7 @@ export function Docs() {
 
         {/* Right content area */}
         <div className="min-w-0 flex-1 rounded-xl border border-[#90c8ee] bg-[#f0f7ff] p-8 shadow-sm dark:border-gray-700 dark:bg-gray-900">
-          <article className="prose prose-gray max-w-none dark:prose-invert prose-headings:text-[#0a2a4a] dark:prose-headings:text-white prose-a:text-teal-600 dark:prose-a:text-teal-400 prose-code:rounded prose-code:bg-[#d6eeff] prose-code:px-1.5 prose-code:py-0.5 prose-code:text-sm dark:prose-code:bg-gray-800 prose-pre:bg-gray-900 prose-pre:text-[#7aaacc]">
+          <article className="prose prose-gray max-w-none dark:prose-invert prose-headings:text-[#0a2a4a] dark:prose-headings:text-white prose-p:text-[#1a4a6a] dark:prose-p:text-gray-300 prose-a:text-teal-600 dark:prose-a:text-teal-400 prose-code:rounded prose-code:bg-[#d6eeff] prose-code:px-1.5 prose-code:py-0.5 prose-code:text-sm dark:prose-code:bg-gray-800 prose-pre:bg-gray-900 prose-pre:text-[#7aaacc]">
             <Markdown remarkPlugins={[remarkGfm]}>{content}</Markdown>
           </article>
         </div>

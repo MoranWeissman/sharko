@@ -400,7 +400,7 @@ export function ClustersOverview() {
               onChange={(e) =>
                 setFilters((prev) => ({ ...prev, name: e.target.value }))
               }
-              className="w-full rounded-md border border-[#80b8e0] py-2 pl-10 pr-4 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:placeholder-[#5a8aaa]"
+              className="w-full rounded-md border border-[#80b8e0] bg-[#f0f7ff] py-2 pl-10 pr-4 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:placeholder-[#5a8aaa]"
             />
           </div>
 

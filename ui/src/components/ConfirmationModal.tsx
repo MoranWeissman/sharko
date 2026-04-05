@@ -66,7 +66,7 @@ export function ConfirmationModal({
               value={typed}
               onChange={(e) => setTyped(e.target.value)}
               placeholder={typeToConfirm}
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
+              className="w-full rounded-md border border-[#80b8e0] bg-[#f0f7ff] px-3 py-2 text-sm text-[#0a2a4a] focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
             />
           </div>
         )}
@@ -76,7 +76,7 @@ export function ConfirmationModal({
             type="button"
             onClick={handleClose}
             disabled={loading}
-            className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+            className="rounded-md border border-[#80b8e0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
           >
             Cancel
           </button>
