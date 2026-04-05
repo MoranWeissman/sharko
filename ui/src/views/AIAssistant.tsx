@@ -597,7 +597,7 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
       </div>
 
       {/* Input area */}
-      <div className="border-t border-gray-200 bg-[#e0f0ff] px-4 py-3 dark:border-gray-700 dark:bg-gray-900">
+      <div className="border-t border-gray-200 bg-[#f0f7ff] px-4 py-3 dark:border-gray-700 dark:bg-gray-900">
         <div className="mx-auto flex max-w-3xl items-end gap-3">
           <textarea
             ref={textareaRef}

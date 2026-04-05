@@ -99,7 +99,7 @@ function AddonCard({ addon }: { addon: AddonCatalogItem }) {
   return (
     <div
       onClick={handleCardClick}
-      className="group flex cursor-pointer flex-col rounded-lg border border-[#90c8ee] bg-[#e0f0ff] shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:border-teal-400 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-teal-500"
+      className="group flex cursor-pointer flex-col rounded-lg border border-[#90c8ee] bg-[#f0f7ff] shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:border-teal-400 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-teal-500"
     >
       <div className="flex flex-1 flex-col p-4">
         {/* Header */}
@@ -289,7 +289,7 @@ function PaginationControls({
 function AddonListTable({ addons }: { addons: AddonCatalogItem[] }) {
   const navigate = useNavigate()
   return (
-    <div className="overflow-x-auto rounded-xl border border-gray-200 bg-[#e0f0ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
+    <div className="overflow-x-auto rounded-xl border border-gray-200 bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
       <table className="w-full text-left text-sm">
         <thead className="border-b border-gray-200 bg-[#d0e8f8] text-xs uppercase text-gray-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
           <tr>
@@ -597,7 +597,7 @@ export function AddonCatalog() {
               type="button"
               onClick={() => setAddAddonOpen(false)}
               disabled={addAddonSubmitting}
-              className="rounded-md border border-gray-300 bg-[#e0f0ff] px-4 py-2 text-sm font-medium text-gray-700 hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+              className="rounded-md border border-gray-300 bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-gray-700 hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
             >
               {addAddonResult ? 'Close' : 'Cancel'}
             </button>
@@ -709,7 +709,7 @@ export function AddonCatalog() {
             className={`rounded-l-lg p-2 ${
               viewMode === 'grid'
                 ? 'bg-teal-600 text-white'
-                : 'bg-[#e0f0ff] text-gray-500 hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
+                : 'bg-[#f0f7ff] text-gray-500 hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
             }`}
             aria-label="Grid view"
             title="Grid view"
@@ -722,7 +722,7 @@ export function AddonCatalog() {
             className={`rounded-r-lg p-2 ${
               viewMode === 'list'
                 ? 'bg-teal-600 text-white'
-                : 'bg-[#e0f0ff] text-gray-500 hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
+                : 'bg-[#f0f7ff] text-gray-500 hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
             }`}
             aria-label="List view"
             title="List view"

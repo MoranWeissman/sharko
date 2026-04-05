@@ -89,7 +89,7 @@ function MatrixCell({ cell, cluster, addonName }: { cell: VersionMatrixCell | un
 /* Transposed matrix: clusters as rows, addons as columns */
 function MatrixTable({ addons, clusters }: { addons: VersionMatrixRow[]; clusters: string[] }) {
   return (
-    <div className="overflow-x-auto rounded-xl border border-gray-200 bg-[#e0f0ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
+    <div className="overflow-x-auto rounded-xl border border-gray-200 bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
       <table className="w-full text-left text-sm">
         <thead className="border-b border-gray-200 bg-[#d0e8f8] dark:border-gray-700 dark:bg-gray-900">
           <tr>
@@ -121,7 +121,7 @@ function MatrixTable({ addons, clusters }: { addons: VersionMatrixRow[]; cluster
 
             return (
               <tr key={cluster} className="hover:bg-[#d6eeff]/50 dark:hover:bg-gray-800">
-                <td className="sticky left-0 z-10 border-r border-gray-200 bg-[#e0f0ff] px-4 py-2 dark:border-gray-700 dark:bg-gray-800">
+                <td className="sticky left-0 z-10 border-r border-gray-200 bg-[#f0f7ff] px-4 py-2 dark:border-gray-700 dark:bg-gray-800">
                   <span className="text-sm font-medium text-gray-900 dark:text-white">
                     {cluster.replace(/-eks$/, '')}
                   </span>
@@ -169,7 +169,7 @@ function ClusterChip({ cluster, cell, addonName }: { cluster: string; cell: Vers
       className={`group inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs transition-all hover:shadow-md
         ${isDrift
           ? 'border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-900/20'
-          : 'border-gray-200 bg-[#e0f0ff] dark:border-gray-700 dark:bg-gray-800'
+          : 'border-gray-200 bg-[#f0f7ff] dark:border-gray-700 dark:bg-gray-800'
         }
         hover:ring-2 ${healthRing(cell.health)}
       `}
@@ -204,7 +204,7 @@ function AddonRow({ row, clusters }: { row: VersionMatrixRow; clusters: string[]
   const driftCount = activeCells.filter(e => e.cell.drift_from_catalog).length
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-[#e0f0ff] dark:border-gray-700 dark:bg-gray-800/50">
+    <div className="rounded-lg border border-gray-200 bg-[#f0f7ff] dark:border-gray-700 dark:bg-gray-800/50">
       <button
         type="button"
         onClick={() => setExpanded(v => !v)}
@@ -281,7 +281,7 @@ function HeatmapView({ addons, clusters }: { addons: VersionMatrixRow[]; cluster
         const isExpanded = expanded === row.addon_name
 
         return (
-          <div key={row.addon_name} className="rounded-lg border border-gray-200 bg-[#e0f0ff] dark:border-gray-700 dark:bg-gray-800/50">
+          <div key={row.addon_name} className="rounded-lg border border-gray-200 bg-[#f0f7ff] dark:border-gray-700 dark:bg-gray-800/50">
             {/* Compact row: addon name + dot grid */}
             <button
               type="button"
@@ -363,7 +363,7 @@ function HeatmapView({ addons, clusters }: { addons: VersionMatrixRow[]; cluster
         )
       })}
       {addons.length === 0 && (
-        <div className="rounded-lg border border-gray-200 bg-[#e0f0ff] p-8 text-center text-sm text-gray-500 dark:border-gray-700 dark:bg-gray-800">
+        <div className="rounded-lg border border-gray-200 bg-[#f0f7ff] p-8 text-center text-sm text-gray-500 dark:border-gray-700 dark:bg-gray-800">
           No addons match the current filters.
         </div>
       )}
@@ -448,17 +448,17 @@ export function VersionMatrix() {
         {/* View mode toggle */}
         <div className="ml-auto flex items-center rounded-lg border border-gray-300 dark:border-gray-600">
           <button type="button" onClick={() => setViewMode('heatmap')}
-            className={`rounded-l-lg p-2 ${viewMode === 'heatmap' ? 'bg-teal-600 text-white' : 'bg-[#e0f0ff] text-gray-500 hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'}`}
+            className={`rounded-l-lg p-2 ${viewMode === 'heatmap' ? 'bg-teal-600 text-white' : 'bg-[#f0f7ff] text-gray-500 hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'}`}
             aria-label="Heatmap view" title="Heatmap (compact)">
             <Grid3X3 className="h-4 w-4" />
           </button>
           <button type="button" onClick={() => setViewMode('table')}
-            className={`p-2 ${viewMode === 'table' ? 'bg-teal-600 text-white' : 'bg-[#e0f0ff] text-gray-500 hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'}`}
+            className={`p-2 ${viewMode === 'table' ? 'bg-teal-600 text-white' : 'bg-[#f0f7ff] text-gray-500 hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'}`}
             aria-label="Table view" title="Table matrix">
             <Table2 className="h-4 w-4" />
           </button>
           <button type="button" onClick={() => setViewMode('cards')}
-            className={`rounded-r-lg p-2 ${viewMode === 'cards' ? 'bg-teal-600 text-white' : 'bg-[#e0f0ff] text-gray-500 hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'}`}
+            className={`rounded-r-lg p-2 ${viewMode === 'cards' ? 'bg-teal-600 text-white' : 'bg-[#f0f7ff] text-gray-500 hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'}`}
             aria-label="Card view" title="Card view">
             <LayoutGrid className="h-4 w-4" />
           </button>
@@ -473,7 +473,7 @@ export function VersionMatrix() {
       ) : (
         <div className="space-y-3">
           {filteredAddons.length === 0 ? (
-            <div className="rounded-lg border border-gray-200 bg-[#e0f0ff] p-8 text-center text-sm text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400">
+            <div className="rounded-lg border border-gray-200 bg-[#f0f7ff] p-8 text-center text-sm text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400">
               No addons match the current filters.
             </div>
           ) : (
