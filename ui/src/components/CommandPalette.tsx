@@ -126,10 +126,10 @@ export function CommandPalette() {
 
       {/* Modal */}
       <div className="fixed left-1/2 top-[20%] z-[60] w-full max-w-lg -translate-x-1/2">
-        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900">
+        <div className="overflow-hidden rounded-xl border border-[#90c8ee] bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900">
           {/* Search input */}
-          <div className="flex items-center gap-3 border-b border-gray-200 px-4 dark:border-gray-700">
-            <Search className="h-5 w-5 shrink-0 text-gray-400" />
+          <div className="flex items-center gap-3 border-b border-[#90c8ee] px-4 dark:border-gray-700">
+            <Search className="h-5 w-5 shrink-0 text-[#3a6a8a]" />
             <input
               ref={inputRef}
               type="text"
@@ -137,9 +137,9 @@ export function CommandPalette() {
               onChange={e => setQuery(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="Search pages, clusters, addons..."
-              className="w-full bg-transparent py-3.5 text-sm text-gray-900 placeholder-gray-400 outline-none dark:text-gray-100"
+              className="w-full bg-transparent py-3.5 text-sm text-[#0a2a4a] placeholder-[#5a8aaa] outline-none dark:text-gray-100"
             />
-            <kbd className="hidden shrink-0 rounded border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[10px] font-medium text-gray-400 sm:block dark:border-gray-700 dark:bg-gray-800">
+            <kbd className="hidden shrink-0 rounded border border-[#90c8ee] bg-[#e8f4ff] px-1.5 py-0.5 text-[10px] font-medium text-[#3a6a8a] sm:block dark:border-gray-700 dark:bg-gray-800">
               ESC
             </kbd>
           </div>
@@ -147,7 +147,7 @@ export function CommandPalette() {
           {/* Results */}
           <div className="max-h-72 overflow-y-auto py-2">
             {results.length === 0 ? (
-              <div className="px-4 py-6 text-center text-sm text-gray-500">
+              <div className="px-4 py-6 text-center text-sm text-[#2a5a7a]">
                 No results for "{query}"
               </div>
             ) : (
@@ -159,12 +159,12 @@ export function CommandPalette() {
                   className={`flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm transition-colors ${
                     i === selectedIndex
                       ? 'bg-teal-50 text-teal-700 dark:bg-teal-900/20 dark:text-teal-400'
-                      : 'text-gray-700 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-800'
+                      : 'text-[#0a3a5a] hover:bg-[#e8f4ff] dark:text-gray-300 dark:hover:bg-gray-800'
                   }`}
                 >
-                  <result.icon className="h-4 w-4 shrink-0 text-gray-400" />
+                  <result.icon className="h-4 w-4 shrink-0 text-[#3a6a8a]" />
                   <span className="flex-1 truncate">{result.label}</span>
-                  <span className="shrink-0 text-[10px] uppercase tracking-wide text-gray-400">
+                  <span className="shrink-0 text-[10px] uppercase tracking-wide text-[#3a6a8a]">
                     {typeLabel[result.type]}
                   </span>
                 </button>
@@ -173,7 +173,7 @@ export function CommandPalette() {
           </div>
 
           {/* Footer hint */}
-          <div className="border-t border-gray-200 px-4 py-2 text-[10px] text-gray-400 dark:border-gray-700">
+          <div className="border-t border-[#90c8ee] px-4 py-2 text-[10px] text-[#3a6a8a] dark:border-gray-700">
             <span className="mr-3">Arrow keys to navigate</span>
             <span className="mr-3">Enter to select</span>
             <span>Esc to close</span>

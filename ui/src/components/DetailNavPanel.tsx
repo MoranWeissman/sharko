@@ -27,7 +27,7 @@ export function DetailNavPanel({ sections, activeKey, onSelect }: DetailNavPanel
         {sections.map((group, gi) => (
           <div key={gi}>
             {group.label && (
-              <p className="mb-1 px-2 text-[9px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">
+              <p className="mb-1 px-2 text-[9px] font-semibold uppercase tracking-wider text-[#3a6a8a] dark:text-gray-500">
                 {group.label}
               </p>
             )}
@@ -41,7 +41,7 @@ export function DetailNavPanel({ sections, activeKey, onSelect }: DetailNavPanel
                       ? 'border-l-[3px] border-[#0a2a4a] bg-[#d6eeff] font-semibold text-[#0a2a4a] dark:border-blue-400 dark:bg-gray-700 dark:text-white'
                       : item.destructive
                         ? 'border-l-[3px] border-transparent text-red-600 hover:bg-[#d6eeff] dark:text-red-400 dark:hover:bg-red-900/20'
-                        : 'border-l-[3px] border-transparent text-gray-600 hover:bg-[#d6eeff] dark:text-gray-400 dark:hover:bg-gray-700'
+                        : 'border-l-[3px] border-transparent text-[#1a4a6a] hover:bg-[#d6eeff] dark:text-gray-400 dark:hover:bg-gray-700'
                   }`}
                 >
                   <span className="flex items-center gap-2">
@@ -49,7 +49,7 @@ export function DetailNavPanel({ sections, activeKey, onSelect }: DetailNavPanel
                     <span>{item.label}</span>
                   </span>
                   {item.badge !== undefined && (
-                    <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500 dark:bg-gray-700 dark:text-gray-400">
+                    <span className="rounded-full bg-[#d6eeff] px-1.5 py-0.5 text-[10px] font-medium text-[#2a5a7a] dark:bg-gray-700 dark:text-gray-400">
                       {item.badge}
                     </span>
                   )}

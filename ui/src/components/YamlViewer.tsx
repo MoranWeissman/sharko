@@ -16,7 +16,7 @@ function highlightYaml(raw: string): string {
     .map((line) => {
       // Comments
       if (/^\s*#/.test(line)) {
-        return `<span class="text-gray-500">${escapeHtml(line)}</span>`
+        return `<span class="text-[#2a5a7a]">${escapeHtml(line)}</span>`
       }
       // Key-value lines
       const match = line.match(/^(\s*)([\w.-]+)(\s*:\s*)(.*)$/)
@@ -30,7 +30,7 @@ function highlightYaml(raw: string): string {
         } else if (/^(true|false)$/i.test(value)) {
           valueHtml = `<span class="text-blue-400">${escapeHtml(value)}</span>`
         } else if (/^(null|~)$/i.test(value)) {
-          valueHtml = `<span class="text-gray-500">${escapeHtml(value)}</span>`
+          valueHtml = `<span class="text-[#2a5a7a]">${escapeHtml(value)}</span>`
         }
         return `${escapeHtml(indent)}<span class="text-teal-400">${escapeHtml(key)}</span>${escapeHtml(colon)}${valueHtml}`
       }
@@ -38,7 +38,7 @@ function highlightYaml(raw: string): string {
       const arrayMatch = line.match(/^(\s*-\s)(.*)$/)
       if (arrayMatch) {
         const [, prefix, value] = arrayMatch
-        return `<span class="text-gray-400">${escapeHtml(prefix)}</span><span class="text-green-400">${escapeHtml(value)}</span>`
+        return `<span class="text-[#3a6a8a]">${escapeHtml(prefix)}</span><span class="text-green-400">${escapeHtml(value)}</span>`
       }
       return escapeHtml(line)
     })
@@ -62,7 +62,7 @@ function TreeNode({ name, value, defaultExpanded = true }: { name: string; value
       <div className="flex items-center gap-1 py-0.5">
         <span className="w-4" />
         <span className="font-semibold text-teal-400">{name}:</span>
-        <span className="text-gray-500">null</span>
+        <span className="text-[#2a5a7a]">null</span>
       </div>
     )
   }
@@ -74,20 +74,20 @@ function TreeNode({ name, value, defaultExpanded = true }: { name: string; value
         <button
           type="button"
           onClick={() => setExpanded(!expanded)}
-          className="flex items-center gap-1 py-0.5 hover:bg-gray-800 rounded px-1 -ml-1"
+          className="flex items-center gap-1 py-0.5 hover:bg-[#0d2035] rounded px-1 -ml-1"
         >
           {expanded ? (
-            <ChevronDown className="h-3.5 w-3.5 text-gray-500 shrink-0" />
+            <ChevronDown className="h-3.5 w-3.5 text-[#2a5a7a] shrink-0" />
           ) : (
-            <ChevronRight className="h-3.5 w-3.5 text-gray-500 shrink-0" />
+            <ChevronRight className="h-3.5 w-3.5 text-[#2a5a7a] shrink-0" />
           )}
           <span className="font-semibold text-teal-400">{name}</span>
           {!expanded && (
-            <span className="text-gray-400 text-xs ml-1">({entries.length} keys)</span>
+            <span className="text-[#3a6a8a] text-xs ml-1">({entries.length} keys)</span>
           )}
         </button>
         {expanded && (
-          <div className="ml-4 border-l border-gray-700 pl-2">
+          <div className="ml-4 border-l border-[#1a3a5a] pl-2">
             {entries.map(([k, v]) => (
               <TreeNode key={k} name={k} value={v} defaultExpanded={false} />
             ))}
@@ -103,18 +103,18 @@ function TreeNode({ name, value, defaultExpanded = true }: { name: string; value
         <button
           type="button"
           onClick={() => setExpanded(!expanded)}
-          className="flex items-center gap-1 py-0.5 hover:bg-gray-800 rounded px-1 -ml-1"
+          className="flex items-center gap-1 py-0.5 hover:bg-[#0d2035] rounded px-1 -ml-1"
         >
           {expanded ? (
-            <ChevronDown className="h-3.5 w-3.5 text-gray-500 shrink-0" />
+            <ChevronDown className="h-3.5 w-3.5 text-[#2a5a7a] shrink-0" />
           ) : (
-            <ChevronRight className="h-3.5 w-3.5 text-gray-500 shrink-0" />
+            <ChevronRight className="h-3.5 w-3.5 text-[#2a5a7a] shrink-0" />
           )}
           <span className="font-semibold text-teal-400">{name}</span>
-          <span className="text-gray-400 text-xs ml-1">[{value.length}]</span>
+          <span className="text-[#3a6a8a] text-xs ml-1">[{value.length}]</span>
         </button>
         {expanded && (
-          <div className="ml-4 border-l border-gray-700 pl-2">
+          <div className="ml-4 border-l border-[#1a3a5a] pl-2">
             {value.map((item, i) => (
               <TreeNode key={i} name={`[${i}]`} value={item} defaultExpanded={false} />
             ))}
@@ -158,12 +158,12 @@ export function YamlViewer({ yaml: yamlString, title, defaultView = 'raw' }: Yam
   }
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
+    <div className="rounded-xl border border-[#90c8ee] bg-[#f0f7ff] shadow-sm dark:border-[#1a3a5a] dark:bg-gray-800">
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3 dark:border-gray-700">
+      <div className="flex items-center justify-between border-b border-[#90c8ee] px-4 py-3 dark:border-[#1a3a5a]">
         <div>
           {title && (
-            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+            <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
               {title}
             </h3>
           )}
@@ -173,7 +173,7 @@ export function YamlViewer({ yaml: yamlString, title, defaultView = 'raw' }: Yam
           <button
             type="button"
             onClick={handleCopy}
-            className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2 py-1 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-100 dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-700"
+            className="inline-flex items-center gap-1 rounded-md border border-[#80b8e0] px-2 py-1 text-xs font-medium text-[#1a4a6a] transition-colors hover:bg-[#d6eeff] dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-700"
             aria-label="Copy YAML"
           >
             {copied ? (
@@ -190,14 +190,14 @@ export function YamlViewer({ yaml: yamlString, title, defaultView = 'raw' }: Yam
           </button>
 
           {/* View mode toggle */}
-          <div className="flex rounded-md border border-gray-300 dark:border-gray-600">
+          <div className="flex rounded-md border border-[#80b8e0] dark:border-gray-600">
             <button
               type="button"
               onClick={() => setMode('raw')}
               className={`px-2 py-1 text-xs font-medium transition-colors ${
                 mode === 'raw'
                   ? 'bg-teal-500 text-white'
-                  : 'text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700'
+                  : 'text-[#1a4a6a] hover:bg-[#d6eeff] dark:text-gray-400 dark:hover:bg-gray-700'
               } rounded-l-md`}
             >
               Raw
@@ -208,7 +208,7 @@ export function YamlViewer({ yaml: yamlString, title, defaultView = 'raw' }: Yam
               className={`px-2 py-1 text-xs font-medium transition-colors ${
                 mode === 'tree'
                   ? 'bg-teal-500 text-white'
-                  : 'text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700'
+                  : 'text-[#1a4a6a] hover:bg-[#d6eeff] dark:text-gray-400 dark:hover:bg-gray-700'
               } rounded-r-md`}
             >
               Tree
@@ -218,7 +218,7 @@ export function YamlViewer({ yaml: yamlString, title, defaultView = 'raw' }: Yam
       </div>
 
       {/* Content */}
-      <div className="overflow-x-auto rounded-b-xl bg-gray-900 p-4 text-gray-100">
+      <div className="overflow-x-auto rounded-b-xl bg-[#071828] p-4 text-[#7aaacc]">
         {mode === 'raw' ? (
           <pre
             className="font-mono text-xs leading-relaxed"
@@ -231,7 +231,7 @@ export function YamlViewer({ yaml: yamlString, title, defaultView = 'raw' }: Yam
             ))}
           </div>
         ) : (
-          <pre className="font-mono text-xs leading-relaxed text-gray-400">
+          <pre className="font-mono text-xs leading-relaxed text-[#3a6a8a]">
             Unable to parse YAML for tree view. Showing raw content:{'\n\n'}
             {yamlString}
           </pre>

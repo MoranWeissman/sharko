@@ -90,7 +90,7 @@ export function Docs() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-20 text-gray-500">
+      <div className="flex items-center justify-center py-20 text-[#2a5a7a]">
         Loading documentation...
       </div>
     )
@@ -100,7 +100,7 @@ export function Docs() {
     <div>
       <div className="mb-6 flex items-center gap-3">
         <BookOpen className="h-7 w-7 text-teal-600 dark:text-teal-400" />
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+        <h1 className="text-2xl font-bold text-[#0a2a4a] dark:text-white">
           Documentation
         </h1>
       </div>
@@ -110,13 +110,13 @@ export function Docs() {
         <nav className="w-56 shrink-0 space-y-4">
           {/* Search */}
           <div className="relative">
-            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-400" />
+            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-[#3a6a8a]" />
             <input
               type="text"
               placeholder="Search docs..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full rounded-lg border border-gray-200 bg-[#f0f7ff] py-2 pl-9 pr-3 text-sm text-gray-900 placeholder-gray-400 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+              className="w-full rounded-lg border border-[#90c8ee] bg-[#f0f7ff] py-2 pl-9 pr-3 text-sm text-[#0a2a4a] placeholder-[#5a8aaa] focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
             />
           </div>
 
@@ -127,7 +127,7 @@ export function Docs() {
                 {searchResults.length} result{searchResults.length !== 1 ? 's' : ''}
               </p>
               {searchResults.length === 0 ? (
-                <p className="text-xs text-gray-500">No matches found.</p>
+                <p className="text-xs text-[#2a5a7a]">No matches found.</p>
               ) : (
                 <ul className="space-y-2">
                   {searchResults.map((r) => (
@@ -137,7 +137,7 @@ export function Docs() {
                         className="block w-full text-left"
                       >
                         <span className="text-xs font-medium text-teal-700 dark:text-teal-400">{r.title}</span>
-                        <span className="block truncate text-xs text-gray-500">{r.snippet}</span>
+                        <span className="block truncate text-xs text-[#2a5a7a]">{r.snippet}</span>
                       </button>
                     </li>
                   ))}
@@ -157,7 +157,7 @@ export function Docs() {
                     className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors ${
                       isActive
                         ? 'bg-teal-50 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400'
-                        : 'text-gray-600 hover:bg-[#d6eeff] hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200'
+                        : 'text-[#1a4a6a] hover:bg-[#d6eeff] hover:text-[#0a2a4a] dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200'
                     }`}
                   >
                     <span>{page.title}</span>
@@ -169,8 +169,8 @@ export function Docs() {
         </nav>
 
         {/* Right content area */}
-        <div className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-[#f0f7ff] p-8 shadow-sm dark:border-gray-700 dark:bg-gray-900">
-          <article className="prose prose-gray max-w-none dark:prose-invert prose-headings:text-gray-900 dark:prose-headings:text-white prose-a:text-teal-600 dark:prose-a:text-teal-400 prose-code:rounded prose-code:bg-gray-100 prose-code:px-1.5 prose-code:py-0.5 prose-code:text-sm dark:prose-code:bg-gray-800 prose-pre:bg-gray-900 prose-pre:text-gray-100">
+        <div className="min-w-0 flex-1 rounded-xl border border-[#90c8ee] bg-[#f0f7ff] p-8 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+          <article className="prose prose-gray max-w-none dark:prose-invert prose-headings:text-[#0a2a4a] dark:prose-headings:text-white prose-a:text-teal-600 dark:prose-a:text-teal-400 prose-code:rounded prose-code:bg-[#d6eeff] prose-code:px-1.5 prose-code:py-0.5 prose-code:text-sm dark:prose-code:bg-gray-800 prose-pre:bg-gray-900 prose-pre:text-[#7aaacc]">
             <Markdown remarkPlugins={[remarkGfm]}>{content}</Markdown>
           </article>
         </div>

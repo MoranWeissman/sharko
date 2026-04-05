@@ -26,9 +26,9 @@ function HealthBar({ title, subtitle, segments }: HealthBarProps) {
 
   return (
     <div className="rounded-xl border border-[#90c8ee] bg-[#f0f7ff] p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
-      <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">{title}</h3>
+      <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">{title}</h3>
       <p className="mb-3 text-xs text-[#2a5a7a] dark:text-gray-400">{subtitle}</p>
-      <div className="mb-3 flex h-3 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-700">
+      <div className="mb-3 flex h-3 overflow-hidden rounded-full bg-[#d6eeff] dark:bg-gray-700">
         {segments.filter(s => s.value > 0).map((seg) => (
           <div
             key={seg.label}
@@ -42,7 +42,7 @@ function HealthBar({ title, subtitle, segments }: HealthBarProps) {
         {segments.filter(s => s.value > 0).map((seg) => (
           <div key={seg.label} className="flex items-center gap-1.5 text-xs">
             <div className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: seg.color }} />
-            <span className="font-medium text-gray-700 dark:text-gray-300">{seg.value}/{total}</span>
+            <span className="font-medium text-[#0a3a5a] dark:text-gray-300">{seg.value}/{total}</span>
             <span className="text-[#2a5a7a] dark:text-gray-400">{seg.label}</span>
           </div>
         ))}
@@ -221,7 +221,7 @@ export function Dashboard() {
                     }`} />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="font-medium text-gray-900 dark:text-gray-100">{item.app_name}</span>
+                        <span className="font-medium text-[#0a2a4a] dark:text-gray-100">{item.app_name}</span>
                         <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
                           item.health === 'Error' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
                             : item.health === 'Degraded' ? 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'
@@ -265,7 +265,7 @@ export function Dashboard() {
       {clusters.length > 0 && (
         <div>
           <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Clusters Needing Attention</h2>
+            <h2 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">Clusters Needing Attention</h2>
             <button
               onClick={() => navigate('/clusters?status=issues')}
               className="text-sm text-teal-600 hover:text-teal-700 dark:text-teal-400"
@@ -308,16 +308,16 @@ export function Dashboard() {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         {/* Quick Actions */}
         <div className="rounded-xl border border-[#90c8ee] bg-[#f0f7ff] p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
-          <h3 className="mb-3 text-sm font-semibold text-gray-900 dark:text-gray-100">Quick Actions</h3>
+          <h3 className="mb-3 text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Quick Actions</h3>
           <div className="space-y-2">
             <button onClick={() => navigate('/upgrade')}
-              className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-gray-700 transition-colors hover:bg-[#d6eeff] dark:text-gray-300 dark:hover:bg-gray-700">
+              className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-[#0a3a5a] transition-colors hover:bg-[#d6eeff] dark:text-gray-300 dark:hover:bg-gray-700">
               <ArrowUpCircle className="h-4 w-4 text-teal-500" />
               <span>Check Upgrade Impact</span>
               <ChevronRight className="ml-auto h-4 w-4 text-[#3a6a8a]" />
             </button>
             <button onClick={() => navigate('/observability')}
-              className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-gray-700 transition-colors hover:bg-[#d6eeff] dark:text-gray-300 dark:hover:bg-gray-700">
+              className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-[#0a3a5a] transition-colors hover:bg-[#d6eeff] dark:text-gray-300 dark:hover:bg-gray-700">
               <Activity className="h-4 w-4 text-green-500" />
               <span>View Observability</span>
               <ChevronRight className="ml-auto h-4 w-4 text-[#3a6a8a]" />
@@ -328,7 +328,7 @@ export function Dashboard() {
         {/* Recent Sync Activity */}
         <div className="rounded-xl border border-[#90c8ee] bg-[#f0f7ff] p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
           <div className="mb-3 flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Recent Activity</h3>
+            <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Recent Activity</h3>
             <button onClick={() => navigate('/observability')} className="text-xs text-teal-600 hover:text-teal-700 dark:text-teal-400">
               View all
             </button>
@@ -341,7 +341,7 @@ export function Dashboard() {
                 <div key={i} className="flex items-center gap-3 text-xs">
                   <div className={`h-2 w-2 shrink-0 rounded-full ${sync.status === 'Synced' || sync.status === 'Succeeded' ? 'bg-green-500' : 'bg-amber-500'}`} />
                   <div className="min-w-0 flex-1">
-                    <span className="font-medium text-gray-700 dark:text-gray-300">{sync.addon_name}</span>
+                    <span className="font-medium text-[#0a3a5a] dark:text-gray-300">{sync.addon_name}</span>
                     <span className="text-[#3a6a8a]"> on </span>
                     <span className="text-[#2a5a7a] dark:text-gray-400">{sync.cluster_name}</span>
                   </div>
@@ -358,7 +358,7 @@ export function Dashboard() {
         {/* Version Drift */}
         <div className="rounded-xl border border-[#90c8ee] bg-[#f0f7ff] p-5 shadow-sm dark:border-gray-700 dark:bg-gray-800">
           <div className="mb-3 flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Version Drift</h3>
+            <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Version Drift</h3>
             <button onClick={() => navigate('/version-matrix')} className="text-xs text-teal-600 hover:text-teal-700 dark:text-teal-400">
               View matrix
             </button>
@@ -374,7 +374,7 @@ export function Dashboard() {
                 <div key={d.addon}
                   onClick={() => navigate(`/addons/${d.addon}`)}
                   className="flex cursor-pointer items-center justify-between rounded-lg px-3 py-2 text-xs transition-colors hover:bg-[#d6eeff] dark:hover:bg-gray-700">
-                  <span className="font-medium text-gray-700 dark:text-gray-300">{d.addon}</span>
+                  <span className="font-medium text-[#0a3a5a] dark:text-gray-300">{d.addon}</span>
                   <span className="rounded-full bg-amber-100 px-2 py-0.5 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
                     {d.count} cluster{d.count !== 1 ? 's' : ''}
                   </span>

@@ -35,7 +35,7 @@ export function ClusterCard({
     >
       <div className="mb-2 flex items-center gap-2">
         <Server className="h-4 w-4 text-teal-600 dark:text-teal-400" />
-        <h3 className="truncate text-sm font-bold text-gray-900 dark:text-gray-100">{name}</h3>
+        <h3 className="truncate text-sm font-bold text-[#0a2a4a] dark:text-gray-100">{name}</h3>
       </div>
       <div className="mb-2 flex items-center gap-1.5">
         <div className={`h-2 w-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`} />
@@ -43,7 +43,7 @@ export function ClusterCard({
           {isConnected ? 'Connected' : 'Disconnected'}
         </span>
       </div>
-      <p className="mb-2 text-xs text-gray-500 dark:text-gray-400">
+      <p className="mb-2 text-xs text-[#2a5a7a] dark:text-gray-400">
         {totalCount > 0 ? `${healthyCount}/${totalCount} healthy` : 'No addons'}
       </p>
       <AddonDots addons={addonSummary} />

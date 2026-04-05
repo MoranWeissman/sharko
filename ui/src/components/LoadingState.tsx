@@ -10,7 +10,7 @@ export function LoadingState({ message = 'Loading...' }: LoadingStateProps) {
         alt=""
         className="h-12 w-auto animate-pulse opacity-70"
       />
-      <p className="text-sm text-gray-500 dark:text-gray-400">{message}</p>
+      <p className="text-sm text-[#2a5a7a] dark:text-gray-400">{message}</p>
     </div>
   );
 }

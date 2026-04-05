@@ -14,8 +14,8 @@ const healthColor: Record<string, string> = {
   Healthy: 'bg-green-500',
   Progressing: 'bg-amber-400',
   Degraded: 'bg-red-500',
-  Missing: 'bg-gray-400',
-  Unknown: 'bg-gray-400',
+  Missing: 'bg-[#90c8ee]',
+  Unknown: 'bg-[#90c8ee]',
 }
 
 interface AddonDotsProps {
@@ -32,7 +32,7 @@ export function AddonDots({ addons }: AddonDotsProps) {
           <Tooltip key={addon.name}>
             <TooltipTrigger asChild>
               <span
-                className={`inline-block h-2.5 w-2.5 rounded-full transition-colors ${healthColor[addon.health] ?? 'bg-gray-400'}`}
+                className={`inline-block h-2.5 w-2.5 rounded-full transition-colors ${healthColor[addon.health] ?? 'bg-[#90c8ee]'}`}
                 tabIndex={0}
                 role="img"
                 aria-label={`${addon.name}: ${addon.health}`}

@@ -36,7 +36,7 @@ function getConnectionInfo(status: string): {
     };
   }
 
-  return { icon: HelpCircle, label: 'Unknown', colorClass: 'text-gray-500' };
+  return { icon: HelpCircle, label: 'Unknown', colorClass: 'text-[#2a5a7a]' };
 }
 
 export function ConnectionStatus({ status }: ConnectionStatusProps) {

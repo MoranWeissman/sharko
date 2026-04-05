@@ -14,7 +14,7 @@ interface UserAccount {
 const ROLE_COLORS: Record<string, string> = {
   admin: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
   operator: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
-  viewer: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400',
+  viewer: 'bg-[#d6eeff] text-[#0a3a5a] dark:bg-gray-800 dark:text-gray-400',
 }
 
 export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
@@ -106,7 +106,7 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
         <div className="flex items-center gap-3">
           <Users className="h-7 w-7 text-teal-600 dark:text-teal-400" />
           <div>
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">User Management</h1>
+            <h1 className="text-2xl font-bold text-[#0a2a4a] dark:text-white">User Management</h1>
             <p className="text-sm text-[#2a5a7a] dark:text-gray-400">Manage user accounts, roles, and access</p>
           </div>
         </div>
@@ -138,29 +138,29 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
       )}
 
       {/* Role legend */}
-      <div className="flex flex-wrap gap-4 rounded-xl border border-gray-200 bg-[#f0f7ff] p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+      <div className="flex flex-wrap gap-4 rounded-xl border border-[#90c8ee] bg-[#f0f7ff] p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
         <div className="text-xs font-medium text-[#2a5a7a] dark:text-gray-400">Roles:</div>
         <div className="flex items-center gap-1.5 text-xs">
           <Shield className="h-3.5 w-3.5 text-red-500" />
-          <span className="font-medium text-gray-700 dark:text-gray-300">Admin</span>
+          <span className="font-medium text-[#0a3a5a] dark:text-gray-300">Admin</span>
           <span className="text-[#3a6a8a]">— full access, user management</span>
         </div>
         <div className="flex items-center gap-1.5 text-xs">
           <Wrench className="h-3.5 w-3.5 text-blue-500" />
-          <span className="font-medium text-gray-700 dark:text-gray-300">Operator</span>
+          <span className="font-medium text-[#0a3a5a] dark:text-gray-300">Operator</span>
           <span className="text-[#3a6a8a]">— all except user management</span>
         </div>
         <div className="flex items-center gap-1.5 text-xs">
           <Eye className="h-3.5 w-3.5 text-[#2a5a7a]" />
-          <span className="font-medium text-gray-700 dark:text-gray-300">Viewer</span>
+          <span className="font-medium text-[#0a3a5a] dark:text-gray-300">Viewer</span>
           <span className="text-[#3a6a8a]">— read-only access</span>
         </div>
       </div>
 
       {/* Users table */}
-      <div className="rounded-xl border border-gray-200 bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
-        <div className="flex items-center justify-between border-b border-gray-200 p-4 dark:border-gray-700">
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+      <div className="rounded-xl border border-[#90c8ee] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
+        <div className="flex items-center justify-between border-b border-[#90c8ee] p-4 dark:border-gray-700">
+          <h3 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
             Users ({users.length})
           </h3>
           <Button onClick={() => setShowAddForm(true)} disabled={showAddForm}>
@@ -171,25 +171,25 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
 
         {/* Add user form */}
         {showAddForm && (
-          <div className="border-b border-gray-200 bg-[#d0e8f8] p-4 dark:border-gray-700 dark:bg-gray-900/50">
+          <div className="border-b border-[#90c8ee] bg-[#d0e8f8] p-4 dark:border-gray-700 dark:bg-gray-900/50">
             <div className="flex items-end gap-3">
               <div className="flex-1">
-                <label className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">Username</label>
+                <label className="mb-1 block text-xs font-medium text-[#1a4a6a] dark:text-gray-400">Username</label>
                 <input
                   type="text"
                   value={newUsername}
                   onChange={(e) => setNewUsername(e.target.value)}
                   placeholder="e.g. john.doe"
-                  className="w-full rounded-lg border border-gray-300 bg-[#f0f7ff] px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                  className="w-full rounded-lg border border-[#80b8e0] bg-[#f0f7ff] px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
                   autoFocus
                 />
               </div>
               <div className="w-40">
-                <label className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">Role</label>
+                <label className="mb-1 block text-xs font-medium text-[#1a4a6a] dark:text-gray-400">Role</label>
                 <select
                   value={newRole}
                   onChange={(e) => setNewRole(e.target.value)}
-                  className="w-full rounded-lg border border-gray-300 bg-[#f0f7ff] px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                  className="w-full rounded-lg border border-[#80b8e0] bg-[#f0f7ff] px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
                 >
                   <option value="viewer">Viewer</option>
                   <option value="operator">Operator</option>
@@ -213,12 +213,12 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
           <ErrorState message={error} onRetry={fetchUsers} />
         ) : users.length === 0 ? (
           <div className="py-12 text-center text-[#2a5a7a]">
-            <Users className="mx-auto mb-3 h-10 w-10 text-gray-300 dark:text-gray-600" />
+            <Users className="mx-auto mb-3 h-10 w-10 text-[#5a8aaa] dark:text-gray-600" />
             <p className="text-lg font-medium">No users configured</p>
             <p className="mt-1 text-sm">Add your first user above.</p>
           </div>
         ) : (
-          <div className="divide-y divide-gray-100 dark:divide-gray-700">
+          <div className="divide-y divide-[#a0d0f0] dark:divide-gray-700">
             {users.map((user) => {
               return (
                 <div key={user.username} className="flex items-center gap-4 px-4 py-3">
@@ -226,7 +226,7 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
                   <div className={`flex h-9 w-9 items-center justify-center rounded-full text-sm font-bold ${
                     user.enabled
                       ? 'bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-400'
-                      : 'bg-gray-100 text-[#3a6a8a] dark:bg-gray-800'
+                      : 'bg-[#d6eeff] text-[#3a6a8a] dark:bg-gray-800'
                   }`}>
                     {user.username.charAt(0).toUpperCase()}
                   </div>
@@ -234,11 +234,11 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
                   {/* Name + status */}
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className={`text-sm font-medium ${user.enabled ? 'text-gray-900 dark:text-gray-100' : 'text-[#3a6a8a] line-through'}`}>
+                      <span className={`text-sm font-medium ${user.enabled ? 'text-[#0a2a4a] dark:text-gray-100' : 'text-[#3a6a8a] line-through'}`}>
                         {user.username}
                       </span>
                       {!user.enabled && (
-                        <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-[#2a5a7a] dark:bg-gray-800">disabled</span>
+                        <span className="rounded bg-[#d6eeff] px-1.5 py-0.5 text-[10px] text-[#2a5a7a] dark:bg-gray-800">disabled</span>
                       )}
                     </div>
                   </div>
@@ -258,14 +258,14 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => handleToggleEnabled(user)}
-                      className="rounded-lg p-2 text-[#3a6a8a] hover:bg-[#d6eeff] hover:text-gray-600 dark:hover:bg-gray-700"
+                      className="rounded-lg p-2 text-[#3a6a8a] hover:bg-[#d6eeff] hover:text-[#1a4a6a] dark:hover:bg-gray-700"
                       title={user.enabled ? 'Disable user' : 'Enable user'}
                     >
                       {user.enabled ? <X className="h-4 w-4" /> : <Check className="h-4 w-4" />}
                     </button>
                     <button
                       onClick={() => handleResetPassword(user.username)}
-                      className="rounded-lg p-2 text-[#3a6a8a] hover:bg-[#d6eeff] hover:text-gray-600 dark:hover:bg-gray-700"
+                      className="rounded-lg p-2 text-[#3a6a8a] hover:bg-[#d6eeff] hover:text-[#1a4a6a] dark:hover:bg-gray-700"
                       title="Reset password"
                     >
                       <Key className="h-4 w-4" />

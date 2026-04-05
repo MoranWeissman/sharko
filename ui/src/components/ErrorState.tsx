@@ -11,7 +11,7 @@ export function ErrorState({ message, onRetry }: ErrorStateProps) {
         alt=""
         className="h-16 w-auto opacity-70"
       />
-      <p className="text-sm text-gray-700 dark:text-gray-300">{message}</p>
+      <p className="text-sm text-[#0a3a5a] dark:text-gray-300">{message}</p>
       {onRetry && (
         <button
           type="button"

@@ -28,14 +28,14 @@ describe('StatusBadge', () => {
     expect(dot.className).toContain('bg-red-500');
   });
 
-  it('renders with "Unknown" status and shows gray styling', () => {
+  it('renders with "Unknown" status and shows blue-tinted styling', () => {
     const { container } = render(<StatusBadge status="Unknown" />);
     const badge = container.firstChild as HTMLElement;
-    expect(badge.className).toContain('bg-gray-100');
-    expect(badge.className).toContain('text-gray-600');
+    expect(badge.className).toContain('bg-[#d6eeff]');
+    expect(badge.className).toContain('text-[#1a4a6a]');
 
     const dot = badge.querySelector('span span') as HTMLElement;
-    expect(dot.className).toContain('bg-gray-400');
+    expect(dot.className).toContain('bg-[#3a6a8a]');
   });
 
   it('maps internal statuses to friendly display names', () => {
