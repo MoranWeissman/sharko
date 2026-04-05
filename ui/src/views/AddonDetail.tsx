@@ -671,6 +671,104 @@ export function AddonDetail() {
                   </div>
                 </div>
               )}
+
+              {/* Advanced Configuration — collapsed by default */}
+              <details className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff]">
+                <summary className="cursor-pointer px-5 py-4 text-base font-semibold text-[#0a2a4a] select-none">
+                  Advanced Configuration
+                </summary>
+                <div className="border-t border-[#6aade0] px-5 py-4 space-y-4">
+                  {/* Sync Wave */}
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-[#0a2a4a]">Sync Wave</p>
+                      <p className="text-xs text-[#3a6a8a]">Controls deployment ordering. Negative = earlier, positive = later.</p>
+                    </div>
+                    <span className="font-mono text-sm text-[#0a2a4a]">{addon.syncWave ?? 0}</span>
+                  </div>
+
+                  {/* Self-Heal */}
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-[#0a2a4a]">Self-Heal</p>
+                      <p className="text-xs text-[#3a6a8a]">When enabled, ArgoCD reverts manual changes automatically.</p>
+                    </div>
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                      addon.selfHeal === false
+                        ? 'bg-amber-100 text-amber-700'
+                        : 'bg-green-100 text-green-700'
+                    }`}>
+                      {addon.selfHeal === false ? 'Disabled' : 'Enabled'}
+                    </span>
+                  </div>
+
+                  {/* Sync Options */}
+                  <div>
+                    <p className="text-sm font-medium text-[#0a2a4a]">Sync Options</p>
+                    <p className="text-xs text-[#3a6a8a] mb-2">ArgoCD sync options applied to this addon.</p>
+                    {addon.syncOptions && addon.syncOptions.length > 0 ? (
+                      <div className="flex flex-wrap gap-1">
+                        {addon.syncOptions.map((opt: string) => (
+                          <span key={opt} className="rounded bg-[#d6eeff] px-2 py-0.5 text-xs font-mono text-[#0a2a4a]">{opt}</span>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-[#5a8aaa]">Default (CreateNamespace=true)</p>
+                    )}
+                  </div>
+
+                  {/* Ignore Differences */}
+                  <div>
+                    <p className="text-sm font-medium text-[#0a2a4a]">Ignore Differences</p>
+                    <p className="text-xs text-[#3a6a8a] mb-2">Fields ignored during ArgoCD sync comparison.</p>
+                    {addon.ignoreDifferences && addon.ignoreDifferences.length > 0 ? (
+                      <pre className="rounded bg-[#071828] p-3 text-xs text-[#bee0ff] overflow-auto">
+                        {JSON.stringify(addon.ignoreDifferences, null, 2)}
+                      </pre>
+                    ) : (
+                      <p className="text-xs text-[#5a8aaa]">None configured</p>
+                    )}
+                  </div>
+
+                  {/* Extra Helm Values */}
+                  <div>
+                    <p className="text-sm font-medium text-[#0a2a4a]">Extra Helm Values</p>
+                    <p className="text-xs text-[#3a6a8a] mb-2">Additional Helm parameters injected during rendering.</p>
+                    {addon.extraHelmValues && Object.keys(addon.extraHelmValues).length > 0 ? (
+                      <div className="space-y-1">
+                        {Object.entries(addon.extraHelmValues).map(([k, v]) => (
+                          <div key={k} className="flex items-center gap-2 text-xs">
+                            <span className="font-mono font-medium text-[#0a2a4a]">{k}</span>
+                            <span className="text-[#3a6a8a]">=</span>
+                            <span className="font-mono text-[#1a4a6a]">{v as string}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-[#5a8aaa]">None configured</p>
+                    )}
+                  </div>
+
+                  {/* Additional Sources */}
+                  <div>
+                    <p className="text-sm font-medium text-[#0a2a4a]">Additional Sources</p>
+                    <p className="text-xs text-[#3a6a8a] mb-2">Extra chart or manifest sources deployed alongside the main addon.</p>
+                    {addon.additionalSources && addon.additionalSources.length > 0 ? (
+                      <div className="space-y-2">
+                        {addon.additionalSources.map((src, i: number) => (
+                          <div key={i} className="rounded bg-[#e0f0ff] px-3 py-2 text-xs">
+                            {src.chart && <p><span className="text-[#3a6a8a]">Chart:</span> <span className="font-mono text-[#0a2a4a]">{src.chart} @ {src.version}</span></p>}
+                            {src.path && <p><span className="text-[#3a6a8a]">Path:</span> <span className="font-mono text-[#0a2a4a]">{src.path}</span></p>}
+                            {src.repoURL && <p><span className="text-[#3a6a8a]">Repo:</span> <span className="font-mono text-[#0a2a4a]">{src.repoURL}</span></p>}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-[#5a8aaa]">Single source (main chart only)</p>
+                    )}
+                  </div>
+                </div>
+              </details>
             </>
           )}
 

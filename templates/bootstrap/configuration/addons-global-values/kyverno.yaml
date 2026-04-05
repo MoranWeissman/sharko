@@ -1,0 +1,3 @@
+# Global values for kyverno addon
+kyverno:
+  enabled: false

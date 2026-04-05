@@ -1,0 +1,6 @@
+# Addon catalog entry for external-dns
+appName: external-dns
+repoURL: https://kubernetes-sigs.github.io/external-dns/
+chart: external-dns
+version: "1.15.0"
+namespace: external-dns

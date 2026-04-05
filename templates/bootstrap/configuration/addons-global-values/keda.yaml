@@ -1,0 +1,3 @@
+# Global values for keda addon
+keda:
+  enabled: false

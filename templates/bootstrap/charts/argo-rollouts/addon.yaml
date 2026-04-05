@@ -1,0 +1,6 @@
+# Addon catalog entry for argo-rollouts
+appName: argo-rollouts
+repoURL: https://argoproj.github.io/argo-helm
+chart: argo-rollouts
+version: "2.38.2"
+namespace: argo-rollouts

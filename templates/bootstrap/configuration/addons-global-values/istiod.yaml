@@ -1,0 +1,3 @@
+# Global values for istiod addon
+istiod:
+  enabled: false

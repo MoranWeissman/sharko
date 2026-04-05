@@ -1,0 +1,8 @@
+# Addon catalog entry for kyverno
+appName: kyverno
+repoURL: https://kyverno.github.io/kyverno/
+chart: kyverno
+version: "3.3.4"
+namespace: kyverno
+syncOptions:
+  - ServerSideApply=true

@@ -1,0 +1,3 @@
+# Global values for cert-manager addon
+cert-manager:
+  enabled: false
