@@ -39,6 +39,9 @@ jobs:
             type=semver,pattern={{major}}
             type=raw,value=latest,enable={{is_default_branch}}
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -46,7 +49,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -90,8 +93,8 @@ jobs:
           CHART_FILE=$(ls sharko-*.tgz)
           helm push "$CHART_FILE" oci://${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
 
-  create-release:
-    name: Create GitHub Release
+  goreleaser:
+    name: Release CLI Binaries
     runs-on: ubuntu-latest
     needs: [build-and-push, helm-package]
     permissions:
@@ -102,44 +105,15 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Extract version from tag
-        id: version
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-
-      - name: Generate changelog
-        id: changelog
-        run: |
-          PREV_TAG=$(git tag --sort=-version:refname | grep -E '^v[0-9]' | sed -n '2p')
-          if [ -n "$PREV_TAG" ]; then
-            CHANGELOG=$(git log "${PREV_TAG}..${GITHUB_REF_NAME}" --pretty=format:"- %s" --no-merges)
-          else
-            CHANGELOG=$(git log --pretty=format:"- %s" --no-merges | head -50)
-          fi
-          {
-            echo "CHANGELOG<<EOF"
-            echo "$CHANGELOG"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - name: Set up Go
+        uses: actions/setup-go@v5
         with:
-          tag_name: ${{ github.ref_name }}
-          name: Sharko ${{ github.ref_name }}
-          body: |
-            ## Sharko ${{ github.ref_name }}
+          go-version-file: go.mod
 
-            ### Docker Image
-            ```
-            docker pull ghcr.io/moranweissman/sharko:${{ steps.version.outputs.VERSION }}
-            ```
-
-            ### Helm Chart
-            ```bash
-            helm install sharko oci://ghcr.io/moranweissman/sharko/sharko --version ${{ steps.version.outputs.VERSION }}
-            ```
-
-            ### Changes
-            ${{ steps.changelog.outputs.CHANGELOG }}
-          draft: false
-          prerelease: ${{ contains(github.ref_name, '-') }}
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v5
+        with:
+          version: latest
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
