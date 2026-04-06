@@ -3800,6 +3800,72 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/webhooks/git": {
+            "post": {
+                "description": "Receives GitHub push event webhooks. Verifies HMAC-SHA256 signature\nwhen SHARKO_WEBHOOK_SECRET is set, then triggers a cache refresh on\npushes to the configured base branch.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Git webhook receiver",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "GitHub HMAC-SHA256 signature",
+                        "name": "X-Hub-Signature-256",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "GitHub event type (push, ping, etc.)",
+                        "name": "X-GitHub-Event",
+                        "in": "header"
+                    },
+                    {
+                        "description": "GitHub push event payload",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.gitHubPushEvent"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Webhook accepted",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request or unreadable body",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid signature",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -4154,6 +4220,9 @@ const docTemplate = `{
                 "addon_data_unavailable": {
                     "type": "boolean"
                 },
+                "argo_unavailable": {
+                    "type": "boolean"
+                },
                 "clusters": {
                     "type": "array",
                     "items": {
@@ -4169,6 +4238,9 @@ const docTemplate = `{
                 "disconnected_clusters": {
                     "type": "integer"
                 },
+                "git_unavailable": {
+                    "type": "boolean"
+                },
                 "healthy_clusters": {
                     "type": "integer"
                 },
@@ -4178,6 +4250,9 @@ const docTemplate = `{
                 "out_of_sync_deployments": {
                     "type": "integer"
                 },
+                "server_version": {
+                    "type": "string"
+                },
                 "total_addons": {
                     "type": "integer"
                 },
@@ -4186,6 +4261,39 @@ const docTemplate = `{
                 },
                 "total_deployments": {
                     "type": "integer"
+                },
+                "uptime": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.gitHubPushEvent": {
+            "type": "object",
+            "properties": {
+                "commits": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {
+                                "type": "string"
+                            },
+                            "message": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "pusher": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "ref": {
+                    "type": "string"
                 }
             }
         },
