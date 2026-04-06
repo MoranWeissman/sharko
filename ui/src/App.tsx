@@ -1,19 +1,31 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { lazy, Suspense } from 'react'
+import { Loader2 } from 'lucide-react'
 import { AuthProvider, useAuth } from '@/hooks/useAuth'
 import { ConnectionProvider, useConnections } from '@/hooks/useConnections'
 import { ThemeProvider } from '@/hooks/useTheme'
 import { Layout } from '@/components/Layout'
 import { Login } from '@/views/Login'
-import { Dashboard } from '@/views/Dashboard'
-import { ClustersOverview } from '@/views/ClustersOverview'
-import { ClusterDetail } from '@/views/ClusterDetail'
-import { AddonCatalog } from '@/views/AddonCatalog'
-import { AddonDetail } from '@/views/AddonDetail'
-import { Observability } from '@/views/Observability'
-import { Dashboards } from '@/views/Dashboards'
-import { UserInfo } from '@/views/UserInfo'
-import { Settings } from '@/views/Settings'
 import { FirstRunWizard } from '@/components/FirstRunWizard'
+
+// Lazy-loaded views — split into separate chunks for faster initial load
+const Dashboard = lazy(() => import('@/views/Dashboard'))
+const ClustersOverview = lazy(() => import('@/views/ClustersOverview'))
+const ClusterDetail = lazy(() => import('@/views/ClusterDetail'))
+const AddonCatalog = lazy(() => import('@/views/AddonCatalog'))
+const AddonDetail = lazy(() => import('@/views/AddonDetail'))
+const Observability = lazy(() => import('@/views/Observability'))
+const Dashboards = lazy(() => import('@/views/Dashboards'))
+const Settings = lazy(() => import('@/views/Settings'))
+const UserInfo = lazy(() => import('@/views/UserInfo'))
+
+function PageLoader() {
+  return (
+    <div className="flex items-center justify-center h-full min-h-[200px]">
+      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+    </div>
+  )
+}
 
 function ConnectedApp() {
   const { connections, loading } = useConnections()
@@ -33,24 +45,26 @@ function ConnectedApp() {
   }
 
   return (
-    <Routes>
-      <Route path="/" element={<Layout />}>
-        <Route index element={<Navigate to="/dashboard" replace />} />
-        <Route path="dashboard" element={<Dashboard />} />
-        <Route path="clusters" element={<ClustersOverview />} />
-        <Route path="clusters/:name" element={<ClusterDetail />} />
-        <Route path="addons" element={<AddonCatalog />} />
-        <Route path="addons/:name" element={<AddonDetail />} />
-        <Route path="version-matrix" element={<Navigate to="/addons" replace />} />
-        <Route path="observability" element={<Observability />} />
-        <Route path="upgrade" element={<Navigate to="/addons" replace />} />
-        <Route path="dashboards" element={<Dashboards />} />
-        <Route path="settings" element={<Settings />} />
-        <Route path="users" element={<Navigate to="/settings?section=users" replace />} />
-        <Route path="api-keys" element={<Navigate to="/settings?section=api-keys" replace />} />
-        <Route path="user" element={<UserInfo />} />
-      </Route>
-    </Routes>
+    <Suspense fallback={<PageLoader />}>
+      <Routes>
+        <Route path="/" element={<Layout />}>
+          <Route index element={<Navigate to="/dashboard" replace />} />
+          <Route path="dashboard" element={<Dashboard />} />
+          <Route path="clusters" element={<ClustersOverview />} />
+          <Route path="clusters/:name" element={<ClusterDetail />} />
+          <Route path="addons" element={<AddonCatalog />} />
+          <Route path="addons/:name" element={<AddonDetail />} />
+          <Route path="version-matrix" element={<Navigate to="/addons" replace />} />
+          <Route path="observability" element={<Observability />} />
+          <Route path="upgrade" element={<Navigate to="/addons" replace />} />
+          <Route path="dashboards" element={<Dashboards />} />
+          <Route path="settings" element={<Settings />} />
+          <Route path="users" element={<Navigate to="/settings?section=users" replace />} />
+          <Route path="api-keys" element={<Navigate to="/settings?section=api-keys" replace />} />
+          <Route path="user" element={<UserInfo />} />
+        </Route>
+      </Routes>
+    </Suspense>
   )
 }
 

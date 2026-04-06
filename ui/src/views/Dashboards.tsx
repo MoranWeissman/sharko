@@ -388,3 +388,4 @@ export function Dashboards() {
     </div>
   );
 }
+export default Dashboards

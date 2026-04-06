@@ -811,3 +811,4 @@ function ConfigOverridesPanel({ data, loading, error, onRetry }: ConfigOverrides
     </div>
   );
 }
+export default ClusterDetail

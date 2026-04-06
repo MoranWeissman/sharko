@@ -1,0 +1,13 @@
+name: Validate Sharko Config
+on: [push, pull_request]
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Sharko CLI
+        run: |
+          curl -sL https://github.com/MoranWeissman/sharko/releases/latest/download/sharko-linux-amd64 -o sharko
+          chmod +x sharko
+      - name: Validate
+        run: ./sharko validate .

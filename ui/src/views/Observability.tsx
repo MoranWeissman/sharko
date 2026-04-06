@@ -826,3 +826,4 @@ export function Observability() {
     </div>
   );
 }
+export default Observability

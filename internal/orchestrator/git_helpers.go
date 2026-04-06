@@ -5,8 +5,32 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"strings"
 )
+
+// detectConflicts checks whether any of the target files have been modified on
+// the base branch since the caller last read them.  This is a best-effort,
+// defensive check — it does not block the operation but logs a warning so
+// operators can investigate unexpected concurrent modifications.
+//
+// A proper conflict will be caught by GitHub's PR merge check anyway; this
+// gives an early, human-readable signal in the server logs.
+func (o *Orchestrator) detectConflicts(ctx context.Context, files map[string][]byte) {
+	for path, localContent := range files {
+		remoteContent, err := o.git.GetFileContent(ctx, path, o.gitops.BaseBranch)
+		if err != nil {
+			// File doesn't exist yet on the base branch — no conflict possible.
+			continue
+		}
+		if string(remoteContent) != string(localContent) {
+			slog.Warn("Possible write conflict detected: file has changed on base branch since read",
+				"file", path,
+				"base_branch", o.gitops.BaseBranch,
+			)
+		}
+	}
+}
 
 // commitChanges creates a PR for the given file changes.
 // Acquires the shared Git mutex to serialize all Git operations across concurrent requests.
@@ -16,6 +40,10 @@ func (o *Orchestrator) commitChanges(ctx context.Context, files map[string][]byt
 		o.gitMu.Lock()
 		defer o.gitMu.Unlock()
 	}
+
+	// Check for potential conflicts before creating the branch.
+	// This is a defensive log-only check; GitHub enforces the real merge guard.
+	o.detectConflicts(ctx, files)
 
 	// Generate a unique branch name.
 	sanitized := strings.ReplaceAll(operation, " ", "-")

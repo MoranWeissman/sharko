@@ -684,3 +684,4 @@ export function ClustersOverview() {
     </div>
   );
 }
+export default ClustersOverview
