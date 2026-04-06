@@ -63,6 +63,9 @@ type Server struct {
 
 	// startTime records when the server was created (used for uptime reporting).
 	startTime time.Time
+
+	// version is set at startup via SetVersion and reflects the ldflags-injected build version.
+	version string
 }
 
 // NewServer creates a new API server.
@@ -101,6 +104,12 @@ func NewServer(
 		notificationStore: notifications.NewStore(100, notifications.DefaultNotificationsPath),
 		startTime:         time.Now(),
 	}
+}
+
+// SetVersion stores the build version (injected via ldflags) for use in the health endpoint.
+// Falls back to "dev" if never called or called with an empty string.
+func (s *Server) SetVersion(v string) {
+	s.version = v
 }
 
 // SetAIConfigStore sets the persistent AI config store (K8s mode only).

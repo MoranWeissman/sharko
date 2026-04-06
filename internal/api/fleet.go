@@ -62,8 +62,12 @@ func formatUptime(d time.Duration) string {
 // handleGetFleetStatus handles GET /api/v1/fleet/status — read-only cluster status aggregation.
 // It is resilient: Git and ArgoCD unavailability are reported as flags, not errors.
 func (s *Server) handleGetFleetStatus(w http.ResponseWriter, r *http.Request) {
+	v := s.version
+	if v == "" {
+		v = "dev"
+	}
 	resp := fleetStatusResponse{
-		ServerVersion: appVersion,
+		ServerVersion: v,
 		Uptime:        formatUptime(time.Since(s.startTime)),
 		Clusters:      make([]fleetClusterSummary, 0),
 	}
