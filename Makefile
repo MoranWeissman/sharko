@@ -1,6 +1,6 @@
 # Sharko — Makefile
 
-.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go
+.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go release
 
 PORT ?= 8080
 
@@ -74,3 +74,16 @@ lint: ## Go vet + UI build check
 
 clean: ## Remove build artifacts
 	rm -rf bin/ ui/dist/
+
+release: ## Tag and push a release (usage: make release VERSION=1.0.0)
+	@if [ -z "$(VERSION)" ]; then echo "Usage: make release VERSION=1.0.0"; exit 1; fi
+	@echo "$(VERSION)" > version.txt
+	@sed -i '' 's/^version:.*/version: $(VERSION)/' charts/sharko/Chart.yaml
+	@sed -i '' 's/^appVersion:.*/appVersion: "$(VERSION)"/' charts/sharko/Chart.yaml
+	@git add version.txt charts/sharko/Chart.yaml
+	@git commit -m "release: v$(VERSION)"
+	@git tag -a "v$(VERSION)" -m "Release v$(VERSION)"
+	@echo ""
+	@echo "  Tagged v$(VERSION). Push with:"
+	@echo "    git push origin main && git push origin v$(VERSION)"
+	@echo ""

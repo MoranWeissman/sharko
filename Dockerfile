@@ -13,9 +13,10 @@ COPY go.mod go.sum ./
 RUN go mod download
 # CACHE_BUST invalidates the layer cache when source changes (set to git SHA in CI)
 ARG CACHE_BUST=dev
+ARG VERSION=dev
 COPY cmd/ cmd/
 COPY internal/ internal/
-RUN CGO_ENABLED=0 go build -o sharko ./cmd/sharko
+RUN CGO_ENABLED=0 go build -ldflags "-X main.version=${VERSION}" -o sharko ./cmd/sharko
 
 # Stage 3: Final image
 FROM alpine:3.21
