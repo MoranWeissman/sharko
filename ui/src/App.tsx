@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from '@/hooks/useAuth'
-import { ConnectionProvider } from '@/hooks/useConnections'
+import { ConnectionProvider, useConnections } from '@/hooks/useConnections'
 import { ThemeProvider } from '@/hooks/useTheme'
 import { Layout } from '@/components/Layout'
 import { Login } from '@/views/Login'
@@ -13,6 +13,46 @@ import { Observability } from '@/views/Observability'
 import { Dashboards } from '@/views/Dashboards'
 import { UserInfo } from '@/views/UserInfo'
 import { Settings } from '@/views/Settings'
+import { FirstRunWizard } from '@/components/FirstRunWizard'
+
+function ConnectedApp() {
+  const { connections, loading } = useConnections()
+
+  // Show spinner while loading connections
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#bee0ff] dark:bg-gray-950">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-[#6aade0] border-t-[#1a3d5c] dark:border-gray-700 dark:border-t-teal-500" />
+      </div>
+    )
+  }
+
+  // No connections yet — show first-run wizard
+  if (connections.length === 0) {
+    return <FirstRunWizard />
+  }
+
+  return (
+    <Routes>
+      <Route path="/" element={<Layout />}>
+        <Route index element={<Navigate to="/dashboard" replace />} />
+        <Route path="dashboard" element={<Dashboard />} />
+        <Route path="clusters" element={<ClustersOverview />} />
+        <Route path="clusters/:name" element={<ClusterDetail />} />
+        <Route path="addons" element={<AddonCatalog />} />
+        <Route path="addons/:name" element={<AddonDetail />} />
+        <Route path="version-matrix" element={<Navigate to="/addons" replace />} />
+        <Route path="observability" element={<Observability />} />
+        <Route path="upgrade" element={<Navigate to="/addons" replace />} />
+        <Route path="dashboards" element={<Dashboards />} />
+        <Route path="settings" element={<Settings />} />
+        <Route path="users" element={<Navigate to="/settings?section=users" replace />} />
+        <Route path="api-keys" element={<Navigate to="/settings?section=api-keys" replace />} />
+        <Route path="user" element={<UserInfo />} />
+      </Route>
+    </Routes>
+  )
+}
 
 function AppRoutes() {
   const { isAuthenticated, loading } = useAuth()
@@ -31,24 +71,7 @@ function AppRoutes() {
 
   return (
     <ConnectionProvider>
-      <Routes>
-        <Route path="/" element={<Layout />}>
-          <Route index element={<Navigate to="/dashboard" replace />} />
-          <Route path="dashboard" element={<Dashboard />} />
-          <Route path="clusters" element={<ClustersOverview />} />
-          <Route path="clusters/:name" element={<ClusterDetail />} />
-          <Route path="addons" element={<AddonCatalog />} />
-          <Route path="addons/:name" element={<AddonDetail />} />
-          <Route path="version-matrix" element={<Navigate to="/addons" replace />} />
-          <Route path="observability" element={<Observability />} />
-          <Route path="upgrade" element={<Navigate to="/addons" replace />} />
-          <Route path="dashboards" element={<Dashboards />} />
-          <Route path="settings" element={<Settings />} />
-          <Route path="users" element={<Navigate to="/settings?section=users" replace />} />
-          <Route path="api-keys" element={<Navigate to="/settings?section=api-keys" replace />} />
-          <Route path="user" element={<UserInfo />} />
-        </Route>
-      </Routes>
+      <ConnectedApp />
     </ConnectionProvider>
   )
 }

@@ -27,11 +27,16 @@ export function Login() {
 
   return (
     <div className="flex min-h-screen">
-      {/* Left side — explicit dimensions prevent layout shift on background image load */}
-      <div
-        className="hidden lg:block lg:flex-1 bg-[#0a2a4a] bg-center bg-no-repeat"
-        style={{ backgroundImage: "url('/sharko-login-bg.png')", backgroundSize: "contain", minHeight: "100vh" }}
-      />
+      {/* Left side — mascot panel */}
+      <div className="hidden lg:flex lg:flex-1 items-center justify-center bg-[#0a2a4a]">
+        <img
+          src="/sharko-login-bg.png"
+          alt=""
+          className="h-full w-full object-contain object-center max-h-screen"
+          style={{ maxWidth: '100%' }}
+          loading="eager"
+        />
+      </div>
 
       {/* Right side — login panel */}
       <div className="flex w-full flex-col bg-[#f0f7ff] lg:w-[440px] lg:min-w-[400px]">

@@ -235,6 +235,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
   const [initRunning, setInitRunning] = useState(false)
   const [initResult, setInitResult] = useState<string | null>(null)
   const [initError, setInitError] = useState<string | null>(null)
+  const [justSaved, setJustSaved] = useState(false)
 
   const handleInitRepo = useCallback(async () => {
     setInitRunning(true)
@@ -372,6 +373,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
       setShowAddForm(false)
       setAddForm({ ...emptyForm })
       setAddTestStatus({ git: 'idle', argocd: 'idle' })
+      setJustSaved(true)
     }, setAddError, setAddSaving)
   }
 
@@ -793,10 +795,29 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
       {/* Initialize Repository */}
       {connections.length > 0 && (
         <section className="space-y-4">
-          <h3 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
-            Initialize Repository
-          </h3>
-          <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div className="flex items-center gap-2">
+            <h3 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
+              Initialize Repository
+            </h3>
+            {justSaved && (
+              <span className="rounded-full bg-teal-100 px-2.5 py-0.5 text-xs font-medium text-teal-700 dark:bg-teal-900/30 dark:text-teal-300">
+                New connection saved
+              </span>
+            )}
+          </div>
+          <div className={`rounded-xl ring-2 bg-[#f0f7ff] p-6 shadow-sm dark:bg-gray-800 transition-all ${
+            justSaved
+              ? 'ring-teal-400 border border-teal-200 dark:ring-teal-600 dark:border-teal-800'
+              : 'ring-[#6aade0] dark:border-gray-700'
+          }`}>
+            {justSaved && (
+              <div className="mb-4 flex items-start gap-2 rounded-lg bg-teal-50 p-3 dark:bg-teal-950/30">
+                <Sparkles className="h-4 w-4 mt-0.5 shrink-0 text-teal-600 dark:text-teal-400" />
+                <p className="text-sm text-teal-700 dark:text-teal-300">
+                  Connection saved! If your repository is empty, initialize it now to create the required folder structure and ApplicationSet.
+                </p>
+              </div>
+            )}
             <p className="mb-4 text-sm text-[#1a4a6a] dark:text-gray-400">
               Bootstrap the Git repository with the required Sharko directory structure and ArgoCD resources.
               Safe to run on an already-initialized repository.
@@ -815,6 +836,15 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
                 )}
                 Initialize Repository
               </button>
+              {justSaved && !initRunning && !initResult && (
+                <button
+                  type="button"
+                  onClick={() => setJustSaved(false)}
+                  className="text-xs text-[#3a6a8a] hover:text-[#1a4a6a] dark:text-gray-500 dark:hover:text-gray-400"
+                >
+                  Dismiss
+                </button>
+              )}
             </div>
             {initError && (
               <p className="mt-3 text-sm text-red-600 dark:text-red-400">{initError}</p>
