@@ -49,3 +49,6 @@ coverage/
 # Build
 *.tar.gz
 .superpowers/
+
+# Internal planning docs (not for public repo)
+docs/superpowers/
