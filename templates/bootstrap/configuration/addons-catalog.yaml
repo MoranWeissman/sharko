@@ -23,16 +23,16 @@ applicationsets:
     namespace: kube-system
 
   # Example with all available fields:
-  # - name: kyverno
-  #   repoURL: https://kyverno.github.io/kyverno/
-  #   chart: kyverno
-  #   version: "3.3.4"
-  #   namespace: kyverno
-  #   syncWave: 0
-  #   selfHeal: true
-  #   syncOptions:
+  # - name: kyverno                        # (required) addon identifier
+  #   repoURL: https://kyverno.github.io/  # (required) Helm repo URL
+  #   chart: kyverno                       # (required) chart name in the repo
+  #   version: "3.3.4"                     # (required) chart version
+  #   namespace: kyverno                   # target namespace (default: addon name)
+  #   syncWave: 0                          # deploy order: negative=first, positive=last
+  #   selfHeal: true                       # auto-revert manual changes
+  #   syncOptions:                         # ArgoCD sync options
   #     - ServerSideApply=true
-  #   ignoreDifferences:
+  #   ignoreDifferences:                   # fields ArgoCD should ignore during diff
   #     - group: kyverno.io
   #       kind: ClusterPolicy
   #       jsonPointers:
