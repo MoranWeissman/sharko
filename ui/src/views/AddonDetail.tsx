@@ -16,8 +16,11 @@ import {
   LayoutGrid,
   Server,
   FileCode,
+  Pencil,
+  Plus,
+  X,
 } from 'lucide-react'
-import { api, removeAddon, upgradeAddon } from '@/services/api'
+import { api, removeAddon, upgradeAddon, configureAddon } from '@/services/api'
 import type { AddonCatalogItem, ConnectionsListResponse } from '@/services/models'
 import { StatCard } from '@/components/StatCard'
 import { StatusBadge } from '@/components/StatusBadge'
@@ -268,6 +271,16 @@ export function AddonDetail() {
   const [upgradeError, setUpgradeError] = useState<string | null>(null)
   const [upgradeResult, setUpgradeResult] = useState<string | null>(null)
 
+  // Advanced config editing
+  const [isEditingConfig, setIsEditingConfig] = useState(false)
+  const [editSyncWave, setEditSyncWave] = useState<number>(0)
+  const [editSelfHeal, setEditSelfHeal] = useState<boolean>(true)
+  const [editSyncOptionsText, setEditSyncOptionsText] = useState<string>('')
+  const [editHelmValues, setEditHelmValues] = useState<{ key: string; value: string }[]>([])
+  const [configSaving, setConfigSaving] = useState(false)
+  const [configError, setConfigError] = useState<string | null>(null)
+  const [configSuccess, setConfigSuccess] = useState<string | null>(null)
+
   useEffect(() => {
     if (!name) return
     api
@@ -327,6 +340,70 @@ export function AddonDetail() {
       setUpgradeSubmitting(false)
     }
   }, [name, upgradeVersion, upgradeCluster])
+
+  const handleStartEditConfig = useCallback(() => {
+    if (!addon) return
+    setEditSyncWave(addon.syncWave ?? 0)
+    setEditSelfHeal(addon.selfHeal !== false)
+    setEditSyncOptionsText((addon.syncOptions ?? []).join(', '))
+    setEditHelmValues(
+      Object.entries(addon.extraHelmValues ?? {}).map(([key, value]) => ({ key, value })),
+    )
+    setConfigError(null)
+    setConfigSuccess(null)
+    setIsEditingConfig(true)
+  }, [addon])
+
+  const handleCancelEditConfig = useCallback(() => {
+    setIsEditingConfig(false)
+    setConfigError(null)
+    setConfigSuccess(null)
+  }, [])
+
+  const handleSaveConfig = useCallback(async () => {
+    if (!name || !addon) return
+    setConfigSaving(true)
+    setConfigError(null)
+    setConfigSuccess(null)
+    try {
+      const syncOptions = editSyncOptionsText
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+
+      const extraHelmValues: Record<string, string> = {}
+      for (const { key, value } of editHelmValues) {
+        if (key.trim()) {
+          extraHelmValues[key.trim()] = value
+        }
+      }
+
+      const payload: {
+        sync_wave?: number
+        self_heal?: boolean
+        sync_options?: string[]
+        extra_helm_values?: Record<string, string>
+      } = {}
+
+      if (editSyncWave !== (addon.syncWave ?? 0)) payload.sync_wave = editSyncWave
+      if (editSelfHeal !== (addon.selfHeal !== false)) payload.self_heal = editSelfHeal
+      const origOptions = (addon.syncOptions ?? []).join(',')
+      if (syncOptions.join(',') !== origOptions) payload.sync_options = syncOptions
+      const origHelm = JSON.stringify(addon.extraHelmValues ?? {})
+      if (JSON.stringify(extraHelmValues) !== origHelm) payload.extra_helm_values = extraHelmValues
+
+      const result = await configureAddon(name, payload)
+      const prUrl = result?.pr_url || result?.pull_request_url
+      setConfigSuccess(prUrl ? `Configuration updated. PR: ${prUrl}` : 'Configuration updated successfully.')
+      setIsEditingConfig(false)
+      // Refresh addon data
+      api.getAddonDetail(name).then((res) => setAddon(res.addon)).catch(() => {})
+    } catch (e: unknown) {
+      setConfigError(e instanceof Error ? e.message : 'Failed to save configuration')
+    } finally {
+      setConfigSaving(false)
+    }
+  }, [name, addon, editSyncWave, editSelfHeal, editSyncOptionsText, editHelmValues])
 
   const enabledApps = useMemo(
     () => (addon ? addon.applications.filter((a) => a.enabled) : []),
@@ -674,39 +751,104 @@ export function AddonDetail() {
 
               {/* Advanced Configuration — collapsed by default */}
               <details className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff]">
-                <summary className="cursor-pointer px-5 py-4 text-base font-semibold text-[#0a2a4a] select-none">
-                  Advanced Configuration
+                <summary className="cursor-pointer px-5 py-4 select-none">
+                  <div className="flex items-center justify-between">
+                    <span className="text-base font-semibold text-[#0a2a4a]">Advanced Configuration</span>
+                    {!isEditingConfig && (
+                      <RoleGuard adminOnly>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.preventDefault(); handleStartEditConfig() }}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff]"
+                        >
+                          <Pencil className="h-3 w-3" />
+                          Edit
+                        </button>
+                      </RoleGuard>
+                    )}
+                  </div>
                 </summary>
                 <div className="border-t border-[#6aade0] px-5 py-4 space-y-4">
+
+                  {/* Success/Error messages */}
+                  {configSuccess && (
+                    <div className="rounded-lg bg-green-50 px-4 py-3 text-sm text-green-700 ring-1 ring-green-200">
+                      {configSuccess}
+                    </div>
+                  )}
+                  {configError && (
+                    <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600 ring-1 ring-red-200">
+                      {configError}
+                    </div>
+                  )}
+
                   {/* Sync Wave */}
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-4">
                     <div>
                       <p className="text-sm font-medium text-[#0a2a4a]">Sync Wave</p>
                       <p className="text-xs text-[#3a6a8a]">Controls deployment ordering. Negative = earlier, positive = later.</p>
                     </div>
-                    <span className="font-mono text-sm text-[#0a2a4a]">{addon.syncWave ?? 0}</span>
+                    {isEditingConfig ? (
+                      <input
+                        type="number"
+                        value={editSyncWave}
+                        onChange={(e) => setEditSyncWave(Number(e.target.value))}
+                        className="w-24 rounded-md border border-[#5a9dd0] bg-white px-3 py-1.5 text-right text-sm font-mono text-[#0a2a4a] focus:border-[#1a6aaa] focus:outline-none focus:ring-1 focus:ring-[#1a6aaa]"
+                      />
+                    ) : (
+                      <span className="font-mono text-sm text-[#0a2a4a]">{addon.syncWave ?? 0}</span>
+                    )}
                   </div>
 
                   {/* Self-Heal */}
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-4">
                     <div>
                       <p className="text-sm font-medium text-[#0a2a4a]">Self-Heal</p>
                       <p className="text-xs text-[#3a6a8a]">When enabled, ArgoCD reverts manual changes automatically.</p>
                     </div>
-                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                      addon.selfHeal === false
-                        ? 'bg-amber-100 text-amber-700'
-                        : 'bg-green-100 text-green-700'
-                    }`}>
-                      {addon.selfHeal === false ? 'Disabled' : 'Enabled'}
-                    </span>
+                    {isEditingConfig ? (
+                      <label className="flex cursor-pointer items-center gap-2">
+                        <span className="text-xs text-[#2a5a7a]">{editSelfHeal ? 'Enabled' : 'Disabled'}</span>
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={editSelfHeal}
+                          onClick={() => setEditSelfHeal((v) => !v)}
+                          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
+                            editSelfHeal ? 'bg-[#1a6aaa]' : 'bg-[#c0ddf0]'
+                          }`}
+                        >
+                          <span
+                            className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${
+                              editSelfHeal ? 'translate-x-4' : 'translate-x-1'
+                            }`}
+                          />
+                        </button>
+                      </label>
+                    ) : (
+                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                        addon.selfHeal === false
+                          ? 'bg-amber-100 text-amber-700'
+                          : 'bg-green-100 text-green-700'
+                      }`}>
+                        {addon.selfHeal === false ? 'Disabled' : 'Enabled'}
+                      </span>
+                    )}
                   </div>
 
                   {/* Sync Options */}
                   <div>
                     <p className="text-sm font-medium text-[#0a2a4a]">Sync Options</p>
                     <p className="text-xs text-[#3a6a8a] mb-2">ArgoCD sync options applied to this addon.</p>
-                    {addon.syncOptions && addon.syncOptions.length > 0 ? (
+                    {isEditingConfig ? (
+                      <textarea
+                        value={editSyncOptionsText}
+                        onChange={(e) => setEditSyncOptionsText(e.target.value)}
+                        placeholder="CreateNamespace=true, ServerSideApply=true"
+                        rows={2}
+                        className="w-full rounded-md border border-[#5a9dd0] bg-white px-3 py-2 text-sm font-mono text-[#0a2a4a] placeholder-[#5a8aaa] focus:border-[#1a6aaa] focus:outline-none focus:ring-1 focus:ring-[#1a6aaa]"
+                      />
+                    ) : addon.syncOptions && addon.syncOptions.length > 0 ? (
                       <div className="flex flex-wrap gap-1">
                         {addon.syncOptions.map((opt: string) => (
                           <span key={opt} className="rounded bg-[#d6eeff] px-2 py-0.5 text-xs font-mono text-[#0a2a4a]">{opt}</span>
@@ -717,10 +859,10 @@ export function AddonDetail() {
                     )}
                   </div>
 
-                  {/* Ignore Differences */}
+                  {/* Ignore Differences — always read-only */}
                   <div>
                     <p className="text-sm font-medium text-[#0a2a4a]">Ignore Differences</p>
-                    <p className="text-xs text-[#3a6a8a] mb-2">Fields ignored during ArgoCD sync comparison.</p>
+                    <p className="text-xs text-[#3a6a8a] mb-2">Fields ignored during ArgoCD sync comparison (read-only).</p>
                     {addon.ignoreDifferences && addon.ignoreDifferences.length > 0 ? (
                       <pre className="rounded bg-[#071828] p-3 text-xs text-[#bee0ff] overflow-auto">
                         {JSON.stringify(addon.ignoreDifferences, null, 2)}
@@ -734,7 +876,53 @@ export function AddonDetail() {
                   <div>
                     <p className="text-sm font-medium text-[#0a2a4a]">Extra Helm Values</p>
                     <p className="text-xs text-[#3a6a8a] mb-2">Additional Helm parameters injected during rendering.</p>
-                    {addon.extraHelmValues && Object.keys(addon.extraHelmValues).length > 0 ? (
+                    {isEditingConfig ? (
+                      <div className="space-y-2">
+                        {editHelmValues.map((row, idx) => (
+                          <div key={idx} className="flex items-center gap-2">
+                            <input
+                              type="text"
+                              value={row.key}
+                              onChange={(e) => {
+                                const updated = [...editHelmValues]
+                                updated[idx] = { ...updated[idx], key: e.target.value }
+                                setEditHelmValues(updated)
+                              }}
+                              placeholder="key"
+                              className="w-40 rounded-md border border-[#5a9dd0] bg-white px-2 py-1.5 text-xs font-mono text-[#0a2a4a] placeholder-[#5a8aaa] focus:border-[#1a6aaa] focus:outline-none focus:ring-1 focus:ring-[#1a6aaa]"
+                            />
+                            <span className="text-[#3a6a8a] text-xs">=</span>
+                            <input
+                              type="text"
+                              value={row.value}
+                              onChange={(e) => {
+                                const updated = [...editHelmValues]
+                                updated[idx] = { ...updated[idx], value: e.target.value }
+                                setEditHelmValues(updated)
+                              }}
+                              placeholder="value"
+                              className="flex-1 rounded-md border border-[#5a9dd0] bg-white px-2 py-1.5 text-xs font-mono text-[#0a2a4a] placeholder-[#5a8aaa] focus:border-[#1a6aaa] focus:outline-none focus:ring-1 focus:ring-[#1a6aaa]"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setEditHelmValues(editHelmValues.filter((_, i) => i !== idx))}
+                              className="rounded p-1 text-[#3a6a8a] hover:bg-[#d6eeff] hover:text-red-600"
+                              aria-label="Remove row"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                        <button
+                          type="button"
+                          onClick={() => setEditHelmValues([...editHelmValues, { key: '', value: '' }])}
+                          className="inline-flex items-center gap-1 rounded-md border border-dashed border-[#5a9dd0] px-3 py-1.5 text-xs text-[#2a5a7a] hover:bg-[#d6eeff]"
+                        >
+                          <Plus className="h-3 w-3" />
+                          Add row
+                        </button>
+                      </div>
+                    ) : addon.extraHelmValues && Object.keys(addon.extraHelmValues).length > 0 ? (
                       <div className="space-y-1">
                         {Object.entries(addon.extraHelmValues).map(([k, v]) => (
                           <div key={k} className="flex items-center gap-2 text-xs">
@@ -749,10 +937,10 @@ export function AddonDetail() {
                     )}
                   </div>
 
-                  {/* Additional Sources */}
+                  {/* Additional Sources — always read-only */}
                   <div>
                     <p className="text-sm font-medium text-[#0a2a4a]">Additional Sources</p>
-                    <p className="text-xs text-[#3a6a8a] mb-2">Extra chart or manifest sources deployed alongside the main addon.</p>
+                    <p className="text-xs text-[#3a6a8a] mb-2">Extra chart or manifest sources deployed alongside the main addon (read-only).</p>
                     {addon.additionalSources && addon.additionalSources.length > 0 ? (
                       <div className="space-y-2">
                         {addon.additionalSources.map((src, i: number) => (
@@ -767,6 +955,29 @@ export function AddonDetail() {
                       <p className="text-xs text-[#5a8aaa]">Single source (main chart only)</p>
                     )}
                   </div>
+
+                  {/* Edit mode action buttons */}
+                  {isEditingConfig && (
+                    <div className="flex items-center gap-3 border-t border-[#c0ddf0] pt-4">
+                      <button
+                        type="button"
+                        onClick={handleSaveConfig}
+                        disabled={configSaving}
+                        className="inline-flex items-center gap-2 rounded-lg bg-[#0a2a4a] px-4 py-2 text-sm font-medium text-white hover:bg-[#14466e] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {configSaving && <Loader2 className="h-4 w-4 animate-spin" />}
+                        Save
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleCancelEditConfig}
+                        disabled={configSaving}
+                        className="rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
                 </div>
               </details>
             </>

@@ -27,7 +27,11 @@ func (s *Server) handleListAddons(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{"applicationsets": addons})
+	p := parsePagination(r)
+	setPaginationHeaders(w, len(addons), p)
+	paged := applyPagination(addons, p)
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"applicationsets": paged})
 }
 
 // handleGetAddonCatalog godoc

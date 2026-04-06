@@ -16,14 +16,19 @@ import (
 // @Router /notifications [get]
 func (s *Server) handleListNotifications(w http.ResponseWriter, r *http.Request) {
 	if s.notificationStore == nil {
+		setPaginationHeaders(w, 0, parsePagination(r))
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"notifications": []interface{}{},
 			"unread_count":  0,
 		})
 		return
 	}
+	all := s.notificationStore.List()
+	p := parsePagination(r)
+	setPaginationHeaders(w, len(all), p)
+	paged := applyPagination(all, p)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"notifications": s.notificationStore.List(),
+		"notifications": paged,
 		"unread_count":  s.notificationStore.UnreadCount(),
 	})
 }

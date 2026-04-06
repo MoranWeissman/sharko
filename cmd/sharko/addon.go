@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"os"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 )
@@ -31,6 +33,9 @@ func init() {
 	configureAddonCmd.Flags().StringSlice("extra-helm-value", nil, "Extra Helm parameter key=value (repeatable)")
 	rootCmd.AddCommand(configureAddonCmd)
 	rootCmd.AddCommand(describeAddonCmd)
+
+	listAddonsCmd.Flags().Bool("show-config", false, "Show advanced config columns (sync-wave, self-heal, sync-options)")
+	rootCmd.AddCommand(listAddonsCmd)
 }
 
 var addAddonCmd = &cobra.Command{
@@ -337,6 +342,72 @@ var describeAddonCmd = &cobra.Command{
 		fmt.Printf("  Extra Helm Values: %s\n", noneIfEmpty(detail.ExtraHelmValues))
 		fmt.Printf("  Additional Sources: %s\n", noneIfEmptyAny(detail.AdditionalSources))
 
+		return nil
+	},
+}
+
+var listAddonsCmd = &cobra.Command{
+	Use:   "list-addons",
+	Short: "List addons in the catalog",
+	Long: `List all addons in the catalog with cluster deployment status.
+
+Examples:
+  sharko list-addons
+  sharko list-addons --show-config`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		showConfig, _ := cmd.Flags().GetBool("show-config")
+
+		respBody, status, err := apiGet("/api/v1/addons")
+		if err != nil {
+			return err
+		}
+		if status != 200 {
+			return printAPIError(respBody, status)
+		}
+
+		var resp struct {
+			Addons []struct {
+				AddonName       string  `json:"addon_name"`
+				Version         string  `json:"version"`
+				Namespace       string  `json:"namespace"`
+				SyncWave        int     `json:"syncWave"`
+				SelfHeal        *bool   `json:"selfHeal"`
+				SyncOptions     []string `json:"syncOptions"`
+				TotalClusters   int     `json:"total_clusters"`
+				EnabledClusters int     `json:"enabled_clusters"`
+			} `json:"addons"`
+		}
+		if err := json.Unmarshal(respBody, &resp); err != nil {
+			return fmt.Errorf("invalid response: %w", err)
+		}
+
+		if len(resp.Addons) == 0 {
+			fmt.Println("No addons in catalog.")
+			return nil
+		}
+
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		if showConfig {
+			fmt.Fprintln(w, "NAME\tVERSION\tNAMESPACE\tSYNC-WAVE\tSELF-HEAL\tCLUSTERS")
+		} else {
+			fmt.Fprintln(w, "NAME\tVERSION\tNAMESPACE\tCLUSTERS")
+		}
+
+		for _, a := range resp.Addons {
+			clusters := fmt.Sprintf("%d/%d", a.EnabledClusters, a.TotalClusters)
+			if showConfig {
+				selfHeal := "false"
+				if a.SelfHeal != nil && *a.SelfHeal {
+					selfHeal = "true"
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\n",
+					a.AddonName, a.Version, a.Namespace, a.SyncWave, selfHeal, clusters)
+			} else {
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
+					a.AddonName, a.Version, a.Namespace, clusters)
+			}
+		}
+		w.Flush()
 		return nil
 	},
 }
