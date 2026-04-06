@@ -1,4 +1,0 @@
-apiVersion: v2
-name: eso-configuration
-description: ESO configuration resources (ClusterSecretStore, etc.)
-version: 1.0.0

@@ -1,8 +1,0 @@
-apiVersion: v2
-name: infra-karpenter
-description: Helm chart for managing Karpenter infra-karpenters on EKS Auto-Mode clusters
-version: 1.0.0
-maintainers:
-  - name: maintainer
-    email: maintainer@example.com
-type: application

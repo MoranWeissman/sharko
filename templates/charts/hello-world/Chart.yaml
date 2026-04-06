@@ -1,4 +1,0 @@
-apiVersion: v2
-name: hello-world
-description: Minimal test chart — deploys a ConfigMap to verify ArgoCD cluster connectivity
-version: 0.1.0
