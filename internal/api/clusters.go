@@ -32,6 +32,10 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	p := parsePagination(r)
+	setPaginationHeaders(w, len(resp.Clusters), p)
+	resp.Clusters = applyPagination(resp.Clusters, p)
+
 	writeJSON(w, http.StatusOK, resp)
 }
 

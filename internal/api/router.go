@@ -330,7 +330,8 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 
 	// Wrap with middleware
 	var handler http.Handler = mux
-	handler = maxBodySize(handler, 1<<20) // 1MB request body limit
+	handler = maxBodySize(handler, 1<<20)                     // 1MB request body limit
+	handler = writeRateLimiter(30, 1*time.Minute)(handler)    // 30 writes/min per IP
 	handler = srv.basicAuthMiddleware(handler)
 	handler = corsMiddleware(handler)
 	handler = securityHeadersMiddleware(handler)
@@ -349,33 +350,34 @@ func maxBodySize(next http.Handler, maxBytes int64) http.Handler {
 	})
 }
 
-// --- Login rate limiter ---
+// --- Rate limiter (shared) ---
 
-type loginRateLimiter struct {
+// rateLimiter is a sliding-window, per-key rate limiter.
+type rateLimiter struct {
 	mu       sync.Mutex
 	attempts map[string][]time.Time
 	limit    int
 	window   time.Duration
 }
 
-func newLoginRateLimiter(limit int, window time.Duration) *loginRateLimiter {
-	return &loginRateLimiter{
+func newRateLimiter(limit int, window time.Duration) *rateLimiter {
+	return &rateLimiter{
 		attempts: make(map[string][]time.Time),
 		limit:    limit,
 		window:   window,
 	}
 }
 
-// Allow checks whether the given IP is within the rate limit.
+// Allow checks whether the given key (IP) is within the rate limit.
 // It cleans up expired entries on each call.
-func (rl *loginRateLimiter) Allow(ip string) bool {
+func (rl *rateLimiter) Allow(key string) bool {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
 	now := time.Now()
 	cutoff := now.Add(-rl.window)
 
-	// Clean up all stale entries periodically (every call is cheap enough for login traffic)
+	// Evict stale entries across all keys
 	for k, times := range rl.attempts {
 		filtered := times[:0]
 		for _, t := range times {
@@ -390,11 +392,41 @@ func (rl *loginRateLimiter) Allow(ip string) bool {
 		}
 	}
 
-	if len(rl.attempts[ip]) >= rl.limit {
+	if len(rl.attempts[key]) >= rl.limit {
 		return false
 	}
-	rl.attempts[ip] = append(rl.attempts[ip], now)
+	rl.attempts[key] = append(rl.attempts[key], now)
 	return true
+}
+
+// loginRateLimiter is an alias kept for readability at the call site.
+type loginRateLimiter = rateLimiter
+
+func newLoginRateLimiter(limit int, window time.Duration) *loginRateLimiter {
+	return newRateLimiter(limit, window)
+}
+
+// writeRateLimiter returns a middleware that rate-limits POST/PUT/PATCH/DELETE requests
+// per client IP. GET and OPTIONS requests pass through without consuming quota.
+func writeRateLimiter(limit int, window time.Duration) func(http.Handler) http.Handler {
+	rl := newRateLimiter(limit, window)
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method {
+			case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+				// Skip the login endpoint — it has its own stricter limiter
+				if r.URL.Path == "/api/v1/auth/login" {
+					next.ServeHTTP(w, r)
+					return
+				}
+				if !rl.Allow(clientIP(r)) {
+					writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
+					return
+				}
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 // clientIP extracts the client IP, preferring X-Forwarded-For (behind ALB/proxy).
