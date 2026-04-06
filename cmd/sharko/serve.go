@@ -210,7 +210,27 @@ var serveCmd = &cobra.Command{
 			return nil
 		}
 
-		// Provider + Orchestrator write-API deps (optional — only if provider is configured)
+		// Repo path and GitOps config — always constructed (not provider-dependent).
+		repoPaths := orchestrator.RepoPathsConfig{
+			ClusterValues:   getEnvDefault("SHARKO_REPO_PATH_CLUSTER_VALUES", "configuration/addons-clusters-values"),
+			GlobalValues:    getEnvDefault("SHARKO_REPO_PATH_GLOBAL_VALUES", "configuration/addons-global-values"),
+			Catalog:         getEnvDefault("SHARKO_REPO_PATH_CATALOG", "configuration/addons-catalog.yaml"),
+			Charts:          getEnvDefault("SHARKO_REPO_PATH_CHARTS", "charts/"),
+			Bootstrap:       getEnvDefault("SHARKO_REPO_PATH_BOOTSTRAP", "bootstrap/"),
+			HostClusterName: os.Getenv("SHARKO_HOST_CLUSTER_NAME"),
+		}
+
+		gitopsCfg := orchestrator.GitOpsConfig{
+			PRAutoMerge:  os.Getenv("SHARKO_GITOPS_PR_AUTO_MERGE") == "true",
+			BranchPrefix: getEnvDefault("SHARKO_GITOPS_BRANCH_PREFIX", "sharko/"),
+			CommitPrefix: getEnvDefault("SHARKO_GITOPS_COMMIT_PREFIX", "sharko:"),
+			BaseBranch:   getEnvDefault("SHARKO_GITOPS_BASE_BRANCH", "main"),
+			RepoURL:      os.Getenv("SHARKO_GITOPS_REPO_URL"),
+		}
+
+		// Provider + Orchestrator write-API deps (optional — only if provider is configured).
+		var credProvider providers.ClusterCredentialsProvider
+		var provCfgPtr *providers.Config
 		providerType := os.Getenv("SHARKO_PROVIDER_TYPE")
 		if providerType != "" {
 			namespace := os.Getenv("SHARKO_NAMESPACE")
@@ -225,30 +245,12 @@ var serveCmd = &cobra.Command{
 				Namespace: getEnvDefault("SHARKO_PROVIDER_NAMESPACE", namespace),
 			}
 
-			credProvider, err := providers.New(provCfg)
+			cp, err := providers.New(provCfg)
 			if err != nil {
 				log.Printf("WARNING: Could not create secrets provider: %v", err)
 			} else {
-				repoPaths := orchestrator.RepoPathsConfig{
-					ClusterValues: getEnvDefault("SHARKO_REPO_PATH_CLUSTER_VALUES", "configuration/addons-clusters-values"),
-					GlobalValues:  getEnvDefault("SHARKO_REPO_PATH_GLOBAL_VALUES", "configuration/addons-global-values"),
-					Catalog:       getEnvDefault("SHARKO_REPO_PATH_CATALOG", "configuration/addons-catalog.yaml"),
-					Charts:        getEnvDefault("SHARKO_REPO_PATH_CHARTS", "charts/"),
-					Bootstrap:     getEnvDefault("SHARKO_REPO_PATH_BOOTSTRAP", "bootstrap/"),
-				}
-
-				gitopsCfg := orchestrator.GitOpsConfig{
-					PRAutoMerge:  os.Getenv("SHARKO_GITOPS_PR_AUTO_MERGE") == "true",
-					BranchPrefix: getEnvDefault("SHARKO_GITOPS_BRANCH_PREFIX", "sharko/"),
-					CommitPrefix: getEnvDefault("SHARKO_GITOPS_COMMIT_PREFIX", "sharko:"),
-					BaseBranch:   getEnvDefault("SHARKO_GITOPS_BASE_BRANCH", "main"),
-					RepoURL:      os.Getenv("SHARKO_GITOPS_REPO_URL"),
-				}
-
-				// Host cluster name (for in-cluster detection in templates).
-				repoPaths.HostClusterName = os.Getenv("SHARKO_HOST_CLUSTER_NAME")
-
-				srv.SetWriteAPIDeps(credProvider, &provCfg, repoPaths, gitopsCfg)
+				credProvider = cp
+				provCfgPtr = &provCfg
 
 				// Default addons (applied to clusters registered without explicit addons).
 				if defaultAddonsEnv := os.Getenv("SHARKO_DEFAULT_ADDONS"); defaultAddonsEnv != "" {
@@ -268,6 +270,9 @@ var serveCmd = &cobra.Command{
 				log.Printf("Secrets provider enabled: %s", providerType)
 			}
 		}
+
+		// Always wire write-API deps — credProvider may be nil if no provider is configured.
+		srv.SetWriteAPIDeps(credProvider, provCfgPtr, repoPaths, gitopsCfg)
 
 		// Addon secret definitions — create persistent store and load saved definitions.
 		addonStore := config.NewAddonSecretStore()
