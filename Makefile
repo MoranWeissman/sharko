@@ -83,15 +83,20 @@ release: ## Tag and push a release (usage: make release VERSION=1.0.0)
 	@echo "$(VERSION)" > version.txt
 	@sed -i '' 's/^version:.*/version: $(VERSION)/' charts/sharko/Chart.yaml
 	@sed -i '' 's/^appVersion:.*/appVersion: "$(VERSION)"/' charts/sharko/Chart.yaml
-	@git checkout -b release/v$(VERSION)
-	@git add -f version.txt charts/sharko/Chart.yaml
-	@git commit -m "release: v$(VERSION)"
-	@git push -u origin release/v$(VERSION)
-	@gh pr create --title "release: v$(VERSION)" --body "Version bump to $(VERSION)"
-	@gh pr merge --squash
-	@git checkout main
-	@git pull origin main
-	@git tag -a "v$(VERSION)" -m "Release v$(VERSION)"
+	@if git diff --quiet version.txt charts/sharko/Chart.yaml; then \
+		echo "  Version already set to $(VERSION) — tagging current main"; \
+		git tag -a "v$(VERSION)" -m "Release v$(VERSION)"; \
+	else \
+		git checkout -b release/v$(VERSION); \
+		git add -f version.txt charts/sharko/Chart.yaml; \
+		git commit -m "release: v$(VERSION)"; \
+		git push -u origin release/v$(VERSION); \
+		gh pr create --title "release: v$(VERSION)" --body "Version bump to $(VERSION)"; \
+		gh pr merge --squash; \
+		git checkout main; \
+		git pull origin main; \
+		git tag -a "v$(VERSION)" -m "Release v$(VERSION)"; \
+	fi
 	@echo ""
 	@echo "  ✅ Tagged v$(VERSION). Push the tag:"
 	@echo "    git push origin v$(VERSION)"
