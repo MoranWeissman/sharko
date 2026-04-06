@@ -11,33 +11,33 @@
 # ================================================================ #
 
 applicationsets:
-  - appName: cert-manager
+  - name: cert-manager
     repoURL: https://charts.jetstack.io
     chart: cert-manager
     version: "1.16.3"
     namespace: cert-manager
     syncWave: -1
 
-  - appName: external-dns
+  - name: external-dns
     repoURL: https://kubernetes-sigs.github.io/external-dns/
     chart: external-dns
     version: "1.15.0"
     namespace: external-dns
 
-  - appName: external-secrets
+  - name: external-secrets
     repoURL: https://charts.external-secrets.io
     chart: external-secrets
     version: "0.12.1"
     namespace: external-secrets
     syncWave: -1
 
-  - appName: keda
+  - name: keda
     repoURL: https://kedacore.github.io/charts
     chart: keda
     version: "2.16.1"
     namespace: keda
 
-  - appName: kyverno
+  - name: kyverno
     repoURL: https://kyverno.github.io/kyverno/
     chart: kyverno
     version: "3.3.4"
@@ -45,40 +45,40 @@ applicationsets:
     syncOptions:
       - ServerSideApply=true
 
-  - appName: argo-rollouts
+  - name: argo-rollouts
     repoURL: https://argoproj.github.io/argo-helm
     chart: argo-rollouts
     version: "2.38.2"
     namespace: argo-rollouts
 
-  - appName: datadog
+  - name: datadog
     repoURL: https://helm.datadoghq.com
     chart: datadog
     version: "3.82.6"
     namespace: datadog
 
   # Istio service mesh — deploy in order: istio-base → istio-cni → istiod → istio-ingress
-  - appName: istio-base
+  - name: istio-base
     repoURL: https://istio-release.storage.googleapis.com/charts
     chart: base
     version: "1.24.3"
     namespace: istio-system
     syncWave: -2
 
-  - appName: istio-cni
+  - name: istio-cni
     repoURL: https://istio-release.storage.googleapis.com/charts
     chart: cni
     version: "1.24.3"
     namespace: istio-system
     syncWave: -1
 
-  - appName: istiod
+  - name: istiod
     repoURL: https://istio-release.storage.googleapis.com/charts
     chart: istiod
     version: "1.24.3"
     namespace: istio-system
 
-  - appName: istio-ingress
+  - name: istio-ingress
     repoURL: https://istio-release.storage.googleapis.com/charts
     chart: gateway
     version: "1.24.3"

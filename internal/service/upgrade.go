@@ -77,7 +77,7 @@ func (s *UpgradeService) ListVersions(ctx context.Context, addonName string, gp 
 
 	var addon *models.AddonCatalogEntry
 	for i := range addons {
-		if addons[i].AppName == addonName {
+		if addons[i].Name == addonName {
 			addon = &addons[i]
 			break
 		}
@@ -129,7 +129,7 @@ func (s *UpgradeService) CheckUpgrade(ctx context.Context, addonName, targetVers
 
 	var addon *models.AddonCatalogEntry
 	for i := range addons {
-		if addons[i].AppName == addonName {
+		if addons[i].Name == addonName {
 			addon = &addons[i]
 			break
 		}

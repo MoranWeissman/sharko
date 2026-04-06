@@ -168,11 +168,11 @@ func setAddonLabel(data []byte, clusterName, addonName, value string) ([]byte, e
 func UpdateCatalogVersion(data []byte, addonName, newVersion string) ([]byte, error) {
 	lines := strings.Split(string(data), "\n")
 
-	// Find the applicationset entry: "  - appName: <addonName>"
+	// Find the applicationset entry: "  - name: <addonName>"
 	appIdx := -1
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if trimmed == "- appName: "+addonName {
+		if trimmed == "- name: "+addonName {
 			appIdx = i
 			break
 		}

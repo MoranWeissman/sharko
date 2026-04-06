@@ -65,7 +65,7 @@ func (o *Orchestrator) RemoveAddon(ctx context.Context, name string) (*GitResult
 // generateAddonCatalogEntry creates the YAML catalog entry for an addon.
 func generateAddonCatalogEntry(req AddAddonRequest) []byte {
 	entry := models.AddonCatalogEntry{
-		AppName:           req.Name,
+		Name:              req.Name,
 		RepoURL:           req.RepoURL,
 		Chart:             req.Chart,
 		Version:           req.Version,
@@ -82,7 +82,7 @@ func generateAddonCatalogEntry(req AddAddonRequest) []byte {
 	if err != nil {
 		// Fallback
 		var b strings.Builder
-		b.WriteString(fmt.Sprintf("appName: %s\n", req.Name))
+		b.WriteString(fmt.Sprintf("name: %s\n", req.Name))
 		b.WriteString(fmt.Sprintf("chart: %s\n", req.Chart))
 		b.WriteString(fmt.Sprintf("repoURL: %s\n", req.RepoURL))
 		b.WriteString(fmt.Sprintf("version: %s\n", req.Version))

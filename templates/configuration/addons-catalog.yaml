@@ -4,53 +4,53 @@
 # See docs/VALUES_GUIDE.md for full documentation
 #
 # Example:
-#   - appName: keda                    # Required: addon name
+#   - name: keda                    # Required: addon name
 #     repoURL: https://kedacore.io     # Required: Helm repo
 #     chart: keda                      # Required: chart name
 #     version: 2.14.2                  # Required: version
-#     namespace: kube-system           # Optional: custom namespace (defaults to appName)
+#     namespace: kube-system           # Optional: custom namespace (defaults to name)
 #     ignoreDifferences: []            # Optional: ArgoCD ignore rules
 # ================================================================ #
 
 applicationsets:
   # Uses multi-source: Official Datadog chart
-  - appName: datadog
+  - name: datadog
     repoURL: https://helm.datadoghq.com
     chart: datadog
     version: 3.160.1
 
-  - appName: keda
+  - name: keda
     repoURL: https://kedacore.github.io/charts
     chart: keda
     version: 2.14.2
 
-  - appName: redisinsight
+  - name: redisinsight
     repoURL: https://your-org.github.io/redisinsight-chart
     chart: redisinsight
     version: 1.14.0
 
-  - appName: redisinsight-v2
+  - name: redisinsight-v2
     repoURL: https://your-org.github.io/redisinsight-v2-chart
     chart: redisinsight-v2
     version: 1.0.12
 
-  - appName: kafka-ui
+  - name: kafka-ui
     repoURL: https://provectus.github.io/kafka-ui-charts
     chart: kafka-ui
     version: 0.7.5
 
-  - appName: external-secrets
+  - name: external-secrets
     repoURL: https://charts.external-secrets.io
     chart: external-secrets
     version: 0.19.2
 
-  - appName: secrets-store-csi-driver
+  - name: secrets-store-csi-driver
     repoURL: https://kubernetes-sigs.github.io/secrets-store-csi-driver/charts
     chart: secrets-store-csi-driver
     namespace: kube-system
     version: 1.5.0
 
-  - appName: sscdp-aws
+  - name: sscdp-aws
     repoURL: https://aws.github.io/secrets-store-csi-driver-provider-aws
     chart: secrets-store-csi-driver-provider-aws
     namespace: kube-system
@@ -58,25 +58,25 @@ applicationsets:
 # | -- Both Istio apps: istio-base and istiod have to be managed, updated and deployed on a cluster -- |
 # | -- Istio-base app deploys CRD's, istiod app deploys istio mesh itself -- | #
 
-  - appName: istio-base
+  - name: istio-base
     repoURL: https://istio-release.storage.googleapis.com/charts
     chart: base
     version: 1.28.0
     namespace: istio-system
 
-  - appName: istiod
+  - name: istiod
     repoURL: https://istio-release.storage.googleapis.com/charts
     chart: istiod
     version: 1.28.0
     namespace: istio-system
 
-  - appName: istio-cni
+  - name: istio-cni
     repoURL: https://istio-release.storage.googleapis.com/charts
     chart: cni
     version: 1.28.0
     namespace: istio-system
 
-  - appName: istio-ingress
+  - name: istio-ingress
     repoURL: https://istio-release.storage.googleapis.com/charts
     chart: gateway          # this is the Istio ingress gateway chart name in 1.22
     version: 1.28.0
@@ -84,23 +84,23 @@ applicationsets:
 
 # | -- End of Istio apps -- | #
 
-  - appName: anodot
+  - name: anodot
     repoURL: https://pileus-cloud.github.io/charts
     chart: anodot-cost-k8s-cw-agent
     version: 0.1.9
     namespace: anodot
 
-  - appName: kyverno
+  - name: kyverno
     repoURL: https://kyverno.github.io/kyverno
     chart: kyverno
     version: 3.3.4
 
-  - appName: argo-rollouts
+  - name: argo-rollouts
     repoURL: https://argoproj.github.io/argo-helm
     chart: argo-rollouts
     version: 2.39.5 # https://artifacthub.io/packages/helm/argo/argo-rollouts/2.39.5
 
-  - appName: karpenter
+  - name: karpenter
     repoURL: https://your-org.github.io/karpenter-crds-chart/
     chart: karpenter-crds-helm-chart
     version: 1.0.2
@@ -110,29 +110,29 @@ applicationsets:
       jsonPointers:
       - /spec/limits/cpu
 
-  - appName: cert-manager
+  - name: cert-manager
     repoURL: https://charts.jetstack.io
     chart: cert-manager
     version: 1.17.1
 
-  - appName: argo-events
+  - name: argo-events
     repoURL: https://argoproj.github.io/argo-helm
     namespace: argo-workflows
     chart: argo-events
     version: 2.4.14
 
-  - appName: argo-workflows
+  - name: argo-workflows
     repoURL: https://argoproj.github.io/argo-helm
     chart: argo-workflows
     version: 0.45.12
 
-  - appName: external-dns
+  - name: external-dns
     repoURL: https://kubernetes-sigs.github.io/external-dns
     chart: external-dns
     version: 1.17.0
 
   # Connectivity test — deploys a ConfigMap to verify ArgoCD can reach the cluster
-  - appName: hello-world
+  - name: hello-world
     repoURL: https://github.com/your-org/argocd-cluster-addons.git
     path: charts/hello-world
     version: main

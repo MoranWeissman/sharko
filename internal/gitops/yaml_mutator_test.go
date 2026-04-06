@@ -172,11 +172,11 @@ func TestPreserveOtherClusters(t *testing.T) {
 
 const addonsCatalogYAML = `# Addons catalog
 applicationsets:
-  - appName: datadog
+  - name: datadog
     repoURL: https://helm.datadoghq.com
     chart: datadog
     version: 3.160.1
-  - appName: keda
+  - name: keda
     repoURL: https://kedacore.github.io/charts
     chart: keda
     version: 2.14.2

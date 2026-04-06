@@ -1,5 +1,5 @@
 # Addon catalog entry for datadog
-appName: datadog
+name: datadog
 repoURL: https://helm.datadoghq.com
 chart: datadog
 version: "3.82.6"

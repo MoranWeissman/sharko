@@ -80,8 +80,8 @@ func (s *DashboardService) GetStats(ctx context.Context, gp gitprovider.GitProvi
 	validAddonApps := make(map[string]bool)
 	for _, addon := range repoCfg.Addons {
 		for _, cluster := range repoCfg.Clusters {
-			if cluster.Labels[addon.AppName] == "enabled" {
-				validAddonApps[addon.AppName+"-"+cluster.Name] = true
+			if cluster.Labels[addon.Name] == "enabled" {
+				validAddonApps[addon.Name+"-"+cluster.Name] = true
 			}
 		}
 	}
@@ -125,7 +125,7 @@ func (s *DashboardService) GetStats(ctx context.Context, gp gitprovider.GitProvi
 	}
 	for _, cluster := range repoCfg.Clusters {
 		for _, addon := range repoCfg.Addons {
-			if cluster.Labels[addon.AppName] == "enabled" {
+			if cluster.Labels[addon.Name] == "enabled" {
 				addonStats.EnabledDeployments++
 			}
 		}

@@ -55,7 +55,7 @@ func generateClusterValues(clusterName string, region string, addons map[string]
 		if addons[name] {
 			ns := name // default namespace = addon name
 			for _, entry := range catalog {
-				if entry.AppName == name && entry.Namespace != "" {
+				if entry.Name == name && entry.Namespace != "" {
 					ns = entry.Namespace
 					break
 				}

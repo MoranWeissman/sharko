@@ -13,12 +13,12 @@ const catalogPath = "configuration/addons-catalog.yaml"
 // sampleCatalog returns a realistic addons-catalog.yaml with the given addons.
 func sampleCatalog() []byte {
 	return []byte(`applicationsets:
-  - appName: cert-manager
+  - name: cert-manager
     chart: cert-manager
     repoURL: https://charts.jetstack.io
     version: 1.14.0
     namespace: cert-manager
-  - appName: metrics-server
+  - name: metrics-server
     chart: metrics-server
     repoURL: https://kubernetes-sigs.github.io/metrics-server
     version: 0.6.0

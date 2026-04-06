@@ -29,7 +29,7 @@ bootstrap:
       roleArn: "arn:aws:iam::123456789012:role/EKS-your-cluster-secret-manager"
 
 # Application configuration (loaded from configuration files)
-appName: ""
+name: ""
 applicationsets: []
 addonsConfig: {}
 clusters: []

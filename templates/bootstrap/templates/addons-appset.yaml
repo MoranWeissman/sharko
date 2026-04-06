@@ -2,7 +2,7 @@
 # Sharko Generic Addon ApplicationSet Template
 #
 # - Catalog-driven: all per-addon behavior is configured via catalog fields in Values.applicationsets
-# - No addon-specific logic: no if-appName blocks, no hardcoded sync waves, no addon helpers
+# - No addon-specific logic: no if-name blocks, no hardcoded sync waves, no addon helpers
 # - Safety features are always on: cluster secret-type filter, finalizers, RBAC, schema tolerances
 # - Additional sources, sync options, ignoreDifferences, extraHelmValues: fully conditional
 # ----------------------------------------------------------------------------------------------------
@@ -12,7 +12,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
-  name: {{ $appset.appName }}
+  name: {{ $appset.name }}
   namespace: argocd
 spec:
   clusterResourceBlacklist: []
@@ -34,7 +34,7 @@ spec:
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: {{ $appset.appName }}
+  name: {{ $appset.name }}
   namespace: argocd
 spec:
   goTemplate: true
@@ -47,10 +47,10 @@ spec:
               selector:
                 matchLabels:
                   argocd.argoproj.io/secret-type: cluster
-                  {{ $appset.appName }}: enabled
+                  {{ $appset.name }}: enabled
               values:
                 revision: '{{ $appset.version }}'
-                app: '{{ $appset.appName }}'
+                app: '{{ $appset.name }}'
           # Read per-cluster values file for matched clusters
           - git:
               repoURL: {{ $.Values.repoURL }}
@@ -59,7 +59,7 @@ spec:
                 - path: "configuration/addons-clusters-values/{{`{{.name}}`}}.yaml"
   template:
     metadata:
-      name: '{{ $appset.appName }}-{{`{{.name}}`}}'
+      name: '{{ $appset.name }}-{{`{{.name}}`}}'
       labels:
         cluster-name: '{{`{{.name}}`}}'
         app-type: addon
@@ -70,7 +70,7 @@ spec:
         argocd.argoproj.io/sync-wave: "{{ $appset.syncWave }}"
       {{- end }}
     spec:
-      project: {{ $appset.appName }}
+      project: {{ $appset.name }}
       sources:
         # Primary source: addon Helm chart
         - repoURL: {{ $appset.repoURL }}
@@ -81,7 +81,7 @@ spec:
             skipSchemaValidation: true
             # Inject per-cluster addon values from the cluster values file
             values: |
-              {{`{{- $addonKey := index . "`}}{{ $appset.appName }}{{`" -}}`}}
+              {{`{{- $addonKey := index . "`}}{{ $appset.name }}{{`" -}}`}}
               {{`{{- if $addonKey -}}`}}
               {{`{{ $addonKey | toYaml }}`}}
               {{`{{- end -}}`}}
@@ -94,7 +94,7 @@ spec:
             {{- end }}
             valueFiles:
             # Global values file for this addon
-            - '$values/configuration/addons-global-values/{{ $appset.appName }}.yaml'
+            - '$values/configuration/addons-global-values/{{ $appset.name }}.yaml'
         {{- if $appset.additionalSources }}
         # Additional sources from catalog entry
         {{- range $appset.additionalSources }}
@@ -133,7 +133,7 @@ spec:
       destination:
         # Route to in-cluster API server for the host cluster, external server URL for all others
         server: '{{`{{if eq .name "SHARKO_HOST_CLUSTER_NAME"}}https://kubernetes.default.svc{{else}}{{.server}}{{end}}`}}'
-        namespace: {{ $appset.namespace | default $appset.appName }}
+        namespace: {{ $appset.namespace | default $appset.name }}
       syncPolicy:
         automated:
           prune: true

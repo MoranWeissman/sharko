@@ -491,7 +491,7 @@ func (e *ToolExecutor) listAddons(ctx context.Context) (string, error) {
 
 	var sb strings.Builder
 	for _, a := range addons {
-		fmt.Fprintf(&sb, "- %s: chart=%s, version=%s, repo=%s\n", a.AppName, a.Chart, a.Version, a.RepoURL)
+		fmt.Fprintf(&sb, "- %s: chart=%s, version=%s, repo=%s\n", a.Name, a.Chart, a.Version, a.RepoURL)
 	}
 	return sb.String(), nil
 }
@@ -552,7 +552,7 @@ func (e *ToolExecutor) compareVersions(ctx context.Context, addonName, currentVe
 
 	var repoURL, chart string
 	for _, a := range addons {
-		if a.AppName == addonName {
+		if a.Name == addonName {
 			repoURL = a.RepoURL
 			chart = a.Chart
 			break
@@ -605,7 +605,7 @@ func (e *ToolExecutor) listChartVersions(ctx context.Context, addonName string) 
 
 	var repoURL, chart string
 	for _, a := range addons {
-		if a.AppName == addonName {
+		if a.Name == addonName {
 			repoURL = a.RepoURL
 			chart = a.Chart
 			break
@@ -674,7 +674,7 @@ func (e *ToolExecutor) getAddonOnCluster(ctx context.Context, addonName, cluster
 		// Get catalog version
 		catalogVersion := "unknown"
 		for _, a := range repoCfg.Addons {
-			if a.AppName == addonName {
+			if a.Name == addonName {
 				catalogVersion = a.Version
 				break
 			}
@@ -946,9 +946,9 @@ func (e *ToolExecutor) searchAddons(ctx context.Context, query string) (string, 
 	var sb strings.Builder
 	count := 0
 	for _, a := range addons {
-		if strings.Contains(strings.ToLower(a.AppName), queryLower) {
+		if strings.Contains(strings.ToLower(a.Name), queryLower) {
 			count++
-			fmt.Fprintf(&sb, "- %s: chart=%s, version=%s, repo=%s\n", a.AppName, a.Chart, a.Version, a.RepoURL)
+			fmt.Fprintf(&sb, "- %s: chart=%s, version=%s, repo=%s\n", a.Name, a.Chart, a.Version, a.RepoURL)
 		}
 	}
 
@@ -1203,7 +1203,7 @@ func (e *ToolExecutor) getReleaseNotes(ctx context.Context, addonName, version s
 
 	var repoURL, chart string
 	for _, a := range addons {
-		if a.AppName == addonName {
+		if a.Name == addonName {
 			repoURL = a.RepoURL
 			chart = a.Chart
 			break

@@ -1,5 +1,5 @@
 # Addon catalog entry for keda
-appName: keda
+name: keda
 repoURL: https://kedacore.github.io/charts
 chart: keda
 version: "2.16.1"

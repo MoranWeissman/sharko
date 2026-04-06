@@ -13,7 +13,7 @@ type AddonSource struct {
 // AddonCatalogEntry represents an addon definition from addons-catalog.yaml.
 type AddonCatalogEntry struct {
 	// Basic (required)
-	AppName string `json:"appName" yaml:"appName"`
+	Name string `json:"name" yaml:"name"`
 	RepoURL string `json:"repoURL" yaml:"repoURL"`
 	Chart   string `json:"chart" yaml:"chart"`
 	Version string `json:"version" yaml:"version"`
