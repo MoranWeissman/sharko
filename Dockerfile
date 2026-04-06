@@ -11,13 +11,15 @@ FROM golang:1.25.8-alpine AS go-build
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
-# CACHE_BUST invalidates the layer cache when source changes (set to git SHA in CI)
-ARG CACHE_BUST=dev
-ARG VERSION=dev
 COPY cmd/ cmd/
 COPY internal/ internal/
 COPY templates/ templates/
 COPY docs/swagger/ docs/swagger/
+# ARG CACHE_BUST must appear after COPY and before go build so that:
+# - COPY layers are still cached by content (faster builds when source unchanged)
+# - go build layer is always invalidated when CACHE_BUST changes (set to git SHA in CI)
+ARG CACHE_BUST=dev
+ARG VERSION=dev
 RUN CGO_ENABLED=0 go build -ldflags "-X main.version=${VERSION}" -o sharko ./cmd/sharko
 
 # Stage 3: Final image
