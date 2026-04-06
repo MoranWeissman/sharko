@@ -1,6 +1,0 @@
-# Addon catalog entry for datadog
-name: datadog
-repoURL: https://helm.datadoghq.com
-chart: datadog
-version: "3.82.6"
-namespace: datadog
