@@ -6,8 +6,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/MoranWeissman/sharko/internal/models"
-	"gopkg.in/yaml.v3"
+	"github.com/MoranWeissman/sharko/internal/gitops"
 )
 
 // AddAddon adds a new addon to the catalog and generates its global values file.
@@ -22,16 +21,33 @@ func (o *Orchestrator) AddAddon(ctx context.Context, req AddAddonRequest) (*GitR
 		return nil, fmt.Errorf("addon repo_url is required")
 	}
 
-	// Generate addon catalog entry YAML.
-	catalogContent := generateAddonCatalogEntry(req)
-	catalogPath := path.Join(o.paths.Charts, req.Name, "addon.yaml")
+	// Read the existing addons-catalog.yaml.
+	catalogPath := path.Join(o.paths.GlobalValues, "..", "addons-catalog.yaml")
+	catalogData, err := o.git.GetFileContent(ctx, catalogPath, o.gitops.BaseBranch)
+	if err != nil {
+		return nil, fmt.Errorf("reading addons-catalog.yaml: %w", err)
+	}
+
+	// Append the new entry to the catalog.
+	entry := gitops.CatalogEntryInput{
+		Name:      req.Name,
+		RepoURL:   req.RepoURL,
+		Chart:     req.Chart,
+		Version:   req.Version,
+		Namespace: req.Namespace,
+		SyncWave:  req.SyncWave,
+	}
+	updatedCatalog, err := gitops.AddCatalogEntry(catalogData, entry)
+	if err != nil {
+		return nil, fmt.Errorf("adding addon %q to catalog: %w", req.Name, err)
+	}
 
 	// Generate global values file.
 	globalValuesContent := generateAddonGlobalValues(req)
 	globalValuesPath := path.Join(o.paths.GlobalValues, req.Name+".yaml")
 
 	files := map[string][]byte{
-		catalogPath:     catalogContent,
+		catalogPath:      updatedCatalog,
 		globalValuesPath: globalValuesContent,
 	}
 
@@ -49,48 +65,32 @@ func (o *Orchestrator) RemoveAddon(ctx context.Context, name string) (*GitResult
 		return nil, fmt.Errorf("addon name is required")
 	}
 
-	catalogPath := path.Join(o.paths.Charts, name, "addon.yaml")
+	// Read the existing addons-catalog.yaml.
+	catalogPath := path.Join(o.paths.GlobalValues, "..", "addons-catalog.yaml")
+	catalogData, err := o.git.GetFileContent(ctx, catalogPath, o.gitops.BaseBranch)
+	if err != nil {
+		return nil, fmt.Errorf("reading addons-catalog.yaml: %w", err)
+	}
+
+	// Remove the entry from the catalog.
+	updatedCatalog, err := gitops.RemoveCatalogEntry(catalogData, name)
+	if err != nil {
+		return nil, fmt.Errorf("removing addon %q from catalog: %w", name, err)
+	}
+
 	globalValuesPath := path.Join(o.paths.GlobalValues, name+".yaml")
 
-	deletePaths := []string{catalogPath, globalValuesPath}
+	files := map[string][]byte{
+		catalogPath: updatedCatalog,
+	}
+	deletePaths := []string{globalValuesPath}
 
-	gitResult, err := o.commitChanges(ctx, nil, deletePaths, fmt.Sprintf("remove addon %s", name))
+	gitResult, err := o.commitChanges(ctx, files, deletePaths, fmt.Sprintf("remove addon %s", name))
 	if err != nil {
 		return nil, fmt.Errorf("committing addon %q removal to Git: %w", name, err)
 	}
 
 	return gitResult, nil
-}
-
-// generateAddonCatalogEntry creates the YAML catalog entry for an addon.
-func generateAddonCatalogEntry(req AddAddonRequest) []byte {
-	entry := models.AddonCatalogEntry{
-		Name:              req.Name,
-		RepoURL:           req.RepoURL,
-		Chart:             req.Chart,
-		Version:           req.Version,
-		Namespace:         req.Namespace,
-		SyncWave:          req.SyncWave,
-		SelfHeal:          req.SelfHeal,
-		SyncOptions:       req.SyncOptions,
-		AdditionalSources: req.AdditionalSources,
-		IgnoreDifferences: req.IgnoreDifferences,
-		ExtraHelmValues:   req.ExtraHelmValues,
-	}
-
-	data, err := yaml.Marshal(entry)
-	if err != nil {
-		// Fallback
-		var b strings.Builder
-		b.WriteString(fmt.Sprintf("name: %s\n", req.Name))
-		b.WriteString(fmt.Sprintf("chart: %s\n", req.Chart))
-		b.WriteString(fmt.Sprintf("repoURL: %s\n", req.RepoURL))
-		b.WriteString(fmt.Sprintf("version: %s\n", req.Version))
-		return []byte(b.String())
-	}
-
-	header := fmt.Sprintf("# Addon catalog entry for %s\n", req.Name)
-	return append([]byte(header), data...)
 }
 
 // generateAddonGlobalValues creates the default global values YAML for an addon.

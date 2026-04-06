@@ -682,6 +682,10 @@ func TestUpdateClusterAddons(t *testing.T) {
 
 func TestAddAddon(t *testing.T) {
 	git := newMockGitProvider()
+	// Pre-populate an empty catalog so AddAddon can read it.
+	catalogPath := "configuration/addons-catalog.yaml"
+	git.files[catalogPath] = []byte("applicationsets:\n")
+
 	orch := New(nil, defaultCreds(), newMockArgocd(), git, defaultGitOps(), defaultPaths(), nil)
 
 	result, err := orch.AddAddon(context.Background(), AddAddonRequest{
@@ -699,9 +703,10 @@ func TestAddAddon(t *testing.T) {
 		t.Error("expected Merged=false for manual PR mode")
 	}
 
-	catalogPath := "charts/prometheus/addon.yaml"
-	if _, ok := git.files[catalogPath]; !ok {
-		t.Errorf("catalog file not created at %s", catalogPath)
+	// Catalog should now contain the new entry.
+	catalogContent := string(git.files[catalogPath])
+	if !strings.Contains(catalogContent, "name: prometheus") {
+		t.Errorf("catalog does not contain new addon entry:\n%s", catalogContent)
 	}
 
 	globalPath := "configuration/addons-global-values/prometheus.yaml"
@@ -712,6 +717,12 @@ func TestAddAddon(t *testing.T) {
 
 func TestRemoveAddon(t *testing.T) {
 	git := newMockGitProvider()
+	// Pre-populate catalog with a prometheus entry.
+	catalogPath := "configuration/addons-catalog.yaml"
+	git.files[catalogPath] = []byte("applicationsets:\n  - name: prometheus\n    chart: kube-prometheus-stack\n    repoURL: https://prometheus-community.github.io/helm-charts\n    version: 45.0.0\n")
+	// Also put the global values file so it can be deleted.
+	git.files["configuration/addons-global-values/prometheus.yaml"] = []byte("prometheus:\n  enabled: false\n")
+
 	orch := New(nil, defaultCreds(), newMockArgocd(), git, defaultGitOps(), defaultPaths(), nil)
 
 	result, err := orch.RemoveAddon(context.Background(), "prometheus")
@@ -719,8 +730,14 @@ func TestRemoveAddon(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(git.deletedFiles) != 2 {
-		t.Errorf("expected 2 files deleted, got %d", len(git.deletedFiles))
+	// Only the global values file is deleted; the catalog is updated (not deleted).
+	if len(git.deletedFiles) != 1 {
+		t.Errorf("expected 1 file deleted (global values), got %d: %v", len(git.deletedFiles), git.deletedFiles)
+	}
+	// Catalog should no longer contain the prometheus entry.
+	catalogContent := string(git.files[catalogPath])
+	if strings.Contains(catalogContent, "name: prometheus") {
+		t.Errorf("catalog still contains prometheus entry after removal:\n%s", catalogContent)
 	}
 	if result.Merged {
 		t.Error("expected Merged=false for manual PR mode")
