@@ -98,7 +98,7 @@ func NewServer(
 		authStore:         authStore,
 		aiConfigStore:     nil, // set via SetAIConfigStore
 		addonSecretDefs:   make(map[string]orchestrator.AddonSecretDefinition),
-		notificationStore: notifications.NewStore(100),
+		notificationStore: notifications.NewStore(100, notifications.DefaultNotificationsPath),
 		startTime:         time.Now(),
 	}
 }
@@ -333,6 +333,7 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	handler = maxBodySize(handler, 1<<20) // 1MB request body limit
 	handler = srv.basicAuthMiddleware(handler)
 	handler = corsMiddleware(handler)
+	handler = securityHeadersMiddleware(handler)
 	handler = loggingMiddleware(handler)
 
 	return handler
@@ -668,16 +669,40 @@ func (s *Server) handleHashPassword(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"hash": string(hash)})
 }
 
-// corsMiddleware adds CORS and security headers.
-func corsMiddleware(next http.Handler) http.Handler {
-	corsOrigin := os.Getenv("SHARKO_CORS_ORIGIN")
+// securityHeadersMiddleware sets security-related HTTP response headers on every response.
+// This includes Content-Security-Policy, X-Content-Type-Options, X-Frame-Options,
+// Referrer-Policy, and Strict-Transport-Security (HTTPS only).
+func securityHeadersMiddleware(next http.Handler) http.Handler {
+	const csp = "default-src 'self'; " +
+		"script-src 'self'; " +
+		"style-src 'self' 'unsafe-inline'; " +
+		"img-src 'self' data:; " +
+		"font-src 'self' https://fonts.gstatic.com https://fonts.googleapis.com; " +
+		"connect-src 'self'; " +
+		"frame-ancestors 'none'; " +
+		"base-uri 'self'; " +
+		"form-action 'self'"
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Security headers
+		w.Header().Set("Content-Security-Policy", csp)
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 
+		// HSTS only when the connection is (or was proxied as) HTTPS
+		if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// corsMiddleware adds CORS headers.
+func corsMiddleware(next http.Handler) http.Handler {
+	corsOrigin := os.Getenv("SHARKO_CORS_ORIGIN")
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// CORS origin
 		origin := r.Header.Get("Origin")
 		if corsOrigin == "*" {
