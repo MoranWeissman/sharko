@@ -287,6 +287,9 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	// Cluster info
 	mux.HandleFunc("GET /api/v1/cluster/nodes", srv.handleGetNodeInfo)
 
+	// Webhooks (no user auth — signature verified inside the handler)
+	mux.HandleFunc("POST /api/v1/webhooks/git", srv.handleGitWebhook)
+
 	// Auth (login is rate-limited: 10 attempts per IP per minute)
 	loginRL := newLoginRateLimiter(10, 1*time.Minute)
 	mux.HandleFunc("POST /api/v1/auth/login", func(w http.ResponseWriter, r *http.Request) {
@@ -572,8 +575,8 @@ func (s *Server) basicAuthMiddleware(next http.Handler) http.Handler {
 
 		path := r.URL.Path
 
-		// Skip auth for: health, login, static files
-		if path == "/api/v1/health" || path == "/api/v1/auth/login" || !strings.HasPrefix(path, "/api/") {
+		// Skip auth for: health, login, git webhooks (signature-verified), static files
+		if path == "/api/v1/health" || path == "/api/v1/auth/login" || path == "/api/v1/webhooks/git" || !strings.HasPrefix(path, "/api/") {
 			next.ServeHTTP(w, r)
 			return
 		}
