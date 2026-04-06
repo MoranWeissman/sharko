@@ -17,6 +17,7 @@ ARG VERSION=dev
 COPY cmd/ cmd/
 COPY internal/ internal/
 COPY templates/ templates/
+COPY docs/swagger/ docs/swagger/
 RUN CGO_ENABLED=0 go build -ldflags "-X main.version=${VERSION}" -o sharko ./cmd/sharko
 
 # Stage 3: Final image
