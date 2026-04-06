@@ -3,10 +3,8 @@ package orchestrator
 import (
 	"context"
 	"fmt"
-	"path"
 
-	"github.com/MoranWeissman/sharko/internal/models"
-	"gopkg.in/yaml.v3"
+	"github.com/MoranWeissman/sharko/internal/gitops"
 )
 
 func (o *Orchestrator) ConfigureAddon(ctx context.Context, req ConfigureAddonRequest) (*GitResult, error) {
@@ -14,50 +12,50 @@ func (o *Orchestrator) ConfigureAddon(ctx context.Context, req ConfigureAddonReq
 		return nil, fmt.Errorf("addon name is required")
 	}
 
-	gp := o.git
-	catalogPath := path.Join(o.paths.Charts, req.Name, "addon.yaml")
+	// Reject complex fields that line-level mutation doesn't yet support.
+	if req.SyncOptions != nil {
+		return nil, fmt.Errorf("sync_options configuration is not yet supported via this endpoint")
+	}
+	if req.AdditionalSources != nil {
+		return nil, fmt.Errorf("additional_sources configuration is not yet supported via this endpoint")
+	}
+	if req.IgnoreDifferences != nil {
+		return nil, fmt.Errorf("ignore_differences configuration is not yet supported via this endpoint")
+	}
+	if req.ExtraHelmValues != nil {
+		return nil, fmt.Errorf("extra_helm_values configuration is not yet supported via this endpoint")
+	}
 
-	data, err := gp.GetFileContent(ctx, o.gitops.BaseBranch, catalogPath)
+	// Read the existing addons-catalog.yaml.
+	catalogPath := o.paths.Catalog
+	data, err := o.git.GetFileContent(ctx, catalogPath, o.gitops.BaseBranch)
 	if err != nil {
 		return nil, fmt.Errorf("addon %q not found in catalog: %w", req.Name, err)
 	}
 
-	var entry models.AddonCatalogEntry
-	if err := yaml.Unmarshal(data, &entry); err != nil {
-		return nil, fmt.Errorf("parsing addon %q catalog entry: %w", req.Name, err)
-	}
-
-	// Merge — only update fields that are provided
+	// Build updates map from non-zero/non-nil fields.
+	updates := make(map[string]string)
 	if req.Version != "" {
-		entry.Version = req.Version
+		updates["version"] = req.Version
 	}
 	if req.SyncWave != nil {
-		entry.SyncWave = *req.SyncWave
+		updates["syncWave"] = fmt.Sprintf("%d", *req.SyncWave)
 	}
 	if req.SelfHeal != nil {
-		entry.SelfHeal = req.SelfHeal
-	}
-	if req.SyncOptions != nil {
-		entry.SyncOptions = req.SyncOptions
-	}
-	if req.AdditionalSources != nil {
-		entry.AdditionalSources = req.AdditionalSources
-	}
-	if req.IgnoreDifferences != nil {
-		entry.IgnoreDifferences = req.IgnoreDifferences
-	}
-	if req.ExtraHelmValues != nil {
-		entry.ExtraHelmValues = req.ExtraHelmValues
+		updates["selfHeal"] = fmt.Sprintf("%v", *req.SelfHeal)
 	}
 
-	updatedData, err := yaml.Marshal(entry)
+	if len(updates) == 0 {
+		return nil, fmt.Errorf("no updatable fields provided for addon %q", req.Name)
+	}
+
+	updatedData, err := gitops.UpdateCatalogEntry(data, req.Name, updates)
 	if err != nil {
-		return nil, fmt.Errorf("serializing addon %q: %w", req.Name, err)
+		return nil, fmt.Errorf("updating addon %q in catalog: %w", req.Name, err)
 	}
 
-	header := fmt.Sprintf("# Addon catalog entry for %s\n", req.Name)
 	files := map[string][]byte{
-		catalogPath: append([]byte(header), updatedData...),
+		catalogPath: updatedData,
 	}
 
 	gitResult, err := o.commitChanges(ctx, files, nil, fmt.Sprintf("configure addon %s", req.Name))

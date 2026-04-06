@@ -309,49 +309,49 @@ const clusterAddonsYAML = `clusters:
 
 // addonsCatalogYAML is the fake configuration/addons-catalog.yaml in applicationsets format.
 const addonsCatalogYAML = `applicationsets:
-  - appName: cert-manager
+  - name: cert-manager
     chart: cert-manager
     repoURL: https://charts.jetstack.io
     version: "1.14.4"
     namespace: cert-manager
 
-  - appName: metrics-server
+  - name: metrics-server
     chart: metrics-server
     repoURL: https://kubernetes-sigs.github.io/metrics-server/
     version: "3.12.1"
     namespace: kube-system
 
-  - appName: datadog
+  - name: datadog
     chart: datadog
     repoURL: https://helm.datadoghq.com
     version: "3.69.0"
     namespace: datadog
 
-  - appName: external-dns
+  - name: external-dns
     chart: external-dns
     repoURL: https://kubernetes-sigs.github.io/external-dns/
     version: "1.14.4"
     namespace: external-dns
 
-  - appName: istio-base
+  - name: istio-base
     chart: base
     repoURL: https://istio-release.storage.googleapis.com/charts
     version: "1.21.1"
     namespace: istio-system
 
-  - appName: kube-prometheus-stack
+  - name: kube-prometheus-stack
     chart: kube-prometheus-stack
     repoURL: https://prometheus-community.github.io/helm-charts
     version: "58.2.1"
     namespace: monitoring
 
-  - appName: logging-operator
+  - name: logging-operator
     chart: logging-operator
     repoURL: https://kube-logging.github.io/helm-charts
     version: "4.6.0"
     namespace: logging
 
-  - appName: vault
+  - name: vault
     chart: vault
     repoURL: https://helm.releases.hashicorp.com
     version: "0.28.0"

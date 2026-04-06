@@ -250,6 +250,7 @@ func defaultPaths() RepoPathsConfig {
 	return RepoPathsConfig{
 		ClusterValues: "configuration/addons-clusters-values",
 		GlobalValues:  "configuration/addons-global-values",
+		Catalog:       "configuration/addons-catalog.yaml",
 		Charts:        "charts",
 		Bootstrap:     "bootstrap",
 	}
@@ -682,6 +683,10 @@ func TestUpdateClusterAddons(t *testing.T) {
 
 func TestAddAddon(t *testing.T) {
 	git := newMockGitProvider()
+	// Pre-populate an empty catalog so AddAddon can read it.
+	catalogPath := "configuration/addons-catalog.yaml"
+	git.files[catalogPath] = []byte("applicationsets:\n")
+
 	orch := New(nil, defaultCreds(), newMockArgocd(), git, defaultGitOps(), defaultPaths(), nil)
 
 	result, err := orch.AddAddon(context.Background(), AddAddonRequest{
@@ -699,9 +704,10 @@ func TestAddAddon(t *testing.T) {
 		t.Error("expected Merged=false for manual PR mode")
 	}
 
-	catalogPath := "charts/prometheus/addon.yaml"
-	if _, ok := git.files[catalogPath]; !ok {
-		t.Errorf("catalog file not created at %s", catalogPath)
+	// Catalog should now contain the new entry.
+	catalogContent := string(git.files[catalogPath])
+	if !strings.Contains(catalogContent, "name: prometheus") {
+		t.Errorf("catalog does not contain new addon entry:\n%s", catalogContent)
 	}
 
 	globalPath := "configuration/addons-global-values/prometheus.yaml"
@@ -712,6 +718,12 @@ func TestAddAddon(t *testing.T) {
 
 func TestRemoveAddon(t *testing.T) {
 	git := newMockGitProvider()
+	// Pre-populate catalog with a prometheus entry.
+	catalogPath := "configuration/addons-catalog.yaml"
+	git.files[catalogPath] = []byte("applicationsets:\n  - name: prometheus\n    chart: kube-prometheus-stack\n    repoURL: https://prometheus-community.github.io/helm-charts\n    version: 45.0.0\n")
+	// Also put the global values file so it can be deleted.
+	git.files["configuration/addons-global-values/prometheus.yaml"] = []byte("prometheus:\n  enabled: false\n")
+
 	orch := New(nil, defaultCreds(), newMockArgocd(), git, defaultGitOps(), defaultPaths(), nil)
 
 	result, err := orch.RemoveAddon(context.Background(), "prometheus")
@@ -719,12 +731,68 @@ func TestRemoveAddon(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(git.deletedFiles) != 2 {
-		t.Errorf("expected 2 files deleted, got %d", len(git.deletedFiles))
+	// Only the global values file is deleted; the catalog is updated (not deleted).
+	if len(git.deletedFiles) != 1 {
+		t.Errorf("expected 1 file deleted (global values), got %d: %v", len(git.deletedFiles), git.deletedFiles)
+	}
+	// Catalog should no longer contain the prometheus entry.
+	catalogContent := string(git.files[catalogPath])
+	if strings.Contains(catalogContent, "name: prometheus") {
+		t.Errorf("catalog still contains prometheus entry after removal:\n%s", catalogContent)
 	}
 	if result.Merged {
 		t.Error("expected Merged=false for manual PR mode")
 	}
+}
+
+func TestConfigureAddon(t *testing.T) {
+	catalogPath := "configuration/addons-catalog.yaml"
+	kedaCatalog := []byte("applicationsets:\n  - name: keda\n    chart: keda\n    repoURL: https://kedacore.github.io/charts\n    version: 2.10.0\n    namespace: keda\n")
+
+	t.Run("update version succeeds and catalog is updated", func(t *testing.T) {
+		git := newMockGitProvider()
+		git.files[catalogPath] = kedaCatalog
+
+		orch := New(nil, defaultCreds(), newMockArgocd(), git, defaultGitOps(), defaultPaths(), nil)
+
+		result, err := orch.ConfigureAddon(context.Background(), ConfigureAddonRequest{
+			Name:    "keda",
+			Version: "2.11.0",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result == nil {
+			t.Fatal("expected non-nil git result")
+		}
+
+		// Catalog should contain the updated version.
+		catalogContent := string(git.files[catalogPath])
+		if !strings.Contains(catalogContent, "2.11.0") {
+			t.Errorf("catalog does not contain updated version:\n%s", catalogContent)
+		}
+		if strings.Contains(catalogContent, "2.10.0") {
+			t.Errorf("catalog still contains old version:\n%s", catalogContent)
+		}
+	})
+
+	t.Run("unsupported SyncOptions returns error", func(t *testing.T) {
+		git := newMockGitProvider()
+		git.files[catalogPath] = kedaCatalog
+
+		orch := New(nil, defaultCreds(), newMockArgocd(), git, defaultGitOps(), defaultPaths(), nil)
+
+		_, err := orch.ConfigureAddon(context.Background(), ConfigureAddonRequest{
+			Name:        "keda",
+			SyncOptions: []string{"CreateNamespace=true"},
+		})
+		if err == nil {
+			t.Fatal("expected error for unsupported SyncOptions field")
+		}
+		if !strings.Contains(err.Error(), "sync_options") {
+			t.Errorf("expected error to mention sync_options, got: %v", err)
+		}
+	})
 }
 
 func TestGenerateClusterValues(t *testing.T) {

@@ -1,7 +1,0 @@
-# Addon catalog entry for istio-cni
-appName: istio-cni
-repoURL: https://istio-release.storage.googleapis.com/charts
-chart: cni
-version: "1.24.3"
-namespace: istio-system
-syncWave: -1

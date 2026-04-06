@@ -361,13 +361,13 @@ func (s *ObservabilityService) checkResourceAlerts(ctx context.Context, gp gitpr
 	var alerts []models.ResourceAlert
 	for _, addon := range catalog {
 		// Skip addons that aren't deployed anywhere
-		if !deployedAddons[addon.AppName] {
+		if !deployedAddons[addon.Name] {
 			continue
 		}
-		missing, detail := checkMissingResources(ctx, gp, addon.AppName)
+		missing, detail := checkMissingResources(ctx, gp, addon.Name)
 		if missing {
 			alerts = append(alerts, models.ResourceAlert{
-				AddonName: addon.AppName,
+				AddonName: addon.Name,
 				AlertType: "missing_limits",
 				Details:   detail,
 			})

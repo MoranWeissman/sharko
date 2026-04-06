@@ -53,15 +53,15 @@ clusters:
 func TestParseAddonsCatalog(t *testing.T) {
 	input := []byte(`
 applicationsets:
-  - appName: datadog
+  - name: datadog
     repoURL: https://helm.datadoghq.com
     chart: datadog
     version: 3.160.1
-  - appName: keda
+  - name: keda
     repoURL: https://kedacore.github.io/charts
     chart: keda
     version: 2.14.2
-  - appName: istio-base
+  - name: istio-base
     repoURL: https://istio-release.storage.googleapis.com/charts
     chart: base
     version: 1.28.0
@@ -92,8 +92,8 @@ applicationsets:
 
 	for _, tt := range tests {
 		a := addons[tt.idx]
-		if a.AppName != tt.appName {
-			t.Errorf("[%d] expected appName=%s, got %s", tt.idx, tt.appName, a.AppName)
+		if a.Name != tt.appName {
+			t.Errorf("[%d] expected appName=%s, got %s", tt.idx, tt.appName, a.Name)
 		}
 		if a.Chart != tt.chart {
 			t.Errorf("[%d] expected chart=%s, got %s", tt.idx, tt.chart, a.Chart)
@@ -121,10 +121,10 @@ func TestGetEnabledAddons(t *testing.T) {
 	}
 
 	catalog := []models.AddonCatalogEntry{
-		{AppName: "datadog", RepoURL: "https://helm.datadoghq.com", Chart: "datadog", Version: "3.160.1"},
-		{AppName: "keda", RepoURL: "https://kedacore.github.io/charts", Chart: "keda", Version: "2.14.2"},
-		{AppName: "external-secrets", RepoURL: "https://charts.external-secrets.io", Chart: "external-secrets", Version: "0.19.2"},
-		{AppName: "istio-base", RepoURL: "https://istio-release.storage.googleapis.com/charts", Chart: "base", Version: "1.28.0"},
+		{Name: "datadog", RepoURL: "https://helm.datadoghq.com", Chart: "datadog", Version: "3.160.1"},
+		{Name: "keda", RepoURL: "https://kedacore.github.io/charts", Chart: "keda", Version: "2.14.2"},
+		{Name: "external-secrets", RepoURL: "https://charts.external-secrets.io", Chart: "external-secrets", Version: "0.19.2"},
+		{Name: "istio-base", RepoURL: "https://istio-release.storage.googleapis.com/charts", Chart: "base", Version: "1.28.0"},
 	}
 
 	addons := parser.GetEnabledAddons(cluster, catalog)
@@ -203,7 +203,7 @@ func TestParseAll(t *testing.T) {
       datadog: enabled
 `)
 	catalogData := []byte(`applicationsets:
-  - appName: datadog
+  - name: datadog
     repoURL: https://helm.datadoghq.com
     chart: datadog
     version: 3.160.1

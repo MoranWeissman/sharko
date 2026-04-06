@@ -19,7 +19,7 @@ func (o *Orchestrator) UpgradeAddonGlobal(ctx context.Context, addonName, newVer
 		return nil, fmt.Errorf("new version is required")
 	}
 
-	catalogPath := path.Join(o.paths.GlobalValues, "..", "addons-catalog.yaml")
+	catalogPath := o.paths.Catalog
 	content, err := o.git.GetFileContent(ctx, catalogPath, o.gitops.BaseBranch)
 	if err != nil {
 		return nil, fmt.Errorf("reading addons-catalog.yaml: %w", err)
@@ -82,7 +82,7 @@ func (o *Orchestrator) UpgradeAddons(ctx context.Context, upgrades map[string]st
 	}
 
 	// Read the catalog once, apply all version changes, commit as single PR.
-	catalogPath := path.Join(o.paths.GlobalValues, "..", "addons-catalog.yaml")
+	catalogPath := o.paths.Catalog
 	content, err := o.git.GetFileContent(ctx, catalogPath, o.gitops.BaseBranch)
 	if err != nil {
 		return nil, fmt.Errorf("reading addons-catalog.yaml: %w", err)

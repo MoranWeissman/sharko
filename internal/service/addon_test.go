@@ -73,17 +73,17 @@ clusters:
 
 	addonsCatalogYAML := []byte(`
 applicationsets:
-  - appName: cert-manager
+  - name: cert-manager
     repoURL: https://charts.jetstack.io
     chart: cert-manager
     version: "1.14.0"
     namespace: cert-manager
-  - appName: ingress-nginx
+  - name: ingress-nginx
     repoURL: https://kubernetes.github.io/ingress-nginx
     chart: ingress-nginx
     version: "4.10.0"
     namespace: ingress-nginx
-  - appName: external-dns
+  - name: external-dns
     repoURL: https://kubernetes-sigs.github.io/external-dns
     chart: external-dns
     version: "1.14.0"

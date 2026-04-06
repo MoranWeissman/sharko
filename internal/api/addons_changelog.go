@@ -81,7 +81,7 @@ func (s *Server) handleGetAddonChangelog(w http.ResponseWriter, r *http.Request)
 
 	var chartName, repoURL, currentVersion string
 	for _, a := range addons {
-		if a.AppName == name {
+		if a.Name == name {
 			chartName = a.Chart
 			repoURL = a.RepoURL
 			currentVersion = a.Version

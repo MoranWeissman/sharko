@@ -13,12 +13,12 @@ const catalogPath = "configuration/addons-catalog.yaml"
 // sampleCatalog returns a realistic addons-catalog.yaml with the given addons.
 func sampleCatalog() []byte {
 	return []byte(`applicationsets:
-  - appName: cert-manager
+  - name: cert-manager
     chart: cert-manager
     repoURL: https://charts.jetstack.io
     version: 1.14.0
     namespace: cert-manager
-  - appName: metrics-server
+  - name: metrics-server
     chart: metrics-server
     repoURL: https://kubernetes-sigs.github.io/metrics-server
     version: 0.6.0
@@ -252,6 +252,9 @@ func TestDefaultAddons_ExplicitAddonsIgnoreDefaults(t *testing.T) {
 func TestSyncWave_AddAddonWithSyncWave(t *testing.T) {
 	git := newMockGitProvider()
 	argocd := newMockArgocd()
+	// Pre-populate an empty catalog so AddAddon can read it.
+	catalogPath := "configuration/addons-catalog.yaml"
+	git.files[catalogPath] = []byte("applicationsets:\n")
 
 	orch := New(nil, defaultCreds(), argocd, git, autoMergeGitOps(), defaultPaths(), nil)
 
@@ -270,15 +273,19 @@ func TestSyncWave_AddAddonWithSyncWave(t *testing.T) {
 		t.Fatal("expected non-nil result")
 	}
 
-	catalogContent := string(git.files["charts/external-dns/addon.yaml"])
+	// syncWave should appear in the catalog, not in a per-addon file.
+	catalogContent := string(git.files[catalogPath])
 	if !strings.Contains(catalogContent, "syncWave: -1") {
-		t.Errorf("expected syncWave: -1, got:\n%s", catalogContent)
+		t.Errorf("expected syncWave: -1 in catalog, got:\n%s", catalogContent)
 	}
 }
 
 func TestSyncWave_AddAddonWithoutSyncWave(t *testing.T) {
 	git := newMockGitProvider()
 	argocd := newMockArgocd()
+	// Pre-populate an empty catalog so AddAddon can read it.
+	catalogPath := "configuration/addons-catalog.yaml"
+	git.files[catalogPath] = []byte("applicationsets:\n")
 
 	orch := New(nil, defaultCreds(), argocd, git, autoMergeGitOps(), defaultPaths(), nil)
 
@@ -293,7 +300,8 @@ func TestSyncWave_AddAddonWithoutSyncWave(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	catalogContent := string(git.files["charts/prometheus/addon.yaml"])
+	// syncWave should not appear when zero.
+	catalogContent := string(git.files[catalogPath])
 	if strings.Contains(catalogContent, "syncWave") {
 		t.Errorf("syncWave should not appear when zero, got:\n%s", catalogContent)
 	}

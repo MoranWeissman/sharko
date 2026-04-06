@@ -232,6 +232,7 @@ var serveCmd = &cobra.Command{
 				repoPaths := orchestrator.RepoPathsConfig{
 					ClusterValues: getEnvDefault("SHARKO_REPO_PATH_CLUSTER_VALUES", "configuration/addons-clusters-values"),
 					GlobalValues:  getEnvDefault("SHARKO_REPO_PATH_GLOBAL_VALUES", "configuration/addons-global-values"),
+					Catalog:       getEnvDefault("SHARKO_REPO_PATH_CATALOG", "configuration/addons-catalog.yaml"),
 					Charts:        getEnvDefault("SHARKO_REPO_PATH_CHARTS", "charts/"),
 					Bootstrap:     getEnvDefault("SHARKO_REPO_PATH_BOOTSTRAP", "bootstrap/"),
 				}
@@ -368,6 +369,7 @@ var serveCmd = &cobra.Command{
 				repoPaths := orchestrator.RepoPathsConfig{
 					ClusterValues:   getEnvDefault("SHARKO_REPO_PATH_CLUSTER_VALUES", "configuration/addons-clusters-values"),
 					GlobalValues:    getEnvDefault("SHARKO_REPO_PATH_GLOBAL_VALUES", "configuration/addons-global-values"),
+					Catalog:         getEnvDefault("SHARKO_REPO_PATH_CATALOG", "configuration/addons-catalog.yaml"),
 					Charts:          getEnvDefault("SHARKO_REPO_PATH_CHARTS", "charts/"),
 					Bootstrap:       getEnvDefault("SHARKO_REPO_PATH_BOOTSTRAP", "bootstrap/"),
 					HostClusterName: os.Getenv("SHARKO_HOST_CLUSTER_NAME"),

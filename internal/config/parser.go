@@ -109,7 +109,7 @@ func (p *Parser) GetEnabledAddons(cluster models.Cluster, catalog []models.Addon
 	addons := make([]models.ClusterAddonInfo, 0)
 
 	for _, catalogEntry := range catalog {
-		addonName := catalogEntry.AppName
+		addonName := catalogEntry.Name
 		labelValue, hasLabel := cluster.Labels[addonName]
 
 		if !hasLabel {

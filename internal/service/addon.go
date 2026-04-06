@@ -105,7 +105,7 @@ func (s *AddonService) GetCatalog(ctx context.Context, gp gitprovider.GitProvide
 
 	for _, addon := range repoCfg.Addons {
 		item := models.AddonCatalogItem{
-			AddonName: addon.AppName,
+			AddonName: addon.Name,
 			Chart:     addon.Chart,
 			RepoURL:   addon.RepoURL,
 			Namespace: addon.Namespace,
@@ -117,7 +117,7 @@ func (s *AddonService) GetCatalog(ctx context.Context, gp gitprovider.GitProvide
 		enabledCount, healthyCount, degradedCount, missingCount := 0, 0, 0, 0
 
 		for _, cluster := range repoCfg.Clusters {
-			labelVal, hasAddon := cluster.Labels[addon.AppName]
+			labelVal, hasAddon := cluster.Labels[addon.Name]
 			if !hasAddon {
 				continue
 			}
@@ -131,7 +131,7 @@ func (s *AddonService) GetCatalog(ctx context.Context, gp gitprovider.GitProvide
 
 			// Version for this cluster
 			version := addon.Version
-			versionKey := addon.AppName + "-version"
+			versionKey := addon.Name + "-version"
 			if override, ok := cluster.Labels[versionKey]; ok {
 				version = override
 			}
@@ -146,7 +146,7 @@ func (s *AddonService) GetCatalog(ctx context.Context, gp gitprovider.GitProvide
 
 			{
 				// Check ArgoCD status
-				appName := addon.AppName + "-" + cluster.Name
+				appName := addon.Name + "-" + cluster.Name
 				if app, ok := appMap[appName]; ok {
 					dep.SyncStatus = app.SyncStatus
 					dep.HealthStatus = app.HealthStatus
@@ -259,7 +259,7 @@ func (s *AddonService) GetVersionMatrix(ctx context.Context, gp gitprovider.GitP
 	rows := make([]models.VersionMatrixRow, 0, len(repoCfg.Addons))
 	for _, addon := range repoCfg.Addons {
 		row := models.VersionMatrixRow{
-			AddonName:      addon.AppName,
+			AddonName:      addon.Name,
 			CatalogVersion: addon.Version,
 			Chart:          addon.Chart,
 			Cells:          make(map[string]models.VersionMatrixCell),
@@ -267,7 +267,7 @@ func (s *AddonService) GetVersionMatrix(ctx context.Context, gp gitprovider.GitP
 
 		for _, clusterName := range clusterNames {
 			cluster := clusterMap[clusterName]
-			labelVal, hasLabel := cluster.Labels[addon.AppName]
+			labelVal, hasLabel := cluster.Labels[addon.Name]
 			if !hasLabel {
 				continue
 			}
@@ -276,7 +276,7 @@ func (s *AddonService) GetVersionMatrix(ctx context.Context, gp gitprovider.GitP
 
 			// Determine version
 			version := addon.Version
-			versionKey := addon.AppName + "-version"
+			versionKey := addon.Name + "-version"
 			if override, ok := cluster.Labels[versionKey]; ok {
 				version = override
 			}
@@ -290,7 +290,7 @@ func (s *AddonService) GetVersionMatrix(ctx context.Context, gp gitprovider.GitP
 				cell.Health = "not_enabled"
 			} else {
 				// Check ArgoCD status
-				appName := addon.AppName + "-" + clusterName
+				appName := addon.Name + "-" + clusterName
 				if app, ok := appMap[appName]; ok {
 					cell.Health = app.HealthStatus
 					if cell.Health == "" {
