@@ -1,7 +1,9 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
+	"time"
 )
 
 // fleetClusterSummary holds per-cluster health info for the cluster status overview response.
@@ -15,6 +17,10 @@ type fleetClusterSummary struct {
 
 // fleetStatusResponse is the response for GET /api/v1/fleet/status (cluster status overview).
 type fleetStatusResponse struct {
+	ServerVersion        string                `json:"server_version"`
+	Uptime               string                `json:"uptime"`
+	GitUnavailable       bool                  `json:"git_unavailable,omitempty"`
+	ArgoUnavailable      bool                  `json:"argo_unavailable,omitempty"`
 	TotalClusters        int                   `json:"total_clusters"`
 	HealthyClusters      int                   `json:"healthy_clusters"`
 	DegradedClusters     int                   `json:"degraded_clusters"`
@@ -28,6 +34,21 @@ type fleetStatusResponse struct {
 	Clusters             []fleetClusterSummary `json:"clusters"`
 }
 
+// formatUptime returns a human-readable uptime string.
+func formatUptime(d time.Duration) string {
+	d = d.Round(time.Second)
+	h := int(d.Hours())
+	m := int(d.Minutes()) % 60
+	s := int(d.Seconds()) % 60
+	if h > 0 {
+		return fmt.Sprintf("%dh%dm", h, m)
+	}
+	if m > 0 {
+		return fmt.Sprintf("%dm%ds", m, s)
+	}
+	return fmt.Sprintf("%ds", s)
+}
+
 // handleGetFleetStatus godoc
 //
 // @Summary Get fleet status
@@ -39,85 +60,86 @@ type fleetStatusResponse struct {
 // @Failure 502 {object} map[string]interface{} "Gateway error"
 // @Router /fleet/status [get]
 // handleGetFleetStatus handles GET /api/v1/fleet/status — read-only cluster status aggregation.
+// It is resilient: Git and ArgoCD unavailability are reported as flags, not errors.
 func (s *Server) handleGetFleetStatus(w http.ResponseWriter, r *http.Request) {
+	resp := fleetStatusResponse{
+		ServerVersion: appVersion,
+		Uptime:        formatUptime(time.Since(s.startTime)),
+		Clusters:      make([]fleetClusterSummary, 0),
+	}
+
 	gp, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, err.Error())
-		return
+		resp.GitUnavailable = true
 	}
 
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, err.Error())
-		return
+		resp.ArgoUnavailable = true
 	}
 
-	clustersResp, err := s.clusterSvc.ListClusters(r.Context(), gp, ac)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to fetch clusters: "+err.Error())
-		return
-	}
-
-	resp := fleetStatusResponse{
-		TotalClusters: len(clustersResp.Clusters),
-		Clusters:      make([]fleetClusterSummary, 0, len(clustersResp.Clusters)),
-	}
-
-	for _, c := range clustersResp.Clusters {
-		switch c.ConnectionStatus {
-		case "Successful":
-			resp.HealthyClusters++
-		case "Failed":
-			resp.DegradedClusters++
-		default:
-			resp.DisconnectedClusters++
-		}
-		resp.Clusters = append(resp.Clusters, fleetClusterSummary{
-			Name:             c.Name,
-			ConnectionStatus: c.ConnectionStatus,
-		})
-	}
-
-	catalog, err := s.addonSvc.GetCatalog(r.Context(), gp, ac)
-	if err != nil {
-		resp.AddonDataUnavailable = true
-		writeJSON(w, http.StatusOK, resp)
-		return
-	}
-
-	resp.TotalAddons = catalog.TotalAddons
-
-	// Build per-cluster addon stats from catalog data.
-	clusterAddons := make(map[string]*fleetClusterSummary)
-	for i := range resp.Clusters {
-		clusterAddons[resp.Clusters[i].Name] = &resp.Clusters[i]
-	}
-
-	for _, addon := range catalog.Addons {
-		for _, app := range addon.Applications {
-			if !app.Enabled {
-				continue
-			}
-			resp.TotalDeployments++
-
-			switch app.HealthStatus {
-			case "Healthy":
-				resp.HealthyDeployments++
-			case "Degraded", "Unknown":
-				resp.DegradedDeployments++
+	// Only fetch cluster/addon data when both providers are available.
+	if !resp.GitUnavailable && !resp.ArgoUnavailable {
+		clustersResp, err := s.clusterSvc.ListClusters(r.Context(), gp, ac)
+		if err != nil {
+			resp.ArgoUnavailable = true
+		} else {
+			resp.TotalClusters = len(clustersResp.Clusters)
+			for _, c := range clustersResp.Clusters {
+				switch c.ConnectionStatus {
+				case "Successful":
+					resp.HealthyClusters++
+				case "Failed":
+					resp.DegradedClusters++
+				default:
+					resp.DisconnectedClusters++
+				}
+				resp.Clusters = append(resp.Clusters, fleetClusterSummary{
+					Name:             c.Name,
+					ConnectionStatus: c.ConnectionStatus,
+				})
 			}
 
-			if app.SyncStatus == "OutOfSync" {
-				resp.OutOfSyncDeployments++
-			}
+			catalog, err := s.addonSvc.GetCatalog(r.Context(), gp, ac)
+			if err != nil {
+				resp.AddonDataUnavailable = true
+			} else {
+				resp.TotalAddons = catalog.TotalAddons
 
-			if cs, ok := clusterAddons[app.ClusterName]; ok {
-				cs.TotalAddons++
-				switch app.HealthStatus {
-				case "Healthy":
-					cs.HealthyAddons++
-				case "Degraded", "Unknown":
-					cs.DegradedAddons++
+				// Build per-cluster addon stats from catalog data.
+				clusterAddons := make(map[string]*fleetClusterSummary)
+				for i := range resp.Clusters {
+					clusterAddons[resp.Clusters[i].Name] = &resp.Clusters[i]
+				}
+
+				for _, addon := range catalog.Addons {
+					for _, app := range addon.Applications {
+						if !app.Enabled {
+							continue
+						}
+						resp.TotalDeployments++
+
+						switch app.HealthStatus {
+						case "Healthy":
+							resp.HealthyDeployments++
+						case "Degraded", "Unknown":
+							resp.DegradedDeployments++
+						}
+
+						if app.SyncStatus == "OutOfSync" {
+							resp.OutOfSyncDeployments++
+						}
+
+						if cs, ok := clusterAddons[app.ClusterName]; ok {
+							cs.TotalAddons++
+							switch app.HealthStatus {
+							case "Healthy":
+								cs.HealthyAddons++
+							case "Degraded", "Unknown":
+								cs.DegradedAddons++
+							}
+						}
+					}
 				}
 			}
 		}

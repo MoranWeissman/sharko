@@ -53,10 +53,12 @@ func (s *Server) handleInit(w http.ResponseWriter, r *http.Request) {
 		req = orchestrator.InitRepoRequest{BootstrapArgoCD: true}
 	}
 
-	// Populate Git credentials for ArgoCD repository registration.
-	if req.GitUsername == "" || req.GitToken == "" {
-		conn, connErr := s.connSvc.GetActiveConnectionInfo()
-		if connErr == nil {
+	// Resolve effective GitOps config — fall back to active connection's repo URL if not set via env.
+	gitopsCfg := s.gitopsCfg
+	conn, connErr := s.connSvc.GetActiveConnectionInfo()
+	if connErr == nil {
+		// Populate Git credentials for ArgoCD repository registration.
+		if req.GitUsername == "" || req.GitToken == "" {
 			username, token := extractGitCredentials(conn)
 			if req.GitUsername == "" {
 				req.GitUsername = username
@@ -65,9 +67,13 @@ func (s *Server) handleInit(w http.ResponseWriter, r *http.Request) {
 				req.GitToken = token
 			}
 		}
+		// Fall back to the connection's repo URL if env var was not set.
+		if gitopsCfg.RepoURL == "" && conn.Git.RepoURL != "" {
+			gitopsCfg.RepoURL = conn.Git.RepoURL
+		}
 	}
 
-	orch := orchestrator.New(&s.gitMu, s.credProvider, ac, git, s.gitopsCfg, s.repoPaths, s.templateFS)
+	orch := orchestrator.New(&s.gitMu, s.credProvider, ac, git, gitopsCfg, s.repoPaths, s.templateFS)
 	result, err := orch.InitRepo(r.Context(), req)
 	if err != nil {
 		if strings.Contains(err.Error(), "already") {

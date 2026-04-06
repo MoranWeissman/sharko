@@ -88,6 +88,10 @@ spec:
             - name: APP_ENVIRONMENTS
               value: {{ .Values.config.environments | quote }}
             {{- end }}
+            {{- if .Values.config.repoURL }}
+            - name: SHARKO_GITOPS_REPO_URL
+              value: {{ .Values.config.repoURL | quote }}
+            {{- end }}
             {{- if .Values.gitops.actions.enabled }}
             - name: GITOPS_ACTIONS_ENABLED
               value: "true"

@@ -43,6 +43,9 @@ config:
   # Comma-separated list of environment keywords to extract from cluster names.
   # e.g. "dev,qa,staging,prod" — cluster "nms-core-dev-eks" → env "dev"
   environments: ""
+  # Git repo URL for the addons repository. Used by init and write operations.
+  # If empty, Sharko falls back to the repo URL stored in the active connection.
+  repoURL: ""  # e.g. https://github.com/your-org/your-addons-repo
 
 # ---------------------------------------------------------------------------
 # Secrets
