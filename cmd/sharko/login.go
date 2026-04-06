@@ -16,6 +16,8 @@ import (
 
 func init() {
 	loginCmd.Flags().String("server", "", "Sharko server URL (required)")
+	loginCmd.Flags().String("username", "", "Username (skips interactive prompt)")
+	loginCmd.Flags().String("password", "", "Password (skips interactive prompt, use with --username)")
 	loginCmd.MarkFlagRequired("server")
 	rootCmd.AddCommand(loginCmd)
 }
@@ -27,21 +29,44 @@ var loginCmd = &cobra.Command{
 		server, _ := cmd.Flags().GetString("server")
 		server = strings.TrimRight(server, "/")
 
-		fmt.Print("Username: ")
-		reader := bufio.NewReader(os.Stdin)
-		username, err := reader.ReadString('\n')
-		if err != nil {
-			return fmt.Errorf("failed to read username: %w", err)
-		}
-		username = strings.TrimSpace(username)
+		flagUsername, _ := cmd.Flags().GetString("username")
+		flagPassword, _ := cmd.Flags().GetString("password")
 
-		fmt.Print("Password: ")
-		passwordBytes, err := term.ReadPassword(int(syscall.Stdin))
-		fmt.Println()
-		if err != nil {
-			return fmt.Errorf("failed to read password: %w", err)
+		var username, password string
+
+		switch {
+		case flagUsername != "" && flagPassword != "":
+			// Both provided — fully non-interactive
+			username = flagUsername
+			password = flagPassword
+		case flagUsername != "":
+			// Username provided — only prompt for password
+			username = flagUsername
+			fmt.Print("Password: ")
+			passwordBytes, err := term.ReadPassword(int(syscall.Stdin))
+			fmt.Println()
+			if err != nil {
+				return fmt.Errorf("failed to read password: %w", err)
+			}
+			password = string(passwordBytes)
+		default:
+			// Neither provided — prompt for both (original behavior)
+			fmt.Print("Username: ")
+			reader := bufio.NewReader(os.Stdin)
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				return fmt.Errorf("failed to read username: %w", err)
+			}
+			username = strings.TrimSpace(line)
+
+			fmt.Print("Password: ")
+			passwordBytes, err := term.ReadPassword(int(syscall.Stdin))
+			fmt.Println()
+			if err != nil {
+				return fmt.Errorf("failed to read password: %w", err)
+			}
+			password = string(passwordBytes)
 		}
-		password := string(passwordBytes)
 
 		// POST directly to the server — no config saved yet.
 		payload, err := json.Marshal(map[string]string{
