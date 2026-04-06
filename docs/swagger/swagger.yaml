@@ -232,6 +232,8 @@ definitions:
     properties:
       addon_data_unavailable:
         type: boolean
+      argo_unavailable:
+        type: boolean
       clusters:
         items:
           $ref: '#/definitions/internal_api.fleetClusterSummary'
@@ -242,18 +244,43 @@ definitions:
         type: integer
       disconnected_clusters:
         type: integer
+      git_unavailable:
+        type: boolean
       healthy_clusters:
         type: integer
       healthy_deployments:
         type: integer
       out_of_sync_deployments:
         type: integer
+      server_version:
+        type: string
       total_addons:
         type: integer
       total_clusters:
         type: integer
       total_deployments:
         type: integer
+      uptime:
+        type: string
+    type: object
+  internal_api.gitHubPushEvent:
+    properties:
+      commits:
+        items:
+          properties:
+            id:
+              type: string
+            message:
+              type: string
+          type: object
+        type: array
+      pusher:
+        properties:
+          name:
+            type: string
+        type: object
+      ref:
+        type: string
     type: object
   internal_api.saveAIConfigRequest:
     properties:
@@ -2792,6 +2819,52 @@ paths:
       summary: Reset user password
       tags:
       - auth
+  /webhooks/git:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Receives GitHub push event webhooks. Verifies HMAC-SHA256 signature
+        when SHARKO_WEBHOOK_SECRET is set, then triggers a cache refresh on
+        pushes to the configured base branch.
+      parameters:
+      - description: GitHub HMAC-SHA256 signature
+        in: header
+        name: X-Hub-Signature-256
+        type: string
+      - description: GitHub event type (push, ping, etc.)
+        in: header
+        name: X-GitHub-Event
+        type: string
+      - description: GitHub push event payload
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/internal_api.gitHubPushEvent'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Webhook accepted
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad request or unreadable body
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Invalid signature
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Git webhook receiver
+      tags:
+      - system
 securityDefinitions:
   BearerAuth:
     in: header
