@@ -1,3 +1,11 @@
-# Global values for keda addon
+# Global Helm values for KEDA
+# Docs: https://keda.sh/docs/deploy/#helm
 keda:
   enabled: false
+  # metricsServer:
+  #   replicaCount: 2
+  # resources:
+  #   operator:
+  #     requests:
+  #       cpu: 100m
+  #       memory: 128Mi
