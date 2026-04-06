@@ -710,7 +710,7 @@ func (s *Server) handleHashPassword(w http.ResponseWriter, r *http.Request) {
 func securityHeadersMiddleware(next http.Handler) http.Handler {
 	const csp = "default-src 'self'; " +
 		"script-src 'self'; " +
-		"style-src 'self' 'unsafe-inline'; " +
+		"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
 		"img-src 'self' data:; " +
 		"font-src 'self' https://fonts.gstatic.com https://fonts.googleapis.com; " +
 		"connect-src 'self'; " +
