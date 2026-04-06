@@ -1,4 +1,0 @@
-apiVersion: v2
-name: datadog-operator-crds
-description: Datadog Operator CRDs (dashboards + monitors) — deployed per cluster via ApplicationSet
-version: 0.1.0
