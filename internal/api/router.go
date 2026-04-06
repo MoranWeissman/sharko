@@ -98,7 +98,7 @@ func NewServer(
 		authStore:         authStore,
 		aiConfigStore:     nil, // set via SetAIConfigStore
 		addonSecretDefs:   make(map[string]orchestrator.AddonSecretDefinition),
-		notificationStore: notifications.NewStore(100),
+		notificationStore: notifications.NewStore(100, notifications.DefaultNotificationsPath),
 		startTime:         time.Now(),
 	}
 }
