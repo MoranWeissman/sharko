@@ -8,6 +8,7 @@ import (
 )
 
 var version = "dev"
+var commit = "none"
 
 var rootCmd = &cobra.Command{
 	Use:     "sharko",

@@ -1,0 +1,72 @@
+site_name: Sharko
+site_description: Addon management for Kubernetes clusters, built on ArgoCD
+site_url: https://moranweissman.github.io/sharko
+repo_url: https://github.com/MoranWeissman/sharko
+repo_name: MoranWeissman/sharko
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: blue
+      accent: light blue
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: blue
+      accent: light blue
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - search.suggest
+    - content.code.copy
+  icon:
+    repo: fontawesome/brands/github
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Quick Start: getting-started/quickstart.md
+    - Installation: getting-started/installation.md
+    - First Run: getting-started/first-run.md
+  - User Guide:
+    - Managing Connections: user-guide/connections.md
+    - Managing Clusters: user-guide/clusters.md
+    - Managing Addons: user-guide/addons.md
+    - Upgrades: user-guide/upgrades.md
+    - Notifications: user-guide/notifications.md
+  - Operator Manual:
+    - Installation: operator/installation.md
+    - Configuration: operator/configuration.md
+    - Security: operator/security.md
+    - Troubleshooting: operator/troubleshooting.md
+  - CLI Reference:
+    - Overview: cli/overview.md
+    - Commands: cli/commands.md
+  - API Reference:
+    - Overview: api/overview.md
+    - Endpoints: api/endpoints.md
+  - Architecture:
+    - Overview: architecture/overview.md
+    - Repository Structure: architecture/repo-structure.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+
+plugins:
+  - search
