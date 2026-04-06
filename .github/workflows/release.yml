@@ -1,9 +1,9 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
 
 env:
   REGISTRY: ghcr.io
@@ -13,6 +13,9 @@ env:
 jobs:
   build-and-push:
     name: Build & Push Docker Image
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      startsWith(github.event.workflow_run.head_branch, 'v')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -20,6 +23,19 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+          fetch-depth: 0
+
+      - name: Fetch tags
+        run: git fetch --tags --force
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG="${{ github.event.workflow_run.head_branch }}"
+          echo "TAG=$TAG" >> "$GITHUB_OUTPUT"
+          echo "VERSION=${TAG#v}" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -34,13 +50,10 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=raw,value=latest,enable={{is_default_branch}}
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+            type=semver,pattern={{version}},value=${{ steps.version.outputs.TAG }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.version.outputs.TAG }}
+            type=semver,pattern={{major}},value=${{ steps.version.outputs.TAG }}
+            type=raw,value=latest
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -49,13 +62,13 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            CACHE_BUST=${{ github.sha }}
-            VERSION=${{ github.ref_name }}
+            CACHE_BUST=${{ github.event.workflow_run.head_sha }}
+            VERSION=${{ steps.version.outputs.TAG }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -69,6 +82,19 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+          fetch-depth: 0
+
+      - name: Fetch tags
+        run: git fetch --tags --force
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG="${{ github.event.workflow_run.head_branch }}"
+          echo "TAG=$TAG" >> "$GITHUB_OUTPUT"
+          echo "VERSION=${TAG#v}" >> "$GITHUB_OUTPUT"
 
       - name: Install Helm
         uses: azure/setup-helm@v4
@@ -81,12 +107,8 @@ jobs:
             --username ${{ github.actor }} \
             --password-stdin
 
-      - name: Extract version from tag
-        id: version
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-
       - name: Package Helm chart
-        run: helm package ${{ env.HELM_CHART_PATH }} --version ${{ steps.version.outputs.VERSION }} --app-version ${{ github.ref_name }}
+        run: helm package ${{ env.HELM_CHART_PATH }} --version ${{ steps.version.outputs.VERSION }} --app-version ${{ steps.version.outputs.TAG }}
 
       - name: Push Helm chart to GHCR
         run: |
@@ -103,7 +125,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.workflow_run.head_branch }}
           fetch-depth: 0
+
+      - name: Fetch tags
+        run: git fetch --tags --force
 
       - name: Set up Go
         uses: actions/setup-go@v5
