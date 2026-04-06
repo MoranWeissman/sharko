@@ -1247,3 +1247,4 @@ export function AddonDetail() {
     </div>
   )
 }
+export default AddonDetail

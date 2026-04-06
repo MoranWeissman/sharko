@@ -72,8 +72,16 @@ func DiscoverServerURL(namespace string) string {
 	return discoverArgocdServer(namespace)
 }
 
+// commonArgoServiceNames lists well-known ArgoCD server service names in priority order.
+// Different Helm releases produce different names depending on the release name used.
+var commonArgoServiceNames = []string{
+	"argocd-server",           // default Helm chart (release name: argocd)
+	"argo-cd-argocd-server",   // release name: argo-cd
+	"argocd-argocd-server",    // release name: argocd (some versions)
+}
+
 // discoverArgocdServer tries to find the ArgoCD server service in the given namespace.
-// Priority: ARGOCD_SERVER_URL env var → K8s service discovery → default name.
+// Priority: ARGOCD_SERVER_URL env var → K8s service listing → common name probes → default name.
 func discoverArgocdServer(namespace string) string {
 	// Check ARGOCD_SERVER_URL env var first
 	if url := os.Getenv("ARGOCD_SERVER_URL"); url != "" {
@@ -90,8 +98,22 @@ func discoverArgocdServer(namespace string) string {
 
 			svcs, err := clientset.CoreV1().Services(namespace).List(ctx, metav1.ListOptions{})
 			if err == nil {
+				// First pass: prefer known common names (exact match, in priority order)
+				svcByName := make(map[string]struct{}, len(svcs.Items))
 				for _, svc := range svcs.Items {
-					// Look for a service with "server" in the name that exposes port 80 or 443
+					svcByName[svc.Name] = struct{}{}
+				}
+				for _, name := range commonArgoServiceNames {
+					if _, ok := svcByName[name]; ok {
+						url := fmt.Sprintf("https://%s.%s.svc.cluster.local", name, namespace)
+						slog.Info("discovered ArgoCD server service by name", "service", name, "url", url)
+						return url
+					}
+				}
+
+				// Second pass: look for any service with "server" in the name (not repo-server)
+				// that exposes port 443 or 80 — handles custom release names
+				for _, svc := range svcs.Items {
 					if !strings.Contains(svc.Name, "server") || strings.Contains(svc.Name, "repo-server") {
 						continue
 					}
@@ -110,7 +132,28 @@ func discoverArgocdServer(namespace string) string {
 		}
 	}
 
-	// Fallback to default
+	// Fallback: probe common names via HTTP to find a responding server
+	httpClient := &http.Client{
+		Timeout: 2 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // discovery probe
+		},
+	}
+	for _, name := range commonArgoServiceNames {
+		url := fmt.Sprintf("https://%s.%s.svc.cluster.local", name, namespace)
+		req, err := http.NewRequest(http.MethodGet, url+"/api/version", nil)
+		if err != nil {
+			continue
+		}
+		resp, err := httpClient.Do(req)
+		if err == nil {
+			resp.Body.Close()
+			slog.Info("ArgoCD server responded to probe", "service", name, "url", url)
+			return url
+		}
+	}
+
+	// Last resort: default name
 	return fmt.Sprintf("https://argocd-server.%s.svc.cluster.local", namespace)
 }
 

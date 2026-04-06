@@ -802,3 +802,4 @@ export function AddonCatalog() {
     </div>
   )
 }
+export default AddonCatalog
