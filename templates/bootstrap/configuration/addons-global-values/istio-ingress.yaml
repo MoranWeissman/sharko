@@ -1,3 +1,9 @@
-# Global values for istio-ingress addon
+# Global Helm values for istio-ingress
+# Docs: https://istio.io/latest/docs/setup/install/helm/
+# Deploy order: istio-base (syncWave -2) → istio-cni (-1) → istiod (0) → istio-ingress (1)
 istio-ingress:
   enabled: false
+  # service:
+  #   type: LoadBalancer
+  #   annotations:
+  #     service.beta.kubernetes.io/aws-load-balancer-type: nlb

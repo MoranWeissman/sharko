@@ -1,3 +1,15 @@
-# Global values for cert-manager addon
+# Global Helm values for cert-manager
+# These values are passed to the cert-manager Helm chart for ALL clusters.
+# Per-cluster overrides go in configuration/addons-clusters-values/<cluster>.yaml
+#
+# Docs: https://cert-manager.io/docs/configuration/
 cert-manager:
   enabled: false
+  # installCRDs: true          # Install CRDs with the chart
+  # replicaCount: 2            # HA setup
+  # resources:
+  #   requests:
+  #     cpu: 50m
+  #     memory: 64Mi
+  #   limits:
+  #     memory: 128Mi

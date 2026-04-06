@@ -1,16 +1,40 @@
 # ================================================================ #
 # Cluster Addons Registry
 # ================================================================ #
-# Each cluster entry defines which addons are enabled via labels.
-# Sharko manages this file — add/remove clusters via the UI or CLI.
+# Sharko manages this file. Each cluster entry controls which addons
+# are deployed via ArgoCD labels. Use the UI, CLI, or edit directly.
 #
-# Example:
-#   clusters:
-#     - name: prod-eu
-#       labels:
-#         cert-manager: enabled
-#         datadog: enabled
-#       region: eu-central-1
+# Fields:
+#   name:   (required) Cluster name — must match ArgoCD cluster secret
+#   labels: (required) Addon labels — set to "enabled" to deploy
+#   region: (optional) Cloud region — used for grouping in the UI
+#
+# Sharko CLI:
+#   sharko add-cluster prod-eu --addons cert-manager,datadog
+#   sharko update-cluster prod-eu --enable keda --disable datadog
+#   sharko remove-cluster prod-eu
 # ================================================================ #
 
-clusters: []
+clusters:
+  # Example cluster — uncomment and modify:
+  #
+  # - name: prod-eu
+  #   region: eu-central-1
+  #   labels:
+  #     cert-manager: enabled
+  #     external-dns: enabled
+  #     datadog: enabled
+  #     keda: disabled          # listed but not deployed
+  #
+  # - name: staging-us
+  #   region: us-east-1
+  #   labels:
+  #     cert-manager: enabled
+  #     kyverno: enabled
+  #
+  # Per-cluster version override (deploys a different version than the catalog):
+  # - name: canary-eu
+  #   region: eu-central-1
+  #   labels:
+  #     cert-manager: enabled
+  #     cert-manager-version: "1.17.0"   # overrides catalog version for this cluster

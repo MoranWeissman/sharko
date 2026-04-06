@@ -1,3 +1,11 @@
-# Global values for argo-rollouts addon
+# Global Helm values for Argo Rollouts
+# Docs: https://argo-rollouts.readthedocs.io/en/stable/installation/#helm
 argo-rollouts:
   enabled: false
+  # dashboard:
+  #   enabled: true            # Enable the Argo Rollouts dashboard
+  # controller:
+  #   resources:
+  #     requests:
+  #       cpu: 100m
+  #       memory: 128Mi

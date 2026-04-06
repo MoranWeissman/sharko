@@ -1,13 +1,47 @@
 # ================================================================ #
-# Addons Catalog — bundled addons shipped with Sharko
+# Addons Catalog — Single Source of Truth
 # ================================================================ #
-# All 11 bundled addons are listed here. Each is disabled by default.
-# Enable an addon for a cluster by adding a label to the ArgoCD
-# cluster secret:
+# This file defines all available addons. ArgoCD ApplicationSets read
+# from this file to deploy addons to clusters. Sharko manages it via
+# the UI, CLI, or API — or edit directly and push.
 #
-#   kubectl label secret <cluster-secret> -n argocd cert-manager=enabled
+# Required fields:
+#   name:      Addon name (used as ArgoCD app suffix and label key)
+#   repoURL:   Helm repository URL
+#   chart:     Helm chart name
+#   version:   Chart version (semver)
 #
-# See configuration/addons-global-values/<name>.yaml for Helm values.
+# Optional fields:
+#   namespace:         Target namespace (defaults to addon name)
+#   syncWave:          ArgoCD sync wave ordering (default: 0)
+#                      Negative = deploy first, positive = deploy last
+#   selfHeal:          Auto-revert manual changes (default: false)
+#   syncOptions:       ArgoCD sync options list
+#                      e.g. ["ServerSideApply=true", "CreateNamespace=true"]
+#   ignoreDifferences: Fields to ignore during diff (for CRD-heavy addons)
+#   additionalSources: Extra Helm sources for multi-source apps
+#   extraHelmValues:   Additional Helm value overrides
+#
+# Sharko CLI:
+#   sharko add-addon nginx-ingress --repo https://kubernetes.github.io/ingress-nginx --chart ingress-nginx --version 4.11.0
+#   sharko configure-addon cert-manager --sync-wave -1 --self-heal true
+#   sharko remove-addon nginx-ingress
+#
+# Full example with all fields:
+#   - name: kyverno
+#     repoURL: https://kyverno.github.io/kyverno/
+#     chart: kyverno
+#     version: "3.3.4"
+#     namespace: kyverno
+#     syncWave: -1
+#     selfHeal: true
+#     syncOptions:
+#       - ServerSideApply=true
+#     ignoreDifferences:
+#       - group: kyverno.io
+#         kind: ClusterPolicy
+#         jsonPointers:
+#           - /spec/rules
 # ================================================================ #
 
 applicationsets:
