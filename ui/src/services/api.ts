@@ -155,6 +155,22 @@ export async function upgradeAddon(name: string, data: { version: string; cluste
   return postJSON<any>(`/addons/${encodeURIComponent(name)}/upgrade`, data)
 }
 
+export async function configureAddon(
+  name: string,
+  config: {
+    version?: string
+    sync_wave?: number
+    self_heal?: boolean
+    sync_options?: string[]
+    extra_helm_values?: Record<string, string>
+  },
+) {
+  return patchJSON<{ status: string; pr_url?: string; pull_request_url?: string }>(
+    `/addons/${encodeURIComponent(name)}/configure`,
+    { name, ...config },
+  )
+}
+
 export async function createToken(data: { name: string; role: string }) {
   return postJSON<any>('/tokens', data)
 }
