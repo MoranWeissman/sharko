@@ -7,6 +7,10 @@ import (
 	"path"
 	"regexp"
 	"time"
+
+	"github.com/MoranWeissman/sharko/internal/models"
+
+	"gopkg.in/yaml.v3"
 )
 
 // ErrClusterAlreadyExists is returned when attempting to register a cluster
@@ -89,7 +93,12 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 
 	// Step 5: Generate cluster values file and commit to Git via PR.
 	// Values file must exist before ArgoCD labels trigger ApplicationSet deployment.
-	valuesContent := generateClusterValues(req.Name, req.Region, req.Addons, nil)
+	var catalog []models.AddonCatalogEntry
+	catalogData, catalogErr := o.git.GetFileContent(ctx, "configuration/addons-catalog.yaml", o.gitops.BaseBranch)
+	if catalogErr == nil && catalogData != nil {
+		catalog, _ = parseAddonsCatalog(catalogData)
+	}
+	valuesContent := generateClusterValues(req.Name, req.Region, req.Addons, catalog)
 	valuesPath := path.Join(o.paths.ClusterValues, req.Name+".yaml")
 
 	files := map[string][]byte{
@@ -287,7 +296,12 @@ func (o *Orchestrator) UpdateClusterAddons(ctx context.Context, name string, ser
 	}
 
 	// Step 4: Update values file in Git.
-	valuesContent := generateClusterValues(name, region, addons, nil)
+	var catalog []models.AddonCatalogEntry
+	catalogData, catalogErr := o.git.GetFileContent(ctx, "configuration/addons-catalog.yaml", o.gitops.BaseBranch)
+	if catalogErr == nil && catalogData != nil {
+		catalog, _ = parseAddonsCatalog(catalogData)
+	}
+	valuesContent := generateClusterValues(name, region, addons, catalog)
 	valuesPath := path.Join(o.paths.ClusterValues, name+".yaml")
 
 	files := map[string][]byte{
@@ -356,4 +370,19 @@ func (o *Orchestrator) RefreshClusterCredentials(ctx context.Context, name strin
 	}
 
 	return nil
+}
+
+// addonsCatalogFile mirrors the YAML structure of addons-catalog.yaml.
+// Duplicated here to avoid an import cycle with the config package.
+type addonsCatalogFile struct {
+	ApplicationSets []models.AddonCatalogEntry `yaml:"applicationsets"`
+}
+
+// parseAddonsCatalog unmarshals raw addons-catalog.yaml bytes into a slice of catalog entries.
+func parseAddonsCatalog(data []byte) ([]models.AddonCatalogEntry, error) {
+	var file addonsCatalogFile
+	if err := yaml.Unmarshal(data, &file); err != nil {
+		return nil, fmt.Errorf("parsing addons-catalog.yaml: %w", err)
+	}
+	return file.ApplicationSets, nil
 }
