@@ -1,0 +1,16 @@
+# ================================================================ #
+# Cluster Addons Registry
+# ================================================================ #
+# Each cluster entry defines which addons are enabled via labels.
+# Sharko manages this file — add/remove clusters via the UI or CLI.
+#
+# Example:
+#   clusters:
+#     - name: prod-eu
+#       labels:
+#         cert-manager: enabled
+#         datadog: enabled
+#       region: eu-central-1
+# ================================================================ #
+
+clusters: []

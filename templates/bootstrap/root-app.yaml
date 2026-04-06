@@ -19,7 +19,7 @@ spec:
       kind: '*'
 ---
 # Root Application - bootstraps the cluster addons bootstrap chart
-# This creates ApplicationSets, ESO, and cluster registration
+# This creates the ApplicationSets that manage addons across all clusters.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -35,18 +35,16 @@ spec:
   project: cluster-addons
   sources:
     # Bootstrap Helm chart
-    - repoURL: https://github.com/your-org/argocd-cluster-addons.git
-      targetRevision: main
+    - repoURL: {{ .Values.repoURL }}
+      targetRevision: {{ .Values.targetRevision }}
       path: bootstrap
       helm:
         valueFiles:
-          - $values/configuration/bootstrap-config.yaml
           - $values/configuration/addons-catalog.yaml
           - $values/configuration/cluster-addons.yaml
-          - $values/configuration/datadog-project-mappings.yaml
     # Values repo reference
-    - repoURL: https://github.com/your-org/argocd-cluster-addons.git
-      targetRevision: main
+    - repoURL: {{ .Values.repoURL }}
+      targetRevision: {{ .Values.targetRevision }}
       ref: values
   destination:
     server: https://kubernetes.default.svc
