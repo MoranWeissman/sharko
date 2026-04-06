@@ -16,8 +16,6 @@
 # ---- CRDs ---- #
 crds:
   install: true
-  # migration:
-  #   enabled: true
 
 # ---- Features ---- #
 features:
