@@ -22,7 +22,7 @@ func (o *Orchestrator) AddAddon(ctx context.Context, req AddAddonRequest) (*GitR
 	}
 
 	// Read the existing addons-catalog.yaml.
-	catalogPath := path.Join(o.paths.GlobalValues, "..", "addons-catalog.yaml")
+	catalogPath := o.paths.Catalog
 	catalogData, err := o.git.GetFileContent(ctx, catalogPath, o.gitops.BaseBranch)
 	if err != nil {
 		return nil, fmt.Errorf("reading addons-catalog.yaml: %w", err)
@@ -66,7 +66,7 @@ func (o *Orchestrator) RemoveAddon(ctx context.Context, name string) (*GitResult
 	}
 
 	// Read the existing addons-catalog.yaml.
-	catalogPath := path.Join(o.paths.GlobalValues, "..", "addons-catalog.yaml")
+	catalogPath := o.paths.Catalog
 	catalogData, err := o.git.GetFileContent(ctx, catalogPath, o.gitops.BaseBranch)
 	if err != nil {
 		return nil, fmt.Errorf("reading addons-catalog.yaml: %w", err)

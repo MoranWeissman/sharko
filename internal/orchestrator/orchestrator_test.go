@@ -250,6 +250,7 @@ func defaultPaths() RepoPathsConfig {
 	return RepoPathsConfig{
 		ClusterValues: "configuration/addons-clusters-values",
 		GlobalValues:  "configuration/addons-global-values",
+		Catalog:       "configuration/addons-catalog.yaml",
 		Charts:        "charts",
 		Bootstrap:     "bootstrap",
 	}
@@ -742,6 +743,56 @@ func TestRemoveAddon(t *testing.T) {
 	if result.Merged {
 		t.Error("expected Merged=false for manual PR mode")
 	}
+}
+
+func TestConfigureAddon(t *testing.T) {
+	catalogPath := "configuration/addons-catalog.yaml"
+	kedaCatalog := []byte("applicationsets:\n  - name: keda\n    chart: keda\n    repoURL: https://kedacore.github.io/charts\n    version: 2.10.0\n    namespace: keda\n")
+
+	t.Run("update version succeeds and catalog is updated", func(t *testing.T) {
+		git := newMockGitProvider()
+		git.files[catalogPath] = kedaCatalog
+
+		orch := New(nil, defaultCreds(), newMockArgocd(), git, defaultGitOps(), defaultPaths(), nil)
+
+		result, err := orch.ConfigureAddon(context.Background(), ConfigureAddonRequest{
+			Name:    "keda",
+			Version: "2.11.0",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result == nil {
+			t.Fatal("expected non-nil git result")
+		}
+
+		// Catalog should contain the updated version.
+		catalogContent := string(git.files[catalogPath])
+		if !strings.Contains(catalogContent, "2.11.0") {
+			t.Errorf("catalog does not contain updated version:\n%s", catalogContent)
+		}
+		if strings.Contains(catalogContent, "2.10.0") {
+			t.Errorf("catalog still contains old version:\n%s", catalogContent)
+		}
+	})
+
+	t.Run("unsupported SyncOptions returns error", func(t *testing.T) {
+		git := newMockGitProvider()
+		git.files[catalogPath] = kedaCatalog
+
+		orch := New(nil, defaultCreds(), newMockArgocd(), git, defaultGitOps(), defaultPaths(), nil)
+
+		_, err := orch.ConfigureAddon(context.Background(), ConfigureAddonRequest{
+			Name:        "keda",
+			SyncOptions: []string{"CreateNamespace=true"},
+		})
+		if err == nil {
+			t.Fatal("expected error for unsupported SyncOptions field")
+		}
+		if !strings.Contains(err.Error(), "sync_options") {
+			t.Errorf("expected error to mention sync_options, got: %v", err)
+		}
+	})
 }
 
 func TestGenerateClusterValues(t *testing.T) {

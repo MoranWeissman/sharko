@@ -15,6 +15,7 @@ type GitOpsConfig struct {
 type RepoPathsConfig struct {
 	ClusterValues   string // e.g. "configuration/addons-clusters-values"
 	GlobalValues    string // e.g. "configuration/addons-global-values"
+	Catalog         string // e.g. "configuration/addons-catalog.yaml"
 	Charts          string // e.g. "charts/"
 	Bootstrap       string // e.g. "bootstrap/"
 	HostClusterName string // e.g. "management" — the cluster running ArgoCD (uses in-cluster)

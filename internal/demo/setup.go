@@ -67,6 +67,7 @@ func SetupDemoServer(srv *api.Server, _ int) (cleanup func(), err error) {
 	repoPaths := orchestrator.RepoPathsConfig{
 		ClusterValues: "configuration/addons-clusters-values",
 		GlobalValues:  "configuration/addons-global-values",
+		Catalog:       "configuration/addons-catalog.yaml",
 		Charts:        "charts/",
 		Bootstrap:     "bootstrap/",
 	}
