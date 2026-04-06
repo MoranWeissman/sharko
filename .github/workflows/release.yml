@@ -57,6 +57,7 @@ jobs:
             type=semver,pattern={{version}},value=${{ steps.version.outputs.TAG }}
             type=semver,pattern={{major}}.{{minor}},value=${{ steps.version.outputs.TAG }}
             type=semver,pattern={{major}},value=${{ steps.version.outputs.TAG }}
+            type=semver,pattern=v{{version}},value=${{ steps.version.outputs.TAG }}
             type=raw,value=latest
 
       - name: Set up Docker Buildx
