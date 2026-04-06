@@ -1,0 +1,6 @@
+# Helm values for metrics-server — applied to all clusters
+# Docs: https://github.com/kubernetes-sigs/metrics-server/tree/master/charts/metrics-server
+metrics-server:
+  enabled: false
+  # args:
+  #   - --kubelet-insecure-tls   # for development clusters
