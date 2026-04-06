@@ -60,6 +60,9 @@ type Server struct {
 
 	// Template filesystem for POST /api/v1/init (always available).
 	templateFS fs.FS
+
+	// startTime records when the server was created (used for uptime reporting).
+	startTime time.Time
 }
 
 // NewServer creates a new API server.
@@ -96,6 +99,7 @@ func NewServer(
 		aiConfigStore:     nil, // set via SetAIConfigStore
 		addonSecretDefs:   make(map[string]orchestrator.AddonSecretDefinition),
 		notificationStore: notifications.NewStore(100),
+		startTime:         time.Now(),
 	}
 }
 

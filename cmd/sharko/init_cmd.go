@@ -25,40 +25,57 @@ var initCmd = &cobra.Command{
 			"bootstrap_argocd": !noBootstrap,
 		}
 
-		fmt.Print("Initializing addons repository... ")
+		fmt.Println("Initializing addons repository...")
 		respBody, status, err := apiPost("/api/v1/init", body)
 		if err != nil {
-			fmt.Println("failed")
 			return err
 		}
 
 		if status != 200 && status != 201 {
-			fmt.Println("failed")
 			return printAPIError(respBody, status)
 		}
 
-		fmt.Println("done")
-
 		var result struct {
-			Status       string   `json:"status"`
-			FilesCreated []string `json:"files_created"`
-			ArgoCD       *struct {
+			Status string `json:"status"`
+			Repo   *struct {
+				FilesCreated []string `json:"files_created"`
+				PRUrl        string   `json:"pr_url"`
+				Branch       string   `json:"branch"`
+				Merged       bool     `json:"merged"`
+			} `json:"repo"`
+			ArgoCD *struct {
 				Bootstrapped bool   `json:"bootstrapped"`
 				RootApp      string `json:"root_app"`
+				SyncError    string `json:"sync_error"`
 			} `json:"argocd"`
 		}
 		if err := json.Unmarshal(respBody, &result); err != nil {
 			return fmt.Errorf("invalid response: %w", err)
 		}
 
-		if len(result.FilesCreated) > 0 {
-			fmt.Printf("Files created: %d\n", len(result.FilesCreated))
-			for _, f := range result.FilesCreated {
-				fmt.Printf("  %s\n", f)
+		// Repository step.
+		if result.Repo != nil {
+			fileCount := len(result.Repo.FilesCreated)
+			if result.Repo.PRUrl != "" {
+				fmt.Printf("  Repository:   \u2713 files created (%d files)\n", fileCount)
+				fmt.Printf("  Pull Request: \u2713 %s\n", result.Repo.PRUrl)
+			} else if result.Repo.Branch != "" {
+				fmt.Printf("  Repository:   \u2713 files pushed to branch %s (%d files)\n", result.Repo.Branch, fileCount)
+				fmt.Println("  Pull Request: \u2717 failed (check server logs)")
+			} else {
+				fmt.Printf("  Repository:   \u2713 %d files created\n", fileCount)
 			}
 		}
-		if result.ArgoCD != nil && result.ArgoCD.Bootstrapped {
-			fmt.Printf("ArgoCD bootstrapped (root app: %s)\n", result.ArgoCD.RootApp)
+
+		// ArgoCD bootstrap step.
+		if result.ArgoCD != nil {
+			if result.ArgoCD.Bootstrapped {
+				fmt.Printf("  ArgoCD:       \u2713 bootstrapped (root app: %s)\n", result.ArgoCD.RootApp)
+			} else if result.ArgoCD.SyncError != "" {
+				fmt.Printf("  ArgoCD:       \u2717 failed (%s)\n", result.ArgoCD.SyncError)
+			} else {
+				fmt.Println("  ArgoCD:       \u2717 failed (check server logs)")
+			}
 		}
 
 		return nil

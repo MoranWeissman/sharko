@@ -27,10 +27,10 @@ export function Login() {
 
   return (
     <div className="flex min-h-screen">
-      {/* Left side — background covers full area, mascot centered */}
+      {/* Left side — explicit dimensions prevent layout shift on background image load */}
       <div
-        className="hidden lg:block lg:flex-1 bg-[#0a2a4a] bg-contain bg-center bg-no-repeat"
-        style={{ backgroundImage: "url('/sharko-login-bg.png')" }}
+        className="hidden lg:block lg:flex-1 bg-[#0a2a4a] bg-center bg-no-repeat"
+        style={{ backgroundImage: "url('/sharko-login-bg.png')", backgroundSize: "contain", minHeight: "100vh" }}
       />
 
       {/* Right side — login panel */}
@@ -38,7 +38,7 @@ export function Login() {
         <div className="flex flex-1 flex-col items-center justify-center px-10 py-12">
           {/* Brand header — logo + name + description */}
           <div className="mb-10 flex flex-col items-center gap-2 text-center">
-            <img src="/sharko-banner.png" alt="Sharko" className="h-16 w-auto" />
+            <img src="/sharko-banner.png" alt="Sharko" className="h-16 w-auto" loading="eager" fetchPriority="high" />
             <h1 className="text-2xl text-[#0a2a4a]" style={{ fontFamily: '"Quicksand", sans-serif', fontWeight: 700 }}>Sharko</h1>
             <p className="text-sm text-[#4a8abf]">Addon management for Kubernetes clusters</p>
           </div>
