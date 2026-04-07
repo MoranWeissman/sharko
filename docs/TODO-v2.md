@@ -1,25 +1,44 @@
-# Sharko — Post v1.1.0 TODO
+# Sharko — Post v1.2.0 TODO
 
-> Issues and improvements found during v1.1.0 QA testing.
+> Issues found during QA testing on real K8s cluster.
 
 ---
 
 ## Bugs
 
-- [ ] **First-run wizard ArgoCD auto-discovery doesn't work** — wizard defaults to `https://argocd-server.argocd.svc.cluster.local` but the actual service name on this cluster is `argo-cd-argocd-server.argocd.svc.cluster.local`. The Phase 6 auto-discovery improvement (try common names like `argocd-server`, `argo-cd-argocd-server`, `argocd-argocd-server`) exists in `internal/argocd/client.go` but the wizard UI isn't using it — it shows a hardcoded default instead of calling the discover endpoint.
-- [ ] **Wizard defaults to HTTPS for ArgoCD internal URL** — in-cluster ArgoCD services use HTTP (port 80), not HTTPS. The wizard should default to `http://` not `https://` for `.svc.cluster.local` addresses.
-- [x] **CSP blocks Google Fonts stylesheets** — `style-src` was missing `https://fonts.googleapis.com`, causing the UI to break (fonts not loading, layout issues). Fixed in PR #90.
-- [ ] **Dashboard crashes on uninitialized repo** — after creating a connection to an empty repo, the dashboard shows a raw 404 error (`GET .../cluster-addons.yaml: 404 Not Found`) instead of detecting the empty repo and suggesting `sharko init`. The fleet status endpoint should handle missing config files gracefully.
-- [ ] **Wizard skips init step or doesn't detect empty repo** — after saving a connection, the wizard should check if the repo needs initialization and offer Step 4 (Initialize). Verify this flow works end-to-end.
+- [x] ~~CSP blocks Google Fonts stylesheets~~ — Fixed in PR #90
+- [x] ~~Dashboard crashes on uninitialized repo~~ — Fixed in PR #95
+- [x] ~~Wizard skips Step 4 (Init)~~ — Fixed in PR #96
+- [x] ~~ArgoCD defaults to HTTPS for in-cluster~~ — Fixed in PR #96
+- [x] ~~Init fails on empty repos~~ — Fixed in PR #96
+- [x] ~~Init writes files one-by-one (slow)~~ — Fixed in PR #96 (batch Git tree API)
+- [x] ~~Version shows 1.0.0~~ — Fixed in PR #94
+
+---
+
+## Open Issues
+
+- [ ] **GitHub token not auto-detected from Helm secret** — user passes `--set secrets.GITHUB_TOKEN` during install, but wizard asks for token again. The connection system uses its own encrypted secret and doesn't read the Helm-managed one.
+- [ ] **Wizard ArgoCD auto-discovery inconsistent** — tries common service names but may not match all installations. Needs to list services in the ArgoCD namespace and probe them.
+- [ ] **Init from Settings doesn't show ArgoCD bootstrap progress** — when initializing from Settings (not wizard), the UI doesn't show sync status polling. The API does the work but the UI doesn't reflect it.
+- [ ] **Cluster secrets not managed via GitOps** — the old ESO-based approach (Git → ExternalSecret → AWS SM → K8s Secret) was removed. Sharko now creates secrets imperatively via API (`internal/remoteclient/`). This means cluster registration only works through `sharko add-cluster`, not by editing Git directly. Design decision needed: is imperative sufficient, or do we need a declarative (GitOps) secret mechanism?
+- [ ] **No bootstrap-config.yaml was being generated** — root-app.yaml references `{{ .Values.repoURL }}` but the values file with repoURL/targetRevision was missing from the bootstrap template. Fixed in this PR.
 
 ---
 
 ## Improvements
 
-(to be added during QA)
+- [ ] **Auto-detect GitHub token from Helm secret** — connection setup should check if GITHUB_TOKEN exists in the Sharko pod's env vars and pre-fill
+- [ ] **Security advisory detection** — parse Helm chart release notes for CVE mentions
+- [ ] **Filtering/sorting on list endpoints** — only pagination was done
+- [ ] **Audit log for manual changes** — webhook exists but no audit trail persisted
+- [ ] **E2E tests** — test against real ArgoCD (Kind + ArgoCD in CI)
+- [ ] **AI-parsed release notes** — use AI provider to summarize chart changelogs
+- [ ] **Addon dependency ordering** — declare addon B depends on addon A
 
 ---
 
 ## Tech Debt
 
-(to be added during QA)
+- [ ] **Test coverage** — orchestrator ~78%, overall ~23%. Target 50%+
+- [ ] **Storybook** — deferred, low ROI for current team size
