@@ -4221,6 +4221,9 @@ const docTemplate = `{
                 "name": {
                     "type": "string"
                 },
+                "provider": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.ProviderConfig"
+                },
                 "set_as_default": {
                     "type": "boolean"
                 }
@@ -4268,6 +4271,27 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "token": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_models.ProviderConfig": {
+            "type": "object",
+            "properties": {
+                "namespace": {
+                    "description": "K8s namespace (k8s-secrets only)",
+                    "type": "string"
+                },
+                "prefix": {
+                    "description": "Secret name prefix, e.g. \"clusters/\"",
+                    "type": "string"
+                },
+                "region": {
+                    "description": "AWS region (aws-sm only)",
+                    "type": "string"
+                },
+                "type": {
+                    "description": "\"aws-sm\" or \"k8s-secrets\"",
                     "type": "string"
                 }
             }

@@ -40,6 +40,8 @@ definitions:
         $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.GitRepoConfig'
       name:
         type: string
+      provider:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.ProviderConfig'
       set_as_default:
         type: boolean
     type: object
@@ -73,6 +75,21 @@ definitions:
       repository:
         type: string
       token:
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_models.ProviderConfig:
+    properties:
+      namespace:
+        description: K8s namespace (k8s-secrets only)
+        type: string
+      prefix:
+        description: Secret name prefix, e.g. "clusters/"
+        type: string
+      region:
+        description: AWS region (aws-sm only)
+        type: string
+      type:
+        description: '"aws-sm" or "k8s-secrets"'
         type: string
     type: object
   github_com_MoranWeissman_sharko_internal_models.SetActiveConnectionRequest:
