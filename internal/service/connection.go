@@ -64,6 +64,7 @@ func (s *ConnectionService) Create(req models.CreateConnectionRequest) error {
 		Git:         req.Git,
 		Argocd:      req.Argocd,
 		Provider:    req.Provider,
+		GitOps:      req.GitOps,
 		IsDefault:   req.SetAsDefault,
 	}
 	// Auto-derive connection name from git repo if not provided
@@ -254,6 +255,19 @@ func (s *ConnectionService) TestCredentials(ctx context.Context, conn *models.Co
 // DiscoverArgocdURL finds the ArgoCD server URL for the given namespace.
 func (s *ConnectionService) DiscoverArgocdURL(namespace string) string {
 	return argocd.DiscoverServerURL(namespace)
+}
+
+// GetActiveConnection returns the active connection with its full configuration.
+// Returns nil (not an error) when no active connection is configured.
+func (s *ConnectionService) GetActiveConnection() (*models.Connection, error) {
+	activeName, err := s.store.GetActiveConnection()
+	if err != nil {
+		return nil, err
+	}
+	if activeName == "" {
+		return nil, nil
+	}
+	return s.store.GetConnection(activeName)
 }
 
 // GetActiveConnectionInfo returns the active connection with its full configuration.

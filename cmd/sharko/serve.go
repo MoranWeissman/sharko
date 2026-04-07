@@ -16,6 +16,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/api"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/demo"
+	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/notifications"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/platform"
@@ -219,12 +220,50 @@ var serveCmd = &cobra.Command{
 			HostClusterName: os.Getenv("SHARKO_HOST_CLUSTER_NAME"),
 		}
 
+		// Build GitOps config — env vars first (with defaults), then connection overrides.
+		// Env vars are kept as a migration fallback and will be deprecated in a future release.
+		if os.Getenv("SHARKO_GITOPS_BRANCH_PREFIX") != "" ||
+			os.Getenv("SHARKO_GITOPS_COMMIT_PREFIX") != "" ||
+			os.Getenv("SHARKO_GITOPS_BASE_BRANCH") != "" ||
+			os.Getenv("SHARKO_GITOPS_PR_AUTO_MERGE") != "" {
+			log.Printf("WARNING: SHARKO_GITOPS_* env vars are deprecated — configure GitOps settings via the Settings UI or API (connection.gitops)")
+		}
+		if os.Getenv("SHARKO_PROVIDER_TYPE") != "" {
+			log.Printf("WARNING: SHARKO_PROVIDER_TYPE env var is deprecated — configure provider in Settings UI or via API")
+		}
+
 		gitopsCfg := orchestrator.GitOpsConfig{
 			PRAutoMerge:  os.Getenv("SHARKO_GITOPS_PR_AUTO_MERGE") == "true",
 			BranchPrefix: getEnvDefault("SHARKO_GITOPS_BRANCH_PREFIX", "sharko/"),
 			CommitPrefix: getEnvDefault("SHARKO_GITOPS_COMMIT_PREFIX", "sharko:"),
 			BaseBranch:   getEnvDefault("SHARKO_GITOPS_BASE_BRANCH", "main"),
 			RepoURL:      os.Getenv("SHARKO_GITOPS_REPO_URL"),
+		}
+
+		// Override GitOps config from active connection if available.
+		if connGitOps := getConnectionGitOps(connSvc); connGitOps != nil {
+			if connGitOps.BaseBranch != "" {
+				gitopsCfg.BaseBranch = connGitOps.BaseBranch
+			}
+			if connGitOps.BranchPrefix != "" {
+				gitopsCfg.BranchPrefix = connGitOps.BranchPrefix
+			}
+			if connGitOps.CommitPrefix != "" {
+				gitopsCfg.CommitPrefix = connGitOps.CommitPrefix
+			}
+			if connGitOps.PRAutoMerge != nil {
+				gitopsCfg.PRAutoMerge = *connGitOps.PRAutoMerge
+			}
+			if connGitOps.HostClusterName != "" {
+				repoPaths.HostClusterName = connGitOps.HostClusterName
+			}
+		}
+
+		// Populate RepoURL from connection's Git config if not set via env var.
+		if gitopsCfg.RepoURL == "" {
+			if conn, err := connSvc.GetActiveConnection(); err == nil && conn != nil && conn.Git.RepoURL != "" {
+				gitopsCfg.RepoURL = conn.Git.RepoURL
+			}
 		}
 
 		// Provider + Orchestrator write-API deps (optional — only if provider is configured).
@@ -272,9 +311,14 @@ var serveCmd = &cobra.Command{
 				provCfgPtr = resolvedProvCfg
 
 				// Default addons (applied to clusters registered without explicit addons).
-				if defaultAddonsEnv := os.Getenv("SHARKO_DEFAULT_ADDONS"); defaultAddonsEnv != "" {
+				// Connection setting takes priority over env var.
+				defaultAddonsStr := os.Getenv("SHARKO_DEFAULT_ADDONS")
+				if connGitOps := getConnectionGitOps(connSvc); connGitOps != nil && connGitOps.DefaultAddons != "" {
+					defaultAddonsStr = connGitOps.DefaultAddons
+				}
+				if defaultAddonsStr != "" {
 					defaults := make(map[string]bool)
-					for _, name := range strings.Split(defaultAddonsEnv, ",") {
+					for _, name := range strings.Split(defaultAddonsStr, ",") {
 						name = strings.TrimSpace(name)
 						if name != "" {
 							defaults[name] = true
@@ -282,7 +326,7 @@ var serveCmd = &cobra.Command{
 					}
 					if len(defaults) > 0 {
 						srv.SetDefaultAddons(defaults)
-						log.Printf("Default addons configured: %v", defaultAddonsEnv)
+						log.Printf("Default addons configured: %v", defaultAddonsStr)
 					}
 				}
 
@@ -385,8 +429,12 @@ var serveCmd = &cobra.Command{
 				}
 
 				// Check if repo is already initialized.
-				baseBranch := getEnvDefault("SHARKO_GITOPS_BASE_BRANCH", "main")
-				if _, fileErr := git.GetFileContent(context.Background(), "bootstrap/root-app.yaml", baseBranch); fileErr == nil {
+				// Use connection GitOps settings if available, fall back to env vars.
+				autoBaseBranch := getEnvDefault("SHARKO_GITOPS_BASE_BRANCH", "main")
+				if connGO := getConnectionGitOps(connSvc); connGO != nil && connGO.BaseBranch != "" {
+					autoBaseBranch = connGO.BaseBranch
+				}
+				if _, fileErr := git.GetFileContent(context.Background(), "bootstrap/root-app.yaml", autoBaseBranch); fileErr == nil {
 					log.Printf("auto-bootstrap: skipping — repo already initialized (bootstrap/root-app.yaml exists)")
 					return
 				}
@@ -399,7 +447,7 @@ var serveCmd = &cobra.Command{
 					return
 				}
 
-				repoPaths := orchestrator.RepoPathsConfig{
+				autoRepoPaths := orchestrator.RepoPathsConfig{
 					ClusterValues:   getEnvDefault("SHARKO_REPO_PATH_CLUSTER_VALUES", "configuration/addons-clusters-values"),
 					GlobalValues:    getEnvDefault("SHARKO_REPO_PATH_GLOBAL_VALUES", "configuration/addons-global-values"),
 					Catalog:         getEnvDefault("SHARKO_REPO_PATH_CATALOG", "configuration/addons-catalog.yaml"),
@@ -407,12 +455,30 @@ var serveCmd = &cobra.Command{
 					Bootstrap:       getEnvDefault("SHARKO_REPO_PATH_BOOTSTRAP", "bootstrap/"),
 					HostClusterName: os.Getenv("SHARKO_HOST_CLUSTER_NAME"),
 				}
-				gitopsCfg := orchestrator.GitOpsConfig{
+				autoGitopsCfg := orchestrator.GitOpsConfig{
 					PRAutoMerge:  os.Getenv("SHARKO_GITOPS_PR_AUTO_MERGE") == "true",
 					BranchPrefix: getEnvDefault("SHARKO_GITOPS_BRANCH_PREFIX", "sharko/"),
 					CommitPrefix: getEnvDefault("SHARKO_GITOPS_COMMIT_PREFIX", "sharko:"),
-					BaseBranch:   baseBranch,
+					BaseBranch:   autoBaseBranch,
 					RepoURL:      os.Getenv("SHARKO_GITOPS_REPO_URL"),
+				}
+				// Override from connection GitOps settings.
+				if connGO := getConnectionGitOps(connSvc); connGO != nil {
+					if connGO.BranchPrefix != "" {
+						autoGitopsCfg.BranchPrefix = connGO.BranchPrefix
+					}
+					if connGO.CommitPrefix != "" {
+						autoGitopsCfg.CommitPrefix = connGO.CommitPrefix
+					}
+					if connGO.PRAutoMerge != nil {
+						autoGitopsCfg.PRAutoMerge = *connGO.PRAutoMerge
+					}
+					if connGO.HostClusterName != "" {
+						autoRepoPaths.HostClusterName = connGO.HostClusterName
+					}
+				}
+				if autoGitopsCfg.RepoURL == "" && conn.Git.RepoURL != "" {
+					autoGitopsCfg.RepoURL = conn.Git.RepoURL
 				}
 
 				req := orchestrator.InitRepoRequest{BootstrapArgoCD: true}
@@ -430,7 +496,7 @@ var serveCmd = &cobra.Command{
 					}
 				}
 
-				orch := orchestrator.New(nil, nil, ac, git, gitopsCfg, repoPaths, templates.TemplateFS)
+				orch := orchestrator.New(nil, nil, ac, git, autoGitopsCfg, autoRepoPaths, templates.TemplateFS)
 				result, initErr := orch.InitRepo(context.Background(), req)
 				if initErr != nil {
 					log.Printf("auto-bootstrap: failed — %v", initErr)
@@ -465,6 +531,15 @@ func getEnvDefault(key, defaultVal string) string {
 		return v
 	}
 	return defaultVal
+}
+
+// getConnectionGitOps returns the GitOpsSettings from the active connection, or nil if not set.
+func getConnectionGitOps(connSvc *service.ConnectionService) *models.GitOpsSettings {
+	conn, err := connSvc.GetActiveConnection()
+	if err != nil || conn == nil {
+		return nil
+	}
+	return conn.GitOps
 }
 
 // loadSecretsEnv loads KEY=VALUE pairs from secrets.env into the environment.

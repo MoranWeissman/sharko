@@ -169,40 +169,67 @@ func (s *Server) SetDefaultAddons(defaults map[string]bool) {
 	s.defaultAddons = defaults
 }
 
-// reinitializeProvider reads provider config from the active connection and
-// rebuilds credProvider + providerCfg. Called after connection create/update/set-active
+// reinitializeProvider reads provider config and GitOps settings from the active connection and
+// rebuilds credProvider + providerCfg + gitopsCfg. Called after connection create/update/set-active
 // so that write-API operations pick up the new settings immediately without a restart.
 func (s *Server) reinitializeProvider() {
-	pc := s.connSvc.GetProviderConfig()
-	if pc == nil || pc.Type == "" {
-		// No provider in active connection — keep whatever was set at startup.
+	conn, err := s.connSvc.GetActiveConnection()
+	if err != nil || conn == nil {
 		return
 	}
 
-	namespace := pc.Namespace
-	if namespace == "" {
-		namespace = os.Getenv("SHARKO_NAMESPACE")
+	// Reinit secrets provider from connection.
+	if pc := conn.Provider; pc != nil && pc.Type != "" {
+		namespace := pc.Namespace
 		if namespace == "" {
-			namespace = "sharko"
+			namespace = os.Getenv("SHARKO_NAMESPACE")
+			if namespace == "" {
+				namespace = "sharko"
+			}
+		}
+
+		cfg := providers.Config{
+			Type:      pc.Type,
+			Region:    pc.Region,
+			Prefix:    pc.Prefix,
+			Namespace: namespace,
+		}
+
+		p, err := providers.New(cfg)
+		if err != nil {
+			slog.Warn("reinitializeProvider: failed to create provider from connection", "error", err)
+		} else {
+			s.credProvider = p
+			s.providerCfg = &cfg
+			slog.Info("provider reinitialized from connection", "type", cfg.Type, "region", cfg.Region, "prefix", cfg.Prefix)
 		}
 	}
 
-	cfg := providers.Config{
-		Type:      pc.Type,
-		Region:    pc.Region,
-		Prefix:    pc.Prefix,
-		Namespace: namespace,
+	// Reinit GitOps config from connection.
+	if gitops := conn.GitOps; gitops != nil {
+		if gitops.BaseBranch != "" {
+			s.gitopsCfg.BaseBranch = gitops.BaseBranch
+		}
+		if gitops.BranchPrefix != "" {
+			s.gitopsCfg.BranchPrefix = gitops.BranchPrefix
+		}
+		if gitops.CommitPrefix != "" {
+			s.gitopsCfg.CommitPrefix = gitops.CommitPrefix
+		}
+		if gitops.PRAutoMerge != nil {
+			s.gitopsCfg.PRAutoMerge = *gitops.PRAutoMerge
+		}
+		slog.Info("gitops config reinitialized from connection",
+			"base_branch", s.gitopsCfg.BaseBranch,
+			"branch_prefix", s.gitopsCfg.BranchPrefix,
+			"pr_auto_merge", s.gitopsCfg.PRAutoMerge,
+		)
 	}
 
-	p, err := providers.New(cfg)
-	if err != nil {
-		slog.Warn("reinitializeProvider: failed to create provider from connection", "error", err)
-		return
+	// Populate RepoURL from Git connection if not already set.
+	if s.gitopsCfg.RepoURL == "" && conn.Git.RepoURL != "" {
+		s.gitopsCfg.RepoURL = conn.Git.RepoURL
 	}
-
-	s.credProvider = p
-	s.providerCfg = &cfg
-	slog.Info("provider reinitialized from connection", "type", cfg.Type, "region", cfg.Region, "prefix", cfg.Prefix)
 }
 
 // NotificationStore returns the server's notification store so external

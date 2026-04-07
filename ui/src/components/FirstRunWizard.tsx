@@ -704,6 +704,12 @@ export function FirstRunWizard({ initialStep = 1 }: { initialStep?: number } = {
           prefix: form.provider_prefix || undefined,
         }
       : undefined,
+    gitops: {
+      base_branch: 'main',
+      branch_prefix: 'sharko/',
+      commit_prefix: 'sharko:',
+      pr_auto_merge: false,
+    },
   })
 
   const testGit = useCallback(async () => {
