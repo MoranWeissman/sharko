@@ -54,6 +54,7 @@ func (s *Server) handleCreateConnection(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	s.reinitializeProvider()
 	writeJSON(w, http.StatusCreated, map[string]string{"status": "created", "name": req.Name})
 }
 
@@ -87,7 +88,7 @@ func (s *Server) handleUpdateConnection(w http.ResponseWriter, r *http.Request) 
 	}
 	req.Name = name // ensure name matches URL
 
-	// For edits: if token fields are empty, keep existing values
+	// For edits: if token/provider fields are empty, keep existing values
 	if saved, err := s.connSvc.GetConnection(name); err == nil && saved != nil {
 		if req.Git.Token == "" {
 			req.Git.Token = saved.Git.Token
@@ -98,6 +99,9 @@ func (s *Server) handleUpdateConnection(w http.ResponseWriter, r *http.Request) 
 		if req.Argocd.Token == "" {
 			req.Argocd.Token = saved.Argocd.Token
 		}
+		if req.Provider == nil {
+			req.Provider = saved.Provider
+		}
 	}
 
 	if err := s.connSvc.Create(req); err != nil {
@@ -105,6 +109,7 @@ func (s *Server) handleUpdateConnection(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	s.reinitializeProvider()
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated", "name": name})
 }
 
@@ -164,6 +169,7 @@ func (s *Server) handleSetActiveConnection(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	s.reinitializeProvider()
 	writeJSON(w, http.StatusOK, map[string]string{"status": "active", "connection": req.ConnectionName})
 }
 
