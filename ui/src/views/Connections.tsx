@@ -15,6 +15,9 @@ import {
   XCircle,
   Play,
   AlertTriangle,
+  ChevronDown,
+  ChevronRight,
+  KeyRound,
 } from 'lucide-react'
 import { initRepo } from '@/services/api'
 import { useConnections } from '@/hooks/useConnections'
@@ -36,6 +39,9 @@ interface ConnectionFormData {
   argocd_server_url: string
   argocd_token: string
   argocd_namespace: string
+  provider_type: '' | 'aws-sm' | 'k8s-secrets'
+  provider_region: string
+  provider_prefix: string
 }
 
 const emptyForm: ConnectionFormData = {
@@ -44,6 +50,9 @@ const emptyForm: ConnectionFormData = {
   argocd_server_url: '',
   argocd_token: '',
   argocd_namespace: 'argocd',
+  provider_type: '',
+  provider_region: '',
+  provider_prefix: '',
 }
 
 function buildPayload(form: ConnectionFormData, name?: string) {
@@ -59,6 +68,13 @@ function buildPayload(form: ConnectionFormData, name?: string) {
       namespace: form.argocd_namespace || 'argocd',
       insecure: true,
     },
+    provider: form.provider_type
+      ? {
+          type: form.provider_type,
+          region: form.provider_region || undefined,
+          prefix: form.provider_prefix || undefined,
+        }
+      : undefined,
   }
 }
 
@@ -79,6 +95,9 @@ function formFromConnection(conn: ConnectionResponse): ConnectionFormData {
     argocd_server_url: conn.argocd_server_url,
     argocd_token: '',
     argocd_namespace: conn.argocd_namespace,
+    provider_type: '' as '' | 'aws-sm' | 'k8s-secrets',
+    provider_region: '',
+    provider_prefix: '',
   }
 }
 
@@ -117,6 +136,8 @@ function ConnectionFormFields({
   onTestGit: () => void
   onTestArgocd: () => void
 }) {
+  const [providerOpen, setProviderOpen] = useState(!!form.provider_type)
+
   return (
     <div className="space-y-6">
       {/* Git Configuration */}
@@ -183,6 +204,69 @@ function ConnectionFormFields({
           {testStatus.argocd === 'ok' && <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400"><CheckCircle className="h-3.5 w-3.5" /> Connected{testStatus.argocdAuth && testStatus.argocdAuth !== 'provided' ? ` (via ${testStatus.argocdAuth})` : ''}</span>}
           {testStatus.argocd === 'error' && <span className="flex items-center gap-1 text-xs text-red-600 dark:text-red-400"><XCircle className="h-3.5 w-3.5" /> {testStatus.argocdMessage || 'Failed'}</span>}
         </div>
+      </div>
+
+      {/* Secrets Provider */}
+      <div className="border-t border-[#bee0ff] pt-4 dark:border-gray-700">
+        <button
+          type="button"
+          onClick={() => setProviderOpen((v) => !v)}
+          className="flex w-full items-center justify-between text-left"
+        >
+          <div className="flex items-center gap-2">
+            <KeyRound className="h-4 w-4 text-[#2a5a7a]" />
+            <h5 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Secrets Provider</h5>
+            {form.provider_type && (
+              <span className="rounded-full bg-teal-100 px-2 py-0.5 text-xs font-medium text-teal-700 dark:bg-teal-900/30 dark:text-teal-400">
+                {form.provider_type}
+              </span>
+            )}
+          </div>
+          {providerOpen
+            ? <ChevronDown className="h-4 w-4 text-[#3a6a8a]" />
+            : <ChevronRight className="h-4 w-4 text-[#3a6a8a]" />}
+        </button>
+
+        {providerOpen && (
+          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="sm:col-span-2">
+              <label className={labelCls}>Provider Type</label>
+              <select
+                className={selectCls}
+                value={form.provider_type}
+                onChange={(e) => onChange({ provider_type: e.target.value as '' | 'aws-sm' | 'k8s-secrets' })}
+              >
+                <option value="">None</option>
+                <option value="aws-sm">AWS Secrets Manager (aws-sm)</option>
+                <option value="k8s-secrets">Kubernetes Secrets (k8s-secrets)</option>
+              </select>
+              <p className="mt-1 text-[10px] text-[#3a6a8a]">How Sharko retrieves cluster credentials for secret-based providers.</p>
+            </div>
+            {form.provider_type === 'aws-sm' && (
+              <div>
+                <label className={labelCls}>Region</label>
+                <input
+                  className={inputCls}
+                  value={form.provider_region}
+                  onChange={(e) => onChange({ provider_region: e.target.value })}
+                  placeholder="e.g. eu-west-1"
+                />
+              </div>
+            )}
+            {form.provider_type && (
+              <div>
+                <label className={labelCls}>Prefix (optional)</label>
+                <input
+                  className={inputCls}
+                  value={form.provider_prefix}
+                  onChange={(e) => onChange({ provider_prefix: e.target.value })}
+                  placeholder="e.g. k8s- (prepended to cluster name for SM lookup)"
+                />
+                <p className="mt-1 text-[10px] text-[#3a6a8a]">Prepended to cluster name when looking up the secret.</p>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )

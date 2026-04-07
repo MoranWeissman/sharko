@@ -135,6 +135,10 @@ export async function registerCluster(data: { name: string; addons?: Record<stri
   return postJSON<any>('/clusters', data)
 }
 
+export async function testClusterConnection(name: string) {
+  return postJSON<{ reachable: boolean; version?: string; error?: string }>(`/clusters/${encodeURIComponent(name)}/test`, {})
+}
+
 export async function deregisterCluster(name: string) {
   return deleteJSON<any>(`/clusters/${encodeURIComponent(name)}`)
 }

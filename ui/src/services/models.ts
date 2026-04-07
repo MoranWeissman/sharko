@@ -4,6 +4,7 @@ export interface Cluster {
   region?: string
   server_version?: string
   connection_status?: string
+  managed?: boolean
 }
 
 export interface ClusterHealthStats {

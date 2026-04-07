@@ -13,8 +13,11 @@ import {
   LayoutGrid,
   Plus,
   Loader2,
+  Wifi,
+  WifiOff,
+  GitMerge,
 } from 'lucide-react';
-import { api, registerCluster } from '@/services/api';
+import { api, registerCluster, testClusterConnection } from '@/services/api';
 import type { Cluster, ClusterHealthStats, ClustersResponse, AddonCatalogResponse } from '@/services/models';
 import { StatCard } from '@/components/StatCard';
 import { ConnectionStatus } from '@/components/ConnectionStatus';
@@ -62,6 +65,12 @@ export function ClustersOverview() {
   const [versionDropdownOpen, setVersionDropdownOpen] = useState(false);
   const [connectionDropdownOpen, setConnectionDropdownOpen] = useState(false);
   const navigate = useNavigate();
+
+  // Test connection state per cluster
+  const [testResults, setTestResults] = useState<Record<string, { reachable: boolean; version?: string; error?: string } | 'testing'>>({});
+
+  // Adopt (start managing) state per cluster
+  const [adoptingCluster, setAdoptingCluster] = useState<string | null>(null);
 
   // Add Cluster dialog state
   const [addClusterOpen, setAddClusterOpen] = useState(false);
@@ -127,6 +136,30 @@ export function ClustersOverview() {
     }
   }, [addClusterName, addClusterRegion, selectedAddons, fetchData]);
 
+  const handleTestCluster = useCallback(async (name: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setTestResults((prev) => ({ ...prev, [name]: 'testing' }));
+    try {
+      const result = await testClusterConnection(name);
+      setTestResults((prev) => ({ ...prev, [name]: result }));
+    } catch (err) {
+      setTestResults((prev) => ({ ...prev, [name]: { reachable: false, error: err instanceof Error ? err.message : 'Failed' } }));
+    }
+  }, []);
+
+  const handleAdoptCluster = useCallback(async (name: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setAdoptingCluster(name);
+    try {
+      await registerCluster({ name });
+      void fetchData();
+    } catch {
+      // ignore — fetchData will refresh state
+    } finally {
+      setAdoptingCluster(null);
+    }
+  }, [fetchData]);
+
   const availableVersions = useMemo(() => {
     const versions = new Set(
       allClusters.map((c) => c.server_version).filter(Boolean) as string[],
@@ -175,6 +208,17 @@ export function ClustersOverview() {
           return nameMatch && versionMatch && connectionMatch;
         }),
     [allClusters, statusFilter, filters],
+  );
+
+  // Split into managed (in git) and discovered (ArgoCD-only / unmanaged)
+  const managedClusters = useMemo(
+    () => filteredClusters.filter((c) => c.managed !== false && c.connection_status !== 'not_in_git'),
+    [filteredClusters],
+  );
+
+  const discoveredClusters = useMemo(
+    () => filteredClusters.filter((c) => c.managed === false || c.connection_status === 'not_in_git'),
+    [filteredClusters],
   );
 
   const handleStatusFilter = (filter: StatusFilter) => {
@@ -555,128 +599,291 @@ export function ClustersOverview() {
         )}
       </div>
 
-      {/* Cluster list / grid */}
-      {viewMode === 'list' ? (
-        <div className="overflow-x-auto rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
-          <table className="w-full text-left text-sm">
-            <thead className="border-b border-[#6aade0] bg-[#d0e8f8] text-xs uppercase text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
-              <tr>
-                <th className="px-6 py-3">Name</th>
-                <th className="px-6 py-3">Connection Status</th>
-                <th className="px-6 py-3">Cluster Version</th>
-                <th className="px-6 py-3">Addons Installed</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#6aade0] dark:divide-gray-700">
-              {filteredClusters.map((cluster) => {
-                const isInCluster = cluster.name === 'in-cluster';
-                return (
-                  <tr
-                    key={cluster.name}
-                    onClick={
-                      isInCluster
-                        ? undefined
-                        : () => navigate(`/clusters/${cluster.name}`)
-                    }
-                    className={
-                      isInCluster
+      {/* Managed Clusters */}
+      <div className="space-y-3">
+        <h3 className="flex items-center gap-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-200">
+          <Server className="h-4 w-4 text-teal-600" />
+          Managed Clusters
+          <span className="rounded-full bg-teal-100 px-2 py-0.5 text-xs font-medium text-teal-700 dark:bg-teal-900/30 dark:text-teal-400">
+            {managedClusters.length}
+          </span>
+        </h3>
+
+        {viewMode === 'list' ? (
+          <div className="overflow-x-auto rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
+            <table className="w-full text-left text-sm">
+              <thead className="border-b border-[#6aade0] bg-[#d0e8f8] text-xs uppercase text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
+                <tr>
+                  <th className="px-6 py-3">Name</th>
+                  <th className="px-6 py-3">Connection Status</th>
+                  <th className="px-6 py-3">Cluster Version</th>
+                  <th className="px-6 py-3">Addons</th>
+                  <th className="px-6 py-3">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#6aade0] dark:divide-gray-700">
+                {managedClusters.map((cluster) => {
+                  const isInCluster = cluster.name === 'in-cluster';
+                  const testResult = testResults[cluster.name];
+                  return (
+                    <tr
+                      key={cluster.name}
+                      onClick={isInCluster ? undefined : () => navigate(`/clusters/${cluster.name}`)}
+                      className={isInCluster
                         ? 'cursor-not-allowed bg-[#d0e8f8] opacity-70 dark:bg-gray-900'
-                        : 'cursor-pointer hover:bg-[#d6eeff] dark:hover:bg-gray-700'
-                    }
-                    title={
-                      isInCluster
-                        ? 'This is the local cluster where ArgoCD is running. It is managed directly and not defined in the Git repository.'
-                        : undefined
-                    }
-                  >
-                    <td className="px-6 py-3 font-medium text-[#0a2a4a] dark:text-gray-100">
-                      <span className="inline-flex items-center gap-1.5">
-                        {cluster.name}
-                        {isInCluster && (
-                          <Info className="h-4 w-4 text-blue-400" />
-                        )}
-                      </span>
-                    </td>
-                    <td className="px-6 py-3">
-                      <ConnectionStatus
-                        status={cluster.connection_status ?? 'unknown'}
-                      />
-                    </td>
-                    <td className="px-6 py-3 font-mono text-xs text-[#2a5a7a] dark:text-gray-400">
-                      {cluster.server_version ?? '--'}
-                    </td>
-                    <td className="px-6 py-3 text-[#2a5a7a] dark:text-gray-400">
-                      {Object.values(cluster.labels).filter((v) => v === 'enabled').length}
+                        : 'cursor-pointer hover:bg-[#d6eeff] dark:hover:bg-gray-700'}
+                      title={isInCluster ? 'This is the local cluster where ArgoCD is running.' : undefined}
+                    >
+                      <td className="px-6 py-3 font-medium text-[#0a2a4a] dark:text-gray-100">
+                        <span className="inline-flex items-center gap-1.5">
+                          {cluster.name}
+                          {isInCluster && <Info className="h-4 w-4 text-blue-400" />}
+                        </span>
+                      </td>
+                      <td className="px-6 py-3">
+                        <ConnectionStatus status={cluster.connection_status ?? 'unknown'} />
+                      </td>
+                      <td className="px-6 py-3 font-mono text-xs text-[#2a5a7a] dark:text-gray-400">
+                        {cluster.server_version ?? '--'}
+                      </td>
+                      <td className="px-6 py-3 text-[#2a5a7a] dark:text-gray-400">
+                        {Object.values(cluster.labels).filter((v) => v === 'enabled').length}
+                      </td>
+                      <td className="px-6 py-3" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={(e) => handleTestCluster(cluster.name, e)}
+                            disabled={testResult === 'testing'}
+                            className="inline-flex items-center gap-1 rounded border border-[#5a9dd0] px-2 py-1 text-xs text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+                          >
+                            {testResult === 'testing'
+                              ? <Loader2 className="h-3 w-3 animate-spin" />
+                              : <Wifi className="h-3 w-3" />}
+                            Test
+                          </button>
+                          {testResult && testResult !== 'testing' && (
+                            testResult.reachable
+                              ? <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+                                  <CheckCircle className="h-3 w-3" />
+                                  {testResult.version ? `v${testResult.version}` : 'OK'}
+                                </span>
+                              : <span className="flex items-center gap-1 text-xs text-red-500 dark:text-red-400">
+                                  <WifiOff className="h-3 w-3" />
+                                  {testResult.error ?? 'Unreachable'}
+                                </span>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {managedClusters.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="px-6 py-8 text-center text-[#3a6a8a] dark:text-gray-500">
+                      No managed clusters match the current filters.
                     </td>
                   </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {managedClusters.map((cluster) => {
+              const isInCluster = cluster.name === 'in-cluster';
+              const addonCount = Object.values(cluster.labels).filter((v) => v === 'enabled').length;
+              const testResult = testResults[cluster.name];
+              return (
+                <div
+                  key={cluster.name}
+                  onClick={isInCluster ? undefined : () => navigate(`/clusters/${cluster.name}`)}
+                  className={`rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 shadow-sm transition-all dark:border-gray-700 dark:bg-gray-800 ${
+                    isInCluster ? 'cursor-not-allowed opacity-70' : 'cursor-pointer hover:-translate-y-0.5 hover:shadow-md'
+                  }`}
+                >
+                  <div className="mb-3 flex items-start justify-between">
+                    <h3 className="text-sm font-bold text-[#0a2a4a] dark:text-gray-100">
+                      <span className="inline-flex items-center gap-1.5">
+                        {cluster.name}
+                        {isInCluster && <Info className="h-4 w-4 text-blue-400" />}
+                      </span>
+                    </h3>
+                    <button
+                      type="button"
+                      onClick={(e) => handleTestCluster(cluster.name, e)}
+                      disabled={testResult === 'testing'}
+                      className="inline-flex items-center gap-1 rounded border border-[#5a9dd0] px-2 py-1 text-xs text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+                    >
+                      {testResult === 'testing' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wifi className="h-3 w-3" />}
+                      Test
+                    </button>
+                  </div>
+                  {testResult && testResult !== 'testing' && (
+                    <div className="mb-2">
+                      {testResult.reachable
+                        ? <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+                            <CheckCircle className="h-3 w-3" />
+                            Reachable{testResult.version ? ` (v${testResult.version})` : ''}
+                          </span>
+                        : <span className="flex items-center gap-1 text-xs text-red-500 dark:text-red-400">
+                            <WifiOff className="h-3 w-3" />
+                            {testResult.error ?? 'Unreachable'}
+                          </span>
+                      }
+                    </div>
+                  )}
+                  <div className="mb-2">
+                    <ConnectionStatus status={cluster.connection_status ?? 'unknown'} />
+                  </div>
+                  <p className="mb-2 font-mono text-xs text-[#2a5a7a] dark:text-gray-400">
+                    {cluster.server_version ? `v${cluster.server_version}` : '--'}
+                  </p>
+                  {addonCount > 0 && (
+                    <span className="inline-flex items-center rounded-full bg-[#d6eeff] px-2 py-0.5 text-xs font-medium text-[#1a4a6a] dark:bg-gray-700 dark:text-gray-300">
+                      {addonCount} addon{addonCount !== 1 ? 's' : ''}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+            {managedClusters.length === 0 && (
+              <div className="col-span-full rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-8 text-center text-[#3a6a8a] dark:border-gray-700 dark:bg-gray-800 dark:text-gray-500">
+                No managed clusters match the current filters.
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Discovered (ArgoCD-only) Clusters */}
+      {discoveredClusters.length > 0 && (
+        <div className="space-y-3">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-200">
+            <AlertTriangle className="h-4 w-4 text-amber-500" />
+            Discovered (ArgoCD)
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+              {discoveredClusters.length}
+            </span>
+            <span className="text-xs font-normal text-[#3a6a8a] dark:text-gray-500">
+              — present in ArgoCD but not yet managed by Sharko
+            </span>
+          </h3>
+
+          {viewMode === 'list' ? (
+            <div className="overflow-x-auto rounded-xl ring-2 ring-amber-200 bg-[#fffbf0] shadow-sm dark:border-amber-800 dark:bg-gray-800">
+              <table className="w-full text-left text-sm">
+                <thead className="border-b border-amber-200 bg-amber-50 text-xs uppercase text-amber-700 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-500">
+                  <tr>
+                    <th className="px-6 py-3">Name</th>
+                    <th className="px-6 py-3">Status</th>
+                    <th className="px-6 py-3">Version</th>
+                    <th className="px-6 py-3">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-amber-100 dark:divide-amber-900/30">
+                  {discoveredClusters.map((cluster) => {
+                    const testResult = testResults[cluster.name];
+                    const isAdopting = adoptingCluster === cluster.name;
+                    return (
+                      <tr key={cluster.name} className="hover:bg-amber-50/60 dark:hover:bg-amber-950/20">
+                        <td className="px-6 py-3 font-medium text-[#0a2a4a] dark:text-gray-100">
+                          {cluster.name}
+                        </td>
+                        <td className="px-6 py-3">
+                          <ConnectionStatus status={cluster.connection_status ?? 'unknown'} />
+                        </td>
+                        <td className="px-6 py-3 font-mono text-xs text-[#2a5a7a] dark:text-gray-400">
+                          {cluster.server_version ?? '--'}
+                        </td>
+                        <td className="px-6 py-3">
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={(e) => handleTestCluster(cluster.name, e)}
+                              disabled={testResult === 'testing'}
+                              className="inline-flex items-center gap-1 rounded border border-[#5a9dd0] px-2 py-1 text-xs text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+                            >
+                              {testResult === 'testing' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wifi className="h-3 w-3" />}
+                              Test
+                            </button>
+                            {testResult && testResult !== 'testing' && (
+                              testResult.reachable
+                                ? <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+                                    <CheckCircle className="h-3 w-3" />
+                                    {testResult.version ? `v${testResult.version}` : 'OK'}
+                                  </span>
+                                : <span className="flex items-center gap-1 text-xs text-red-500 dark:text-red-400">
+                                    <WifiOff className="h-3 w-3" />
+                                    {testResult.error ?? 'Unreachable'}
+                                  </span>
+                            )}
+                            <RoleGuard adminOnly>
+                              <button
+                                type="button"
+                                onClick={(e) => handleAdoptCluster(cluster.name, e)}
+                                disabled={isAdopting}
+                                className="inline-flex items-center gap-1 rounded bg-teal-600 px-2 py-1 text-xs font-medium text-white hover:bg-teal-700 disabled:opacity-50"
+                              >
+                                {isAdopting ? <Loader2 className="h-3 w-3 animate-spin" /> : <GitMerge className="h-3 w-3" />}
+                                Start Managing
+                              </button>
+                            </RoleGuard>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {discoveredClusters.map((cluster) => {
+                const testResult = testResults[cluster.name];
+                const isAdopting = adoptingCluster === cluster.name;
+                return (
+                  <div key={cluster.name} className="rounded-lg ring-2 ring-amber-200 bg-[#fffbf0] p-4 shadow-sm dark:border-amber-800 dark:bg-gray-800">
+                    <div className="mb-2 flex items-center justify-between">
+                      <h3 className="text-sm font-bold text-[#0a2a4a] dark:text-gray-100">{cluster.name}</h3>
+                      <button
+                        type="button"
+                        onClick={(e) => handleTestCluster(cluster.name, e)}
+                        disabled={testResult === 'testing'}
+                        className="inline-flex items-center gap-1 rounded border border-[#5a9dd0] px-2 py-1 text-xs text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:text-gray-300"
+                      >
+                        {testResult === 'testing' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wifi className="h-3 w-3" />}
+                        Test
+                      </button>
+                    </div>
+                    {testResult && testResult !== 'testing' && (
+                      <div className="mb-2">
+                        {testResult.reachable
+                          ? <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400"><CheckCircle className="h-3 w-3" /> Reachable</span>
+                          : <span className="flex items-center gap-1 text-xs text-red-500 dark:text-red-400"><WifiOff className="h-3 w-3" /> {testResult.error ?? 'Unreachable'}</span>
+                        }
+                      </div>
+                    )}
+                    <div className="mb-3">
+                      <ConnectionStatus status={cluster.connection_status ?? 'unknown'} />
+                    </div>
+                    <p className="mb-3 font-mono text-xs text-[#2a5a7a] dark:text-gray-400">
+                      {cluster.server_version ? `v${cluster.server_version}` : '--'}
+                    </p>
+                    <RoleGuard adminOnly>
+                      <button
+                        type="button"
+                        onClick={(e) => handleAdoptCluster(cluster.name, e)}
+                        disabled={isAdopting}
+                        className="inline-flex w-full items-center justify-center gap-1 rounded bg-teal-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-teal-700 disabled:opacity-50"
+                      >
+                        {isAdopting ? <Loader2 className="h-3 w-3 animate-spin" /> : <GitMerge className="h-3 w-3" />}
+                        Start Managing
+                      </button>
+                    </RoleGuard>
+                  </div>
                 );
               })}
-              {filteredClusters.length === 0 && (
-                <tr>
-                  <td
-                    colSpan={4}
-                    className="px-6 py-8 text-center text-[#3a6a8a] dark:text-gray-500"
-                  >
-                    No clusters match the current filters.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {filteredClusters.map((cluster) => {
-            const isInCluster = cluster.name === 'in-cluster';
-            const addonCount = Object.values(cluster.labels).filter((v) => v === 'enabled').length;
-            return (
-              <div
-                key={cluster.name}
-                onClick={
-                  isInCluster
-                    ? undefined
-                    : () => navigate(`/clusters/${cluster.name}`)
-                }
-                className={`rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 shadow-sm transition-all dark:border-gray-700 dark:bg-gray-800 ${
-                  isInCluster
-                    ? 'cursor-not-allowed opacity-70'
-                    : 'cursor-pointer hover:-translate-y-0.5 hover:border-teal-400 hover:shadow-md dark:hover:border-teal-500'
-                }`}
-                title={
-                  isInCluster
-                    ? 'This is the local cluster where ArgoCD is running. It is managed directly and not defined in the Git repository.'
-                    : undefined
-                }
-              >
-                <div className="mb-3 flex items-start justify-between">
-                  <h3 className="text-lg font-bold text-[#0a2a4a] dark:text-gray-100">
-                    <span className="inline-flex items-center gap-1.5">
-                      {cluster.name}
-                      {isInCluster && (
-                        <Info className="h-4 w-4 text-blue-400" />
-                      )}
-                    </span>
-                  </h3>
-                </div>
-                <div className="mb-2">
-                  <ConnectionStatus
-                    status={cluster.connection_status ?? 'unknown'}
-                  />
-                </div>
-                <p className="mb-2 font-mono text-xs text-[#2a5a7a] dark:text-gray-400">
-                  {cluster.server_version ? `v${cluster.server_version}` : '--'}
-                </p>
-                {addonCount > 0 && (
-                  <span className="inline-flex items-center rounded-full bg-[#d6eeff] px-2 py-0.5 text-xs font-medium text-[#1a4a6a] dark:bg-gray-700 dark:text-gray-300">
-                    {addonCount} addon{addonCount !== 1 ? 's' : ''}
-                  </span>
-                )}
-              </div>
-            );
-          })}
-          {filteredClusters.length === 0 && (
-            <div className="col-span-full rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-8 text-center text-[#3a6a8a] dark:border-gray-700 dark:bg-gray-800 dark:text-gray-500">
-              No clusters match the current filters.
             </div>
           )}
         </div>

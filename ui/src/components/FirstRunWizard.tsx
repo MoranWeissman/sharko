@@ -12,6 +12,9 @@ import {
   Clock,
   Circle,
   X,
+  ChevronDown,
+  ChevronRight,
+  KeyRound,
 } from 'lucide-react'
 import { api, initRepo, getOperation, operationHeartbeat } from '@/services/api'
 import type { OperationStep } from '@/services/api'
@@ -35,6 +38,9 @@ interface WizardForm {
   argocd_server_url: string
   argocd_token: string
   argocd_namespace: string
+  provider_type: '' | 'aws-sm' | 'k8s-secrets'
+  provider_region: string
+  provider_prefix: string
 }
 
 const emptyForm: WizardForm = {
@@ -43,6 +49,9 @@ const emptyForm: WizardForm = {
   argocd_server_url: '',
   argocd_token: '',
   argocd_namespace: 'argocd',
+  provider_type: '',
+  provider_region: '',
+  provider_prefix: '',
 }
 
 type TestState = 'idle' | 'testing' | 'ok' | 'error'
@@ -254,6 +263,7 @@ function StepArgoCD({
   onBack: () => void
 }) {
   const canSave = testStatus.argocd === 'ok'
+  const [advancedOpen, setAdvancedOpen] = useState(false)
 
   return (
     <div className="space-y-5">
@@ -336,6 +346,66 @@ function StepArgoCD({
           <span className="flex items-center gap-1 text-xs text-red-600 dark:text-red-400">
             <XCircle className="h-3.5 w-3.5" /> {testStatus.argocdMessage || 'Failed'}
           </span>
+        )}
+      </div>
+
+      {/* Advanced: Secrets Provider */}
+      <div className="border-t border-[#bee0ff] pt-3 dark:border-gray-700">
+        <button
+          type="button"
+          onClick={() => setAdvancedOpen((v) => !v)}
+          className="flex items-center gap-2 text-xs font-medium text-[#3a6a8a] hover:text-[#0a3a5a] dark:text-gray-500 dark:hover:text-gray-300"
+        >
+          {advancedOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+          <KeyRound className="h-3.5 w-3.5" />
+          Secrets Provider (optional)
+          {form.provider_type && (
+            <span className="ml-1 rounded-full bg-teal-100 px-2 py-0.5 text-[10px] font-medium text-teal-700 dark:bg-teal-900/30 dark:text-teal-400">
+              {form.provider_type}
+            </span>
+          )}
+        </button>
+
+        {advancedOpen && (
+          <div className="mt-3 space-y-3 rounded-lg bg-[#e8f4ff] p-4 dark:bg-gray-800">
+            <p className="text-[11px] text-[#2a5a7a] dark:text-gray-400">
+              Optional: configure how Sharko retrieves cluster credentials. You can always update this later in Settings.
+            </p>
+            <div>
+              <label className={labelCls}>Provider Type</label>
+              <select
+                className={inputCls}
+                value={form.provider_type}
+                onChange={(e) => onChange({ provider_type: e.target.value as '' | 'aws-sm' | 'k8s-secrets' })}
+              >
+                <option value="">None</option>
+                <option value="aws-sm">AWS Secrets Manager (aws-sm)</option>
+                <option value="k8s-secrets">Kubernetes Secrets (k8s-secrets)</option>
+              </select>
+            </div>
+            {form.provider_type === 'aws-sm' && (
+              <div>
+                <label className={labelCls}>Region</label>
+                <input
+                  className={inputCls}
+                  value={form.provider_region}
+                  onChange={(e) => onChange({ provider_region: e.target.value })}
+                  placeholder="e.g. eu-west-1"
+                />
+              </div>
+            )}
+            {form.provider_type && (
+              <div>
+                <label className={labelCls}>Prefix (optional)</label>
+                <input
+                  className={inputCls}
+                  value={form.provider_prefix}
+                  onChange={(e) => onChange({ provider_prefix: e.target.value })}
+                  placeholder="e.g. k8s- (prepended to cluster name for SM lookup)"
+                />
+              </div>
+            )}
+          </div>
         )}
       </div>
 
@@ -627,6 +697,13 @@ export function FirstRunWizard({ initialStep = 1 }: { initialStep?: number } = {
       namespace: form.argocd_namespace || 'argocd',
       insecure: true,
     },
+    provider: form.provider_type
+      ? {
+          type: form.provider_type,
+          region: form.provider_region || undefined,
+          prefix: form.provider_prefix || undefined,
+        }
+      : undefined,
   })
 
   const testGit = useCallback(async () => {
