@@ -19,6 +19,7 @@ import {
   Pencil,
   Plus,
   X,
+  HelpCircle,
 } from 'lucide-react'
 import { api, removeAddon, upgradeAddon, configureAddon } from '@/services/api'
 import type { AddonCatalogItem, ConnectionsListResponse } from '@/services/models'
@@ -93,7 +94,8 @@ function UpgradeVersionList({
 
   return (
     <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5">
-      <h3 className="mb-3 text-base font-semibold text-[#0a2a4a]">Available Upgrades</h3>
+      <h3 className="text-base font-semibold text-[#0a2a4a]">Available Versions</h3>
+      <p className="mb-3 text-xs text-[#3a6a8a]">from Helm repository</p>
       <div className="space-y-2">
         {versions.map((v, i) => (
           <div
@@ -159,8 +161,8 @@ function CompareVersions({ addonName, currentVersion }: { addonName: string; cur
 
   return (
     <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5">
-      <h3 className="mb-3 text-base font-semibold text-[#0a2a4a]">Compare Versions</h3>
-      <p className="mb-4 text-sm text-[#2a5a7a]">See what changed between your current version and a target.</p>
+      <h3 className="text-base font-semibold text-[#0a2a4a]">Version Changelog</h3>
+      <p className="mb-4 text-xs text-[#3a6a8a]">compare release notes between versions</p>
 
       <div className="flex items-end gap-4 mb-4">
         <div className="flex-1">
@@ -727,6 +729,12 @@ export function AddonDetail() {
                 total={addon.enabled_clusters}
               />
 
+              {/* AppSet info */}
+              <div className="rounded-lg bg-[#e8f4ff] p-3 text-sm text-[#2a5a7a] dark:bg-gray-800 dark:text-gray-400">
+                <span className="font-medium text-[#0a2a4a] dark:text-gray-200">ApplicationSet:</span>{' '}
+                {addon.addon_name} — manages deployments across all clusters with this addon enabled
+              </div>
+
               {/* Environment Versions */}
               {envVersions.length > 0 && (
                 <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800">
@@ -785,7 +793,15 @@ export function AddonDetail() {
                   {/* Sync Wave */}
                   <div className="flex items-center justify-between gap-4">
                     <div>
-                      <p className="text-sm font-medium text-[#0a2a4a]">Sync Wave</p>
+                      <p className="flex items-center gap-1.5 text-sm font-medium text-[#0a2a4a]">
+                        Sync Wave
+                        <span
+                          title="Deploy order: negative values deploy first (e.g. -1 for CRDs), positive deploy last"
+                          className="cursor-help text-[#5a9dd0] hover:text-[#1a6aaa]"
+                        >
+                          <HelpCircle className="h-3.5 w-3.5" />
+                        </span>
+                      </p>
                       <p className="text-xs text-[#3a6a8a]">Controls deployment ordering. Negative = earlier, positive = later.</p>
                     </div>
                     {isEditingConfig ? (
@@ -803,7 +819,15 @@ export function AddonDetail() {
                   {/* Self-Heal */}
                   <div className="flex items-center justify-between gap-4">
                     <div>
-                      <p className="text-sm font-medium text-[#0a2a4a]">Self-Heal</p>
+                      <p className="flex items-center gap-1.5 text-sm font-medium text-[#0a2a4a]">
+                        Self-Heal
+                        <span
+                          title="When enabled, ArgoCD auto-reverts manual changes to match the Git state"
+                          className="cursor-help text-[#5a9dd0] hover:text-[#1a6aaa]"
+                        >
+                          <HelpCircle className="h-3.5 w-3.5" />
+                        </span>
+                      </p>
                       <p className="text-xs text-[#3a6a8a]">When enabled, ArgoCD reverts manual changes automatically.</p>
                     </div>
                     {isEditingConfig ? (
@@ -838,7 +862,15 @@ export function AddonDetail() {
 
                   {/* Sync Options */}
                   <div>
-                    <p className="text-sm font-medium text-[#0a2a4a]">Sync Options</p>
+                    <p className="flex items-center gap-1.5 text-sm font-medium text-[#0a2a4a]">
+                      Sync Options
+                      <span
+                        title="ArgoCD sync options, e.g. ServerSideApply=true, CreateNamespace=true, PruneLast=true"
+                        className="cursor-help text-[#5a9dd0] hover:text-[#1a6aaa]"
+                      >
+                        <HelpCircle className="h-3.5 w-3.5" />
+                      </span>
+                    </p>
                     <p className="text-xs text-[#3a6a8a] mb-2">ArgoCD sync options applied to this addon.</p>
                     {isEditingConfig ? (
                       <textarea
@@ -861,7 +893,15 @@ export function AddonDetail() {
 
                   {/* Ignore Differences — always read-only */}
                   <div>
-                    <p className="text-sm font-medium text-[#0a2a4a]">Ignore Differences</p>
+                    <p className="flex items-center gap-1.5 text-sm font-medium text-[#0a2a4a]">
+                      Ignore Differences
+                      <span
+                        title="Fields ArgoCD should ignore during diff. Example: group: apps, kind: Deployment, jsonPointers: [/spec/replicas]"
+                        className="cursor-help text-[#5a9dd0] hover:text-[#1a6aaa]"
+                      >
+                        <HelpCircle className="h-3.5 w-3.5" />
+                      </span>
+                    </p>
                     <p className="text-xs text-[#3a6a8a] mb-2">Fields ignored during ArgoCD sync comparison (read-only).</p>
                     {addon.ignoreDifferences && addon.ignoreDifferences.length > 0 ? (
                       <pre className="rounded bg-[#071828] p-3 text-xs text-[#bee0ff] overflow-auto">
@@ -874,7 +914,15 @@ export function AddonDetail() {
 
                   {/* Extra Helm Values */}
                   <div>
-                    <p className="text-sm font-medium text-[#0a2a4a]">Extra Helm Values</p>
+                    <p className="flex items-center gap-1.5 text-sm font-medium text-[#0a2a4a]">
+                      Extra Helm Values
+                      <span
+                        title="Additional Helm value overrides as key-value pairs"
+                        className="cursor-help text-[#5a9dd0] hover:text-[#1a6aaa]"
+                      >
+                        <HelpCircle className="h-3.5 w-3.5" />
+                      </span>
+                    </p>
                     <p className="text-xs text-[#3a6a8a] mb-2">Additional Helm parameters injected during rendering.</p>
                     {isEditingConfig ? (
                       <div className="space-y-2">
@@ -939,7 +987,15 @@ export function AddonDetail() {
 
                   {/* Additional Sources — always read-only */}
                   <div>
-                    <p className="text-sm font-medium text-[#0a2a4a]">Additional Sources</p>
+                    <p className="flex items-center gap-1.5 text-sm font-medium text-[#0a2a4a]">
+                      Additional Sources
+                      <span
+                        title="Extra Helm chart sources for multi-source applications"
+                        className="cursor-help text-[#5a9dd0] hover:text-[#1a6aaa]"
+                      >
+                        <HelpCircle className="h-3.5 w-3.5" />
+                      </span>
+                    </p>
                     <p className="text-xs text-[#3a6a8a] mb-2">Extra chart or manifest sources deployed alongside the main addon (read-only).</p>
                     {addon.additionalSources && addon.additionalSources.length > 0 ? (
                       <div className="space-y-2">
