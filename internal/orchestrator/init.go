@@ -49,8 +49,13 @@ func (o *Orchestrator) InitRepo(ctx context.Context, req InitRepoRequest) (*Init
 		// Replace placeholder tokens with actual config values.
 		content = replacePlaceholdersFull(content, o.gitops, o.paths)
 
-		// Strip the "bootstrap/" prefix — files go to the repo root.
-		repoPath := strings.TrimPrefix(path, "bootstrap/")
+		// Keep bootstrap/ prefix for Helm chart files (Chart.yaml, templates/)
+		// Strip prefix for repo-root files (configuration/, README, root-app, repository-secret)
+		repoPath := path
+		if !strings.HasPrefix(path, "bootstrap/Chart.yaml") &&
+			!strings.HasPrefix(path, "bootstrap/templates/") {
+			repoPath = strings.TrimPrefix(path, "bootstrap/")
+		}
 		files[repoPath] = content
 		return nil
 	})
@@ -245,7 +250,13 @@ func (o *Orchestrator) CollectBootstrapFiles(_ context.Context) (map[string][]by
 			return fmt.Errorf("reading template %s: %w", path, readErr)
 		}
 		content = replacePlaceholdersFull(content, o.gitops, o.paths)
-		repoPath := strings.TrimPrefix(path, "bootstrap/")
+		// Keep bootstrap/ prefix for Helm chart files (Chart.yaml, templates/)
+		// Strip prefix for repo-root files (configuration/, README, root-app, repository-secret)
+		repoPath := path
+		if !strings.HasPrefix(path, "bootstrap/Chart.yaml") &&
+			!strings.HasPrefix(path, "bootstrap/templates/") {
+			repoPath = strings.TrimPrefix(path, "bootstrap/")
+		}
 		files[repoPath] = content
 		return nil
 	})
