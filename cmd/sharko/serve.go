@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -212,66 +211,47 @@ var serveCmd = &cobra.Command{
 
 		// Repo path and GitOps config — always constructed (not provider-dependent).
 		repoPaths := orchestrator.RepoPathsConfig{
-			ClusterValues:   getEnvDefault("SHARKO_REPO_PATH_CLUSTER_VALUES", "configuration/addons-clusters-values"),
-			GlobalValues:    getEnvDefault("SHARKO_REPO_PATH_GLOBAL_VALUES", "configuration/addons-global-values"),
-			Catalog:         getEnvDefault("SHARKO_REPO_PATH_CATALOG", "configuration/addons-catalog.yaml"),
-			Charts:          getEnvDefault("SHARKO_REPO_PATH_CHARTS", "charts/"),
-			Bootstrap:       getEnvDefault("SHARKO_REPO_PATH_BOOTSTRAP", "bootstrap/"),
-			HostClusterName: os.Getenv("SHARKO_HOST_CLUSTER_NAME"),
-		}
-
-		// Build GitOps config — env vars first (with defaults), then connection overrides.
-		// Env vars are kept as a migration fallback and will be deprecated in a future release.
-		if os.Getenv("SHARKO_GITOPS_BRANCH_PREFIX") != "" ||
-			os.Getenv("SHARKO_GITOPS_COMMIT_PREFIX") != "" ||
-			os.Getenv("SHARKO_GITOPS_BASE_BRANCH") != "" ||
-			os.Getenv("SHARKO_GITOPS_PR_AUTO_MERGE") != "" {
-			log.Printf("WARNING: SHARKO_GITOPS_* env vars are deprecated — configure GitOps settings via the Settings UI or API (connection.gitops)")
-		}
-		if os.Getenv("SHARKO_PROVIDER_TYPE") != "" {
-			log.Printf("WARNING: SHARKO_PROVIDER_TYPE env var is deprecated — configure provider in Settings UI or via API")
+			ClusterValues: "configuration/addons-clusters-values",
+			GlobalValues:  "configuration/addons-global-values",
+			Catalog:       "configuration/addons-catalog.yaml",
+			Charts:        "charts/",
+			Bootstrap:     "bootstrap/",
 		}
 
 		gitopsCfg := orchestrator.GitOpsConfig{
-			PRAutoMerge:  os.Getenv("SHARKO_GITOPS_PR_AUTO_MERGE") == "true",
-			BranchPrefix: getEnvDefault("SHARKO_GITOPS_BRANCH_PREFIX", "sharko/"),
-			CommitPrefix: getEnvDefault("SHARKO_GITOPS_COMMIT_PREFIX", "sharko:"),
-			BaseBranch:   getEnvDefault("SHARKO_GITOPS_BASE_BRANCH", "main"),
-			RepoURL:      os.Getenv("SHARKO_GITOPS_REPO_URL"),
+			BranchPrefix: "sharko/",
+			CommitPrefix: "sharko:",
+			BaseBranch:   "main",
 		}
 
-		// Override GitOps config from active connection if available.
-		if connGitOps := getConnectionGitOps(connSvc); connGitOps != nil {
-			if connGitOps.BaseBranch != "" {
-				gitopsCfg.BaseBranch = connGitOps.BaseBranch
+		// Build product config from active connection (connection store is sole authority).
+		if conn, err := connSvc.GetActiveConnection(); err == nil && conn != nil {
+			if conn.GitOps != nil {
+				if conn.GitOps.BaseBranch != "" {
+					gitopsCfg.BaseBranch = conn.GitOps.BaseBranch
+				}
+				if conn.GitOps.BranchPrefix != "" {
+					gitopsCfg.BranchPrefix = conn.GitOps.BranchPrefix
+				}
+				if conn.GitOps.CommitPrefix != "" {
+					gitopsCfg.CommitPrefix = conn.GitOps.CommitPrefix
+				}
+				if conn.GitOps.PRAutoMerge != nil {
+					gitopsCfg.PRAutoMerge = *conn.GitOps.PRAutoMerge
+				}
+				if conn.GitOps.HostClusterName != "" {
+					repoPaths.HostClusterName = conn.GitOps.HostClusterName
+				}
 			}
-			if connGitOps.BranchPrefix != "" {
-				gitopsCfg.BranchPrefix = connGitOps.BranchPrefix
-			}
-			if connGitOps.CommitPrefix != "" {
-				gitopsCfg.CommitPrefix = connGitOps.CommitPrefix
-			}
-			if connGitOps.PRAutoMerge != nil {
-				gitopsCfg.PRAutoMerge = *connGitOps.PRAutoMerge
-			}
-			if connGitOps.HostClusterName != "" {
-				repoPaths.HostClusterName = connGitOps.HostClusterName
-			}
-		}
-
-		// Populate RepoURL from connection's Git config if not set via env var.
-		if gitopsCfg.RepoURL == "" {
-			if conn, err := connSvc.GetActiveConnection(); err == nil && conn != nil && conn.Git.RepoURL != "" {
+			if conn.Git.RepoURL != "" {
 				gitopsCfg.RepoURL = conn.Git.RepoURL
 			}
 		}
 
 		// Provider + Orchestrator write-API deps (optional — only if provider is configured).
-		// Priority: 1) active connection provider config, 2) env vars (backward compat).
 		var credProvider providers.ClusterCredentialsProvider
 		var provCfgPtr *providers.Config
 
-		// Resolve provider config: connection takes priority over env vars.
 		namespace := os.Getenv("SHARKO_NAMESPACE")
 		if namespace == "" {
 			namespace = "sharko"
@@ -279,7 +259,6 @@ var serveCmd = &cobra.Command{
 
 		var resolvedProvCfg *providers.Config
 		if connProv := connSvc.GetProviderConfig(); connProv != nil && connProv.Type != "" {
-			// Primary: read from active connection.
 			ns := connProv.Namespace
 			if ns == "" {
 				ns = namespace
@@ -291,15 +270,6 @@ var serveCmd = &cobra.Command{
 				Namespace: ns,
 			}
 			log.Printf("Secrets provider configured from connection: %s", connProv.Type)
-		} else if providerType := os.Getenv("SHARKO_PROVIDER_TYPE"); providerType != "" {
-			// Fallback: env vars (backward compat).
-			resolvedProvCfg = &providers.Config{
-				Type:      providerType,
-				Region:    os.Getenv("SHARKO_PROVIDER_REGION"),
-				Prefix:    getEnvDefault("SHARKO_PROVIDER_PREFIX", "clusters/"),
-				Namespace: getEnvDefault("SHARKO_PROVIDER_NAMESPACE", namespace),
-			}
-			log.Printf("Secrets provider configured from env vars (legacy): %s", providerType)
 		}
 
 		if resolvedProvCfg != nil {
@@ -311,14 +281,9 @@ var serveCmd = &cobra.Command{
 				provCfgPtr = resolvedProvCfg
 
 				// Default addons (applied to clusters registered without explicit addons).
-				// Connection setting takes priority over env var.
-				defaultAddonsStr := os.Getenv("SHARKO_DEFAULT_ADDONS")
 				if connGitOps := getConnectionGitOps(connSvc); connGitOps != nil && connGitOps.DefaultAddons != "" {
-					defaultAddonsStr = connGitOps.DefaultAddons
-				}
-				if defaultAddonsStr != "" {
 					defaults := make(map[string]bool)
-					for _, name := range strings.Split(defaultAddonsStr, ",") {
+					for _, name := range strings.Split(connGitOps.DefaultAddons, ",") {
 						name = strings.TrimSpace(name)
 						if name != "" {
 							defaults[name] = true
@@ -326,7 +291,7 @@ var serveCmd = &cobra.Command{
 					}
 					if len(defaults) > 0 {
 						srv.SetDefaultAddons(defaults)
-						log.Printf("Default addons configured: %v", defaultAddonsStr)
+						log.Printf("Default addons configured: %v", connGitOps.DefaultAddons)
 					}
 				}
 
@@ -407,103 +372,6 @@ var serveCmd = &cobra.Command{
 					}
 				}
 			}
-		}
-
-		// Auto-bootstrap (optional — triggered by SHARKO_INIT_AUTO_BOOTSTRAP=true)
-		if os.Getenv("SHARKO_INIT_AUTO_BOOTSTRAP") == "true" {
-			go func() {
-				time.Sleep(5 * time.Second)
-				log.Printf("auto-bootstrap: checking conditions...")
-
-				// Check if an active connection is configured.
-				git, gitErr := connSvc.GetActiveGitProvider()
-				if gitErr != nil {
-					log.Printf("auto-bootstrap: skipping — no active git connection: %v", gitErr)
-					return
-				}
-
-				conn, connInfoErr := connSvc.GetActiveConnectionInfo()
-				if connInfoErr != nil {
-					log.Printf("auto-bootstrap: skipping — could not get active connection info: %v", connInfoErr)
-					return
-				}
-
-				// Check if repo is already initialized.
-				// Use connection GitOps settings if available, fall back to env vars.
-				autoBaseBranch := getEnvDefault("SHARKO_GITOPS_BASE_BRANCH", "main")
-				if connGO := getConnectionGitOps(connSvc); connGO != nil && connGO.BaseBranch != "" {
-					autoBaseBranch = connGO.BaseBranch
-				}
-				if _, fileErr := git.GetFileContent(context.Background(), "bootstrap/root-app.yaml", autoBaseBranch); fileErr == nil {
-					log.Printf("auto-bootstrap: skipping — repo already initialized (bootstrap/root-app.yaml exists)")
-					return
-				}
-
-				log.Printf("auto-bootstrap: conditions met — initializing repository...")
-
-				ac, argoErr := connSvc.GetActiveArgocdClient()
-				if argoErr != nil {
-					log.Printf("auto-bootstrap: skipping — no active ArgoCD connection: %v", argoErr)
-					return
-				}
-
-				autoRepoPaths := orchestrator.RepoPathsConfig{
-					ClusterValues:   getEnvDefault("SHARKO_REPO_PATH_CLUSTER_VALUES", "configuration/addons-clusters-values"),
-					GlobalValues:    getEnvDefault("SHARKO_REPO_PATH_GLOBAL_VALUES", "configuration/addons-global-values"),
-					Catalog:         getEnvDefault("SHARKO_REPO_PATH_CATALOG", "configuration/addons-catalog.yaml"),
-					Charts:          getEnvDefault("SHARKO_REPO_PATH_CHARTS", "charts/"),
-					Bootstrap:       getEnvDefault("SHARKO_REPO_PATH_BOOTSTRAP", "bootstrap/"),
-					HostClusterName: os.Getenv("SHARKO_HOST_CLUSTER_NAME"),
-				}
-				autoGitopsCfg := orchestrator.GitOpsConfig{
-					PRAutoMerge:  os.Getenv("SHARKO_GITOPS_PR_AUTO_MERGE") == "true",
-					BranchPrefix: getEnvDefault("SHARKO_GITOPS_BRANCH_PREFIX", "sharko/"),
-					CommitPrefix: getEnvDefault("SHARKO_GITOPS_COMMIT_PREFIX", "sharko:"),
-					BaseBranch:   autoBaseBranch,
-					RepoURL:      os.Getenv("SHARKO_GITOPS_REPO_URL"),
-				}
-				// Override from connection GitOps settings.
-				if connGO := getConnectionGitOps(connSvc); connGO != nil {
-					if connGO.BranchPrefix != "" {
-						autoGitopsCfg.BranchPrefix = connGO.BranchPrefix
-					}
-					if connGO.CommitPrefix != "" {
-						autoGitopsCfg.CommitPrefix = connGO.CommitPrefix
-					}
-					if connGO.PRAutoMerge != nil {
-						autoGitopsCfg.PRAutoMerge = *connGO.PRAutoMerge
-					}
-					if connGO.HostClusterName != "" {
-						autoRepoPaths.HostClusterName = connGO.HostClusterName
-					}
-				}
-				if autoGitopsCfg.RepoURL == "" && conn.Git.RepoURL != "" {
-					autoGitopsCfg.RepoURL = conn.Git.RepoURL
-				}
-
-				req := orchestrator.InitRepoRequest{BootstrapArgoCD: true}
-				// Populate git credentials from connection.
-				switch conn.Git.Provider {
-				case "github":
-					if conn.Git.Token != "" {
-						req.GitUsername = "x-access-token"
-						req.GitToken = conn.Git.Token
-					}
-				case "azuredevops":
-					if conn.Git.PAT != "" {
-						req.GitUsername = conn.Git.Organization
-						req.GitToken = conn.Git.PAT
-					}
-				}
-
-				orch := orchestrator.New(nil, nil, ac, git, autoGitopsCfg, autoRepoPaths, templates.TemplateFS)
-				result, initErr := orch.InitRepo(context.Background(), req)
-				if initErr != nil {
-					log.Printf("auto-bootstrap: failed — %v", initErr)
-					return
-				}
-				log.Printf("auto-bootstrap: completed — status=%s", result.Status)
-			}()
 		}
 
 		// Static files
