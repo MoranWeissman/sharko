@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useState, useEffect } from 'react'
 import { Loader2 } from 'lucide-react'
 import { AuthProvider, useAuth } from '@/hooks/useAuth'
 import { ConnectionProvider, useConnections } from '@/hooks/useConnections'
@@ -7,6 +7,7 @@ import { ThemeProvider } from '@/hooks/useTheme'
 import { Layout } from '@/components/Layout'
 import { Login } from '@/views/Login'
 import { FirstRunWizard } from '@/components/FirstRunWizard'
+import { api } from '@/services/api'
 
 // Lazy-loaded views — split into separate chunks for faster initial load
 const Dashboard = lazy(() => import('@/views/Dashboard'))
@@ -29,9 +30,24 @@ function PageLoader() {
 
 function ConnectedApp() {
   const { connections, loading } = useConnections()
+  const [repoStatus, setRepoStatus] = useState<{ initialized: boolean; reason?: string } | null>(null)
+  const [checkingRepo, setCheckingRepo] = useState(true)
 
-  // Show spinner while loading connections
-  if (loading) {
+  useEffect(() => {
+    if (!loading) {
+      if (connections.length > 0) {
+        api.getRepoStatus()
+          .then(data => setRepoStatus(data))
+          .catch(() => setRepoStatus({ initialized: false, reason: 'error' }))
+          .finally(() => setCheckingRepo(false))
+      } else {
+        setCheckingRepo(false)
+      }
+    }
+  }, [loading, connections.length])
+
+  // Show spinner while loading connections or checking repo status
+  if (loading || checkingRepo) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#bee0ff] dark:bg-gray-950">
         <div className="h-8 w-8 animate-spin rounded-full border-4 border-[#6aade0] border-t-[#1a3d5c] dark:border-gray-700 dark:border-t-teal-500" />
@@ -39,9 +55,14 @@ function ConnectedApp() {
     )
   }
 
-  // No connections yet — show first-run wizard
+  // No connections yet — show full first-run wizard
   if (connections.length === 0) {
     return <FirstRunWizard />
+  }
+
+  // Connection exists but repo not initialized — resume wizard at Step 4 (Init)
+  if (repoStatus && !repoStatus.initialized) {
+    return <FirstRunWizard initialStep={4} />
   }
 
   return (

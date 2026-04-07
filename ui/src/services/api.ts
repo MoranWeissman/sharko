@@ -336,6 +336,9 @@ export const api = {
   // Providers
   getProviders: () => fetchJSON<{ configured_provider: { type: string; region: string; status: string } | null; available_types: string[] }>('/providers'),
 
+  // Repo status
+  getRepoStatus: () => fetchJSON<{ initialized: boolean; reason?: string }>('/repo/status'),
+
   // Notifications
   getNotifications: () => fetchJSON<{
     notifications: { id: string; type: string; title: string; description: string; timestamp: string; read: boolean }[]

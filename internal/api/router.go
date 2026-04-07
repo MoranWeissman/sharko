@@ -266,6 +266,9 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	// Cluster status overview
 	mux.HandleFunc("GET /api/v1/fleet/status", srv.handleGetFleetStatus)
 
+	// Repo status
+	mux.HandleFunc("GET /api/v1/repo/status", srv.handleRepoStatus)
+
 	// System
 	mux.HandleFunc("GET /api/v1/providers", srv.handleGetProviders)
 	mux.HandleFunc("POST /api/v1/providers/test", srv.handleTestProvider)

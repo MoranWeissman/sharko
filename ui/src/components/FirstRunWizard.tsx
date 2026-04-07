@@ -595,10 +595,10 @@ function StepInit({ onDone }: { onDone: () => void }) {
 /*  Main wizard                                                         */
 /* ------------------------------------------------------------------ */
 
-export function FirstRunWizard() {
+export function FirstRunWizard({ initialStep = 1 }: { initialStep?: number } = {}) {
   const navigate = useNavigate()
   const { refreshConnections } = useConnections()
-  const [step, setStep] = useState(1)
+  const [step, setStep] = useState(initialStep)
   const [form, setForm] = useState<WizardForm>({ ...emptyForm })
   const [testStatus, setTestStatus] = useState<TestStatus>({ git: 'idle', argocd: 'idle' })
   const [saving, setSaving] = useState(false)
