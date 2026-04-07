@@ -587,15 +587,6 @@ function StepInit({ onDone }: { onDone: () => void }) {
         </div>
       )}
 
-      {state === 'idle' && (
-        <button
-          type="button"
-          onClick={onDone}
-          className="inline-flex items-center gap-2 rounded-lg border border-[#5a9dd0] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
-        >
-          Skip — I'll initialize manually
-        </button>
-      )}
     </div>
   )
 }
