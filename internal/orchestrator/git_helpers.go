@@ -90,6 +90,10 @@ func (o *Orchestrator) commitChanges(ctx context.Context, files map[string][]byt
 			return result, fmt.Errorf("PR created but merge failed: %w", mergeErr)
 		}
 		result.Merged = true
+		// Clean up branch after merge (best-effort).
+		if delErr := o.git.DeleteBranch(ctx, branchName); delErr != nil {
+			slog.Warn("failed to delete branch after merge", "branch", branchName, "error", delErr)
+		}
 	}
 
 	return result, nil

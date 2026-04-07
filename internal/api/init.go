@@ -191,6 +191,10 @@ func (s *Server) runInitOperation(
 			return
 		}
 		s.opsStore.UpdateStep(sessionID, operations.StatusCompleted, "PR merged (auto)")
+		// Clean up branch after merge (best-effort).
+		if delErr := gp.DeleteBranch(ctx, branch); delErr != nil {
+			slog.Warn("failed to delete branch after merge", "branch", branch, "error", delErr)
+		}
 	} else {
 		// Set session to waiting — client polls for merge.
 		s.opsStore.SetWaiting(sessionID, "Waiting for PR to be merged", gitResult.PRUrl)

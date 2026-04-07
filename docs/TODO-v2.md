@@ -43,18 +43,18 @@ Full design spec: `docs/design/2026-04-07-sharko-v1-design-decisions.md`
 
 ### Action Items from Design Session
 
-- [ ] Remove `secrets` block from Helm values.yaml
-- [ ] Remove env var credential fallback from serve.go
-- [ ] Remove `config.devMode` flag
-- [ ] Single connection — remove connection list UI, edit-only Settings page
-- [ ] Operations endpoint (`/api/v1/operations`) with session model
-- [ ] Heartbeat-based session keep-alive (no timeout clock)
-- [ ] PR merge polling in init flow (UI shows status, CLI watches live)
-- [ ] Resume support for interrupted init sessions
-- [ ] Add `secrets:` field to AddonCatalogEntry model
-- [ ] SecretProvider interface with k8s-secrets and aws-sm backends
-- [ ] Background secrets reconciler goroutine
-- [ ] Remote cluster secret push via existing remoteclient
+- [x] Remove `secrets` block from Helm values.yaml — Done in PR #102
+- [x] Remove env var credential fallback from serve.go — Done in PR #102
+- [x] Remove `config.devMode` flag — Done in PR #102
+- [x] Single connection — remove connection list UI, edit-only Settings page — Done in PR #102
+- [x] Operations endpoint (`/api/v1/operations`) with session model — Done in PR #102
+- [x] Heartbeat-based session keep-alive (no timeout clock) — Done in PR #102
+- [x] PR merge polling in init flow (UI shows status, CLI watches live) — Done in PR #102
+- [x] Resume support for interrupted init sessions — Done in PR #114
+- [x] Add `secrets:` field to AddonCatalogEntry model — Done in PR #105
+- [x] SecretProvider interface with k8s-secrets and aws-sm backends — Done in PR #105
+- [x] Background secrets reconciler goroutine — Done in PR #105
+- [x] Remote cluster secret push via existing remoteclient — Done in PR #105
 - [ ] ArgoCD resource exclusion config for Sharko-managed secrets
 - [ ] GitOps-only ESO reference template (separate repo/deliverable)
 - [ ] V2: Full operator with CRDs (SharkoAddon, SharkoSecret, SharkoCluster)

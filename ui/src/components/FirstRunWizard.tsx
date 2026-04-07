@@ -11,6 +11,7 @@ import {
   Sparkles,
   Clock,
   Circle,
+  X,
 } from 'lucide-react'
 import { api, initRepo, getOperation, operationHeartbeat } from '@/services/api'
 import type { OperationStep } from '@/services/api'
@@ -369,7 +370,7 @@ function StepArgoCD({
 /*  Step 4: Initialize Repository                                      */
 /* ------------------------------------------------------------------ */
 
-function StepInit({ onDone }: { onDone: () => void }) {
+function StepInit({ onDone, resumed }: { onDone: () => void; resumed?: boolean }) {
   const [state, setState] = useState<'idle' | 'running' | 'done' | 'error'>('idle')
   const [error, setError] = useState<string | null>(null)
   const [operationId, setOperationId] = useState<string | null>(null)
@@ -441,6 +442,11 @@ function StepInit({ onDone }: { onDone: () => void }) {
 
   return (
     <div className="space-y-5">
+      {resumed && (
+        <div className="rounded-lg bg-[#e8f4ff] p-3 text-sm text-[#0a3a5a] dark:bg-gray-800 dark:text-gray-300 mb-4">
+          <strong>Resuming setup</strong> — your connection is configured. Initialize the repository to complete setup.
+        </div>
+      )}
       <div className="flex items-center gap-2">
         <FolderGit2 className="h-5 w-5 text-[#1a3d5c] dark:text-blue-400" />
         <h3 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
@@ -680,6 +686,11 @@ export function FirstRunWizard({ initialStep = 1 }: { initialStep?: number } = {
     navigate('/dashboard')
   }, [navigate, refreshConnections])
 
+  const handleEscape = useCallback(() => {
+    refreshConnections()
+    navigate('/dashboard')
+  }, [navigate, refreshConnections])
+
   // On step 3, try to auto-discover ArgoCD URL
   const handleGoToStep3 = useCallback(async () => {
     setStep(3)
@@ -716,7 +727,17 @@ export function FirstRunWizard({ initialStep = 1 }: { initialStep?: number } = {
                 Sharko
               </span>
             </div>
-            <StepIndicator current={step} total={4} />
+            <div className="flex items-center gap-3">
+              <StepIndicator current={step} total={4} />
+              <button
+                type="button"
+                onClick={handleEscape}
+                title="Skip to Dashboard"
+                className="ml-1 rounded-md p-1 text-blue-300/70 transition-colors hover:bg-white/10 hover:text-white focus:outline-none focus:ring-1 focus:ring-white/40"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
           </div>
 
           {/* Step label */}
@@ -751,7 +772,7 @@ export function FirstRunWizard({ initialStep = 1 }: { initialStep?: number } = {
                 onBack={() => setStep(2)}
               />
             )}
-            {step === 4 && <StepInit onDone={handleDone} />}
+            {step === 4 && <StepInit onDone={handleDone} resumed={initialStep === 4} />}
           </div>
         </div>
 
