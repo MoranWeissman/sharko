@@ -104,7 +104,7 @@ func (o *Orchestrator) InitRepo(ctx context.Context, req InitRepoRequest) (*Init
 			return result, nil
 		}
 
-		rootAppContent = replacePlaceholdersFull(rootAppContent, o.gitops, o.paths)
+		rootAppContent = replaceForBootstrap(rootAppContent, o.gitops, o.paths)
 
 		bootstrapErr := o.bootstrapArgoCD(ctx, rootAppContent)
 		if bootstrapErr != nil {
@@ -301,7 +301,7 @@ func (o *Orchestrator) ReadRootAppTemplate(_ context.Context) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading root-app template: %w", err)
 	}
-	return replacePlaceholdersFull(content, o.gitops, o.paths), nil
+	return replaceForBootstrap(content, o.gitops, o.paths), nil
 }
 
 // BootstrapArgoCD is the exported counterpart of bootstrapArgoCD.
@@ -344,5 +344,23 @@ func replacePlaceholdersFull(content []byte, cfg GitOpsConfig, paths RepoPathsCo
 	content = replacePlaceholders(content, cfg)
 	// Always replace — if unset, use empty string so no cluster matches the in-cluster condition.
 	content = bytes.ReplaceAll(content, []byte("SHARKO_HOST_CLUSTER_NAME"), []byte(paths.HostClusterName))
+	return content
+}
+
+// replaceForBootstrap extends replacePlaceholdersFull by also substituting Helm template
+// expressions present in root-app.yaml. Those expressions must remain intact in the
+// Git-committed copy (ArgoCD renders them at deploy time), but when Sharko reads the
+// file directly to call the ArgoCD API it needs plain YAML without unresolved {{ }} syntax.
+func replaceForBootstrap(content []byte, cfg GitOpsConfig, paths RepoPathsConfig) []byte {
+	content = replacePlaceholdersFull(content, cfg, paths)
+	if cfg.RepoURL != "" {
+		content = bytes.ReplaceAll(content, []byte("{{ .Values.repoURL }}"), []byte(cfg.RepoURL))
+	}
+	branch := cfg.BaseBranch
+	if branch == "" {
+		branch = "main"
+	}
+	content = bytes.ReplaceAll(content, []byte("{{ .Values.targetRevision }}"), []byte(branch))
+	content = bytes.ReplaceAll(content, []byte("{{ .Values.hostCluster.name }}"), []byte(paths.HostClusterName))
 	return content
 }
