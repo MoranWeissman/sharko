@@ -271,40 +271,6 @@ var serveCmd = &cobra.Command{
 		// Always wire write-API deps — credProvider may be nil if no provider is configured.
 		srv.SetWriteAPIDeps(credProvider, provCfgPtr, repoPaths, gitopsCfg)
 
-		// Addon secret definitions — create persistent store and load saved definitions.
-		addonStore := config.NewAddonSecretStore()
-		srv.SetAddonSecretStore(addonStore)
-
-		// Merge: start from persisted store, then let env var override/extend.
-		mergedDefs := make(map[string]orchestrator.AddonSecretDefinition)
-		if stored, err := addonStore.Load(); err != nil {
-			log.Printf("WARNING: Could not load addon secret definitions from store: %v", err)
-		} else {
-			for k, v := range stored {
-				mergedDefs[k] = v
-			}
-			if len(stored) > 0 {
-				log.Printf("Addon secret definitions loaded from store: %d addon(s)", len(stored))
-			}
-		}
-
-		addonSecretsJSON := os.Getenv("SHARKO_ADDON_SECRETS")
-		if addonSecretsJSON != "" {
-			var defs map[string]orchestrator.AddonSecretDefinition
-			if err := json.Unmarshal([]byte(addonSecretsJSON), &defs); err != nil {
-				log.Printf("WARNING: Could not parse SHARKO_ADDON_SECRETS: %v", err)
-			} else {
-				for k, v := range defs {
-					mergedDefs[k] = v
-				}
-				log.Printf("Addon secret definitions from env merged (%d addons)", len(defs))
-			}
-		}
-
-		if len(mergedDefs) > 0 {
-			srv.SetAddonSecretDefs(mergedDefs)
-		}
-
 		// AI config persistence (K8s mode — encrypted Secret)
 		if mode == platform.ModeKubernetes {
 			encKey := os.Getenv("SHARKO_ENCRYPTION_KEY")

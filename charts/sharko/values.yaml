@@ -204,22 +204,6 @@ tolerations: []
 affinity: {}
 
 # ---------------------------------------------------------------------------
-# Addon Secret Definitions
-# ---------------------------------------------------------------------------
-# Define how secrets should be fetched from the secrets provider and delivered
-# to remote clusters as Kubernetes Secrets. Used by addons that need API keys
-# or credentials at runtime (e.g., Datadog, New Relic).
-#
-# Format: JSON string mapping addon name → AddonSecretDefinition.
-# Keys in each definition map K8s secret data keys to provider paths.
-#
-# Example:
-#   addonSecrets: '{"datadog":{"addon_name":"datadog","secret_name":"datadog-keys","namespace":"datadog","keys":{"api-key":"secrets/datadog/api-key","app-key":"secrets/datadog/app-key"}}}'
-#
-# Maps to env var: SHARKO_ADDON_SECRETS
-# addonSecrets: ""
-
-# ---------------------------------------------------------------------------
 # Default Addons for New Clusters
 # ---------------------------------------------------------------------------
 # Comma-separated list of addon names that are automatically enabled when a
