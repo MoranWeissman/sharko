@@ -27,8 +27,8 @@ func (o *Orchestrator) InitRepo(ctx context.Context, req InitRepoRequest) (*Init
 	}
 
 	// Step 1 — Check if repo is already initialized.
-	if _, err := o.git.GetFileContent(ctx, "bootstrap/root-app.yaml", o.gitops.BaseBranch); err == nil {
-		return nil, fmt.Errorf("repo already initialized: bootstrap/root-app.yaml exists")
+	if _, err := o.git.GetFileContent(ctx, "bootstrap/Chart.yaml", o.gitops.BaseBranch); err == nil {
+		return nil, fmt.Errorf("repo already initialized: bootstrap/Chart.yaml exists")
 	}
 
 	// Step 2 — Collect all files from templates.

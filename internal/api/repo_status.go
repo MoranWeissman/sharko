@@ -7,7 +7,7 @@ import (
 // handleRepoStatus godoc
 //
 // @Summary Get repo initialization status
-// @Description Checks whether the GitOps repository has been bootstrapped (bootstrap/root-app.yaml exists on the base branch)
+// @Description Checks whether the GitOps repository has been bootstrapped (bootstrap/Chart.yaml exists on the base branch)
 // @Tags system
 // @Produce json
 // @Security BearerAuth
@@ -24,12 +24,12 @@ func (s *Server) handleRepoStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if bootstrap/root-app.yaml exists on the base branch.
+	// Check if bootstrap/Chart.yaml exists on the base branch.
 	baseBranch := s.gitopsCfg.BaseBranch
 	if baseBranch == "" {
 		baseBranch = "main"
 	}
-	_, err = gp.GetFileContent(r.Context(), "bootstrap/root-app.yaml", baseBranch)
+	_, err = gp.GetFileContent(r.Context(), "bootstrap/Chart.yaml", baseBranch)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"initialized": false,
