@@ -2,6 +2,8 @@ package providers
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -60,6 +62,18 @@ func (p *AWSSecretsManagerProvider) GetSecretValue(ctx context.Context, path str
 	return nil, fmt.Errorf("secret %q has no value", path)
 }
 
+// structuredEKSSecret is the JSON schema used when secrets contain EKS cluster
+// metadata rather than a raw kubeconfig YAML.
+type structuredEKSSecret struct {
+	ClusterName string `json:"clusterName"`
+	Host        string `json:"host"`
+	CAData      string `json:"caData"`
+	AccountId   string `json:"accountId"`
+	Region      string `json:"region"`
+	Project     string `json:"project"`
+	Environment string `json:"environment"`
+}
+
 func (p *AWSSecretsManagerProvider) GetCredentials(clusterName string) (*Kubeconfig, error) {
 	secretName := p.prefix + clusterName
 
@@ -75,9 +89,50 @@ func (p *AWSSecretsManagerProvider) GetCredentials(clusterName string) (*Kubecon
 	}
 
 	raw := []byte(*output.SecretString)
+
+	// Try structured JSON first. If the secret contains an EKS cluster descriptor
+	// (host + caData + region), build credentials via STS token generation.
+	var structured structuredEKSSecret
+	if err := json.Unmarshal(raw, &structured); err == nil && structured.Host != "" {
+		return p.buildFromStructured(structured)
+	}
+
+	// Fallback: treat the secret value as raw kubeconfig YAML.
+	return p.buildFromRawKubeconfig(raw, secretName)
+}
+
+// buildFromStructured constructs a Kubeconfig from the EKS JSON metadata format.
+// It base64-decodes the CA cert and obtains a short-lived STS bearer token.
+func (p *AWSSecretsManagerProvider) buildFromStructured(s structuredEKSSecret) (*Kubeconfig, error) {
+	caData, err := base64.StdEncoding.DecodeString(s.CAData)
+	if err != nil {
+		return nil, fmt.Errorf("decoding caData for cluster %q: %w", s.ClusterName, err)
+	}
+
+	// Determine cluster name: prefer the clusterName field; fall back to empty
+	// string which will cause getEKSToken to omit the header (should not happen).
+	name := s.ClusterName
+	if name == "" {
+		name = s.Environment
+	}
+
+	token, err := getEKSToken(context.Background(), name, s.Region)
+	if err != nil {
+		return nil, fmt.Errorf("generating EKS token for cluster %q: %w", name, err)
+	}
+
+	return &Kubeconfig{
+		Server: s.Host,
+		CAData: caData,
+		Token:  token,
+	}, nil
+}
+
+// buildFromRawKubeconfig parses a raw kubeconfig YAML secret and extracts
+// connection info using the client-go clientcmd library.
+func (p *AWSSecretsManagerProvider) buildFromRawKubeconfig(raw []byte, secretName string) (*Kubeconfig, error) {
 	kc := &Kubeconfig{Raw: raw}
 
-	// Parse kubeconfig to extract connection info
 	config, err := clientcmd.RESTConfigFromKubeConfig(raw)
 	if err != nil {
 		return nil, fmt.Errorf("parsing kubeconfig from secret %q: %w", secretName, err)
@@ -101,20 +156,52 @@ func (p *AWSSecretsManagerProvider) ListClusters() ([]ClusterInfo, error) {
 		},
 	})
 
+	ctx := context.Background()
 	for paginator.HasMorePages() {
-		page, err := paginator.NextPage(context.Background())
+		page, err := paginator.NextPage(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("listing secrets with prefix %q: %w", p.prefix, err)
 		}
 		for _, secret := range page.SecretList {
 			name := strings.TrimPrefix(aws.ToString(secret.Name), p.prefix)
 			info := ClusterInfo{Name: name}
-			// Extract region from tags if available
+
+			// Extract region from SM tags first (cheap, no extra API call).
 			for _, tag := range secret.Tags {
 				if aws.ToString(tag.Key) == "region" {
 					info.Region = aws.ToString(tag.Value)
 				}
 			}
+
+			// Try to fetch the secret and parse structured JSON for richer metadata.
+			// This adds one API call per cluster, which is acceptable for discovery.
+			val, err := p.client.GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{
+				SecretId: secret.Name,
+			})
+			if err == nil && val.SecretString != nil {
+				var meta struct {
+					Region      string `json:"region"`
+					Project     string `json:"project"`
+					Environment string `json:"environment"`
+				}
+				if json.Unmarshal([]byte(*val.SecretString), &meta) == nil {
+					if meta.Region != "" {
+						info.Region = meta.Region
+					}
+					if meta.Project != "" || meta.Environment != "" {
+						if info.Tags == nil {
+							info.Tags = make(map[string]string)
+						}
+						if meta.Project != "" {
+							info.Tags["project"] = meta.Project
+						}
+						if meta.Environment != "" {
+							info.Tags["environment"] = meta.Environment
+						}
+					}
+				}
+			}
+
 			clusters = append(clusters, info)
 		}
 	}
