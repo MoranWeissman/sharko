@@ -40,9 +40,6 @@ config:
   # Comma-separated list of environment keywords to extract from cluster names.
   # e.g. "dev,qa,staging,prod" — cluster "nms-core-dev-eks" → env "dev"
   environments: ""
-  # Git repo URL for the addons repository. Used by init and write operations.
-  # If empty, Sharko falls back to the repo URL stored in the active connection.
-  repoURL: ""  # e.g. https://github.com/your-org/your-addons-repo
 
 # ---------------------------------------------------------------------------
 # Authentication
@@ -202,30 +199,6 @@ readinessProbe:
 nodeSelector: {}
 tolerations: []
 affinity: {}
-
-# ---------------------------------------------------------------------------
-# Default Addons for New Clusters
-# ---------------------------------------------------------------------------
-# Comma-separated list of addon names that are automatically enabled when a
-# cluster is registered without an explicit addon list.
-#
-# Example: "cert-manager,metrics-server,monitoring"
-#
-# Maps to env var: SHARKO_DEFAULT_ADDONS
-# defaultAddons: ""
-
-# ---------------------------------------------------------------------------
-# Host Cluster Name
-# ---------------------------------------------------------------------------
-# The name of the cluster running Sharko itself. Used to identify the
-# management/host cluster when it also appears in the registered clusters. When set,
-# Sharko uses in-cluster credentials for this cluster instead of fetching
-# them from the secrets provider.
-#
-# Example: "management" or "hub-cluster"
-#
-# Maps to env var: SHARKO_HOST_CLUSTER_NAME
-# hostClusterName: ""
 
 # Extra environment variables (name/value pairs)
 extraEnv: []
