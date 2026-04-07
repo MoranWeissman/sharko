@@ -42,6 +42,24 @@ func NewAWSSecretsManagerProvider(cfg Config) (*AWSSecretsManagerProvider, error
 	return &AWSSecretsManagerProvider{client: client, prefix: prefix}, nil
 }
 
+// GetSecretValue retrieves a raw secret value from AWS Secrets Manager.
+// path is the full secret name/ARN in AWS Secrets Manager.
+func (p *AWSSecretsManagerProvider) GetSecretValue(ctx context.Context, path string) ([]byte, error) {
+	output, err := p.client.GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{
+		SecretId: aws.String(path),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("getting secret %q from AWS Secrets Manager: %w", path, err)
+	}
+	if output.SecretString != nil {
+		return []byte(*output.SecretString), nil
+	}
+	if output.SecretBinary != nil {
+		return output.SecretBinary, nil
+	}
+	return nil, fmt.Errorf("secret %q has no value", path)
+}
+
 func (p *AWSSecretsManagerProvider) GetCredentials(clusterName string) (*Kubeconfig, error) {
 	secretName := p.prefix + clusterName
 

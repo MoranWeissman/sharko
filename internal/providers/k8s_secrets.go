@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -45,6 +46,40 @@ func NewKubernetesSecretProvider(cfg Config) (*KubernetesSecretProvider, error) 
 // newKubernetesSecretProviderWithClient creates a provider with an injected client (for testing).
 func newKubernetesSecretProviderWithClient(client kubernetes.Interface, namespace string) *KubernetesSecretProvider {
 	return &KubernetesSecretProvider{client: client, namespace: namespace}
+}
+
+// GetSecretValue retrieves a raw secret value from a Kubernetes Secret.
+// path has the form "namespace/secret-name/key". If namespace is omitted the
+// provider's default namespace is used.
+//
+// Supported formats:
+//   - "secret-name/key"              — uses provider namespace
+//   - "namespace/secret-name/key"    — explicit namespace
+func (p *KubernetesSecretProvider) GetSecretValue(ctx context.Context, path string) ([]byte, error) {
+	parts := strings.Split(path, "/")
+	var namespace, secretName, key string
+	switch len(parts) {
+	case 2:
+		namespace = p.namespace
+		secretName = parts[0]
+		key = parts[1]
+	case 3:
+		namespace = parts[0]
+		secretName = parts[1]
+		key = parts[2]
+	default:
+		return nil, fmt.Errorf("invalid secret path %q: expected \"secret/key\" or \"namespace/secret/key\"", path)
+	}
+
+	secret, err := p.client.CoreV1().Secrets(namespace).Get(ctx, secretName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("getting secret %q in namespace %q: %w", secretName, namespace, err)
+	}
+	val, ok := secret.Data[key]
+	if !ok {
+		return nil, fmt.Errorf("secret %q/%q has no key %q", namespace, secretName, key)
+	}
+	return val, nil
 }
 
 func (p *KubernetesSecretProvider) GetCredentials(clusterName string) (*Kubeconfig, error) {

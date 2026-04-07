@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -108,8 +109,12 @@ func (o *Orchestrator) deleteAddonSecrets(ctx context.Context, kubeconfig []byte
 		}
 		// Delete only the specific secret for this addon, not all managed secrets in the namespace.
 		err = client.CoreV1().Secrets(def.Namespace).Delete(ctx, def.SecretName, metav1.DeleteOptions{})
-		if err != nil && !apierrors.IsNotFound(err) {
-			// Best-effort: continue deleting other addon secrets even if one fails.
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				slog.Info("secret already gone", "addon", addonName, "secret", def.SecretName)
+			} else {
+				slog.Warn("failed to delete secret", "addon", addonName, "secret", def.SecretName, "error", err)
+			}
 			continue
 		}
 		deleted = append(deleted, def.SecretName)
@@ -133,8 +138,12 @@ func (o *Orchestrator) deleteAllAddonSecrets(ctx context.Context, kubeconfig []b
 	for _, def := range o.secretDefs {
 		// Delete by specific secret name, not namespace sweep, to avoid cross-addon deletion.
 		err = client.CoreV1().Secrets(def.Namespace).Delete(ctx, def.SecretName, metav1.DeleteOptions{})
-		if err != nil && !apierrors.IsNotFound(err) {
-			// Best-effort: continue deleting other secrets even if one fails.
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				slog.Info("secret already gone", "addon", def.AddonName, "secret", def.SecretName)
+			} else {
+				slog.Warn("failed to delete secret", "addon", def.AddonName, "secret", def.SecretName, "error", err)
+			}
 			continue
 		}
 		deleted = append(deleted, def.SecretName)

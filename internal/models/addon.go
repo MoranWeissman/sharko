@@ -1,5 +1,14 @@
 package models
 
+// AddonSecretRef describes a Kubernetes Secret that an addon needs on remote clusters.
+// Keys maps the secret data key (as it will appear in the K8s Secret) to the
+// provider path that holds the actual value (e.g. "secrets/datadog/api-key").
+type AddonSecretRef struct {
+	SecretName string            `json:"secretName" yaml:"secretName"`
+	Namespace  string            `json:"namespace" yaml:"namespace"`
+	Keys       map[string]string `json:"keys" yaml:"keys"`
+}
+
 // AddonSource represents an additional Helm chart or manifest source for an addon.
 type AddonSource struct {
 	RepoURL    string            `json:"repoURL,omitempty" yaml:"repoURL,omitempty"`
@@ -34,6 +43,9 @@ type AddonCatalogEntry struct {
 
 	// Advanced — extra Helm configuration
 	ExtraHelmValues map[string]string `json:"extraHelmValues,omitempty" yaml:"extraHelmValues,omitempty"`
+
+	// Secret requirements — Sharko creates these K8s Secrets on remote clusters
+	Secrets []AddonSecretRef `json:"secrets,omitempty" yaml:"secrets,omitempty"`
 }
 
 // AddonDeploymentInfo holds information about an addon's deployment in a specific cluster.

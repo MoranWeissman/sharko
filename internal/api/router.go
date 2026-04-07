@@ -27,6 +27,13 @@ import (
 	_ "github.com/MoranWeissman/sharko/docs/swagger" // swagger docs
 )
 
+// SecretReconciler is the interface the server uses to trigger and query the reconciler.
+// It is implemented by internal/secrets.Reconciler but defined here to avoid an import cycle.
+type SecretReconciler interface {
+	Trigger()
+	GetStats() interface{} // returns secrets.ReconcileStats but we keep the import-free boundary
+}
+
 // Server holds the HTTP handlers and their dependencies.
 type Server struct {
 	connSvc          *service.ConnectionService
@@ -50,7 +57,6 @@ type Server struct {
 	// Remote secret management (optional — set via SetAddonSecretDefs).
 	addonSecretDefs   map[string]orchestrator.AddonSecretDefinition
 	addonSecretDefsMu sync.RWMutex // protects addonSecretDefs from concurrent read/write
-	addonSecretStore  config.AddonSecretStore
 	secretFetcher     orchestrator.SecretValueFetcher
 
 	// Default addons (optional — set via SetDefaultAddons).
@@ -64,6 +70,9 @@ type Server struct {
 
 	// Template filesystem for POST /api/v1/init (always available).
 	templateFS fs.FS
+
+	// secretReconciler reconciles addon secrets across remote clusters (optional — set via SetSecretReconciler).
+	secretReconciler SecretReconciler
 
 	// startTime records when the server was created (used for uptime reporting).
 	startTime time.Time
@@ -117,6 +126,12 @@ func (s *Server) SetVersion(v string) {
 	s.version = v
 }
 
+// SetSecretReconciler wires in the background secret reconciler.
+// Call this after NewServer, before starting the HTTP listener.
+func (s *Server) SetSecretReconciler(r SecretReconciler) {
+	s.secretReconciler = r
+}
+
 // SetAIConfigStore sets the persistent AI config store (K8s mode only).
 func (s *Server) SetAIConfigStore(store *config.AIConfigStore) {
 	s.aiConfigStore = store
@@ -152,11 +167,6 @@ func (s *Server) SetSecretFetcher(fetcher orchestrator.SecretValueFetcher) {
 // explicit addon selections.
 func (s *Server) SetDefaultAddons(defaults map[string]bool) {
 	s.defaultAddons = defaults
-}
-
-// SetAddonSecretStore sets the persistent store for addon secret definitions.
-func (s *Server) SetAddonSecretStore(store config.AddonSecretStore) {
-	s.addonSecretStore = store
 }
 
 // NotificationStore returns the server's notification store so external
@@ -248,6 +258,10 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	// Cluster secrets (remote cluster operations)
 	mux.HandleFunc("GET /api/v1/clusters/{name}/secrets", srv.handleListClusterSecrets)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/secrets/refresh", srv.handleRefreshClusterSecrets)
+
+	// Secrets reconciler
+	mux.HandleFunc("POST /api/v1/secrets/reconcile", srv.handleTriggerReconcile)
+	mux.HandleFunc("GET /api/v1/secrets/status", srv.handleReconcileStatus)
 
 	// Cluster status overview
 	mux.HandleFunc("GET /api/v1/fleet/status", srv.handleGetFleetStatus)

@@ -20,6 +20,8 @@ import (
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/platform"
 	"github.com/MoranWeissman/sharko/internal/providers"
+	"github.com/MoranWeissman/sharko/internal/remoteclient"
+	"github.com/MoranWeissman/sharko/internal/secrets"
 	"github.com/MoranWeissman/sharko/internal/service"
 	"github.com/MoranWeissman/sharko/templates"
 	"github.com/spf13/cobra"
@@ -271,38 +273,47 @@ var serveCmd = &cobra.Command{
 		// Always wire write-API deps — credProvider may be nil if no provider is configured.
 		srv.SetWriteAPIDeps(credProvider, provCfgPtr, repoPaths, gitopsCfg)
 
-		// Addon secret definitions — create persistent store and load saved definitions.
-		addonStore := config.NewAddonSecretStore()
-		srv.SetAddonSecretStore(addonStore)
-
-		// Merge: start from persisted store, then let env var override/extend.
-		mergedDefs := make(map[string]orchestrator.AddonSecretDefinition)
-		if stored, err := addonStore.Load(); err != nil {
-			log.Printf("WARNING: Could not load addon secret definitions from store: %v", err)
-		} else {
-			for k, v := range stored {
-				mergedDefs[k] = v
-			}
-			if len(stored) > 0 {
-				log.Printf("Addon secret definitions loaded from store: %d addon(s)", len(stored))
-			}
-		}
-
-		addonSecretsJSON := os.Getenv("SHARKO_ADDON_SECRETS")
-		if addonSecretsJSON != "" {
-			var defs map[string]orchestrator.AddonSecretDefinition
-			if err := json.Unmarshal([]byte(addonSecretsJSON), &defs); err != nil {
-				log.Printf("WARNING: Could not parse SHARKO_ADDON_SECRETS: %v", err)
+		// Secret reconciler — reconciles addon secrets on remote clusters.
+		if credProvider != nil && provCfgPtr != nil {
+			secretProvider, spErr := providers.NewSecretProvider(*provCfgPtr)
+			if spErr != nil {
+				log.Printf("WARNING: Could not create secret provider for reconciler: %v", spErr)
 			} else {
-				for k, v := range defs {
-					mergedDefs[k] = v
+				reconcileInterval := getEnvDefault("SHARKO_SECRET_RECONCILE_INTERVAL", "5m")
+				dur, parseErr := time.ParseDuration(reconcileInterval)
+				if parseErr != nil {
+					log.Printf("WARNING: Invalid reconcile interval %q, using 5m", reconcileInterval)
+					dur = 5 * time.Minute
 				}
-				log.Printf("Addon secret definitions from env merged (%d addons)", len(defs))
-			}
-		}
 
-		if len(mergedDefs) > 0 {
-			srv.SetAddonSecretDefs(mergedDefs)
+				parser := config.NewParser()
+				baseBranch := gitopsCfg.BaseBranch
+				if baseBranch == "" {
+					baseBranch = "main"
+				}
+
+				gitReaderFn := func() secrets.GitReader {
+					gp, err := connSvc.GetActiveGitProvider()
+					if err != nil {
+						return nil
+					}
+					return gp
+				}
+
+				reconciler := secrets.NewReconciler(
+					credProvider,
+					secretProvider,
+					gitReaderFn,
+					remoteclient.NewClientFromKubeconfig,
+					parser,
+					baseBranch,
+					dur,
+				)
+				srv.SetSecretReconciler(reconciler)
+				reconciler.Start()
+				defer reconciler.Stop()
+				log.Printf("Secret reconciler started (interval: %s)", dur)
+			}
 		}
 
 		// AI config persistence (K8s mode — encrypted Secret)
