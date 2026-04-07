@@ -62,6 +62,8 @@ Full design spec: `docs/design/2026-04-07-sharko-v1-design-decisions.md`
 - [ ] **E2E tests** — test against real ArgoCD (Kind + ArgoCD in CI)
 - [ ] **AI-parsed release notes** — use AI provider to summarize chart changelogs
 - [ ] **Addon dependency ordering** — declare addon B depends on addon A
+- [ ] **Separate managed vs discovered clusters in dashboard** — clusters in cluster-addons.yaml show as "Managed" with full Sharko features. Clusters only in ArgoCD show as "Discovered" with a "Start managing" button. Don't hide ArgoCD-only clusters.
+- [ ] **Adopt existing ArgoCD cluster secrets** — when adding a cluster that ArgoCD already knows about, skip registration and just add it to cluster-addons.yaml + create values file. Show "This cluster is already in ArgoCD — add to Sharko management?"
 
 ---
 
