@@ -2,6 +2,10 @@ package api
 
 import (
 	"net/http"
+	"sort"
+	"strings"
+
+	"github.com/MoranWeissman/sharko/internal/models"
 )
 
 // handleListClusters handles GET /api/v1/clusters
@@ -32,11 +36,73 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	p := parsePagination(r)
+	qp := parseQueryParams(r)
+
+	// Apply filter before pagination.
+	resp.Clusters = filterClusters(resp.Clusters, qp.Filter)
+
+	// Apply sort.
+	sortClusters(resp.Clusters, qp.Sort, qp.Order)
+
+	p := paginationParams{Page: qp.Page, PerPage: qp.PerPage}
 	setPaginationHeaders(w, len(resp.Clusters), p)
 	resp.Clusters = applyPagination(resp.Clusters, p)
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// filterClusters filters a cluster slice by the given filter expression.
+// Supported forms:
+//   - "name:<prefix>*"  — cluster name starts with prefix
+//   - "name:<value>"    — cluster name equals value
+//   - "managed:true"    — only managed clusters
+//   - "managed:false"   — only unmanaged clusters
+func filterClusters(clusters []models.Cluster, filter string) []models.Cluster {
+	if filter == "" {
+		return clusters
+	}
+	field, value, found := strings.Cut(filter, ":")
+	if !found {
+		return clusters
+	}
+	result := clusters[:0:0]
+	for _, c := range clusters {
+		switch field {
+		case "name":
+			if strings.HasSuffix(value, "*") {
+				if strings.HasPrefix(c.Name, strings.TrimSuffix(value, "*")) {
+					result = append(result, c)
+				}
+			} else if c.Name == value {
+				result = append(result, c)
+			}
+		case "managed":
+			if (value == "true") == c.Managed {
+				result = append(result, c)
+			}
+		default:
+			result = append(result, c)
+		}
+	}
+	return result
+}
+
+// sortClusters sorts a cluster slice in place by the given field and order.
+// Supported sort fields: "name" (default), "status".
+func sortClusters(clusters []models.Cluster, field, order string) {
+	sort.SliceStable(clusters, func(i, j int) bool {
+		var less bool
+		switch field {
+		case "status":
+			less = clusters[i].ConnectionStatus < clusters[j].ConnectionStatus
+		default: // "name" and anything else
+			less = clusters[i].Name < clusters[j].Name
+		}
+		if order == "desc" {
+			return !less
+		}
+		return less
+	})
 }
 
 // handleGetCluster godoc

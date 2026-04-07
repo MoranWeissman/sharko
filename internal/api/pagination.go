@@ -64,3 +64,29 @@ func setPaginationHeaders(w http.ResponseWriter, total int, p paginationParams) 
 	w.Header().Set("X-Page", fmt.Sprintf("%d", p.Page))
 	w.Header().Set("X-Per-Page", fmt.Sprintf("%d", p.PerPage))
 }
+
+// queryParams extends paginationParams with optional sort and filter fields.
+type queryParams struct {
+	Page    int
+	PerPage int
+	Sort    string // field name, e.g. "name" or "status"
+	Order   string // "asc" or "desc" (default: "asc")
+	Filter  string // "field:value" or "field:prefix*"
+}
+
+// parseQueryParams parses pagination plus ?sort=, ?order=, and ?filter= query params.
+// Sort order defaults to "asc" when not specified or invalid.
+func parseQueryParams(r *http.Request) queryParams {
+	p := parsePagination(r)
+	order := r.URL.Query().Get("order")
+	if order != "asc" && order != "desc" {
+		order = "asc"
+	}
+	return queryParams{
+		Page:    p.Page,
+		PerPage: p.PerPage,
+		Sort:    r.URL.Query().Get("sort"),
+		Order:   order,
+		Filter:  r.URL.Query().Get("filter"),
+	}
+}
