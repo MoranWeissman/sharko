@@ -174,6 +174,40 @@ When Sharko runs on one of the managed clusters, set this to use in-cluster cred
 hostClusterName: "management"
 ```
 
+## Secrets Reconciler
+
+| Value | Type | Default | Description |
+|-------|------|---------|-------------|
+| `secrets.reconciler.enabled` | bool | `true` | Enable the background secrets reconciler |
+| `secrets.reconciler.interval` | string | `"5m"` | How often to check for secret changes. Maps to `SHARKO_SECRET_RECONCILE_INTERVAL`. Format: Go duration (`5m`, `1h`, `30s`) |
+| `secrets.webhookSecret` | string | `""` | HMAC-SHA256 secret for validating `POST /api/v1/webhooks/git`. Maps to `SHARKO_WEBHOOK_SECRET` |
+
+The secrets reconciler uses the **same secrets provider** configured for cluster credentials (`SHARKO_PROVIDER_TYPE`). No separate provider configuration is needed.
+
+When `secrets.webhookSecret` is set, Sharko verifies the `X-Hub-Signature-256` header on every webhook call. Requests without a valid signature are rejected with 401. If the secret is empty, HMAC verification is skipped (useful for internal environments without a gateway).
+
+```yaml
+# Example: enable reconciler with webhook verification
+secrets:
+  reconciler:
+    enabled: true
+    interval: "10m"
+  webhookSecret: "your-hmac-secret"
+```
+
+Equivalent env vars:
+
+```yaml
+extraEnv:
+  - name: SHARKO_SECRET_RECONCILE_INTERVAL
+    value: "10m"
+  - name: SHARKO_WEBHOOK_SECRET
+    valueFrom:
+      secretKeyRef:
+        name: my-webhook-secret
+        key: secret
+```
+
 ## Extra Environment Variables
 
 Inject arbitrary environment variables into the Sharko pod:

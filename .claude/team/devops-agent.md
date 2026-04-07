@@ -108,6 +108,63 @@ For CI, steps 1-3 are build, steps 4-5 are test. The swagger regeneration must h
 - `make test` — `go clean -testcache && go test ./...` + `cd ui && npm test -- --run`
 - Helm values use flat keys where possible, nested only for logical grouping
 
+## GitHub Actions Workflows (v1.4.0)
+
+### Release Workflow (`workflow_run` trigger)
+
+The release workflow triggers on successful completion of the CI workflow — it does NOT trigger on push/tag directly:
+
+```yaml
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: ["main"]
+```
+
+This ensures a release is never published without passing CI. The release job checks `event.workflow_run.conclusion == 'success'` before proceeding.
+
+### Concurrency Control
+
+All workflows use concurrency groups to prevent duplicate runs:
+
+```yaml
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+```
+
+### goreleaser (CLI Binaries)
+
+CLI binaries are built and published via goreleaser. Configuration lives in `.goreleaser.yaml`.
+The release workflow calls `goreleaser release --clean`. Binaries are attached to the GitHub release
+and also pushed as OCI artifacts.
+
+### New Helm Values (v1.4.0)
+
+Add these to `charts/sharko/values.yaml`:
+
+```yaml
+secrets:
+  reconciler:
+    enabled: true
+    interval: "5m"   # maps to SHARKO_SECRET_RECONCILE_INTERVAL
+  webhookSecret: ""  # maps to SHARKO_WEBHOOK_SECRET
+```
+
+Template in `charts/sharko/templates/deployment.yaml` should render these as env vars:
+
+```yaml
+- name: SHARKO_SECRET_RECONCILE_INTERVAL
+  value: {{ .Values.secrets.reconciler.interval | quote }}
+- name: SHARKO_WEBHOOK_SECRET
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "sharko.secretName" . }}
+      key: webhookSecret
+      optional: true
+```
+
 ## Context7 MCP
 When working with Helm, Docker, or GitHub Actions syntax, use the context7 MCP to fetch current documentation for the tools you're configuring.
 

@@ -98,13 +98,60 @@ The AI assistant runs as an agent loop with tool-calling capabilities. It has ac
 
 Multi-provider support means you can use any combination of cloud models or self-hosted Ollama, configured per-deployment.
 
+## Secrets Reconciler Architecture
+
+The secrets reconciler is a background subsystem that keeps addon secrets fresh on remote clusters without requiring External Secrets Operator:
+
+```
+Secrets Provider (AWS SM / K8s Secrets)
+  |
+  |  GetSecret(path) — fresh fetch, no cache
+  v
+secrets.Reconciler (Sharko Server)
+  |
+  +-- SHA-256 hash comparison (skip write if unchanged)
+  |
+  v
+remoteclient → K8s Secret on remote cluster
+  labeled: app.kubernetes.io/managed-by: sharko
+
+Trigger sources:
+  1. time.Ticker  — default every 5 minutes
+  2. Webhook      — POST /api/v1/webhooks/git (HMAC-SHA256)
+  3. Manual       — POST /api/v1/secrets/reconcile
+```
+
+ArgoCD is configured with a resource exclusion to ignore these labeled secrets. This prevents ArgoCD from deleting secrets that are not in Git — the secrets are managed exclusively by the Sharko reconciler.
+
+## Operations Engine
+
+Long-running workflows (init, large batch operations) use the async operations engine:
+
+```
+HTTP Handler
+  |
+  +-- Creates OperationSession (ID, status=pending)
+  +-- Returns 202 Accepted + operation_id
+  |
+  Goroutine (async):
+    +-- Runs workflow steps, appends to session.Log
+    +-- Sets status = running → succeeded / failed
+  |
+Client:
+  +-- GET /api/v1/operations/{id}    — polls for status
+  +-- POST /api/v1/operations/{id}/heartbeat — keep-alive (required every 15s)
+```
+
+Sessions expire if the client stops sending heartbeats. This prevents orphaned sessions from accumulating when a client disconnects mid-operation.
+
 ## GitOps Flow
 
 Every write operation that changes fleet state:
 
 1. Sharko modifies files in the addons repo (values files, cluster directories)
-2. A PR is opened in Git
-3. ArgoCD watches the repo and syncs the ApplicationSet after the PR is merged
-4. The ApplicationSet generates ArgoCD Applications per-cluster, per-addon
+2. Batch file changes are committed atomically via the Git tree API (`BatchCreateFiles`)
+3. A PR is opened in Git
+4. ArgoCD watches the repo and syncs the ApplicationSet after the PR is merged
+5. The ApplicationSet generates ArgoCD Applications per-cluster, per-addon
 
 This means Sharko's state is always reflected in Git — the addons repo is the source of truth, not the Sharko database.

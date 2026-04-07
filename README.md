@@ -24,12 +24,15 @@ Sharko is a server that runs in your Kubernetes cluster, next to ArgoCD, and man
 
 - **Register clusters** from secrets providers (AWS Secrets Manager, K8s Secrets), including remote cluster secrets (API keys delivered to remote clusters)
 - **Manage addons** across your clusters (cert-manager, monitoring, logging, etc.)
+- **Catalog-driven secrets** -- declare addon secrets in `addons-catalog.yaml`; Sharko reconciles them to remote clusters automatically (no ESO required)
 - **Observe cluster health** with drift detection, version matrix, and sync status
 - **Automate GitOps workflows** -- every change creates a PR (auto-merged if `SHARKO_GITOPS_PR_AUTO_MERGE=true`)
 - **Upgrade addons** globally or per-cluster, with batch multi-addon upgrades and per-cluster drift detection
 - **Batch register clusters** -- register up to 10 clusters in a single API call
 - **Manage API keys** for non-interactive consumers (Backstage, Terraform, CI/CD)
 - **Full UI write capabilities** -- register clusters, add addons, upgrade versions, manage secrets from the browser
+- **First-run wizard** -- guided setup for new installations (connection config + repo init)
+- **Async operations** -- long-running workflows (init, batch) tracked via operation sessions with streaming logs
 - **Integrate with IDPs** -- Backstage, Port.io, Terraform, CI/CD all use the same API
 - **AI-powered troubleshooting** -- context-aware assistant with deep platform knowledge
 
@@ -171,7 +174,12 @@ Sharko exposes a REST API that every consumer uses -- the CLI, the UI, and exter
 | DELETE | `/api/v1/addon-secrets/{addon}` | Remove an addon secret definition |
 | POST | `/api/v1/tokens` | Create an API key |
 | DELETE | `/api/v1/tokens/{name}` | Revoke an API key |
-| POST | `/api/v1/init` | Initialize addons repo from templates |
+| POST | `/api/v1/init` | Initialize addons repo from templates (async — returns `operation_id`) |
+| GET | `/api/v1/operations/{id}` | Get async operation status and log lines |
+| POST | `/api/v1/operations/{id}/heartbeat` | Keep-alive for an active operation session |
+| POST | `/api/v1/secrets/reconcile` | Trigger immediate secrets reconcile |
+| GET | `/api/v1/secrets/status` | Reconciler status per cluster |
+| POST | `/api/v1/webhooks/git` | Git push webhook (triggers secrets reconcile, HMAC-SHA256 verified) |
 
 See [docs/api-contract.md](docs/api-contract.md) for full API reference with request/response shapes.
 
@@ -191,7 +199,11 @@ The Swagger UI lets you explore all endpoints, view request/response schemas, an
 |---------|-------------|
 | `sharko login --server <url>` | Authenticate with the server |
 | `sharko version` | Show CLI + server version |
-| `sharko init` | Initialize the addons repo |
+| `sharko init` | Initialize the addons repo (async, streams progress) |
+| `sharko validate [path]` | Validate catalog YAML against schema |
+| `sharko connect` | Configure the active Git connection |
+| `sharko connect list` | Show current connection |
+| `sharko connect test` | Test current connection |
 | `sharko add-cluster <name>` | Register a cluster |
 | `sharko add-clusters <n1,n2,...>` | Batch register multiple clusters |
 | `sharko remove-cluster <name>` | Deregister a cluster |
@@ -201,6 +213,9 @@ The Swagger UI lets you explore all endpoints, view request/response schemas, an
 | `sharko remove-addon <name>` | Remove addon (dry-run without `--confirm`) |
 | `sharko upgrade-addon <name>` | Upgrade an addon version (global or per-cluster) |
 | `sharko upgrade-addons <addon=ver,...>` | Batch upgrade multiple addons |
+| `sharko list-addons [--show-config]` | List addons (with catalog config) |
+| `sharko refresh-secrets [cluster]` | Trigger immediate secrets reconcile |
+| `sharko secret-status` | Show reconciler status per cluster |
 | `sharko token create` | Create an API key |
 | `sharko token list` | List API keys |
 | `sharko token revoke <name>` | Revoke an API key |
@@ -292,6 +307,8 @@ All configuration is server-side via Helm values and environment variables. No c
 | `SHARKO_DEFAULT_ADDONS` | Comma-separated default addons for new clusters | (none) |
 | `SHARKO_HOST_CLUSTER_NAME` | Name of the host cluster (for in-cluster deployment) | (none) |
 | `SHARKO_INIT_AUTO_BOOTSTRAP` | Auto-bootstrap ArgoCD during init (not yet implemented, post-v1) | `false` |
+| `SHARKO_SECRET_RECONCILE_INTERVAL` | How often the secrets reconciler runs (Go duration) | `5m` |
+| `SHARKO_WEBHOOK_SECRET` | HMAC-SHA256 secret for validating `/api/v1/webhooks/git` | (none) |
 | `GITHUB_TOKEN` | GitHub PAT (set via `secrets.GITHUB_TOKEN` in Helm) | (none) |
 
 ## Development

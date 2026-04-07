@@ -6,7 +6,10 @@ The addon catalog is the source of truth for which Helm charts Sharko manages ac
 
 ```bash
 # CLI: list all addons with version and deployment stats
-sharko list-addons  # (or check the UI Addons page)
+sharko list-addons
+
+# Include full catalog config (secrets declarations, values):
+sharko list-addons --show-config
 ```
 
 In the UI, the **Addons** page shows:
@@ -69,24 +72,61 @@ Via UI: **Addons → [addon name] → Remove** — the UI requires explicit conf
 
 ## Addon Secrets
 
-Some addons need API keys or credentials at runtime (e.g., Datadog agent, New Relic). Define an addon secret template to have Sharko deliver the secret to each cluster when the addon is enabled:
+Some addons need API keys or credentials at runtime (e.g., Datadog, New Relic). Sharko delivers secrets directly to remote clusters using the same secrets provider configured for cluster credentials (AWS Secrets Manager or Kubernetes Secrets). No External Secrets Operator is required.
 
-```bash
-curl -X POST https://sharko.your-domain.com/api/v1/addon-secrets \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "addon_name": "datadog",
-    "secret_name": "datadog-keys",
-    "namespace": "datadog",
-    "keys": {
-      "api-key": "secrets/datadog/api-key",
-      "app-key": "secrets/datadog/app-key"
-    }
-  }'
+### Declaring Secrets in the Catalog
+
+Secrets are declared in `addons-catalog.yaml` under the `secrets:` field of the addon:
+
+```yaml
+addons:
+  - name: datadog
+    chart: datadog
+    repo: https://helm.datadoghq.com
+    version: 3.74.0
+    secrets:
+      - secretName: datadog-keys
+        namespace: datadog
+        keys:
+          api-key: secrets/datadog/api-key
+          app-key: secrets/datadog/app-key
 ```
 
-The `keys` map resolves paths from your secrets provider (AWS Secrets Manager or Kubernetes Secrets) and creates a Kubernetes Secret on the remote cluster.
+The `keys` map is `<k8s-key>: <provider-path>`. Sharko resolves each provider path, creates a `datadog-keys` Secret in the `datadog` namespace on every cluster that has the Datadog addon enabled.
+
+### How Reconciliation Works
+
+The secrets reconciler runs continuously in the background:
+
+1. Every 5 minutes (default), Sharko re-fetches all declared secrets from the provider
+2. It computes a SHA-256 hash of each value and compares it to the last known hash
+3. If a value changed, Sharko updates the Kubernetes Secret on the affected remote clusters
+4. ArgoCD is configured to ignore these secrets (resource exclusion), so it never deletes them
+
+All Sharko-managed secrets are labeled `app.kubernetes.io/managed-by: sharko`.
+
+### Manual Trigger
+
+To force an immediate reconcile after rotating a secret in your provider:
+
+```bash
+sharko refresh-secrets               # reconcile all clusters
+sharko refresh-secrets prod-eu       # reconcile a specific cluster
+```
+
+### Checking Secret Status
+
+```bash
+sharko secret-status
+# Shows: last reconcile time, hash match status, and any errors per cluster
+```
+
+Or via the API:
+
+```bash
+curl https://sharko.your-domain.com/api/v1/secrets/status \
+  -H "Authorization: Bearer <token>"
+```
 
 ## Upgrading Addons
 

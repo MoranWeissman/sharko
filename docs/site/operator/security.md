@@ -18,7 +18,14 @@ HSTS is only effective when Sharko is served over HTTPS. Configure TLS terminati
 
 ## Rate Limiting
 
-Sharko applies rate limiting to authentication endpoints. Rate limiting relies on the client's real IP address, which requires correct **trusted proxy** configuration.
+Sharko applies rate limiting to both authentication endpoints and admin write endpoints:
+
+| Scope | Limit |
+|-------|-------|
+| Auth endpoints (`/api/v1/auth/*`) | Per-IP burst limit |
+| Write endpoints (admin POST/DELETE/PATCH) | 30 requests/minute per IP |
+
+Rate limiting relies on the client's real IP address, which requires correct **trusted proxy** configuration.
 
 If Sharko is behind a reverse proxy or ingress controller, set the `SHARKO_TRUSTED_PROXIES` environment variable to the proxy's IP CIDR or `"*"` to trust all proxies (only safe in controlled environments):
 
@@ -134,9 +141,35 @@ spec:
           protocol: TCP
 ```
 
+## Webhook Security
+
+`POST /api/v1/webhooks/git` accepts push events from your Git provider to trigger secrets reconciliation. Protect this endpoint with HMAC-SHA256 signature verification:
+
+1. Generate a random secret: `openssl rand -hex 32`
+2. Configure it in Sharko: `secrets.webhookSecret: "<secret>"` (or `SHARKO_WEBHOOK_SECRET` env var)
+3. Configure the same secret in your Git provider's webhook settings
+
+Sharko verifies the `X-Hub-Signature-256` header. Requests without a valid signature return `401 Unauthorized`.
+
+!!! warning
+    If `SHARKO_WEBHOOK_SECRET` is empty, HMAC verification is skipped. Always set a webhook secret in production.
+
+## Secrets Provider Security Model
+
+Sharko's secrets reconciler uses a push-based model:
+
+- Sharko fetches secrets from the provider (AWS SM or K8s Secrets) at reconcile time
+- Values are **never cached** in memory or on disk between reconcile cycles
+- Secrets are pushed directly to remote clusters via temporary kubeconfig connections
+- All Sharko-managed secrets are labeled `app.kubernetes.io/managed-by: sharko`
+- ArgoCD must exclude these secrets from management (see [Configuration](configuration.md#secrets-reconciler))
+
+This means the blast radius of a Sharko compromise is limited to the window between reconcile cycles — there is no persistent plaintext store on the Sharko pod.
+
 ## Secrets Management Recommendations
 
 - Use `existingSecret` with **Sealed Secrets** or **External Secrets Operator** instead of passing tokens as Helm values
 - Enable **RBAC audit logging** in your cluster to track Sharko's API calls
 - Rotate GitHub PATs and ArgoCD tokens periodically via the Settings UI
 - Do not enable `config.devMode: true` in production — it allows credential fallback via environment variables
+- Set `SHARKO_WEBHOOK_SECRET` when exposing the webhook endpoint to the internet
