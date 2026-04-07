@@ -408,7 +408,7 @@ function StepInit({ onDone }: { onDone: () => void }) {
         const status = await getOperation(operationId)
         setSteps(status.steps || [])
         setOperationStatus(status.status)
-        if (status.pr_url) setPrUrl(status.pr_url)
+        if (status.wait_payload) setPrUrl(status.wait_payload)
 
         if (
           status.status === 'completed' ||
@@ -499,8 +499,8 @@ function StepInit({ onDone }: { onDone: () => void }) {
               <span className={step.status === 'pending' ? 'text-[#3a6a8a]' : 'text-[#0a2a4a] dark:text-gray-200'}>
                 {step.name}
               </span>
-              {step.message && (
-                <span className="text-xs text-[#3a6a8a] dark:text-gray-400">— {step.message}</span>
+              {step.detail && (
+                <span className="text-xs text-[#3a6a8a] dark:text-gray-400">— {step.detail}</span>
               )}
             </div>
           ))}

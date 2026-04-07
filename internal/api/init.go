@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
@@ -121,9 +120,10 @@ func (s *Server) handleInit(w http.ResponseWriter, r *http.Request) {
 	// Run init asynchronously — use a background context so the goroutine
 	// outlives the HTTP request.
 	bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel() // ensure cleanup even if goroutine doesn't start
 
 	go func() {
-		defer cancel()
+		defer cancel() // also cancel when done (idempotent)
 		s.runInitOperation(bgCtx, session.ID, req, gitopsCfg, gp, ac, s.templateFS)
 	}()
 
@@ -297,24 +297,16 @@ func (s *Server) pollPRMerge(ctx context.Context, sessionID string, gp gitprovid
 }
 
 // extractGitCredentials returns (username, token) from the active connection's Git config.
-// It checks the connection config first, then falls back to environment variables.
+// Credentials come from the active connection only — no env var fallback.
 func extractGitCredentials(conn *models.Connection) (string, string) {
 	switch conn.Git.Provider {
 	case models.GitProviderGitHub:
-		token := conn.Git.Token
-		if token == "" {
-			token = os.Getenv("GITHUB_TOKEN")
-		}
-		if token != "" {
-			return "x-access-token", token
+		if conn.Git.Token != "" {
+			return "x-access-token", conn.Git.Token
 		}
 	case models.GitProviderAzureDevOps:
-		pat := conn.Git.PAT
-		if pat == "" {
-			pat = os.Getenv("AZURE_DEVOPS_PAT")
-		}
-		if pat != "" {
-			return conn.Git.Organization, pat
+		if conn.Git.PAT != "" {
+			return conn.Git.Organization, conn.Git.PAT
 		}
 	}
 	return "", ""

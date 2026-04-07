@@ -107,9 +107,11 @@ func (st *Store) Get(id string) (*Session, bool) {
 	if !ok {
 		return nil, false
 	}
-	// Return a shallow copy to avoid data races on read.
-	copy := *s
-	return &copy, true
+	// Return a deep copy to avoid data races on the Steps slice.
+	cp := *s
+	cp.Steps = make([]Step, len(s.Steps))
+	copy(cp.Steps, s.Steps)
+	return &cp, true
 }
 
 // FindByTypeAndStatus returns all sessions of the given type with the given status.
@@ -120,6 +122,8 @@ func (st *Store) FindByTypeAndStatus(opType string, status Status) []*Session {
 	for _, s := range st.sessions {
 		if s.Type == opType && s.Status == status {
 			cp := *s
+			cp.Steps = make([]Step, len(s.Steps))
+			copy(cp.Steps, s.Steps)
 			out = append(out, &cp)
 		}
 	}

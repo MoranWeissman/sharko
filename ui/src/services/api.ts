@@ -194,14 +194,15 @@ export async function discoverClusters() {
 export interface OperationStep {
   name: string
   status: 'pending' | 'running' | 'completed' | 'failed' | 'waiting'
-  message?: string
+  detail?: string
 }
 
 export interface OperationSession {
   id: string
-  status: 'running' | 'completed' | 'failed' | 'cancelled' | 'waiting'
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'waiting'
   steps: OperationStep[]
-  pr_url?: string
+  wait_payload?: string
+  wait_detail?: string
   error?: string
 }
 
