@@ -195,6 +195,18 @@ func (m *mockGitProvider) CreateOrUpdateFile(_ context.Context, path string, con
 	return nil
 }
 
+func (m *mockGitProvider) BatchCreateFiles(_ context.Context, files map[string][]byte, _, _ string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.createErr != nil {
+		return m.createErr
+	}
+	for path, content := range files {
+		m.files[path] = content
+	}
+	return nil
+}
+
 func (m *mockGitProvider) DeleteFile(_ context.Context, path, _, _ string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

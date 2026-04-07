@@ -27,10 +27,30 @@ func (g *GitHubProvider) getContentsRaw(ctx context.Context, path, ref string) (
 }
 
 // CreateBranch creates a new branch from the given ref (branch name or SHA).
+// If the repository is empty (no commits yet), it initialises the repo with an
+// initial commit on fromRef before creating the target branch.
 func (g *GitHubProvider) CreateBranch(ctx context.Context, branchName, fromRef string) error {
 	// Resolve fromRef to a SHA.
 	ref, _, err := g.client.Git.GetRef(ctx, g.owner, g.repo, "refs/heads/"+fromRef)
 	if err != nil {
+		// If the base branch doesn't exist the repo is empty — bootstrap it.
+		if ghErr, ok := err.(*github.ErrorResponse); ok && ghErr.Response.StatusCode == http.StatusNotFound {
+			slog.Info("base branch not found, initializing empty repo", "branch", fromRef)
+			sha, initErr := g.initEmptyRepo(ctx, fromRef)
+			if initErr != nil {
+				return fmt.Errorf("create branch: init empty repo: %w", initErr)
+			}
+			newRef := &github.Reference{
+				Ref:    github.Ptr("refs/heads/" + branchName),
+				Object: &github.GitObject{SHA: github.Ptr(sha)},
+			}
+			_, _, err = g.client.Git.CreateRef(ctx, g.owner, g.repo, newRef)
+			if err != nil {
+				return fmt.Errorf("create branch after init: %w", err)
+			}
+			slog.Info("github branch created (after repo init)", "branch", branchName, "from", fromRef)
+			return nil
+		}
 		return fmt.Errorf("create branch: get ref %q: %w", fromRef, err)
 	}
 
@@ -46,6 +66,31 @@ func (g *GitHubProvider) CreateBranch(ctx context.Context, branchName, fromRef s
 
 	slog.Info("github branch created", "branch", branchName, "from", fromRef)
 	return nil
+}
+
+// initEmptyRepo bootstraps an empty GitHub repository by creating an initial
+// README commit on the given branch via the Contents API.  It returns the SHA
+// of the new commit so the caller can branch from it.
+func (g *GitHubProvider) initEmptyRepo(ctx context.Context, branchName string) (string, error) {
+	author := &github.CommitAuthor{
+		Name:  github.Ptr("Sharko Bot"),
+		Email: github.Ptr("sharko-bot@users.noreply.github.com"),
+	}
+	_, _, err := g.client.Repositories.CreateFile(ctx, g.owner, g.repo, "README.md", &github.RepositoryContentFileOptions{
+		Message:   github.Ptr("Initial commit"),
+		Content:   []byte("# Sharko Addons Repository\n\nManaged by [Sharko](https://github.com/MoranWeissman/sharko).\n"),
+		Author:    author,
+		Committer: author,
+	})
+	if err != nil {
+		return "", fmt.Errorf("creating initial commit: %w", err)
+	}
+	// The Contents API auto-creates the repo's default branch; fetch its SHA.
+	ref, _, err := g.client.Git.GetRef(ctx, g.owner, g.repo, "refs/heads/"+branchName)
+	if err != nil {
+		return "", fmt.Errorf("getting ref after init: %w", err)
+	}
+	return ref.GetObject().GetSHA(), nil
 }
 
 // CreateOrUpdateFile creates a new file or updates an existing one on the given branch.
@@ -129,6 +174,69 @@ func (g *GitHubProvider) DeleteFile(ctx context.Context, path, branch, commitMes
 	}
 
 	slog.Info("github file deleted", "path", path, "branch", branch)
+	return nil
+}
+
+// BatchCreateFiles creates or updates multiple files in a single Git commit
+// using the Git Data API (tree + commit).  This is significantly faster than
+// calling CreateOrUpdateFile once per file for bulk operations such as init.
+func (g *GitHubProvider) BatchCreateFiles(ctx context.Context, files map[string][]byte, branch, commitMessage string) error {
+	// 1. Resolve the current HEAD of the branch.
+	ref, _, err := g.client.Git.GetRef(ctx, g.owner, g.repo, "refs/heads/"+branch)
+	if err != nil {
+		return fmt.Errorf("batch create: get ref: %w", err)
+	}
+	baseSHA := ref.GetObject().GetSHA()
+
+	// 2. Fetch the tree SHA of that commit.
+	commit, _, err := g.client.Git.GetCommit(ctx, g.owner, g.repo, baseSHA)
+	if err != nil {
+		return fmt.Errorf("batch create: get commit: %w", err)
+	}
+	baseTreeSHA := commit.GetTree().GetSHA()
+
+	// 3. Build tree entries — one per file.
+	entries := make([]*github.TreeEntry, 0, len(files))
+	for path, content := range files {
+		entries = append(entries, &github.TreeEntry{
+			Path:    github.Ptr(path),
+			Mode:    github.Ptr("100644"),
+			Type:    github.Ptr("blob"),
+			Content: github.Ptr(string(content)),
+		})
+	}
+
+	// 4. Create a new tree on top of the base tree.
+	tree, _, err := g.client.Git.CreateTree(ctx, g.owner, g.repo, baseTreeSHA, entries)
+	if err != nil {
+		return fmt.Errorf("batch create: create tree: %w", err)
+	}
+
+	// 5. Create a commit that points to the new tree.
+	author := &github.CommitAuthor{
+		Name:  github.Ptr("Sharko Bot"),
+		Email: github.Ptr("sharko-bot@users.noreply.github.com"),
+	}
+	newCommit, _, err := g.client.Git.CreateCommit(ctx, g.owner, g.repo, &github.Commit{
+		Message: github.Ptr(commitMessage),
+		Tree:    tree,
+		Parents: []*github.Commit{{SHA: github.Ptr(baseSHA)}},
+		Author:  author,
+	}, nil)
+	if err != nil {
+		return fmt.Errorf("batch create: create commit: %w", err)
+	}
+
+	// 6. Fast-forward the branch ref to the new commit.
+	_, _, err = g.client.Git.UpdateRef(ctx, g.owner, g.repo, &github.Reference{
+		Ref:    github.Ptr("refs/heads/" + branch),
+		Object: &github.GitObject{SHA: newCommit.SHA},
+	}, false)
+	if err != nil {
+		return fmt.Errorf("batch create: update ref: %w", err)
+	}
+
+	slog.Info("github batch files written", "count", len(files), "branch", branch)
 	return nil
 }
 

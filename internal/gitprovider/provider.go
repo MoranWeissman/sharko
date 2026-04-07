@@ -28,6 +28,9 @@ type GitProvider interface {
 	// Write operations
 	CreateBranch(ctx context.Context, branchName, fromRef string) error
 	CreateOrUpdateFile(ctx context.Context, path string, content []byte, branch, commitMessage string) error
+	// BatchCreateFiles writes multiple files in a single commit.
+	// Implementations that lack a native batch API may fall back to sequential calls.
+	BatchCreateFiles(ctx context.Context, files map[string][]byte, branch, commitMessage string) error
 	DeleteFile(ctx context.Context, path, branch, commitMessage string) error
 	CreatePullRequest(ctx context.Context, title, body, head, base string) (*PullRequest, error)
 	MergePullRequest(ctx context.Context, prNumber int) error
