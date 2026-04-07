@@ -360,7 +360,7 @@ func TestInitRepo_CommitsViaPR(t *testing.T) {
 func TestInitRepo_AlreadyInitialized(t *testing.T) {
 	git := newMockGitProvider()
 	// Pre-populate the bootstrap file so it looks initialized.
-	git.files["bootstrap/root-app.yaml"] = []byte("existing")
+	git.files["bootstrap/Chart.yaml"] = []byte("existing")
 
 	cfg := defaultGitOps()
 	cfg.RepoURL = "https://github.com/example/addons"

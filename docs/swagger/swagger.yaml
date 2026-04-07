@@ -2489,7 +2489,7 @@ paths:
       - system
   /repo/status:
     get:
-      description: Checks whether the GitOps repository has been bootstrapped (bootstrap/root-app.yaml
+      description: Checks whether the GitOps repository has been bootstrapped (bootstrap/Chart.yaml
         exists on the base branch)
       produces:
       - application/json
