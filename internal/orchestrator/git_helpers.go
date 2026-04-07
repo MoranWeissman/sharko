@@ -59,9 +59,9 @@ func (o *Orchestrator) commitChanges(ctx context.Context, files map[string][]byt
 
 	commitMsg := fmt.Sprintf("%s %s", o.gitops.CommitPrefix, operation)
 
-	for path, content := range files {
-		if err := o.git.CreateOrUpdateFile(ctx, path, content, branchName, commitMsg); err != nil {
-			return nil, fmt.Errorf("writing file %q on branch %q: %w", path, branchName, err)
+	if len(files) > 0 {
+		if err := o.git.BatchCreateFiles(ctx, files, branchName, commitMsg); err != nil {
+			return nil, fmt.Errorf("writing files on branch %q: %w", branchName, err)
 		}
 	}
 

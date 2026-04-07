@@ -290,6 +290,18 @@ func (a *AzureDevOpsProvider) CreateOrUpdateFile(_ context.Context, filePath str
 	return nil
 }
 
+// BatchCreateFiles writes multiple files using sequential CreateOrUpdateFile
+// calls.  Azure DevOps does not expose a single-request multi-file commit API,
+// so this is a best-effort sequential fallback.
+func (a *AzureDevOpsProvider) BatchCreateFiles(ctx context.Context, files map[string][]byte, branch, commitMessage string) error {
+	for path, content := range files {
+		if err := a.CreateOrUpdateFile(ctx, path, content, branch, commitMessage); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // DeleteFile removes a file from the given branch.
 func (a *AzureDevOpsProvider) DeleteFile(_ context.Context, filePath, branch, commitMessage string) error {
 	currentSHA, err := a.getRefSHA(branch)

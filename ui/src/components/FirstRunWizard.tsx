@@ -272,9 +272,16 @@ function StepArgoCD({
             onChange={(e) => onChange({ argocd_server_url: e.target.value })}
             placeholder="Auto-discovered from cluster"
           />
-          <p className="mt-1 text-[10px] text-[#3a6a8a]">
-            Leave blank for in-cluster auto-discovery. Override for external ArgoCD.
-          </p>
+          {form.argocd_server_url.includes('.svc.cluster.local') && form.argocd_server_url.startsWith('https://') && (
+            <p className="mt-1 text-[10px] text-amber-600 dark:text-amber-400">
+              ⚠ In-cluster services typically use http://, not https://
+            </p>
+          )}
+          {!(form.argocd_server_url.includes('.svc.cluster.local') && form.argocd_server_url.startsWith('https://')) && (
+            <p className="mt-1 text-[10px] text-[#3a6a8a]">
+              Leave blank for in-cluster auto-discovery. Override for external ArgoCD.
+            </p>
+          )}
         </div>
 
         <div>
@@ -559,14 +566,16 @@ export function FirstRunWizard() {
     setSaveError(null)
     try {
       await api.createConnection(buildPayload())
-      refreshConnections()
+      // DON'T call refreshConnections here — it causes App.tsx to re-render,
+      // unmounting the wizard before setStep(4) can execute.
+      // refreshConnections is called in handleDone instead.
       setStep(4)
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'Failed to save connection')
     } finally {
       setSaving(false)
     }
-  }, [form, refreshConnections])  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [form])  // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDone = useCallback(() => {
     refreshConnections()
@@ -580,7 +589,12 @@ export function FirstRunWizard() {
       try {
         const disc = await api.discoverArgocd()
         if (disc.server_url) {
-          setForm((prev) => ({ ...prev, argocd_server_url: disc.server_url }))
+          let url = disc.server_url
+          // In-cluster services use HTTP, not HTTPS
+          if (url.includes('.svc.cluster.local')) {
+            url = url.replace('https://', 'http://')
+          }
+          setForm((prev) => ({ ...prev, argocd_server_url: url }))
         }
       } catch { /* ignore */ }
     }

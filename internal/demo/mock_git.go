@@ -185,6 +185,16 @@ func (p *MockGitProvider) CreateOrUpdateFile(_ context.Context, path string, con
 	return nil
 }
 
+// BatchCreateFiles upserts multiple files in the in-memory store atomically.
+func (p *MockGitProvider) BatchCreateFiles(_ context.Context, files map[string][]byte, _, _ string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for path, content := range files {
+		p.files[path] = content
+	}
+	return nil
+}
+
 // DeleteFile removes a file from the in-memory store.
 func (p *MockGitProvider) DeleteFile(_ context.Context, path, _, _ string) error {
 	p.mu.Lock()

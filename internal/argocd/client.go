@@ -105,7 +105,7 @@ func discoverArgocdServer(namespace string) string {
 				}
 				for _, name := range commonArgoServiceNames {
 					if _, ok := svcByName[name]; ok {
-						url := fmt.Sprintf("https://%s.%s.svc.cluster.local", name, namespace)
+						url := fmt.Sprintf("http://%s.%s.svc.cluster.local", name, namespace)
 						slog.Info("discovered ArgoCD server service by name", "service", name, "url", url)
 						return url
 					}
@@ -132,7 +132,8 @@ func discoverArgocdServer(namespace string) string {
 		}
 	}
 
-	// Fallback: probe common names via HTTP to find a responding server
+	// Fallback: probe common names via HTTP to find a responding server.
+	// In-cluster services use plain HTTP (port 80), not HTTPS.
 	httpClient := &http.Client{
 		Timeout: 2 * time.Second,
 		Transport: &http.Transport{
@@ -140,7 +141,7 @@ func discoverArgocdServer(namespace string) string {
 		},
 	}
 	for _, name := range commonArgoServiceNames {
-		url := fmt.Sprintf("https://%s.%s.svc.cluster.local", name, namespace)
+		url := fmt.Sprintf("http://%s.%s.svc.cluster.local", name, namespace)
 		req, err := http.NewRequest(http.MethodGet, url+"/api/version", nil)
 		if err != nil {
 			continue
@@ -153,8 +154,8 @@ func discoverArgocdServer(namespace string) string {
 		}
 	}
 
-	// Last resort: default name
-	return fmt.Sprintf("https://argocd-server.%s.svc.cluster.local", namespace)
+	// Last resort: default name — use http:// for in-cluster access
+	return fmt.Sprintf("http://argocd-server.%s.svc.cluster.local", namespace)
 }
 
 // TestConnection verifies that the client can reach the ArgoCD server

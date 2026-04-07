@@ -40,6 +40,10 @@ func (f *fakeGitProvider) CreateOrUpdateFile(_ context.Context, _ string, _ []by
 	return nil
 }
 
+func (f *fakeGitProvider) BatchCreateFiles(_ context.Context, _ map[string][]byte, _, _ string) error {
+	return nil
+}
+
 func (f *fakeGitProvider) DeleteFile(_ context.Context, _, _, _ string) error {
 	return nil
 }
