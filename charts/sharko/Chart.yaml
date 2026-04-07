@@ -2,8 +2,8 @@ apiVersion: v2
 name: sharko
 description: Addon management for Kubernetes clusters, built on ArgoCD
 type: application
-version: 1.5.1
-appVersion: "1.5.1"
+version: 1.6.0
+appVersion: "1.6.0"
 keywords:
   - argocd
   - kubernetes
