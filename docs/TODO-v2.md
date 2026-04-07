@@ -26,6 +26,12 @@
 - [ ] **Wizard has no escape/skip option** — says "You can always update connections later in Settings" but there's no way to close or skip the wizard. Need a "Skip to Dashboard" link or X button.
 - [ ] **Bootstrap resume should show "continuing" message** — when Sharko detects a previously started bootstrap (e.g., PR exists but not merged), the wizard/CLI should indicate it's resuming an existing process, not starting fresh
 - [ ] **Auto-merge doesn't delete the branch after merging** — when Sharko auto-merges a PR, the source branch is left behind. Should call `DeleteBranch` after successful merge.
+- [ ] **Addon detail missing AppSet info** — each addon is an ApplicationSet but the detail page doesn't show AppSet status (synced/errored, how many apps generated, which clusters matched)
+- [ ] **Advanced config fields lack context** — syncWave, selfHeal, syncOptions etc. are shown without examples or explanation of what they do. Add inline help text or tooltips explaining each field and when to use it
+- [ ] **ignoreDifferences not editable + no example** — field is read-only with no guidance on format. Should show an example like `group: apps, kind: Deployment, jsonPointers: [/spec/replicas]`
+- [ ] **additionalSources not editable + no example** — same as above, needs format guidance and edit capability
+- [ ] **Upgrade advisor not showing data** — the version comparison and upgrade recommendations section appears empty. May be because no clusters have the addon enabled, or the Helm repo fetch isn't returning versions. Need to verify the upgrade version check works end-to-end
+- [ ] **"20+ latest versions" and "Compare versions" unclear** — these UI sections need better labels and explanation of what they do (show available chart versions from Helm repo, compare changelogs between versions)
 
 ---
 
@@ -64,6 +70,7 @@ Full design spec: `docs/design/2026-04-07-sharko-v1-design-decisions.md`
 - [ ] **Addon dependency ordering** — declare addon B depends on addon A
 - [ ] **Separate managed vs discovered clusters in dashboard** — clusters in cluster-addons.yaml show as "Managed" with full Sharko features. Clusters only in ArgoCD show as "Discovered" with a "Start managing" button. Don't hide ArgoCD-only clusters.
 - [ ] **Adopt existing ArgoCD cluster secrets** — when adding a cluster that ArgoCD already knows about, skip registration and just add it to cluster-addons.yaml + create values file. Show "This cluster is already in ArgoCD — add to Sharko management?"
+- [ ] **Cluster connectivity check** — ability to test if a cluster is reachable, either via direct connection test or by deploying a lightweight hello-world addon (ConfigMap) and verifying ArgoCD can sync it
 
 ---
 
