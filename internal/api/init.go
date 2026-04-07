@@ -120,10 +120,10 @@ func (s *Server) handleInit(w http.ResponseWriter, r *http.Request) {
 	// Run init asynchronously — use a background context so the goroutine
 	// outlives the HTTP request.
 	bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-	defer cancel() // ensure cleanup even if goroutine doesn't start
+	// NO defer cancel() here — the goroutine owns the context
 
 	go func() {
-		defer cancel() // also cancel when done (idempotent)
+		defer cancel()
 		s.runInitOperation(bgCtx, session.ID, req, gitopsCfg, gp, ac, s.templateFS)
 	}()
 
