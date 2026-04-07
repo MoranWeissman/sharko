@@ -2487,6 +2487,23 @@ paths:
       summary: Test ad-hoc provider config
       tags:
       - system
+  /repo/status:
+    get:
+      description: Checks whether the GitOps repository has been bootstrapped (bootstrap/root-app.yaml
+        exists on the base branch)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Repo status
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get repo initialization status
+      tags:
+      - system
   /secrets/reconcile:
     post:
       description: |-

@@ -53,6 +53,7 @@ vi.mock('@/services/api', () => ({
     setAIProvider: () => Promise.resolve({ status: 'ok', provider: 'none' }),
     testConnection: () => Promise.resolve({ git: { status: 'ok' }, argocd: { status: 'ok' } }),
     getProviders: () => Promise.resolve({ configured_provider: null, available_types: [] }),
+    getRepoStatus: () => Promise.resolve({ initialized: true }),
   },
   initRepo: () => Promise.resolve({ status: 'initialized' }),
 }))
