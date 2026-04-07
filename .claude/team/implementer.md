@@ -180,6 +180,8 @@ swag init -g cmd/sharko/serve.go -o docs/swagger --parseDependency --parseIntern
 
 **NEVER edit `docs/swagger/` files manually.** They are auto-generated.
 
+**MANDATORY: After adding any new endpoint, regenerate swagger docs before committing. CI will fail otherwise.**
+
 ## UI Patterns (v2 — Current)
 
 ### Color Palette (Sky-Blue Theme)

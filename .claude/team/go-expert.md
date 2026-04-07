@@ -79,6 +79,8 @@ This reads the `@title`, `@version`, etc. from `cmd/sharko/serve.go` and all `@R
 
 **NEVER edit files in `docs/swagger/` manually.**
 
+**MANDATORY: After adding any new endpoint, regenerate swagger docs before committing. CI will fail otherwise.**
+
 ## Interfaces (exact signatures from codebase)
 
 ### ClusterCredentialsProvider (`internal/providers/provider.go`)

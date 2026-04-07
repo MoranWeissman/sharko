@@ -7,6 +7,10 @@
 - **Never retag an existing version.** Every code change — no matter how small — gets a new semver version. Retagging (deleting a tag and recreating it on a different commit) is forbidden. Patch bump for fixes, minor for features, major for breaking changes.
 - Git user: `Moran Weissman <moran.weissman@gmail.com>`
 
+## Code Rules
+
+- **Every new API endpoint must have swagger annotations AND regenerated docs.** After adding or modifying any handler with `@Router` annotations, run `swag init -g cmd/sharko/serve.go -o docs/swagger --parseDependency --parseInternal` and commit the result. CI will reject PRs with stale swagger docs.
+
 ## Content Policy
 
 This project was extracted from an internal codebase. No references to the original organization, internal domains, employee emails, or real AWS account IDs should appear anywhere in the code, commits, or documentation. If any are found, remove them immediately.
