@@ -96,6 +96,12 @@ func (s *Server) handleGitWebhook(w http.ResponseWriter, r *http.Request) {
 		// The services fetch data directly from Git on every request (no persistent
 		// cache today), so the log is sufficient to signal the event. A dedicated
 		// cache layer can hook in here later.
+
+		// Trigger secret reconciliation on catalog changes.
+		if s.secretReconciler != nil {
+			s.secretReconciler.Trigger()
+			slog.Info("[webhooks] triggered secret reconcile from push event")
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
