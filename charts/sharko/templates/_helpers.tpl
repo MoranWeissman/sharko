@@ -55,11 +55,7 @@ Service account name
 Secret name
 */}}
 {{- define "sharko.secretName" -}}
-{{- if .Values.existingSecret }}
-{{- .Values.existingSecret }}
-{{- else }}
 {{- include "sharko.fullname" . }}
-{{- end }}
 {{- end }}
 
 {{/*

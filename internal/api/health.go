@@ -2,7 +2,6 @@ package api
 
 import (
 	"net/http"
-	"os"
 
 	"github.com/MoranWeissman/sharko/internal/platform"
 )
@@ -28,9 +27,8 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{
-		"status":   "healthy",
-		"version":  v,
-		"mode":     deploymentMode,
-		"dev_mode": os.Getenv("SHARKO_DEV_MODE"),
+		"status":  "healthy",
+		"version": v,
+		"mode":    deploymentMode,
 	})
 }
