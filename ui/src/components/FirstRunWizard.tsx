@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   GitBranch,
@@ -9,8 +9,11 @@ import {
   XCircle,
   ArrowRight,
   Sparkles,
+  Clock,
+  Circle,
 } from 'lucide-react'
-import { api, initRepo } from '@/services/api'
+import { api, initRepo, getOperation, operationHeartbeat } from '@/services/api'
+import type { OperationStep } from '@/services/api'
 import { useConnections } from '@/hooks/useConnections'
 
 /* ------------------------------------------------------------------ */
@@ -368,26 +371,73 @@ function StepArgoCD({
 
 function StepInit({ onDone }: { onDone: () => void }) {
   const [state, setState] = useState<'idle' | 'running' | 'done' | 'error'>('idle')
-  const [result, setResult] = useState<string | null>(null)
-  const [prUrl, setPrUrl] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [operationId, setOperationId] = useState<string | null>(null)
+  const [steps, setSteps] = useState<OperationStep[]>([])
+  const [operationStatus, setOperationStatus] = useState<string>('idle')
+  const [prUrl, setPrUrl] = useState<string | null>(null)
 
-  const handleInit = async () => {
+  const handleInit = async (autoMerge: boolean) => {
     setState('running')
     setError(null)
-    setResult(null)
+    setSteps([])
+    setOperationStatus('idle')
+    setPrUrl(null)
     try {
-      const res = await initRepo({ bootstrap_argocd: true })
-      const url = res?.pr_url || res?.pull_request_url || null
-      const status = res?.status || res?.message || 'initialized'
-      setResult(`Repository ${status}.`)
-      setPrUrl(url)
-      setState('done')
+      const res = await initRepo({ bootstrap_argocd: true, auto_merge: autoMerge })
+      if (res?.operation_id) {
+        setOperationId(res.operation_id)
+      } else {
+        // Legacy synchronous response fallback
+        const url = res?.pr_url || res?.pull_request_url || null
+        setPrUrl(url)
+        setOperationStatus('completed')
+        setState('done')
+      }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to initialize repository')
       setState('error')
     }
   }
+
+  useEffect(() => {
+    if (!operationId) return
+
+    const pollInterval = setInterval(async () => {
+      try {
+        const status = await getOperation(operationId)
+        setSteps(status.steps || [])
+        setOperationStatus(status.status)
+        if (status.pr_url) setPrUrl(status.pr_url)
+
+        if (
+          status.status === 'completed' ||
+          status.status === 'failed' ||
+          status.status === 'cancelled'
+        ) {
+          clearInterval(pollInterval)
+          clearInterval(heartbeatInterval)
+          if (status.status === 'completed') {
+            setState('done')
+          } else {
+            setError(status.error || `Operation ${status.status}`)
+            setState('error')
+          }
+        }
+      } catch {
+        // ignore transient poll errors
+      }
+    }, 2000)
+
+    const heartbeatInterval = setInterval(() => {
+      operationHeartbeat(operationId)
+    }, 15000)
+
+    return () => {
+      clearInterval(pollInterval)
+      clearInterval(heartbeatInterval)
+    }
+  }, [operationId])
 
   return (
     <div className="space-y-5">
@@ -409,20 +459,77 @@ function StepInit({ onDone }: { onDone: () => void }) {
       </div>
 
       {state === 'idle' && (
-        <button
-          type="button"
-          onClick={handleInit}
-          className="inline-flex items-center gap-2 rounded-full bg-[#0a2a4a] px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#14466e] focus:outline-none focus:ring-2 focus:ring-[#6aade0]"
-        >
-          <Sparkles className="h-4 w-4" />
-          Initialize Repository
-        </button>
+        <div className="flex flex-col gap-3 sm:flex-row">
+          <button
+            type="button"
+            onClick={() => handleInit(true)}
+            className="inline-flex items-center gap-2 rounded-full bg-[#0a2a4a] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#14466e] focus:outline-none focus:ring-2 focus:ring-[#6aade0]"
+          >
+            <Sparkles className="h-4 w-4" />
+            Initialize &amp; Auto-merge
+          </button>
+          <button
+            type="button"
+            onClick={() => handleInit(false)}
+            className="inline-flex items-center gap-2 rounded-full border border-[#5a9dd0] bg-[#f0f7ff] px-5 py-2.5 text-sm font-semibold text-[#0a3a5a] transition-colors hover:bg-[#d6eeff] focus:outline-none focus:ring-2 focus:ring-[#6aade0] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+          >
+            <FolderGit2 className="h-4 w-4" />
+            Initialize (manual PR review)
+          </button>
+        </div>
       )}
 
-      {state === 'running' && (
+      {/* Step-by-step progress */}
+      {state === 'running' && steps.length === 0 && (
         <div className="flex items-center gap-2 text-sm text-[#2a5a7a] dark:text-gray-400">
           <Loader2 className="h-4 w-4 animate-spin" />
-          Initializing repository, creating PR...
+          Starting initialization…
+        </div>
+      )}
+
+      {steps.length > 0 && (
+        <div className="space-y-2">
+          {steps.map((step, i) => (
+            <div key={i} className="flex items-center gap-2 text-sm">
+              {step.status === 'completed' && <CheckCircle className="h-4 w-4 text-green-600 shrink-0" />}
+              {step.status === 'running' && <Loader2 className="h-4 w-4 animate-spin text-[#2a5a7a] shrink-0" />}
+              {step.status === 'waiting' && <Clock className="h-4 w-4 text-amber-500 shrink-0" />}
+              {step.status === 'pending' && <Circle className="h-4 w-4 text-[#bee0ff] shrink-0" />}
+              {step.status === 'failed' && <XCircle className="h-4 w-4 text-red-500 shrink-0" />}
+              <span className={step.status === 'pending' ? 'text-[#3a6a8a]' : 'text-[#0a2a4a] dark:text-gray-200'}>
+                {step.name}
+              </span>
+              {step.message && (
+                <span className="text-xs text-[#3a6a8a] dark:text-gray-400">— {step.message}</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Waiting for PR merge */}
+      {operationStatus === 'waiting' && prUrl && (
+        <div className="rounded-xl ring-2 ring-amber-300 bg-amber-50 p-4 dark:bg-amber-900/20">
+          <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+            Waiting for PR to be merged…
+          </p>
+          <a
+            href={prUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs text-[#1a4a8a] underline hover:text-[#0a3a6a] dark:text-blue-400"
+          >
+            Review and merge the PR →
+          </a>
+        </div>
+      )}
+
+      {/* Waiting without a PR URL yet */}
+      {operationStatus === 'waiting' && !prUrl && (
+        <div className="rounded-xl ring-2 ring-amber-300 bg-amber-50 p-4 dark:bg-amber-900/20">
+          <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+            Waiting for PR to be merged…
+          </p>
         </div>
       )}
 
@@ -431,7 +538,7 @@ function StepInit({ onDone }: { onDone: () => void }) {
           <div className="flex items-start gap-2 text-sm text-green-700 dark:text-green-400">
             <CheckCircle className="h-4 w-4 mt-0.5 shrink-0" />
             <div>
-              <p>{result}</p>
+              <p>Repository initialized successfully.</p>
               {prUrl && (
                 <a
                   href={prUrl}
@@ -464,7 +571,7 @@ function StepInit({ onDone }: { onDone: () => void }) {
           <div className="flex items-center gap-3">
             <button
               type="button"
-              onClick={handleInit}
+              onClick={() => setState('idle')}
               className="inline-flex items-center gap-2 rounded-full bg-[#0a2a4a] px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#14466e]"
             >
               Retry
