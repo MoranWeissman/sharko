@@ -49,8 +49,15 @@ func (o *Orchestrator) InitRepo(ctx context.Context, req InitRepoRequest) (*Init
 		// Replace placeholder tokens with actual config values.
 		content = replacePlaceholdersFull(content, o.gitops, o.paths)
 
-		// Strip the "bootstrap/" prefix — files go to the repo root.
-		repoPath := strings.TrimPrefix(path, "bootstrap/")
+		// Determine the destination path in the repo.
+		// bootstrap/Chart.yaml and bootstrap/templates/ stay under bootstrap/ (Helm chart).
+		// Everything else (configuration/, README.md, root-app.yaml, repository-secret.yaml)
+		// goes to the repo root so ArgoCD can reference them via $values at the root.
+		repoPath := path
+		if !strings.HasPrefix(path, "bootstrap/Chart.yaml") &&
+			!strings.HasPrefix(path, "bootstrap/templates/") {
+			repoPath = strings.TrimPrefix(path, "bootstrap/")
+		}
 		files[repoPath] = content
 		return nil
 	})
@@ -245,7 +252,11 @@ func (o *Orchestrator) CollectBootstrapFiles(_ context.Context) (map[string][]by
 			return fmt.Errorf("reading template %s: %w", path, readErr)
 		}
 		content = replacePlaceholdersFull(content, o.gitops, o.paths)
-		repoPath := strings.TrimPrefix(path, "bootstrap/")
+		repoPath := path
+		if !strings.HasPrefix(path, "bootstrap/Chart.yaml") &&
+			!strings.HasPrefix(path, "bootstrap/templates/") {
+			repoPath = strings.TrimPrefix(path, "bootstrap/")
+		}
 		files[repoPath] = content
 		return nil
 	})
