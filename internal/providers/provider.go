@@ -44,6 +44,20 @@ type Config struct {
 	Namespace string // K8s namespace holding secrets (for k8s-secrets)
 }
 
+// NewSecretProvider creates the appropriate SecretProvider for the given config.
+func NewSecretProvider(cfg Config) (SecretProvider, error) {
+	switch cfg.Type {
+	case "k8s-secrets", "kubernetes":
+		return NewKubernetesSecretProvider(cfg)
+	case "aws-sm", "aws-secrets-manager":
+		return NewAWSSecretsManagerProvider(cfg)
+	case "":
+		return nil, fmt.Errorf("no secrets provider configured")
+	default:
+		return nil, fmt.Errorf("unknown provider type %q", cfg.Type)
+	}
+}
+
 // New creates the appropriate ClusterCredentialsProvider for the given config.
 func New(cfg Config) (ClusterCredentialsProvider, error) {
 	switch cfg.Type {

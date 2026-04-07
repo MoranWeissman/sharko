@@ -50,14 +50,13 @@ func newKubernetesSecretProviderWithClient(client kubernetes.Interface, namespac
 
 // GetSecretValue retrieves a raw secret value from a Kubernetes Secret.
 // path has the form "namespace/secret-name/key". If namespace is omitted the
-// provider's default namespace is used. If key is omitted the raw JSON
-// representation of all keys is returned.
+// provider's default namespace is used.
 //
 // Supported formats:
 //   - "secret-name/key"              — uses provider namespace
 //   - "namespace/secret-name/key"    — explicit namespace
 func (p *KubernetesSecretProvider) GetSecretValue(ctx context.Context, path string) ([]byte, error) {
-	parts := splitPath(path)
+	parts := strings.Split(path, "/")
 	var namespace, secretName, key string
 	switch len(parts) {
 	case 2:
@@ -81,20 +80,6 @@ func (p *KubernetesSecretProvider) GetSecretValue(ctx context.Context, path stri
 		return nil, fmt.Errorf("secret %q/%q has no key %q", namespace, secretName, key)
 	}
 	return val, nil
-}
-
-// splitPath splits a path string by "/".
-func splitPath(path string) []string {
-	var parts []string
-	start := 0
-	for i := 0; i < len(path); i++ {
-		if path[i] == '/' {
-			parts = append(parts, path[start:i])
-			start = i + 1
-		}
-	}
-	parts = append(parts, path[start:])
-	return parts
 }
 
 func (p *KubernetesSecretProvider) GetCredentials(clusterName string) (*Kubeconfig, error) {
@@ -121,27 +106,6 @@ func (p *KubernetesSecretProvider) GetCredentials(clusterName string) (*Kubeconf
 	kc.Token = config.BearerToken
 
 	return kc, nil
-}
-
-// GetSecretValue reads a secret value from a K8s Secret.
-// Path format: "<secret-name>/<key>" — reads the specified key from the named Secret.
-func (p *KubernetesSecretProvider) GetSecretValue(ctx context.Context, path string) ([]byte, error) {
-	parts := strings.SplitN(path, "/", 2)
-	if len(parts) != 2 {
-		return nil, fmt.Errorf("invalid k8s secret path %q — expected <secret-name>/<key>", path)
-	}
-	secretName, key := parts[0], parts[1]
-
-	secret, err := p.client.CoreV1().Secrets(p.namespace).Get(ctx, secretName, metav1.GetOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("getting secret %s/%s: %w", p.namespace, secretName, err)
-	}
-
-	val, ok := secret.Data[key]
-	if !ok {
-		return nil, fmt.Errorf("key %q not found in secret %s/%s", key, p.namespace, secretName)
-	}
-	return val, nil
 }
 
 func (p *KubernetesSecretProvider) ListClusters() ([]ClusterInfo, error) {

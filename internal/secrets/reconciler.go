@@ -14,6 +14,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/providers"
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
@@ -287,6 +288,9 @@ func (r *Reconciler) reconcileSecret(
 	// Check whether the secret already exists on the remote cluster.
 	existing, err := client.CoreV1().Secrets(ref.Namespace).Get(ctx, ref.SecretName, metav1.GetOptions{})
 	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("checking existing secret: %w", err)
+		}
 		// Secret doesn't exist — create it.
 		slog.Info("[secrets] creating secret",
 			"cluster", clusterName, "addon", addonName,
@@ -295,9 +299,6 @@ func (r *Reconciler) reconcileSecret(
 		if createErr := remoteclient.EnsureSecret(ctx, client, ref.Namespace, ref.SecretName, desiredData); createErr != nil {
 			return fmt.Errorf("creating secret: %w", createErr)
 		}
-		r.mu.Lock()
-		r.lastStats.Created++
-		r.mu.Unlock()
 		stats.Created++
 		slog.Info("[secrets] secret created",
 			"cluster", clusterName, "addon", addonName, "secret", ref.SecretName,
@@ -311,9 +312,6 @@ func (r *Reconciler) reconcileSecret(
 		slog.Info("[secrets] secret up-to-date",
 			"cluster", clusterName, "addon", addonName, "secret", ref.SecretName,
 		)
-		r.mu.Lock()
-		r.lastStats.Skipped++
-		r.mu.Unlock()
 		stats.Skipped++
 		return nil
 	}
@@ -325,9 +323,6 @@ func (r *Reconciler) reconcileSecret(
 	if updateErr := remoteclient.EnsureSecret(ctx, client, ref.Namespace, ref.SecretName, desiredData); updateErr != nil {
 		return fmt.Errorf("updating secret: %w", updateErr)
 	}
-	r.mu.Lock()
-	r.lastStats.Updated++
-	r.mu.Unlock()
 	stats.Updated++
 	slog.Info("[secrets] secret updated",
 		"cluster", clusterName, "addon", addonName, "secret", ref.SecretName,
