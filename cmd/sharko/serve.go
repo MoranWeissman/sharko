@@ -228,28 +228,48 @@ var serveCmd = &cobra.Command{
 		}
 
 		// Provider + Orchestrator write-API deps (optional — only if provider is configured).
+		// Priority: 1) active connection provider config, 2) env vars (backward compat).
 		var credProvider providers.ClusterCredentialsProvider
 		var provCfgPtr *providers.Config
-		providerType := os.Getenv("SHARKO_PROVIDER_TYPE")
-		if providerType != "" {
-			namespace := os.Getenv("SHARKO_NAMESPACE")
-			if namespace == "" {
-				namespace = "sharko"
-			}
 
-			provCfg := providers.Config{
+		// Resolve provider config: connection takes priority over env vars.
+		namespace := os.Getenv("SHARKO_NAMESPACE")
+		if namespace == "" {
+			namespace = "sharko"
+		}
+
+		var resolvedProvCfg *providers.Config
+		if connProv := connSvc.GetProviderConfig(); connProv != nil && connProv.Type != "" {
+			// Primary: read from active connection.
+			ns := connProv.Namespace
+			if ns == "" {
+				ns = namespace
+			}
+			resolvedProvCfg = &providers.Config{
+				Type:      connProv.Type,
+				Region:    connProv.Region,
+				Prefix:    connProv.Prefix,
+				Namespace: ns,
+			}
+			log.Printf("Secrets provider configured from connection: %s", connProv.Type)
+		} else if providerType := os.Getenv("SHARKO_PROVIDER_TYPE"); providerType != "" {
+			// Fallback: env vars (backward compat).
+			resolvedProvCfg = &providers.Config{
 				Type:      providerType,
 				Region:    os.Getenv("SHARKO_PROVIDER_REGION"),
 				Prefix:    getEnvDefault("SHARKO_PROVIDER_PREFIX", "clusters/"),
 				Namespace: getEnvDefault("SHARKO_PROVIDER_NAMESPACE", namespace),
 			}
+			log.Printf("Secrets provider configured from env vars (legacy): %s", providerType)
+		}
 
-			cp, err := providers.New(provCfg)
+		if resolvedProvCfg != nil {
+			cp, err := providers.New(*resolvedProvCfg)
 			if err != nil {
 				log.Printf("WARNING: Could not create secrets provider: %v", err)
 			} else {
 				credProvider = cp
-				provCfgPtr = &provCfg
+				provCfgPtr = resolvedProvCfg
 
 				// Default addons (applied to clusters registered without explicit addons).
 				if defaultAddonsEnv := os.Getenv("SHARKO_DEFAULT_ADDONS"); defaultAddonsEnv != "" {
@@ -266,7 +286,7 @@ var serveCmd = &cobra.Command{
 					}
 				}
 
-				log.Printf("Secrets provider enabled: %s", providerType)
+				log.Printf("Secrets provider enabled: %s", resolvedProvCfg.Type)
 			}
 		}
 

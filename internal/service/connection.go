@@ -63,6 +63,7 @@ func (s *ConnectionService) Create(req models.CreateConnectionRequest) error {
 		Description: req.Description,
 		Git:         req.Git,
 		Argocd:      req.Argocd,
+		Provider:    req.Provider,
 		IsDefault:   req.SetAsDefault,
 	}
 	// Auto-derive connection name from git repo if not provided
@@ -259,6 +260,16 @@ func (s *ConnectionService) DiscoverArgocdURL(namespace string) string {
 // This is used by API handlers that need access to raw credentials (e.g., for ArgoCD repo registration).
 func (s *ConnectionService) GetActiveConnectionInfo() (*models.Connection, error) {
 	return s.getActiveConn()
+}
+
+// GetProviderConfig returns the provider config from the active connection, or nil if not set.
+// Callers should fall back to env vars when this returns nil.
+func (s *ConnectionService) GetProviderConfig() *models.ProviderConfig {
+	conn, err := s.getActiveConn()
+	if err != nil || conn == nil {
+		return nil
+	}
+	return conn.Provider
 }
 
 func (s *ConnectionService) getActiveConn() (*models.Connection, error) {

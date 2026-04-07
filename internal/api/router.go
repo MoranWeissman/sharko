@@ -169,6 +169,42 @@ func (s *Server) SetDefaultAddons(defaults map[string]bool) {
 	s.defaultAddons = defaults
 }
 
+// reinitializeProvider reads provider config from the active connection and
+// rebuilds credProvider + providerCfg. Called after connection create/update/set-active
+// so that write-API operations pick up the new settings immediately without a restart.
+func (s *Server) reinitializeProvider() {
+	pc := s.connSvc.GetProviderConfig()
+	if pc == nil || pc.Type == "" {
+		// No provider in active connection — keep whatever was set at startup.
+		return
+	}
+
+	namespace := pc.Namespace
+	if namespace == "" {
+		namespace = os.Getenv("SHARKO_NAMESPACE")
+		if namespace == "" {
+			namespace = "sharko"
+		}
+	}
+
+	cfg := providers.Config{
+		Type:      pc.Type,
+		Region:    pc.Region,
+		Prefix:    pc.Prefix,
+		Namespace: namespace,
+	}
+
+	p, err := providers.New(cfg)
+	if err != nil {
+		slog.Warn("reinitializeProvider: failed to create provider from connection", "error", err)
+		return
+	}
+
+	s.credProvider = p
+	s.providerCfg = &cfg
+	slog.Info("provider reinitialized from connection", "type", cfg.Type, "region", cfg.Region, "prefix", cfg.Prefix)
+}
+
 // NotificationStore returns the server's notification store so external
 // components (e.g. the background Checker) can push notifications into it.
 func (s *Server) NotificationStore() *notifications.Store {

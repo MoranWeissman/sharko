@@ -101,15 +101,25 @@ type ArgocdConfig struct {
 	Insecure  bool   `json:"insecure,omitempty" yaml:"insecure,omitempty"`
 }
 
-// Connection combines Git repo and ArgoCD settings.
+// ProviderConfig holds credentials-provider configuration stored in a connection.
+// The provider fetches cluster kubeconfigs from an external secret store.
+type ProviderConfig struct {
+	Type      string `json:"type" yaml:"type"`                             // "aws-sm" or "k8s-secrets"
+	Region    string `json:"region,omitempty" yaml:"region,omitempty"`     // AWS region (aws-sm only)
+	Prefix    string `json:"prefix,omitempty" yaml:"prefix,omitempty"`     // Secret name prefix, e.g. "clusters/"
+	Namespace string `json:"namespace,omitempty" yaml:"namespace,omitempty"` // K8s namespace (k8s-secrets only)
+}
+
+// Connection combines Git repo, ArgoCD, and provider settings.
 type Connection struct {
-	Name        string       `json:"name" yaml:"name"`
-	Description string       `json:"description,omitempty" yaml:"description,omitempty"`
-	Git         GitRepoConfig `json:"git" yaml:"git"`
-	Argocd      ArgocdConfig `json:"argocd" yaml:"argocd"`
-	IsDefault   bool         `json:"is_default" yaml:"default,omitempty"`
-	CreatedAt   string       `json:"created_at,omitempty" yaml:"-"`
-	UpdatedAt   string       `json:"updated_at,omitempty" yaml:"-"`
+	Name        string          `json:"name" yaml:"name"`
+	Description string          `json:"description,omitempty" yaml:"description,omitempty"`
+	Git         GitRepoConfig   `json:"git" yaml:"git"`
+	Argocd      ArgocdConfig    `json:"argocd" yaml:"argocd"`
+	Provider    *ProviderConfig `json:"provider,omitempty" yaml:"provider,omitempty"`
+	IsDefault   bool            `json:"is_default" yaml:"default,omitempty"`
+	CreatedAt   string          `json:"created_at,omitempty" yaml:"-"`
+	UpdatedAt   string          `json:"updated_at,omitempty" yaml:"-"`
 }
 
 // ConnectionResponse is a connection with masked sensitive data for API responses.
@@ -122,6 +132,7 @@ type ConnectionResponse struct {
 	ArgocdServerURL   string          `json:"argocd_server_url"`
 	ArgocdTokenMasked string          `json:"argocd_token_masked"`
 	ArgocdNamespace   string          `json:"argocd_namespace"`
+	Provider          *ProviderConfig `json:"provider,omitempty"`
 	IsDefault         bool            `json:"is_default"`
 	IsActive          bool            `json:"is_active"`
 	CreatedAt         string          `json:"created_at,omitempty"`
@@ -136,11 +147,12 @@ type ConnectionsListResponse struct {
 
 // CreateConnectionRequest is the API request to create a new connection.
 type CreateConnectionRequest struct {
-	Name         string       `json:"name"`
-	Description  string       `json:"description,omitempty"`
-	Git          GitRepoConfig `json:"git"`
-	Argocd       ArgocdConfig `json:"argocd"`
-	SetAsDefault bool         `json:"set_as_default"`
+	Name         string          `json:"name"`
+	Description  string          `json:"description,omitempty"`
+	Git          GitRepoConfig   `json:"git"`
+	Argocd       ArgocdConfig    `json:"argocd"`
+	Provider     *ProviderConfig `json:"provider,omitempty"`
+	SetAsDefault bool            `json:"set_as_default"`
 }
 
 // SetActiveConnectionRequest is the API request to set the active connection.
@@ -189,6 +201,7 @@ func (c *Connection) ToResponse(isActive bool) ConnectionResponse {
 		ArgocdServerURL:   c.Argocd.ServerURL,
 		ArgocdTokenMasked: MaskToken(c.Argocd.Token),
 		ArgocdNamespace:   c.Argocd.Namespace,
+		Provider:          c.Provider,
 		IsDefault:         c.IsDefault,
 		IsActive:          isActive,
 		CreatedAt:         c.CreatedAt,
