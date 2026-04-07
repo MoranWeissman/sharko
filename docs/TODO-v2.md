@@ -26,6 +26,30 @@
 
 ---
 
+## Design Decisions (Next Phases)
+
+Full design spec: `docs/design/2026-04-07-sharko-v1-design-decisions.md`
+
+### Action Items from Design Session
+
+- [ ] Remove `secrets` block from Helm values.yaml
+- [ ] Remove env var credential fallback from serve.go
+- [ ] Remove `config.devMode` flag
+- [ ] Single connection — remove connection list UI, edit-only Settings page
+- [ ] Operations endpoint (`/api/v1/operations`) with session model
+- [ ] Heartbeat-based session keep-alive (no timeout clock)
+- [ ] PR merge polling in init flow (UI shows status, CLI watches live)
+- [ ] Resume support for interrupted init sessions
+- [ ] Add `secrets:` field to AddonCatalogEntry model
+- [ ] SecretProvider interface with k8s-secrets and aws-sm backends
+- [ ] Background secrets reconciler goroutine
+- [ ] Remote cluster secret push via existing remoteclient
+- [ ] ArgoCD resource exclusion config for Sharko-managed secrets
+- [ ] GitOps-only ESO reference template (separate repo/deliverable)
+- [ ] V2: Full operator with CRDs (SharkoAddon, SharkoSecret, SharkoCluster)
+
+---
+
 ## Improvements
 
 - [ ] **Auto-detect GitHub token from Helm secret** — connection setup should check if GITHUB_TOKEN exists in the Sharko pod's env vars and pre-fill
