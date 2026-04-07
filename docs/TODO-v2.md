@@ -32,6 +32,8 @@
 - [ ] **additionalSources not editable + no example** — same as above, needs format guidance and edit capability
 - [ ] **Upgrade advisor not showing data** — the version comparison and upgrade recommendations section appears empty. May be because no clusters have the addon enabled, or the Helm repo fetch isn't returning versions. Need to verify the upgrade version check works end-to-end
 - [ ] **"20+ latest versions" and "Compare versions" unclear** — these UI sections need better labels and explanation of what they do (show available chart versions from Helm repo, compare changelogs between versions)
+- [ ] **AWS SM secret format — structured JSON, not raw kubeconfig** — Sharko's AWS SM provider expects a full kubeconfig YAML but real secrets have individual keys (host, caData, clusterName, region, etc.). Need to auto-detect format and build kubeconfig from structured JSON. Also need STS-based short-lived token generation (like argocd-k8s-auth) instead of static tokens.
+- [ ] **Multi-cloud provider support (V1.x/V2)** — interface is pluggable but only AWS is implemented. GCP (oauth2 token), Azure (AD token) need their own implementations. Community can contribute — the interface is "given cluster info, return a short-lived token."
 
 ---
 
