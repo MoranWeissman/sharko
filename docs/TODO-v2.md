@@ -25,6 +25,7 @@
 - [ ] **No bootstrap-config.yaml was being generated** — root-app.yaml references `{{ .Values.repoURL }}` but the values file with repoURL/targetRevision was missing from the bootstrap template. Fixed in this PR.
 - [ ] **Wizard has no escape/skip option** — says "You can always update connections later in Settings" but there's no way to close or skip the wizard. Need a "Skip to Dashboard" link or X button.
 - [ ] **Bootstrap resume should show "continuing" message** — when Sharko detects a previously started bootstrap (e.g., PR exists but not merged), the wizard/CLI should indicate it's resuming an existing process, not starting fresh
+- [ ] **Auto-merge doesn't delete the branch after merging** — when Sharko auto-merges a PR, the source branch is left behind. Should call `DeleteBranch` after successful merge.
 
 ---
 
