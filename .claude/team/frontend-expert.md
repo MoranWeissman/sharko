@@ -209,6 +209,58 @@ Configure (admin only):
 - API calls: all through `api.ts` helpers, auto-redirect to login on 401
 - `RoleGuard.tsx` — conditionally renders children based on user role
 
+## v1.4.0 UI Patterns
+
+### FirstRunWizard
+
+`ui/src/components/FirstRunWizard.tsx` — shown on first load when no active connection exists. Multi-step
+wizard (connection type → credentials form → test → done). Replaces the old empty Settings state.
+
+The wizard completes by calling `POST /api/v1/connections` then `POST /api/v1/init`. Init is async:
+the wizard receives an `operation_id` and transitions to a progress step that polls
+`GET /api/v1/operations/{id}` with a `useEffect` + `setInterval`. Heartbeat is sent to
+`POST /api/v1/operations/{id}/heartbeat` every 15 seconds to keep the session alive.
+
+```tsx
+// Operations polling pattern
+useEffect(() => {
+  if (!operationId) return;
+  const interval = setInterval(async () => {
+    const op = await fetchOperation(operationId);
+    setOperation(op);
+    if (op.status === 'succeeded' || op.status === 'failed') {
+      clearInterval(interval);
+    }
+  }, 2000);
+  return () => clearInterval(interval);
+}, [operationId]);
+```
+
+### Single Connection Edit (Settings)
+
+Settings → Connections shows **one active connection** with an **Edit** button (no Add/Remove list).
+Editing opens the connection form pre-populated with existing values. Token field shows a masked
+placeholder — user only needs to provide a new token if rotating.
+
+The connection model is singular: Sharko has one ArgoCD connection and one Git connection. The UI
+reflects this by showing edit-in-place rather than a list.
+
+### Async Init Flow
+
+`sharko init` via UI:
+1. Click **Initialize** in the Connections section
+2. API returns `202` + `operation_id`
+3. UI shows a progress log component streaming `operation.log` lines
+4. Heartbeat sent every 15 seconds
+5. On `succeeded`: show success state + ArgoCD sync URL
+6. On `failed`: show error with last log line
+
+### Code Splitting
+
+Vite is configured with manual chunks to split large dependencies (Victory charting, shadcn heavy
+components) into separate bundles. Improves initial page load — only the main bundle is required
+for login and dashboard.
+
 ## v1.0.0 UI Patterns
 
 ### Synchronous API, No Polling

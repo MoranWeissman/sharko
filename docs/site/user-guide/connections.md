@@ -9,17 +9,54 @@ Connections tell Sharko how to reach ArgoCD and your Git provider. Without activ
 | **ArgoCD** | Read cluster/app health, sync status, resource trees |
 | **Git** | Open PRs, push branches, read values files |
 
-## Adding an ArgoCD Connection
+## Single Connection Model
 
-1. Navigate to **Settings** (left sidebar, requires admin role)
-2. Select **Connections** in the left navigation panel
-3. Click **Add Connection → ArgoCD**
-4. Fill in:
-   - **Name** — a label for this connection (e.g., `production-argocd`)
-   - **Server URL** — the ArgoCD server URL reachable from within the cluster (e.g., `https://argocd-server.argocd.svc.cluster.local`)
-   - **Token** — an ArgoCD account token with `applications:get`, `projects:get` permissions
-5. Click **Save**
-6. Toggle the connection to **Active**
+Sharko maintains **one active connection per type** (one ArgoCD, one Git). You edit the existing connection — there is no list of multiple connections to manage. This keeps configuration simple: there is always exactly one source of truth for where Sharko sends changes.
+
+## Three Entry Points
+
+### 1. UI First-Run Wizard
+
+On first access, Sharko shows a setup wizard that walks you through configuring the ArgoCD and Git connections. The wizard validates each connection before proceeding and guides you through the `sharko init` step at the end.
+
+### 2. CLI
+
+```bash
+# Configure the Git connection:
+sharko connect \
+  --name production-git \
+  --git-provider github \
+  --git-repo https://github.com/your-org/addons-repo \
+  --git-token ghp_xxxx
+
+# Verify it works:
+sharko connect test
+
+# Show current connection:
+sharko connect list
+```
+
+### 3. API
+
+```bash
+# Set/update the Git connection:
+curl -X POST https://sharko.your-domain.com/api/v1/connections \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "git",
+    "provider": "github",
+    "repoURL": "https://github.com/your-org/addons-repo",
+    "token": "ghp_xxxx"
+  }'
+```
+
+## Configuring ArgoCD Connection
+
+Via the UI (Settings → Connections → Edit):
+
+- **Server URL** — ArgoCD server URL reachable from within the cluster (e.g., `https://argocd-server.argocd.svc.cluster.local`)
+- **Token** — ArgoCD account token with `applications:get`, `projects:get` permissions
 
 !!! tip "Generating an ArgoCD token"
     ```bash
@@ -27,15 +64,13 @@ Connections tell Sharko how to reach ArgoCD and your Git provider. Without activ
     ```
     Create a dedicated `sharko` account in ArgoCD with read permissions. Do not use the admin token.
 
-## Adding a Git Connection
+## Configuring Git Connection
 
-1. In **Settings → Connections**, click **Add Connection → Git**
-2. Fill in:
-   - **Provider** — `GitHub` or `Azure DevOps`
-   - **Token** — PAT with `repo` read/write (GitHub) or `Code (Read & Write)` (Azure DevOps)
-   - **Repository URL** — the addons repo URL (e.g., `https://github.com/your-org/your-addons-repo`)
-3. Click **Save**
-4. Toggle the connection to **Active**
+Via the UI (Settings → Connections → Edit):
+
+- **Provider** — `GitHub` or `Azure DevOps`
+- **Token** — PAT with `repo` read/write (GitHub) or `Code (Read & Write)` (Azure DevOps)
+- **Repository URL** — the addons repo URL (e.g., `https://github.com/your-org/your-addons-repo`)
 
 ## Verifying Connections
 
@@ -45,7 +80,13 @@ Sharko validates each connection when you save it. If validation fails, check:
 - The token has not expired
 - Network policies allow traffic from the Sharko pod to ArgoCD/GitHub
 
-You can re-test a connection at any time by clicking **Test** next to an existing connection.
+You can re-test at any time:
+
+```bash
+sharko connect test
+```
+
+Or click **Test** in Settings → Connections.
 
 ## API Keys {#api-keys}
 

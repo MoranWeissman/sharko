@@ -12,6 +12,8 @@ Key endpoints reference. For full request/response schemas, use the interactive 
 | `GET` | `/api/v1/clusters/{name}` | Cluster detail with addon status |
 | `GET` | `/api/v1/clusters/available` | Discover available clusters from the secrets provider |
 
+List endpoints support pagination via `?page=<n>&limit=<n>` query params (default: `limit=50`).
+
 ### Addons
 
 | Method | Path | Description |
@@ -78,7 +80,27 @@ All write endpoints require the `admin` role.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/v1/init` | Initialize addons repo from templates |
+| `POST` | `/api/v1/init` | Initialize addons repo from templates (async — returns `operation_id`) |
+
+### Operations
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/operations/{id}` | Get operation status and log lines |
+| `POST` | `/api/v1/operations/{id}/heartbeat` | Keep-alive for an active operation session |
+
+### Secrets
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/secrets/reconcile` | Trigger immediate secrets reconcile (all clusters or specific cluster) |
+| `GET` | `/api/v1/secrets/status` | Reconciler status per cluster (last run, hash result, errors) |
+
+### Webhooks
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/webhooks/git` | Git push webhook — triggers secrets reconcile (requires HMAC-SHA256 signature) |
 
 ---
 
@@ -136,3 +158,43 @@ curl -X POST https://sharko.your-domain.com/api/v1/tokens \
 ```
 
 Response includes the plaintext key — store it immediately.
+
+### Poll an Operation
+
+```bash
+# Start init (returns operation_id):
+curl -X POST https://sharko.your-domain.com/api/v1/init \
+  -H "Authorization: Bearer <token>"
+# Response: {"operation_id": "op_a1b2c3d4", "status": "running"}
+
+# Poll until done:
+curl https://sharko.your-domain.com/api/v1/operations/op_a1b2c3d4 \
+  -H "Authorization: Bearer <token>"
+# Response: {"id": "op_a1b2c3d4", "status": "succeeded", "log": [...]}
+
+# Send heartbeat (required every 15s to keep session alive):
+curl -X POST https://sharko.your-domain.com/api/v1/operations/op_a1b2c3d4/heartbeat \
+  -H "Authorization: Bearer <token>"
+```
+
+### Trigger Secrets Reconcile
+
+```bash
+# Reconcile all clusters:
+curl -X POST https://sharko.your-domain.com/api/v1/secrets/reconcile \
+  -H "Authorization: Bearer <token>"
+
+# Reconcile a specific cluster:
+curl -X POST https://sharko.your-domain.com/api/v1/secrets/reconcile \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"cluster": "prod-eu"}'
+```
+
+### Check Secrets Status
+
+```bash
+curl https://sharko.your-domain.com/api/v1/secrets/status \
+  -H "Authorization: Bearer <token>"
+# Response: [{"cluster": "prod-eu", "last_run": "2026-04-06T10:00:00Z", "status": "ok", "secrets_pushed": 2}]
+```

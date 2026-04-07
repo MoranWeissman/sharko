@@ -22,16 +22,22 @@ You write code for the Sharko project following a plan or task description.
 
 ```
 cmd/sharko/
-  main.go           Calls Execute()
-  root.go           Cobra root command, --version, --insecure flag
-  serve.go          'sharko serve' — full server startup logic
-  login.go          'sharko login --server <url>'
-  version_cmd.go    'sharko version' — CLI + server version
-  init_cmd.go       'sharko init' — POST /api/v1/init
-  cluster.go        add-cluster, remove-cluster, update-cluster, list-clusters
-  addon.go          add-addon, remove-addon (--confirm for destructive)
-  status.go         'sharko status' — fleet overview
-  client.go         Shared HTTP client, config loading (~/.sharko/config)
+  main.go              Calls Execute()
+  root.go              Cobra root command, --version, --insecure flag
+  serve.go             'sharko serve' — full server startup logic
+  login.go             'sharko login --server <url> [--username] [--password]'
+  version_cmd.go       'sharko version' — CLI + server version
+  init_cmd.go          'sharko init' — POST /api/v1/init (async, returns operation ID)
+  cluster.go           add-cluster, remove-cluster, update-cluster, list-clusters
+  addon.go             add-addon, remove-addon (--confirm for destructive)
+  addon_list.go        'sharko list-addons [--show-config]'
+  validate.go          'sharko validate [path]' — validate catalog YAML against schema
+  connect.go           'sharko connect' — configure Git connection (--name, --git-provider, --git-repo, --git-token)
+                       Sub-commands: 'sharko connect list', 'sharko connect test'
+  secrets.go           'sharko refresh-secrets [cluster]' — trigger secrets reconcile
+                       'sharko secret-status' — show reconciler status per cluster
+  status.go            'sharko status' — fleet overview
+  client.go            Shared HTTP client, config loading (~/.sharko/config)
 
 internal/
   api/              HTTP handlers (26 files)
@@ -71,9 +77,17 @@ internal/
     values_generator.go  generateClusterValues YAML
 
   providers/        Secrets provider interface (5 files)
-    provider.go     ClusterCredentialsProvider interface, Config, New() factory
+    provider.go     ClusterCredentialsProvider + SecretProvider interfaces, Config, New() factory
     k8s_secrets.go  KubernetesSecretProvider
     aws_sm.go       AWSSecretsManagerProvider
+
+  secrets/          Secrets reconciler (2 files)
+    reconciler.go   Background reconcile loop: timer (5min) + webhook + manual trigger
+    hash.go         SHA-256 hash comparison for change detection
+
+  operations/       Async operations engine (2 files)
+    session.go      OperationSession struct, heartbeat keep-alive
+    store.go        Thread-safe in-memory operation store
 
   argocd/           ArgoCD REST client (4 files)
     client.go       HTTP client, ListClusters, ListApplications, GetApplication, etc.
@@ -258,6 +272,22 @@ store.go      — In-memory notification store with read/unread state
 - **Batch max 10**: sequential loop through clusters, CLI auto-splits larger batches
 - **Remote secrets**: orchestrator flow gains secret creation steps before PR merge
 - **Addon upgrades**: global (catalog version) vs per-cluster (values file override), multi-addon batch in one PR
+
+## v1.4.0 Pattern Changes
+- **Async init**: `POST /api/v1/init` now returns `202 Accepted` + `operation_id`; client polls operations endpoint.
+  `sharko init` CLI prints operation ID and streams log lines until done.
+- **Single connection model**: Settings shows one active Git connection — edit, not add/remove list.
+  `sharko connect` CLI command sets/replaces the current connection directly.
+- **Credential flow**: cluster credentials come exclusively from the secrets provider (no Helm secrets for this path).
+  Users configure creds via UI first-run wizard, CLI `sharko connect`, or API — never bare tokens in values.
+- **Batch file commits**: GitProvider gains `BatchCreateFiles` for atomic multi-file commits via Git tree API.
+  Reduces PR commit count for operations that touch multiple files (e.g., init, batch register).
+- **Secrets reconciler**: `internal/secrets/` package runs a background goroutine. Triggered by 5-min timer,
+  `POST /api/v1/webhooks/git` (HMAC-SHA256 verified), or `POST /api/v1/secrets/reconcile`. No caching —
+  always fetches fresh from provider, compares SHA-256 hash, writes to remote cluster only on change.
+- **Operations engine**: `internal/operations/` provides session tracking for async workflows. Sessions expire
+  if client stops sending heartbeats. UI polls `GET /api/v1/operations/{id}` with a `useEffect` + interval.
+- **Write rate limiting**: 30 req/min per IP on all admin write endpoints.
 
 ## Dependencies (14 direct)
 aws-sdk-go-v2, go-github/v68, cobra, crypto, oauth2, term, yaml.v3, k8s api/apimachinery/client-go, swaggo/swag, swaggo/http-swagger

@@ -102,8 +102,19 @@ type GitProvider interface {
     CreatePullRequest(ctx context.Context, title, body, head, base string) (*PullRequest, error)
     MergePullRequest(ctx context.Context, prNumber int) error
     DeleteBranch(ctx context.Context, branchName string) error
+    BatchCreateFiles(ctx context.Context, files map[string][]byte, branch, commitMessage string) error
+    GetPullRequestStatus(ctx context.Context, prNumber int) (string, error)
 }
 ```
+
+### SecretProvider (`internal/providers/provider.go`)
+```go
+type SecretProvider interface {
+    GetSecret(ctx context.Context, path string) (string, error)
+}
+```
+
+Implemented by `KubernetesSecretProvider` and `AWSSecretsManagerProvider` — same types as `ClusterCredentialsProvider`, extended with `GetSecret`.
 
 ### ArgocdClient (`internal/orchestrator/orchestrator.go`)
 ```go
@@ -179,6 +190,44 @@ func (o *Orchestrator) RegisterCluster(ctx, req) (*RegisterClusterResult, error)
 - If `PRAutoMerge: true`: call `git.MergePullRequest()` after PR creation
 - `GitResult` gains `Merged bool` and `PRID int`, loses `Mode` field
 
+## v1.4.0 New Packages and Patterns
+
+### `internal/secrets/` — Secrets Reconciler
+```
+reconciler.go    — Background goroutine (5-min timer + webhook trigger + manual trigger)
+                   Reads AddonSecretRef from catalog, calls SecretProvider.GetSecret(),
+                   compares hash (SHA-256 of value), pushes to remote cluster on change.
+hash.go          — SHA-256-based change detection; reconciler skips write if hash unchanged.
+```
+**Key design:** push-based. Sharko holds secrets in memory only during reconcile; no cache. All
+Sharko-managed secrets labeled `app.kubernetes.io/managed-by: sharko`. ArgoCD resource exclusion
+must be configured so ArgoCD does not delete them.
+
+### `internal/operations/` — Async Operations Engine
+```
+session.go       — OperationSession: ID, status (pending/running/succeeded/failed), log lines.
+                   Heartbeat keep-alive: client must POST /heartbeat every N seconds or session expires.
+store.go         — In-memory operation store, thread-safe.
+```
+**Pattern:** long-running handlers (init, batch register) create an Operation, return `202 Accepted`
+with `operation_id`, continue in a goroutine. Client polls `GET /api/v1/operations/{id}`. When the
+UI is the client, it uses `useEffect` + heartbeat interval.
+
+```go
+type OperationSession struct {
+    ID        string
+    Status    string   // "pending" | "running" | "succeeded" | "failed"
+    Log       []string
+    CreatedAt time.Time
+    UpdatedAt time.Time
+}
+```
+
+**Trigger sources for secrets reconciler:**
+1. Timer — `time.NewTicker(interval)`, default 5 minutes
+2. Webhook — `POST /api/v1/webhooks/git` with HMAC-SHA256 verification
+3. Manual — `POST /api/v1/secrets/reconcile`
+
 ## Planned Packages
 
 ### `internal/notifications/`
@@ -205,6 +254,17 @@ store.go      — In-memory notification store with read/unread state,
 - `getEnvDefault(key, defaultVal)` — in serve.go for env var reads
 - `platform.Detect()` — returns ModeKubernetes or default
 - Line-level YAML mutation in `internal/gitops/yaml_mutator.go` — preserves comments
+
+## Write Rate Limiting
+
+Write endpoints (admin, POST/DELETE/PATCH) are rate-limited to **30 requests/minute** per IP.
+Rate limiter middleware is in `internal/api/router.go`. The same `SHARKO_TRUSTED_PROXIES` env var
+governs IP extraction.
+
+## Webhook HMAC Verification
+
+`POST /api/v1/webhooks/git` validates the `X-Hub-Signature-256` header using HMAC-SHA256.
+Secret configured via `SHARKO_WEBHOOK_SECRET` env var. Requests without a valid signature return 401.
 
 ## Update This File When
 - Interface signatures change (add/remove methods)

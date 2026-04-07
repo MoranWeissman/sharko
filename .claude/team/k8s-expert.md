@@ -157,9 +157,73 @@ hostClusterName: ""
 ### Both Parse kubeconfig
 - Extract Server, CAData, Token via `clientcmd.RESTConfigFromKubeConfig`
 
+## v1.4.0: Catalog-Driven Secrets (AddonSecretRef)
+
+Addon secrets are now declared directly in `addons-catalog.yaml` using the `secrets:` field:
+
+```yaml
+addons:
+  - name: datadog
+    chart: datadog
+    repo: https://helm.datadoghq.com
+    version: 3.74.0
+    secrets:
+      - secretName: datadog-keys
+        namespace: datadog
+        keys:
+          api-key: secrets/datadog/api-key
+          app-key: secrets/datadog/app-key
+```
+
+The `keys` map is path → secrets provider path. Sharko resolves each path at reconcile time using the configured `SecretProvider` (same backend as cluster credentials: `aws-sm` or `k8s-secrets`).
+
+### Secrets Reconciler Architecture
+
+```
+Sharko Server
+  secrets.Reconciler
+    |
+    +-- reads AddonSecretRef from catalog (in-memory)
+    +-- calls SecretProvider.GetSecret(path) for each key
+    +-- compares SHA-256 hash of current value
+    +-- if changed: remoteclient → create/update K8s Secret on target cluster
+    |
+    Trigger sources:
+      1. time.Ticker (default 5min, SHARKO_SECRET_RECONCILE_INTERVAL)
+      2. POST /api/v1/webhooks/git (HMAC-SHA256 verified)
+      3. POST /api/v1/secrets/reconcile (manual)
+```
+
+**Push-based, not pull-based.** Sharko pushes secrets to remote clusters. No External Secrets Operator required. No secret values are cached — always fresh from provider.
+
+### ArgoCD Resource Exclusion
+
+Sharko-managed secrets must be excluded from ArgoCD management to prevent ArgoCD from deleting them. Add to `argocd-cm`:
+
+```yaml
+resource.exclusions: |
+  - apiGroups: [""]
+    kinds: ["Secret"]
+    clusters: ["*"]
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/managed-by: sharko
+```
+
+### New Helm Values (v1.4.0)
+
+```yaml
+secrets:
+  reconciler:
+    enabled: true
+    interval: 5m           # SHARKO_SECRET_RECONCILE_INTERVAL
+  webhookSecret: ""        # SHARKO_WEBHOOK_SECRET — HMAC key for /webhooks/git
+```
+
 ## Update This File When
 - ArgoCD API usage changes (new endpoints)
 - Helm chart structure changes (new templates, values)
 - New provider implementations are added
 - ApplicationSet pattern changes
 - Remote client patterns are established (Phase 3)
+- Secrets reconciler behavior changes
