@@ -14,6 +14,7 @@ import {
   CheckCircle,
   XCircle,
   Play,
+  AlertTriangle,
 } from 'lucide-react'
 import { initRepo } from '@/services/api'
 import { useConnections } from '@/hooks/useConnections'
@@ -230,6 +231,17 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
     }
   }, [existingConn?.name]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Repo initialization status
+  const [repoStatus, setRepoStatus] = useState<{ initialized: boolean; reason?: string } | null>(null)
+
+  const fetchRepoStatus = useCallback(() => {
+    if (existingConn) {
+      api.getRepoStatus()
+        .then(data => setRepoStatus(data))
+        .catch(() => setRepoStatus(null))
+    }
+  }, [existingConn?.name]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Initialize repo
   const [initRunning, setInitRunning] = useState(false)
   const [initResult, setInitResult] = useState<string | null>(null)
@@ -245,12 +257,14 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
       const prUrl = result?.pr_url || result?.pull_request_url
       const status = result?.status || result?.message || 'initialized'
       setInitResult(prUrl ? `Repository ${status}. PR: ${prUrl}` : `Repository ${status}.`)
+      // Refresh repo status to update the banner
+      fetchRepoStatus()
     } catch (e: unknown) {
       setInitError(e instanceof Error ? e.message : 'Failed to initialize repository')
     } finally {
       setInitRunning(false)
     }
-  }, [])
+  }, [fetchRepoStatus])
 
   const fetchHealth = useCallback(() => {
     setHealthLoading(true)
@@ -293,10 +307,12 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
   useEffect(() => {
     if (existingConn) {
       fetchLiveStatus()
+      fetchRepoStatus()
     } else {
       setLiveStatus({ git: 'idle', argocd: 'idle' })
+      setRepoStatus(null)
     }
-  }, [existingConn?.name, fetchLiveStatus]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [existingConn?.name, fetchLiveStatus, fetchRepoStatus]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function testCredentials(which: 'git' | 'argocd' | 'both') {
     const payload = buildPayload(form, existingConn?.name)
@@ -390,6 +406,42 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
           <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
             Manage connection and view platform information.
           </p>
+        </div>
+      )}
+
+      {/* Repo not initialized banner */}
+      {existingConn && repoStatus && !repoStatus.initialized && (
+        <div className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-4 dark:border-amber-700 dark:bg-amber-950/30">
+          <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-600 dark:text-amber-400" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">Repository not initialized</p>
+            <p className="mt-0.5 text-sm text-amber-700 dark:text-amber-400">
+              Your Git repository has not been bootstrapped yet. Sharko cannot manage addons until the repository is initialized.
+            </p>
+            <div className="mt-3 flex items-center gap-3 flex-wrap">
+              <button
+                type="button"
+                onClick={handleInitRepo}
+                disabled={initRunning}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-amber-700 disabled:opacity-50 dark:bg-amber-700 dark:hover:bg-amber-600"
+              >
+                {initRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                Initialize Repository
+              </button>
+              {initResult && (
+                <span className="flex items-center gap-1 text-sm text-green-700 dark:text-green-400">
+                  <CheckCircle className="h-4 w-4" />
+                  {initResult}
+                </span>
+              )}
+              {initError && (
+                <span className="flex items-center gap-1 text-sm text-red-700 dark:text-red-400">
+                  <XCircle className="h-4 w-4" />
+                  {initError}
+                </span>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
