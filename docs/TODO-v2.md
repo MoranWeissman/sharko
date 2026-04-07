@@ -24,6 +24,7 @@
 - [ ] **Cluster secrets not managed via GitOps** — the old ESO-based approach (Git → ExternalSecret → AWS SM → K8s Secret) was removed. Sharko now creates secrets imperatively via API (`internal/remoteclient/`). This means cluster registration only works through `sharko add-cluster`, not by editing Git directly. Design decision needed: is imperative sufficient, or do we need a declarative (GitOps) secret mechanism?
 - [ ] **No bootstrap-config.yaml was being generated** — root-app.yaml references `{{ .Values.repoURL }}` but the values file with repoURL/targetRevision was missing from the bootstrap template. Fixed in this PR.
 - [ ] **Wizard has no escape/skip option** — says "You can always update connections later in Settings" but there's no way to close or skip the wizard. Need a "Skip to Dashboard" link or X button.
+- [ ] **Bootstrap resume should show "continuing" message** — when Sharko detects a previously started bootstrap (e.g., PR exists but not merged), the wizard/CLI should indicate it's resuming an existing process, not starting fresh
 
 ---
 
