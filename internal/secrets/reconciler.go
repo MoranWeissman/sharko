@@ -131,7 +131,9 @@ func (r *Reconciler) Trigger() {
 }
 
 // GetStats returns a snapshot of the last reconcile run's statistics.
-func (r *Reconciler) GetStats() ReconcileStats {
+// It returns interface{} to satisfy the api.SecretReconciler interface without
+// creating an import cycle; callers within this package should type-assert to ReconcileStats.
+func (r *Reconciler) GetStats() interface{} {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.lastStats

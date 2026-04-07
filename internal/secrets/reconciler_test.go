@@ -180,7 +180,7 @@ func TestReconcile_CreateMissing(t *testing.T) {
 		t.Errorf("expected app-key=the-app-key, got %q", secret.Data["app-key"])
 	}
 
-	stats := r.GetStats()
+	stats := r.GetStats().(ReconcileStats)
 	if stats.Created != 1 {
 		t.Errorf("expected Created=1, got %d", stats.Created)
 	}
@@ -209,14 +209,14 @@ func TestReconcile_SkipUpToDate(t *testing.T) {
 
 	// First reconcile — creates the secret.
 	r.reconcile()
-	stats := r.GetStats()
+	stats := r.GetStats().(ReconcileStats)
 	if stats.Created != 1 {
 		t.Fatalf("expected Created=1 after first reconcile, got %d", stats.Created)
 	}
 
 	// Second reconcile — hashes match, should skip.
 	r.reconcile()
-	stats = r.GetStats()
+	stats = r.GetStats().(ReconcileStats)
 	if stats.Skipped != 1 {
 		t.Errorf("expected Skipped=1 after second reconcile, got %d", stats.Skipped)
 	}
@@ -242,7 +242,7 @@ func TestReconcile_UpdateRotated(t *testing.T) {
 	)
 	r.reconcile()
 
-	stats := r.GetStats()
+	stats := r.GetStats().(ReconcileStats)
 	if stats.Created != 1 {
 		t.Fatalf("expected Created=1, got %d", stats.Created)
 	}
@@ -254,7 +254,7 @@ func TestReconcile_UpdateRotated(t *testing.T) {
 	}}
 
 	r.reconcile()
-	stats = r.GetStats()
+	stats = r.GetStats().(ReconcileStats)
 	if stats.Updated != 1 {
 		t.Errorf("expected Updated=1, got %d", stats.Updated)
 	}
@@ -285,7 +285,7 @@ func TestReconcile_NoSecretDefinitions(t *testing.T) {
 	)
 	r.reconcile()
 
-	stats := r.GetStats()
+	stats := r.GetStats().(ReconcileStats)
 	if stats.Checked != 0 {
 		t.Errorf("expected Checked=0, got %d", stats.Checked)
 	}
@@ -312,7 +312,7 @@ func TestReconcile_ProviderError(t *testing.T) {
 	)
 	r.reconcile()
 
-	stats := r.GetStats()
+	stats := r.GetStats().(ReconcileStats)
 	if stats.Errors == 0 {
 		t.Error("expected at least one error due to provider failure")
 	}
@@ -340,7 +340,7 @@ func TestReconcile_ClusterError(t *testing.T) {
 	)
 	r.reconcile()
 
-	stats := r.GetStats()
+	stats := r.GetStats().(ReconcileStats)
 	if stats.Errors == 0 {
 		t.Error("expected error due to cluster connection failure")
 	}
@@ -365,7 +365,7 @@ func TestReconcile_NoGitConnection(t *testing.T) {
 	r.reconcile()
 
 	// Stats should be zero / unset.
-	stats := r.GetStats()
+	stats := r.GetStats().(ReconcileStats)
 	if stats.Checked != 0 || stats.Created != 0 || stats.Errors != 0 {
 		t.Errorf("expected all-zero stats when no git connection, got %+v", stats)
 	}
@@ -427,7 +427,7 @@ func TestReconcile_AddonNotEnabled(t *testing.T) {
 	)
 	r.reconcile()
 
-	stats := r.GetStats()
+	stats := r.GetStats().(ReconcileStats)
 	if stats.Checked != 0 {
 		t.Errorf("expected Checked=0 when addon not enabled, got %d", stats.Checked)
 	}
@@ -450,7 +450,7 @@ func TestReconcile_CredentialsError(t *testing.T) {
 	)
 	r.reconcile()
 
-	stats := r.GetStats()
+	stats := r.GetStats().(ReconcileStats)
 	if stats.Errors == 0 {
 		t.Error("expected error due to credentials failure")
 	}

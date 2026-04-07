@@ -20,6 +20,8 @@ import (
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/platform"
 	"github.com/MoranWeissman/sharko/internal/providers"
+	"github.com/MoranWeissman/sharko/internal/remoteclient"
+	"github.com/MoranWeissman/sharko/internal/secrets"
 	"github.com/MoranWeissman/sharko/internal/service"
 	"github.com/MoranWeissman/sharko/templates"
 	"github.com/spf13/cobra"
@@ -270,6 +272,49 @@ var serveCmd = &cobra.Command{
 
 		// Always wire write-API deps — credProvider may be nil if no provider is configured.
 		srv.SetWriteAPIDeps(credProvider, provCfgPtr, repoPaths, gitopsCfg)
+
+		// Secret reconciler — reconciles addon secrets on remote clusters.
+		if credProvider != nil && provCfgPtr != nil {
+			secretProvider, spErr := providers.NewSecretProvider(*provCfgPtr)
+			if spErr != nil {
+				log.Printf("WARNING: Could not create secret provider for reconciler: %v", spErr)
+			} else {
+				reconcileInterval := getEnvDefault("SHARKO_SECRET_RECONCILE_INTERVAL", "5m")
+				dur, parseErr := time.ParseDuration(reconcileInterval)
+				if parseErr != nil {
+					log.Printf("WARNING: Invalid reconcile interval %q, using 5m", reconcileInterval)
+					dur = 5 * time.Minute
+				}
+
+				parser := config.NewParser()
+				baseBranch := gitopsCfg.BaseBranch
+				if baseBranch == "" {
+					baseBranch = "main"
+				}
+
+				gitReaderFn := func() secrets.GitReader {
+					gp, err := connSvc.GetActiveGitProvider()
+					if err != nil {
+						return nil
+					}
+					return gp
+				}
+
+				reconciler := secrets.NewReconciler(
+					credProvider,
+					secretProvider,
+					gitReaderFn,
+					remoteclient.NewClientFromKubeconfig,
+					parser,
+					baseBranch,
+					dur,
+				)
+				srv.SetSecretReconciler(reconciler)
+				reconciler.Start()
+				defer reconciler.Stop()
+				log.Printf("Secret reconciler started (interval: %s)", dur)
+			}
+		}
 
 		// AI config persistence (K8s mode — encrypted Secret)
 		if mode == platform.ModeKubernetes {
