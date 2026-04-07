@@ -2,7 +2,6 @@ package orchestrator
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io/fs"
 	"strings"
@@ -839,28 +838,31 @@ func TestGenerateClusterValues_NoAddons(t *testing.T) {
 	}
 }
 
-func TestRegisterCluster_DuplicateReturnsError(t *testing.T) {
+func TestRegisterCluster_AdoptsExistingArgocdCluster(t *testing.T) {
 	argocd := newMockArgocd()
 	argocd.existingClusters = []models.ArgocdCluster{
 		{Name: "prod-eu", Server: "https://k8s.example.com:6443"},
 	}
 	git := newMockGitProvider()
-	orch := New(nil, defaultCreds(), argocd, git, defaultGitOps(), defaultPaths(), nil)
+	orch := New(nil, defaultCreds(), argocd, git, autoMergeGitOps(), defaultPaths(), nil)
 
-	_, err := orch.RegisterCluster(context.Background(), RegisterClusterRequest{
+	result, err := orch.RegisterCluster(context.Background(), RegisterClusterRequest{
 		Name:   "prod-eu",
 		Addons: map[string]bool{"monitoring": true},
 	})
 
-	if err == nil {
-		t.Fatal("expected error for duplicate cluster")
+	if err != nil {
+		t.Fatalf("expected adoption to succeed, got error: %v", err)
 	}
-	if !errors.Is(err, ErrClusterAlreadyExists) {
-		t.Errorf("expected ErrClusterAlreadyExists, got: %v", err)
+	if result.Status != "success" {
+		t.Errorf("expected status=success, got: %s", result.Status)
 	}
-	// Should NOT have registered in ArgoCD.
+	if !result.Adopted {
+		t.Error("expected Adopted=true for cluster already in ArgoCD")
+	}
+	// Should NOT have called RegisterCluster in ArgoCD (already there).
 	if _, ok := argocd.registeredClusters["prod-eu"]; ok {
-		t.Error("duplicate cluster should not be registered in ArgoCD")
+		t.Error("adopted cluster should not be re-registered in ArgoCD")
 	}
 }
 

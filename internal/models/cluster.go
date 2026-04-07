@@ -7,6 +7,7 @@ type Cluster struct {
 	Region           string            `json:"region,omitempty" yaml:"region,omitempty"`
 	ServerVersion    string            `json:"server_version,omitempty"`
 	ConnectionStatus string            `json:"connection_status,omitempty"`
+	Managed          bool              `json:"managed"` // true if in cluster-addons.yaml
 }
 
 // ClusterHealthStats holds aggregated health statistics for the clusters overview.
