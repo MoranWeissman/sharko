@@ -3296,7 +3296,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Checks whether the GitOps repository has been bootstrapped (bootstrap/root-app.yaml exists on the base branch)",
+                "description": "Checks whether the GitOps repository has been bootstrapped (bootstrap/Chart.yaml exists on the base branch)",
                 "produces": [
                     "application/json"
                 ],
