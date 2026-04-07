@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"strings"
 
 	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/config"
@@ -39,12 +41,20 @@ func (s *DashboardService) GetStats(ctx context.Context, gp gitprovider.GitProvi
 	// Parse Git config
 	clusterData, err := gp.GetFileContent(ctx, "configuration/cluster-addons.yaml", "main")
 	if err != nil {
-		return nil, err
+		if strings.Contains(err.Error(), "404") {
+			clusterData = []byte("clusters: []")
+		} else {
+			return nil, fmt.Errorf("reading cluster-addons.yaml: %w", err)
+		}
 	}
 
 	catalogData, err := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", "main")
 	if err != nil {
-		return nil, err
+		if strings.Contains(err.Error(), "404") {
+			catalogData = []byte("applicationsets: []")
+		} else {
+			return nil, fmt.Errorf("reading addons-catalog.yaml: %w", err)
+		}
 	}
 
 	repoCfg, err := s.parser.ParseAll(clusterData, catalogData)

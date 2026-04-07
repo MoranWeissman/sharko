@@ -32,7 +32,11 @@ func (s *ClusterService) ListClusters(ctx context.Context, gp gitprovider.GitPro
 	// Fetch Git config
 	clusterData, err := gp.GetFileContent(ctx, "configuration/cluster-addons.yaml", "main")
 	if err != nil {
-		return nil, err
+		if strings.Contains(err.Error(), "404") {
+			clusterData = []byte("clusters: []")
+		} else {
+			return nil, fmt.Errorf("reading cluster-addons.yaml: %w", err)
+		}
 	}
 
 	clusters, err := s.parser.ParseClusterAddons(clusterData)
@@ -95,12 +99,20 @@ func (s *ClusterService) ListClusters(ctx context.Context, gp gitprovider.GitPro
 func (s *ClusterService) GetClusterDetail(ctx context.Context, clusterName string, gp gitprovider.GitProvider, ac *argocd.Client) (*models.ClusterDetailResponse, error) {
 	clusterData, err := gp.GetFileContent(ctx, "configuration/cluster-addons.yaml", "main")
 	if err != nil {
-		return nil, err
+		if strings.Contains(err.Error(), "404") {
+			clusterData = []byte("clusters: []")
+		} else {
+			return nil, fmt.Errorf("reading cluster-addons.yaml: %w", err)
+		}
 	}
 
 	catalogData, err := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", "main")
 	if err != nil {
-		return nil, err
+		if strings.Contains(err.Error(), "404") {
+			catalogData = []byte("applicationsets: []")
+		} else {
+			return nil, fmt.Errorf("reading addons-catalog.yaml: %w", err)
+		}
 	}
 
 	repoCfg, err := s.parser.ParseAll(clusterData, catalogData)
@@ -162,12 +174,20 @@ func (s *ClusterService) GetClusterDetail(ctx context.Context, clusterName strin
 func (s *ClusterService) GetClusterComparison(ctx context.Context, clusterName string, gp gitprovider.GitProvider, ac *argocd.Client) (*models.ClusterComparisonResponse, error) {
 	clusterData, err := gp.GetFileContent(ctx, "configuration/cluster-addons.yaml", "main")
 	if err != nil {
-		return nil, err
+		if strings.Contains(err.Error(), "404") {
+			clusterData = []byte("clusters: []")
+		} else {
+			return nil, fmt.Errorf("reading cluster-addons.yaml: %w", err)
+		}
 	}
 
 	catalogData, err := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", "main")
 	if err != nil {
-		return nil, err
+		if strings.Contains(err.Error(), "404") {
+			catalogData = []byte("applicationsets: []")
+		} else {
+			return nil, fmt.Errorf("reading addons-catalog.yaml: %w", err)
+		}
 	}
 
 	repoCfg, err := s.parser.ParseAll(clusterData, catalogData)

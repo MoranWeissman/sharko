@@ -67,7 +67,11 @@ func (s *UpgradeService) ListVersions(ctx context.Context, addonName string, gp 
 	// Get addon info from catalog
 	catalogData, err := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", "main")
 	if err != nil {
-		return nil, fmt.Errorf("fetching addons catalog: %w", err)
+		if strings.Contains(err.Error(), "404") {
+			catalogData = []byte("applicationsets: []")
+		} else {
+			return nil, fmt.Errorf("fetching addons catalog: %w", err)
+		}
 	}
 
 	addons, err := s.parser.ParseAddonsCatalog(catalogData)
@@ -119,7 +123,11 @@ func (s *UpgradeService) CheckUpgrade(ctx context.Context, addonName, targetVers
 	// Get addon info from catalog
 	catalogData, err := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", "main")
 	if err != nil {
-		return nil, fmt.Errorf("fetching addons catalog: %w", err)
+		if strings.Contains(err.Error(), "404") {
+			catalogData = []byte("applicationsets: []")
+		} else {
+			return nil, fmt.Errorf("fetching addons catalog: %w", err)
+		}
 	}
 
 	addons, err := s.parser.ParseAddonsCatalog(catalogData)
@@ -212,6 +220,10 @@ func (s *UpgradeService) CheckUpgrade(ctx context.Context, addonName, targetVers
 
 	// Check for conflicts with per-cluster values
 	clusterData, err := gp.GetFileContent(ctx, "configuration/cluster-addons.yaml", "main")
+	if err != nil && strings.Contains(err.Error(), "404") {
+		clusterData = []byte("clusters: []")
+		err = nil
+	}
 	if err != nil {
 		log.Printf("Warning: could not fetch cluster addons config: %v", err)
 	} else {
