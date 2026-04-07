@@ -104,19 +104,31 @@ type ArgocdConfig struct {
 // ProviderConfig holds credentials-provider configuration stored in a connection.
 // The provider fetches cluster kubeconfigs from an external secret store.
 type ProviderConfig struct {
-	Type      string `json:"type" yaml:"type"`                             // "aws-sm" or "k8s-secrets"
-	Region    string `json:"region,omitempty" yaml:"region,omitempty"`     // AWS region (aws-sm only)
-	Prefix    string `json:"prefix,omitempty" yaml:"prefix,omitempty"`     // Secret name prefix, e.g. "clusters/"
+	Type      string `json:"type" yaml:"type"`                               // "aws-sm" or "k8s-secrets"
+	Region    string `json:"region,omitempty" yaml:"region,omitempty"`       // AWS region (aws-sm only)
+	Prefix    string `json:"prefix,omitempty" yaml:"prefix,omitempty"`       // Secret name prefix, e.g. "clusters/"
 	Namespace string `json:"namespace,omitempty" yaml:"namespace,omitempty"` // K8s namespace (k8s-secrets only)
 }
 
-// Connection combines Git repo, ArgoCD, and provider settings.
+// GitOpsSettings holds product-level GitOps preferences stored in a connection.
+// These override env vars (which remain as a fallback for migration).
+type GitOpsSettings struct {
+	BaseBranch      string `json:"base_branch,omitempty" yaml:"base_branch,omitempty"`           // default: "main"
+	BranchPrefix    string `json:"branch_prefix,omitempty" yaml:"branch_prefix,omitempty"`       // default: "sharko/"
+	CommitPrefix    string `json:"commit_prefix,omitempty" yaml:"commit_prefix,omitempty"`       // default: "sharko:"
+	PRAutoMerge     *bool  `json:"pr_auto_merge,omitempty" yaml:"pr_auto_merge,omitempty"`       // default: false
+	HostClusterName string `json:"host_cluster_name,omitempty" yaml:"host_cluster_name,omitempty"` // cluster running ArgoCD (in-cluster)
+	DefaultAddons   string `json:"default_addons,omitempty" yaml:"default_addons,omitempty"`     // comma-separated addon names
+}
+
+// Connection combines Git repo, ArgoCD, provider, and GitOps settings.
 type Connection struct {
 	Name        string          `json:"name" yaml:"name"`
 	Description string          `json:"description,omitempty" yaml:"description,omitempty"`
 	Git         GitRepoConfig   `json:"git" yaml:"git"`
 	Argocd      ArgocdConfig    `json:"argocd" yaml:"argocd"`
 	Provider    *ProviderConfig `json:"provider,omitempty" yaml:"provider,omitempty"`
+	GitOps      *GitOpsSettings `json:"gitops,omitempty" yaml:"gitops,omitempty"`
 	IsDefault   bool            `json:"is_default" yaml:"default,omitempty"`
 	CreatedAt   string          `json:"created_at,omitempty" yaml:"-"`
 	UpdatedAt   string          `json:"updated_at,omitempty" yaml:"-"`
@@ -133,6 +145,7 @@ type ConnectionResponse struct {
 	ArgocdTokenMasked string          `json:"argocd_token_masked"`
 	ArgocdNamespace   string          `json:"argocd_namespace"`
 	Provider          *ProviderConfig `json:"provider,omitempty"`
+	GitOps            *GitOpsSettings `json:"gitops,omitempty"`
 	IsDefault         bool            `json:"is_default"`
 	IsActive          bool            `json:"is_active"`
 	CreatedAt         string          `json:"created_at,omitempty"`
@@ -152,6 +165,7 @@ type CreateConnectionRequest struct {
 	Git          GitRepoConfig   `json:"git"`
 	Argocd       ArgocdConfig    `json:"argocd"`
 	Provider     *ProviderConfig `json:"provider,omitempty"`
+	GitOps       *GitOpsSettings `json:"gitops,omitempty"`
 	SetAsDefault bool            `json:"set_as_default"`
 }
 
@@ -202,6 +216,7 @@ func (c *Connection) ToResponse(isActive bool) ConnectionResponse {
 		ArgocdTokenMasked: MaskToken(c.Argocd.Token),
 		ArgocdNamespace:   c.Argocd.Namespace,
 		Provider:          c.Provider,
+		GitOps:            c.GitOps,
 		IsDefault:         c.IsDefault,
 		IsActive:          isActive,
 		CreatedAt:         c.CreatedAt,
