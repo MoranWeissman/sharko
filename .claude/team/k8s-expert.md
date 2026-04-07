@@ -157,6 +157,47 @@ hostClusterName: ""
 ### Both Parse kubeconfig
 - Extract Server, CAData, Token via `clientcmd.RESTConfigFromKubeConfig`
 
+### AWSSecretsManagerProvider — Structured JSON Support (Phase 3)
+
+The provider now auto-detects two formats. If the secret value is JSON with a `server` key, it's treated as a structured secret instead of raw kubeconfig YAML:
+
+```json
+{
+  "server": "https://abc123.gr7.us-east-1.eks.amazonaws.com",
+  "ca": "<base64-ca>",
+  "cluster_name": "prod-eu",
+  "role_arn": "arn:aws:iam::123456789012:role/EKSReadRole"
+}
+```
+
+When `role_arn` is present, the provider calls the EKS STS token API to generate a short-lived bearer token (valid 15 minutes). This requires IRSA — the Sharko pod's service account must have IAM permissions to call `eks:GetToken` and assume the role ARN.
+
+### IRSA Setup for EKS Clusters
+
+Add to `charts/sharko/values.yaml`:
+
+```yaml
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/SharkoIRSARole"
+```
+
+The IAM role must trust the cluster's OIDC provider and have the following permissions:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": [
+    "secretsmanager:GetSecretValue",
+    "secretsmanager:ListSecrets",
+    "eks:DescribeCluster"
+  ],
+  "Resource": "*"
+}
+```
+
+For cross-account EKS token generation, add `sts:AssumeRole` for each target role ARN.
+
 ## v1.4.0: Catalog-Driven Secrets (AddonSecretRef)
 
 Addon secrets are now declared directly in `addons-catalog.yaml` using the `secrets:` field:
@@ -220,6 +261,68 @@ secrets:
   webhookSecret: ""        # SHARKO_WEBHOOK_SECRET — HMAC key for /webhooks/git
 ```
 
+## Phase 3-6 ArgoCD and Cluster Changes
+
+### ArgoCD Service Discovery (Phase 4)
+
+`internal/argocd/client.go` — `autoDiscoverArgoCD()` probes all services in the configured namespace:
+
+1. Lists all services in `SHARKO_ARGOCD_NAMESPACE` (default: `argocd`)
+2. For each service, attempts `GET /api/v1/version` with the configured token
+3. First successful response = ArgoCD endpoint
+4. Falls back to `SHARKO_ARGOCD_SERVER` env var if no service responds
+
+This allows Sharko to survive ArgoCD service name changes without reconfiguration.
+
+### Managed vs Discovered Clusters (Phase 5)
+
+Clusters now carry a `managed` boolean field on the `ClusterInfo` model:
+
+```go
+type ClusterInfo struct {
+    Name    string
+    Server  string
+    Labels  map[string]string
+    Managed bool   // true = registered via Sharko; false = pre-existing in ArgoCD
+}
+```
+
+**Managed** (`managed: true`): registered via Sharko — has a values file in Git, fully managed lifecycle.
+**Discovered** (`managed: false`): found in ArgoCD but not in Git — Sharko is aware but does not manage.
+
+The `GET /api/v1/clusters` response includes `managed` on each cluster entry. The UI renders managed and discovered clusters in separate sections.
+
+### Adopt Cluster (Phase 5)
+
+`POST /api/v1/clusters/{name}/adopt` — takes an existing ArgoCD cluster and creates the Git values file for it, making it fully managed:
+
+```
+Step 1 — Verify cluster exists in ArgoCD (GET /api/v1/clusters)
+Step 2 — Verify cluster does NOT have a values file in Git (409 if already managed)
+Step 3 — Generate values file from current ArgoCD labels
+Step 4 — Commit via PR
+Step 5 — Mark cluster as managed in ArgoCD labels
+```
+
+No kubeconfig fetch required — the cluster is already in ArgoCD. The adopt flow uses only ArgoCD API + Git.
+
+### Cluster Connectivity Check (Phase 5)
+
+`POST /api/v1/clusters/{name}/test` — verifies that Sharko can reach the cluster's Kubernetes API:
+
+```
+Step 1 — Fetch kubeconfig from provider (GetCredentials)
+Step 2 — Build temporary kubernetes.Interface via remoteclient
+Step 3 — Call ServerVersion() — lightweight, no cluster-wide permissions needed
+Step 4 — Return {"reachable": true, "version": "v1.29.3"} or {"reachable": false, "error": "..."}
+```
+
+Returns 200 with a JSON body in both the reachable and unreachable cases (200 with `reachable: false`, never 502).
+
+### Branch Cleanup After Auto-Merge (Phase 5)
+
+When `PRAutoMerge: true` and `MergePullRequest()` succeeds, the orchestrator immediately calls `DeleteBranch(ctx, branchName)`. This is already supported by the `GitProvider` interface (`DeleteBranch`). The cleanup is best-effort — a failure to delete the branch is logged but does not fail the operation.
+
 ## Update This File When
 - ArgoCD API usage changes (new endpoints)
 - Helm chart structure changes (new templates, values)
@@ -227,3 +330,5 @@ secrets:
 - ApplicationSet pattern changes
 - Remote client patterns are established (Phase 3)
 - Secrets reconciler behavior changes
+- Cluster adoption flow changes
+- ArgoCD service discovery logic changes

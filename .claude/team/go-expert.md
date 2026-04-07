@@ -230,14 +230,92 @@ type OperationSession struct {
 2. Webhook — `POST /api/v1/webhooks/git` with HMAC-SHA256 verification
 3. Manual — `POST /api/v1/secrets/reconcile`
 
+## Phase 3-6 New Patterns
+
+### AWS SM Structured JSON (Phase 3)
+
+`AWSSecretsManagerProvider` supports two secret formats:
+
+**Format 1 — Raw kubeconfig (original):**
+```json
+"apiVersion: v1\nkind: Config\n..."
+```
+
+**Format 2 — Structured JSON (auto-detected):**
+```json
+{
+  "server": "https://abc123.gr7.us-east-1.eks.amazonaws.com",
+  "ca": "<base64-ca>",
+  "token": "<bearer-token>"
+}
+```
+Or for EKS clusters that use STS token generation:
+```json
+{
+  "server": "https://abc123.gr7.us-east-1.eks.amazonaws.com",
+  "ca": "<base64-ca>",
+  "cluster_name": "prod-eu",
+  "role_arn": "arn:aws:iam::123456789012:role/EKSReadRole"
+}
+```
+
+**Auto-detection logic (`internal/providers/aws_sm.go`):**
+1. Attempt `json.Unmarshal` into `StructuredSecret` struct
+2. If `server` key present → structured format
+3. If `role_arn` key present → call STS EKS token API (`eks:GetToken`)
+4. Otherwise → treat raw string as kubeconfig YAML
+
+**STS EKS token generation:**
+- Uses `github.com/aws/aws-sdk-go-v2/service/eks` — `GetToken` pre-signed URL
+- Token format: `k8s-aws-v1.<base64url(presigned-url)>`
+- Token TTL: 15 minutes (token is generated fresh on each `GetCredentials()` call)
+- IRSA role assumed transitively — no static creds needed
+
+### List Filtering and Sorting (Phase 4)
+
+`GET /api/v1/clusters` and `GET /api/v1/addons/catalog` accept:
+
+| Param | Values | Description |
+|-------|--------|-------------|
+| `?sort=name` | `name`, `env`, `health`, `addon_count` | Sort field |
+| `?sort=-name` | prefix `-` | Descending sort |
+| `?filter=env:prod` | `env:<val>`, `health:<val>`, `addon:<name>` | Filter predicate |
+
+Filtering is applied server-side before pagination. Multiple `?filter=` params are AND-joined.
+
+Implement as middleware helpers in `internal/api/` — no database, pure in-memory slice sort/filter.
+
+### Security Advisory Notifications (Phase 6)
+
+`internal/notifications/checker.go` — polls on a timer (default 24h):
+1. Fetches Helm repo index for each addon in the catalog
+2. Compares current version against latest **major** version
+3. If major version bump detected → creates a `security_advisory` notification
+4. Notifications stored in `internal/notifications/store.go`
+
+Notification type:
+```go
+type Notification struct {
+    ID          string    // uuid
+    Type        string    // "upgrade_available" | "version_drift" | "security_advisory"
+    Title       string
+    Description string
+    AddonName   string
+    CreatedAt   time.Time
+    Read        bool
+}
+```
+
+Exposed via `GET /api/v1/notifications` (read all) and `POST /api/v1/notifications/{id}/read`.
+
 ## Planned Packages
 
 ### `internal/notifications/`
-Periodic notification system (PLANNED):
+Periodic notification system (Phase 6):
 ```
-checker.go    — Periodic checker goroutine (runs every N minutes)
+checker.go    — Periodic checker goroutine (runs every 24h by default)
                 Checks: upgrade available (semver comparison via Helm repo index),
-                        version drift across clusters, security advisories
+                        version drift across clusters, security advisories (major bumps)
 store.go      — In-memory notification store with read/unread state,
                 exposes notifications via GET /api/v1/notifications
 ```
@@ -275,3 +353,5 @@ Secret configured via `SHARKO_WEBHOOK_SECRET` env var. Requests without a valid 
 - New testing patterns are established
 - New packages are created (remoteclient, notifications, etc.)
 - Swagger annotations are modified or new annotation patterns emerge
+- AWS SM format detection logic changes
+- Filtering/sorting params are added or modified

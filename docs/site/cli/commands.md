@@ -123,6 +123,36 @@ Update the addon assignments for a cluster.
 sharko update-cluster <name> --addons cert-manager,metrics-server,logging
 ```
 
+### `sharko test-cluster`
+
+Test connectivity to a cluster. Verifies that Sharko can reach the cluster's Kubernetes API using the credentials stored in the secrets provider.
+
+```bash
+sharko test-cluster <name>
+```
+
+Example output:
+
+```
+Cluster: prod-eu
+Reachable: yes
+Kubernetes version: v1.29.3
+```
+
+If the cluster is unreachable, the error message from the provider or the Kubernetes API is shown.
+
+### `sharko adopt-cluster`
+
+Adopt an existing ArgoCD cluster into Sharko management. Creates the Git values file for a cluster that is already registered in ArgoCD but not yet tracked in the addons repo.
+
+```bash
+sharko adopt-cluster <name> [--addons <list>]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--addons <list>` | Comma-separated addons to enable on the adopted cluster |
+
 ### `sharko list-clusters`
 
 List all registered clusters.

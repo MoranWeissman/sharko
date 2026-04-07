@@ -88,6 +88,30 @@ type ClusterCredentialsProvider interface {
 }
 ```
 
+### AWS SM — Credential Flow
+
+The `aws-sm` provider supports two secret formats and auto-detects which is in use:
+
+```
+AWS Secrets Manager
+  |
+  | GetSecretValue("{prefix}{cluster-name}")
+  v
+Format detection (internal/providers/aws_sm.go)
+  |
+  +-- Raw YAML? → parse as kubeconfig directly
+  |
+  +-- Structured JSON with "token" key?
+  |     → build kubeconfig from server + ca + token fields
+  |
+  +-- Structured JSON with "role_arn" key?
+        → call EKS STS token API (eks:DescribeCluster + pre-signed URL)
+        → k8s-aws-v1.<base64url(presigned-url)> token (15-min TTL)
+        → build kubeconfig from server + ca + fresh token
+```
+
+The STS path requires IRSA — the Sharko pod's service account is annotated with an IAM role ARN that has `secretsmanager:GetSecretValue`, `eks:DescribeCluster`, and optionally `sts:AssumeRole` for cross-account clusters. See [IRSA Setup](../operator/configuration.md#irsa-setup).
+
 ## Connection Management
 
 ArgoCD and Git connections are stored encrypted in a Kubernetes Secret (`sharko-connections`), using AES-256-GCM. Connections are managed through the Settings UI — no restart required when updating connections.
@@ -144,6 +168,43 @@ Client:
 
 Sessions expire if the client stops sending heartbeats. This prevents orphaned sessions from accumulating when a client disconnects mid-operation.
 
+## Managed vs Discovered Clusters
+
+Sharko distinguishes clusters by whether they have a values file in the addons Git repo:
+
+```
+ArgoCD cluster registry
+  |
+  +-- Has a Sharko values file in Git?
+        YES → "managed"   — full Sharko lifecycle
+        NO  → "discovered" — read-only in Sharko, can be adopted
+```
+
+The `GET /api/v1/clusters` response includes a `"managed": bool` field on each entry. The UI renders the two groups separately. Discovered clusters show an **Adopt** action that creates the initial values file via PR.
+
+## Notifications
+
+Sharko includes a background notification checker (`internal/notifications/`) that fires on a configurable timer (default 24h):
+
+```
+notifications.Checker (Sharko Server)
+  |
+  +-- For each addon in catalog:
+  |     fetch Helm repo index → compare semver
+  |     major version bump? → security_advisory notification
+  |
+  +-- Version drift check (per-cluster vs catalog)
+  |     diverged clusters → version_drift notification
+  |
+  v
+notifications.Store (in-memory, read/unread state)
+  |
+  GET /api/v1/notifications          → list all
+  POST /api/v1/notifications/{id}/read → mark read
+```
+
+Security advisory notifications are raised when an addon has a new **major** version available (e.g., v3 → v4). These are surfaced prominently in the UI notification bell with an amber shield icon.
+
 ## GitOps Flow
 
 Every write operation that changes fleet state:
@@ -155,3 +216,5 @@ Every write operation that changes fleet state:
 5. The ApplicationSet generates ArgoCD Applications per-cluster, per-addon
 
 This means Sharko's state is always reflected in Git — the addons repo is the source of truth, not the Sharko database.
+
+When `SHARKO_GITOPS_PR_AUTO_MERGE=true`, Sharko also deletes the feature branch immediately after a successful merge (`DeleteBranch`). Branch cleanup is best-effort — a failure is logged but does not affect the operation result.
