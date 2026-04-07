@@ -165,6 +165,8 @@ definitions:
     type: object
   github_com_MoranWeissman_sharko_internal_orchestrator.InitRepoRequest:
     properties:
+      auto_merge:
+        type: boolean
       bootstrap_argocd:
         type: boolean
       git_token:
@@ -2200,8 +2202,10 @@ paths:
     post:
       consumes:
       - application/json
-      description: Creates the GitOps repository structure and bootstraps ArgoCD with
-        initial addon ApplicationSets
+      description: |-
+        Creates the GitOps repository structure and bootstraps ArgoCD with initial addon ApplicationSets.
+        Returns immediately with an operation_id; poll GET /api/v1/operations/{id} for progress.
+        If an existing "waiting" init session is found, returns that session (idempotent resume).
       parameters:
       - description: Init request (defaults to bootstrap mode)
         in: body
@@ -2211,18 +2215,18 @@ paths:
       produces:
       - application/json
       responses:
-        "201":
-          description: Repository initialized
+        "200":
+          description: Existing waiting session returned (already in progress)
+          schema:
+            additionalProperties: true
+            type: object
+        "202":
+          description: Operation accepted — poll operation_id for progress
           schema:
             additionalProperties: true
             type: object
         "401":
           description: Unauthorized
-          schema:
-            additionalProperties: true
-            type: object
-        "409":
-          description: Already initialized
           schema:
             additionalProperties: true
             type: object
@@ -2315,6 +2319,91 @@ paths:
       summary: Get observability overview
       tags:
       - observability
+  /operations/{id}:
+    get:
+      description: Returns the current status and step progress of a long-running
+        operation
+      parameters:
+      - description: Operation session ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Operation session
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Operation not found
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get operation status
+      tags:
+      - system
+  /operations/{id}/cancel:
+    post:
+      description: Cancels a pending or waiting operation. Running operations may
+        not stop immediately.
+      parameters:
+      - description: Operation session ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Operation cancelled
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Operation not found
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Cancel an operation
+      tags:
+      - system
+  /operations/{id}/heartbeat:
+    post:
+      description: |-
+        Records a client heartbeat so the server knows the client is still polling.
+        Without heartbeats, a waiting operation may be abandoned.
+      parameters:
+      - description: Operation session ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Heartbeat recorded
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Operation not found
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Send operation heartbeat
+      tags:
+      - system
   /providers:
     get:
       description: Returns the configured credentials provider type and connection

@@ -59,7 +59,7 @@ type Server struct {
 	// Notification store (always available — initialised in NewServer).
 	notificationStore *notifications.Store
 
-	// Operations store (always available — initialised in NewServer).
+	// Operation store for async long-running operations (always available — initialised in NewServer).
 	opsStore *operations.Store
 
 	// Template filesystem for POST /api/v1/init (always available).
@@ -228,6 +228,11 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	// Init (orchestrator-backed)
 	mux.HandleFunc("POST /api/v1/init", srv.handleInit)
 
+	// Operations (async operation tracking)
+	mux.HandleFunc("GET /api/v1/operations/{id}", srv.handleGetOperation)
+	mux.HandleFunc("POST /api/v1/operations/{id}/heartbeat", srv.handleOperationHeartbeat)
+	mux.HandleFunc("POST /api/v1/operations/{id}/cancel", srv.handleCancelOperation)
+
 	// Addons (write — orchestrator-backed)
 	mux.HandleFunc("POST /api/v1/addons/upgrade-batch", srv.handleUpgradeAddonsBatch)
 	mux.HandleFunc("POST /api/v1/addons/{name}/upgrade", srv.handleUpgradeAddon)
@@ -300,12 +305,6 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 
 	// Cluster info
 	mux.HandleFunc("GET /api/v1/cluster/nodes", srv.handleGetNodeInfo)
-
-	// Operations (long-running session management)
-	mux.HandleFunc("POST /api/v1/operations", srv.handleCreateOperation)
-	mux.HandleFunc("GET /api/v1/operations/{id}", srv.handleGetOperation)
-	mux.HandleFunc("DELETE /api/v1/operations/{id}", srv.handleCancelOperation)
-	mux.HandleFunc("POST /api/v1/operations/{id}/heartbeat", srv.handleOperationHeartbeat)
 
 	// Webhooks (no user auth — signature verified inside the handler)
 	mux.HandleFunc("POST /api/v1/webhooks/git", srv.handleGitWebhook)

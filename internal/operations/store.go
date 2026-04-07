@@ -1,188 +1,257 @@
+// Package operations provides an in-memory store for tracking long-running
+// asynchronous operations (e.g. init, cluster registration).
+//
+// Each operation is represented as a Session that progresses through a list
+// of named steps. Callers advance the session step-by-step, mark it as
+// waiting (e.g. waiting for a PR to be merged), and eventually complete or
+// fail it.
+//
+// The store is safe for concurrent use.
 package operations
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
+
+// Status represents the lifecycle state of an operation session.
+type Status string
 
 const (
-	// cleanupInterval is how often the background goroutine scans for dead sessions.
-	cleanupInterval = 1 * time.Minute
-	// defaultHeartbeatTimeout is used by the background cleanup goroutine.
-	defaultHeartbeatTimeout = 2 * time.Minute
+	StatusPending   Status = "pending"   // created, not yet started
+	StatusRunning   Status = "running"   // actively executing steps
+	StatusWaiting   Status = "waiting"   // paused, waiting for external event (e.g. PR merge)
+	StatusCompleted Status = "completed" // finished successfully
+	StatusFailed    Status = "failed"    // finished with error
+	StatusCancelled Status = "cancelled" // explicitly cancelled by the client
 )
 
-// Store is an in-memory session store. It is safe for concurrent use.
+// Step represents a single named step within an operation.
+type Step struct {
+	Name      string    `json:"name"`
+	Status    Status    `json:"status"`
+	Detail    string    `json:"detail,omitempty"` // e.g. PR URL, error message
+	StartedAt time.Time `json:"started_at,omitempty"`
+	DoneAt    time.Time `json:"done_at,omitempty"`
+}
+
+// Session is a single operation's runtime state.
+type Session struct {
+	ID          string    `json:"id"`
+	Type        string    `json:"type"` // e.g. "init"
+	Status      Status    `json:"status"`
+	Steps       []Step    `json:"steps"`
+	CurrentStep int       `json:"current_step"` // index into Steps
+	WaitDetail  string    `json:"wait_detail,omitempty"`  // human-readable context when waiting
+	WaitPayload string    `json:"wait_payload,omitempty"` // machine-readable payload (e.g. PR URL)
+	Result      string    `json:"result,omitempty"`       // final result message on completion
+	Error       string    `json:"error,omitempty"`        // error message on failure
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	HeartbeatAt time.Time `json:"heartbeat_at"` // last client heartbeat
+}
+
+// IsAlive returns true if the client sent a heartbeat within the given window.
+// A session that has never received a heartbeat is considered alive for the
+// first staleAfter period (grace period after creation).
+func (s *Session) IsAlive(staleAfter time.Duration) bool {
+	if s.HeartbeatAt.IsZero() {
+		return time.Since(s.CreatedAt) < staleAfter
+	}
+	return time.Since(s.HeartbeatAt) < staleAfter
+}
+
+// Store is a thread-safe in-memory store for operation sessions.
 type Store struct {
 	mu       sync.RWMutex
 	sessions map[string]*Session
 }
 
-// NewStore creates a new Store and starts a background cleanup goroutine that
-// removes sessions with no heartbeat for 2 minutes.
+// NewStore creates an empty Store.
 func NewStore() *Store {
-	s := &Store{
-		sessions: make(map[string]*Session),
+	return &Store{sessions: make(map[string]*Session)}
+}
+
+// Create initialises a new session with the given operation type and step names.
+// The session starts in StatusPending; the caller should transition it to
+// StatusRunning when background work begins.
+func (st *Store) Create(opType string, steps []string) *Session {
+	id := uuid.NewString()
+	now := time.Now()
+
+	s := &Session{
+		ID:        id,
+		Type:      opType,
+		Status:    StatusPending,
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
-	go s.runCleanup()
+	for _, name := range steps {
+		s.Steps = append(s.Steps, Step{Name: name, Status: StatusPending})
+	}
+
+	st.mu.Lock()
+	st.sessions[id] = s
+	st.mu.Unlock()
+
 	return s
 }
 
-// runCleanup periodically removes dead sessions.
-func (s *Store) runCleanup() {
-	ticker := time.NewTicker(cleanupInterval)
-	defer ticker.Stop()
-	for range ticker.C {
-		s.Cleanup(defaultHeartbeatTimeout)
+// Get returns the session with the given ID (nil if not found).
+func (st *Store) Get(id string) (*Session, bool) {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	s, ok := st.sessions[id]
+	if !ok {
+		return nil, false
 	}
+	// Return a shallow copy to avoid data races on read.
+	copy := *s
+	return &copy, true
 }
 
-// generateID returns a cryptographically random hex ID.
-func generateID() string {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		// Fallback: use timestamp-based ID (should not happen in practice)
-		return hex.EncodeToString([]byte(time.Now().String()))
+// FindByTypeAndStatus returns all sessions of the given type with the given status.
+func (st *Store) FindByTypeAndStatus(opType string, status Status) []*Session {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	var out []*Session
+	for _, s := range st.sessions {
+		if s.Type == opType && s.Status == status {
+			cp := *s
+			out = append(out, &cp)
+		}
 	}
-	return hex.EncodeToString(b)
+	return out
 }
 
-// Create generates a new session with a random ID and the given step names,
-// all initialised to StatusPending.
-func (s *Store) Create(opType string, steps []string) *Session {
-	now := time.Now()
-	sess := &Session{
-		ID:            generateID(),
-		Type:          opType,
-		Status:        StatusPending,
-		Steps:         make([]Step, len(steps)),
-		CurrentStep:   0,
-		CreatedAt:     now,
-		LastHeartbeat: now,
-	}
-	for i, name := range steps {
-		sess.Steps[i] = Step{Name: name, Status: StatusPending}
-	}
-
-	s.mu.Lock()
-	s.sessions[sess.ID] = sess
-	s.mu.Unlock()
-
-	return sess
-}
-
-// Get returns a session by ID. Returns nil, false if not found.
-func (s *Store) Get(id string) (*Session, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	sess, ok := s.sessions[id]
-	return sess, ok
-}
-
-// Heartbeat updates the last heartbeat time. Returns false if the session is not found.
-func (s *Store) Heartbeat(id string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	sess, ok := s.sessions[id]
+// Heartbeat records a client heartbeat for the given session.
+func (st *Store) Heartbeat(id string) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	s, ok := st.sessions[id]
 	if !ok {
 		return false
 	}
-	sess.LastHeartbeat = time.Now()
+	s.HeartbeatAt = time.Now()
+	s.UpdatedAt = time.Now()
 	return true
 }
 
-// UpdateStep marks the current step with the given status and message, then
-// advances CurrentStep to the next index. If already at the last step the
-// index is not advanced beyond the slice bounds.
-func (s *Store) UpdateStep(id string, status Status, message string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	sess, ok := s.sessions[id]
+// Start transitions the session to StatusRunning and marks the first step as running.
+func (st *Store) Start(id string) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	s, ok := st.sessions[id]
 	if !ok {
 		return
 	}
-	if sess.CurrentStep < len(sess.Steps) {
-		sess.Steps[sess.CurrentStep].Status = status
-		sess.Steps[sess.CurrentStep].Message = message
-		if sess.CurrentStep < len(sess.Steps)-1 {
-			sess.CurrentStep++
-		}
+	now := time.Now()
+	s.Status = StatusRunning
+	s.UpdatedAt = now
+	if len(s.Steps) > 0 {
+		s.Steps[0].Status = StatusRunning
+		s.Steps[0].StartedAt = now
 	}
-	sess.Status = StatusRunning
 }
 
-// SetWaiting puts the session in waiting state, recording the PR URL and ID.
-func (s *Store) SetWaiting(id string, prURL string, prID int) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	sess, ok := s.sessions[id]
+// UpdateStep marks the current step as completed (with an optional detail message)
+// and advances to the next step, which is immediately set to running.
+func (st *Store) UpdateStep(id string, status Status, detail string) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	s, ok := st.sessions[id]
 	if !ok {
 		return
 	}
-	sess.Status = StatusWaiting
-	sess.PRUrl = prURL
-	sess.PRID = prID
+	now := time.Now()
+	if s.CurrentStep < len(s.Steps) {
+		s.Steps[s.CurrentStep].Status = status
+		s.Steps[s.CurrentStep].Detail = detail
+		s.Steps[s.CurrentStep].DoneAt = now
+	}
+	s.UpdatedAt = now
+
+	// Advance to the next step if the current one succeeded.
+	if status == StatusCompleted && s.CurrentStep+1 < len(s.Steps) {
+		s.CurrentStep++
+		s.Steps[s.CurrentStep].Status = StatusRunning
+		s.Steps[s.CurrentStep].StartedAt = now
+	}
 }
 
-// Complete marks the session as completed and stores the result.
-func (s *Store) Complete(id string, result any) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	sess, ok := s.sessions[id]
+// SetWaiting transitions the session to StatusWaiting.
+// detail is a human-readable message; payload is machine-readable (e.g. PR URL).
+func (st *Store) SetWaiting(id, detail, payload string) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	s, ok := st.sessions[id]
 	if !ok {
 		return
 	}
-	sess.Status = StatusCompleted
-	sess.Result = result
+	s.Status = StatusWaiting
+	s.WaitDetail = detail
+	s.WaitPayload = payload
+	s.UpdatedAt = time.Now()
+}
+
+// ResumeFromWaiting transitions the session back to StatusRunning.
+func (st *Store) ResumeFromWaiting(id string) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	s, ok := st.sessions[id]
+	if !ok {
+		return
+	}
+	s.Status = StatusRunning
+	s.WaitDetail = ""
+	s.WaitPayload = ""
+	s.UpdatedAt = time.Now()
+}
+
+// Complete marks the session as completed with an optional result message.
+func (st *Store) Complete(id, result string) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	s, ok := st.sessions[id]
+	if !ok {
+		return
+	}
+	s.Status = StatusCompleted
+	s.Result = result
+	s.UpdatedAt = time.Now()
 }
 
 // Fail marks the session as failed with an error message.
-func (s *Store) Fail(id string, err string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	sess, ok := s.sessions[id]
+func (st *Store) Fail(id, errMsg string) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	s, ok := st.sessions[id]
 	if !ok {
 		return
 	}
-	sess.Status = StatusFailed
-	sess.Error = err
+	now := time.Now()
+	s.Status = StatusFailed
+	s.Error = errMsg
+	s.UpdatedAt = now
+	// Mark the current in-progress step as failed too.
+	if s.CurrentStep < len(s.Steps) && s.Steps[s.CurrentStep].Status == StatusRunning {
+		s.Steps[s.CurrentStep].Status = StatusFailed
+		s.Steps[s.CurrentStep].Detail = errMsg
+		s.Steps[s.CurrentStep].DoneAt = now
+	}
 }
 
 // Cancel marks the session as cancelled.
-func (s *Store) Cancel(id string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	sess, ok := s.sessions[id]
+func (st *Store) Cancel(id string) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	s, ok := st.sessions[id]
 	if !ok {
-		return
+		return false
 	}
-	sess.Status = StatusCancelled
-}
-
-// Cleanup removes sessions that have not received a heartbeat within the
-// given threshold. It should be called periodically.
-func (s *Store) Cleanup(threshold time.Duration) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for id, sess := range s.sessions {
-		if !sess.IsAlive(threshold) {
-			delete(s.sessions, id)
-		}
-	}
-}
-
-// FindByTypeAndStatus returns all sessions matching the given type and status.
-// The returned slice is a snapshot — callers must not mutate the Session values.
-func (s *Store) FindByTypeAndStatus(opType string, status Status) []*Session {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	var result []*Session
-	for _, sess := range s.sessions {
-		if sess.Type == opType && sess.Status == status {
-			result = append(result, sess)
-		}
-	}
-	return result
+	s.Status = StatusCancelled
+	s.UpdatedAt = time.Now()
+	return true
 }

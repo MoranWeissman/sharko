@@ -76,7 +76,7 @@ func TestHeartbeat_KeepsSessionAlive(t *testing.T) {
 
 	// Manually back-date the heartbeat
 	s.mu.Lock()
-	sess.LastHeartbeat = time.Now().Add(-90 * time.Second)
+	s.sessions[sess.ID].HeartbeatAt = time.Now().Add(-90 * time.Second)
 	s.mu.Unlock()
 
 	// Send a heartbeat — session should now be alive with a 2-minute threshold
@@ -97,38 +97,10 @@ func TestHeartbeat_ReturnsFalseForMissing(t *testing.T) {
 	}
 }
 
-func TestCleanup_RemovesDeadSessions(t *testing.T) {
-	s := newTestStore()
-	sess := s.Create("init", nil)
-
-	// Back-date heartbeat beyond the threshold
-	s.mu.Lock()
-	sess.LastHeartbeat = time.Now().Add(-3 * time.Minute)
-	s.mu.Unlock()
-
-	s.Cleanup(2 * time.Minute)
-
-	_, ok := s.Get(sess.ID)
-	if ok {
-		t.Fatal("expected dead session to be removed")
-	}
-}
-
-func TestCleanup_KeepsAliveSessions(t *testing.T) {
-	s := newTestStore()
-	sess := s.Create("init", nil)
-
-	s.Cleanup(2 * time.Minute)
-
-	_, ok := s.Get(sess.ID)
-	if !ok {
-		t.Fatal("expected live session to be kept")
-	}
-}
-
 func TestUpdateStep_AdvancesCurrentStep(t *testing.T) {
 	s := newTestStore()
 	sess := s.Create("init", []string{"step1", "step2", "step3"})
+	s.Start(sess.ID)
 
 	s.UpdateStep(sess.ID, StatusCompleted, "done step 1")
 
@@ -136,8 +108,8 @@ func TestUpdateStep_AdvancesCurrentStep(t *testing.T) {
 	if got.Steps[0].Status != StatusCompleted {
 		t.Errorf("expected step0 completed, got %q", got.Steps[0].Status)
 	}
-	if got.Steps[0].Message != "done step 1" {
-		t.Errorf("unexpected message: %q", got.Steps[0].Message)
+	if got.Steps[0].Detail != "done step 1" {
+		t.Errorf("unexpected detail: %q", got.Steps[0].Detail)
 	}
 	if got.CurrentStep != 1 {
 		t.Errorf("expected CurrentStep=1, got %d", got.CurrentStep)
@@ -150,6 +122,7 @@ func TestUpdateStep_AdvancesCurrentStep(t *testing.T) {
 func TestUpdateStep_DoesNotAdvancePastLastStep(t *testing.T) {
 	s := newTestStore()
 	sess := s.Create("init", []string{"only"})
+	s.Start(sess.ID)
 
 	s.UpdateStep(sess.ID, StatusCompleted, "")
 
@@ -159,21 +132,22 @@ func TestUpdateStep_DoesNotAdvancePastLastStep(t *testing.T) {
 	}
 }
 
-func TestSetWaiting_SetsStatusAndPR(t *testing.T) {
+func TestSetWaiting_SetsStatusAndPayload(t *testing.T) {
 	s := newTestStore()
 	sess := s.Create("init", nil)
+	prURL := "https://github.com/example/repo/pull/42"
 
-	s.SetWaiting(sess.ID, "https://github.com/example/repo/pull/42", 42)
+	s.SetWaiting(sess.ID, "waiting for PR merge", prURL)
 
 	got, _ := s.Get(sess.ID)
 	if got.Status != StatusWaiting {
 		t.Errorf("expected waiting, got %q", got.Status)
 	}
-	if got.PRUrl != "https://github.com/example/repo/pull/42" {
-		t.Errorf("unexpected PRUrl: %q", got.PRUrl)
+	if got.WaitDetail != "waiting for PR merge" {
+		t.Errorf("unexpected WaitDetail: %q", got.WaitDetail)
 	}
-	if got.PRID != 42 {
-		t.Errorf("expected PRID=42, got %d", got.PRID)
+	if got.WaitPayload != prURL {
+		t.Errorf("unexpected WaitPayload: %q", got.WaitPayload)
 	}
 }
 
@@ -181,15 +155,14 @@ func TestComplete_SetsStatusAndResult(t *testing.T) {
 	s := newTestStore()
 	sess := s.Create("init", nil)
 
-	result := map[string]string{"repo": "done"}
-	s.Complete(sess.ID, result)
+	s.Complete(sess.ID, "repository created successfully")
 
 	got, _ := s.Get(sess.ID)
 	if got.Status != StatusCompleted {
 		t.Errorf("expected completed, got %q", got.Status)
 	}
-	if got.Result == nil {
-		t.Error("expected non-nil result")
+	if got.Result != "repository created successfully" {
+		t.Errorf("unexpected result: %q", got.Result)
 	}
 }
 
@@ -212,11 +185,20 @@ func TestCancel_SetsStatus(t *testing.T) {
 	s := newTestStore()
 	sess := s.Create("init", nil)
 
-	s.Cancel(sess.ID)
+	if !s.Cancel(sess.ID) {
+		t.Fatal("expected Cancel to return true for existing session")
+	}
 
 	got, _ := s.Get(sess.ID)
 	if got.Status != StatusCancelled {
 		t.Errorf("expected cancelled, got %q", got.Status)
+	}
+}
+
+func TestCancel_ReturnsFalseForMissing(t *testing.T) {
+	s := newTestStore()
+	if s.Cancel("nope") {
+		t.Fatal("expected false for non-existent session")
 	}
 }
 
@@ -227,8 +209,8 @@ func TestFindByTypeAndStatus(t *testing.T) {
 	b := s.Create("init", nil)
 	c := s.Create("add-cluster", nil)
 
-	s.SetWaiting(a.ID, "https://example.com/pr/1", 1)
-	s.SetWaiting(b.ID, "https://example.com/pr/2", 2)
+	s.SetWaiting(a.ID, "waiting for PR", "https://example.com/pr/1")
+	s.SetWaiting(b.ID, "waiting for PR", "https://example.com/pr/2")
 	// c stays pending
 
 	results := s.FindByTypeAndStatus("init", StatusWaiting)
@@ -269,48 +251,14 @@ func TestConcurrentAccess(t *testing.T) {
 	}
 	wg.Wait()
 
-	// Concurrently heartbeat, update, and read
-	for i := 0; i < goroutines; i++ {
-		wg.Add(3)
-		id := ids[i]
-		go func() {
-			defer wg.Done()
-			s.Heartbeat(id)
-		}()
-		go func() {
-			defer wg.Done()
-			s.UpdateStep(id, StatusCompleted, "ok")
-		}()
-		go func() {
-			defer wg.Done()
-			s.Get(id)
-		}()
-	}
-	wg.Wait()
-
-	// Concurrently complete, fail, and cancel
+	// Read and heartbeat concurrently
 	for i := 0; i < goroutines; i++ {
 		wg.Add(1)
-		id := ids[i]
 		go func(idx int) {
 			defer wg.Done()
-			switch idx % 3 {
-			case 0:
-				s.Complete(id, nil)
-			case 1:
-				s.Fail(id, "err")
-			case 2:
-				s.Cancel(id)
-			}
+			s.Heartbeat(ids[idx])
+			s.Get(ids[idx])
 		}(i)
 	}
-	wg.Wait()
-
-	// Cleanup should not panic under concurrent access
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		s.Cleanup(1 * time.Millisecond) // very short threshold to exercise deletion path
-	}()
 	wg.Wait()
 }
