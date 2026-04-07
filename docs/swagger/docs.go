@@ -3295,6 +3295,32 @@ const docTemplate = `{
                 }
             }
         },
+        "/repo/status": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Checks whether the GitOps repository has been bootstrapped (bootstrap/root-app.yaml exists on the base branch)",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Get repo initialization status",
+                "responses": {
+                    "200": {
+                        "description": "Repo status",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/secrets/reconcile": {
             "post": {
                 "security": [
