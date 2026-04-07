@@ -4218,6 +4218,9 @@ const docTemplate = `{
                 "git": {
                     "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.GitRepoConfig"
                 },
+                "gitops": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.GitOpsSettings"
+                },
                 "name": {
                     "type": "string"
                 },
@@ -4225,6 +4228,35 @@ const docTemplate = `{
                     "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.ProviderConfig"
                 },
                 "set_as_default": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_models.GitOpsSettings": {
+            "type": "object",
+            "properties": {
+                "base_branch": {
+                    "description": "default: \"main\"",
+                    "type": "string"
+                },
+                "branch_prefix": {
+                    "description": "default: \"sharko/\"",
+                    "type": "string"
+                },
+                "commit_prefix": {
+                    "description": "default: \"sharko:\"",
+                    "type": "string"
+                },
+                "default_addons": {
+                    "description": "comma-separated addon names",
+                    "type": "string"
+                },
+                "host_cluster_name": {
+                    "description": "cluster running ArgoCD (in-cluster)",
+                    "type": "string"
+                },
+                "pr_auto_merge": {
+                    "description": "default: false",
                     "type": "boolean"
                 }
             }
