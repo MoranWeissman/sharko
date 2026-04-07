@@ -1,8 +1,16 @@
 package providers
 
 import (
+	"context"
 	"fmt"
 )
+
+// SecretProvider abstracts fetching raw secret values from an external backend
+// (e.g. AWS Secrets Manager, Kubernetes Secrets). The path argument is the
+// provider-specific identifier for the secret (e.g. "secrets/datadog/api-key").
+type SecretProvider interface {
+	GetSecretValue(ctx context.Context, path string) ([]byte, error)
+}
 
 // ClusterCredentialsProvider abstracts how cluster kubeconfigs are fetched.
 // The server uses this to retrieve credentials when registering clusters.

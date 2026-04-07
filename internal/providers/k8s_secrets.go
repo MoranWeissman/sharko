@@ -48,6 +48,55 @@ func newKubernetesSecretProviderWithClient(client kubernetes.Interface, namespac
 	return &KubernetesSecretProvider{client: client, namespace: namespace}
 }
 
+// GetSecretValue retrieves a raw secret value from a Kubernetes Secret.
+// path has the form "namespace/secret-name/key". If namespace is omitted the
+// provider's default namespace is used. If key is omitted the raw JSON
+// representation of all keys is returned.
+//
+// Supported formats:
+//   - "secret-name/key"              — uses provider namespace
+//   - "namespace/secret-name/key"    — explicit namespace
+func (p *KubernetesSecretProvider) GetSecretValue(ctx context.Context, path string) ([]byte, error) {
+	parts := splitPath(path)
+	var namespace, secretName, key string
+	switch len(parts) {
+	case 2:
+		namespace = p.namespace
+		secretName = parts[0]
+		key = parts[1]
+	case 3:
+		namespace = parts[0]
+		secretName = parts[1]
+		key = parts[2]
+	default:
+		return nil, fmt.Errorf("invalid secret path %q: expected \"secret/key\" or \"namespace/secret/key\"", path)
+	}
+
+	secret, err := p.client.CoreV1().Secrets(namespace).Get(ctx, secretName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("getting secret %q in namespace %q: %w", secretName, namespace, err)
+	}
+	val, ok := secret.Data[key]
+	if !ok {
+		return nil, fmt.Errorf("secret %q/%q has no key %q", namespace, secretName, key)
+	}
+	return val, nil
+}
+
+// splitPath splits a path string by "/".
+func splitPath(path string) []string {
+	var parts []string
+	start := 0
+	for i := 0; i < len(path); i++ {
+		if path[i] == '/' {
+			parts = append(parts, path[start:i])
+			start = i + 1
+		}
+	}
+	parts = append(parts, path[start:])
+	return parts
+}
+
 func (p *KubernetesSecretProvider) GetCredentials(clusterName string) (*Kubeconfig, error) {
 	secret, err := p.client.CoreV1().Secrets(p.namespace).Get(context.Background(), clusterName, metav1.GetOptions{})
 	if err != nil {

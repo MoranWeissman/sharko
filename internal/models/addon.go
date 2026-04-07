@@ -1,5 +1,14 @@
 package models
 
+// AddonSecretRef describes a Kubernetes Secret that an addon needs on remote clusters.
+// Keys maps the secret data key (as it will appear in the K8s Secret) to the
+// provider path that holds the actual value (e.g. "secrets/datadog/api-key").
+type AddonSecretRef struct {
+	SecretName string            `json:"secretName" yaml:"secretName"`
+	Namespace  string            `json:"namespace" yaml:"namespace"`
+	Keys       map[string]string `json:"keys" yaml:"keys"`
+}
+
 // AddonSource represents an additional Helm chart or manifest source for an addon.
 type AddonSource struct {
 	RepoURL    string            `json:"repoURL,omitempty" yaml:"repoURL,omitempty"`
@@ -8,14 +17,6 @@ type AddonSource struct {
 	Version    string            `json:"version,omitempty" yaml:"version,omitempty"`
 	Parameters map[string]string `json:"parameters,omitempty" yaml:"parameters,omitempty"`
 	ValueFiles []string          `json:"valueFiles,omitempty" yaml:"valueFiles,omitempty"`
-}
-
-// AddonSecretRef declares a K8s Secret that an addon needs on remote clusters.
-// Provider paths are references (e.g., "secrets/datadog/api-key"), not values.
-type AddonSecretRef struct {
-	SecretName string            `json:"secretName" yaml:"secretName"`
-	Namespace  string            `json:"namespace" yaml:"namespace"`
-	Keys       map[string]string `json:"keys" yaml:"keys"` // K8s data key → provider path
 }
 
 // AddonCatalogEntry represents an addon definition from addons-catalog.yaml.
