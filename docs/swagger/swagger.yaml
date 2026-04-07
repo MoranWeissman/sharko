@@ -2487,6 +2487,68 @@ paths:
       summary: Test ad-hoc provider config
       tags:
       - system
+  /secrets/reconcile:
+    post:
+      description: |-
+        Manually triggers a full secret reconciliation pass across all registered clusters.
+        Returns immediately with 202 Accepted; reconciliation runs in the background.
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Reconcile triggered
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Secrets reconciler not configured
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Trigger secret reconciliation
+      tags:
+      - secrets
+  /secrets/status:
+    get:
+      description: |-
+        Returns statistics from the most recent secret reconciliation run,
+        including counts of checked, created, updated, deleted, and skipped secrets,
+        error count, duration, and the timestamp of the last run.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Reconciliation stats
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Secrets reconciler not configured
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get secret reconciliation status
+      tags:
+      - secrets
   /tokens:
     get:
       description: Returns all active API tokens without their secret values (admin
