@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -71,6 +72,27 @@ func (p *KubernetesSecretProvider) GetCredentials(clusterName string) (*Kubeconf
 	kc.Token = config.BearerToken
 
 	return kc, nil
+}
+
+// GetSecretValue reads a secret value from a K8s Secret.
+// Path format: "<secret-name>/<key>" — reads the specified key from the named Secret.
+func (p *KubernetesSecretProvider) GetSecretValue(ctx context.Context, path string) ([]byte, error) {
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("invalid k8s secret path %q — expected <secret-name>/<key>", path)
+	}
+	secretName, key := parts[0], parts[1]
+
+	secret, err := p.client.CoreV1().Secrets(p.namespace).Get(ctx, secretName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("getting secret %s/%s: %w", p.namespace, secretName, err)
+	}
+
+	val, ok := secret.Data[key]
+	if !ok {
+		return nil, fmt.Errorf("key %q not found in secret %s/%s", key, p.namespace, secretName)
+	}
+	return val, nil
 }
 
 func (p *KubernetesSecretProvider) ListClusters() ([]ClusterInfo, error) {

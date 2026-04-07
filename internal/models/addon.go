@@ -10,6 +10,14 @@ type AddonSource struct {
 	ValueFiles []string          `json:"valueFiles,omitempty" yaml:"valueFiles,omitempty"`
 }
 
+// AddonSecretRef declares a K8s Secret that an addon needs on remote clusters.
+// Provider paths are references (e.g., "secrets/datadog/api-key"), not values.
+type AddonSecretRef struct {
+	SecretName string            `json:"secretName" yaml:"secretName"`
+	Namespace  string            `json:"namespace" yaml:"namespace"`
+	Keys       map[string]string `json:"keys" yaml:"keys"` // K8s data key → provider path
+}
+
 // AddonCatalogEntry represents an addon definition from addons-catalog.yaml.
 type AddonCatalogEntry struct {
 	// Basic (required)
@@ -34,6 +42,9 @@ type AddonCatalogEntry struct {
 
 	// Advanced — extra Helm configuration
 	ExtraHelmValues map[string]string `json:"extraHelmValues,omitempty" yaml:"extraHelmValues,omitempty"`
+
+	// Secret requirements — Sharko creates these K8s Secrets on remote clusters
+	Secrets []AddonSecretRef `json:"secrets,omitempty" yaml:"secrets,omitempty"`
 }
 
 // AddonDeploymentInfo holds information about an addon's deployment in a specific cluster.

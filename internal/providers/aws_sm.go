@@ -72,6 +72,24 @@ func (p *AWSSecretsManagerProvider) GetCredentials(clusterName string) (*Kubecon
 	return kc, nil
 }
 
+// GetSecretValue fetches a secret value from AWS Secrets Manager.
+// Path is the full secret name/path in SM (e.g., "secrets/datadog/api-key").
+func (p *AWSSecretsManagerProvider) GetSecretValue(ctx context.Context, path string) ([]byte, error) {
+	result, err := p.client.GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{
+		SecretId: aws.String(path),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("fetching secret %q from AWS SM: %w", path, err)
+	}
+	if result.SecretBinary != nil {
+		return result.SecretBinary, nil
+	}
+	if result.SecretString != nil {
+		return []byte(*result.SecretString), nil
+	}
+	return nil, fmt.Errorf("secret %q has no value", path)
+}
+
 func (p *AWSSecretsManagerProvider) ListClusters() ([]ClusterInfo, error) {
 	var clusters []ClusterInfo
 	paginator := secretsmanager.NewListSecretsPaginator(p.client, &secretsmanager.ListSecretsInput{
