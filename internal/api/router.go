@@ -17,6 +17,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/auth"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/notifications"
+	"github.com/MoranWeissman/sharko/internal/operations"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/providers"
 	"github.com/MoranWeissman/sharko/internal/service"
@@ -57,6 +58,9 @@ type Server struct {
 
 	// Notification store (always available — initialised in NewServer).
 	notificationStore *notifications.Store
+
+	// Operations store (always available — initialised in NewServer).
+	opsStore *operations.Store
 
 	// Template filesystem for POST /api/v1/init (always available).
 	templateFS fs.FS
@@ -102,6 +106,7 @@ func NewServer(
 		aiConfigStore:     nil, // set via SetAIConfigStore
 		addonSecretDefs:   make(map[string]orchestrator.AddonSecretDefinition),
 		notificationStore: notifications.NewStore(100, notifications.DefaultNotificationsPath),
+		opsStore:          operations.NewStore(),
 		startTime:         time.Now(),
 	}
 }
@@ -295,6 +300,12 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 
 	// Cluster info
 	mux.HandleFunc("GET /api/v1/cluster/nodes", srv.handleGetNodeInfo)
+
+	// Operations (long-running session management)
+	mux.HandleFunc("POST /api/v1/operations", srv.handleCreateOperation)
+	mux.HandleFunc("GET /api/v1/operations/{id}", srv.handleGetOperation)
+	mux.HandleFunc("DELETE /api/v1/operations/{id}", srv.handleCancelOperation)
+	mux.HandleFunc("POST /api/v1/operations/{id}/heartbeat", srv.handleOperationHeartbeat)
 
 	// Webhooks (no user auth — signature verified inside the handler)
 	mux.HandleFunc("POST /api/v1/webhooks/git", srv.handleGitWebhook)
