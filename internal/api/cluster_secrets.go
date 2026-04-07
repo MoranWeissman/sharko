@@ -1,6 +1,7 @@
 package api
 
 import (
+	"log/slog"
 	"net/http"
 
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
@@ -47,15 +48,42 @@ func (s *Server) handleListClusterSecrets(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	secrets, err := remoteclient.ListManagedSecrets(r.Context(), client, "")
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "listing secrets: "+err.Error())
-		return
+	// Collect declared namespaces from addon secret definitions.
+	allowedNamespaces := make(map[string]bool)
+	s.addonSecretDefsMu.RLock()
+	for _, def := range s.addonSecretDefs {
+		if def.Namespace != "" {
+			allowedNamespaces[def.Namespace] = true
+		}
+	}
+	s.addonSecretDefsMu.RUnlock()
+
+	var allSecrets []remoteclient.ManagedSecretInfo
+	if len(allowedNamespaces) > 0 {
+		// List secrets only in declared namespaces.
+		for ns := range allowedNamespaces {
+			secrets, err := remoteclient.ListManagedSecrets(r.Context(), client, ns)
+			if err != nil {
+				// Log but continue — namespace may not exist yet.
+				slog.Warn("listing secrets in namespace", "namespace", ns, "error", err)
+				continue
+			}
+			allSecrets = append(allSecrets, secrets...)
+		}
+	} else {
+		// No addon secret definitions configured — fall back to listing by label only.
+		slog.Warn("no addon secret definitions — listing all managed secrets")
+		secrets, err := remoteclient.ListManagedSecrets(r.Context(), client, "")
+		if err != nil {
+			writeError(w, http.StatusBadGateway, "listing secrets: "+err.Error())
+			return
+		}
+		allSecrets = secrets
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"cluster": name,
-		"secrets": secrets,
+		"secrets": allSecrets,
 	})
 }
 

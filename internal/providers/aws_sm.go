@@ -36,10 +36,9 @@ func NewAWSSecretsManagerProvider(cfg Config) (*AWSSecretsManagerProvider, error
 
 	client := secretsmanager.NewFromConfig(awsCfg)
 
+	// No default prefix — secret name equals cluster name by default.
+	// Users who want a prefix can set SHARKO_PROVIDER_PREFIX.
 	prefix := cfg.Prefix
-	if prefix == "" {
-		prefix = "clusters/"
-	}
 
 	return &AWSSecretsManagerProvider{client: client, prefix: prefix}, nil
 }
