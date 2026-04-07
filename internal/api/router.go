@@ -234,6 +234,7 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("DELETE /api/v1/clusters/{name}", srv.handleDeregisterCluster)
 	mux.HandleFunc("PATCH /api/v1/clusters/{name}", srv.handleUpdateClusterAddons)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/refresh", srv.handleRefreshClusterCredentials)
+	mux.HandleFunc("POST /api/v1/clusters/{name}/test", srv.handleTestCluster)
 
 	// Init (orchestrator-backed)
 	mux.HandleFunc("POST /api/v1/init", srv.handleInit)

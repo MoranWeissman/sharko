@@ -1606,6 +1606,39 @@ paths:
       summary: Refresh cluster secrets
       tags:
       - clusters
+  /clusters/{name}/test:
+    post:
+      description: Attempts to connect to a cluster using credentials from the provider
+        and returns the server version
+      parameters:
+      - description: Cluster name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Connectivity result (reachable true/false)
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: No credentials provider configured
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Test cluster connectivity
+      tags:
+      - clusters
   /clusters/{name}/values:
     get:
       description: Returns the Helm values file for a specific cluster

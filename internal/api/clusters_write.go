@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"regexp"
 
@@ -73,10 +72,6 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := orch.RegisterCluster(r.Context(), req)
 	if err != nil {
-		if errors.Is(err, orchestrator.ErrClusterAlreadyExists) {
-			writeError(w, http.StatusConflict, err.Error())
-			return
-		}
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}

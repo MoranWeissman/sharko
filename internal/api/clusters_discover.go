@@ -2,6 +2,8 @@ package api
 
 import (
 	"net/http"
+
+	"github.com/MoranWeissman/sharko/internal/remoteclient"
 )
 
 // discoverClusterEntry is a single cluster in the discover response.
@@ -72,5 +74,68 @@ func (s *Server) handleDiscoverClusters(w http.ResponseWriter, r *http.Request) 
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"clusters": entries,
+	})
+}
+
+// handleTestCluster godoc
+//
+// @Summary Test cluster connectivity
+// @Description Attempts to connect to a cluster using credentials from the provider and returns the server version
+// @Tags clusters
+// @Produce json
+// @Security BearerAuth
+// @Param name path string true "Cluster name"
+// @Success 200 {object} map[string]interface{} "Connectivity result (reachable true/false)"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 503 {object} map[string]interface{} "No credentials provider configured"
+// @Router /clusters/{name}/test [post]
+// handleTestCluster handles POST /api/v1/clusters/{name}/test — test connectivity to a cluster.
+func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
+
+	name := r.PathValue("name")
+
+	if s.credProvider == nil {
+		writeError(w, http.StatusServiceUnavailable, "no credentials provider configured")
+		return
+	}
+
+	creds, err := s.credProvider.GetCredentials(name)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"name":      name,
+			"reachable": false,
+			"error":     err.Error(),
+		})
+		return
+	}
+
+	client, err := remoteclient.NewClientFromKubeconfig(creds.Raw)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"name":      name,
+			"reachable": false,
+			"error":     "failed to build client: " + err.Error(),
+		})
+		return
+	}
+
+	version, err := client.Discovery().ServerVersion()
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"name":      name,
+			"reachable": false,
+			"error":     err.Error(),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"name":           name,
+		"reachable":      true,
+		"server_version": version.GitVersion,
+		"platform":       version.Platform,
 	})
 }

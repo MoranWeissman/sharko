@@ -38,6 +38,7 @@ type RegisterClusterResult struct {
 	FailedStep     string        `json:"failed_step,omitempty"`
 	Error          string        `json:"error,omitempty"`
 	Message        string        `json:"message,omitempty"`
+	Adopted        bool          `json:"adopted,omitempty"` // true if cluster was already in ArgoCD
 }
 
 // ClusterResult holds cluster details in operation results.

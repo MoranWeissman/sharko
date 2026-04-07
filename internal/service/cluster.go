@@ -61,8 +61,9 @@ func (s *ClusterService) ListClusters(ctx context.Context, gp gitprovider.GitPro
 		argocdMap[ac.Name] = ac
 	}
 
-	// Enrich clusters with ArgoCD status
+	// Enrich clusters with ArgoCD status; mark as managed (in cluster-addons.yaml)
 	for i := range clusters {
+		clusters[i].Managed = true
 		if ac, ok := argocdMap[clusters[i].Name]; ok {
 			clusters[i].ConnectionStatus = ac.ConnectionState
 			clusters[i].ServerVersion = ac.ServerVersion

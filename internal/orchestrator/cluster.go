@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"path"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/models"
@@ -47,14 +49,17 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		}
 	}
 
-	// Step 2: Check for duplicate — cluster must not already exist in ArgoCD.
+	// Step 2: Check whether the cluster already exists in ArgoCD.
+	// If it does, we adopt it (skip ArgoCD registration) instead of returning an error.
 	clusters, err := o.argocd.ListClusters(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("checking for existing cluster %q: %w", req.Name, err)
 	}
+	alreadyInArgoCD := false
 	for _, c := range clusters {
 		if c.Name == req.Name {
-			return nil, fmt.Errorf("%w: %q in ArgoCD", ErrClusterAlreadyExists, req.Name)
+			alreadyInArgoCD = true
+			break
 		}
 	}
 
@@ -63,6 +68,7 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 			Name:   req.Name,
 			Addons: req.Addons,
 		},
+		Adopted: alreadyInArgoCD,
 	}
 	var steps []string
 
@@ -130,6 +136,7 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 
 	// Step 6: Register cluster in ArgoCD with addon labels.
 	// This is LAST — by now secrets exist and the values file is merged.
+	// If the cluster was already in ArgoCD (adoption path), skip registration.
 	labels := make(map[string]string)
 	for addon, enabled := range req.Addons {
 		if enabled {
@@ -139,16 +146,29 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		}
 	}
 
-	if err := o.argocd.RegisterCluster(ctx, req.Name, creds.Server, creds.CAData, creds.Token, labels); err != nil {
-		result.Status = "partial"
-		result.CompletedSteps = steps
-		result.FailedStep = "argocd_register"
-		result.Error = err.Error()
-		result.Message = "Secrets created and values PR merged, but ArgoCD registration failed. Register the cluster manually."
-		result.Git = gitResult
-		return result, nil
+	if alreadyInArgoCD {
+		slog.Info("cluster already in ArgoCD, adopting — skipping registration", "cluster", req.Name)
+		steps = append(steps, "argocd_adopt")
+	} else {
+		if err := o.argocd.RegisterCluster(ctx, req.Name, creds.Server, creds.CAData, creds.Token, labels); err != nil {
+			// Handle race condition: cluster was registered between our check and now.
+			if strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "409") {
+				slog.Info("cluster already in ArgoCD, adopting", "cluster", req.Name)
+				result.Adopted = true
+				steps = append(steps, "argocd_adopt")
+			} else {
+				result.Status = "partial"
+				result.CompletedSteps = steps
+				result.FailedStep = "argocd_register"
+				result.Error = err.Error()
+				result.Message = "Secrets created and values PR merged, but ArgoCD registration failed. Register the cluster manually."
+				result.Git = gitResult
+				return result, nil
+			}
+		} else {
+			steps = append(steps, "argocd_register")
+		}
 	}
-	steps = append(steps, "argocd_register")
 
 	result.Status = "success"
 	result.CompletedSteps = steps
