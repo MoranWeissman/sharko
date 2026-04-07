@@ -5,7 +5,6 @@ import {
   Server,
   Shield,
   Loader2,
-  Plus,
   Pencil,
   X,
   Activity,
@@ -21,7 +20,6 @@ import { useConnections } from '@/hooks/useConnections'
 import { api } from '@/services/api'
 import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
-import { Badge } from '@/components/ui/badge'
 import type { AIConfigResponse, AIProviderInfo, ConnectionResponse } from '@/services/models'
 
 interface PlatformInfo {
@@ -205,31 +203,32 @@ interface ProviderInfo {
 }
 
 export function Connections({ embedded }: { embedded?: boolean } = {}) {
-  const { connections, loading, error, refreshConnections } =
-    useConnections()
-  const [switchingTo, setSwitchingTo] = useState<string | null>(null)
+  const { connections, loading, error, refreshConnections } = useConnections()
   const [platformInfo, setPlatformInfo] = useState<PlatformInfo | null>(null)
   const [healthLoading, setHealthLoading] = useState(true)
 
-  // Live connection status (for active connection card)
+  // Live status indicators
   const [liveStatus, setLiveStatus] = useState<LiveStatus>({ git: 'idle', argocd: 'idle' })
 
   // Secrets provider info
   const [providerInfo, setProviderInfo] = useState<ProviderInfo | null>(null)
 
-  // Add form state
-  const [showAddForm, setShowAddForm] = useState(false)
-  const [addForm, setAddForm] = useState<ConnectionFormData>({ ...emptyForm })
-  const [addSaving, setAddSaving] = useState(false)
-  const [addError, setAddError] = useState<string | null>(null)
-  const [addTestStatus, setAddTestStatus] = useState<TestStatus>({ git: 'idle', argocd: 'idle' })
+  // Single connection form state
+  const [form, setForm] = useState<ConnectionFormData>({ ...emptyForm })
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [testStatus, setTestStatus] = useState<TestStatus>({ git: 'idle', argocd: 'idle' })
 
-  // Edit form state
-  const [editingName, setEditingName] = useState<string | null>(null)
-  const [editForm, setEditForm] = useState<ConnectionFormData>({ ...emptyForm })
-  const [editSaving, setEditSaving] = useState(false)
-  const [editError, setEditError] = useState<string | null>(null)
-  const [editTestStatus, setEditTestStatus] = useState<TestStatus>({ git: 'idle', argocd: 'idle' })
+  // Derive the single connection (first/active one)
+  const existingConn = connections.find((c) => c.is_active) ?? connections[0] ?? null
+  const isEdit = existingConn !== null
+
+  // Populate form when connection loads
+  useEffect(() => {
+    if (existingConn) {
+      setForm(formFromConnection(existingConn))
+    }
+  }, [existingConn?.name]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Initialize repo
   const [initRunning, setInitRunning] = useState(false)
@@ -291,56 +290,44 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
     fetchProviderInfo()
   }, [fetchHealth, fetchProviderInfo])
 
-  // Refresh live status when active connection changes
   useEffect(() => {
-    const activeConn = connections.find((c) => c.is_active)
-    if (activeConn) {
+    if (existingConn) {
       fetchLiveStatus()
     } else {
       setLiveStatus({ git: 'idle', argocd: 'idle' })
     }
-  }, [connections, fetchLiveStatus])
+  }, [existingConn?.name, fetchLiveStatus]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function handleSwitch(name: string) {
-    setSwitchingTo(name)
-    try {
-      await api.setActiveConnection(name)
-      refreshConnections()
-    } finally {
-      setSwitchingTo(null)
-    }
-  }
-
-  async function testCredentials(form: ConnectionFormData, which: 'git' | 'argocd' | 'both', setStatus: (s: TestStatus | ((prev: TestStatus) => TestStatus)) => void) {
-    const payload = buildPayload(form)
-    if (which === 'git' || which === 'both') setStatus(prev => ({ ...prev, git: 'testing', gitMessage: undefined }))
-    if (which === 'argocd' || which === 'both') setStatus(prev => ({ ...prev, argocd: 'testing', argocdMessage: undefined }))
+  async function testCredentials(which: 'git' | 'argocd' | 'both') {
+    const payload = buildPayload(form, existingConn?.name)
+    if (which === 'git' || which === 'both') setTestStatus(prev => ({ ...prev, git: 'testing', gitMessage: undefined }))
+    if (which === 'argocd' || which === 'both') setTestStatus(prev => ({ ...prev, argocd: 'testing', argocdMessage: undefined }))
     try {
       const res = await api.testCredentials(payload)
       if (which === 'git' || which === 'both') {
-        setStatus(prev => ({ ...prev, git: res.git.status === 'ok' ? 'ok' : 'error', gitMessage: res.git.message, gitAuth: res.git.auth }))
+        setTestStatus(prev => ({ ...prev, git: res.git.status === 'ok' ? 'ok' : 'error', gitMessage: res.git.message, gitAuth: res.git.auth }))
       }
       if (which === 'argocd' || which === 'both') {
-        setStatus(prev => ({ ...prev, argocd: res.argocd.status === 'ok' ? 'ok' : 'error', argocdMessage: res.argocd.message, argocdAuth: res.argocd.auth }))
+        setTestStatus(prev => ({ ...prev, argocd: res.argocd.status === 'ok' ? 'ok' : 'error', argocdMessage: res.argocd.message, argocdAuth: res.argocd.auth }))
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Test failed'
-      if (which === 'git' || which === 'both') setStatus(prev => ({ ...prev, git: 'error', gitMessage: msg }))
-      if (which === 'argocd' || which === 'both') setStatus(prev => ({ ...prev, argocd: 'error', argocdMessage: msg }))
+      if (which === 'git' || which === 'both') setTestStatus(prev => ({ ...prev, git: 'error', gitMessage: msg }))
+      if (which === 'argocd' || which === 'both') setTestStatus(prev => ({ ...prev, argocd: 'error', argocdMessage: msg }))
     }
   }
 
-  async function testAndSave(form: ConnectionFormData, setStatus: (s: TestStatus | ((prev: TestStatus) => TestStatus)) => void, saveFn: () => Promise<void>, setError: (e: string | null) => void, setSaving: (b: boolean) => void, connectionName?: string) {
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault()
     setSaving(true)
-    setError(null)
-    // Auto-test before saving (name included so backend can fill missing tokens from saved connection)
-    setStatus({ git: 'testing', argocd: 'testing' })
+    setSaveError(null)
+    setTestStatus({ git: 'testing', argocd: 'testing' })
     try {
-      const payload = buildPayload(form, connectionName)
+      const payload = buildPayload(form, existingConn?.name)
       const res = await api.testCredentials(payload)
       const gitOk = res.git.status === 'ok'
       const argocdOk = res.argocd.status === 'ok'
-      setStatus({
+      setTestStatus({
         git: gitOk ? 'ok' : 'error',
         argocd: argocdOk ? 'ok' : 'error',
         gitMessage: res.git.message,
@@ -352,47 +339,36 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
         const errors = []
         if (!gitOk) errors.push(`Git: ${res.git.message || 'failed'}`)
         if (!argocdOk) errors.push(`ArgoCD: ${res.argocd.message || 'failed'}`)
-        setError(`Connection test failed — ${errors.join(', ')}`)
+        setSaveError(`Connection test failed — ${errors.join(', ')}`)
         setSaving(false)
         return
       }
-      // Tests passed — save
-      await saveFn()
+      if (isEdit && existingConn) {
+        await api.updateConnection(existingConn.name, buildPayload(form, existingConn.name))
+      } else {
+        await api.createConnection(buildPayload(form))
+      }
+      refreshConnections()
+      setJustSaved(true)
+      fetchLiveStatus()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save connection')
+      setSaveError(err instanceof Error ? err.message : 'Failed to save connection')
     } finally {
       setSaving(false)
     }
   }
 
-  async function handleAddSubmit(e: FormEvent) {
-    e.preventDefault()
-    await testAndSave(addForm, setAddTestStatus, async () => {
-      await api.createConnection(buildPayload(addForm))
-      refreshConnections()
-      setShowAddForm(false)
-      setAddForm({ ...emptyForm })
-      setAddTestStatus({ git: 'idle', argocd: 'idle' })
-      setJustSaved(true)
-    }, setAddError, setAddSaving)
-  }
-
-  function handleEditStart(conn: ConnectionResponse) {
-    setEditingName(conn.name)
-    setEditForm(formFromConnection(conn))
-    setEditError(null)
-    setEditTestStatus({ git: 'idle', argocd: 'idle' })
-  }
-
-  async function handleEditSubmit(e: FormEvent) {
-    e.preventDefault()
-    if (!editingName) return
-    const name = editingName
-    await testAndSave(editForm, setEditTestStatus, async () => {
-      await api.updateConnection(name, buildPayload(editForm, name))
-      refreshConnections()
-      setEditingName(null)
-    }, setEditError, setEditSaving, name)
+  async function handleTestConnection() {
+    setLiveStatus({ git: 'testing', argocd: 'testing' })
+    try {
+      const res = await api.testConnection()
+      setLiveStatus({
+        git: res.git.status === 'ok' ? 'ok' : 'error',
+        argocd: res.argocd.status === 'ok' ? 'ok' : 'error',
+      })
+    } catch {
+      setLiveStatus({ git: 'error', argocd: 'error' })
+    }
   }
 
   if (loading) {
@@ -403,8 +379,6 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
     return <ErrorState message={error} onRetry={refreshConnections} />
   }
 
-  const activeConn = connections.find((c) => c.is_active) ?? null
-
   return (
     <div className="space-y-8">
       {/* Header */}
@@ -414,266 +388,81 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
             Settings
           </h2>
           <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
-            Manage connections and view platform information.
+            Manage connection and view platform information.
           </p>
         </div>
       )}
 
-      {/* Active Connections */}
+      {/* Connection Form */}
       <section className="space-y-4">
         <div className="flex items-center justify-between">
           <h3 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
-            Active Connections
+            Connection
           </h3>
-          <button
-            onClick={async () => {
-              const opening = !showAddForm
-              setShowAddForm(opening)
-              setAddForm({ ...emptyForm })
-              setAddError(null)
-              setAddTestStatus({ git: 'idle', argocd: 'idle' })
-              if (opening) {
-                try {
-                  const disc = await api.discoverArgocd()
-                  if (disc.server_url) {
-                    setAddForm(prev => ({ ...prev, argocd_server_url: disc.server_url }))
-                  }
-                } catch { /* ignore — user can enter manually */ }
-              }
-            }}
-            className="inline-flex items-center gap-2 rounded-lg border-2 border-dashed border-[#6aade0] px-5 py-2.5 text-sm font-medium text-[#0a2a4a] hover:bg-[#d6eeff] hover:border-solid transition-all dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
-          >
-            <Plus className="h-4 w-4" />
-            Add Connection
-          </button>
-        </div>
-
-        {/* Add Connection Form */}
-        {showAddForm && (
-          <form
-            onSubmit={handleAddSubmit}
-            className="rounded-xl border border-teal-200 bg-teal-50/50 p-6 shadow-sm dark:border-teal-800 dark:bg-teal-950/20"
-          >
-            <h4 className="mb-4 text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
-              New Connection
-            </h4>
-            <ConnectionFormFields
-              form={addForm}
-              onChange={(patch) => {
-                setAddForm((prev) => ({ ...prev, ...patch }))
-                setAddTestStatus({ git: 'idle', argocd: 'idle' })
-              }}
-              isEdit={false}
-              testStatus={addTestStatus}
-              onTestGit={() => testCredentials(addForm, 'git', setAddTestStatus)}
-              onTestArgocd={() => testCredentials(addForm, 'argocd', setAddTestStatus)}
-            />
-            {addError && (
-              <p className="mt-3 text-sm text-red-600 dark:text-red-400">
-                {addError}
-              </p>
-            )}
-            <div className="mt-4 flex items-center gap-3">
-              <button
-                type="submit"
-                disabled={addSaving}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-teal-700 disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
-              >
-                {addSaving && (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                )}
-                Save
-              </button>
+          {isEdit && (
+            <div className="flex items-center gap-3">
+              <span className="flex items-center gap-1 text-xs text-[#2a5a7a] dark:text-gray-400">
+                <GitBranch className="h-3.5 w-3.5" />
+                Git:
+                {liveStatus.git === 'testing' && <Loader2 className="h-3 w-3 animate-spin text-[#3a6a8a]" />}
+                {liveStatus.git === 'ok' && <CheckCircle className="h-3.5 w-3.5 text-green-500" />}
+                {liveStatus.git === 'error' && <XCircle className="h-3.5 w-3.5 text-red-500" />}
+                {liveStatus.git === 'idle' && <span className="text-[#3a6a8a]">—</span>}
+              </span>
+              <span className="flex items-center gap-1 text-xs text-[#2a5a7a] dark:text-gray-400">
+                <Server className="h-3.5 w-3.5" />
+                ArgoCD:
+                {liveStatus.argocd === 'testing' && <Loader2 className="h-3 w-3 animate-spin text-[#3a6a8a]" />}
+                {liveStatus.argocd === 'ok' && <CheckCircle className="h-3.5 w-3.5 text-green-500" />}
+                {liveStatus.argocd === 'error' && <XCircle className="h-3.5 w-3.5 text-red-500" />}
+                {liveStatus.argocd === 'idle' && <span className="text-[#3a6a8a]">—</span>}
+              </span>
               <button
                 type="button"
-                onClick={() => setShowAddForm(false)}
-                className="rounded-lg px-4 py-2 text-sm font-medium text-[#1a4a6a] hover:text-[#0a3a5a] dark:text-gray-400 dark:hover:text-gray-200"
+                onClick={handleTestConnection}
+                disabled={liveStatus.git === 'testing' || liveStatus.argocd === 'testing'}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
               >
-                Cancel
+                {(liveStatus.git === 'testing' || liveStatus.argocd === 'testing') ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <Activity className="h-3 w-3" />
+                )}
+                Test Connection
               </button>
             </div>
-          </form>
-        )}
+          )}
+        </div>
 
-        {connections.length === 0 ? (
-          <p className="py-8 text-center text-[#3a6a8a] dark:text-gray-500">
-            No connections configured.
-          </p>
-        ) : (
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            {connections.map((conn) => (
-              <div key={conn.name}>
-                <div
-                  className={`rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-6 shadow-sm dark:bg-gray-800 ${
-                    conn.is_active
-                      ? 'border-teal-500 ring-2 ring-teal-100 dark:ring-teal-900/50'
-                      : 'border-[#6aade0] dark:border-gray-700'
-                  }`}
-                >
-                  {/* Name + badges */}
-                  <div className="mb-4 flex items-center justify-between">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h4 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
-                        {conn.name}
-                      </h4>
-                      {conn.is_default && (
-                        <Badge variant="secondary" className="text-xs">
-                          Default
-                        </Badge>
-                      )}
-                      {conn.is_active && (
-                        <Badge className="bg-teal-100 text-xs text-teal-700 dark:bg-teal-900/30 dark:text-teal-400">
-                          Active
-                        </Badge>
-                      )}
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => handleEditStart(conn)}
-                        className="inline-flex items-center gap-1 text-xs font-medium text-[#2a5a7a] hover:text-[#0a3a5a] dark:text-gray-400 dark:hover:text-gray-200"
-                      >
-                        <Pencil className="h-3 w-3" />
-                        Edit
-                      </button>
-                      {!conn.is_active && (
-                        <button
-                          onClick={() => handleSwitch(conn.name)}
-                          disabled={switchingTo === conn.name}
-                          className="text-xs font-medium text-teal-600 hover:text-teal-700 disabled:opacity-50 dark:text-teal-400 dark:hover:text-teal-300"
-                        >
-                          {switchingTo === conn.name ? (
-                            <Loader2 className="inline h-3 w-3 animate-spin" />
-                          ) : (
-                            'Switch'
-                          )}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Live status badges (active connection only) */}
-                  {conn.is_active && (
-                    <div className="mb-3 flex items-center gap-3">
-                      <span className="flex items-center gap-1 text-xs text-[#2a5a7a] dark:text-gray-400">
-                        <GitBranch className="h-3 w-3" />
-                        Git:
-                        {liveStatus.git === 'testing' && <Loader2 className="h-3 w-3 animate-spin text-[#3a6a8a]" />}
-                        {liveStatus.git === 'ok' && <CheckCircle className="h-3.5 w-3.5 text-green-500" />}
-                        {liveStatus.git === 'error' && <XCircle className="h-3.5 w-3.5 text-red-500" />}
-                        {liveStatus.git === 'idle' && <span className="text-[#3a6a8a]">—</span>}
-                      </span>
-                      <span className="flex items-center gap-1 text-xs text-[#2a5a7a] dark:text-gray-400">
-                        <Server className="h-3 w-3" />
-                        ArgoCD:
-                        {liveStatus.argocd === 'testing' && <Loader2 className="h-3 w-3 animate-spin text-[#3a6a8a]" />}
-                        {liveStatus.argocd === 'ok' && <CheckCircle className="h-3.5 w-3.5 text-green-500" />}
-                        {liveStatus.argocd === 'error' && <XCircle className="h-3.5 w-3.5 text-red-500" />}
-                        {liveStatus.argocd === 'idle' && <span className="text-[#3a6a8a]">—</span>}
-                      </span>
-                    </div>
-                  )}
-
-                  {/* Details */}
-                  <dl className="space-y-2 text-sm">
-                    <div className="flex items-center justify-between">
-                      <dt className="flex items-center gap-1.5 text-[#2a5a7a] dark:text-gray-400">
-                        <GitBranch className="h-3.5 w-3.5" />
-                        Git Provider
-                      </dt>
-                      <dd className="font-medium capitalize text-[#0a2a4a] dark:text-gray-100">
-                        {conn.git_provider}
-                      </dd>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <dt className="flex items-center gap-1.5 text-[#2a5a7a] dark:text-gray-400">
-                        <GitBranch className="h-3.5 w-3.5" />
-                        Repository
-                      </dt>
-                      <dd className="font-mono text-xs text-[#0a3a5a] dark:text-gray-300">
-                        {conn.git_repo_identifier}
-                      </dd>
-                    </div>
-                    <div className="flex items-start justify-between gap-2">
-                      <dt className="flex shrink-0 items-center gap-1.5 text-[#2a5a7a] dark:text-gray-400">
-                        <Server className="h-3.5 w-3.5" />
-                        ArgoCD URL
-                      </dt>
-                      <dd className="break-all text-right font-mono text-xs text-[#0a3a5a] dark:text-gray-300">
-                        {conn.argocd_server_url}
-                      </dd>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <dt className="flex items-center gap-1.5 text-[#2a5a7a] dark:text-gray-400">
-                        <Shield className="h-3.5 w-3.5" />
-                        Namespace
-                      </dt>
-                      <dd className="font-mono text-xs text-[#0a3a5a] dark:text-gray-300">
-                        {conn.argocd_namespace}
-                      </dd>
-                    </div>
-                  </dl>
-                </div>
-
-                {/* Inline Edit Form */}
-                {editingName === conn.name && (
-                  <form
-                    onSubmit={handleEditSubmit}
-                    className="mt-2 rounded-xl border border-amber-200 bg-amber-50/50 p-6 shadow-sm dark:border-amber-800 dark:bg-amber-950/20"
-                  >
-                    <div className="mb-4 flex items-center justify-between">
-                      <h4 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
-                        Edit Connection
-                      </h4>
-                      <button
-                        type="button"
-                        onClick={() => setEditingName(null)}
-                        className="text-[#3a6a8a] hover:text-[#1a4a6a] dark:hover:text-gray-200"
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                    </div>
-                    <ConnectionFormFields
-                      form={editForm}
-                      onChange={(patch) => {
-                        setEditForm((prev) => ({ ...prev, ...patch }))
-                        setEditTestStatus({ git: 'idle', argocd: 'idle' })
-                      }}
-                      isEdit={true}
-                      testStatus={editTestStatus}
-                      onTestGit={() => testCredentials(editForm, 'git', setEditTestStatus)}
-                      onTestArgocd={() => testCredentials(editForm, 'argocd', setEditTestStatus)}
-                    />
-                    {editError && (
-                      <p className="mt-3 text-sm text-red-600 dark:text-red-400">
-                        {editError}
-                      </p>
-                    )}
-                    <div className="mt-4 flex items-center gap-3">
-                      <button
-                        type="submit"
-                        disabled={editSaving}
-                        className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-amber-700 disabled:opacity-50 dark:bg-amber-700 dark:hover:bg-amber-600"
-                      >
-                        {editSaving && (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        )}
-                        Update
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setEditingName(null)}
-                        className="rounded-lg px-4 py-2 text-sm font-medium text-[#1a4a6a] hover:text-[#0a3a5a] dark:text-gray-400 dark:hover:text-gray-200"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </form>
-                )}
-              </div>
-            ))}
+        <form
+          onSubmit={handleSubmit}
+          className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-6 shadow-sm dark:bg-gray-800"
+        >
+          <ConnectionFormFields
+            form={form}
+            onChange={(patch) => {
+              setForm((prev) => ({ ...prev, ...patch }))
+              setTestStatus({ git: 'idle', argocd: 'idle' })
+            }}
+            isEdit={isEdit}
+            testStatus={testStatus}
+            onTestGit={() => testCredentials('git')}
+            onTestArgocd={() => testCredentials('argocd')}
+          />
+          {saveError && (
+            <p className="mt-3 text-sm text-red-600 dark:text-red-400">{saveError}</p>
+          )}
+          <div className="mt-6 flex items-center gap-3">
+            <button
+              type="submit"
+              disabled={saving}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-teal-700 disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
+            >
+              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {isEdit ? 'Update Connection' : 'Save Connection'}
+            </button>
           </div>
-        )}
+        </form>
       </section>
 
       {/* Platform Info */}
@@ -683,7 +472,6 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
         </h3>
         <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
           <dl className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-            {/* Deployment Mode */}
             <div>
               <dt className="flex items-center gap-1.5 text-sm text-[#2a5a7a] dark:text-gray-400">
                 <Monitor className="h-3.5 w-3.5" />
@@ -693,8 +481,6 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
                 {platformInfo?.mode ?? 'Unknown'}
               </dd>
             </div>
-
-            {/* API Health */}
             <div>
               <dt className="flex items-center gap-1.5 text-sm text-[#2a5a7a] dark:text-gray-400">
                 <Activity className="h-3.5 w-3.5" />
@@ -716,26 +502,22 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
                 )}
               </dd>
             </div>
-
-            {/* Git Provider */}
             <div>
               <dt className="flex items-center gap-1.5 text-sm text-[#2a5a7a] dark:text-gray-400">
                 <GitBranch className="h-3.5 w-3.5" />
                 Git Provider
               </dt>
               <dd className="mt-1 text-sm font-medium capitalize text-[#0a2a4a] dark:text-gray-100">
-                {activeConn?.git_provider ?? 'N/A'}
+                {existingConn?.git_provider ?? 'N/A'}
               </dd>
             </div>
-
-            {/* ArgoCD Server */}
             <div>
               <dt className="flex items-center gap-1.5 text-sm text-[#2a5a7a] dark:text-gray-400">
                 <Globe className="h-3.5 w-3.5" />
                 ArgoCD Server
               </dt>
               <dd className="mt-1 break-all font-mono text-sm text-[#0a2a4a] dark:text-gray-100">
-                {activeConn?.argocd_server_url ?? 'N/A'}
+                {existingConn?.argocd_server_url ?? 'N/A'}
               </dd>
             </div>
           </dl>
@@ -793,7 +575,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
       </section>
 
       {/* Initialize Repository */}
-      {connections.length > 0 && (
+      {isEdit && (
         <section className="space-y-4">
           <div className="flex items-center gap-2">
             <h3 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
@@ -801,7 +583,7 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
             </h3>
             {justSaved && (
               <span className="rounded-full bg-teal-100 px-2.5 py-0.5 text-xs font-medium text-teal-700 dark:bg-teal-900/30 dark:text-teal-300">
-                New connection saved
+                Connection saved
               </span>
             )}
           </div>

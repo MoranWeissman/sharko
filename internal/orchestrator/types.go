@@ -88,8 +88,9 @@ type ConfigureAddonRequest struct {
 // InitRepoRequest is the input for initializing the addons repository.
 type InitRepoRequest struct {
 	BootstrapArgoCD bool   `json:"bootstrap_argocd"`
-	GitUsername      string `json:"git_username,omitempty"`
-	GitToken         string `json:"git_token,omitempty"`
+	AutoMerge       bool   `json:"auto_merge"`
+	GitUsername     string `json:"git_username,omitempty"`
+	GitToken        string `json:"git_token,omitempty"`
 }
 
 // InitRepoResult is the output of a successful repo initialization.

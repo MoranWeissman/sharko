@@ -191,8 +191,55 @@ export async function discoverClusters() {
   return fetchJSON<any>('/clusters/available')
 }
 
-export async function initRepo(data?: { bootstrap_argocd?: boolean }) {
-  return postJSON<any>('/init', data || { bootstrap_argocd: true })
+export interface OperationStep {
+  name: string
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'waiting'
+  detail?: string
+}
+
+export interface OperationSession {
+  id: string
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'waiting'
+  steps: OperationStep[]
+  wait_payload?: string
+  wait_detail?: string
+  error?: string
+}
+
+export async function initRepo(data?: { bootstrap_argocd?: boolean; auto_merge?: boolean }): Promise<{ operation_id: string } | any> {
+  const res = await fetch(`${BASE_URL}/init`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(data || { bootstrap_argocd: true }),
+  })
+  if (res.status === 401) {
+    sessionStorage.removeItem(TOKEN_KEY)
+    window.location.reload()
+    throw new Error('Session expired')
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error(err.error || res.statusText)
+  }
+  return res.json()
+}
+
+export async function getOperation(id: string): Promise<OperationSession> {
+  const res = await fetch(`${BASE_URL}/operations/${id}`, { headers: authHeaders() })
+  if (res.status === 401) {
+    sessionStorage.removeItem(TOKEN_KEY)
+    window.location.reload()
+    throw new Error('Session expired')
+  }
+  if (!res.ok) throw new Error('Failed to get operation')
+  return res.json()
+}
+
+export async function operationHeartbeat(id: string): Promise<void> {
+  await fetch(`${BASE_URL}/operations/${id}/heartbeat`, {
+    method: 'POST',
+    headers: authHeaders(),
+  })
 }
 
 export const api = {

@@ -33,9 +33,6 @@ config:
   # Connections are managed via the Settings UI and stored in an encrypted K8s Secret.
   # The Secret name can be customized below. On first deploy, open the UI to configure.
   connectionSecretName: "sharko-connections"
-  # Dev mode: enables env var fallback for credentials (GITHUB_TOKEN, ARGOCD_TOKEN, etc.)
-  # In production, set to false — credentials must be configured via Settings UI.
-  devMode: false
   # Enable read access to Kubernetes Nodes (get/list).
   # Adds a ClusterRole rule allowing Sharko to fetch node count and status.
   # Requires cluster-level permissions — opt-in.
@@ -46,19 +43,6 @@ config:
   # Git repo URL for the addons repository. Used by init and write operations.
   # If empty, Sharko falls back to the repo URL stored in the active connection.
   repoURL: ""  # e.g. https://github.com/your-org/your-addons-repo
-
-# ---------------------------------------------------------------------------
-# Secrets
-# ---------------------------------------------------------------------------
-# Existing secret with env vars (GITHUB_TOKEN, AI_API_KEY, DATADOG_API_KEY, etc.)
-# If set, the chart will NOT create a secret — use your own.
-existingSecret: ""
-
-# If existingSecret is empty, these values are used to create one.
-# In production, use existingSecret or sealed-secrets instead.
-secrets:
-  GITHUB_TOKEN: ""
-  # ARGOCD_TOKEN: ""  # Not needed in in-cluster mode with RBAC
 
 # ---------------------------------------------------------------------------
 # Authentication

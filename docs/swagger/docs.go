@@ -2868,7 +2868,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Creates the GitOps repository structure and bootstraps ArgoCD with initial addon ApplicationSets",
+                "description": "Creates the GitOps repository structure and bootstraps ArgoCD with initial addon ApplicationSets.\nReturns immediately with an operation_id; poll GET /api/v1/operations/{id} for progress.\nIf an existing \"waiting\" init session is found, returns that session (idempotent resume).",
                 "consumes": [
                     "application/json"
                 ],
@@ -2890,8 +2890,15 @@ const docTemplate = `{
                     }
                 ],
                 "responses": {
-                    "201": {
-                        "description": "Repository initialized",
+                    "200": {
+                        "description": "Existing waiting session returned (already in progress)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "202": {
+                        "description": "Operation accepted — poll operation_id for progress",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -2899,13 +2906,6 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "409": {
-                        "description": "Already initialized",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -3033,6 +3033,132 @@ const docTemplate = `{
                     },
                     "503": {
                         "description": "Service unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/operations/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the current status and step progress of a long-running operation",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Get operation status",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Operation session ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Operation session",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Operation not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/operations/{id}/cancel": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Cancels a pending or waiting operation. Running operations may not stop immediately.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Cancel an operation",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Operation session ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Operation cancelled",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Operation not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/operations/{id}/heartbeat": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Records a client heartbeat so the server knows the client is still polling.\nWithout heartbeats, a waiting operation may be abandoned.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Send operation heartbeat",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Operation session ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Heartbeat recorded",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Operation not found",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -4117,6 +4243,9 @@ const docTemplate = `{
         "github_com_MoranWeissman_sharko_internal_orchestrator.InitRepoRequest": {
             "type": "object",
             "properties": {
+                "auto_merge": {
+                    "type": "boolean"
+                },
                 "bootstrap_argocd": {
                     "type": "boolean"
                 },

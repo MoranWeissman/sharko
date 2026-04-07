@@ -3,6 +3,8 @@ package orchestrator
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -212,6 +214,111 @@ func (o *Orchestrator) bootstrapArgoCD(ctx context.Context, rootAppYAML []byte) 
 	}
 
 	return nil
+}
+
+// ─── Exported step-by-step helpers for the async init flow ───────────────────
+//
+// These methods expose individual phases of the init workflow so that the API
+// handler can drive them one step at a time, recording progress in the
+// operations store between each step.
+
+// CollectBootstrapFiles walks the templateFS and returns the ready-to-commit
+// file map (placeholder tokens already substituted).
+func (o *Orchestrator) CollectBootstrapFiles(_ context.Context) (map[string][]byte, error) {
+	if o.templateFS == nil {
+		return nil, fmt.Errorf("template filesystem not configured")
+	}
+	if o.gitops.RepoURL == "" {
+		return nil, fmt.Errorf("git repo URL is required — set SHARKO_GITOPS_REPO_URL")
+	}
+
+	files := make(map[string][]byte)
+	err := fs.WalkDir(o.templateFS, "bootstrap", func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			return nil
+		}
+		content, readErr := fs.ReadFile(o.templateFS, path)
+		if readErr != nil {
+			return fmt.Errorf("reading template %s: %w", path, readErr)
+		}
+		content = replacePlaceholdersFull(content, o.gitops, o.paths)
+		repoPath := strings.TrimPrefix(path, "bootstrap/")
+		files[repoPath] = content
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("walking bootstrap templates: %w", err)
+	}
+	return files, nil
+}
+
+// CommitBootstrapFiles creates a uniquely-named branch and commits the given
+// files to it. Returns the branch name. Does NOT create a PR.
+func (o *Orchestrator) CommitBootstrapFiles(ctx context.Context, files map[string][]byte) (string, error) {
+	if o.gitMu != nil {
+		o.gitMu.Lock()
+		defer o.gitMu.Unlock()
+	}
+
+	o.detectConflicts(ctx, files)
+
+	branchName := fmt.Sprintf("%sinitialize-repository-%s", o.gitops.BranchPrefix, initBranchSuffix())
+
+	if err := o.git.CreateBranch(ctx, branchName, o.gitops.BaseBranch); err != nil {
+		return "", fmt.Errorf("creating branch %q: %w", branchName, err)
+	}
+	commitMsg := fmt.Sprintf("%s initialize repository", o.gitops.CommitPrefix)
+	if err := o.git.BatchCreateFiles(ctx, files, branchName, commitMsg); err != nil {
+		return "", fmt.Errorf("writing files on branch %q: %w", branchName, err)
+	}
+	return branchName, nil
+}
+
+// CreateInitPR opens a pull request for the given branch against the base branch.
+// The caller is responsible for merging (or waiting for a human to merge).
+func (o *Orchestrator) CreateInitPR(ctx context.Context, branch string) (*GitResult, error) {
+	title := fmt.Sprintf("%s initialize repository", o.gitops.CommitPrefix)
+	pr, err := o.git.CreatePullRequest(ctx, title, "initialize repository", branch, o.gitops.BaseBranch)
+	if err != nil {
+		return nil, fmt.Errorf("creating pull request: %w", err)
+	}
+	return &GitResult{
+		PRUrl:  pr.URL,
+		PRID:   pr.ID,
+		Branch: branch,
+	}, nil
+}
+
+// ReadRootAppTemplate reads and renders the root-app.yaml bootstrap template.
+func (o *Orchestrator) ReadRootAppTemplate(_ context.Context) ([]byte, error) {
+	if o.templateFS == nil {
+		return nil, fmt.Errorf("template filesystem not configured")
+	}
+	content, err := fs.ReadFile(o.templateFS, "bootstrap/root-app.yaml")
+	if err != nil {
+		return nil, fmt.Errorf("reading root-app template: %w", err)
+	}
+	return replacePlaceholdersFull(content, o.gitops, o.paths), nil
+}
+
+// BootstrapArgoCD is the exported counterpart of bootstrapArgoCD.
+func (o *Orchestrator) BootstrapArgoCD(ctx context.Context, rootAppYAML []byte) error {
+	return o.bootstrapArgoCD(ctx, rootAppYAML)
+}
+
+// WaitForSync is the exported counterpart of waitForSync.
+func (o *Orchestrator) WaitForSync(ctx context.Context, appName string, timeout time.Duration) (string, string) {
+	return o.waitForSync(ctx, appName, timeout)
+}
+
+// initBranchSuffix returns a short random hex string for init branch name uniqueness.
+func initBranchSuffix() string {
+	b := make([]byte, 4)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
 // replacePlaceholders substitutes well-known tokens in template content.

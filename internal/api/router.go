@@ -17,6 +17,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/auth"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/notifications"
+	"github.com/MoranWeissman/sharko/internal/operations"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/providers"
 	"github.com/MoranWeissman/sharko/internal/service"
@@ -57,6 +58,9 @@ type Server struct {
 
 	// Notification store (always available — initialised in NewServer).
 	notificationStore *notifications.Store
+
+	// Operation store for async long-running operations (always available — initialised in NewServer).
+	opsStore *operations.Store
 
 	// Template filesystem for POST /api/v1/init (always available).
 	templateFS fs.FS
@@ -102,6 +106,7 @@ func NewServer(
 		aiConfigStore:     nil, // set via SetAIConfigStore
 		addonSecretDefs:   make(map[string]orchestrator.AddonSecretDefinition),
 		notificationStore: notifications.NewStore(100, notifications.DefaultNotificationsPath),
+		opsStore:          operations.NewStore(),
 		startTime:         time.Now(),
 	}
 }
@@ -222,6 +227,11 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 
 	// Init (orchestrator-backed)
 	mux.HandleFunc("POST /api/v1/init", srv.handleInit)
+
+	// Operations (async operation tracking)
+	mux.HandleFunc("GET /api/v1/operations/{id}", srv.handleGetOperation)
+	mux.HandleFunc("POST /api/v1/operations/{id}/heartbeat", srv.handleOperationHeartbeat)
+	mux.HandleFunc("POST /api/v1/operations/{id}/cancel", srv.handleCancelOperation)
 
 	// Addons (write — orchestrator-backed)
 	mux.HandleFunc("POST /api/v1/addons/upgrade-batch", srv.handleUpgradeAddonsBatch)

@@ -21,8 +21,8 @@ export function Settings() {
 
   const sections = [
     {
-      label: 'Connections',
-      items: [{ key: 'connections', label: 'Connections', icon: Plug }],
+      label: 'Connection',
+      items: [{ key: 'connections', label: 'Connection', icon: Plug }],
     },
     ...(isAdmin
       ? [

@@ -1,30 +1,36 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
+	"io/fs"
+	"log/slog"
 	"net/http"
-	"os"
-	"strings"
+	"time"
 
+	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/operations"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
 // handleInit godoc
 //
 // @Summary Initialize addons repository
-// @Description Creates the GitOps repository structure and bootstraps ArgoCD with initial addon ApplicationSets
+// @Description Creates the GitOps repository structure and bootstraps ArgoCD with initial addon ApplicationSets.
+// @Description Returns immediately with an operation_id; poll GET /api/v1/operations/{id} for progress.
+// @Description If an existing "waiting" init session is found, returns that session (idempotent resume).
 // @Tags init
 // @Accept json
 // @Produce json
 // @Security BearerAuth
 // @Param body body orchestrator.InitRepoRequest false "Init request (defaults to bootstrap mode)"
-// @Success 201 {object} map[string]interface{} "Repository initialized"
+// @Success 202 {object} map[string]interface{} "Operation accepted — poll operation_id for progress"
+// @Success 200 {object} map[string]interface{} "Existing waiting session returned (already in progress)"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
-// @Failure 409 {object} map[string]interface{} "Already initialized"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
 // @Router /init [post]
-// handleInit handles POST /api/v1/init — initialize the addons repository.
 func (s *Server) handleInit(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
 		return
@@ -36,7 +42,7 @@ func (s *Server) handleInit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	git, err := s.connSvc.GetActiveGitProvider()
+	gp, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
 		return
@@ -73,39 +79,234 @@ func (s *Server) handleInit(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	orch := orchestrator.New(&s.gitMu, s.credProvider, ac, git, gitopsCfg, s.repoPaths, s.templateFS)
-	result, err := orch.InitRepo(r.Context(), req)
-	if err != nil {
-		if strings.Contains(err.Error(), "already") {
-			writeError(w, http.StatusConflict, err.Error())
-		} else {
-			writeError(w, http.StatusBadGateway, err.Error())
-		}
+	// Check for an existing "waiting" init session — allow resume.
+	// If one exists, return it so the client can continue polling.
+	existing := s.opsStore.FindByTypeAndStatus("init", operations.StatusWaiting)
+	if len(existing) > 0 {
+		sess := existing[0]
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"operation_id": sess.ID,
+			"status":       string(sess.Status),
+			"wait_detail":  sess.WaitDetail,
+			"wait_payload": sess.WaitPayload,
+			"resumed":      true,
+		})
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, result)
+	// Also check for a still-running init (avoid duplicate launches).
+	running := s.opsStore.FindByTypeAndStatus("init", operations.StatusRunning)
+	if len(running) > 0 {
+		sess := running[0]
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"operation_id": sess.ID,
+			"status":       string(sess.Status),
+			"resumed":      true,
+		})
+		return
+	}
+
+	// Create a new operation session.
+	steps := []string{
+		"Creating bootstrap files",
+		"Pushing to branch",
+		"Creating pull request",
+		"Waiting for PR merge",
+		"Bootstrapping ArgoCD",
+		"Waiting for sync",
+	}
+	session := s.opsStore.Create("init", steps)
+
+	// Run init asynchronously — use a background context so the goroutine
+	// outlives the HTTP request.
+	bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel() // ensure cleanup even if goroutine doesn't start
+
+	go func() {
+		defer cancel() // also cancel when done (idempotent)
+		s.runInitOperation(bgCtx, session.ID, req, gitopsCfg, gp, ac, s.templateFS)
+	}()
+
+	writeJSON(w, http.StatusAccepted, map[string]interface{}{
+		"operation_id": session.ID,
+		"status":       "pending",
+	})
+}
+
+// runInitOperation is the background goroutine that performs the full init flow.
+// It advances steps via opsStore and sets waiting/complete/fail states.
+func (s *Server) runInitOperation(
+	ctx context.Context,
+	sessionID string,
+	req orchestrator.InitRepoRequest,
+	gitopsCfg orchestrator.GitOpsConfig,
+	gp gitprovider.GitProvider,
+	ac orchestrator.ArgocdClient,
+	templateFS fs.FS,
+) {
+	orch := orchestrator.New(&s.gitMu, s.credProvider, ac, gp, gitopsCfg, s.repoPaths, templateFS)
+
+	s.opsStore.Start(sessionID)
+
+	// Check for already-initialized repo before doing any work.
+	if _, checkErr := gp.GetFileContent(ctx, "bootstrap/root-app.yaml", gitopsCfg.BaseBranch); checkErr == nil {
+		s.opsStore.Fail(sessionID, "repo already initialized: bootstrap/root-app.yaml exists")
+		return
+	}
+
+	// Step 1: Creating bootstrap files
+	files, filesErr := orch.CollectBootstrapFiles(ctx)
+	if filesErr != nil {
+		s.opsStore.UpdateStep(sessionID, operations.StatusFailed, filesErr.Error())
+		s.opsStore.Fail(sessionID, "failed to collect bootstrap files: "+filesErr.Error())
+		return
+	}
+	s.opsStore.UpdateStep(sessionID, operations.StatusCompleted, fmt.Sprintf("%d files prepared", len(files)))
+
+	// Step 2: Pushing to branch — handled inside CommitBootstrapFiles (creates branch + commits).
+	branch, pushErr := orch.CommitBootstrapFiles(ctx, files)
+	if pushErr != nil {
+		s.opsStore.UpdateStep(sessionID, operations.StatusFailed, pushErr.Error())
+		s.opsStore.Fail(sessionID, "failed to push bootstrap files: "+pushErr.Error())
+		return
+	}
+	s.opsStore.UpdateStep(sessionID, operations.StatusCompleted, "branch: "+branch)
+
+	// Step 3: Creating pull request.
+	gitResult, prErr := orch.CreateInitPR(ctx, branch)
+	if prErr != nil {
+		s.opsStore.UpdateStep(sessionID, operations.StatusFailed, prErr.Error())
+		s.opsStore.Fail(sessionID, "failed to create pull request: "+prErr.Error())
+		return
+	}
+	s.opsStore.UpdateStep(sessionID, operations.StatusCompleted, gitResult.PRUrl)
+
+	// Step 4: Wait for PR merge.
+	// If auto_merge is set (or global PRAutoMerge is enabled), merge immediately.
+	shouldAutoMerge := req.AutoMerge || gitopsCfg.PRAutoMerge
+	if shouldAutoMerge {
+		if mergeErr := gp.MergePullRequest(ctx, gitResult.PRID); mergeErr != nil {
+			s.opsStore.UpdateStep(sessionID, operations.StatusFailed, mergeErr.Error())
+			s.opsStore.Fail(sessionID, "PR auto-merge failed: "+mergeErr.Error())
+			return
+		}
+		s.opsStore.UpdateStep(sessionID, operations.StatusCompleted, "PR merged (auto)")
+	} else {
+		// Set session to waiting — client polls for merge.
+		s.opsStore.SetWaiting(sessionID, "Waiting for PR to be merged", gitResult.PRUrl)
+
+		// Poll in background until merged or abandoned.
+		merged := s.pollPRMerge(ctx, sessionID, gp, gitopsCfg.BaseBranch)
+		if !merged {
+			// Check if session was cancelled.
+			sess, _ := s.opsStore.Get(sessionID)
+			if sess != nil && sess.Status == operations.StatusCancelled {
+				return
+			}
+			s.opsStore.Fail(sessionID, "PR merge timed out or session abandoned")
+			return
+		}
+		s.opsStore.ResumeFromWaiting(sessionID)
+		s.opsStore.UpdateStep(sessionID, operations.StatusCompleted, "PR merged")
+	}
+
+	// Step 5: Bootstrap ArgoCD.
+	if req.BootstrapArgoCD && ac != nil {
+		// Add repository to ArgoCD.
+		if req.GitUsername != "" && req.GitToken != "" {
+			if addRepoErr := ac.AddRepository(ctx, gitopsCfg.RepoURL, req.GitUsername, req.GitToken); addRepoErr != nil {
+				slog.Warn("failed to add repository to ArgoCD", "error", addRepoErr)
+				// Non-fatal — continue with bootstrap.
+			}
+		}
+
+		rootAppContent, readErr := orch.ReadRootAppTemplate(ctx)
+		if readErr != nil {
+			s.opsStore.UpdateStep(sessionID, operations.StatusFailed, readErr.Error())
+			s.opsStore.Fail(sessionID, "failed to read root-app template: "+readErr.Error())
+			return
+		}
+
+		if bootstrapErr := orch.BootstrapArgoCD(ctx, rootAppContent); bootstrapErr != nil {
+			s.opsStore.UpdateStep(sessionID, operations.StatusFailed, bootstrapErr.Error())
+			s.opsStore.Fail(sessionID, "ArgoCD bootstrap failed: "+bootstrapErr.Error())
+			return
+		}
+		s.opsStore.UpdateStep(sessionID, operations.StatusCompleted, "ArgoCD bootstrapped")
+
+		// Step 6: Wait for sync.
+		syncStatus, syncErr := orch.WaitForSync(ctx, "addons-bootstrap", 2*time.Minute)
+		detail := syncStatus
+		if syncErr != "" {
+			detail = syncStatus + ": " + syncErr
+		}
+		if syncStatus != "synced" {
+			s.opsStore.UpdateStep(sessionID, operations.StatusFailed, detail)
+			s.opsStore.Complete(sessionID, "init complete (sync: "+detail+")")
+		} else {
+			s.opsStore.UpdateStep(sessionID, operations.StatusCompleted, "synced")
+			s.opsStore.Complete(sessionID, "init complete")
+		}
+	} else {
+		// Skip steps 5 and 6 — advance them as skipped.
+		s.opsStore.UpdateStep(sessionID, operations.StatusCompleted, "skipped")
+		s.opsStore.UpdateStep(sessionID, operations.StatusCompleted, "skipped")
+		s.opsStore.Complete(sessionID, "init complete (no ArgoCD bootstrap)")
+	}
+}
+
+// pollPRMerge polls for the PR to be merged by checking whether the bootstrap
+// file appears on the base branch. Returns true if merged, false if timed out
+// or the session was abandoned/cancelled.
+func (s *Server) pollPRMerge(ctx context.Context, sessionID string, gp gitprovider.GitProvider, baseBranch string) bool {
+	// Allow up to 24 hours for a human to merge the PR.
+	deadline := time.Now().Add(24 * time.Hour)
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			if time.Now().After(deadline) {
+				return false
+			}
+
+			// Check if session is still alive (client must send heartbeats).
+			sess, ok := s.opsStore.Get(sessionID)
+			if !ok {
+				return false
+			}
+			if sess.Status == operations.StatusCancelled {
+				return false
+			}
+			if !sess.IsAlive(2 * time.Minute) {
+				slog.Info("init operation abandoned — no heartbeat from client", "session_id", sessionID)
+				return false
+			}
+
+			// Check if PR is merged by seeing if bootstrap/root-app.yaml exists on the base branch.
+			_, err := gp.GetFileContent(ctx, "bootstrap/root-app.yaml", baseBranch)
+			if err == nil {
+				return true // file exists on base branch — PR was merged
+			}
+
+		case <-ctx.Done():
+			return false
+		}
+	}
 }
 
 // extractGitCredentials returns (username, token) from the active connection's Git config.
-// It checks the connection config first, then falls back to environment variables.
+// Credentials come from the active connection only — no env var fallback.
 func extractGitCredentials(conn *models.Connection) (string, string) {
 	switch conn.Git.Provider {
 	case models.GitProviderGitHub:
-		token := conn.Git.Token
-		if token == "" {
-			token = os.Getenv("GITHUB_TOKEN")
-		}
-		if token != "" {
-			return "x-access-token", token
+		if conn.Git.Token != "" {
+			return "x-access-token", conn.Git.Token
 		}
 	case models.GitProviderAzureDevOps:
-		pat := conn.Git.PAT
-		if pat == "" {
-			pat = os.Getenv("AZURE_DEVOPS_PAT")
-		}
-		if pat != "" {
-			return conn.Git.Organization, pat
+		if conn.Git.PAT != "" {
+			return conn.Git.Organization, conn.Git.PAT
 		}
 	}
 	return "", ""

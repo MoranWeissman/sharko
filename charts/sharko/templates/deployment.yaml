@@ -39,10 +39,6 @@ spec:
               value: "/app/static"
             - name: CONNECTION_SECRET_NAME
               value: {{ .Values.config.connectionSecretName | default "sharko-connections" | quote }}
-            {{- if .Values.config.devMode }}
-            - name: SHARKO_DEV_MODE
-              value: "true"
-            {{- end }}
             - name: ARGOCD_NAMESPACE
               value: {{ include "sharko.argocdNamespace" . | quote }}
             - name: SHARKO_NAMESPACE
