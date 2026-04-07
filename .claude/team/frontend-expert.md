@@ -315,6 +315,74 @@ No job IDs, no progress polling, no progress modals.
 - Use Quicksand font for "Sharko" brand text
 - Use `NotificationBell` in the top bar (already in Layout)
 
+## Phase 3-6 UI Features
+
+### Wizard Escape Button
+
+`FirstRunWizard.tsx` — an X (close) button in the top-right corner allows the user to dismiss the wizard at any step. The button dispatches a `close-wizard` custom event (or calls a prop callback `onClose`). The parent `Layout.tsx` hides the wizard overlay when this event is received.
+
+```tsx
+// Pattern: X button in wizard header
+<button
+  onClick={onClose}
+  className="absolute top-4 right-4 text-[#3a6a8a] hover:text-[#0a2a4a] dark:text-gray-400 dark:hover:text-white"
+  aria-label="Close"
+>
+  <X className="h-5 w-5" />
+</button>
+```
+
+### Managed vs Discovered Cluster UI
+
+`ClustersOverview.tsx` — clusters list is split into two sections:
+
+1. **Managed clusters** — registered via Sharko, have a values file in Git. Show full health, addon count, and action buttons.
+2. **Discovered clusters** — found in ArgoCD but not in Git. Show a lighter card style with an **Adopt** button and a "Not managed by Sharko" label.
+
+The section headers are rendered as `<h2>` with a `WaveDecoration` divider between sections.
+
+Filtering/sorting UI (Phase 4):
+- A sort dropdown (`?sort=name|env|health|addon_count`) and filter input (`?filter=env:prod`) are rendered above the clusters list.
+- State is managed in component local state and appended to the API fetch URL.
+
+### Addon Detail Help Tooltips
+
+`AddonDetail.tsx` — all advanced config fields (sync wave, namespace, values, secrets) display a tooltip icon (`HelpCircle` from lucide-react) next to the field label. Hovering/clicking shows a brief explanation using the shadcn `tooltip` component.
+
+```tsx
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+
+<TooltipProvider>
+  <Tooltip>
+    <TooltipTrigger asChild>
+      <HelpCircle className="h-4 w-4 text-[#5a8aaa] cursor-help" />
+    </TooltipTrigger>
+    <TooltipContent>
+      <p>Sync wave controls the order in which ArgoCD deploys addons. Lower numbers deploy first.</p>
+    </TooltipContent>
+  </Tooltip>
+</TooltipProvider>
+```
+
+### Security Advisory Notifications
+
+`NotificationBell.tsx` — now connected to `GET /api/v1/notifications` (no longer mock data). Security advisory notifications (major version bumps) are displayed with a `ShieldAlert` icon and a distinct amber/orange background.
+
+Notification types:
+- `upgrade_available` — blue info icon
+- `version_drift` — yellow warning icon
+- `security_advisory` — amber shield icon (major version bump flagged)
+
+Mark-read API: `POST /api/v1/notifications/{id}/read` — called when the user clicks a notification or opens the dropdown.
+
+### Cluster Connectivity Test
+
+`ClusterDetail.tsx` — a **Test Connectivity** button in the cluster detail header calls `POST /api/v1/clusters/{name}/test`. The result is shown as an inline badge:
+- `reachable: true` → green badge with Kubernetes version (e.g., `v1.29.3`)
+- `reachable: false` → red badge with the error message
+
+The button shows a spinner while the request is in-flight (typically 2–5s).
+
 ## Update This File When
 - New views or components are added
 - shadcn/ui components are added
@@ -322,3 +390,5 @@ No job IDs, no progress polling, no progress modals.
 - API service methods change significantly
 - Color palette changes
 - New reusable component patterns are established
+- Wizard behavior changes (escape, multi-step flow)
+- Notification types are added

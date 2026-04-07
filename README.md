@@ -26,12 +26,19 @@ Sharko is a server that runs in your Kubernetes cluster, next to ArgoCD, and man
 - **Manage addons** across your clusters (cert-manager, monitoring, logging, etc.)
 - **Catalog-driven secrets** -- declare addon secrets in `addons-catalog.yaml`; Sharko reconciles them to remote clusters automatically (no ESO required)
 - **Observe cluster health** with drift detection, version matrix, and sync status
-- **Automate GitOps workflows** -- every change creates a PR (auto-merged if `SHARKO_GITOPS_PR_AUTO_MERGE=true`)
+- **Automate GitOps workflows** -- every change creates a PR (auto-merged if `SHARKO_GITOPS_PR_AUTO_MERGE=true`; branches cleaned up automatically after merge)
 - **Upgrade addons** globally or per-cluster, with batch multi-addon upgrades and per-cluster drift detection
 - **Batch register clusters** -- register up to 10 clusters in a single API call
+- **Managed vs discovered clusters** -- Sharko surfaces all ArgoCD clusters, distinguishing managed (registered via Sharko) from discovered (pre-existing). Adopt discovered clusters into full management with one command.
+- **Connectivity checks** -- verify cluster reachability via `POST /api/v1/clusters/{name}/test` without running a full registration
+- **AWS SM structured JSON** -- store cluster credentials as individual JSON keys in AWS SM instead of raw kubeconfig YAML; supports STS EKS token generation via IRSA (no static tokens)
+- **ArgoCD service discovery** -- Sharko probes all services in the ArgoCD namespace, tolerating service name changes without reconfiguration
+- **Security advisory notifications** -- major Helm chart version bumps are flagged as security advisories in the notification bell
+- **List filtering and sorting** -- filter clusters by env/health/addon and sort by name/health/addon count via query params
+- **Addon help tooltips** -- all advanced configuration fields in the UI include contextual help text
 - **Manage API keys** for non-interactive consumers (Backstage, Terraform, CI/CD)
 - **Full UI write capabilities** -- register clusters, add addons, upgrade versions, manage secrets from the browser
-- **First-run wizard** -- guided setup for new installations (connection config + repo init)
+- **First-run wizard** -- guided setup for new installations (connection config + repo init), dismissible at any step
 - **Async operations** -- long-running workflows (init, batch) tracked via operation sessions with streaming logs
 - **Integrate with IDPs** -- Backstage, Port.io, Terraform, CI/CD all use the same API
 - **AI-powered troubleshooting** -- context-aware assistant with deep platform knowledge
@@ -92,13 +99,15 @@ The server holds all credentials. The CLI is a thin HTTP client -- like `kubectl
 
 Sharko ships with a full-featured dashboard built on a sky-blue ocean theme.
 
-- **Fleet overview** -- cluster health cards with sync status, addon counts, and connection indicators
-- **Addon catalog** -- version matrix showing every addon across every cluster, with drift detection highlights
-- **Cluster detail pages** -- left navigation panel with addon list, health status, and per-cluster configuration
+- **Fleet overview** -- cluster health cards with sync status, addon counts, and connection indicators; separate sections for managed and discovered clusters
+- **Addon catalog** -- version matrix showing every addon across every cluster, with drift detection highlights and contextual help tooltips on all advanced config fields
+- **Cluster detail pages** -- left navigation panel with addon list, health status, per-cluster configuration, and a **Test Connectivity** button
 - **Addon upgrade view** -- upgrade addons globally or per-cluster, with per-cluster drift detection showing which clusters are behind
-- **Notification bell** -- real-time alerts for available upgrades and configuration drift
+- **Notification bell** -- alerts for available upgrades, configuration drift, and security advisories (major version bumps flagged with amber icon)
+- **Filtering and sorting** -- filter clusters by environment/health/addon, sort by name/health/count; live filter UI above clusters list
 - **AI assistant** -- floating panel accessible from any page, context-aware (knows what page you are on)
 - **Settings** -- left navigation panel with connections (ArgoCD, Git), secrets providers, addon secrets, and AI configuration
+- **First-run wizard** -- dismissible at any step with an X button; no forced walk-through
 - **Full write support** -- register clusters, add addons, upgrade versions, manage API keys, configure secrets, all from the browser
 
 > Screenshots are available in the `assets/` directory.
@@ -155,6 +164,7 @@ Sharko exposes a REST API that every consumer uses -- the CLI, the UI, and exter
 | GET | `/api/v1/tokens` | List API keys (admin only) |
 | GET | `/api/v1/addon-secrets` | List addon secret definitions |
 | GET | `/api/v1/clusters/{name}/secrets` | List managed secrets on a cluster |
+| GET | `/api/v1/notifications` | List notifications (upgrades, drift, security advisories) |
 
 ### Write Operations (management)
 
@@ -166,6 +176,8 @@ Sharko exposes a REST API that every consumer uses -- the CLI, the UI, and exter
 | PATCH | `/api/v1/clusters/{name}` | Update addon labels |
 | POST | `/api/v1/clusters/{name}/refresh` | Refresh cluster credentials |
 | POST | `/api/v1/clusters/{name}/secrets/refresh` | Refresh managed secrets on a cluster |
+| POST | `/api/v1/clusters/{name}/test` | Test cluster connectivity |
+| POST | `/api/v1/clusters/{name}/adopt` | Adopt a discovered ArgoCD cluster into Sharko |
 | POST | `/api/v1/addons` | Add addon to catalog |
 | DELETE | `/api/v1/addons/{name}?confirm=true` | Remove addon (with safety gate) |
 | POST | `/api/v1/addons/{name}/upgrade` | Upgrade an addon (global or per-cluster) |
@@ -209,6 +221,8 @@ The Swagger UI lets you explore all endpoints, view request/response schemas, an
 | `sharko remove-cluster <name>` | Deregister a cluster |
 | `sharko update-cluster <name>` | Update addon assignments |
 | `sharko list-clusters` | List all clusters |
+| `sharko test-cluster <name>` | Test connectivity to a cluster |
+| `sharko adopt-cluster <name>` | Adopt a discovered ArgoCD cluster into Sharko |
 | `sharko add-addon <name>` | Add addon to catalog |
 | `sharko remove-addon <name>` | Remove addon (dry-run without `--confirm`) |
 | `sharko upgrade-addon <name>` | Upgrade an addon version (global or per-cluster) |

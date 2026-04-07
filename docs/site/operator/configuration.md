@@ -138,6 +138,85 @@ For migration state storage:
 | `affinity` | Affinity/anti-affinity rules |
 | `hostAliases` | Host aliases for private DNS resolution |
 
+## AWS Secrets Manager — Secret Formats
+
+When using `SHARKO_PROVIDER_TYPE=aws-sm`, each cluster secret in AWS SM can be stored in one of two formats. Sharko auto-detects which format is used.
+
+### Format 1 — Raw Kubeconfig (original)
+
+The secret value is a YAML kubeconfig string:
+
+```yaml
+apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+    server: https://...
+    certificate-authority-data: <base64>
+  name: my-cluster
+# ... (full kubeconfig)
+```
+
+### Format 2 — Structured JSON
+
+The secret value is a JSON object with individual fields. This is simpler to manage programmatically:
+
+```json
+{
+  "server": "https://abc123.gr7.us-east-1.eks.amazonaws.com",
+  "ca": "<base64-encoded-ca-data>",
+  "token": "<bearer-token>"
+}
+```
+
+For EKS clusters where you want Sharko to generate a short-lived STS token (recommended), provide `cluster_name` and `role_arn` instead of a static token:
+
+```json
+{
+  "server": "https://abc123.gr7.us-east-1.eks.amazonaws.com",
+  "ca": "<base64-encoded-ca-data>",
+  "cluster_name": "prod-eu",
+  "role_arn": "arn:aws:iam::123456789012:role/EKSReadRole"
+}
+```
+
+Sharko calls the EKS STS token API to generate a `k8s-aws-v1.*` bearer token on each credential fetch. Tokens are valid for 15 minutes and are never stored.
+
+### IRSA Setup
+
+For STS-based token generation, the Sharko pod must run with an IAM role that has permission to call EKS and assume the target role:
+
+```yaml
+# charts/sharko/values.yaml
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::123456789012:role/SharkoIRSARole"
+```
+
+Required IAM permissions for the Sharko IRSA role:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": [
+    "secretsmanager:GetSecretValue",
+    "secretsmanager:ListSecrets",
+    "eks:DescribeCluster"
+  ],
+  "Resource": "*"
+}
+```
+
+For cross-account EKS clusters, also add:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": "sts:AssumeRole",
+  "Resource": "arn:aws:iam::*:role/EKSReadRole"
+}
+```
+
 ## Advanced: Addon Secrets
 
 For addons that require API keys delivered to remote clusters (e.g., Datadog, New Relic), define addon secret templates:

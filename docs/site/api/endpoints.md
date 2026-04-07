@@ -14,6 +14,18 @@ Key endpoints reference. For full request/response schemas, use the interactive 
 
 List endpoints support pagination via `?page=<n>&limit=<n>` query params (default: `limit=50`).
 
+#### Filtering and Sorting
+
+`GET /api/v1/clusters` and `GET /api/v1/addons/catalog` accept additional query params:
+
+| Param | Example | Description |
+|-------|---------|-------------|
+| `?sort=<field>` | `?sort=name` | Sort by field. Prefix with `-` for descending: `?sort=-health` |
+| `?filter=<pred>` | `?filter=env:prod` | Filter predicate. Multiple params are AND-joined |
+
+Supported sort fields for clusters: `name`, `env`, `health`, `addon_count`.
+Supported filter predicates for clusters: `env:<value>`, `health:<value>`, `addon:<name>`.
+
 ### Addons
 
 | Method | Path | Description |
@@ -27,6 +39,13 @@ List endpoints support pagination via `?page=<n>&limit=<n>` query params (defaul
 |--------|------|-------------|
 | `GET` | `/api/v1/fleet/status` | Cluster status overview |
 | `GET` | `/api/v1/observability/overview` | ArgoCD health groups and sync activity |
+
+### Notifications
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/notifications` | List all notifications (upgrade available, version drift, security advisories) |
+| `POST` | `/api/v1/notifications/{id}/read` | Mark a notification as read |
 
 ### Tokens & Secrets
 
@@ -52,6 +71,8 @@ All write endpoints require the `admin` role.
 | `PATCH` | `/api/v1/clusters/{name}` | Update addon labels |
 | `POST` | `/api/v1/clusters/{name}/refresh` | Refresh cluster credentials |
 | `POST` | `/api/v1/clusters/{name}/secrets/refresh` | Refresh managed secrets on a cluster |
+| `POST` | `/api/v1/clusters/{name}/test` | Test cluster connectivity (returns `{"reachable": bool, "version": "..."}`) |
+| `POST` | `/api/v1/clusters/{name}/adopt` | Adopt a discovered ArgoCD cluster into Sharko management |
 
 ### Addons
 
@@ -197,4 +218,39 @@ curl -X POST https://sharko.your-domain.com/api/v1/secrets/reconcile \
 curl https://sharko.your-domain.com/api/v1/secrets/status \
   -H "Authorization: Bearer <token>"
 # Response: [{"cluster": "prod-eu", "last_run": "2026-04-06T10:00:00Z", "status": "ok", "secrets_pushed": 2}]
+```
+
+### Test Cluster Connectivity
+
+```bash
+curl -X POST https://sharko.your-domain.com/api/v1/clusters/prod-eu/test \
+  -H "Authorization: Bearer <token>"
+# Response (reachable):    {"reachable": true, "version": "v1.29.3"}
+# Response (unreachable):  {"reachable": false, "error": "connection refused"}
+```
+
+### Adopt a Discovered Cluster
+
+```bash
+curl -X POST https://sharko.your-domain.com/api/v1/clusters/prod-eu/adopt \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"addons": ["cert-manager", "metrics-server"]}'
+# Response: {"pr_url": "https://github.com/.../pull/55", "cluster": "prod-eu"}
+```
+
+### List Notifications
+
+```bash
+curl https://sharko.your-domain.com/api/v1/notifications \
+  -H "Authorization: Bearer <token>"
+# Response: [{"id": "notif_1", "type": "security_advisory", "title": "cert-manager major version available", "read": false, ...}]
+```
+
+### Filter and Sort Clusters
+
+```bash
+# Only prod clusters, sorted by health descending
+curl "https://sharko.your-domain.com/api/v1/clusters?filter=env:prod&sort=-health" \
+  -H "Authorization: Bearer <token>"
 ```

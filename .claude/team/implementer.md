@@ -28,7 +28,9 @@ cmd/sharko/
   login.go             'sharko login --server <url> [--username] [--password]'
   version_cmd.go       'sharko version' — CLI + server version
   init_cmd.go          'sharko init' — POST /api/v1/init (async, returns operation ID)
-  cluster.go           add-cluster, remove-cluster, update-cluster, list-clusters
+  cluster.go           add-cluster, remove-cluster, update-cluster, list-clusters,
+                       test-cluster (POST /api/v1/clusters/{name}/test)
+                       adopt-cluster (POST /api/v1/clusters/{name}/adopt)
   addon.go             add-addon, remove-addon (--confirm for destructive)
   addon_list.go        'sharko list-addons [--show-config]'
   validate.go          'sharko validate [path]' — validate catalog YAML against schema
@@ -40,13 +42,15 @@ cmd/sharko/
   client.go            Shared HTTP client, config loading (~/.sharko/config)
 
 internal/
-  api/              HTTP handlers (26 files)
-    router.go       Server struct, NewRouter (73 routes + swagger), middleware, auth
+  api/              HTTP handlers (28 files)
+    router.go       Server struct, NewRouter (76 routes + swagger), middleware, auth
     init.go         POST /api/v1/init handler
-    clusters.go     Cluster read handlers
+    clusters.go     Cluster read handlers (includes managed/discovered split, ?sort=/?filter= params)
     clusters_write.go  POST/DELETE/PATCH cluster handlers
     clusters_batch.go  POST /api/v1/clusters/batch
     clusters_discover.go  GET /api/v1/clusters/available
+    clusters_test.go  POST /api/v1/clusters/{name}/test — connectivity check
+    clusters_adopt.go  POST /api/v1/clusters/{name}/adopt — adopt discovered clusters into Git
     cluster_secrets.go  Cluster secret management
     addons.go       Addon read handlers
     addons_write.go POST/DELETE addon handlers
@@ -66,14 +70,16 @@ internal/
     nodes.go        Cluster node info
     users.go        User management (requireAdmin helper lives here)
     tokens.go       API key CRUD (create, list, revoke)
+    notifications.go  GET /api/v1/notifications, POST /api/v1/notifications/{id}/read
 
-  orchestrator/     Workflow engine (8 files)
+  orchestrator/     Workflow engine (9 files)
     orchestrator.go ArgocdClient interface, Orchestrator struct, New()
     types.go        Request/result types, GitOpsConfig, RepoPathsConfig
     cluster.go      RegisterCluster, DeregisterCluster, UpdateClusterAddons, RefreshClusterCredentials
+    cluster_adopt.go  AdoptCluster — adopts discovered ArgoCD clusters into Git
     addon.go        AddAddon, RemoveAddon
     init.go         InitRepo (with conflict detection + ArgoCD bootstrap)
-    git_helpers.go  commitChanges, commitDirect, commitViaPR
+    git_helpers.go  commitChanges, commitViaPR (+ branch cleanup after auto-merge)
     values_generator.go  generateClusterValues YAML
 
   providers/        Secrets provider interface (5 files)
