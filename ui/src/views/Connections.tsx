@@ -18,6 +18,7 @@ import {
   ChevronDown,
   ChevronRight,
   KeyRound,
+  GitMerge,
 } from 'lucide-react'
 import { initRepo } from '@/services/api'
 import { useConnections } from '@/hooks/useConnections'
@@ -42,6 +43,12 @@ interface ConnectionFormData {
   provider_type: '' | 'aws-sm' | 'k8s-secrets'
   provider_region: string
   provider_prefix: string
+  gitops_base_branch: string
+  gitops_branch_prefix: string
+  gitops_commit_prefix: string
+  gitops_pr_auto_merge: boolean
+  gitops_host_cluster_name: string
+  gitops_default_addons: string
 }
 
 const emptyForm: ConnectionFormData = {
@@ -53,6 +60,12 @@ const emptyForm: ConnectionFormData = {
   provider_type: '',
   provider_region: '',
   provider_prefix: '',
+  gitops_base_branch: 'main',
+  gitops_branch_prefix: 'sharko/',
+  gitops_commit_prefix: 'sharko:',
+  gitops_pr_auto_merge: false,
+  gitops_host_cluster_name: '',
+  gitops_default_addons: '',
 }
 
 function buildPayload(form: ConnectionFormData, name?: string) {
@@ -75,6 +88,14 @@ function buildPayload(form: ConnectionFormData, name?: string) {
           prefix: form.provider_prefix || undefined,
         }
       : undefined,
+    gitops: {
+      base_branch: form.gitops_base_branch || 'main',
+      branch_prefix: form.gitops_branch_prefix || 'sharko/',
+      commit_prefix: form.gitops_commit_prefix || 'sharko:',
+      pr_auto_merge: form.gitops_pr_auto_merge,
+      host_cluster_name: form.gitops_host_cluster_name || undefined,
+      default_addons: form.gitops_default_addons || undefined,
+    },
   }
 }
 
@@ -98,6 +119,12 @@ function formFromConnection(conn: ConnectionResponse): ConnectionFormData {
     provider_type: '' as '' | 'aws-sm' | 'k8s-secrets',
     provider_region: '',
     provider_prefix: '',
+    gitops_base_branch: 'main',
+    gitops_branch_prefix: 'sharko/',
+    gitops_commit_prefix: 'sharko:',
+    gitops_pr_auto_merge: false,
+    gitops_host_cluster_name: '',
+    gitops_default_addons: '',
   }
 }
 
@@ -137,6 +164,16 @@ function ConnectionFormFields({
   onTestArgocd: () => void
 }) {
   const [providerOpen, setProviderOpen] = useState(!!form.provider_type)
+
+  const hasNonDefaultGitops =
+    form.gitops_base_branch !== 'main' ||
+    form.gitops_branch_prefix !== 'sharko/' ||
+    form.gitops_commit_prefix !== 'sharko:' ||
+    form.gitops_pr_auto_merge ||
+    !!form.gitops_host_cluster_name ||
+    !!form.gitops_default_addons
+
+  const [gitopsOpen, setGitopsOpen] = useState(hasNonDefaultGitops)
 
   return (
     <div className="space-y-6">
@@ -265,6 +302,111 @@ function ConnectionFormFields({
                 <p className="mt-1 text-[10px] text-[#3a6a8a]">Prepended to cluster name when looking up the secret.</p>
               </div>
             )}
+          </div>
+        )}
+      </div>
+
+      {/* GitOps Settings */}
+      <div className="border-t border-[#bee0ff] pt-4 dark:border-gray-700">
+        <button
+          type="button"
+          onClick={() => setGitopsOpen((v) => !v)}
+          className="flex w-full items-center justify-between text-left"
+        >
+          <div className="flex items-center gap-2">
+            <GitMerge className="h-4 w-4 text-[#2a5a7a]" />
+            <h5 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">GitOps Settings (Advanced)</h5>
+            {hasNonDefaultGitops && (
+              <span className="rounded-full bg-teal-100 px-2 py-0.5 text-xs font-medium text-teal-700 dark:bg-teal-900/30 dark:text-teal-400">
+                customized
+              </span>
+            )}
+          </div>
+          {gitopsOpen
+            ? <ChevronDown className="h-4 w-4 text-[#3a6a8a]" />
+            : <ChevronRight className="h-4 w-4 text-[#3a6a8a]" />}
+        </button>
+
+        {gitopsOpen && (
+          <div className="mt-4 space-y-4">
+            {/* Git group */}
+            <div>
+              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-[#3a6a8a] dark:text-gray-500">Git</p>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label className={labelCls}>Base Branch</label>
+                  <input
+                    className={inputCls}
+                    value={form.gitops_base_branch}
+                    onChange={(e) => onChange({ gitops_base_branch: e.target.value })}
+                    placeholder="main"
+                  />
+                </div>
+                <div>
+                  <label className={labelCls}>Branch Prefix</label>
+                  <input
+                    className={inputCls}
+                    value={form.gitops_branch_prefix}
+                    onChange={(e) => onChange({ gitops_branch_prefix: e.target.value })}
+                    placeholder="sharko/"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className={labelCls}>Commit Prefix</label>
+                  <input
+                    className={inputCls}
+                    value={form.gitops_commit_prefix}
+                    onChange={(e) => onChange({ gitops_commit_prefix: e.target.value })}
+                    placeholder="sharko:"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Automation group */}
+            <div>
+              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-[#3a6a8a] dark:text-gray-500">Automation</p>
+              <label className="flex items-center gap-3 cursor-pointer">
+                <div className="relative">
+                  <input
+                    type="checkbox"
+                    className="sr-only peer"
+                    checked={form.gitops_pr_auto_merge}
+                    onChange={(e) => onChange({ gitops_pr_auto_merge: e.target.checked })}
+                  />
+                  <div className="h-5 w-9 rounded-full border border-[#5a9dd0] bg-[#f0f7ff] peer-checked:bg-teal-500 peer-checked:border-teal-500 transition-colors dark:border-gray-600 dark:bg-gray-700" />
+                  <div className="absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform peer-checked:translate-x-4" />
+                </div>
+                <span className="text-sm font-medium text-[#0a3a5a] dark:text-gray-300">Auto-merge PRs</span>
+              </label>
+            </div>
+
+            {/* Cluster group */}
+            <div>
+              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-[#3a6a8a] dark:text-gray-500">Cluster</p>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label className={labelCls}>Host Cluster Name <span className="text-[#3a6a8a] font-normal">(optional)</span></label>
+                  <input
+                    className={inputCls}
+                    value={form.gitops_host_cluster_name}
+                    onChange={(e) => onChange({ gitops_host_cluster_name: e.target.value })}
+                    placeholder="e.g. management"
+                  />
+                  <p className="mt-1 text-[10px] text-[#3a6a8a]">Name of the cluster running Sharko + ArgoCD</p>
+                </div>
+                <div>
+                  <label className={labelCls}>Default Addons <span className="text-[#3a6a8a] font-normal">(optional)</span></label>
+                  <input
+                    className={inputCls}
+                    value={form.gitops_default_addons}
+                    onChange={(e) => onChange({ gitops_default_addons: e.target.value })}
+                    placeholder="e.g. metrics-server,cert-manager"
+                  />
+                  <p className="mt-1 text-[10px] text-[#3a6a8a]">Comma-separated addon names enabled on new clusters by default</p>
+                </div>
+              </div>
+            </div>
           </div>
         )}
       </div>
