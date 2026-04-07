@@ -165,6 +165,15 @@ Template in `charts/sharko/templates/deployment.yaml` should render these as env
       optional: true
 ```
 
+## Release Rules
+
+- **Every code change = new version.** Never retag. Never push the same version tag to a different commit.
+- Patch bump (x.y.Z) for bug fixes and small changes
+- Minor bump (x.Y.0) for new features
+- Major bump (X.0.0) for breaking changes
+- The release workflow is triggered by tags — one tag per commit, one commit per tag
+- If a release has a bug, fix it and bump patch. Do not delete and recreate the tag.
+
 ## Context7 MCP
 When working with Helm, Docker, or GitHub Actions syntax, use the context7 MCP to fetch current documentation for the tools you're configuring.
 

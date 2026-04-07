@@ -4,6 +4,7 @@
 
 - **Never add Co-Authored-By trailers** to commits. All commits are authored solely by the repo owner.
 - **Never use --no-verify or skip hooks.**
+- **Never retag an existing version.** Every code change — no matter how small — gets a new semver version. Retagging (deleting a tag and recreating it on a different commit) is forbidden. Patch bump for fixes, minor for features, major for breaking changes.
 - Git user: `Moran Weissman <moran.weissman@gmail.com>`
 
 ## Content Policy
