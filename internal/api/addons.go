@@ -2,6 +2,10 @@ package api
 
 import (
 	"net/http"
+	"sort"
+	"strings"
+
+	"github.com/MoranWeissman/sharko/internal/models"
 )
 
 // handleListAddons godoc
@@ -27,7 +31,15 @@ func (s *Server) handleListAddons(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	p := parsePagination(r)
+	qp := parseQueryParams(r)
+
+	// Apply filter before pagination.
+	addons = filterAddons(addons, qp.Filter)
+
+	// Apply sort.
+	sortAddons(addons, qp.Sort, qp.Order)
+
+	p := paginationParams{Page: qp.Page, PerPage: qp.PerPage}
 	setPaginationHeaders(w, len(addons), p)
 	paged := applyPagination(addons, p)
 
@@ -177,4 +189,54 @@ func (s *Server) handleGetVersionMatrix(w http.ResponseWriter, r *http.Request) 
 	}
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// filterAddons filters an AddonCatalogEntry slice by the given filter expression.
+// Supported forms:
+//   - "name:<prefix>*"  — addon name starts with prefix
+//   - "name:<value>"    — addon name equals value
+func filterAddons(addons []models.AddonCatalogEntry, filter string) []models.AddonCatalogEntry {
+	if filter == "" {
+		return addons
+	}
+	field, value, found := strings.Cut(filter, ":")
+	if !found {
+		return addons
+	}
+	result := addons[:0:0]
+	for _, a := range addons {
+		switch field {
+		case "name":
+			if strings.HasSuffix(value, "*") {
+				if strings.HasPrefix(a.Name, strings.TrimSuffix(value, "*")) {
+					result = append(result, a)
+				}
+			} else if a.Name == value {
+				result = append(result, a)
+			}
+		default:
+			result = append(result, a)
+		}
+	}
+	return result
+}
+
+// sortAddons sorts an AddonCatalogEntry slice in place by the given field and order.
+// Supported sort fields: "name" (default), "chart", "version".
+func sortAddons(addons []models.AddonCatalogEntry, field, order string) {
+	sort.SliceStable(addons, func(i, j int) bool {
+		var less bool
+		switch field {
+		case "chart":
+			less = addons[i].Chart < addons[j].Chart
+		case "version":
+			less = addons[i].Version < addons[j].Version
+		default: // "name" and anything else
+			less = addons[i].Name < addons[j].Name
+		}
+		if order == "desc" {
+			return !less
+		}
+		return less
+	})
 }

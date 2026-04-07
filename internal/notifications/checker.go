@@ -96,6 +96,18 @@ func (c *Checker) check() {
 					Timestamp:   now,
 				})
 			}
+
+			// Check for security-relevant versions: flag major version bumps as
+			// potentially security-relevant since they often include breaking CVE fixes.
+			if isMajorUpgrade(info.CatalogVersion, info.LatestVersion) {
+				c.store.Add(Notification{
+					ID:          fmt.Sprintf("security-%s-%s", info.AddonName, info.LatestVersion),
+					Type:        TypeSecurity,
+					Title:       fmt.Sprintf("Major update: %s %s", info.AddonName, info.LatestVersion),
+					Description: fmt.Sprintf("Major version change from %s — review for security patches", info.CatalogVersion),
+					Timestamp:   now,
+				})
+			}
 		}
 
 		// Check for drift between cluster version and catalog version.
@@ -122,6 +134,17 @@ func isMajorOrMinorUpgrade(current, latest string) bool {
 		return current != latest
 	}
 	return curParts[0] != latParts[0] || curParts[1] != latParts[1]
+}
+
+// isMajorUpgrade returns true when the latest version has a higher major
+// component than the current version. Major bumps often include security fixes.
+func isMajorUpgrade(current, latest string) bool {
+	curParts := parseSemverParts(current)
+	latParts := parseSemverParts(latest)
+	if len(curParts) < 1 || len(latParts) < 1 {
+		return false
+	}
+	return latParts[0] > curParts[0]
 }
 
 // parseSemverParts parses a semver string into its numeric components.

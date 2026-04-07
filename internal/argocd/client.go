@@ -81,14 +81,14 @@ var commonArgoServiceNames = []string{
 }
 
 // discoverArgocdServer tries to find the ArgoCD server service in the given namespace.
-// Priority: ARGOCD_SERVER_URL env var → K8s service listing → common name probes → default name.
+// Priority: ARGOCD_SERVER_URL env var → K8s service listing with HTTP probe → common name probes → default name.
 func discoverArgocdServer(namespace string) string {
 	// Check ARGOCD_SERVER_URL env var first
 	if url := os.Getenv("ARGOCD_SERVER_URL"); url != "" {
 		return url
 	}
 
-	// Try K8s API to find ArgoCD server service by label or name pattern
+	// Try K8s API to list all services and find the ArgoCD server by probing.
 	cfg, err := rest.InClusterConfig()
 	if err == nil {
 		clientset, err := kubernetes.NewForConfig(cfg)
@@ -98,7 +98,7 @@ func discoverArgocdServer(namespace string) string {
 
 			svcs, err := clientset.CoreV1().Services(namespace).List(ctx, metav1.ListOptions{})
 			if err == nil {
-				// First pass: prefer known common names (exact match, in priority order)
+				// First pass: prefer well-known service names — probe to confirm they respond.
 				svcByName := make(map[string]struct{}, len(svcs.Items))
 				for _, svc := range svcs.Items {
 					svcByName[svc.Name] = struct{}{}
@@ -106,23 +106,22 @@ func discoverArgocdServer(namespace string) string {
 				for _, name := range commonArgoServiceNames {
 					if _, ok := svcByName[name]; ok {
 						url := fmt.Sprintf("http://%s.%s.svc.cluster.local", name, namespace)
-						slog.Info("discovered ArgoCD server service by name", "service", name, "url", url)
-						return url
+						if probeArgoCD(url) {
+							slog.Info("discovered ArgoCD server service by name", "service", name, "url", url)
+							return url
+						}
 					}
 				}
 
-				// Second pass: look for any service with "server" in the name (not repo-server)
-				// that exposes port 443 or 80 — handles custom release names
+				// Second pass: probe any service that exposes port 80 or 443 — handles
+				// custom Helm release names.
 				for _, svc := range svcs.Items {
-					if !strings.Contains(svc.Name, "server") || strings.Contains(svc.Name, "repo-server") {
-						continue
-					}
 					for _, port := range svc.Spec.Ports {
-						if port.Port == 80 || port.Port == 443 {
-							url := fmt.Sprintf("http://%s.%s.svc.cluster.local", svc.Name, namespace)
-							if port.Port == 443 {
-								url = fmt.Sprintf("https://%s.%s.svc.cluster.local", svc.Name, namespace)
-							}
+						if port.Port != 80 && port.Port != 443 {
+							continue
+						}
+						url := fmt.Sprintf("http://%s.%s.svc.cluster.local", svc.Name, namespace)
+						if probeArgoCD(url) {
 							slog.Info("discovered ArgoCD server service", "service", svc.Name, "url", url)
 							return url
 						}
@@ -132,30 +131,37 @@ func discoverArgocdServer(namespace string) string {
 		}
 	}
 
-	// Fallback: probe common names via HTTP to find a responding server.
-	// In-cluster services use plain HTTP (port 80), not HTTPS.
-	httpClient := &http.Client{
+	return fallbackDiscovery(namespace)
+}
+
+// fallbackDiscovery probes common ArgoCD service names when K8s API is not available.
+func fallbackDiscovery(namespace string) string {
+	for _, name := range commonArgoServiceNames {
+		url := fmt.Sprintf("http://%s.%s.svc.cluster.local", name, namespace)
+		if probeArgoCD(url) {
+			slog.Info("ArgoCD server responded to fallback probe", "service", name, "url", url)
+			return url
+		}
+	}
+	// Last resort: default name.
+	return fmt.Sprintf("http://argocd-server.%s.svc.cluster.local", namespace)
+}
+
+// probeArgoCD checks whether an ArgoCD server is reachable at the given base URL
+// by sending a GET request to /api/v1/version with a 2-second timeout.
+func probeArgoCD(baseURL string) bool {
+	client := &http.Client{
 		Timeout: 2 * time.Second,
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // discovery probe
 		},
 	}
-	for _, name := range commonArgoServiceNames {
-		url := fmt.Sprintf("http://%s.%s.svc.cluster.local", name, namespace)
-		req, err := http.NewRequest(http.MethodGet, url+"/api/version", nil)
-		if err != nil {
-			continue
-		}
-		resp, err := httpClient.Do(req)
-		if err == nil {
-			resp.Body.Close()
-			slog.Info("ArgoCD server responded to probe", "service", name, "url", url)
-			return url
-		}
+	resp, err := client.Get(baseURL + "/api/v1/version")
+	if err != nil {
+		return false
 	}
-
-	// Last resort: default name — use http:// for in-cluster access
-	return fmt.Sprintf("http://argocd-server.%s.svc.cluster.local", namespace)
+	defer resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
 }
 
 // TestConnection verifies that the client can reach the ArgoCD server
