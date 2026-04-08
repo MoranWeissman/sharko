@@ -1,82 +1,76 @@
 # Installation
 
-This page covers a full production installation of Sharko.
-
 ## Prerequisites
 
 - Kubernetes 1.27+ with **ArgoCD** installed and running
 - **Helm 3.x** (`helm version` to verify)
-- A **GitHub Personal Access Token** (PAT) with `repo` scope, or an Azure DevOps PAT with `Code (Read & Write)` permissions
-- (Optional) AWS IAM role with Secrets Manager read access, if using `aws-sm` as the secrets provider
 
-## Basic Installation
+That's it. Connection credentials (Git token, ArgoCD token) are entered through the first-run wizard after install — not at Helm install time.
+
+## Install Sharko
 
 ```bash
-helm install sharko oci://ghcr.io/moranweissman/sharko/charts/sharko \
-  --namespace sharko --create-namespace \
-  --set secrets.GITHUB_TOKEN=<your-github-pat>
+helm install sharko oci://ghcr.io/moranweissman/sharko/sharko \
+  --namespace sharko --create-namespace
 ```
 
 Verify the pod is running:
 
 ```bash
 kubectl get pods -n sharko
-kubectl get svc -n sharko
 ```
 
-## Configuration at Install Time
+## AWS Secrets Manager (optional)
 
-All configuration is passed as Helm values. Common options:
+If you plan to use AWS Secrets Manager as the secrets provider for cluster credentials, annotate the service account with your IRSA role at install time:
 
 ```bash
-helm install sharko oci://ghcr.io/moranweissman/sharko/charts/sharko \
+helm install sharko oci://ghcr.io/moranweissman/sharko/sharko \
   --namespace sharko --create-namespace \
-  --set secrets.GITHUB_TOKEN=<github-pat> \
-  --set gitops.actions.enabled=true \
-  --set ai.enabled=true \
-  --set ai.provider=openai \
-  --set ai.apiKey=<openai-api-key> \
-  --set ai.cloudModel=gpt-4o
+  --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=arn:aws:iam::123456789012:role/sharko-role
 ```
 
-For a full list of values, see the [Configuration reference](configuration.md).
+This lets the Sharko pod assume the IAM role via IRSA and read secrets from AWS SM without static credentials.
 
-## Using an Existing Secret
+## Get the Admin Password
 
-If you manage secrets externally (e.g., with Sealed Secrets or External Secrets Operator), point Sharko at your secret:
+Sharko generates a random admin password on first install:
 
 ```bash
-helm install sharko oci://ghcr.io/moranweissman/sharko/charts/sharko \
-  --namespace sharko --create-namespace \
-  --set existingSecret=my-sharko-secret
+kubectl get secret sharko -n sharko \
+  -o jsonpath='{.data.admin\.initialPassword}' | base64 -d
 ```
 
-The secret must contain the keys your configuration requires (e.g., `GITHUB_TOKEN`, `AI_API_KEY`).
+Save this password — you will use it to log in for the first time.
 
-## Ingress {#ingress}
+## Access the UI
 
-For production access, enable the ingress resource:
+**Port-forward (quickest for initial setup):**
 
 ```bash
-helm install sharko oci://ghcr.io/moranweissman/sharko/charts/sharko \
+kubectl port-forward svc/sharko 8080:80 -n sharko
+```
+
+Open [http://localhost:8080](http://localhost:8080).
+
+**Via Ingress (production):**
+
+```bash
+helm install sharko oci://ghcr.io/moranweissman/sharko/sharko \
   --namespace sharko --create-namespace \
-  --set secrets.GITHUB_TOKEN=<github-pat> \
   --set ingress.enabled=true \
   --set ingress.className=nginx \
-  --set ingress.hosts[0].host=sharko.your-domain.com \
-  --set ingress.hosts[0].paths[0].path=/ \
-  --set ingress.hosts[0].paths[0].pathType=Prefix \
-  --set ingress.tls[0].secretName=sharko-tls \
-  --set ingress.tls[0].hosts[0]=sharko.your-domain.com
+  --set "ingress.hosts[0].host=sharko.your-domain.com" \
+  --set "ingress.hosts[0].paths[0].path=/" \
+  --set "ingress.hosts[0].paths[0].pathType=Prefix" \
+  --set "ingress.tls[0].secretName=sharko-tls" \
+  --set "ingress.tls[0].hosts[0]=sharko.your-domain.com"
 ```
 
 Or use a values file:
 
 ```yaml
 # sharko-values.yaml
-secrets:
-  GITHUB_TOKEN: "<github-pat>"
-
 ingress:
   enabled: true
   className: nginx
@@ -92,15 +86,19 @@ ingress:
 ```
 
 ```bash
-helm install sharko oci://ghcr.io/moranweissman/sharko/charts/sharko \
+helm install sharko oci://ghcr.io/moranweissman/sharko/sharko \
   --namespace sharko --create-namespace \
   -f sharko-values.yaml
 ```
 
+## What's Next
+
+After accessing the UI, the first-run wizard appears automatically. See [First-Run Wizard](first-run.md) for a step-by-step walkthrough.
+
 ## Upgrading Sharko
 
 ```bash
-helm upgrade sharko oci://ghcr.io/moranweissman/sharko/charts/sharko \
+helm upgrade sharko oci://ghcr.io/moranweissman/sharko/sharko \
   --namespace sharko \
   -f sharko-values.yaml
 ```

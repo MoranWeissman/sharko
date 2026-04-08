@@ -18,9 +18,9 @@
 
 ---
 
-Sharko is a server that runs in your Kubernetes cluster, next to ArgoCD, and manages the lifecycle of addons across your fleet. It provides a REST API, a dashboard UI with an ocean-inspired theme, a thin CLI client, and an AI assistant for troubleshooting.
+Sharko is a server that runs in your Kubernetes cluster, next to ArgoCD, and manages the lifecycle of addons across your fleet. Install it with a single Helm command, and a guided wizard walks you through connecting your Git repo, ArgoCD instance, and optional secrets provider — no config files, no env vars to set by hand.
 
-## What Sharko Does
+## Features
 
 - **Wizard-based setup** — first run opens a step-by-step wizard: Git connection, ArgoCD connection, secrets provider, and repo initialization
 - **Fleet dashboard** — cluster health cards with sync status, addon counts, and connection indicators; managed and discovered clusters in separate sections
@@ -32,6 +32,7 @@ Sharko is a server that runs in your Kubernetes cluster, next to ArgoCD, and man
 - **API keys** — long-lived tokens for Backstage, Terraform, and CI/CD integrations
 - **Unified API** — CLI, UI, and external integrations all use the same REST API
 - **Upgrade management** — upgrade addons globally or per-cluster, with drift detection and batch multi-addon upgrades
+
 - **Addon dependency ordering** — declare `dependsOn` in the catalog to enforce deployment order; cycle detection prevents invalid graphs
 - **AI addon summaries** — AI-generated summaries of each addon's purpose and release notes, shown in the addon detail view
 - **Audit log** — every write operation recorded with actor, action, result, and timestamp; queryable via `GET /api/v1/audit`
@@ -40,7 +41,7 @@ Sharko is a server that runs in your Kubernetes cluster, next to ArgoCD, and man
 
 ## Demo
 
-The fastest way to try Sharko. No Kubernetes cluster required -- mock backends simulate ArgoCD, Git, and secrets providers.
+No Kubernetes cluster required — mock backends simulate ArgoCD, Git, and secrets providers.
 
 ```bash
 git clone https://github.com/MoranWeissman/sharko.git
@@ -50,25 +51,63 @@ make demo
 
 Open [http://localhost:8080](http://localhost:8080) and log in with `admin` / `admin` (admin role) or `qa` / `sharko` (viewer role).
 
-Demo mode gives you a fully functional UI and API with realistic mock data -- clusters, addons, health status, drift detection, and the AI assistant.
+## Quick Start (Production)
+
+### 1. Install Sharko
+
+```bash
+helm install sharko oci://ghcr.io/moranweissman/sharko/sharko \
+  --namespace sharko --create-namespace
+```
+
+If using AWS Secrets Manager for cluster credentials, add the IRSA annotation:
+
+```bash
+helm install sharko oci://ghcr.io/moranweissman/sharko/sharko \
+  --namespace sharko --create-namespace \
+  --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=arn:aws:iam::123456789012:role/sharko-role
+```
+
+### 2. Get the Admin Password
+
+```bash
+kubectl get secret sharko -n sharko \
+  -o jsonpath='{.data.admin\.initialPassword}' | base64 -d
+```
+
+### 3. Open the UI
+
+```bash
+kubectl port-forward svc/sharko 8080:80 -n sharko
+```
+
+Open [http://localhost:8080](http://localhost:8080) and log in with `admin` and the password from step 2.
+
+### 4. Complete the First-Run Wizard
+
+The wizard appears automatically on first access — no separate configuration step needed.
+
+1. **Welcome** — overview of what Sharko will set up
+2. **Git connection** — enter your repo URL and personal access token
+3. **ArgoCD connection** — Sharko auto-discovers the ArgoCD service in-cluster; add optional secrets provider config
+4. **Initialize repository** — Sharko creates the ApplicationSet, base values, and cluster directory structure in your repo; choose auto-merge or review the PR yourself
+
+After the wizard completes, the dashboard loads with clusters pulled from ArgoCD.
 
 ## Architecture
 
 ```
-Developer laptop:
+Developer laptop / CI:
   sharko CLI ---------> Sharko Server API
 
-Backstage / Port.io:
-  plugin -------------> Sharko Server API
-
-Terraform / CI:
-  curl / CLI ---------> Sharko Server API
+Backstage / Port.io / Terraform:
+  plugin / curl ------> Sharko Server API
 
 Sharko Server (in-cluster):
-  +-- UI (React dashboard)
-  +-- API (read + write endpoints)
+  +-- UI (React dashboard with first-run wizard)
+  +-- API (REST endpoints, JWT + API key auth)
   +-- Orchestrator (workflow engine, Git-serialized via mutex)
-  +-- ArgoCD client (account token auth)
+  +-- ArgoCD client (service-discovery + account token auth)
   +-- Git client (GitHub, Azure DevOps)
   +-- Secrets provider (AWS SM, K8s Secrets)
   +-- Remote client (deliver secrets to remote clusters)
@@ -76,7 +115,7 @@ Sharko Server (in-cluster):
   +-- Swagger UI (/swagger/index.html)
 ```
 
-The server holds all credentials. The CLI is a thin HTTP client -- like `kubectl` to the Kubernetes API server. No credentials on developer laptops.
+The server holds all credentials. The CLI is a thin HTTP client — like `kubectl` to the Kubernetes API. No credentials on developer laptops.
 
 ## Tech Stack
 
@@ -90,62 +129,41 @@ The server holds all credentials. The CLI is a thin HTTP client -- like `kubectl
 | Secrets | AWS Secrets Manager, Kubernetes Secrets |
 | AI | OpenAI, Claude, Gemini, Ollama, custom OpenAI-compatible |
 
-## UI Features
+## CLI Commands
 
-Sharko ships with a full-featured dashboard built on a sky-blue ocean theme.
-
-- **Fleet overview** -- cluster health cards with sync status, addon counts, and connection indicators; separate sections for managed and discovered clusters
-- **Addon catalog** -- version matrix showing every addon across every cluster, with drift detection highlights and contextual help tooltips on all advanced config fields
-- **Cluster detail pages** -- left navigation panel with addon list, health status, per-cluster configuration, and a **Test Connectivity** button
-- **Addon upgrade view** -- upgrade addons globally or per-cluster, with per-cluster drift detection showing which clusters are behind
-- **Notification bell** -- alerts for available upgrades, configuration drift, and security advisories (major version bumps flagged with amber icon)
-- **Filtering and sorting** -- filter clusters by environment/health/addon, sort by name/health/count; live filter UI above clusters list
-- **AI assistant** -- floating panel accessible from any page, context-aware (knows what page you are on)
-- **Settings** -- left navigation panel with connections (ArgoCD, Git), secrets providers, addon secrets, and AI configuration
-- **First-run wizard** -- dismissible at any step with an X button; no forced walk-through
-- **Full write support** -- register clusters, add addons, upgrade versions, manage API keys, configure secrets, all from the browser
-
-> Screenshots are available in the `assets/` directory.
-
-## Quickstart (Production)
-
-### 1. Install Sharko
-
-```bash
-helm install sharko oci://ghcr.io/moranweissman/sharko/charts/sharko \
-  --namespace sharko --create-namespace \
-  --set secrets.GITHUB_TOKEN=<github-pat>
-```
-
-### 2. Connect the CLI
-
-```bash
-sharko login --server https://sharko.your-cluster.com
-```
-
-### 3. Configure connections
-
-Open the Sharko UI and configure your ArgoCD and Git connections in Settings.
-
-### 4. Initialize your addons repo
-
-```bash
-sharko init
-```
-
-### 5. Add addons and clusters
-
-```bash
-sharko add-addon cert-manager --chart cert-manager --repo https://charts.jetstack.io --version 1.14.5
-sharko add-cluster prod-eu --addons cert-manager,metrics-server --region eu-west-1
-sharko status
-```
+| Command | Description |
+|---------|-------------|
+| `sharko login --server <url>` | Authenticate with the server |
+| `sharko version` | Show CLI + server version |
+| `sharko connect` | Configure the active Git connection |
+| `sharko connect list` | Show current connection |
+| `sharko connect test` | Test current connection |
+| `sharko init` | Initialize the addons repo (async, streams progress) |
+| `sharko validate [path]` | Validate catalog YAML against schema |
+| `sharko add-cluster <name>` | Register a cluster |
+| `sharko add-clusters <n1,n2,...>` | Batch register multiple clusters |
+| `sharko remove-cluster <name>` | Deregister a cluster |
+| `sharko update-cluster <name>` | Update addon assignments |
+| `sharko list-clusters` | List all clusters |
+| `sharko test-cluster <name>` | Test connectivity to a cluster |
+| `sharko adopt-cluster <name>` | Adopt a discovered ArgoCD cluster |
+| `sharko add-addon <name>` | Add addon to catalog |
+| `sharko remove-addon <name>` | Remove addon (dry-run without `--confirm`) |
+| `sharko upgrade-addon <name>` | Upgrade an addon version |
+| `sharko upgrade-addons <addon=ver,...>` | Batch upgrade multiple addons |
+| `sharko list-addons [--show-config]` | List addons |
+| `sharko refresh-secrets [cluster]` | Trigger immediate secrets reconcile |
+| `sharko secret-status` | Show reconciler status per cluster |
+| `sharko token create` | Create an API key |
+| `sharko token list` | List API keys |
+| `sharko token revoke <name>` | Revoke an API key |
+| `sharko status` | Cluster status overview |
 
 ## API
 
-Sharko exposes a REST API that every consumer uses -- the CLI, the UI, and external integrations.
+Sharko exposes a REST API that every consumer uses — the CLI, the UI, and external integrations.
 
-### Read Operations (observability)
+### Read Operations
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -153,15 +171,14 @@ Sharko exposes a REST API that every consumer uses -- the CLI, the UI, and exter
 | GET | `/api/v1/clusters/{name}` | Cluster detail + addon status |
 | GET | `/api/v1/clusters/available` | Discover available clusters from the secrets provider |
 | GET | `/api/v1/addons/catalog` | Addon catalog with deployment stats |
-| GET | `/api/v1/addons/version-matrix` | Version matrix: addon x cluster grid |
+| GET | `/api/v1/addons/version-matrix` | Version matrix: addon × cluster grid |
 | GET | `/api/v1/fleet/status` | Cluster status overview |
-| GET | `/api/v1/observability/overview` | ArgoCD health groups + sync activity |
 | GET | `/api/v1/tokens` | List API keys (admin only) |
 | GET | `/api/v1/addon-secrets` | List addon secret definitions |
 | GET | `/api/v1/clusters/{name}/secrets` | List managed secrets on a cluster |
 | GET | `/api/v1/notifications` | List notifications (upgrades, drift, security advisories) |
 
-### Write Operations (management)
+### Write Operations
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -172,217 +189,100 @@ Sharko exposes a REST API that every consumer uses -- the CLI, the UI, and exter
 | POST | `/api/v1/clusters/{name}/refresh` | Refresh cluster credentials |
 | POST | `/api/v1/clusters/{name}/secrets/refresh` | Refresh managed secrets on a cluster |
 | POST | `/api/v1/clusters/{name}/test` | Test cluster connectivity |
-| POST | `/api/v1/clusters/{name}/adopt` | Adopt a discovered ArgoCD cluster into Sharko |
+| POST | `/api/v1/clusters/{name}/adopt` | Adopt a discovered ArgoCD cluster |
 | POST | `/api/v1/addons` | Add addon to catalog |
 | DELETE | `/api/v1/addons/{name}?confirm=true` | Remove addon (with safety gate) |
-| POST | `/api/v1/addons/{name}/upgrade` | Upgrade an addon (global or per-cluster) |
+| POST | `/api/v1/addons/{name}/upgrade` | Upgrade an addon |
 | POST | `/api/v1/addons/upgrade-batch` | Upgrade multiple addons in one PR |
 | POST | `/api/v1/addon-secrets` | Define an addon secret template |
 | DELETE | `/api/v1/addon-secrets/{addon}` | Remove an addon secret definition |
 | POST | `/api/v1/tokens` | Create an API key |
 | DELETE | `/api/v1/tokens/{name}` | Revoke an API key |
-| POST | `/api/v1/init` | Initialize addons repo from templates (async — returns `operation_id`) |
+| POST | `/api/v1/init` | Initialize addons repo (async — returns `operation_id`) |
 | GET | `/api/v1/operations/{id}` | Get async operation status and log lines |
-| POST | `/api/v1/operations/{id}/heartbeat` | Keep-alive for an active operation session |
 | POST | `/api/v1/secrets/reconcile` | Trigger immediate secrets reconcile |
 | GET | `/api/v1/secrets/status` | Reconciler status per cluster |
-| POST | `/api/v1/webhooks/git` | Git push webhook (triggers secrets reconcile, HMAC-SHA256 verified) |
 
-See [docs/api-contract.md](docs/api-contract.md) for full API reference with request/response shapes.
+See [docs/api-contract.md](docs/api-contract.md) for full request/response shapes.
 
-## Swagger
+Interactive API docs at `/swagger/index.html` when the server is running.
 
-Interactive API documentation is available at `/swagger/index.html` when the server is running. In demo mode:
+## Settings
 
-```
-http://localhost:8080/swagger/index.html
-```
+After the wizard, the **Settings** page has six sections:
 
-The Swagger UI lets you explore all endpoints, view request/response schemas, and execute API calls directly from the browser.
-
-## CLI Commands
-
-| Command | Description |
-|---------|-------------|
-| `sharko login --server <url>` | Authenticate with the server |
-| `sharko version` | Show CLI + server version |
-| `sharko init` | Initialize the addons repo (async, streams progress) |
-| `sharko validate [path]` | Validate catalog YAML against schema |
-| `sharko connect` | Configure the active Git connection |
-| `sharko connect list` | Show current connection |
-| `sharko connect test` | Test current connection |
-| `sharko add-cluster <name>` | Register a cluster |
-| `sharko add-clusters <n1,n2,...>` | Batch register multiple clusters |
-| `sharko remove-cluster <name>` | Deregister a cluster |
-| `sharko update-cluster <name>` | Update addon assignments |
-| `sharko list-clusters` | List all clusters |
-| `sharko test-cluster <name>` | Test connectivity to a cluster |
-| `sharko adopt-cluster <name>` | Adopt a discovered ArgoCD cluster into Sharko |
-| `sharko add-addon <name>` | Add addon to catalog |
-| `sharko remove-addon <name>` | Remove addon (dry-run without `--confirm`) |
-| `sharko upgrade-addon <name>` | Upgrade an addon version (global or per-cluster) |
-| `sharko upgrade-addons <addon=ver,...>` | Batch upgrade multiple addons |
-| `sharko list-addons [--show-config]` | List addons (with catalog config) |
-| `sharko refresh-secrets [cluster]` | Trigger immediate secrets reconcile |
-| `sharko secret-status` | Show reconciler status per cluster |
-| `sharko token create` | Create an API key |
-| `sharko token list` | List API keys |
-| `sharko token revoke <name>` | Revoke an API key |
-| `sharko status` | Cluster status overview |
+| Section | What you configure |
+|---------|-------------------|
+| Connection | ArgoCD server URL + token, Git provider + repo + token |
+| Secrets Provider | `aws-sm` or `k8s-secrets`, region or namespace |
+| GitOps | Auto-merge PRs, branch prefix, commit prefix, base branch |
+| Users | Change admin password |
+| API Keys | Create and revoke long-lived tokens for CI/CD |
+| AI | Provider (OpenAI, Claude, Gemini, Ollama, custom), model, API key |
 
 ## AI Assistant
 
-Sharko includes a built-in AI assistant that understands your platform. It runs as a floating panel in the UI and is context-aware -- it knows which page you are on and can answer questions about the clusters, addons, and configuration you are currently viewing.
+Built-in assistant accessible from any page. Knows which cluster or addon you are viewing and can answer questions about health, configuration, and version drift.
 
-**Supported providers:**
+**Supported providers:** OpenAI, Claude, Gemini, Ollama, or any OpenAI-compatible API.
 
-| Provider | Description |
-|----------|-------------|
-| OpenAI | GPT-4o and other OpenAI models |
-| Claude | Anthropic Claude models |
-| Gemini | Google Gemini models |
-| Ollama | Local/self-hosted models (no API key needed) |
-| Custom OpenAI-compatible | Any provider with an OpenAI-compatible API (custom base URL, auth header, auth prefix) |
-
-**Capabilities:** 24 read tools and 5 write tools give the assistant deep platform access:
-
-- List clusters, addons, and their health status
-- Inspect per-cluster addon configuration and values
+**Capabilities:** 24 read tools and 5 write tools (admin-only, opt-in):
+- List clusters, addons, and health status
+- Inspect per-cluster addon configuration
 - Query ArgoCD application health, resources, events, and pod logs
 - Compare Helm chart versions and fetch release notes
-- Detect unhealthy addons and disconnected clusters
-- Search the web for Kubernetes and Helm documentation
-- Enable/disable addons, update versions, sync and refresh ArgoCD apps (write tools, admin only)
-- Persistent memory across conversations
+- Enable/disable addons, update versions, sync and refresh ArgoCD apps
 
-Configure the AI provider in the Settings page or via environment variables. Write tools require admin role and explicit opt-in.
+## Secrets Provider
 
-## API Keys
-
-API keys provide long-lived authentication for non-interactive consumers like Backstage, Terraform, and CI/CD pipelines.
-
-- Keys use the `sharko_` prefix followed by 32 hex characters (e.g., `sharko_a1b2c3d4...`)
-- The plaintext key is shown only once at creation time
-- Keys are stored as bcrypt hashes -- the server never stores plaintext keys
-- Each key has a name for identification and an associated role (`admin` or `viewer`)
-- Manage keys via `sharko token create/list/revoke` or the UI Settings page
-
-## Secrets Providers
-
-Sharko uses a pluggable provider interface to fetch cluster kubeconfigs:
+Sharko uses a pluggable provider to fetch cluster kubeconfigs:
 
 | Provider | Description |
 |----------|-------------|
-| `aws-sm` | AWS Secrets Manager (IRSA for auth) |
+| `aws-sm` | AWS Secrets Manager (IRSA for auth — no static credentials) |
 | `k8s-secrets` | Kubernetes Secrets (no cloud dependency) |
 
-Configure via the **Settings UI** or API. The provider type and connection details are stored server-side.
-
-| Setting | Description |
-|---------|-------------|
-| Provider backend | `aws-sm` or `k8s-secrets` — configured in Settings > Provider |
-| `SHARKO_PROVIDER_REGION` | AWS region (for `aws-sm`) — Helm value |
-| `SHARKO_PROVIDER_NAMESPACE` | K8s namespace for secrets (for `k8s-secrets`) — Helm value |
-
-### Writing Your Own Provider
-
-Implement the `ClusterCredentialsProvider` interface:
-
-```go
-type ClusterCredentialsProvider interface {
-    GetCredentials(clusterName string) (*Kubeconfig, error)
-    ListClusters() ([]ClusterInfo, error)
-}
-```
-
-See [internal/providers/](internal/providers/) for implementation examples.
-
-## Configuration
-
-All configuration is server-side via Helm values and environment variables. No config files in the addons repo.
-
-| Env Var | Description | Default |
-|---------|-------------|---------|
-| Provider type | Secrets provider backend (`aws-sm`, `k8s-secrets`) — configure via Settings UI or API | (none) |
-| `SHARKO_PROVIDER_REGION` | AWS region for secrets provider | (none) |
-| `SHARKO_ENCRYPTION_KEY` | Encryption key for connection secrets (required in K8s) | (none) |
-| `SHARKO_DEV_MODE` | Enable env var fallback for credentials | `false` |
-| `SHARKO_GITOPS_PR_AUTO_MERGE` | Auto-merge PRs after creation | `false` |
-| `SHARKO_GITOPS_BRANCH_PREFIX` | Branch prefix for PR branches | `sharko/` |
-| `SHARKO_GITOPS_COMMIT_PREFIX` | Commit message prefix | `sharko:` |
-| `SHARKO_GITOPS_BASE_BRANCH` | Target branch for PRs | `main` |
-| `SHARKO_GITOPS_REPO_URL` | Git repo URL for init placeholder replacement | (none) |
-| `SHARKO_ADDON_SECRETS` | JSON-encoded addon secret definitions | (none) |
-| `SHARKO_DEFAULT_ADDONS` | Comma-separated default addons for new clusters | (none) |
-| `SHARKO_HOST_CLUSTER_NAME` | Name of the host cluster (for in-cluster deployment) | (none) |
-| `SHARKO_INIT_AUTO_BOOTSTRAP` | Auto-bootstrap ArgoCD during init (not yet implemented, post-v1) | `false` |
-| `SHARKO_SECRET_RECONCILE_INTERVAL` | How often the secrets reconciler runs (Go duration) | `5m` |
-| `SHARKO_WEBHOOK_SECRET` | HMAC-SHA256 secret for validating `/api/v1/webhooks/git` | (none) |
-| `GITHUB_TOKEN` | GitHub PAT (set via `secrets.GITHUB_TOKEN` in Helm) | (none) |
+Configure in **Settings → Secrets Provider**. Supports structured JSON secrets in AWS SM (individual keys instead of raw kubeconfig YAML) and STS EKS token generation via IRSA.
 
 ## Development
 
-### Demo mode (recommended for QA and exploration)
-
-Builds the UI and starts the server with mock backends. No external dependencies required.
+### Demo mode
 
 ```bash
 make demo
-# Open http://localhost:8080
-# Login: admin/admin (admin) or qa/sharko (viewer)
+# Open http://localhost:8080 — login: admin/admin or qa/sharko
 ```
 
 ### Hot-reload development
 
-Starts the Go backend in demo mode and the Vite dev server with hot reload. Use this when developing the UI.
-
 ```bash
 make dev
-# Frontend: http://localhost:5173 (open this)
+# Frontend: http://localhost:5173
 # Backend:  http://localhost:8080 (API only)
 ```
 
 ### Build and test
 
 ```bash
-make build          # Build Go binary + UI
-make test           # Run all tests (Go + UI)
-make lint           # Go vet + UI build check
+make build    # Build Go binary + UI
+make test     # Run all tests (Go + UI)
+make lint     # Go vet + UI build check
 ```
 
 ### Swagger regeneration
 
-After changing API annotations, regenerate the Swagger docs:
-
 ```bash
 swag init -g cmd/sharko/serve.go -o docs/swagger --parseDependency --parseInternal
-```
-
-### Docker
-
-```bash
-docker build -t sharko:dev .
 ```
 
 ## Documentation
 
 | Document | Description |
 |----------|-------------|
-| [API Contract](docs/api-contract.md) | Full API reference with request/response shapes, error codes, and orchestration behavior |
+| [API Contract](docs/api-contract.md) | Full API reference with request/response shapes and error codes |
 | [Architecture](docs/architecture.md) | Server-first architecture, orchestrator pattern, provider interfaces |
-| [User Guide](docs/user-guide.md) | End-to-end guide for operators: install, configure, manage clusters and addons |
-| [Developer Guide](docs/developer-guide.md) | Contributing guide: project structure, coding patterns, testing, adding new features |
-
-## Contributing
-
-Sharko development is coordinated through an agent team structure defined in [`.claude/team/`](.claude/team/). Each role (implementer, frontend expert, Go expert, test engineer, etc.) has a playbook that describes patterns, conventions, and responsibilities. If you are contributing, read the role file relevant to your change.
-
-Key conventions:
-
-- All write operations go through the orchestrator and create PRs (never direct commits)
-- The API contract in `docs/api-contract.md` is the source of truth for endpoint behavior
-- Tests live next to the code they test (`_test.go` suffix)
-- UI components use shadcn/ui with the project's ocean theme
+| [User Guide](docs/user-guide.md) | End-to-end guide: install, configure, manage clusters and addons |
+| [Developer Guide](docs/developer-guide.md) | Project structure, coding patterns, testing, adding new features |
 
 ## License
 
