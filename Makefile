@@ -79,7 +79,7 @@ e2e: ## Run E2E tests against a Kind cluster (requires docker + kind)
 	bash tests/e2e/setup.sh
 	kubectl port-forward svc/sharko 8080:80 -n sharko &
 	sleep 5
-	go test ./tests/e2e/... -v -timeout 5m
+	go test -tags e2e ./tests/e2e/... -v -timeout 5m
 	bash tests/e2e/teardown.sh
 
 release: ## Tag and push a release (usage: make release VERSION=1.0.0)

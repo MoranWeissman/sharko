@@ -39,7 +39,7 @@ jobs:
           sleep 5
 
       - name: Run E2E tests
-        run: go test ./tests/e2e/... -v -timeout 5m
+        run: go test -tags e2e ./tests/e2e/... -v -timeout 5m
         env:
           SHARKO_E2E_URL: http://localhost:8080
 
