@@ -1,112 +1,82 @@
-# First Run
+# First-Run Wizard
 
-After installing Sharko, this guide walks you through the initial configuration wizard.
+When you access Sharko for the first time, a setup wizard appears automatically. It walks you through every configuration step needed before the dashboard is usable. You cannot accidentally skip it — but you can dismiss it at any step with the X button if you prefer to configure things manually later.
 
-## 1. Retrieve the Admin Password
+## Before You Start
 
-Sharko generates a random admin password on first install:
+Have these ready:
 
-```bash
-kubectl get secret sharko -n sharko \
-  -o jsonpath='{.data.admin\.initialPassword}' | base64 -d
-```
+- **Git personal access token** — GitHub PAT with `repo` scope, or Azure DevOps PAT with `Code (Read & Write)` permissions
+- **Addons repo URL** — the Git repository where Sharko will store ApplicationSet and cluster configuration (can be an existing repo or a new empty one)
+- **ArgoCD account token** — an ArgoCD account token with at minimum `applications:get` and `projects:get` permissions
 
-Save this password — you will use it to log in for the first time.
+## Step 1: Welcome
 
-## 2. Access the UI
+An overview of what the wizard will set up. Read through it and click **Get Started**.
 
-**Option A: Port-forward (quickest)**
+## Step 2: Git Connection
 
-```bash
-kubectl port-forward svc/sharko -n sharko 8080:80
-```
+Sharko needs a Git repo to store your fleet configuration (ApplicationSet, base values, per-cluster overrides). All write operations (adding clusters, upgrading addons) create PRs in this repo.
 
-Open [http://localhost:8080](http://localhost:8080).
+| Field | What to enter |
+|-------|--------------|
+| **Provider** | GitHub or Azure DevOps |
+| **Repository URL** | e.g., `https://github.com/your-org/addons-repo` |
+| **Personal Access Token** | PAT with read/write access to the repo |
 
-**Option B: Via Ingress (production)**
+Sharko validates the connection before letting you proceed. If validation fails, check that the token has not expired and the repo URL is correct.
 
-If you configured ingress during installation, open `https://sharko.your-domain.com` directly.
+## Step 3: ArgoCD Connection
 
-## 3. Log In
+Sharko reads cluster health, sync status, and resource trees from ArgoCD.
 
-On the login page, enter:
+| Field | What to enter |
+|-------|--------------|
+| **Server URL** | ArgoCD server URL reachable from within the cluster (auto-discovered if ArgoCD is in the same cluster) |
+| **Token** | ArgoCD account token |
 
-- **Username:** `admin`
-- **Password:** the initial password from step 1
+!!! tip "Auto-discovery"
+    Sharko probes all services in the ArgoCD namespace and suggests the correct URL. In most cases you can accept the suggested value without changes.
 
-You will be prompted to change the password after first login.
+!!! tip "Generating a token"
+    ```bash
+    argocd account generate-token --account sharko
+    ```
+    Create a dedicated `sharko` account with read permissions. Do not use the admin token.
 
-## 4. Configure Your ArgoCD Connection
+**Secrets Provider (optional, same step):** If you use AWS Secrets Manager or Kubernetes Secrets to store cluster kubeconfigs, configure the provider here:
 
-Navigate to **Settings → Connections → ArgoCD** and fill in:
+- **AWS Secrets Manager** — select `aws-sm` and enter the AWS region. Sharko uses IRSA for auth (configure the IRSA annotation at Helm install time — see [Installation](installation.md#aws-secrets-manager-optional)).
+- **Kubernetes Secrets** — select `k8s-secrets` and enter the namespace where cluster secrets live.
 
-| Field | Value |
-|-------|-------|
-| Server URL | e.g., `https://argocd.your-cluster.com` |
-| Token | An ArgoCD account token with read access |
+You can skip this and configure the secrets provider later in **Settings → Secrets Provider**.
 
-Click **Save** and set the connection as **active**. Sharko will verify connectivity immediately.
+## Step 4: Initialize Repository
 
-!!! tip "In-cluster ArgoCD"
-    If ArgoCD is in the same cluster, use the in-cluster service URL: `https://argocd-server.argocd.svc.cluster.local`
+This step creates the initial structure in your Git repo:
 
-## 5. Configure Your Git Connection
-
-Navigate to **Settings → Connections → Git** and fill in:
-
-| Field | Value |
-|-------|-------|
-| Provider | GitHub or Azure DevOps |
-| Token | PAT with `repo` read/write |
-| Repository URL | e.g., `https://github.com/your-org/your-addons-repo` |
-
-Click **Save** and set the connection as **active**.
-
-## 6. Install the CLI
-
-```bash
-# macOS (Homebrew)
-brew install moranweissman/tap/sharko
-
-# Or download the binary from GitHub releases
-# https://github.com/MoranWeissman/sharko/releases
-```
-
-Then log in:
-
-```bash
-sharko login --server https://sharko.your-domain.com
-# Enter: admin / <your-password>
-```
-
-## 7. Initialize the Addons Repository
-
-The `sharko init` command creates the initial folder structure in your Git repo:
-
-```bash
-sharko init
-```
-
-This creates:
-
-- An **ApplicationSet** that manages all cluster addons
+- An **ApplicationSet** that manages all cluster addons via ArgoCD
 - A **base values directory** with per-addon default configuration
 - A **clusters directory** where per-cluster overrides live
 
-Merge the PR that Sharko creates in your Git repo, then wait for ArgoCD to sync.
+Sharko shows you a step-by-step progress log as it creates each file and opens the PR.
 
-## 8. Register Your First Cluster
+**Auto-merge:** Toggle this on if you want Sharko to merge the PR immediately after creating it. Toggle it off if you want to review the PR yourself in GitHub or Azure DevOps first.
 
-```bash
-sharko add-cluster my-cluster \
-  --addons cert-manager,metrics-server
-```
+Click **Initialize** and watch the progress. When the step completes, click **Go to Dashboard**.
 
-Or use the UI: navigate to **Clusters → Register Cluster**.
+## Dashboard
+
+The dashboard loads with clusters discovered from ArgoCD. You will see:
+
+- **Managed clusters** — clusters already registered with Sharko
+- **Discovered clusters** — existing ArgoCD clusters not yet managed by Sharko
+
+Click **Start Managing** on a discovered cluster to bring it under Sharko management. Click **Test Connection** to verify connectivity to any cluster.
 
 ## What's Next
 
-- [Add more addons to the catalog](../user-guide/addons.md)
+- [Add addons to the catalog](../user-guide/addons.md)
 - [Register additional clusters](../user-guide/clusters.md)
-- [Set up notifications](../user-guide/notifications.md)
+- [Configure Settings](../user-guide/connections.md)
 - [Enable the AI assistant](../operator/configuration.md#ai-provider)
