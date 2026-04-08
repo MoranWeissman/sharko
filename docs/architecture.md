@@ -434,7 +434,7 @@ Two implementations ship with Sharko:
 
 The `k8s-secrets` provider is critical for adoption: anyone can try Sharko without a cloud account. Put kubeconfigs in Kubernetes Secrets and go.
 
-The factory pattern in `providers.New()` creates the appropriate implementation based on the `SHARKO_PROVIDER_TYPE` configuration.
+The factory pattern in `providers.New()` creates the appropriate implementation based on the provider type configured via the Settings UI or API.
 
 ---
 

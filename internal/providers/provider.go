@@ -66,7 +66,7 @@ func New(cfg Config) (ClusterCredentialsProvider, error) {
 	case "aws-sm", "aws-secrets-manager":
 		return NewAWSSecretsManagerProvider(cfg)
 	case "":
-		return nil, fmt.Errorf("no secrets provider configured — set SHARKO_PROVIDER_TYPE")
+		return nil, fmt.Errorf("no secrets provider configured — configure provider in Settings or via API")
 	default:
 		return nil, fmt.Errorf("unknown provider type %q — valid options: aws-sm, k8s-secrets", cfg.Type)
 	}

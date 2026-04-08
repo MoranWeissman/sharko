@@ -281,13 +281,13 @@ Sharko uses a pluggable provider interface to fetch cluster kubeconfigs:
 | `aws-sm` | AWS Secrets Manager (IRSA for auth) |
 | `k8s-secrets` | Kubernetes Secrets (no cloud dependency) |
 
-Configure via environment variables (set via Helm `extraEnv` or the created Secret):
+Configure via the **Settings UI** or API. The provider type and connection details are stored server-side.
 
-| Env Var | Description |
+| Setting | Description |
 |---------|-------------|
-| `SHARKO_PROVIDER_TYPE` | Provider backend (`aws-sm` or `k8s-secrets`) |
-| `SHARKO_PROVIDER_REGION` | AWS region (for `aws-sm`) |
-| `SHARKO_PROVIDER_NAMESPACE` | K8s namespace for secrets (for `k8s-secrets`) |
+| Provider backend | `aws-sm` or `k8s-secrets` — configured in Settings > Provider |
+| `SHARKO_PROVIDER_REGION` | AWS region (for `aws-sm`) — Helm value |
+| `SHARKO_PROVIDER_NAMESPACE` | K8s namespace for secrets (for `k8s-secrets`) — Helm value |
 
 ### Writing Your Own Provider
 
@@ -308,7 +308,7 @@ All configuration is server-side via Helm values and environment variables. No c
 
 | Env Var | Description | Default |
 |---------|-------------|---------|
-| `SHARKO_PROVIDER_TYPE` | Secrets provider backend (`aws-sm`, `k8s-secrets`) | (none) |
+| Provider type | Secrets provider backend (`aws-sm`, `k8s-secrets`) — configure via Settings UI or API | (none) |
 | `SHARKO_PROVIDER_REGION` | AWS region for secrets provider | (none) |
 | `SHARKO_ENCRYPTION_KEY` | Encryption key for connection secrets (required in K8s) | (none) |
 | `SHARKO_DEV_MODE` | Enable env var fallback for credentials | `false` |

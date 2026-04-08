@@ -554,7 +554,7 @@ No ArgoCD connection is configured or set as active. Go to Settings > Connection
 Same as above, but for Git. Configure a Git connection in Settings > Connections.
 
 **"secrets provider not configured"**
-The `SHARKO_PROVIDER_TYPE` environment variable is not set. Set it via Helm values (`extraEnv`) or configure a provider.
+No secrets provider is configured. Go to **Settings > Provider** in the UI or use the API to configure a provider backend (`aws-sm` or `k8s-secrets`).
 
 **"template filesystem not configured"**
 Internal error. The StarterFS should always be available. Check that the Sharko binary was built correctly.
@@ -598,7 +598,7 @@ If ArgoCD or Git connections fail:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `SHARKO_PORT` | HTTP server port | `8080` |
-| `SHARKO_PROVIDER_TYPE` | Secrets provider (`aws-sm`, `k8s-secrets`) | (none) |
+| Provider type | Secrets provider backend (`aws-sm`, `k8s-secrets`) — configure via **Settings UI** or API | (none) |
 | `SHARKO_PROVIDER_REGION` | AWS region for secrets provider | (none) |
 | `SHARKO_ENCRYPTION_KEY` | Encryption key for connection store (required in K8s) | (none) |
 | `SHARKO_DEV_MODE` | Enable env var fallback for credentials | `false` |

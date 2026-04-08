@@ -10,8 +10,8 @@ func TestNew_EmptyType(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for empty type, got nil")
 	}
-	if !strings.Contains(err.Error(), "SHARKO_PROVIDER_TYPE") {
-		t.Errorf("expected error to mention SHARKO_PROVIDER_TYPE, got: %v", err)
+	if !strings.Contains(err.Error(), "configure provider in Settings or via API") {
+		t.Errorf("expected error to mention configuration instructions, got: %v", err)
 	}
 }
 
