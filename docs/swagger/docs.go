@@ -4402,6 +4402,10 @@ const docTemplate = `{
                     "description": "AWS region (aws-sm only)",
                     "type": "string"
                 },
+                "role_arn": {
+                    "description": "default IAM role to assume for EKS token generation",
+                    "type": "string"
+                },
                 "type": {
                     "description": "\"aws-sm\" or \"k8s-secrets\"",
                     "type": "string"
