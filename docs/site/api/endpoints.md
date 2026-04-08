@@ -141,6 +141,25 @@ curl -X POST https://sharko.your-domain.com/api/v1/clusters \
   }'
 ```
 
+**Request fields:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Cluster name (used as the directory name in Git) |
+| `addons` | string[] | No | Addons to enable on registration |
+| `region` | string | No | AWS region (for `aws-sm` provider) |
+| `env` | string | No | Environment label (`dev`, `staging`, `prod`, etc.) |
+| `secret_path` | string | No | Override the path used to look up credentials in the secrets provider. Defaults to the cluster `name`. Use when the secret key differs from the cluster name (e.g., `"clusters/prod/prod-eu"`). |
+
+When a cluster cannot be found at the expected path, the API returns 404 with a `suggestions` array of close matches found in the provider:
+
+```json
+{
+  "error": "cluster not found",
+  "suggestions": ["clusters/prod/prod-eu", "clusters/staging/prod-eu"]
+}
+```
+
 ### Upgrade an Addon
 
 ```bash
