@@ -6,10 +6,15 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
+	"github.com/MoranWeissman/sharko/internal/ai"
+	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
+	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
+	"github.com/MoranWeissman/sharko/internal/service"
 )
 
 // ---------------------------------------------------------------------------
@@ -317,5 +322,143 @@ func TestHandleGetFleetStatus_DefaultVersion(t *testing.T) {
 	}
 	if body.ServerVersion != "dev" {
 		t.Errorf("expected server_version=dev, got %q", body.ServerVersion)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ReinitializeFromConnection
+// ---------------------------------------------------------------------------
+
+// newIsolatedTestServer creates a Server backed by a unique temp file store so that
+// ReinitializeFromConnection tests do not share state with newTestServer() or each other.
+func newIsolatedTestServer(t *testing.T) *Server {
+	t.Helper()
+	f, err := os.CreateTemp("", "sharko-test-*.yaml")
+	if err != nil {
+		t.Fatalf("create temp config file: %v", err)
+	}
+	f.Close()
+	t.Cleanup(func() { os.Remove(f.Name()) })
+
+	store := config.NewFileStore(f.Name())
+	connSvc := service.NewConnectionService(store)
+	clusterSvc := service.NewClusterService()
+	addonSvc := service.NewAddonService()
+	dashboardSvc := service.NewDashboardService(connSvc)
+	observabilitySvc := service.NewObservabilityService()
+	upgradeSvc := service.NewUpgradeService(ai.NewClient(ai.Config{}))
+	aiClient := ai.NewClient(ai.Config{})
+	return NewServer(connSvc, clusterSvc, addonSvc, dashboardSvc, observabilitySvc, upgradeSvc, aiClient)
+}
+
+// seedActiveConnection saves a Connection and marks it active on the server's connSvc.
+func seedActiveConnection(t *testing.T, srv *Server, conn models.Connection) {
+	t.Helper()
+	if err := srv.connSvc.Create(models.CreateConnectionRequest{
+		Name:     conn.Name,
+		Git:      conn.Git,
+		Argocd:   conn.Argocd,
+		Provider: conn.Provider,
+		GitOps:   conn.GitOps,
+	}); err != nil {
+		t.Fatalf("seed connection: %v", err)
+	}
+	if err := srv.connSvc.SetActive(conn.Name); err != nil {
+		t.Fatalf("set active connection: %v", err)
+	}
+}
+
+func TestReinitializeFromConnection_NoConnection(t *testing.T) {
+	// No active connection — ReinitializeFromConnection must not panic
+	// and credProvider must remain nil.
+	srv := newIsolatedTestServer(t)
+	srv.ReinitializeFromConnection()
+
+	if srv.credProvider != nil {
+		t.Error("expected credProvider to remain nil when no active connection")
+	}
+}
+
+func TestReinitializeFromConnection_GitOpsConfig(t *testing.T) {
+	// Connection with GitOps settings populated.
+	// ReinitializeFromConnection must copy those values into srv.gitopsCfg.
+	srv := newIsolatedTestServer(t)
+
+	autoMerge := true
+	seedActiveConnection(t, srv, models.Connection{
+		Name: "gitops-conn",
+		Git:  models.GitRepoConfig{Provider: models.GitProviderGitHub, Owner: "owner", Repo: "repo"},
+		GitOps: &models.GitOpsSettings{
+			BaseBranch:   "develop",
+			BranchPrefix: "feature/",
+			CommitPrefix: "feat:",
+			PRAutoMerge:  &autoMerge,
+		},
+	})
+
+	srv.ReinitializeFromConnection()
+
+	if srv.gitopsCfg.BaseBranch != "develop" {
+		t.Errorf("expected BaseBranch=develop, got %q", srv.gitopsCfg.BaseBranch)
+	}
+	if srv.gitopsCfg.BranchPrefix != "feature/" {
+		t.Errorf("expected BranchPrefix=feature/, got %q", srv.gitopsCfg.BranchPrefix)
+	}
+	if srv.gitopsCfg.CommitPrefix != "feat:" {
+		t.Errorf("expected CommitPrefix=feat:, got %q", srv.gitopsCfg.CommitPrefix)
+	}
+	if !srv.gitopsCfg.PRAutoMerge {
+		t.Error("expected PRAutoMerge=true")
+	}
+}
+
+func TestReinitializeFromConnection_SetsProvider(t *testing.T) {
+	// Connection with an aws-sm provider config.
+	// providers.New(aws-sm) succeeds without real credentials at construction time
+	// (the AWS SDK defers credential resolution to the first API call).
+	// After ReinitializeFromConnection, credProvider must be non-nil.
+	srv := newIsolatedTestServer(t)
+
+	seedActiveConnection(t, srv, models.Connection{
+		Name: "aws-conn",
+		Git:  models.GitRepoConfig{Provider: models.GitProviderGitHub, Owner: "owner", Repo: "repo"},
+		Provider: &models.ProviderConfig{
+			Type:   "aws-sm",
+			Region: "us-east-1",
+			Prefix: "clusters/",
+		},
+	})
+
+	srv.ReinitializeFromConnection()
+
+	if srv.credProvider == nil {
+		t.Error("expected credProvider to be set after ReinitializeFromConnection with aws-sm provider")
+	}
+	if srv.providerCfg == nil {
+		t.Error("expected providerCfg to be set after ReinitializeFromConnection")
+	}
+	if srv.providerCfg != nil && srv.providerCfg.Type != "aws-sm" {
+		t.Errorf("expected providerCfg.Type=aws-sm, got %q", srv.providerCfg.Type)
+	}
+}
+
+func TestReinitializeFromConnection_RepoURL(t *testing.T) {
+	// Connection with a git RepoURL — gitopsCfg.RepoURL must be populated.
+	srv := newIsolatedTestServer(t)
+
+	seedActiveConnection(t, srv, models.Connection{
+		Name: "repo-conn",
+		Git: models.GitRepoConfig{
+			Provider: models.GitProviderGitHub,
+			Owner:    "owner",
+			Repo:     "repo",
+			RepoURL:  "https://github.com/owner/repo.git",
+		},
+	})
+
+	srv.ReinitializeFromConnection()
+
+	if srv.gitopsCfg.RepoURL != "https://github.com/owner/repo.git" {
+		t.Errorf("expected RepoURL=https://github.com/owner/repo.git, got %q", srv.gitopsCfg.RepoURL)
 	}
 }
