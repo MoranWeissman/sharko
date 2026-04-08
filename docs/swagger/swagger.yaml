@@ -1,15 +1,240 @@
 basePath: /api/v1
 definitions:
-  api.aiConfigResponse:
+  github_com_MoranWeissman_sharko_internal_models.AddonSource:
+    properties:
+      chart:
+        type: string
+      parameters:
+        additionalProperties:
+          type: string
+        type: object
+      path:
+        type: string
+      repoURL:
+        type: string
+      valueFiles:
+        items:
+          type: string
+        type: array
+      version:
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_models.ArgocdConfig:
+    properties:
+      insecure:
+        type: boolean
+      namespace:
+        type: string
+      server_url:
+        type: string
+      token:
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_models.CreateConnectionRequest:
+    properties:
+      argocd:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.ArgocdConfig'
+      description:
+        type: string
+      git:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.GitRepoConfig'
+      gitops:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.GitOpsSettings'
+      name:
+        type: string
+      provider:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.ProviderConfig'
+      set_as_default:
+        type: boolean
+    type: object
+  github_com_MoranWeissman_sharko_internal_models.GitOpsSettings:
+    properties:
+      base_branch:
+        description: 'default: "main"'
+        type: string
+      branch_prefix:
+        description: 'default: "sharko/"'
+        type: string
+      commit_prefix:
+        description: 'default: "sharko:"'
+        type: string
+      default_addons:
+        description: comma-separated addon names
+        type: string
+      host_cluster_name:
+        description: cluster running ArgoCD (in-cluster)
+        type: string
+      pr_auto_merge:
+        description: 'default: false'
+        type: boolean
+    type: object
+  github_com_MoranWeissman_sharko_internal_models.GitProviderType:
+    enum:
+    - github
+    - azuredevops
+    type: string
+    x-enum-varnames:
+    - GitProviderGitHub
+    - GitProviderAzureDevOps
+  github_com_MoranWeissman_sharko_internal_models.GitRepoConfig:
+    properties:
+      organization:
+        description: Azure DevOps fields
+        type: string
+      owner:
+        description: GitHub fields
+        type: string
+      pat:
+        type: string
+      project:
+        type: string
+      provider:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.GitProviderType'
+      repo:
+        type: string
+      repo_url:
+        description: URL-based input (parsed into owner/repo or org/project/repo)
+        type: string
+      repository:
+        type: string
+      token:
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_models.ProviderConfig:
+    properties:
+      namespace:
+        description: K8s namespace (k8s-secrets only)
+        type: string
+      prefix:
+        description: Secret name prefix, e.g. "clusters/"
+        type: string
+      region:
+        description: AWS region (aws-sm only)
+        type: string
+      type:
+        description: '"aws-sm" or "k8s-secrets"'
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_models.SetActiveConnectionRequest:
+    properties:
+      connection_name:
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_models.UpgradeCheckRequest:
+    properties:
+      addon_name:
+        type: string
+      target_version:
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.AddAddonRequest:
+    properties:
+      additional_sources:
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.AddonSource'
+        type: array
+      chart:
+        type: string
+      extra_helm_values:
+        additionalProperties:
+          type: string
+        type: object
+      ignore_differences:
+        items:
+          additionalProperties: true
+          type: object
+        type: array
+      name:
+        type: string
+      namespace:
+        type: string
+      repo_url:
+        type: string
+      self_heal:
+        type: boolean
+      sync_options:
+        items:
+          type: string
+        type: array
+      sync_wave:
+        type: integer
+      version:
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.AddonSecretDefinition:
+    properties:
+      addon_name:
+        type: string
+      keys:
+        additionalProperties:
+          type: string
+        description: secret data key → provider path (e.g. "api-key" → "secrets/datadog/api-key")
+        type: object
+      namespace:
+        type: string
+      secret_name:
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.ConfigureAddonRequest:
+    properties:
+      additional_sources:
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.AddonSource'
+        type: array
+      extra_helm_values:
+        additionalProperties:
+          type: string
+        type: object
+      ignore_differences:
+        items:
+          additionalProperties: true
+          type: object
+        type: array
+      name:
+        type: string
+      self_heal:
+        type: boolean
+      sync_options:
+        items:
+          type: string
+        type: array
+      sync_wave:
+        type: integer
+      version:
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.InitRepoRequest:
+    properties:
+      auto_merge:
+        type: boolean
+      bootstrap_argocd:
+        type: boolean
+      git_token:
+        type: string
+      git_username:
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.RegisterClusterRequest:
+    properties:
+      addons:
+        additionalProperties:
+          type: boolean
+        type: object
+      name:
+        type: string
+      region:
+        type: string
+    type: object
+  internal_api.aiConfigResponse:
     properties:
       available_providers:
         items:
-          $ref: '#/definitions/api.aiProviderInfo'
+          $ref: '#/definitions/internal_api.aiProviderInfo'
         type: array
       current_provider:
         type: string
     type: object
-  api.aiProviderInfo:
+  internal_api.aiProviderInfo:
     properties:
       configured:
         type: boolean
@@ -20,7 +245,7 @@ definitions:
       name:
         type: string
     type: object
-  api.embeddedDashboard:
+  internal_api.embeddedDashboard:
     properties:
       id:
         type: string
@@ -32,7 +257,7 @@ definitions:
       url:
         type: string
     type: object
-  api.fleetClusterSummary:
+  internal_api.fleetClusterSummary:
     properties:
       connection_status:
         type: string
@@ -45,7 +270,7 @@ definitions:
       total_addons:
         type: integer
     type: object
-  api.fleetStatusResponse:
+  internal_api.fleetStatusResponse:
     properties:
       addon_data_unavailable:
         type: boolean
@@ -53,7 +278,7 @@ definitions:
         type: boolean
       clusters:
         items:
-          $ref: '#/definitions/api.fleetClusterSummary'
+          $ref: '#/definitions/internal_api.fleetClusterSummary'
         type: array
       degraded_clusters:
         type: integer
@@ -80,7 +305,7 @@ definitions:
       uptime:
         type: string
     type: object
-  api.gitHubPushEvent:
+  internal_api.gitHubPushEvent:
     properties:
       commits:
         items:
@@ -99,7 +324,7 @@ definitions:
       ref:
         type: string
     type: object
-  api.saveAIConfigRequest:
+  internal_api.saveAIConfigRequest:
     properties:
       api_key:
         type: string
@@ -110,231 +335,6 @@ definitions:
       ollama_url:
         type: string
       provider:
-        type: string
-    type: object
-  models.AddonSource:
-    properties:
-      chart:
-        type: string
-      parameters:
-        additionalProperties:
-          type: string
-        type: object
-      path:
-        type: string
-      repoURL:
-        type: string
-      valueFiles:
-        items:
-          type: string
-        type: array
-      version:
-        type: string
-    type: object
-  models.ArgocdConfig:
-    properties:
-      insecure:
-        type: boolean
-      namespace:
-        type: string
-      server_url:
-        type: string
-      token:
-        type: string
-    type: object
-  models.CreateConnectionRequest:
-    properties:
-      argocd:
-        $ref: '#/definitions/models.ArgocdConfig'
-      description:
-        type: string
-      git:
-        $ref: '#/definitions/models.GitRepoConfig'
-      gitops:
-        $ref: '#/definitions/models.GitOpsSettings'
-      name:
-        type: string
-      provider:
-        $ref: '#/definitions/models.ProviderConfig'
-      set_as_default:
-        type: boolean
-    type: object
-  models.GitOpsSettings:
-    properties:
-      base_branch:
-        description: 'default: "main"'
-        type: string
-      branch_prefix:
-        description: 'default: "sharko/"'
-        type: string
-      commit_prefix:
-        description: 'default: "sharko:"'
-        type: string
-      default_addons:
-        description: comma-separated addon names
-        type: string
-      host_cluster_name:
-        description: cluster running ArgoCD (in-cluster)
-        type: string
-      pr_auto_merge:
-        description: 'default: false'
-        type: boolean
-    type: object
-  models.GitProviderType:
-    enum:
-    - github
-    - azuredevops
-    type: string
-    x-enum-varnames:
-    - GitProviderGitHub
-    - GitProviderAzureDevOps
-  models.GitRepoConfig:
-    properties:
-      organization:
-        description: Azure DevOps fields
-        type: string
-      owner:
-        description: GitHub fields
-        type: string
-      pat:
-        type: string
-      project:
-        type: string
-      provider:
-        $ref: '#/definitions/models.GitProviderType'
-      repo:
-        type: string
-      repo_url:
-        description: URL-based input (parsed into owner/repo or org/project/repo)
-        type: string
-      repository:
-        type: string
-      token:
-        type: string
-    type: object
-  models.ProviderConfig:
-    properties:
-      namespace:
-        description: K8s namespace (k8s-secrets only)
-        type: string
-      prefix:
-        description: Secret name prefix, e.g. "clusters/"
-        type: string
-      region:
-        description: AWS region (aws-sm only)
-        type: string
-      type:
-        description: '"aws-sm" or "k8s-secrets"'
-        type: string
-    type: object
-  models.SetActiveConnectionRequest:
-    properties:
-      connection_name:
-        type: string
-    type: object
-  models.UpgradeCheckRequest:
-    properties:
-      addon_name:
-        type: string
-      target_version:
-        type: string
-    type: object
-  orchestrator.AddAddonRequest:
-    properties:
-      additional_sources:
-        items:
-          $ref: '#/definitions/models.AddonSource'
-        type: array
-      chart:
-        type: string
-      extra_helm_values:
-        additionalProperties:
-          type: string
-        type: object
-      ignore_differences:
-        items:
-          additionalProperties: true
-          type: object
-        type: array
-      name:
-        type: string
-      namespace:
-        type: string
-      repo_url:
-        type: string
-      self_heal:
-        type: boolean
-      sync_options:
-        items:
-          type: string
-        type: array
-      sync_wave:
-        type: integer
-      version:
-        type: string
-    type: object
-  orchestrator.AddonSecretDefinition:
-    properties:
-      addon_name:
-        type: string
-      keys:
-        additionalProperties:
-          type: string
-        description: secret data key → provider path (e.g. "api-key" → "secrets/datadog/api-key")
-        type: object
-      namespace:
-        type: string
-      secret_name:
-        type: string
-    type: object
-  orchestrator.ConfigureAddonRequest:
-    properties:
-      additional_sources:
-        items:
-          $ref: '#/definitions/models.AddonSource'
-        type: array
-      extra_helm_values:
-        additionalProperties:
-          type: string
-        type: object
-      ignore_differences:
-        items:
-          additionalProperties: true
-          type: object
-        type: array
-      name:
-        type: string
-      self_heal:
-        type: boolean
-      sync_options:
-        items:
-          type: string
-        type: array
-      sync_wave:
-        type: integer
-      version:
-        type: string
-    type: object
-  orchestrator.InitRepoRequest:
-    properties:
-      auto_merge:
-        type: boolean
-      bootstrap_argocd:
-        type: boolean
-      git_token:
-        type: string
-      git_username:
-        type: string
-    type: object
-  orchestrator.RegisterClusterRequest:
-    properties:
-      addons:
-        additionalProperties:
-          type: boolean
-        type: object
-      name:
-        type: string
-      region:
         type: string
     type: object
 host: localhost:8080
@@ -376,7 +376,7 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/orchestrator.AddonSecretDefinition'
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.AddonSecretDefinition'
       produces:
       - application/json
       responses:
@@ -449,7 +449,7 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/orchestrator.AddAddonRequest'
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.AddAddonRequest'
       produces:
       - application/json
       responses:
@@ -578,7 +578,7 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/orchestrator.ConfigureAddonRequest'
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.ConfigureAddonRequest'
       produces:
       - application/json
       responses:
@@ -941,7 +941,7 @@ paths:
         "200":
           description: AI configuration
           schema:
-            $ref: '#/definitions/api.aiConfigResponse'
+            $ref: '#/definitions/internal_api.aiConfigResponse'
       security:
       - BearerAuth: []
       summary: Get AI configuration
@@ -957,7 +957,7 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/api.saveAIConfigRequest'
+          $ref: '#/definitions/internal_api.saveAIConfigRequest'
       produces:
       - application/json
       responses:
@@ -1060,7 +1060,7 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/api.saveAIConfigRequest'
+          $ref: '#/definitions/internal_api.saveAIConfigRequest'
       produces:
       - application/json
       responses:
@@ -1239,7 +1239,7 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/orchestrator.RegisterClusterRequest'
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.RegisterClusterRequest'
       produces:
       - application/json
       responses:
@@ -1837,7 +1837,7 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/models.CreateConnectionRequest'
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.CreateConnectionRequest'
       produces:
       - application/json
       responses:
@@ -1919,7 +1919,7 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/models.CreateConnectionRequest'
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.CreateConnectionRequest'
       produces:
       - application/json
       responses:
@@ -1960,7 +1960,7 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/models.SetActiveConnectionRequest'
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.SetActiveConnectionRequest'
       produces:
       - application/json
       responses:
@@ -2039,7 +2039,7 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/models.CreateConnectionRequest'
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.CreateConnectionRequest'
       produces:
       - application/json
       responses:
@@ -2206,7 +2206,7 @@ paths:
         required: true
         schema:
           items:
-            $ref: '#/definitions/api.embeddedDashboard'
+            $ref: '#/definitions/internal_api.embeddedDashboard'
           type: array
       produces:
       - application/json
@@ -2246,7 +2246,7 @@ paths:
         "200":
           description: Fleet status
           schema:
-            $ref: '#/definitions/api.fleetStatusResponse'
+            $ref: '#/definitions/internal_api.fleetStatusResponse'
         "502":
           description: Gateway error
           schema:
@@ -2284,7 +2284,7 @@ paths:
         in: body
         name: body
         schema:
-          $ref: '#/definitions/orchestrator.InitRepoRequest'
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.InitRepoRequest'
       produces:
       - application/json
       responses:
@@ -2809,7 +2809,7 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/models.UpgradeCheckRequest'
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.UpgradeCheckRequest'
       produces:
       - application/json
       responses:
@@ -2845,7 +2845,7 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/models.UpgradeCheckRequest'
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.UpgradeCheckRequest'
       produces:
       - application/json
       responses:
@@ -3081,7 +3081,7 @@ paths:
         in: body
         name: body
         schema:
-          $ref: '#/definitions/api.gitHubPushEvent'
+          $ref: '#/definitions/internal_api.gitHubPushEvent'
       produces:
       - application/json
       responses:

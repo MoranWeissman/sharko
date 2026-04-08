@@ -93,7 +93,8 @@ describe('ClustersOverview', () => {
     expect(screen.getByText('Unmanaged')).toBeInTheDocument();
 
     // Stat values - total = total_in_git + not_in_git = 3
-    expect(screen.getByText('3')).toBeInTheDocument();
+    // Use getAllByText because '3' may appear in both the stat card and a count badge
+    expect(screen.getAllByText('3').length).toBeGreaterThanOrEqual(1);
 
     // Table rows
     expect(screen.getByText('prod-eu')).toBeInTheDocument();
