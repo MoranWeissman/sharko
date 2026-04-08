@@ -5,25 +5,13 @@ import (
 	"fmt"
 
 	"github.com/MoranWeissman/sharko/internal/gitops"
+	"github.com/MoranWeissman/sharko/internal/models"
+	"gopkg.in/yaml.v3"
 )
 
 func (o *Orchestrator) ConfigureAddon(ctx context.Context, req ConfigureAddonRequest) (*GitResult, error) {
 	if req.Name == "" {
 		return nil, fmt.Errorf("addon name is required")
-	}
-
-	// Reject complex fields that line-level mutation doesn't yet support.
-	if req.SyncOptions != nil {
-		return nil, fmt.Errorf("sync_options configuration is not yet supported via this endpoint")
-	}
-	if req.AdditionalSources != nil {
-		return nil, fmt.Errorf("additional_sources configuration is not yet supported via this endpoint")
-	}
-	if req.IgnoreDifferences != nil {
-		return nil, fmt.Errorf("ignore_differences configuration is not yet supported via this endpoint")
-	}
-	if req.ExtraHelmValues != nil {
-		return nil, fmt.Errorf("extra_helm_values configuration is not yet supported via this endpoint")
 	}
 
 	// Read the existing addons-catalog.yaml.
@@ -33,7 +21,61 @@ func (o *Orchestrator) ConfigureAddon(ctx context.Context, req ConfigureAddonReq
 		return nil, fmt.Errorf("addon %q not found in catalog: %w", req.Name, err)
 	}
 
-	// Build updates map from non-zero/non-nil fields.
+	// If complex fields are provided, use full unmarshal/marshal for the entry.
+	hasComplexFields := req.SyncOptions != nil || req.AdditionalSources != nil ||
+		req.IgnoreDifferences != nil || req.ExtraHelmValues != nil
+
+	if hasComplexFields {
+		var file struct {
+			ApplicationSets []models.AddonCatalogEntry `yaml:"applicationsets"`
+		}
+		if err := yaml.Unmarshal(data, &file); err != nil {
+			return nil, fmt.Errorf("parsing catalog: %w", err)
+		}
+
+		found := false
+		for i, entry := range file.ApplicationSets {
+			if entry.Name == req.Name {
+				if req.SyncOptions != nil {
+					file.ApplicationSets[i].SyncOptions = req.SyncOptions
+				}
+				if req.AdditionalSources != nil {
+					file.ApplicationSets[i].AdditionalSources = req.AdditionalSources
+				}
+				if req.IgnoreDifferences != nil {
+					file.ApplicationSets[i].IgnoreDifferences = req.IgnoreDifferences
+				}
+				if req.ExtraHelmValues != nil {
+					file.ApplicationSets[i].ExtraHelmValues = req.ExtraHelmValues
+				}
+				// Also apply simple fields.
+				if req.Version != "" {
+					file.ApplicationSets[i].Version = req.Version
+				}
+				if req.SyncWave != nil {
+					file.ApplicationSets[i].SyncWave = *req.SyncWave
+				}
+				if req.SelfHeal != nil {
+					file.ApplicationSets[i].SelfHeal = req.SelfHeal
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("addon %q not found in catalog", req.Name)
+		}
+
+		updatedData, err := yaml.Marshal(file)
+		if err != nil {
+			return nil, fmt.Errorf("serializing catalog: %w", err)
+		}
+
+		files := map[string][]byte{catalogPath: updatedData}
+		return o.commitChanges(ctx, files, nil, fmt.Sprintf("configure addon %s", req.Name))
+	}
+
+	// Simple fields only — use line-level mutation.
 	updates := make(map[string]string)
 	if req.Version != "" {
 		updates["version"] = req.Version

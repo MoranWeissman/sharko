@@ -3,6 +3,7 @@ package models
 // Cluster represents a Kubernetes cluster from the Git configuration.
 type Cluster struct {
 	Name             string            `json:"name" yaml:"name"`
+	SecretPath       string            `json:"secret_path,omitempty" yaml:"secretPath,omitempty"`
 	Labels           map[string]string `json:"labels" yaml:"labels"`
 	Region           string            `json:"region,omitempty" yaml:"region,omitempty"`
 	ServerVersion    string            `json:"server_version,omitempty"`

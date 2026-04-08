@@ -67,13 +67,28 @@ func TestConfigureAddon_UpdateSelfHeal(t *testing.T) {
 	}
 }
 
-func TestConfigureAddon_RejectsAdditionalSources(t *testing.T) {
-	orch := New(nil, defaultCreds(), newMockArgocd(), newMockGitProvider(), autoMergeGitOps(), defaultPaths(), nil)
-	_, err := orch.ConfigureAddon(context.Background(), ConfigureAddonRequest{
+func TestConfigureAddon_AdditionalSources(t *testing.T) {
+	git := newMockGitProvider()
+	git.files["configuration/addons-catalog.yaml"] = []byte(`applicationsets:
+  - name: cert-manager
+    chart: cert-manager
+    repoURL: https://charts.jetstack.io
+    version: 1.14.0
+    namespace: cert-manager
+`)
+	orch := New(nil, defaultCreds(), newMockArgocd(), git, autoMergeGitOps(), defaultPaths(), nil)
+	result, err := orch.ConfigureAddon(context.Background(), ConfigureAddonRequest{
 		Name:              "cert-manager",
-		AdditionalSources: []models.AddonSource{{RepoURL: "https://example.com"}},
+		AdditionalSources: []models.AddonSource{{RepoURL: "https://example.com", Chart: "extra-chart", Version: "1.0.0"}},
 	})
-	if err == nil {
-		t.Fatal("expected error for unsupported additional_sources")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	updated := string(git.files["configuration/addons-catalog.yaml"])
+	if !strings.Contains(updated, "https://example.com") {
+		t.Errorf("expected additional source repoURL in catalog, got:\n%s", updated)
 	}
 }

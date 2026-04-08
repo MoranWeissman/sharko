@@ -23,9 +23,10 @@ type RepoPathsConfig struct {
 
 // RegisterClusterRequest is the input for cluster registration.
 type RegisterClusterRequest struct {
-	Name   string          `json:"name"`
-	Addons map[string]bool `json:"addons"`
-	Region string          `json:"region"`
+	Name       string          `json:"name"`
+	SecretPath string          `json:"secret_path,omitempty"`
+	Addons     map[string]bool `json:"addons"`
+	Region     string          `json:"region"`
 }
 
 // RegisterClusterResult is the output of a successful cluster registration.

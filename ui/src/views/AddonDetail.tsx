@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
+import * as yaml from 'yaml'
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom'
 import { DetailNavPanel } from '@/components/DetailNavPanel'
 import {
@@ -241,6 +242,26 @@ function HealthProgressBar({ healthy, total }: { healthy: number; total: number 
   )
 }
 
+function HelpText({ text }: { text: string }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="inline-flex items-center text-[#5a9dd0] hover:text-[#3a7db0] cursor-help"
+      >
+        <HelpCircle className="h-3.5 w-3.5" />
+      </button>
+      {open && (
+        <p className="mt-1 text-xs text-[#3a6a8a] dark:text-gray-400 bg-[#e8f4ff] dark:bg-gray-700 rounded px-2 py-1">
+          {text}
+        </p>
+      )}
+    </>
+  )
+}
+
 export function AddonDetail() {
   const { name } = useParams<{ name: string }>()
   const navigate = useNavigate()
@@ -279,6 +300,8 @@ export function AddonDetail() {
   const [editSelfHeal, setEditSelfHeal] = useState<boolean>(true)
   const [editSyncOptionsText, setEditSyncOptionsText] = useState<string>('')
   const [editHelmValues, setEditHelmValues] = useState<{ key: string; value: string }[]>([])
+  const [editIgnoreDifferencesYaml, setEditIgnoreDifferencesYaml] = useState<string>('')
+  const [editAdditionalSourcesYaml, setEditAdditionalSourcesYaml] = useState<string>('')
   const [configSaving, setConfigSaving] = useState(false)
   const [configError, setConfigError] = useState<string | null>(null)
   const [configSuccess, setConfigSuccess] = useState<string | null>(null)
@@ -351,6 +374,16 @@ export function AddonDetail() {
     setEditHelmValues(
       Object.entries(addon.extraHelmValues ?? {}).map(([key, value]) => ({ key, value })),
     )
+    setEditIgnoreDifferencesYaml(
+      addon.ignoreDifferences && addon.ignoreDifferences.length > 0
+        ? yaml.stringify(addon.ignoreDifferences)
+        : '',
+    )
+    setEditAdditionalSourcesYaml(
+      addon.additionalSources && addon.additionalSources.length > 0
+        ? yaml.stringify(addon.additionalSources)
+        : '',
+    )
     setConfigError(null)
     setConfigSuccess(null)
     setIsEditingConfig(true)
@@ -385,6 +418,8 @@ export function AddonDetail() {
         self_heal?: boolean
         sync_options?: string[]
         extra_helm_values?: Record<string, string>
+        ignore_differences?: Record<string, unknown>[]
+        additional_sources?: Record<string, unknown>[]
       } = {}
 
       if (editSyncWave !== (addon.syncWave ?? 0)) payload.sync_wave = editSyncWave
@@ -393,6 +428,25 @@ export function AddonDetail() {
       if (syncOptions.join(',') !== origOptions) payload.sync_options = syncOptions
       const origHelm = JSON.stringify(addon.extraHelmValues ?? {})
       if (JSON.stringify(extraHelmValues) !== origHelm) payload.extra_helm_values = extraHelmValues
+
+      // Parse YAML fields
+      if (editIgnoreDifferencesYaml.trim()) {
+        const parsed = yaml.parse(editIgnoreDifferencesYaml)
+        const asArray = Array.isArray(parsed) ? parsed : [parsed]
+        const origIgnore = JSON.stringify(addon.ignoreDifferences ?? [])
+        if (JSON.stringify(asArray) !== origIgnore) payload.ignore_differences = asArray
+      } else if (addon.ignoreDifferences && addon.ignoreDifferences.length > 0) {
+        payload.ignore_differences = []
+      }
+
+      if (editAdditionalSourcesYaml.trim()) {
+        const parsed = yaml.parse(editAdditionalSourcesYaml)
+        const asArray = Array.isArray(parsed) ? parsed : [parsed]
+        const origSources = JSON.stringify(addon.additionalSources ?? [])
+        if (JSON.stringify(asArray) !== origSources) payload.additional_sources = asArray
+      } else if (addon.additionalSources && addon.additionalSources.length > 0) {
+        payload.additional_sources = []
+      }
 
       const result = await configureAddon(name, payload)
       const prUrl = result?.pr_url || result?.pull_request_url
@@ -405,7 +459,7 @@ export function AddonDetail() {
     } finally {
       setConfigSaving(false)
     }
-  }, [name, addon, editSyncWave, editSelfHeal, editSyncOptionsText, editHelmValues])
+  }, [name, addon, editSyncWave, editSelfHeal, editSyncOptionsText, editHelmValues, editIgnoreDifferencesYaml, editAdditionalSourcesYaml])
 
   const enabledApps = useMemo(
     () => (addon ? addon.applications.filter((a) => a.enabled) : []),
@@ -795,12 +849,7 @@ export function AddonDetail() {
                     <div>
                       <p className="flex items-center gap-1.5 text-sm font-medium text-[#0a2a4a]">
                         Sync Wave
-                        <span
-                          title="Deploy order: negative values deploy first (e.g. -1 for CRDs), positive deploy last"
-                          className="cursor-help text-[#5a9dd0] hover:text-[#1a6aaa]"
-                        >
-                          <HelpCircle className="h-3.5 w-3.5" />
-                        </span>
+                        <HelpText text="Deploy order: negative values deploy first (e.g. -1 for CRDs), positive deploy last" />
                       </p>
                       <p className="text-xs text-[#3a6a8a]">Controls deployment ordering. Negative = earlier, positive = later.</p>
                     </div>
@@ -809,7 +858,8 @@ export function AddonDetail() {
                         type="number"
                         value={editSyncWave}
                         onChange={(e) => setEditSyncWave(Number(e.target.value))}
-                        className="w-24 rounded-md border border-[#5a9dd0] bg-white px-3 py-1.5 text-right text-sm font-mono text-[#0a2a4a] focus:border-[#1a6aaa] focus:outline-none focus:ring-1 focus:ring-[#1a6aaa]"
+                        placeholder="0"
+                        className="w-24 rounded-md border border-[#5a9dd0] bg-white px-3 py-1.5 text-right text-sm font-mono text-[#0a2a4a] placeholder-[#5a8aaa] focus:border-[#1a6aaa] focus:outline-none focus:ring-1 focus:ring-[#1a6aaa]"
                       />
                     ) : (
                       <span className="font-mono text-sm text-[#0a2a4a]">{addon.syncWave ?? 0}</span>
@@ -821,12 +871,7 @@ export function AddonDetail() {
                     <div>
                       <p className="flex items-center gap-1.5 text-sm font-medium text-[#0a2a4a]">
                         Self-Heal
-                        <span
-                          title="When enabled, ArgoCD auto-reverts manual changes to match the Git state"
-                          className="cursor-help text-[#5a9dd0] hover:text-[#1a6aaa]"
-                        >
-                          <HelpCircle className="h-3.5 w-3.5" />
-                        </span>
+                        <HelpText text="When enabled, ArgoCD auto-reverts manual changes to match the Git state" />
                       </p>
                       <p className="text-xs text-[#3a6a8a]">When enabled, ArgoCD reverts manual changes automatically.</p>
                     </div>
@@ -864,12 +909,7 @@ export function AddonDetail() {
                   <div>
                     <p className="flex items-center gap-1.5 text-sm font-medium text-[#0a2a4a]">
                       Sync Options
-                      <span
-                        title="ArgoCD sync options, e.g. ServerSideApply=true, CreateNamespace=true, PruneLast=true"
-                        className="cursor-help text-[#5a9dd0] hover:text-[#1a6aaa]"
-                      >
-                        <HelpCircle className="h-3.5 w-3.5" />
-                      </span>
+                      <HelpText text="ArgoCD sync options, e.g. ServerSideApply=true, CreateNamespace=true, PruneLast=true" />
                     </p>
                     <p className="text-xs text-[#3a6a8a] mb-2">ArgoCD sync options applied to this addon.</p>
                     {isEditingConfig ? (
@@ -891,19 +931,22 @@ export function AddonDetail() {
                     )}
                   </div>
 
-                  {/* Ignore Differences — always read-only */}
+                  {/* Ignore Differences */}
                   <div>
                     <p className="flex items-center gap-1.5 text-sm font-medium text-[#0a2a4a]">
                       Ignore Differences
-                      <span
-                        title="Fields ArgoCD should ignore during diff. Example: group: apps, kind: Deployment, jsonPointers: [/spec/replicas]"
-                        className="cursor-help text-[#5a9dd0] hover:text-[#1a6aaa]"
-                      >
-                        <HelpCircle className="h-3.5 w-3.5" />
-                      </span>
+                      <HelpText text="Fields ArgoCD should ignore during diff. Example: group: apps, kind: Deployment, jsonPointers: [/spec/replicas]" />
                     </p>
-                    <p className="text-xs text-[#3a6a8a] mb-2">Fields ignored during ArgoCD sync comparison (read-only).</p>
-                    {addon.ignoreDifferences && addon.ignoreDifferences.length > 0 ? (
+                    <p className="text-xs text-[#3a6a8a] mb-2">Fields ignored during ArgoCD sync comparison.</p>
+                    {isEditingConfig ? (
+                      <textarea
+                        value={editIgnoreDifferencesYaml}
+                        onChange={(e) => setEditIgnoreDifferencesYaml(e.target.value)}
+                        placeholder={`# Example:\n# - group: apps\n#   kind: Deployment\n#   jsonPointers:\n#     - /spec/replicas`}
+                        rows={6}
+                        className="w-full rounded-md border border-[#5a9dd0] bg-white px-3 py-2 text-sm font-mono text-[#0a2a4a] placeholder-[#5a8aaa] focus:border-[#1a6aaa] focus:outline-none focus:ring-1 focus:ring-[#1a6aaa]"
+                      />
+                    ) : addon.ignoreDifferences && addon.ignoreDifferences.length > 0 ? (
                       <pre className="rounded bg-[#071828] p-3 text-xs text-[#bee0ff] overflow-auto">
                         {JSON.stringify(addon.ignoreDifferences, null, 2)}
                       </pre>
@@ -916,12 +959,7 @@ export function AddonDetail() {
                   <div>
                     <p className="flex items-center gap-1.5 text-sm font-medium text-[#0a2a4a]">
                       Extra Helm Values
-                      <span
-                        title="Additional Helm value overrides as key-value pairs"
-                        className="cursor-help text-[#5a9dd0] hover:text-[#1a6aaa]"
-                      >
-                        <HelpCircle className="h-3.5 w-3.5" />
-                      </span>
+                      <HelpText text="Additional Helm value overrides as key-value pairs" />
                     </p>
                     <p className="text-xs text-[#3a6a8a] mb-2">Additional Helm parameters injected during rendering.</p>
                     {isEditingConfig ? (
@@ -985,19 +1023,22 @@ export function AddonDetail() {
                     )}
                   </div>
 
-                  {/* Additional Sources — always read-only */}
+                  {/* Additional Sources */}
                   <div>
                     <p className="flex items-center gap-1.5 text-sm font-medium text-[#0a2a4a]">
                       Additional Sources
-                      <span
-                        title="Extra Helm chart sources for multi-source applications"
-                        className="cursor-help text-[#5a9dd0] hover:text-[#1a6aaa]"
-                      >
-                        <HelpCircle className="h-3.5 w-3.5" />
-                      </span>
+                      <HelpText text="Extra Helm chart sources for multi-source applications" />
                     </p>
-                    <p className="text-xs text-[#3a6a8a] mb-2">Extra chart or manifest sources deployed alongside the main addon (read-only).</p>
-                    {addon.additionalSources && addon.additionalSources.length > 0 ? (
+                    <p className="text-xs text-[#3a6a8a] mb-2">Extra chart or manifest sources deployed alongside the main addon.</p>
+                    {isEditingConfig ? (
+                      <textarea
+                        value={editAdditionalSourcesYaml}
+                        onChange={(e) => setEditAdditionalSourcesYaml(e.target.value)}
+                        placeholder={`# Example:\n# - repoURL: https://github.com/org/repo\n#   path: charts/my-chart\n#   version: "1.0.0"`}
+                        rows={6}
+                        className="w-full rounded-md border border-[#5a9dd0] bg-white px-3 py-2 text-sm font-mono text-[#0a2a4a] placeholder-[#5a8aaa] focus:border-[#1a6aaa] focus:outline-none focus:ring-1 focus:ring-[#1a6aaa]"
+                      />
+                    ) : addon.additionalSources && addon.additionalSources.length > 0 ? (
                       <div className="space-y-2">
                         {addon.additionalSources.map((src, i: number) => (
                           <div key={i} className="rounded bg-[#e0f0ff] px-3 py-2 text-xs">

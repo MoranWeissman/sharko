@@ -218,7 +218,12 @@ func (r *Reconciler) reconcile() {
 			}
 			for _, secretRef := range as.secrets {
 				stats.Checked++
-				if err := r.reconcileSecret(ctx, &stats, cluster.Name, as.addon.Name, secretRef); err != nil {
+				// Use secretPath for credential lookup when explicitly set on the cluster.
+				credLookup := cluster.Name
+				if cluster.SecretPath != "" {
+					credLookup = cluster.SecretPath
+				}
+				if err := r.reconcileSecret(ctx, &stats, credLookup, as.addon.Name, secretRef); err != nil {
 					stats.Errors++
 					errMsg := fmt.Sprintf("cluster=%s addon=%s secret=%s: %v",
 						cluster.Name, as.addon.Name, secretRef.SecretName, err)

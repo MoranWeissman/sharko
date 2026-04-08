@@ -167,6 +167,8 @@ export async function configureAddon(
     self_heal?: boolean
     sync_options?: string[]
     extra_helm_values?: Record<string, string>
+    ignore_differences?: Record<string, unknown>[]
+    additional_sources?: Record<string, unknown>[]
   },
 ) {
   return patchJSON<{ status: string; pr_url?: string; pull_request_url?: string }>(

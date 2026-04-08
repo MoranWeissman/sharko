@@ -73,9 +73,8 @@ type structuredEKSSecret struct {
 	Environment string `json:"environment"`
 }
 
-func (p *AWSSecretsManagerProvider) GetCredentials(clusterName string) (*Kubeconfig, error) {
-	secretName := p.prefix + clusterName
-
+// fetchSecret retrieves and parses credentials from the secret at the given exact name.
+func (p *AWSSecretsManagerProvider) fetchSecret(secretName string) (*Kubeconfig, error) {
 	output, err := p.client.GetSecretValue(context.Background(), &secretsmanager.GetSecretValueInput{
 		SecretId: aws.String(secretName),
 	})
@@ -98,6 +97,60 @@ func (p *AWSSecretsManagerProvider) GetCredentials(clusterName string) (*Kubecon
 
 	// Fallback: treat the secret value as raw kubeconfig YAML.
 	return p.buildFromRawKubeconfig(raw, secretName)
+}
+
+// GetCredentials fetches credentials for the named cluster using a three-step lookup:
+//
+//  1. Try with the configured prefix (e.g. "clusters/prod-eu").
+//  2. Try the exact name as-is (supports secretPath passthrough from the orchestrator).
+//  3. Search Secrets Manager for names containing the query and return suggestions.
+func (p *AWSSecretsManagerProvider) GetCredentials(clusterName string) (*Kubeconfig, error) {
+	// Step 1: Try with prefix (skipped when prefix is empty or name already contains prefix).
+	if p.prefix != "" {
+		withPrefix := p.prefix + clusterName
+		if kc, err := p.fetchSecret(withPrefix); err == nil {
+			return kc, nil
+		}
+	}
+
+	// Step 2: Try exact name (handles explicit secretPath values that don't need a prefix).
+	if kc, err := p.fetchSecret(clusterName); err == nil {
+		return kc, nil
+	}
+
+	// Step 3: Search for similar names and include them in the error message.
+	suggestions, searchErr := p.searchSimilar(clusterName)
+	if searchErr == nil && len(suggestions) > 0 {
+		return nil, fmt.Errorf("secret for cluster %q not found in AWS Secrets Manager. Similar secrets: %s",
+			clusterName, strings.Join(suggestions, ", "))
+	}
+
+	return nil, fmt.Errorf("secret for cluster %q not found in AWS Secrets Manager", clusterName)
+}
+
+// searchSimilar returns secret names that contain query as a substring.
+// The ListSecrets filter with key=name does substring matching on the secret name.
+func (p *AWSSecretsManagerProvider) searchSimilar(query string) ([]string, error) {
+	paginator := secretsmanager.NewListSecretsPaginator(p.client, &secretsmanager.ListSecretsInput{
+		Filters: []types.Filter{
+			{
+				Key:    types.FilterNameStringTypeName,
+				Values: []string{query},
+			},
+		},
+	})
+
+	var matches []string
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(context.Background())
+		if err != nil {
+			return nil, err
+		}
+		for _, secret := range page.SecretList {
+			matches = append(matches, aws.ToString(secret.Name))
+		}
+	}
+	return matches, nil
 }
 
 // buildFromStructured constructs a Kubeconfig from the EKS JSON metadata format.

@@ -79,6 +79,96 @@ func TestGetCredentials_MissingSecret(t *testing.T) {
 	}
 }
 
+// TestGetCredentials_ExplicitSecretPath verifies that GetCredentials succeeds
+// when called with an explicit secret name that differs from the cluster name.
+func TestGetCredentials_ExplicitSecretPath(t *testing.T) {
+	kubeconfig := testKubeconfig("https://api.cluster-1.example.com:6443")
+
+	// The secret is stored under an explicit path, not the cluster name.
+	client := fake.NewSimpleClientset(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "k8s-prod-eu-eks",
+			Namespace: "sharko",
+		},
+		Data: map[string][]byte{
+			"kubeconfig": kubeconfig,
+		},
+	})
+
+	provider := newKubernetesSecretProviderWithClient(client, "sharko")
+
+	// Caller passes the explicit secretPath instead of the cluster name.
+	kc, err := provider.GetCredentials("k8s-prod-eu-eks")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if kc.Server != "https://api.cluster-1.example.com:6443" {
+		t.Errorf("expected server URL, got %q", kc.Server)
+	}
+}
+
+// TestGetCredentials_SuggestsSimilar verifies that when a secret is not found,
+// similar secret names are included in the error message.
+func TestGetCredentials_SuggestsSimilar(t *testing.T) {
+	kubeconfig := testKubeconfig("https://api.cluster-1.example.com:6443")
+
+	client := fake.NewSimpleClientset(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "k8s-prod-eu-eks",
+			Namespace: "sharko",
+		},
+		Data: map[string][]byte{
+			"kubeconfig": kubeconfig,
+		},
+	})
+
+	provider := newKubernetesSecretProviderWithClient(client, "sharko")
+
+	// Query contains "prod-eu" which is a substring of "k8s-prod-eu-eks".
+	_, err := provider.GetCredentials("prod-eu")
+	if err == nil {
+		t.Fatal("expected error for missing secret, got nil")
+	}
+
+	errMsg := err.Error()
+	if !contains(errMsg, "k8s-prod-eu-eks") {
+		t.Errorf("expected error to suggest %q, got: %v", "k8s-prod-eu-eks", errMsg)
+	}
+	if !contains(errMsg, "Similar secrets") {
+		t.Errorf("expected error to mention similar secrets, got: %v", errMsg)
+	}
+}
+
+// TestGetCredentials_NoSuggestions verifies that a clean error is returned
+// when no similar secrets exist.
+func TestGetCredentials_NoSuggestions(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	provider := newKubernetesSecretProviderWithClient(client, "sharko")
+
+	_, err := provider.GetCredentials("totally-unknown-cluster")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	errMsg := err.Error()
+	if contains(errMsg, "Similar secrets") {
+		t.Errorf("expected no suggestions in error, got: %v", errMsg)
+	}
+}
+
+// contains is a helper to avoid importing strings in tests just for Contains.
+func contains(s, sub string) bool {
+	return len(s) >= len(sub) && (s == sub || len(sub) == 0 ||
+		func() bool {
+			for i := 0; i <= len(s)-len(sub); i++ {
+				if s[i:i+len(sub)] == sub {
+					return true
+				}
+			}
+			return false
+		}())
+}
+
 func TestGetCredentials_MissingKubeconfigKey(t *testing.T) {
 	client := fake.NewSimpleClientset(&corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
