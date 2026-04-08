@@ -28,6 +28,12 @@ type GitReader interface {
 // Abstracted for testing — production uses remoteclient.NewClientFromKubeconfig.
 type RemoteClientFactory func(kubeconfig []byte) (kubernetes.Interface, error)
 
+// AuditFunc is a callback the Reconciler invokes after reconciling secrets so
+// that callers can record audit entries without creating an import cycle.
+// clusterName is the cluster that was affected; created and updated are counts
+// from this reconcile pass.
+type AuditFunc func(clusterName string, created, updated int)
+
 // Reconciler periodically fetches secret definitions from the Git catalog and
 // ensures the corresponding K8s Secrets exist and are up-to-date on every
 // remote cluster that has the owning addon enabled.
@@ -47,6 +53,9 @@ type Reconciler struct {
 	triggerCh      chan struct{}
 	stopCh         chan struct{}
 	stopOnce       sync.Once
+
+	// Optional audit callback — set via SetAuditFunc.
+	auditFn AuditFunc
 
 	// Last reconcile stats (protected by mu)
 	mu         sync.RWMutex
@@ -138,6 +147,12 @@ func (r *Reconciler) GetStats() interface{} {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.lastStats
+}
+
+// SetAuditFunc registers an optional callback invoked after each successful
+// reconcile cycle. Pass nil to clear an existing callback.
+func (r *Reconciler) SetAuditFunc(fn AuditFunc) {
+	r.auditFn = fn
 }
 
 // GetErrors returns the error messages from the last reconcile run.
@@ -257,6 +272,11 @@ func (r *Reconciler) reconcile() {
 		"errors", stats.Errors,
 		"duration", stats.Duration,
 	)
+
+	// Invoke audit callback when secrets were created or updated.
+	if r.auditFn != nil && (stats.Created > 0 || stats.Updated > 0) {
+		r.auditFn("*", stats.Created, stats.Updated)
+	}
 }
 
 // reconcileSecret ensures a single K8s Secret exists and is current on the

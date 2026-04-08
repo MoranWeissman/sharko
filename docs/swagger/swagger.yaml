@@ -1081,6 +1081,59 @@ paths:
       summary: Test AI configuration
       tags:
       - ai
+  /argocd/resource-exclusions:
+    get:
+      description: |-
+        Reads the argocd-cm ConfigMap and checks whether the Sharko-managed
+        Secret exclusion label (app.kubernetes.io/managed-by: sharko) is
+        configured. Returns configured=true when the exclusion is present, plus
+        a human-readable recommendation when it is missing.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Exclusion status
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Check ArgoCD resource exclusions
+      tags:
+      - system
+  /audit:
+    get:
+      description: |-
+        Returns recent audit log entries (webhook pushes, cluster registrations, secret reconciliations, init runs).
+        Entries are ordered newest-first. Use ?limit=N to restrict the number returned (default 50).
+      parameters:
+      - description: Maximum number of entries to return (default 50)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Audit log entries
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List audit log entries
+      tags:
+      - system
   /auth/hash:
     post:
       consumes:

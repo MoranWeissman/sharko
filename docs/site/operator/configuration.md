@@ -287,6 +287,81 @@ extraEnv:
         key: secret
 ```
 
+## ArgoCD Resource Exclusions {#argocd-resource-exclusions}
+
+Sharko pushes K8s Secrets labeled `app.kubernetes.io/managed-by: sharko` to remote clusters during the addon secrets reconciliation cycle. Without an exclusion rule, ArgoCD may attempt to manage — or delete — these secrets when it syncs cluster state.
+
+### Required configuration
+
+Add the following block to your `argocd-cm` ConfigMap in the `argocd` namespace:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: argocd
+data:
+  resource.exclusions: |
+    - apiGroups: [""]
+      kinds: ["Secret"]
+      clusters: ["*"]
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/managed-by: sharko
+```
+
+Apply with:
+
+```bash
+kubectl apply -f argocd-cm-patch.yaml
+```
+
+Or patch in place:
+
+```bash
+kubectl patch configmap argocd-cm -n argocd --type merge -p '
+{
+  "data": {
+    "resource.exclusions": "- apiGroups: [\"\"]\n  kinds: [\"Secret\"]\n  clusters: [\"*\"]\n  labelSelector:\n    matchLabels:\n      app.kubernetes.io/managed-by: sharko\n"
+  }
+}'
+```
+
+!!! warning "ArgoCD restart required"
+    After patching `argocd-cm`, restart the ArgoCD application controller for the change to take effect:
+    ```bash
+    kubectl rollout restart deployment argocd-application-controller -n argocd
+    ```
+
+### Checking exclusion status
+
+Use the Sharko API to verify the exclusion is configured:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  https://<sharko-host>/api/v1/argocd/resource-exclusions | jq .
+```
+
+Example response when configured:
+
+```json
+{
+  "configured": true,
+  "detail": "resource.exclusions is configured with a sharko Secret exclusion"
+}
+```
+
+Example response when not configured:
+
+```json
+{
+  "configured": false,
+  "detail": "argocd-cm has no resource.exclusions configured",
+  "recommendation": "Add the following to your argocd-cm ConfigMap ..."
+}
+```
+
 ## Extra Environment Variables
 
 Inject arbitrary environment variables into the Sharko pod:

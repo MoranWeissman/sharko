@@ -13,6 +13,7 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/ai"
 	"github.com/MoranWeissman/sharko/internal/api"
+	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/demo"
 	"github.com/MoranWeissman/sharko/internal/models"
@@ -344,6 +345,18 @@ var serveCmd = &cobra.Command{
 					dur,
 				)
 				srv.SetSecretReconciler(reconciler)
+
+				// Wire audit callback so reconcile events appear in GET /api/v1/audit.
+				auditLog := srv.AuditLog()
+				reconciler.SetAuditFunc(func(clusterName string, created, updated int) {
+					auditLog.Add(audit.Entry{
+						Source:  "reconciler",
+						Action:  "secret_push",
+						Actor:   "sharko",
+						Details: fmt.Sprintf("secrets reconciled — created: %d, updated: %d", created, updated),
+					})
+				})
+
 				reconciler.Start()
 				defer reconciler.Stop()
 				log.Printf("Secret reconciler started (interval: %s)", dur)

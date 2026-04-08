@@ -1118,6 +1118,80 @@
                 }
             }
         },
+        "/argocd/resource-exclusions": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Reads the argocd-cm ConfigMap and checks whether the Sharko-managed\nSecret exclusion label (app.kubernetes.io/managed-by: sharko) is\nconfigured. Returns configured=true when the exclusion is present, plus\na human-readable recommendation when it is missing.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Check ArgoCD resource exclusions",
+                "responses": {
+                    "200": {
+                        "description": "Exclusion status",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/audit": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns recent audit log entries (webhook pushes, cluster registrations, secret reconciliations, init runs).\nEntries are ordered newest-first. Use ?limit=N to restrict the number returned (default 50).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "List audit log entries",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Maximum number of entries to return (default 50)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Audit log entries",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/auth/hash": {
             "post": {
                 "description": "Generates a bcrypt hash from a plaintext password. Only available when auth is disabled.",

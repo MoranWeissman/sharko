@@ -5,10 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
+
+	"github.com/MoranWeissman/sharko/internal/audit"
 )
 
 // gitHubPushEvent is the minimal GitHub push event payload we need.
@@ -102,6 +105,18 @@ func (s *Server) handleGitWebhook(w http.ResponseWriter, r *http.Request) {
 			s.secretReconciler.Trigger()
 			slog.Info("[webhooks] triggered secret reconcile from push event")
 		}
+
+		// Record audit entry.
+		details := fmt.Sprintf("%d commit(s) pushed to %s", len(event.Commits), baseBranch)
+		if len(event.Commits) > 0 {
+			details = fmt.Sprintf("%s — %s", details, event.Commits[0].Message)
+		}
+		s.auditLog.Add(audit.Entry{
+			Source:  "webhook",
+			Action:  "push",
+			Actor:   pusher,
+			Details: details,
+		})
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})

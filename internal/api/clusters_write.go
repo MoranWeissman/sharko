@@ -3,10 +3,12 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"regexp"
 
 	"github.com/MoranWeissman/sharko/internal/argocd"
+	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
 )
@@ -80,6 +82,14 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 	if result.Status == "partial" {
 		status = http.StatusMultiStatus
 	}
+
+	s.auditLog.Add(audit.Entry{
+		Source:  "api",
+		Action:  "cluster_register",
+		Actor:   "sharko",
+		Details: fmt.Sprintf("cluster %q registered (status: %s)", req.Name, result.Status),
+	})
+
 	writeJSON(w, status, result)
 }
 

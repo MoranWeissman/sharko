@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/ai"
+	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/auth"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/notifications"
@@ -61,6 +62,9 @@ type Server struct {
 
 	// Default addons (optional — set via SetDefaultAddons).
 	defaultAddons map[string]bool
+
+	// Audit log for external-change events (always available — initialised in NewServer).
+	auditLog *audit.Log
 
 	// Notification store (always available — initialised in NewServer).
 	notificationStore *notifications.Store
@@ -114,6 +118,7 @@ func NewServer(
 		authStore:         authStore,
 		aiConfigStore:     nil, // set via SetAIConfigStore
 		addonSecretDefs:   make(map[string]orchestrator.AddonSecretDefinition),
+		auditLog:          audit.NewLog(200),
 		notificationStore: notifications.NewStore(100, notifications.DefaultNotificationsPath),
 		opsStore:          operations.NewStore(),
 		startTime:         time.Now(),
@@ -236,6 +241,12 @@ func (s *Server) reinitializeProvider() {
 // components (e.g. the background Checker) can push notifications into it.
 func (s *Server) NotificationStore() *notifications.Store {
 	return s.notificationStore
+}
+
+// AuditLog returns the server's audit log so external components can record
+// events (e.g. the secret reconciler after a reconcile cycle).
+func (s *Server) AuditLog() *audit.Log {
+	return s.auditLog
 }
 
 // SetDemoConnectionService replaces the server's connection service with one
@@ -383,6 +394,12 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	// Notifications
 	mux.HandleFunc("GET /api/v1/notifications", srv.handleListNotifications)
 	mux.HandleFunc("POST /api/v1/notifications/read-all", srv.handleMarkAllNotificationsRead)
+
+	// Audit log
+	mux.HandleFunc("GET /api/v1/audit", srv.handleListAuditLog)
+
+	// ArgoCD resource exclusions check
+	mux.HandleFunc("GET /api/v1/argocd/resource-exclusions", srv.handleCheckResourceExclusions)
 
 	// Cluster info
 	mux.HandleFunc("GET /api/v1/cluster/nodes", srv.handleGetNodeInfo)
