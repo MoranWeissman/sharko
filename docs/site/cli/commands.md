@@ -88,6 +88,7 @@ sharko add-cluster <name> [flags]
 | `--addons <list>` | Comma-separated list of addons to enable |
 | `--region <region>` | AWS region (for `aws-sm` provider) |
 | `--env <env>` | Environment label (`dev`, `staging`, `prod`, etc.) |
+| `--secret-path <path>` | Override the secrets provider path used to look up cluster credentials. Use when the secret key differs from the cluster name (e.g., `clusters/prod/my-cluster`). |
 
 Example:
 
@@ -96,6 +97,12 @@ sharko add-cluster prod-eu \
   --addons cert-manager,monitoring,logging \
   --region eu-west-1 \
   --env prod
+
+# With a custom secret path:
+sharko add-cluster prod-eu \
+  --secret-path clusters/prod/prod-eu \
+  --addons cert-manager,monitoring \
+  --region eu-west-1
 ```
 
 ### `sharko add-clusters`

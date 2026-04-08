@@ -23,16 +23,16 @@
 - [ ] **Init from Settings doesn't show ArgoCD bootstrap progress** — when initializing from Settings (not wizard), the UI doesn't show sync status polling. The API does the work but the UI doesn't reflect it.
 - [ ] **Cluster secrets not managed via GitOps** — the old ESO-based approach (Git → ExternalSecret → AWS SM → K8s Secret) was removed. Sharko now creates secrets imperatively via API (`internal/remoteclient/`). This means cluster registration only works through `sharko add-cluster`, not by editing Git directly. Design decision needed: is imperative sufficient, or do we need a declarative (GitOps) secret mechanism?
 - [ ] **No bootstrap-config.yaml was being generated** — root-app.yaml references `{{ .Values.repoURL }}` but the values file with repoURL/targetRevision was missing from the bootstrap template. Fixed in this PR.
-- [ ] **Wizard has no escape/skip option** — says "You can always update connections later in Settings" but there's no way to close or skip the wizard. Need a "Skip to Dashboard" link or X button.
-- [ ] **Bootstrap resume should show "continuing" message** — when Sharko detects a previously started bootstrap (e.g., PR exists but not merged), the wizard/CLI should indicate it's resuming an existing process, not starting fresh
-- [ ] **Auto-merge doesn't delete the branch after merging** — when Sharko auto-merges a PR, the source branch is left behind. Should call `DeleteBranch` after successful merge.
+- [x] **Wizard has no escape/skip option** — X button added to wizard header; dispatches `close-wizard` event to parent Layout.
+- [x] **Bootstrap resume should show "continuing" message** — wizard/CLI now detects an existing in-progress bootstrap and displays "Resuming previous initialization…" instead of starting fresh.
+- [x] **Auto-merge doesn't delete the branch after merging** — `DeleteBranch` is now called after successful `MergePullRequest` in the orchestrator.
 - [ ] **Addon detail missing AppSet info** — each addon is an ApplicationSet but the detail page doesn't show AppSet status (synced/errored, how many apps generated, which clusters matched)
-- [ ] **Advanced config fields lack context** — syncWave, selfHeal, syncOptions etc. are shown without examples or explanation of what they do. Add inline help text or tooltips explaining each field and when to use it
-- [ ] **ignoreDifferences not editable + no example** — field is read-only with no guidance on format. Should show an example like `group: apps, kind: Deployment, jsonPointers: [/spec/replicas]`
-- [ ] **additionalSources not editable + no example** — same as above, needs format guidance and edit capability
+- [x] **Advanced config fields lack context** — click-to-toggle HelpText panels added to all advanced config fields in AddonDetail. Clicking the HelpCircle icon expands an inline explanation.
+- [x] **ignoreDifferences not editable + no example** — now editable via YAML textarea with placeholder example; saved via `PATCH /api/v1/addons/{name}`.
+- [x] **additionalSources not editable + no example** — now editable via YAML textarea with placeholder example; saved via `PATCH /api/v1/addons/{name}`.
 - [ ] **Upgrade advisor not showing data** — the version comparison and upgrade recommendations section appears empty. May be because no clusters have the addon enabled, or the Helm repo fetch isn't returning versions. Need to verify the upgrade version check works end-to-end
 - [ ] **"20+ latest versions" and "Compare versions" unclear** — these UI sections need better labels and explanation of what they do (show available chart versions from Helm repo, compare changelogs between versions)
-- [ ] **AWS SM secret format — structured JSON, not raw kubeconfig** — Sharko's AWS SM provider expects a full kubeconfig YAML but real secrets have individual keys (host, caData, clusterName, region, etc.). Need to auto-detect format and build kubeconfig from structured JSON. Also need STS-based short-lived token generation (like argocd-k8s-auth) instead of static tokens.
+- [x] **AWS SM secret format — structured JSON, not raw kubeconfig** — provider auto-detects format (raw kubeconfig vs structured JSON with `server`/`ca`/`token` keys). STS-based short-lived token generation via `role_arn` field is supported.
 - [ ] **Multi-cloud provider support (V1.x/V2)** — interface is pluggable but only AWS is implemented. GCP (oauth2 token), Azure (AD token) need their own implementations. Community can contribute — the interface is "given cluster info, return a short-lived token."
 - [ ] **Settings page UX — organize sections in side nav** — currently one long form with everything crammed together. Should use DetailNavPanel with separate sections: Connection (Git + ArgoCD), Secrets Provider, GitOps Settings, Users, API Keys, AI Provider. Each section is its own page, not a scrollable form.
 - [ ] **Auto-detect host cluster name** — Sharko runs on the cluster, it can detect its own name. Don't ask the user.
@@ -68,16 +68,16 @@ Full design spec: `docs/design/2026-04-07-sharko-v1-design-decisions.md`
 
 ## Improvements
 
-- [ ] **Auto-detect GitHub token from Helm secret** — connection setup should check if GITHUB_TOKEN exists in the Sharko pod's env vars and pre-fill
-- [ ] **Security advisory detection** — parse Helm chart release notes for CVE mentions
-- [ ] **Filtering/sorting on list endpoints** — only pagination was done
+- N/A **Auto-detect GitHub token from Helm secret** — removed; Sharko no longer uses a Helm-managed GitHub token secret. Connection credentials are entered once in Settings and stored encrypted.
+- [x] **Security advisory detection** — `GET /api/v1/notifications` now surfaces `security_advisory` type notifications when a major version bump is detected in the Helm repo index.
+- [x] **Filtering/sorting on list endpoints** — `GET /api/v1/clusters` and `GET /api/v1/addons/catalog` support `?sort=<field>` and `?filter=<predicate>` query params.
 - [ ] **Audit log for manual changes** — webhook exists but no audit trail persisted
 - [ ] **E2E tests** — test against real ArgoCD (Kind + ArgoCD in CI)
 - [ ] **AI-parsed release notes** — use AI provider to summarize chart changelogs
 - [ ] **Addon dependency ordering** — declare addon B depends on addon A
-- [ ] **Separate managed vs discovered clusters in dashboard** — clusters in cluster-addons.yaml show as "Managed" with full Sharko features. Clusters only in ArgoCD show as "Discovered" with a "Start managing" button. Don't hide ArgoCD-only clusters.
-- [ ] **Adopt existing ArgoCD cluster secrets** — when adding a cluster that ArgoCD already knows about, skip registration and just add it to cluster-addons.yaml + create values file. Show "This cluster is already in ArgoCD — add to Sharko management?"
-- [ ] **Cluster connectivity check** — ability to test if a cluster is reachable, either via direct connection test or by deploying a lightweight hello-world addon (ConfigMap) and verifying ArgoCD can sync it
+- [x] **Separate managed vs discovered clusters in dashboard** — ClustersOverview now shows two sections: Managed (full Sharko features) and Discovered (ArgoCD-only, with Adopt button).
+- [x] **Adopt existing ArgoCD cluster secrets** — `POST /api/v1/clusters/{name}/adopt` implemented. UI shows "Adopt" button on discovered cluster cards.
+- [x] **Cluster connectivity check** — `POST /api/v1/clusters/{name}/test` implemented. CLI: `sharko test-cluster`. UI: Test Connectivity button on cluster detail page.
 
 ---
 

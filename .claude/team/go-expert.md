@@ -230,6 +230,73 @@ type OperationSession struct {
 2. Webhook — `POST /api/v1/webhooks/git` with HMAC-SHA256 verification
 3. Manual — `POST /api/v1/secrets/reconcile`
 
+## v1.7.0 New Patterns
+
+### Secret Path on Cluster Model
+
+The `Cluster` model now has an optional `SecretPath` field:
+
+```go
+type Cluster struct {
+    Name       string   `json:"name"`
+    SecretPath string   `json:"secret_path,omitempty"` // override default path in secrets provider
+    Region     string   `json:"region,omitempty"`
+    Env        string   `json:"env,omitempty"`
+    // ... existing fields
+}
+```
+
+When `secret_path` is set, the provider uses it verbatim instead of deriving the path from `Name`. This supports non-standard naming conventions in AWS SM (e.g., `clusters/prod/my-cluster` instead of `my-cluster`).
+
+The field is accepted on `POST /api/v1/clusters` and surfaced via `GET /api/v1/clusters/{name}`.
+CLI flag: `--secret-path`.
+
+### Smart Search Fallback in Providers
+
+`ClusterCredentialsProvider.ListClusters()` now supports a smart search fallback when an exact path match fails:
+
+1. Try exact lookup by `name` (or `secret_path` if set)
+2. If not found, scan all secrets under the configured prefix and find the closest match (substring / suffix match on the last path segment)
+3. Return ranked suggestions alongside a `not_found` error so the API can include them in the 404 response body
+
+```json
+{
+  "error": "cluster not found",
+  "suggestions": ["clusters/prod/my-cluster", "clusters/staging/my-cluster"]
+}
+```
+
+This is implemented in `internal/providers/search.go` and used by both `KubernetesSecretProvider` and `AWSSecretsManagerProvider`.
+
+### ConfigureAddon: Complex Fields (ignoreDifferences, additionalSources)
+
+`PATCH /api/v1/addons/{name}` now accepts two complex fields:
+
+**`ignore_differences`** — array of ArgoCD resource ignore rules:
+```json
+[
+  {
+    "group": "apps",
+    "kind": "Deployment",
+    "jsonPointers": ["/spec/replicas"]
+  }
+]
+```
+
+**`additional_sources`** — array of extra Helm chart sources to include alongside the main chart:
+```json
+[
+  {
+    "repoURL": "https://charts.example.com",
+    "chart": "common-config",
+    "targetRevision": "1.0.0",
+    "helm": {"valueFiles": ["$values/base.yaml"]}
+  }
+]
+```
+
+Both fields are marshalled to YAML and written to the addon's catalog entry via `yaml_mutator.go`. They map directly to the ArgoCD ApplicationSet `ignoreDifferences` and `sources` fields.
+
 ## Phase 3-6 New Patterns
 
 ### AWS SM Structured JSON (Phase 3)
@@ -355,3 +422,6 @@ Secret configured via `SHARKO_WEBHOOK_SECRET` env var. Requests without a valid 
 - Swagger annotations are modified or new annotation patterns emerge
 - AWS SM format detection logic changes
 - Filtering/sorting params are added or modified
+- Cluster model fields are added (e.g., secret_path)
+- Provider search/fallback logic changes
+- Addon config fields are added or modified

@@ -383,6 +383,54 @@ Mark-read API: `POST /api/v1/notifications/{id}/read` — called when the user c
 
 The button shows a spinner while the request is in-flight (typically 2–5s).
 
+## v1.7.0 UI Features
+
+### HelpText Click-to-Toggle Component
+
+`AddonDetail.tsx` now uses a click-to-toggle help text pattern instead of always-visible tooltips. A `HelpCircle` icon sits next to the field label; clicking it expands an inline explanation panel below the field. Clicking again collapses it.
+
+```tsx
+const [helpOpen, setHelpOpen] = useState<string | null>(null);
+
+// Toggle handler
+const toggleHelp = (field: string) =>
+  setHelpOpen(prev => (prev === field ? null : field));
+
+// Usage per field
+<button
+  onClick={() => toggleHelp("syncWave")}
+  className="text-[#5a8aaa] hover:text-[#0a2a4a] dark:text-gray-400 dark:hover:text-white"
+  aria-label="Toggle help"
+>
+  <HelpCircle className="h-4 w-4" />
+</button>
+{helpOpen === "syncWave" && (
+  <p className="mt-1 text-sm text-[#3a6a8a] dark:text-gray-400">
+    Sync wave controls the order in which ArgoCD deploys addons. Lower numbers deploy first. Default is 0.
+  </p>
+)}
+```
+
+This replaces the old shadcn `Tooltip` hover approach for complex fields. The shadcn `tooltip` component is still used for simple icon-only labels elsewhere.
+
+### YAML Textarea Editors for Complex Fields
+
+`AddonDetail.tsx` — the `ignoreDifferences` and `additionalSources` fields are now editable via a `<textarea>` styled as a code editor (monospace font, fixed-height with scroll). The textarea shows the current value as YAML. Saving calls `PATCH /api/v1/addons/{name}` with the parsed value.
+
+```tsx
+<textarea
+  className="w-full font-mono text-sm bg-[#e8f4ff] dark:bg-gray-900 text-[#0a2a4a] dark:text-gray-200
+             ring-2 ring-[#6aade0] dark:ring-gray-700 rounded-md p-3 resize-y min-h-[120px]"
+  value={ignoreDiffsYaml}
+  onChange={e => setIgnoreDiffsYaml(e.target.value)}
+  placeholder={"- group: apps\n  kind: Deployment\n  jsonPointers:\n    - /spec/replicas"}
+/>
+```
+
+An example placeholder is always shown so users know the expected format. Validation errors (YAML parse failures) are shown inline below the textarea in amber text.
+
+Both `ignoreDifferences` and `additionalSources` editors include a click-to-toggle HelpText panel explaining the field's purpose and an ArgoCD docs link.
+
 ## Update This File When
 - New views or components are added
 - shadcn/ui components are added

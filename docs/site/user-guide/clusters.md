@@ -40,6 +40,7 @@ Flags:
 | `--addons` | Comma-separated list of addons to enable on this cluster |
 | `--region` | AWS region (for `aws-sm` secrets provider) |
 | `--env` | Environment label (e.g., `prod`, `staging`) — auto-detected from name if `config.environments` is set |
+| `--secret-path` | Override the path used to look up credentials in the secrets provider (see [Secret Path](#secret-path)) |
 
 ### Via UI
 
@@ -180,6 +181,46 @@ curl -X POST https://sharko.your-domain.com/api/v1/clusters/my-cluster/refresh \
 ```
 
 Or in the UI: cluster detail page → **Refresh Credentials**.
+
+## Secret Path
+
+By default, Sharko looks up credentials in the secrets provider using the cluster name as the path. If your secrets follow a different naming convention (e.g., `clusters/prod/my-cluster` instead of `my-cluster`), you can override this with `--secret-path`:
+
+```bash
+sharko add-cluster my-cluster \
+  --secret-path clusters/prod/my-cluster \
+  --addons cert-manager
+```
+
+The `secret_path` is stored on the cluster record and used for all future credential fetches (refresh, connectivity test, secrets reconcile). You can also set it via the API:
+
+```bash
+curl -X POST https://sharko.your-domain.com/api/v1/clusters \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "my-cluster",
+    "secret_path": "clusters/prod/my-cluster",
+    "addons": ["cert-manager"],
+    "region": "eu-west-1"
+  }'
+```
+
+### Smart Search with Suggestions
+
+If no exact match is found at the expected path, Sharko automatically searches the entire secrets prefix for a close match (suffix / substring on the final path segment) and returns suggestions alongside the error:
+
+```json
+{
+  "error": "cluster not found",
+  "suggestions": [
+    "clusters/prod/my-cluster",
+    "clusters/staging/my-cluster"
+  ]
+}
+```
+
+Use `--secret-path` with the suggested path to register with the correct secret. In the UI, suggestions are shown as clickable chips below the cluster name input when an exact match fails.
 
 ## Cluster Environments
 
