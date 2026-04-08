@@ -63,6 +63,8 @@ func (o *Orchestrator) createAddonSecrets(ctx context.Context, kubeconfig []byte
 		return nil, nil
 	}
 
+	slog.Info("[secrets] createAddonSecrets called", "addonCount", len(toCreate))
+
 	client, err := o.remoteClientFn(kubeconfig)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to remote cluster: %w", err)
@@ -72,6 +74,7 @@ func (o *Orchestrator) createAddonSecrets(ctx context.Context, kubeconfig []byte
 	for _, def := range toCreate {
 		data := make(map[string][]byte)
 		for key, providerPath := range def.Keys {
+			slog.Info("[secrets] fetching secret value", "addon", def.AddonName, "key", key, "path", providerPath)
 			val, fetchErr := o.secretFetcher.GetSecretValue(ctx, providerPath)
 			if fetchErr != nil {
 				return created, fmt.Errorf("fetching secret value for %s key %q from %q: %w", def.AddonName, key, providerPath, fetchErr)
@@ -79,6 +82,7 @@ func (o *Orchestrator) createAddonSecrets(ctx context.Context, kubeconfig []byte
 			data[key] = val
 		}
 
+		slog.Info("[secrets] pushing secret to cluster", "addon", def.AddonName, "secret", def.SecretName, "namespace", def.Namespace)
 		if err := remoteclient.EnsureSecret(ctx, client, def.Namespace, def.SecretName, data); err != nil {
 			return created, fmt.Errorf("creating secret for addon %s: %w", def.AddonName, err)
 		}

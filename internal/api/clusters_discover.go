@@ -1,6 +1,7 @@
 package api
 
 import (
+	"log/slog"
 	"net/http"
 
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
@@ -96,14 +97,17 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 	}
 
 	name := r.PathValue("name")
+	slog.Info("[cluster-test] testing cluster", "name", name)
 
 	if s.credProvider == nil {
 		writeError(w, http.StatusServiceUnavailable, "no credentials provider configured")
 		return
 	}
 
+	slog.Info("[cluster-test] fetching credentials", "name", name)
 	creds, err := s.credProvider.GetCredentials(name)
 	if err != nil {
+		slog.Error("[cluster-test] failed", "name", name, "step", "fetch-credentials", "error", err)
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"name":      name,
 			"reachable": false,
@@ -111,9 +115,12 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	slog.Info("[cluster-test] credentials obtained", "name", name, "server", creds.Server)
 
+	slog.Info("[cluster-test] building k8s client", "name", name)
 	client, err := remoteclient.NewClientFromKubeconfig(creds.Raw)
 	if err != nil {
+		slog.Error("[cluster-test] failed", "name", name, "step", "build-client", "error", err)
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"name":      name,
 			"reachable": false,
@@ -122,8 +129,10 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	slog.Info("[cluster-test] calling ServerVersion", "name", name)
 	version, err := client.Discovery().ServerVersion()
 	if err != nil {
+		slog.Error("[cluster-test] failed", "name", name, "step", "server-version", "error", err)
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"name":      name,
 			"reachable": false,
@@ -132,6 +141,7 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	slog.Info("[cluster-test] cluster reachable", "name", name, "version", version.GitVersion)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"name":           name,
 		"reachable":      true,
