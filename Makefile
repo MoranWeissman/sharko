@@ -1,6 +1,6 @@
 # Sharko — Makefile
 
-.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go release
+.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e
 
 PORT ?= 8080
 
@@ -74,6 +74,13 @@ lint: ## Go vet + UI build check
 
 clean: ## Remove build artifacts
 	rm -rf bin/ ui/dist/
+
+e2e: ## Run E2E tests against a Kind cluster (requires docker + kind)
+	bash tests/e2e/setup.sh
+	kubectl port-forward svc/sharko 8080:80 -n sharko &
+	sleep 5
+	go test ./tests/e2e/... -v -timeout 5m
+	bash tests/e2e/teardown.sh
 
 release: ## Tag and push a release (usage: make release VERSION=1.0.0)
 	@if [ -z "$(VERSION)" ]; then echo "Usage: make release VERSION=1.0.0"; exit 1; fi

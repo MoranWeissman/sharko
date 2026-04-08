@@ -760,6 +760,13 @@ func (c *Client) chatCustomOpenAI(ctx context.Context, messages []ChatMessage, t
 	return chatResp, nil
 }
 
+// SimplePrompt sends a single prompt to the AI provider and returns the response.
+// It is an alias for Summarize provided for semantic clarity when the caller is
+// not summarising diff output but asking an arbitrary question.
+func (c *Client) SimplePrompt(ctx context.Context, prompt string) (string, error) {
+	return c.Summarize(ctx, prompt)
+}
+
 // BuildUpgradePrompt creates a concise prompt for analyzing an upgrade.
 // Keeps prompt small for faster LLM response.
 func BuildUpgradePrompt(addonName, currentVersion, targetVersion string, added, removed, changed int, changedDetails string, conflicts string, releaseNotes string) string {

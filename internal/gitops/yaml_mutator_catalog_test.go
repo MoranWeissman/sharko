@@ -335,3 +335,95 @@ func TestUpdateCatalogEntry_NotFound(t *testing.T) {
 		t.Errorf("error should mention addon name: %v", err)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// AddCatalogEntry — secretName field via UpdateCatalogEntry (post-add mutation)
+// ---------------------------------------------------------------------------
+
+func TestAddCatalogEntry_ThenUpdateWithExtraField(t *testing.T) {
+	// Add an entry then update it with an extra field.
+	entry := CatalogEntryInput{
+		Name:    "cert-manager",
+		RepoURL: "https://charts.jetstack.io",
+		Chart:   "cert-manager",
+		Version: "1.14.0",
+	}
+	after, err := AddCatalogEntry([]byte(catalogBase), entry)
+	if err != nil {
+		t.Fatalf("AddCatalogEntry: %v", err)
+	}
+
+	// Now update it with an additional field (simulating a secrets placeholder).
+	updated, err := UpdateCatalogEntry(after, "cert-manager", map[string]string{
+		"namespace": "cert-manager",
+		"syncWave":  "-5",
+	})
+	if err != nil {
+		t.Fatalf("UpdateCatalogEntry after add: %v", err)
+	}
+
+	s := string(updated)
+	if !strings.Contains(s, "    namespace: cert-manager") {
+		t.Errorf("namespace field missing:\n%s", s)
+	}
+	if !strings.Contains(s, "    syncWave: -5") {
+		t.Errorf("syncWave field missing:\n%s", s)
+	}
+	// Original entries intact.
+	if !strings.Contains(s, "  - name: datadog") {
+		t.Errorf("datadog entry lost:\n%s", s)
+	}
+	if !strings.Contains(s, "  - name: keda") {
+		t.Errorf("keda entry lost:\n%s", s)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// RemoveCatalogEntry — single-entry catalog
+// ---------------------------------------------------------------------------
+
+func TestRemoveCatalogEntry_OnlyEntry(t *testing.T) {
+	input := `applicationsets:
+  - name: keda
+    repoURL: https://kedacore.github.io/charts
+    chart: keda
+    version: 2.14.2
+`
+	out, err := RemoveCatalogEntry([]byte(input), "keda")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	s := string(out)
+	if strings.Contains(s, "keda") {
+		t.Errorf("keda entry still present:\n%s", s)
+	}
+	if !strings.Contains(s, "applicationsets:") {
+		t.Errorf("applicationsets key removed unexpectedly:\n%s", s)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// UpdateCatalogEntry — replace existing and add new in one call
+// ---------------------------------------------------------------------------
+
+func TestUpdateCatalogEntry_ReplaceExistingAndAddNew(t *testing.T) {
+	// keda exists with version and chart; update version (exists) + add namespace (new).
+	out, err := UpdateCatalogEntry([]byte(catalogBase), "keda", map[string]string{
+		"version":   "2.99.0",
+		"namespace": "keda-system",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	s := string(out)
+	if !strings.Contains(s, "    version: 2.99.0") {
+		t.Errorf("version not updated:\n%s", s)
+	}
+	if !strings.Contains(s, "    namespace: keda-system") {
+		t.Errorf("namespace not appended:\n%s", s)
+	}
+	// datadog untouched
+	if !strings.Contains(s, "    version: 3.160.1") {
+		t.Errorf("datadog version modified unexpectedly:\n%s", s)
+	}
+}

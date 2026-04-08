@@ -37,3 +37,8 @@ applicationsets:
   #       kind: ClusterPolicy
   #       jsonPointers:
   #         - /spec/rules
+  #   dependsOn: [cert-manager]            # addon names that must be synced first
+
+  # Dependency ordering example:
+  # - name: istiod
+  #   dependsOn: [istio-base, istio-cni]   # istiod syncs after istio-base and istio-cni

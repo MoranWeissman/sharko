@@ -8,10 +8,13 @@ import {
   XCircle,
   Activity,
   AlertTriangle,
-  Play,
   Sparkles,
+  FolderGit2,
+  Clock,
+  Circle,
 } from 'lucide-react'
-import { initRepo } from '@/services/api'
+import { initRepo, getOperation, operationHeartbeat } from '@/services/api'
+import type { OperationStep } from '@/services/api'
 import { useConnections } from '@/hooks/useConnections'
 import { api } from '@/services/api'
 import { LoadingState } from '@/components/LoadingState'
@@ -64,9 +67,12 @@ export function ConnectionSection() {
   const [justSaved, setJustSaved] = useState(false)
 
   const [repoStatus, setRepoStatus] = useState<{ initialized: boolean; reason?: string } | null>(null)
-  const [initRunning, setInitRunning] = useState(false)
-  const [initResult, setInitResult] = useState<string | null>(null)
+  const [initState, setInitState] = useState<'idle' | 'running' | 'done' | 'error'>('idle')
   const [initError, setInitError] = useState<string | null>(null)
+  const [operationId, setOperationId] = useState<string | null>(null)
+  const [initSteps, setInitSteps] = useState<OperationStep[]>([])
+  const [operationStatus, setOperationStatus] = useState<string>('idle')
+  const [prUrl, setPrUrl] = useState<string | null>(null)
 
   useEffect(() => {
     if (existingConn) {
@@ -117,22 +123,70 @@ export function ConnectionSection() {
     }
   }, [existingConn?.name, fetchLiveStatus, fetchRepoStatus]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleInitRepo = useCallback(async () => {
-    setInitRunning(true)
-    setInitResult(null)
+  const handleInitRepo = useCallback(async (autoMerge: boolean) => {
+    setInitState('running')
     setInitError(null)
+    setInitSteps([])
+    setOperationStatus('idle')
+    setPrUrl(null)
+    setOperationId(null)
     try {
-      const result = await initRepo({ bootstrap_argocd: true })
-      const prUrl = result?.pr_url || result?.pull_request_url
-      const status = result?.status || result?.message || 'initialized'
-      setInitResult(prUrl ? `Repository ${status}. PR: ${prUrl}` : `Repository ${status}.`)
-      fetchRepoStatus()
+      const res = await initRepo({ bootstrap_argocd: true, auto_merge: autoMerge })
+      if (res?.operation_id) {
+        setOperationId(res.operation_id)
+      } else {
+        // Legacy synchronous response fallback
+        const url = res?.pr_url || res?.pull_request_url || null
+        setPrUrl(url)
+        setOperationStatus('completed')
+        setInitState('done')
+        fetchRepoStatus()
+      }
     } catch (e: unknown) {
       setInitError(e instanceof Error ? e.message : 'Failed to initialize repository')
-    } finally {
-      setInitRunning(false)
+      setInitState('error')
     }
   }, [fetchRepoStatus])
+
+  useEffect(() => {
+    if (!operationId) return
+
+    const pollInterval = setInterval(async () => {
+      try {
+        const status = await getOperation(operationId)
+        setInitSteps(status.steps || [])
+        setOperationStatus(status.status)
+        if (status.wait_payload) setPrUrl(status.wait_payload)
+
+        if (
+          status.status === 'completed' ||
+          status.status === 'failed' ||
+          status.status === 'cancelled'
+        ) {
+          clearInterval(pollInterval)
+          clearInterval(heartbeatInterval)
+          if (status.status === 'completed') {
+            setInitState('done')
+            fetchRepoStatus()
+          } else {
+            setInitError(status.error || `Operation ${status.status}`)
+            setInitState('error')
+          }
+        }
+      } catch {
+        // ignore transient poll errors
+      }
+    }, 2000)
+
+    const heartbeatInterval = setInterval(() => {
+      operationHeartbeat(operationId)
+    }, 15000)
+
+    return () => {
+      clearInterval(pollInterval)
+      clearInterval(heartbeatInterval)
+    }
+  }, [operationId, fetchRepoStatus])
 
   async function testCredentials(which: 'git' | 'argocd') {
     const payload = buildPayload(form, existingConn?.name)
@@ -201,27 +255,102 @@ export function ConnectionSection() {
             <p className="mt-0.5 text-sm text-amber-700 dark:text-amber-400">
               Your Git repository has not been bootstrapped yet. Sharko cannot manage addons until the repository is initialized.
             </p>
-            <div className="mt-3 flex items-center gap-3 flex-wrap">
-              <button
-                type="button"
-                onClick={handleInitRepo}
-                disabled={initRunning}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-amber-700 disabled:opacity-50 dark:bg-amber-700 dark:hover:bg-amber-600"
-              >
-                {initRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-                Initialize Repository
-              </button>
-              {initResult && (
-                <span className="flex items-center gap-1 text-sm text-green-700 dark:text-green-400">
-                  <CheckCircle className="h-4 w-4" />
-                  {initResult}
-                </span>
+            <div className="mt-3 space-y-3">
+              {initState === 'idle' && (
+                <div className="flex items-center gap-3 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => handleInitRepo(true)}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-amber-700 dark:bg-amber-700 dark:hover:bg-amber-600"
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                    Initialize &amp; Auto-merge
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleInitRepo(false)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-amber-400 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-800 shadow-sm hover:bg-amber-100 dark:border-amber-600 dark:bg-amber-900/20 dark:text-amber-300 dark:hover:bg-amber-900/40"
+                  >
+                    <FolderGit2 className="h-3.5 w-3.5" />
+                    Initialize (manual PR review)
+                  </button>
+                </div>
               )}
-              {initError && (
-                <span className="flex items-center gap-1 text-sm text-red-700 dark:text-red-400">
-                  <XCircle className="h-4 w-4" />
-                  {initError}
-                </span>
+              {initState === 'running' && initSteps.length === 0 && (
+                <div className="flex items-center gap-2 text-sm text-amber-700 dark:text-amber-400">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Starting initialization…
+                </div>
+              )}
+              {initSteps.length > 0 && (
+                <div className="space-y-1.5">
+                  {initSteps.map((step, i) => (
+                    <div key={i} className="flex items-center gap-2 text-sm">
+                      {step.status === 'completed' && <CheckCircle className="h-4 w-4 text-green-600 shrink-0" />}
+                      {step.status === 'running' && <Loader2 className="h-4 w-4 animate-spin text-amber-600 shrink-0" />}
+                      {step.status === 'waiting' && <Clock className="h-4 w-4 text-amber-500 shrink-0" />}
+                      {step.status === 'pending' && <Circle className="h-4 w-4 text-amber-300 shrink-0" />}
+                      {step.status === 'failed' && <XCircle className="h-4 w-4 text-red-500 shrink-0" />}
+                      <span className={step.status === 'pending' ? 'text-amber-600 dark:text-amber-500' : 'text-amber-900 dark:text-amber-200'}>
+                        {step.name}
+                      </span>
+                      {step.detail && (
+                        <span className="text-xs text-amber-600 dark:text-amber-400">— {step.detail}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {operationStatus === 'waiting' && (
+                <div className="rounded-lg border border-amber-400 bg-amber-100 p-3 dark:bg-amber-900/30">
+                  <p className="text-sm font-medium text-amber-800 dark:text-amber-300">Waiting for PR to be merged…</p>
+                  {prUrl && (
+                    <a
+                      href={prUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-amber-700 underline hover:text-amber-900 dark:text-amber-400"
+                    >
+                      Review and merge the PR →
+                    </a>
+                  )}
+                </div>
+              )}
+              {initState === 'done' && (
+                <div className="flex items-center gap-1.5 text-sm text-green-700 dark:text-green-400">
+                  <CheckCircle className="h-4 w-4 shrink-0" />
+                  <span>
+                    Repository initialized successfully.
+                    {prUrl && (
+                      <>
+                        {' '}
+                        <a
+                          href={prUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline hover:text-green-900 dark:hover:text-green-300"
+                        >
+                          View Pull Request
+                        </a>
+                      </>
+                    )}
+                  </span>
+                </div>
+              )}
+              {initState === 'error' && (
+                <div className="flex items-start gap-2">
+                  <span className="flex items-center gap-1 text-sm text-red-700 dark:text-red-400">
+                    <XCircle className="h-4 w-4 shrink-0" />
+                    {initError}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setInitState('idle')}
+                    className="text-xs text-amber-700 underline hover:text-amber-900 dark:text-amber-400 shrink-0"
+                  >
+                    Retry
+                  </button>
+                </div>
               )}
             </div>
           </div>
@@ -439,36 +568,118 @@ export function ConnectionSection() {
               Bootstrap the Git repository with the required Sharko directory structure and ArgoCD resources.
               Safe to run on an already-initialized repository.
             </p>
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={handleInitRepo}
-                disabled={initRunning}
-                className="inline-flex items-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
-              >
-                {initRunning ? (
+            <div className="space-y-3">
+              {initState === 'idle' && (
+                <div className="flex items-center gap-3 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => handleInitRepo(true)}
+                    className="inline-flex items-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-600"
+                  >
+                    <Sparkles className="h-4 w-4" />
+                    Initialize &amp; Auto-merge
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleInitRepo(false)}
+                    className="inline-flex items-center gap-2 rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
+                  >
+                    <FolderGit2 className="h-4 w-4" />
+                    Initialize (manual PR review)
+                  </button>
+                  {justSaved && (
+                    <button
+                      type="button"
+                      onClick={() => setJustSaved(false)}
+                      className="text-xs text-[#3a6a8a] hover:text-[#1a4a6a] dark:text-gray-500 dark:hover:text-gray-400"
+                    >
+                      Dismiss
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {initState === 'running' && initSteps.length === 0 && (
+                <div className="flex items-center gap-2 text-sm text-[#2a5a7a] dark:text-gray-400">
                   <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Play className="h-4 w-4" />
-                )}
-                Initialize Repository
-              </button>
-              {justSaved && !initRunning && !initResult && (
-                <button
-                  type="button"
-                  onClick={() => setJustSaved(false)}
-                  className="text-xs text-[#3a6a8a] hover:text-[#1a4a6a] dark:text-gray-500 dark:hover:text-gray-400"
-                >
-                  Dismiss
-                </button>
+                  Starting initialization…
+                </div>
+              )}
+
+              {initSteps.length > 0 && (
+                <div className="space-y-1.5">
+                  {initSteps.map((step, i) => (
+                    <div key={i} className="flex items-center gap-2 text-sm">
+                      {step.status === 'completed' && <CheckCircle className="h-4 w-4 text-green-600 shrink-0" />}
+                      {step.status === 'running' && <Loader2 className="h-4 w-4 animate-spin text-[#2a5a7a] shrink-0" />}
+                      {step.status === 'waiting' && <Clock className="h-4 w-4 text-amber-500 shrink-0" />}
+                      {step.status === 'pending' && <Circle className="h-4 w-4 text-[#bee0ff] shrink-0" />}
+                      {step.status === 'failed' && <XCircle className="h-4 w-4 text-red-500 shrink-0" />}
+                      <span className={step.status === 'pending' ? 'text-[#3a6a8a]' : 'text-[#0a2a4a] dark:text-gray-200'}>
+                        {step.name}
+                      </span>
+                      {step.detail && (
+                        <span className="text-xs text-[#3a6a8a] dark:text-gray-400">— {step.detail}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {operationStatus === 'waiting' && (
+                <div className="rounded-xl ring-2 ring-amber-300 bg-amber-50 p-4 dark:bg-amber-900/20">
+                  <p className="text-sm font-medium text-amber-800 dark:text-amber-300">Waiting for PR to be merged…</p>
+                  {prUrl && (
+                    <a
+                      href={prUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-[#1a4a8a] underline hover:text-[#0a3a6a] dark:text-blue-400"
+                    >
+                      Review and merge the PR →
+                    </a>
+                  )}
+                </div>
+              )}
+
+              {initState === 'done' && (
+                <div className="flex items-center gap-1.5 text-sm text-green-600 dark:text-green-400">
+                  <CheckCircle className="h-4 w-4 shrink-0" />
+                  <span>
+                    Repository initialized successfully.
+                    {prUrl && (
+                      <>
+                        {' '}
+                        <a
+                          href={prUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline hover:text-green-800 dark:hover:text-green-300"
+                        >
+                          View Pull Request
+                        </a>
+                      </>
+                    )}
+                  </span>
+                </div>
+              )}
+
+              {initState === 'error' && (
+                <div className="flex items-start gap-3">
+                  <span className="flex items-start gap-1.5 text-sm text-red-600 dark:text-red-400">
+                    <XCircle className="h-4 w-4 mt-0.5 shrink-0" />
+                    {initError}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setInitState('idle')}
+                    className="text-xs text-[#3a6a8a] underline hover:text-[#1a4a6a] dark:text-gray-400 shrink-0"
+                  >
+                    Retry
+                  </button>
+                </div>
               )}
             </div>
-            {initError && (
-              <p className="mt-3 text-sm text-red-600 dark:text-red-400">{initError}</p>
-            )}
-            {initResult && (
-              <p className="mt-3 text-sm text-green-600 dark:text-green-400">{initResult}</p>
-            )}
           </div>
         </div>
       )}

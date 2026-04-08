@@ -73,6 +73,7 @@ type AddAddonRequest struct {
 	AdditionalSources []models.AddonSource     `json:"additional_sources,omitempty"`
 	IgnoreDifferences []map[string]interface{} `json:"ignore_differences,omitempty"`
 	ExtraHelmValues   map[string]string        `json:"extra_helm_values,omitempty"`
+	DependsOn         []string                 `json:"depends_on,omitempty"`
 }
 
 // ConfigureAddonRequest is the input for updating an addon's catalog configuration.

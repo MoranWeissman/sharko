@@ -212,15 +212,16 @@ func UpdateCatalogVersion(data []byte, addonName, newVersion string) ([]byte, er
 // ---------------------------------------------------------------------------
 
 // CatalogEntryInput holds the fields for a new addons-catalog.yaml entry.
-// Namespace, SyncWave and Path are optional (zero value means not set).
+// Namespace, SyncWave, Path and DependsOn are optional (zero value means not set).
 type CatalogEntryInput struct {
 	Name      string
 	RepoURL   string
 	Chart     string
 	Version   string
-	Namespace string // optional
-	SyncWave  int    // optional, 0 = not set
-	Path      string // optional, for git-sourced addons
+	Namespace string   // optional
+	SyncWave  int      // optional, 0 = not set
+	Path      string   // optional, for git-sourced addons
+	DependsOn []string // optional, addon names this entry depends on
 }
 
 // AddCatalogEntry appends a new entry to the applicationsets array in an
@@ -282,6 +283,11 @@ func AddCatalogEntry(data []byte, entry CatalogEntryInput) ([]byte, error) {
 	}
 	if entry.Path != "" {
 		newLines = append(newLines, "    path: "+entry.Path)
+	}
+	if len(entry.DependsOn) > 0 {
+		// Render as an inline YAML list: dependsOn: [a, b, c]
+		deps := strings.Join(entry.DependsOn, ", ")
+		newLines = append(newLines, "    dependsOn: ["+deps+"]")
 	}
 
 	// Insert a blank separator then the new block after lastContentIdx.

@@ -44,6 +44,10 @@ type AddonCatalogEntry struct {
 	// Advanced — extra Helm configuration
 	ExtraHelmValues map[string]string `json:"extraHelmValues,omitempty" yaml:"extraHelmValues,omitempty"`
 
+	// Dependency ordering — addon names that must be synced before this one.
+	// Sharko uses this to warn when sync waves conflict and to validate the dependency graph.
+	DependsOn []string `json:"dependsOn,omitempty" yaml:"dependsOn,omitempty"`
+
 	// Secret requirements — Sharko creates these K8s Secrets on remote clusters
 	Secrets []AddonSecretRef `json:"secrets,omitempty" yaml:"secrets,omitempty"`
 }
