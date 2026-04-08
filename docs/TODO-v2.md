@@ -34,6 +34,7 @@
 - [ ] **"20+ latest versions" and "Compare versions" unclear** — these UI sections need better labels and explanation of what they do (show available chart versions from Helm repo, compare changelogs between versions)
 - [ ] **AWS SM secret format — structured JSON, not raw kubeconfig** — Sharko's AWS SM provider expects a full kubeconfig YAML but real secrets have individual keys (host, caData, clusterName, region, etc.). Need to auto-detect format and build kubeconfig from structured JSON. Also need STS-based short-lived token generation (like argocd-k8s-auth) instead of static tokens.
 - [ ] **Multi-cloud provider support (V1.x/V2)** — interface is pluggable but only AWS is implemented. GCP (oauth2 token), Azure (AD token) need their own implementations. Community can contribute — the interface is "given cluster info, return a short-lived token."
+- [ ] **Settings page UX — organize sections in side nav** — currently one long form with everything crammed together. Should use DetailNavPanel with separate sections: Connection (Git + ArgoCD), Secrets Provider, GitOps Settings, Users, API Keys, AI Provider. Each section is its own page, not a scrollable form.
 
 ---
 
