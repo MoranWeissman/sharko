@@ -31,21 +31,28 @@ func (s *Server) handleGetProviders(w http.ResponseWriter, r *http.Request) {
 
 	// Test connectivity to report status.
 	status := "configured"
+	var statusError string
 	if s.credProvider != nil {
 		if _, err := s.credProvider.ListClusters(); err == nil {
 			status = "connected"
 		} else {
 			status = "error"
+			statusError = err.Error()
 		}
 	}
 
+	providerInfo := map[string]interface{}{
+		"type":   s.providerCfg.Type,
+		"region": s.providerCfg.Region,
+		"status": status,
+	}
+	if statusError != "" {
+		providerInfo["error"] = statusError
+	}
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"configured_provider": map[string]interface{}{
-			"type":   s.providerCfg.Type,
-			"region": s.providerCfg.Region,
-			"status": status,
-		},
-		"available_types": availableTypes,
+		"configured_provider": providerInfo,
+		"available_types":     availableTypes,
 	})
 }
 

@@ -54,7 +54,7 @@ func (s *Server) handleCreateConnection(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	s.reinitializeProvider()
+	s.ReinitializeFromConnection()
 	writeJSON(w, http.StatusCreated, map[string]string{"status": "created", "name": req.Name})
 }
 
@@ -109,7 +109,7 @@ func (s *Server) handleUpdateConnection(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	s.reinitializeProvider()
+	s.ReinitializeFromConnection()
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated", "name": name})
 }
 
@@ -169,7 +169,7 @@ func (s *Server) handleSetActiveConnection(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	s.reinitializeProvider()
+	s.ReinitializeFromConnection()
 	writeJSON(w, http.StatusOK, map[string]string{"status": "active", "connection": req.ConnectionName})
 }
 

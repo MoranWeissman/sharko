@@ -179,6 +179,10 @@ var serveCmd = &cobra.Command{
 		srv.SetVersion(version)                 // Propagate ldflags-injected version to health endpoint
 		srv.SetTemplateFS(templates.TemplateFS) // Always available — init doesn't need a provider
 
+		// Initialize provider + gitops config from active connection (if exists).
+		// This ensures a pod restart doesn't leave the provider nil when a connection is already stored.
+		srv.ReinitializeFromConnection()
+
 		// Start notification checker (background goroutine, checks every 30 min).
 		notifProvider := notifications.NewServiceProvider(connSvc, addonSvc)
 		notifChecker := notifications.NewChecker(srv.NotificationStore(), notifProvider, 30*time.Minute)
