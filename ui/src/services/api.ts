@@ -340,7 +340,7 @@ export const api = {
   docsGet: (slug: string) => fetchJSON<{ slug: string; content: string }>(`/docs/${encodeURIComponent(slug)}`),
 
   // Providers
-  getProviders: () => fetchJSON<{ configured_provider: { type: string; region: string; status: string } | null; available_types: string[] }>('/providers'),
+  getProviders: () => fetchJSON<{ configured_provider: { type: string; region: string; prefix?: string; status: string; error?: string } | null; available_types: string[] }>('/providers'),
 
   // Repo status
   getRepoStatus: () => fetchJSON<{ initialized: boolean; reason?: string }>('/repo/status'),
