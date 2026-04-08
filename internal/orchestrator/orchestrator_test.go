@@ -787,21 +787,25 @@ func TestConfigureAddon(t *testing.T) {
 		}
 	})
 
-	t.Run("unsupported SyncOptions returns error", func(t *testing.T) {
+	t.Run("SyncOptions are applied to catalog", func(t *testing.T) {
 		git := newMockGitProvider()
 		git.files[catalogPath] = kedaCatalog
 
 		orch := New(nil, defaultCreds(), newMockArgocd(), git, defaultGitOps(), defaultPaths(), nil)
 
-		_, err := orch.ConfigureAddon(context.Background(), ConfigureAddonRequest{
+		result, err := orch.ConfigureAddon(context.Background(), ConfigureAddonRequest{
 			Name:        "keda",
 			SyncOptions: []string{"CreateNamespace=true"},
 		})
-		if err == nil {
-			t.Fatal("expected error for unsupported SyncOptions field")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
 		}
-		if !strings.Contains(err.Error(), "sync_options") {
-			t.Errorf("expected error to mention sync_options, got: %v", err)
+		if result == nil {
+			t.Fatal("expected non-nil git result")
+		}
+		catalogContent := string(git.files[catalogPath])
+		if !strings.Contains(catalogContent, "CreateNamespace=true") {
+			t.Errorf("expected SyncOptions in catalog, got:\n%s", catalogContent)
 		}
 	})
 }
