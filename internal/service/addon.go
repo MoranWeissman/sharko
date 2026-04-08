@@ -217,9 +217,29 @@ func (s *AddonService) GetAddonDetail(ctx context.Context, addonName string, gp 
 
 	for _, item := range catalog.Addons {
 		if item.AddonName == addonName {
-			return &models.AddonDetailResponse{
+			resp := &models.AddonDetailResponse{
 				Addon: item,
-			}, nil
+			}
+
+			// Enrich with ApplicationSet status from ArgoCD (best-effort).
+			if appSetStatus, err := ac.GetApplicationSet(ctx, addonName); err == nil {
+				info := &models.ApplicationSetStatusInfo{
+					Name:          appSetStatus.Name,
+					GeneratedApps: appSetStatus.GeneratedApps,
+				}
+				for _, c := range appSetStatus.Conditions {
+					info.Conditions = append(info.Conditions, models.ApplicationSetCondition{
+						Type:    c.Type,
+						Status:  c.Status,
+						Message: c.Message,
+					})
+				}
+				resp.ApplicationSet = info
+			} else {
+				log.Printf("Warning: could not fetch ApplicationSet status for %q: %v", addonName, err)
+			}
+
+			return resp, nil
 		}
 	}
 

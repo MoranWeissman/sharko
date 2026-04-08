@@ -111,10 +111,11 @@ func (s *UpgradeService) ListVersions(ctx context.Context, addonName string, gp 
 	}
 
 	return &models.AvailableVersionsResponse{
-		AddonName: addonName,
-		Chart:     addon.Chart,
-		RepoURL:   addon.RepoURL,
-		Versions:  versions,
+		AddonName:      addonName,
+		Chart:          addon.Chart,
+		RepoURL:        addon.RepoURL,
+		CurrentVersion: addon.Version,
+		Versions:       versions,
 	}, nil
 }
 

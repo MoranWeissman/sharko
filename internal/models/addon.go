@@ -92,9 +92,24 @@ type AddonCatalogResponse struct {
 	AddonsOnlyInGit int              `json:"addons_only_in_git"`
 }
 
+// ApplicationSetCondition holds a single condition from an ArgoCD ApplicationSet status.
+type ApplicationSetCondition struct {
+	Type    string `json:"type"`
+	Status  string `json:"status"`
+	Message string `json:"message"`
+}
+
+// ApplicationSetStatusInfo holds status information for an ArgoCD ApplicationSet.
+type ApplicationSetStatusInfo struct {
+	Name          string                    `json:"name"`
+	Conditions    []ApplicationSetCondition `json:"conditions"`
+	GeneratedApps int                       `json:"generated_apps"`
+}
+
 // AddonDetailResponse is the API response for a single addon's details.
 type AddonDetailResponse struct {
-	Addon AddonCatalogItem `json:"addon"`
+	Addon            AddonCatalogItem           `json:"addon"`
+	ApplicationSet   *ApplicationSetStatusInfo  `json:"application_set,omitempty"`
 }
 
 // AddonValuesResponse is the API response for raw addon global values YAML.

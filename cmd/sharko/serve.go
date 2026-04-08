@@ -241,6 +241,11 @@ var serveCmd = &cobra.Command{
 				}
 				if conn.GitOps.HostClusterName != "" {
 					repoPaths.HostClusterName = conn.GitOps.HostClusterName
+				} else if mode == platform.ModeKubernetes {
+					if detected := platform.DetectClusterName(); detected != "" {
+						repoPaths.HostClusterName = detected
+						log.Printf("Host cluster name auto-detected: %s", detected)
+					}
 				}
 			}
 			if conn.Git.RepoURL != "" {
