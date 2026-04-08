@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
@@ -53,8 +54,11 @@ func getEKSToken(ctx context.Context, clusterName, region string) (string, error
 		return "", fmt.Errorf("presigning GetCallerIdentity for cluster %q: %w", clusterName, err)
 	}
 
-	slog.Debug("[auth] STS presigned URL generated", "cluster", clusterName, "urlLength", len(req.URL))
-	slog.Debug("[auth] STS presigned URL details", "cluster", clusterName, "urlHost", req.URL[:60])
+	slog.Debug("[auth] STS presigned URL check",
+		"cluster", clusterName,
+		"hasClusterHeader", strings.Contains(req.URL, "x-k8s-aws-id"),
+		"fullURL", req.URL,
+	)
 
 	// Encode the presigned URL as a k8s-aws-v1 token (base64url, no padding).
 	token := v1Prefix + base64.RawURLEncoding.EncodeToString([]byte(req.URL))
