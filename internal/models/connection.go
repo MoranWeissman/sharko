@@ -108,6 +108,7 @@ type ProviderConfig struct {
 	Region    string `json:"region,omitempty" yaml:"region,omitempty"`       // AWS region (aws-sm only)
 	Prefix    string `json:"prefix,omitempty" yaml:"prefix,omitempty"`       // Secret name prefix, e.g. "clusters/"
 	Namespace string `json:"namespace,omitempty" yaml:"namespace,omitempty"` // K8s namespace (k8s-secrets only)
+	RoleARN   string `json:"role_arn,omitempty" yaml:"role_arn,omitempty"`   // default IAM role to assume for EKS token generation
 }
 
 // GitOpsSettings holds product-level GitOps preferences stored in a connection.

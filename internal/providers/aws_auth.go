@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
@@ -19,7 +21,12 @@ const (
 // getEKSToken generates a short-lived bearer token for an EKS cluster using a
 // presigned STS GetCallerIdentity URL. This is the same mechanism used by
 // aws-iam-authenticator and argocd-k8s-auth.
-func getEKSToken(ctx context.Context, clusterName, region string) (string, error) {
+//
+// If roleARN is non-empty, the function assumes that role first (via
+// AssumeRole) before presigning — matching ArgoCD's --role-arn behaviour.
+// This is required when the pod's IRSA role does not have direct access to the
+// target cluster and must assume a cross-account / cluster-specific role.
+func getEKSToken(ctx context.Context, clusterName, region, roleARN string) (string, error) {
 	slog.Info("[auth] generating EKS token", "cluster", clusterName, "region", region)
 
 	opts := []func(*awsconfig.LoadOptions) error{}
@@ -34,18 +41,30 @@ func getEKSToken(ctx context.Context, clusterName, region string) (string, error
 	}
 
 	stsClient := sts.NewFromConfig(cfg)
+
+	// If a target role is specified, assume it before presigning so that the
+	// resulting token is signed by that role's credentials (not the pod's).
+	if roleARN != "" {
+		slog.Info("[auth] assuming role for EKS token", "role", roleARN, "cluster", clusterName)
+		appCreds := stscreds.NewAssumeRoleProvider(stsClient, roleARN)
+		cfg.Credentials = aws.NewCredentialsCache(appCreds)
+		stsClient = sts.NewFromConfig(cfg)
+	}
+
 	presignClient := sts.NewPresignClient(stsClient)
 
 	// Presign a GetCallerIdentity request that includes the cluster-name header.
 	// The x-k8s-aws-id header is required so the EKS authenticator knows which
 	// cluster the token is intended for, preventing token reuse across clusters.
+	// X-Amz-Expires caps the token lifetime at 60 seconds (matching ArgoCD).
 	req, err := presignClient.PresignGetCallerIdentity(ctx, &sts.GetCallerIdentityInput{},
 		func(po *sts.PresignOptions) {
-			po.ClientOptions = append(po.ClientOptions,
-				sts.WithAPIOptions(
-					smithyhttp.AddHeaderValue(clusterIDHeader, clusterName),
-				),
-			)
+			po.ClientOptions = append(po.ClientOptions, func(o *sts.Options) {
+				o.APIOptions = append(o.APIOptions,
+					smithyhttp.SetHeaderValue(clusterIDHeader, clusterName),
+					smithyhttp.SetHeaderValue("X-Amz-Expires", "60"),
+				)
+			})
 		},
 	)
 	if err != nil {
