@@ -431,6 +431,48 @@ An example placeholder is always shown so users know the expected format. Valida
 
 Both `ignoreDifferences` and `additionalSources` editors include a click-to-toggle HelpText panel explaining the field's purpose and an ArgoCD docs link.
 
+## v1.8.0 UI Features
+
+### Init Progress in Settings
+
+`Settings.tsx` — the Connections section now includes a live progress log component when an init operation is in progress. It uses the same operations polling pattern as the wizard:
+
+```tsx
+// Trigger init and show progress inline in Settings
+const handleInit = async () => {
+  const { operation_id } = await postJSON("/api/v1/init", {});
+  setOperationId(operation_id);
+};
+
+// Poll until done (same pattern as wizard)
+useEffect(() => {
+  if (!operationId) return;
+  const interval = setInterval(async () => {
+    const op = await fetchJSON(`/api/v1/operations/${operationId}`);
+    setOperation(op);
+    await postJSON(`/api/v1/operations/${operationId}/heartbeat`, {});
+    if (op.status === 'succeeded' || op.status === 'failed') {
+      clearInterval(interval);
+    }
+  }, 2000);
+  return () => clearInterval(interval);
+}, [operationId]);
+```
+
+Progress steps are rendered as a scrollable log panel (`bg-[#e8f4ff] dark:bg-gray-900`, `font-mono text-sm`). Each log entry is color-coded: in-progress entries are `text-[#2a5a7a]`, completed entries are `text-green-600 dark:text-green-400`, failed entries are `text-red-600`.
+
+### AI Addon Summaries
+
+`AddonDetail.tsx` — a collapsible AI summary panel at the top of the overview tab. When `ai.enabled` is `true`, the panel shows a generated summary from `POST /api/v1/addons/{name}/ai-summary`.
+
+The panel uses a `ChevronDown` / `ChevronUp` toggle. While loading, a `Skeleton` component fills the summary area. The generated text is rendered via `MarkdownRenderer.tsx`.
+
+### Dependency Graph Display
+
+`AddonDetail.tsx` — the Overview tab shows a `dependsOn` field when the addon has dependencies. Rendered as pill badges linking to the referenced addon detail pages.
+
+`AddonCatalog.tsx` — the catalog list shows a small dependency indicator icon on addons that have `dependsOn` set.
+
 ## Update This File When
 - New views or components are added
 - shadcn/ui components are added

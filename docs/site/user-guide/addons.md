@@ -38,10 +38,56 @@ Flags:
 | `--version` | Yes | Helm chart version to track |
 | `--namespace` | No | Target namespace (defaults to addon name) |
 | `--values` | No | Path to a values YAML file to use as the base |
+| `--depends-on` | No | Comma-separated list of addons that must be deployed before this one |
 
 Via UI: **Addons → Add Addon**, fill in the form.
 
 The command creates a PR that adds the addon's directory structure to your Git repo.
+
+## Addon Dependency Ordering
+
+Use `dependsOn` to declare that one addon must be fully deployed before another starts. This maps directly to ArgoCD sync waves under the hood.
+
+### Declaring dependencies in the catalog
+
+```yaml
+addons:
+  - name: cert-manager
+    chart: cert-manager
+    repo: https://charts.jetstack.io
+    version: 1.14.5
+
+  - name: ingress-nginx
+    chart: ingress-nginx
+    repo: https://kubernetes.github.io/ingress-nginx
+    version: 4.9.0
+    dependsOn:
+      - cert-manager
+```
+
+In this example, `ingress-nginx` will not begin syncing until `cert-manager` is in a `Healthy` state across all clusters.
+
+### Via CLI
+
+```bash
+sharko add-addon ingress-nginx \
+  --chart ingress-nginx \
+  --repo https://kubernetes.github.io/ingress-nginx \
+  --version 4.9.0 \
+  --depends-on cert-manager
+```
+
+Multiple dependencies are comma-separated: `--depends-on cert-manager,metrics-server`.
+
+### Cycle detection
+
+Sharko validates the dependency graph when an addon is added or updated. Cycles (e.g., A depends on B, B depends on A) are rejected with a `400 Bad Request` and a descriptive error identifying the cycle.
+
+### Constraints
+
+- `dependsOn` references must be existing addons in the catalog
+- Circular dependencies are not allowed
+- Self-references are rejected
 
 ## Configuring an Addon
 
@@ -127,6 +173,29 @@ Or via the API:
 curl https://sharko.your-domain.com/api/v1/secrets/status \
   -H "Authorization: Bearer <token>"
 ```
+
+## AI-Generated Addon Summaries
+
+When the AI provider is configured and `ai.enabled: true`, each addon in the catalog displays an AI-generated summary on its detail page. The summary is produced by passing the addon's chart name, version, and release notes to the configured LLM and is cached in-memory.
+
+The summary appears as a collapsible panel at the top of the addon detail view. It includes:
+
+- A one-paragraph description of what the addon does
+- Notable changes in the current version (parsed from the Helm chart changelog)
+- Any breaking changes detected in the release notes
+
+To generate a summary on demand via API:
+
+```bash
+curl -X POST https://sharko.your-domain.com/api/v1/addons/cert-manager/ai-summary \
+  -H "Authorization: Bearer <token>"
+# Response: {"summary": "cert-manager v1.14.5 is a...", "generated_at": "2026-04-06T10:00:00Z"}
+```
+
+The `ai_summary` field is also available as a query parameter on `GET /api/v1/addons/catalog?ai_summary=true` to include summaries inline with the catalog list response.
+
+!!! note
+    AI summaries require `ai.enabled: true` in Helm values. If the AI provider is not configured, the summary panel is hidden.
 
 ## Upgrading Addons
 

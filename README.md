@@ -33,6 +33,12 @@ Sharko is a server that runs in your Kubernetes cluster, next to ArgoCD, and man
 - **Unified API** — CLI, UI, and external integrations all use the same REST API
 - **Upgrade management** — upgrade addons globally or per-cluster, with drift detection and batch multi-addon upgrades
 
+- **Addon dependency ordering** — declare `dependsOn` in the catalog to enforce deployment order; cycle detection prevents invalid graphs
+- **AI addon summaries** — AI-generated summaries of each addon's purpose and release notes, shown in the addon detail view
+- **Audit log** — every write operation recorded with actor, action, result, and timestamp; queryable via `GET /api/v1/audit`
+- **Multi-cloud provider stubs** — GCP and Azure provider stubs define the interface for community contributions
+- **E2E test framework** — test against a real ArgoCD + Kind cluster (`make e2e-setup && make e2e`)
+
 ## Demo
 
 No Kubernetes cluster required — mock backends simulate ArgoCD, Git, and secrets providers.

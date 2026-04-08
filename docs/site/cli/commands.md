@@ -195,6 +195,7 @@ sharko add-addon <name> [flags]
 | `--version <ver>` | Yes | Chart version |
 | `--namespace <ns>` | No | Target namespace (defaults to addon name) |
 | `--values <file>` | No | Base values YAML file |
+| `--depends-on <list>` | No | Comma-separated list of addon names that must be `Healthy` before this addon is deployed |
 
 Example:
 
@@ -204,7 +205,16 @@ sharko add-addon ingress-nginx \
   --repo https://kubernetes.github.io/ingress-nginx \
   --version 4.9.0 \
   --namespace ingress-nginx
+
+# With dependency ordering:
+sharko add-addon ingress-nginx \
+  --chart ingress-nginx \
+  --repo https://kubernetes.github.io/ingress-nginx \
+  --version 4.9.0 \
+  --depends-on cert-manager
 ```
+
+Sharko validates the dependency graph on every `add-addon` call. Cycles are rejected with a descriptive error before any PR is created.
 
 ### `sharko remove-addon`
 

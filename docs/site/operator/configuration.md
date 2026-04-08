@@ -362,6 +362,58 @@ Example response when not configured:
 }
 ```
 
+## End-to-End Testing Setup
+
+Sharko includes an E2E test framework that tests against a real ArgoCD instance in a Kind cluster. The E2E suite is not run in the standard `make test` target — it requires a running Kind cluster with ArgoCD.
+
+### Prerequisites
+
+```bash
+# Install Kind
+brew install kind   # macOS
+# or: go install sigs.k8s.io/kind@latest
+
+# Install ArgoCD CLI
+brew install argocd
+```
+
+### Spin up the E2E environment
+
+```bash
+make e2e-setup
+# Creates a Kind cluster named "sharko-e2e"
+# Installs ArgoCD into the argocd namespace
+# Waits for ArgoCD to become ready
+# Exports ARGOCD_SERVER and ARGOCD_TOKEN env vars
+```
+
+### Run E2E tests
+
+```bash
+make e2e
+# Runs the test suite in e2e/ against the Kind cluster
+# Tests: cluster registration, addon deployment, init flow, secrets reconciliation
+```
+
+### Tear down
+
+```bash
+make e2e-teardown
+# Deletes the Kind cluster
+```
+
+### E2E environment variables
+
+| Var | Description |
+|-----|-------------|
+| `E2E_ARGOCD_SERVER` | ArgoCD server URL (set by `make e2e-setup`) |
+| `E2E_ARGOCD_TOKEN` | ArgoCD bearer token (set by `make e2e-setup`) |
+| `E2E_SHARKO_SERVER` | Sharko server URL (defaults to `http://localhost:8080`) |
+| `E2E_GIT_REPO` | Git repo URL for the addons repo (optional — tests use a local mock repo by default) |
+
+!!! note
+    E2E tests are not required to pass before merging feature branches. They are run manually and in a separate CI job (`e2e.yml`) that is not required for PR approval.
+
 ## Extra Environment Variables
 
 Inject arbitrary environment variables into the Sharko pod:

@@ -323,6 +323,27 @@ Returns 200 with a JSON body in both the reachable and unreachable cases (200 wi
 
 When `PRAutoMerge: true` and `MergePullRequest()` succeeds, the orchestrator immediately calls `DeleteBranch(ctx, branchName)`. This is already supported by the `GitProvider` interface (`DeleteBranch`). The cleanup is best-effort — a failure to delete the branch is logged but does not fail the operation.
 
+## v1.8.0: Multi-Cloud Provider Stubs
+
+GCP and Azure provider stubs are registered in `internal/providers/`:
+- `gcp.go` — `GCPProvider` — returns `ErrNotImplemented`. Key: `"gcp"`.
+- `azure.go` — `AzureProvider` — returns `ErrNotImplemented`. Key: `"azure"`.
+
+Both implement `ClusterCredentialsProvider`. The stubs define the interface boundary for community contributions implementing GCP (OAuth2 token from service account) and Azure (Azure AD credential from managed identity).
+
+When implementing:
+- GCP: Use `golang.org/x/oauth2/google` — `google.FindDefaultCredentials` → `TokenSource` → GKE cluster endpoint
+- Azure: Use `github.com/Azure/azure-sdk-for-go` — `azidentity.NewDefaultAzureCredential` → AKS kubeconfig
+
+## v1.8.0: E2E Framework
+
+`e2e/` directory tests against a real ArgoCD + Kind cluster:
+- Spin up: `make e2e-setup` — creates Kind cluster, installs ArgoCD, exports env vars
+- Run: `make e2e` — runs `go test ./e2e/...` against the live cluster
+- Tear down: `make e2e-teardown`
+
+E2E tests are in a separate `e2e` Go package (`package e2e`), not `package main`. They use `testing.T` and skip if `E2E_SHARKO_SERVER` is not set. This ensures they do not run in normal `go test ./...` or `make test`.
+
 ## Update This File When
 - ArgoCD API usage changes (new endpoints)
 - Helm chart structure changes (new templates, values)
