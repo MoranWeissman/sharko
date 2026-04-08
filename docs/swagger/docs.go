@@ -71,7 +71,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/orchestrator.AddonSecretDefinition"
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.AddonSecretDefinition"
                         }
                     }
                 ],
@@ -181,7 +181,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/orchestrator.AddAddonRequest"
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.AddAddonRequest"
                         }
                     }
                 ],
@@ -545,7 +545,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/orchestrator.ConfigureAddonRequest"
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.ConfigureAddonRequest"
                         }
                     }
                 ],
@@ -917,7 +917,7 @@ const docTemplate = `{
                     "200": {
                         "description": "AI configuration",
                         "schema": {
-                            "$ref": "#/definitions/api.aiConfigResponse"
+                            "$ref": "#/definitions/internal_api.aiConfigResponse"
                         }
                     }
                 }
@@ -946,7 +946,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/api.saveAIConfigRequest"
+                            "$ref": "#/definitions/internal_api.saveAIConfigRequest"
                         }
                     }
                 ],
@@ -1102,7 +1102,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/api.saveAIConfigRequest"
+                            "$ref": "#/definitions/internal_api.saveAIConfigRequest"
                         }
                     }
                 ],
@@ -1368,7 +1368,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/orchestrator.RegisterClusterRequest"
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.RegisterClusterRequest"
                         }
                     }
                 ],
@@ -2262,7 +2262,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/models.CreateConnectionRequest"
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.CreateConnectionRequest"
                         }
                     }
                 ],
@@ -2323,7 +2323,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/models.SetActiveConnectionRequest"
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.SetActiveConnectionRequest"
                         }
                     }
                 ],
@@ -2444,7 +2444,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/models.CreateConnectionRequest"
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.CreateConnectionRequest"
                         }
                     }
                 ],
@@ -2498,7 +2498,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/models.CreateConnectionRequest"
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.CreateConnectionRequest"
                         }
                     }
                 ],
@@ -2820,7 +2820,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/api.embeddedDashboard"
+                                "$ref": "#/definitions/internal_api.embeddedDashboard"
                             }
                         }
                     }
@@ -2876,7 +2876,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Fleet status",
                         "schema": {
-                            "$ref": "#/definitions/api.fleetStatusResponse"
+                            "$ref": "#/definitions/internal_api.fleetStatusResponse"
                         }
                     },
                     "502": {
@@ -2934,7 +2934,7 @@ const docTemplate = `{
                         "name": "body",
                         "in": "body",
                         "schema": {
-                            "$ref": "#/definitions/orchestrator.InitRepoRequest"
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.InitRepoRequest"
                         }
                     }
                 ],
@@ -3667,7 +3667,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/models.UpgradeCheckRequest"
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.UpgradeCheckRequest"
                         }
                     }
                 ],
@@ -3721,7 +3721,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/models.UpgradeCheckRequest"
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.UpgradeCheckRequest"
                         }
                     }
                 ],
@@ -4123,7 +4123,7 @@ const docTemplate = `{
                         "name": "body",
                         "in": "body",
                         "schema": {
-                            "$ref": "#/definitions/api.gitHubPushEvent"
+                            "$ref": "#/definitions/internal_api.gitHubPushEvent"
                         }
                     }
                 ],
@@ -4160,13 +4160,348 @@ const docTemplate = `{
         }
     },
     "definitions": {
-        "api.aiConfigResponse": {
+        "github_com_MoranWeissman_sharko_internal_models.AddonSource": {
+            "type": "object",
+            "properties": {
+                "chart": {
+                    "type": "string"
+                },
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "path": {
+                    "type": "string"
+                },
+                "repoURL": {
+                    "type": "string"
+                },
+                "valueFiles": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_models.ArgocdConfig": {
+            "type": "object",
+            "properties": {
+                "insecure": {
+                    "type": "boolean"
+                },
+                "namespace": {
+                    "type": "string"
+                },
+                "server_url": {
+                    "type": "string"
+                },
+                "token": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_models.CreateConnectionRequest": {
+            "type": "object",
+            "properties": {
+                "argocd": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.ArgocdConfig"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "git": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.GitRepoConfig"
+                },
+                "gitops": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.GitOpsSettings"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "provider": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.ProviderConfig"
+                },
+                "set_as_default": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_models.GitOpsSettings": {
+            "type": "object",
+            "properties": {
+                "base_branch": {
+                    "description": "default: \"main\"",
+                    "type": "string"
+                },
+                "branch_prefix": {
+                    "description": "default: \"sharko/\"",
+                    "type": "string"
+                },
+                "commit_prefix": {
+                    "description": "default: \"sharko:\"",
+                    "type": "string"
+                },
+                "default_addons": {
+                    "description": "comma-separated addon names",
+                    "type": "string"
+                },
+                "host_cluster_name": {
+                    "description": "cluster running ArgoCD (in-cluster)",
+                    "type": "string"
+                },
+                "pr_auto_merge": {
+                    "description": "default: false",
+                    "type": "boolean"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_models.GitProviderType": {
+            "type": "string",
+            "enum": [
+                "github",
+                "azuredevops"
+            ],
+            "x-enum-varnames": [
+                "GitProviderGitHub",
+                "GitProviderAzureDevOps"
+            ]
+        },
+        "github_com_MoranWeissman_sharko_internal_models.GitRepoConfig": {
+            "type": "object",
+            "properties": {
+                "organization": {
+                    "description": "Azure DevOps fields",
+                    "type": "string"
+                },
+                "owner": {
+                    "description": "GitHub fields",
+                    "type": "string"
+                },
+                "pat": {
+                    "type": "string"
+                },
+                "project": {
+                    "type": "string"
+                },
+                "provider": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.GitProviderType"
+                },
+                "repo": {
+                    "type": "string"
+                },
+                "repo_url": {
+                    "description": "URL-based input (parsed into owner/repo or org/project/repo)",
+                    "type": "string"
+                },
+                "repository": {
+                    "type": "string"
+                },
+                "token": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_models.ProviderConfig": {
+            "type": "object",
+            "properties": {
+                "namespace": {
+                    "description": "K8s namespace (k8s-secrets only)",
+                    "type": "string"
+                },
+                "prefix": {
+                    "description": "Secret name prefix, e.g. \"clusters/\"",
+                    "type": "string"
+                },
+                "region": {
+                    "description": "AWS region (aws-sm only)",
+                    "type": "string"
+                },
+                "type": {
+                    "description": "\"aws-sm\" or \"k8s-secrets\"",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_models.SetActiveConnectionRequest": {
+            "type": "object",
+            "properties": {
+                "connection_name": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_models.UpgradeCheckRequest": {
+            "type": "object",
+            "properties": {
+                "addon_name": {
+                    "type": "string"
+                },
+                "target_version": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_orchestrator.AddAddonRequest": {
+            "type": "object",
+            "properties": {
+                "additional_sources": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.AddonSource"
+                    }
+                },
+                "chart": {
+                    "type": "string"
+                },
+                "extra_helm_values": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "ignore_differences": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": true
+                    }
+                },
+                "name": {
+                    "type": "string"
+                },
+                "namespace": {
+                    "type": "string"
+                },
+                "repo_url": {
+                    "type": "string"
+                },
+                "self_heal": {
+                    "type": "boolean"
+                },
+                "sync_options": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "sync_wave": {
+                    "type": "integer"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_orchestrator.AddonSecretDefinition": {
+            "type": "object",
+            "properties": {
+                "addon_name": {
+                    "type": "string"
+                },
+                "keys": {
+                    "description": "secret data key → provider path (e.g. \"api-key\" → \"secrets/datadog/api-key\")",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "namespace": {
+                    "type": "string"
+                },
+                "secret_name": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_orchestrator.ConfigureAddonRequest": {
+            "type": "object",
+            "properties": {
+                "additional_sources": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.AddonSource"
+                    }
+                },
+                "extra_helm_values": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "ignore_differences": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": true
+                    }
+                },
+                "name": {
+                    "type": "string"
+                },
+                "self_heal": {
+                    "type": "boolean"
+                },
+                "sync_options": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "sync_wave": {
+                    "type": "integer"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_orchestrator.InitRepoRequest": {
+            "type": "object",
+            "properties": {
+                "auto_merge": {
+                    "type": "boolean"
+                },
+                "bootstrap_argocd": {
+                    "type": "boolean"
+                },
+                "git_token": {
+                    "type": "string"
+                },
+                "git_username": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_orchestrator.RegisterClusterRequest": {
+            "type": "object",
+            "properties": {
+                "addons": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "boolean"
+                    }
+                },
+                "name": {
+                    "type": "string"
+                },
+                "region": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.aiConfigResponse": {
             "type": "object",
             "properties": {
                 "available_providers": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/api.aiProviderInfo"
+                        "$ref": "#/definitions/internal_api.aiProviderInfo"
                     }
                 },
                 "current_provider": {
@@ -4174,7 +4509,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.aiProviderInfo": {
+        "internal_api.aiProviderInfo": {
             "type": "object",
             "properties": {
                 "configured": {
@@ -4191,7 +4526,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.embeddedDashboard": {
+        "internal_api.embeddedDashboard": {
             "type": "object",
             "properties": {
                 "id": {
@@ -4209,7 +4544,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.fleetClusterSummary": {
+        "internal_api.fleetClusterSummary": {
             "type": "object",
             "properties": {
                 "connection_status": {
@@ -4229,7 +4564,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.fleetStatusResponse": {
+        "internal_api.fleetStatusResponse": {
             "type": "object",
             "properties": {
                 "addon_data_unavailable": {
@@ -4241,7 +4576,7 @@ const docTemplate = `{
                 "clusters": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/api.fleetClusterSummary"
+                        "$ref": "#/definitions/internal_api.fleetClusterSummary"
                     }
                 },
                 "degraded_clusters": {
@@ -4282,7 +4617,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.gitHubPushEvent": {
+        "internal_api.gitHubPushEvent": {
             "type": "object",
             "properties": {
                 "commits": {
@@ -4312,7 +4647,7 @@ const docTemplate = `{
                 }
             }
         },
-        "api.saveAIConfigRequest": {
+        "internal_api.saveAIConfigRequest": {
             "type": "object",
             "properties": {
                 "api_key": {
@@ -4328,341 +4663,6 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "provider": {
-                    "type": "string"
-                }
-            }
-        },
-        "models.AddonSource": {
-            "type": "object",
-            "properties": {
-                "chart": {
-                    "type": "string"
-                },
-                "parameters": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string"
-                    }
-                },
-                "path": {
-                    "type": "string"
-                },
-                "repoURL": {
-                    "type": "string"
-                },
-                "valueFiles": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "version": {
-                    "type": "string"
-                }
-            }
-        },
-        "models.ArgocdConfig": {
-            "type": "object",
-            "properties": {
-                "insecure": {
-                    "type": "boolean"
-                },
-                "namespace": {
-                    "type": "string"
-                },
-                "server_url": {
-                    "type": "string"
-                },
-                "token": {
-                    "type": "string"
-                }
-            }
-        },
-        "models.CreateConnectionRequest": {
-            "type": "object",
-            "properties": {
-                "argocd": {
-                    "$ref": "#/definitions/models.ArgocdConfig"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "git": {
-                    "$ref": "#/definitions/models.GitRepoConfig"
-                },
-                "gitops": {
-                    "$ref": "#/definitions/models.GitOpsSettings"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "provider": {
-                    "$ref": "#/definitions/models.ProviderConfig"
-                },
-                "set_as_default": {
-                    "type": "boolean"
-                }
-            }
-        },
-        "models.GitOpsSettings": {
-            "type": "object",
-            "properties": {
-                "base_branch": {
-                    "description": "default: \"main\"",
-                    "type": "string"
-                },
-                "branch_prefix": {
-                    "description": "default: \"sharko/\"",
-                    "type": "string"
-                },
-                "commit_prefix": {
-                    "description": "default: \"sharko:\"",
-                    "type": "string"
-                },
-                "default_addons": {
-                    "description": "comma-separated addon names",
-                    "type": "string"
-                },
-                "host_cluster_name": {
-                    "description": "cluster running ArgoCD (in-cluster)",
-                    "type": "string"
-                },
-                "pr_auto_merge": {
-                    "description": "default: false",
-                    "type": "boolean"
-                }
-            }
-        },
-        "models.GitProviderType": {
-            "type": "string",
-            "enum": [
-                "github",
-                "azuredevops"
-            ],
-            "x-enum-varnames": [
-                "GitProviderGitHub",
-                "GitProviderAzureDevOps"
-            ]
-        },
-        "models.GitRepoConfig": {
-            "type": "object",
-            "properties": {
-                "organization": {
-                    "description": "Azure DevOps fields",
-                    "type": "string"
-                },
-                "owner": {
-                    "description": "GitHub fields",
-                    "type": "string"
-                },
-                "pat": {
-                    "type": "string"
-                },
-                "project": {
-                    "type": "string"
-                },
-                "provider": {
-                    "$ref": "#/definitions/models.GitProviderType"
-                },
-                "repo": {
-                    "type": "string"
-                },
-                "repo_url": {
-                    "description": "URL-based input (parsed into owner/repo or org/project/repo)",
-                    "type": "string"
-                },
-                "repository": {
-                    "type": "string"
-                },
-                "token": {
-                    "type": "string"
-                }
-            }
-        },
-        "models.ProviderConfig": {
-            "type": "object",
-            "properties": {
-                "namespace": {
-                    "description": "K8s namespace (k8s-secrets only)",
-                    "type": "string"
-                },
-                "prefix": {
-                    "description": "Secret name prefix, e.g. \"clusters/\"",
-                    "type": "string"
-                },
-                "region": {
-                    "description": "AWS region (aws-sm only)",
-                    "type": "string"
-                },
-                "type": {
-                    "description": "\"aws-sm\" or \"k8s-secrets\"",
-                    "type": "string"
-                }
-            }
-        },
-        "models.SetActiveConnectionRequest": {
-            "type": "object",
-            "properties": {
-                "connection_name": {
-                    "type": "string"
-                }
-            }
-        },
-        "models.UpgradeCheckRequest": {
-            "type": "object",
-            "properties": {
-                "addon_name": {
-                    "type": "string"
-                },
-                "target_version": {
-                    "type": "string"
-                }
-            }
-        },
-        "orchestrator.AddAddonRequest": {
-            "type": "object",
-            "properties": {
-                "additional_sources": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/models.AddonSource"
-                    }
-                },
-                "chart": {
-                    "type": "string"
-                },
-                "extra_helm_values": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string"
-                    }
-                },
-                "ignore_differences": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": true
-                    }
-                },
-                "name": {
-                    "type": "string"
-                },
-                "namespace": {
-                    "type": "string"
-                },
-                "repo_url": {
-                    "type": "string"
-                },
-                "self_heal": {
-                    "type": "boolean"
-                },
-                "sync_options": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "sync_wave": {
-                    "type": "integer"
-                },
-                "version": {
-                    "type": "string"
-                }
-            }
-        },
-        "orchestrator.AddonSecretDefinition": {
-            "type": "object",
-            "properties": {
-                "addon_name": {
-                    "type": "string"
-                },
-                "keys": {
-                    "description": "secret data key → provider path (e.g. \"api-key\" → \"secrets/datadog/api-key\")",
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string"
-                    }
-                },
-                "namespace": {
-                    "type": "string"
-                },
-                "secret_name": {
-                    "type": "string"
-                }
-            }
-        },
-        "orchestrator.ConfigureAddonRequest": {
-            "type": "object",
-            "properties": {
-                "additional_sources": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/models.AddonSource"
-                    }
-                },
-                "extra_helm_values": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string"
-                    }
-                },
-                "ignore_differences": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": true
-                    }
-                },
-                "name": {
-                    "type": "string"
-                },
-                "self_heal": {
-                    "type": "boolean"
-                },
-                "sync_options": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "sync_wave": {
-                    "type": "integer"
-                },
-                "version": {
-                    "type": "string"
-                }
-            }
-        },
-        "orchestrator.InitRepoRequest": {
-            "type": "object",
-            "properties": {
-                "auto_merge": {
-                    "type": "boolean"
-                },
-                "bootstrap_argocd": {
-                    "type": "boolean"
-                },
-                "git_token": {
-                    "type": "string"
-                },
-                "git_username": {
-                    "type": "string"
-                }
-            }
-        },
-        "orchestrator.RegisterClusterRequest": {
-            "type": "object",
-            "properties": {
-                "addons": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "boolean"
-                    }
-                },
-                "name": {
-                    "type": "string"
-                },
-                "region": {
                     "type": "string"
                 }
             }
