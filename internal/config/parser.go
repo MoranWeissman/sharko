@@ -14,9 +14,10 @@ type clusterAddonsFile struct {
 }
 
 type clusterEntry struct {
-	Name   string      `yaml:"name"`
-	Labels interface{} `yaml:"labels"` // Can be map[string]string or []interface{} (empty)
-	Region string      `yaml:"region,omitempty"`
+	Name       string      `yaml:"name"`
+	SecretPath string      `yaml:"secretPath,omitempty"`
+	Labels     interface{} `yaml:"labels"` // Can be map[string]string or []interface{} (empty)
+	Region     string      `yaml:"region,omitempty"`
 }
 
 // addonsCatalogFile represents the structure of addons-catalog.yaml.
@@ -53,9 +54,10 @@ func (p *Parser) ParseClusterAddons(data []byte) ([]models.Cluster, error) {
 	clusters := make([]models.Cluster, 0, len(file.Clusters))
 	for _, entry := range file.Clusters {
 		cluster := models.Cluster{
-			Name:   entry.Name,
-			Labels: parseLabels(entry.Labels),
-			Region: entry.Region,
+			Name:       entry.Name,
+			SecretPath: entry.SecretPath,
+			Labels:     parseLabels(entry.Labels),
+			Region:     entry.Region,
 		}
 		clusters = append(clusters, cluster)
 	}

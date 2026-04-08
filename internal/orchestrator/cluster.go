@@ -73,7 +73,12 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	var steps []string
 
 	// Step 3: Fetch credentials from provider.
-	creds, err := o.credProvider.GetCredentials(req.Name)
+	// If an explicit secretPath is provided, use it directly (bypasses prefix logic).
+	credLookupName := req.Name
+	if req.SecretPath != "" {
+		credLookupName = req.SecretPath
+	}
+	creds, err := o.credProvider.GetCredentials(credLookupName)
 	if err != nil {
 		return nil, fmt.Errorf("fetching credentials for cluster %q: %w", req.Name, err)
 	}

@@ -3,6 +3,7 @@
 
 clusters:
   # - name: prod-eu
+  #   secretPath: k8s-prod-eu-eks   # explicit path to secret in provider
   #   region: eu-central-1
   #   labels:
   #     cert-manager: enabled

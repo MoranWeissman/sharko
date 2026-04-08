@@ -82,23 +82,23 @@ func (p *KubernetesSecretProvider) GetSecretValue(ctx context.Context, path stri
 	return val, nil
 }
 
-func (p *KubernetesSecretProvider) GetCredentials(clusterName string) (*Kubeconfig, error) {
-	secret, err := p.client.CoreV1().Secrets(p.namespace).Get(context.Background(), clusterName, metav1.GetOptions{})
+// fetchK8sSecret retrieves and parses a kubeconfig from a Kubernetes Secret by exact name.
+func (p *KubernetesSecretProvider) fetchK8sSecret(secretName string) (*Kubeconfig, error) {
+	secret, err := p.client.CoreV1().Secrets(p.namespace).Get(context.Background(), secretName, metav1.GetOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("getting secret %q in namespace %q: %w", clusterName, p.namespace, err)
+		return nil, fmt.Errorf("getting secret %q in namespace %q: %w", secretName, p.namespace, err)
 	}
 
 	raw, ok := secret.Data["kubeconfig"]
 	if !ok {
-		return nil, fmt.Errorf("secret %q has no 'kubeconfig' key", clusterName)
+		return nil, fmt.Errorf("secret %q has no 'kubeconfig' key", secretName)
 	}
 
 	kc := &Kubeconfig{Raw: raw}
 
-	// Parse the kubeconfig to extract server URL, CA data, and token
 	config, err := clientcmd.RESTConfigFromKubeConfig(raw)
 	if err != nil {
-		return nil, fmt.Errorf("parsing kubeconfig from secret %q: %w", clusterName, err)
+		return nil, fmt.Errorf("parsing kubeconfig from secret %q: %w", secretName, err)
 	}
 
 	kc.Server = config.Host
@@ -106,6 +106,44 @@ func (p *KubernetesSecretProvider) GetCredentials(clusterName string) (*Kubeconf
 	kc.Token = config.BearerToken
 
 	return kc, nil
+}
+
+// GetCredentials fetches credentials for the named cluster. It tries the exact
+// secret name first; if not found it searches for secrets whose name contains
+// the cluster name as a substring and returns them as suggestions.
+func (p *KubernetesSecretProvider) GetCredentials(clusterName string) (*Kubeconfig, error) {
+	// Step 1: Try exact name.
+	if kc, err := p.fetchK8sSecret(clusterName); err == nil {
+		return kc, nil
+	}
+
+	// Step 2: Search for similar names and include them in the error.
+	suggestions, searchErr := p.searchSimilarK8s(clusterName)
+	if searchErr == nil && len(suggestions) > 0 {
+		return nil, fmt.Errorf("secret for cluster %q not found in namespace %q. Similar secrets: %s",
+			clusterName, p.namespace, strings.Join(suggestions, ", "))
+	}
+
+	return nil, fmt.Errorf("secret for cluster %q not found in namespace %q", clusterName, p.namespace)
+}
+
+// searchSimilarK8s returns secret names in the provider namespace that contain
+// query as a substring and have a 'kubeconfig' data key.
+func (p *KubernetesSecretProvider) searchSimilarK8s(query string) ([]string, error) {
+	secrets, err := p.client.CoreV1().Secrets(p.namespace).List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("listing secrets in namespace %q: %w", p.namespace, err)
+	}
+
+	var matches []string
+	for _, s := range secrets.Items {
+		if strings.Contains(s.Name, query) {
+			if _, ok := s.Data["kubeconfig"]; ok {
+				matches = append(matches, s.Name)
+			}
+		}
+	}
+	return matches, nil
 }
 
 func (p *KubernetesSecretProvider) ListClusters() ([]ClusterInfo, error) {
