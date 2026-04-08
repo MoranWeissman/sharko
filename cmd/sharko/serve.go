@@ -179,6 +179,10 @@ var serveCmd = &cobra.Command{
 		srv.SetVersion(version)                 // Propagate ldflags-injected version to health endpoint
 		srv.SetTemplateFS(templates.TemplateFS) // Always available — init doesn't need a provider
 
+		log.Println("========================================")
+		log.Println("  Sharko v" + version + " starting")
+		log.Println("========================================")
+
 		// Initialize provider + gitops config from active connection (if exists).
 		// This ensures a pod restart doesn't leave the provider nil when a connection is already stored.
 		srv.ReinitializeFromConnection()
