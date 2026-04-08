@@ -231,6 +231,21 @@ If `config.environments` is set (e.g., `"dev,qa,staging,prod"`), Sharko extracts
 
 This label is displayed in the UI and can be used for filtering. Set it manually with `--env` if auto-detection doesn't work for your naming convention.
 
+## Initialization Progress in Settings
+
+When initializing the addons repository from the **Settings** page (rather than the first-run wizard), the UI now displays a live progress log showing each step as it completes — the same streaming view shown in the wizard.
+
+The progress panel appears inline in the Connections section when you click **Initialize**. It shows:
+
+- Branch creation and file commit progress
+- PR creation and auto-merge status (if enabled)
+- ArgoCD bootstrap sync polling — individual step status (`Pending`, `Syncing`, `Healthy`)
+
+Once the init operation succeeds, the progress panel is replaced with a success state and a link to the ArgoCD root application. If the operation fails, the last log line is highlighted in red with the error message.
+
+!!! tip
+    If you navigate away from Settings during initialization, the operation continues in the background. Return to Settings to see the final result — the operation ID is persisted in the browser session.
+
 ## Filtering and Sorting Clusters
 
 The `GET /api/v1/clusters` endpoint and the Clusters UI both support filtering and sorting:

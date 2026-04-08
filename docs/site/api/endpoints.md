@@ -31,6 +31,7 @@ Supported filter predicates for clusters: `env:<value>`, `health:<value>`, `addo
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/v1/addons/catalog` | Addon catalog with deployment stats |
+| `GET` | `/api/v1/addons/catalog?ai_summary=true` | Catalog with AI-generated summaries included inline (requires `ai.enabled: true`) |
 | `GET` | `/api/v1/addons/version-matrix` | Version matrix: addon × cluster grid |
 
 ### Fleet
@@ -54,6 +55,17 @@ Supported filter predicates for clusters: `env:<value>`, `health:<value>`, `addo
 | `GET` | `/api/v1/tokens` | List API keys (admin only) |
 | `GET` | `/api/v1/addon-secrets` | List addon secret definitions |
 | `GET` | `/api/v1/clusters/{name}/secrets` | List managed secrets on a cluster |
+
+### Audit Log
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/audit` | List audit log entries (admin only) — records all write operations with actor, timestamp, and result |
+| `GET` | `/api/v1/audit?cluster=<name>` | Filter audit entries by cluster |
+| `GET` | `/api/v1/audit?addon=<name>` | Filter audit entries by addon |
+| `GET` | `/api/v1/audit?limit=<n>&before=<cursor>` | Paginate results (default `limit=100`) |
+
+Audit log entries include: `id`, `timestamp`, `actor` (username or API key name), `action` (e.g., `register_cluster`, `upgrade_addon`), `target` (cluster or addon name), `result` (`success` / `failure`), and an optional `detail` string.
 
 ---
 
@@ -82,6 +94,7 @@ All write endpoints require the `admin` role.
 | `DELETE` | `/api/v1/addons/{name}?confirm=true` | Remove addon from catalog and all clusters |
 | `POST` | `/api/v1/addons/{name}/upgrade` | Upgrade addon (global or per-cluster) |
 | `POST` | `/api/v1/addons/upgrade-batch` | Upgrade multiple addons in one PR |
+| `POST` | `/api/v1/addons/{name}/ai-summary` | Generate (or regenerate) an AI summary for an addon's release notes |
 
 ### Addon Secrets
 

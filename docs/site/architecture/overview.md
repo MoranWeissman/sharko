@@ -78,6 +78,8 @@ Sharko uses a pluggable provider interface to fetch cluster kubeconfigs:
 |----------|-------------|
 | `aws-sm` | AWS Secrets Manager — uses IRSA for authentication, no static credentials needed |
 | `k8s-secrets` | Kubernetes Secrets — no cloud dependency, simpler setup |
+| `gcp` | GCP (stub) — OAuth2 token generation. Planned for community contribution |
+| `azure` | Azure (stub) — Azure AD token generation. Planned for community contribution |
 
 Implement the `ClusterCredentialsProvider` interface to add a custom provider:
 
@@ -87,6 +89,22 @@ type ClusterCredentialsProvider interface {
     ListClusters() ([]ClusterInfo, error)
 }
 ```
+
+### Multi-Cloud Provider Architecture
+
+The interface is designed for multi-cloud from the start. The provider abstraction means the Sharko server, orchestrator, and secrets reconciler are all cloud-agnostic — they receive a `*Kubeconfig` regardless of which cloud the credentials came from.
+
+```
+ClusterCredentialsProvider interface
+  |
+  +-- aws-sm     → IRSA → AWS SM GetSecretValue → kubeconfig or STS token
+  +-- k8s-secrets → in-cluster K8s client → Secret data["kubeconfig"]
+  +-- gcp (stub) → oauth2 TokenSource → GKE cluster credentials [PLANNED]
+  +-- azure (stub) → Azure AD credential → AKS kubeconfig [PLANNED]
+  +-- custom     → implement the interface, register with New() factory
+```
+
+The GCP and Azure stubs define the interface boundary. Community contributions implementing them are welcome — see `internal/providers/` for the AWS SM implementation as a reference.
 
 ### AWS SM — Credential Flow
 
@@ -204,6 +222,36 @@ notifications.Store (in-memory, read/unread state)
 ```
 
 Security advisory notifications are raised when an addon has a new **major** version available (e.g., v3 → v4). These are surfaced prominently in the UI notification bell with an amber shield icon.
+
+## Audit Log
+
+Every write operation that passes through the API is recorded in the audit log. The audit log provides an immutable trail of who did what and when.
+
+```
+HTTP Handler (write operation)
+  |
+  +-- requireAdmin check
+  +-- Execute operation
+  |
+  v
+audit.Logger
+  +-- Records: actor, action, target, result, timestamp, detail
+  +-- Stores in-memory ring buffer (last N entries, configurable)
+  |
+  GET /api/v1/audit     → list entries (admin only)
+  GET /api/v1/audit?cluster=<name>  → filter by cluster
+  GET /api/v1/audit?addon=<name>    → filter by addon
+```
+
+Audit entries capture:
+- `actor` — username from the JWT claim, or API key name for token-authenticated requests
+- `action` — operation name (`register_cluster`, `remove_addon`, `upgrade_addon`, etc.)
+- `target` — the primary resource name (cluster name or addon name)
+- `result` — `success` or `failure`
+- `detail` — optional additional context (e.g., PR URL created, error message on failure)
+- `timestamp` — RFC3339 UTC
+
+The audit log is in-memory (not persisted to disk or Git). It survives pod restarts only if persistence is enabled (`persistence.enabled: true`). For production audit requirements, ship logs to an external system via standard structured logging output.
 
 ## GitOps Flow
 

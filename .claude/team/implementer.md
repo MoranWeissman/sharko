@@ -281,6 +281,40 @@ store.go      — In-memory notification store with read/unread state
 - **Remote secrets**: orchestrator flow gains secret creation steps before PR merge
 - **Addon upgrades**: global (catalog version) vs per-cluster (values file override), multi-addon batch in one PR
 
+## v1.8.0 Feature Additions
+
+### AI SimplePrompt
+`internal/ai/agent.go` — a lightweight `SimplePrompt(ctx, prompt string)` method that sends a single non-streaming request to the configured LLM without entering the tool-calling loop. Used for generating addon summaries from release notes. Returns `(string, error)`. No tool access, no memory.
+
+### Addon dependsOn Field
+`internal/models/addon.go` — `AddonCatalogEntry` now includes `DependsOn []string`. When set, the orchestrator generates ArgoCD sync wave annotations to enforce deployment order. The `addons_write.go` handler validates the dependency graph before accepting the request.
+
+**Cycle detection**: `internal/orchestrator/addon.go` — `validateDependencyGraph(catalog []AddonCatalogEntry) error` performs a topological sort (DFS with visit marking). Returns a descriptive error identifying the cycle if one is detected. Called on every `AddAddon` and `PATCH /api/v1/addons/{name}` request.
+
+### Audit Log
+`internal/audit/` package:
+- `logger.go` — `Logger` struct with `Log(entry AuditEntry)` method. Ring buffer (configurable size, default 1000). Thread-safe via `sync.RWMutex`.
+- `entry.go` — `AuditEntry` struct: `ID`, `Timestamp`, `Actor`, `Action`, `Target`, `Result`, `Detail`.
+- Injected into all write handlers in `internal/api/`. Handler calls `s.audit.Log(...)` after each write operation.
+- `GET /api/v1/audit` returns the log filtered by query params (`cluster`, `addon`, `limit`, `before`).
+
+### GCP / Azure Provider Stubs
+`internal/providers/gcp.go` — `GCPProvider` struct implementing `ClusterCredentialsProvider`. Both `GetCredentials` and `ListClusters` return `ErrNotImplemented` with a descriptive message. Registered in `New()` factory under key `"gcp"`.
+
+`internal/providers/azure.go` — same pattern for `"azure"` key.
+
+These stubs define the interface boundary for community contributions. The provider selection error message names these stubs explicitly: `"supported providers: aws-sm, k8s-secrets, gcp (stub), azure (stub)"`.
+
+### E2E Framework
+`e2e/` directory:
+- `e2e_test.go` — main test file, uses `testing.T`, requires `E2E_SHARKO_SERVER` env var
+- `helpers.go` — shared helpers: `sharkoClient()`, `waitForOperation()`, `waitForArgoCD()`
+- `Makefile` targets: `e2e-setup`, `e2e`, `e2e-teardown`
+- Tests cover: cluster registration, addon deployment, init flow, secrets reconciliation
+
+### Init Progress in Settings
+`internal/api/init.go` — init handler now stores the `operation_id` in the response for all callers, not just the wizard. The Settings page calls the same `POST /api/v1/init` endpoint and polls `GET /api/v1/operations/{id}` to display progress. No new endpoint needed.
+
 ## v1.4.0 Pattern Changes
 - **Async init**: `POST /api/v1/init` now returns `202 Accepted` + `operation_id`; client polls operations endpoint.
   `sharko init` CLI prints operation ID and streams log lines until done.

@@ -22,26 +22,21 @@ Sharko is a server that runs in your Kubernetes cluster, next to ArgoCD, and man
 
 ## What Sharko Does
 
-- **Register clusters** from secrets providers (AWS Secrets Manager, K8s Secrets), including remote cluster secrets (API keys delivered to remote clusters)
-- **Manage addons** across your clusters (cert-manager, monitoring, logging, etc.)
-- **Catalog-driven secrets** -- declare addon secrets in `addons-catalog.yaml`; Sharko reconciles them to remote clusters automatically (no ESO required)
-- **Observe cluster health** with drift detection, version matrix, and sync status
-- **Automate GitOps workflows** -- every change creates a PR (auto-merged if `SHARKO_GITOPS_PR_AUTO_MERGE=true`; branches cleaned up automatically after merge)
-- **Upgrade addons** globally or per-cluster, with batch multi-addon upgrades and per-cluster drift detection
-- **Batch register clusters** -- register up to 10 clusters in a single API call
-- **Managed vs discovered clusters** -- Sharko surfaces all ArgoCD clusters, distinguishing managed (registered via Sharko) from discovered (pre-existing). Adopt discovered clusters into full management with one command.
-- **Connectivity checks** -- verify cluster reachability via `POST /api/v1/clusters/{name}/test` without running a full registration
-- **AWS SM structured JSON** -- store cluster credentials as individual JSON keys in AWS SM instead of raw kubeconfig YAML; supports STS EKS token generation via IRSA (no static tokens)
-- **ArgoCD service discovery** -- Sharko probes all services in the ArgoCD namespace, tolerating service name changes without reconfiguration
-- **Security advisory notifications** -- major Helm chart version bumps are flagged as security advisories in the notification bell
-- **List filtering and sorting** -- filter clusters by env/health/addon and sort by name/health/addon count via query params
-- **Addon help tooltips** -- all advanced configuration fields in the UI include contextual help text
-- **Manage API keys** for non-interactive consumers (Backstage, Terraform, CI/CD)
-- **Full UI write capabilities** -- register clusters, add addons, upgrade versions, manage secrets from the browser
-- **First-run wizard** -- guided setup for new installations (connection config + repo init), dismissible at any step
-- **Async operations** -- long-running workflows (init, batch) tracked via operation sessions with streaming logs
-- **Integrate with IDPs** -- Backstage, Port.io, Terraform, CI/CD all use the same API
-- **AI-powered troubleshooting** -- context-aware assistant with deep platform knowledge
+- **Wizard-based setup** — first run opens a step-by-step wizard: Git connection, ArgoCD connection, secrets provider, and repo initialization
+- **Fleet dashboard** — cluster health cards with sync status, addon counts, and connection indicators; managed and discovered clusters in separate sections
+- **Addon catalog** — version matrix across every cluster, drift detection, and contextual help on all advanced config fields
+- **GitOps-native** — every write operation creates a PR (auto-merge optional); branches cleaned up after merge
+- **Managed vs discovered clusters** — Sharko surfaces all ArgoCD clusters; adopt discovered clusters into full management in one click
+- **Secrets provider** — deliver addon credentials to remote clusters via AWS Secrets Manager or Kubernetes Secrets (no ESO required)
+- **AI assistant** — context-aware troubleshooting panel, supports OpenAI, Claude, Gemini, Ollama, and any OpenAI-compatible API
+- **API keys** — long-lived tokens for Backstage, Terraform, and CI/CD integrations
+- **Unified API** — CLI, UI, and external integrations all use the same REST API
+- **Upgrade management** — upgrade addons globally or per-cluster, with drift detection and batch multi-addon upgrades
+- **Addon dependency ordering** — declare `dependsOn` in the catalog to enforce deployment order; cycle detection prevents invalid graphs
+- **AI addon summaries** — AI-generated summaries of each addon's purpose and release notes, shown in the addon detail view
+- **Audit log** — every write operation recorded with actor, action, result, and timestamp; queryable via `GET /api/v1/audit`
+- **Multi-cloud provider stubs** — GCP and Azure provider stubs define the interface for community contributions
+- **E2E test framework** — test against a real ArgoCD + Kind cluster (`make e2e-setup && make e2e`)
 
 ## Demo
 
