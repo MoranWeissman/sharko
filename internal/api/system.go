@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 
 	"github.com/MoranWeissman/sharko/internal/providers"
@@ -38,6 +39,7 @@ func (s *Server) handleGetProviders(w http.ResponseWriter, r *http.Request) {
 		} else {
 			status = "error"
 			statusError = err.Error()
+			slog.Warn("[provider] ListClusters failed", "type", s.providerCfg.Type, "region", s.providerCfg.Region, "prefix", s.providerCfg.Prefix, "error", err)
 		}
 	}
 

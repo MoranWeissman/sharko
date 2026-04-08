@@ -15,6 +15,7 @@ interface ProviderInfo {
   type: string
   region: string
   status: string
+  error?: string
 }
 
 const labelCls = 'block text-sm font-medium text-[#0a3a5a] dark:text-gray-300'
@@ -118,7 +119,12 @@ export function SecretsProviderSection() {
                 ) : providerInfo.status === 'configured' ? (
                   <><span className="inline-block h-2 w-2 rounded-full bg-yellow-500" /><span className="text-yellow-600 dark:text-yellow-400">Configured</span></>
                 ) : (
-                  <><span className="inline-block h-2 w-2 rounded-full bg-red-500" /><span className="text-red-600 dark:text-red-400">Error</span></>
+                  <>
+                    <span className="inline-block h-2 w-2 rounded-full bg-red-500" />
+                    <span className="text-red-600 dark:text-red-400">
+                      Error{providerInfo.error ? `: ${providerInfo.error}` : ''}
+                    </span>
+                  </>
                 )}
               </dd>
             </div>
