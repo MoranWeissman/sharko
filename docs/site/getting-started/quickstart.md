@@ -6,14 +6,12 @@ Get Sharko running on your cluster in about 5 minutes.
 
 - Kubernetes 1.27+ with ArgoCD installed
 - Helm 3.x
-- A GitHub Personal Access Token (PAT) with `repo` scope
 
 ## 1. Install Sharko
 
 ```bash
-helm install sharko oci://ghcr.io/moranweissman/sharko/charts/sharko \
-  --namespace sharko --create-namespace \
-  --set secrets.GITHUB_TOKEN=<your-github-pat>
+helm install sharko oci://ghcr.io/moranweissman/sharko/sharko \
+  --namespace sharko --create-namespace
 ```
 
 ## 2. Get the Admin Password
@@ -23,54 +21,40 @@ kubectl get secret sharko -n sharko \
   -o jsonpath='{.data.admin\.initialPassword}' | base64 -d
 ```
 
-## 3. Access the UI
-
-Port-forward the service to your local machine:
+## 3. Open the UI
 
 ```bash
-kubectl port-forward svc/sharko -n sharko 8080:80
+kubectl port-forward svc/sharko 8080:80 -n sharko
 ```
 
 Open [http://localhost:8080](http://localhost:8080) and log in with `admin` and the password from step 2.
 
-## 4. Configure Connections
+## 4. Complete the First-Run Wizard
 
-In the UI, go to **Settings → Connections** and add:
+The wizard appears automatically on first access.
 
-1. An **ArgoCD connection** — server URL and account token
-2. A **Git connection** — provider (GitHub or Azure DevOps), token, and repo URL
+**Step 1 — Welcome:** Overview of what the wizard will configure.
 
-Set both connections as **active**.
+**Step 2 — Git connection:** Enter your addons repo URL and a personal access token with read/write access.
 
-## 5. Initialize the Addons Repo
+**Step 3 — ArgoCD connection:** Sharko auto-discovers the ArgoCD service in-cluster. Confirm the server URL and enter an ArgoCD account token. Optionally configure a secrets provider (AWS Secrets Manager or Kubernetes Secrets) for cluster credentials.
 
-```bash
-sharko login --server http://localhost:8080
-sharko init
-```
+**Step 4 — Initialize repository:** Sharko creates the ApplicationSet, base values directory, and clusters directory in your repo. Choose **auto-merge** to merge the PR immediately, or review it yourself in GitHub/Azure DevOps first.
 
-This creates the initial directory structure in your Git repo (ApplicationSet, base values, etc.).
+After the wizard completes, the dashboard loads with clusters discovered from ArgoCD.
 
-## 6. Add Your First Addon and Cluster
+## 5. Start Managing Clusters
 
-```bash
-sharko add-addon cert-manager \
-  --chart cert-manager \
-  --repo https://charts.jetstack.io \
-  --version 1.14.5
+From the dashboard, you will see two sections:
 
-sharko add-cluster my-cluster \
-  --addons cert-manager,metrics-server \
-  --region us-east-1
+- **Managed clusters** — clusters registered and managed by Sharko
+- **Discovered clusters** — existing ArgoCD clusters not yet managed by Sharko
 
-sharko status
-```
-
-Each command creates a PR in your Git repo. Merge the PRs and ArgoCD will deploy the changes.
+Click **Start Managing** on any discovered cluster to bring it under Sharko management.
 
 ## Next Steps
 
-- [Configure ingress for production access](installation.md#ingress)
-- [Add more clusters](../user-guide/clusters.md)
+- [Add addons to the catalog](../user-guide/addons.md)
+- [Configure ingress for production access](installation.md#via-ingress-production)
 - [Enable the AI assistant](../operator/configuration.md#ai-provider)
 - [Set up API keys for CI/CD](../user-guide/connections.md#api-keys)
