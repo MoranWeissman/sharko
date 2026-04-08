@@ -174,10 +174,11 @@ func (s *Server) SetDefaultAddons(defaults map[string]bool) {
 	s.defaultAddons = defaults
 }
 
-// reinitializeProvider reads provider config and GitOps settings from the active connection and
-// rebuilds credProvider + providerCfg + gitopsCfg. Called after connection create/update/set-active
+// ReinitializeFromConnection reads provider config and GitOps settings from the active connection
+// and rebuilds credProvider + providerCfg + gitopsCfg. Called after connection create/update/set-active
 // so that write-API operations pick up the new settings immediately without a restart.
-func (s *Server) reinitializeProvider() {
+// Also called at startup so that a pod restart does not leave the provider nil.
+func (s *Server) ReinitializeFromConnection() {
 	conn, err := s.connSvc.GetActiveConnection()
 	if err != nil || conn == nil {
 		return
