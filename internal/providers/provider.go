@@ -42,6 +42,7 @@ type Config struct {
 	Region    string // AWS region (for aws-sm)
 	Prefix    string // Secret name prefix, e.g. "clusters/" (for aws-sm)
 	Namespace string // K8s namespace holding secrets (for k8s-secrets)
+	RoleARN   string // default IAM role to assume for EKS token generation (aws-sm only)
 }
 
 // NewSecretProvider creates the appropriate SecretProvider for the given config.

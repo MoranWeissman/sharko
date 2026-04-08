@@ -18,8 +18,9 @@ import (
 // AWSSecretsManagerProvider reads kubeconfigs from AWS Secrets Manager.
 // Secret path: {prefix}{cluster-name}. Supports IRSA for authentication.
 type AWSSecretsManagerProvider struct {
-	client *secretsmanager.Client
-	prefix string
+	client  *secretsmanager.Client
+	prefix  string
+	roleARN string // default IAM role to assume for EKS token generation
 }
 
 // NewAWSSecretsManagerProvider creates a provider backed by AWS Secrets Manager.
@@ -41,7 +42,7 @@ func NewAWSSecretsManagerProvider(cfg Config) (*AWSSecretsManagerProvider, error
 	// Users who want a prefix can set SHARKO_PROVIDER_PREFIX.
 	prefix := cfg.Prefix
 
-	return &AWSSecretsManagerProvider{client: client, prefix: prefix}, nil
+	return &AWSSecretsManagerProvider{client: client, prefix: prefix, roleARN: cfg.RoleARN}, nil
 }
 
 // GetSecretValue retrieves a raw secret value from AWS Secrets Manager.
@@ -76,6 +77,7 @@ type structuredEKSSecret struct {
 	Region      string `json:"region"`
 	Project     string `json:"project"`
 	Environment string `json:"environment"`
+	RoleARN     string `json:"roleArn"` // optional — IAM role to assume for cluster access
 }
 
 // fetchSecret retrieves and parses credentials from the secret at the given exact name.
@@ -195,7 +197,14 @@ func (p *AWSSecretsManagerProvider) buildFromStructured(s structuredEKSSecret) (
 		name = s.Environment
 	}
 
-	token, err := getEKSToken(context.Background(), name, s.Region)
+	// Prefer the per-cluster roleArn from the secret; fall back to the
+	// provider-level default configured via ProviderConfig.RoleARN.
+	roleARN := s.RoleARN
+	if roleARN == "" {
+		roleARN = p.roleARN
+	}
+
+	token, err := getEKSToken(context.Background(), name, s.Region, roleARN)
 	if err != nil {
 		slog.Error("[provider] GetCredentials failed", "cluster", name, "step", "sts", "error", err)
 		return nil, fmt.Errorf("generating EKS token for cluster %q: %w", name, err)

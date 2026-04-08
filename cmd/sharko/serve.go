@@ -298,6 +298,7 @@ var serveCmd = &cobra.Command{
 				Region:    connProv.Region,
 				Prefix:    connProv.Prefix,
 				Namespace: ns,
+				RoleARN:   connProv.RoleARN,
 			}
 			log.Printf("Secrets provider configured from connection: %s", connProv.Type)
 		}

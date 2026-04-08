@@ -199,6 +199,7 @@ func (s *Server) ReinitializeFromConnection() {
 			Region:    pc.Region,
 			Prefix:    pc.Prefix,
 			Namespace: namespace,
+			RoleARN:   pc.RoleARN,
 		}
 
 		p, err := providers.New(cfg)
