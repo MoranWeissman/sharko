@@ -51,6 +51,10 @@ func NewSecretProvider(cfg Config) (SecretProvider, error) {
 		return NewKubernetesSecretProvider(cfg)
 	case "aws-sm", "aws-secrets-manager":
 		return NewAWSSecretsManagerProvider(cfg)
+	case "gcp", "gcp-sm", "google-secret-manager":
+		return NewGCPSecretManagerProvider(cfg)
+	case "azure", "azure-kv", "azure-key-vault":
+		return NewAzureKeyVaultProvider(cfg)
 	case "":
 		return nil, fmt.Errorf("no secrets provider configured")
 	default:
@@ -65,9 +69,13 @@ func New(cfg Config) (ClusterCredentialsProvider, error) {
 		return NewKubernetesSecretProvider(cfg)
 	case "aws-sm", "aws-secrets-manager":
 		return NewAWSSecretsManagerProvider(cfg)
+	case "gcp", "gcp-sm", "google-secret-manager":
+		return NewGCPSecretManagerProvider(cfg)
+	case "azure", "azure-kv", "azure-key-vault":
+		return NewAzureKeyVaultProvider(cfg)
 	case "":
 		return nil, fmt.Errorf("no secrets provider configured — configure provider in Settings or via API")
 	default:
-		return nil, fmt.Errorf("unknown provider type %q — valid options: aws-sm, k8s-secrets", cfg.Type)
+		return nil, fmt.Errorf("unknown provider type %q — valid options: aws-sm, k8s-secrets, gcp-sm, azure-kv", cfg.Type)
 	}
 }
