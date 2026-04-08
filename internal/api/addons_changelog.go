@@ -10,6 +10,27 @@ import (
 	"github.com/MoranWeissman/sharko/internal/helm"
 )
 
+// buildChangelogText converts a slice of changelog entries into a human-readable
+// string suitable for inclusion in an AI prompt.
+func buildChangelogText(addonName string, entries []changelogVersionEntry) string {
+	var sb strings.Builder
+	sb.WriteString("Addon: " + addonName + "\n\nVersions:\n")
+	for _, e := range entries {
+		sb.WriteString(fmt.Sprintf("- %s", e.Version))
+		if e.AppVersion != "" {
+			sb.WriteString(fmt.Sprintf(" (app: %s)", e.AppVersion))
+		}
+		if e.Created != "" {
+			sb.WriteString(fmt.Sprintf(", released: %s", e.Created))
+		}
+		if e.Description != "" {
+			sb.WriteString(fmt.Sprintf("\n  %s", e.Description))
+		}
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
 // changelogVersionEntry is a single version entry returned by the changelog endpoint.
 type changelogVersionEntry struct {
 	Version     string `json:"version"`
@@ -21,13 +42,14 @@ type changelogVersionEntry struct {
 // handleGetAddonChangelog godoc
 //
 // @Summary Get addon version changelog
-// @Description Returns chart versions between two semver versions for comparison
+// @Description Returns chart versions between two semver versions for comparison. When ?ai_summary=true and an AI provider is configured, an AI-generated summary is included.
 // @Tags addons
 // @Produce json
 // @Security BearerAuth
 // @Param name path string true "Addon name"
 // @Param from query string false "Starting version (current) — exclusive lower bound"
 // @Param to query string false "Target version — inclusive upper bound"
+// @Param ai_summary query string false "Set to 'true' to include an AI-generated summary (requires AI provider)"
 // @Success 200 {object} map[string]interface{} "Changelog between versions"
 // @Failure 400 {object} map[string]interface{} "Bad request"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
@@ -143,13 +165,24 @@ func (s *Server) handleGetAddonChangelog(w http.ResponseWriter, r *http.Request)
 		filtered = []changelogVersionEntry{}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"addon_name":              name,
-		"current_version":         fromVersion,
-		"target_version":          toVersion,
-		"versions":                filtered,
-		"total_versions_between":  len(filtered),
-	})
+	response := map[string]interface{}{
+		"addon_name":             name,
+		"current_version":        fromVersion,
+		"target_version":         toVersion,
+		"versions":               filtered,
+		"total_versions_between": len(filtered),
+	}
+
+	if r.URL.Query().Get("ai_summary") == "true" && s.aiClient != nil && s.aiClient.IsEnabled() {
+		changelog := buildChangelogText(name, filtered)
+		prompt := fmt.Sprintf("Summarize these Helm chart version changes for %s, highlighting breaking changes and security fixes:\n\n%s", name, changelog)
+		summary, err := s.aiClient.SimplePrompt(r.Context(), prompt)
+		if err == nil {
+			response["ai_summary"] = summary
+		}
+	}
+
+	writeJSON(w, http.StatusOK, response)
 }
 
 // semverParts holds the numeric parts of a semver string.

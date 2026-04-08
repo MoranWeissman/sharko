@@ -135,6 +135,10 @@ definitions:
         type: array
       chart:
         type: string
+      depends_on:
+        items:
+          type: string
+        type: array
       extra_helm_values:
         additionalProperties:
           type: string
@@ -616,7 +620,9 @@ paths:
       - addons
   /addons/{name}/changelog:
     get:
-      description: Returns chart versions between two semver versions for comparison
+      description: Returns chart versions between two semver versions for comparison.
+        When ?ai_summary=true and an AI provider is configured, an AI-generated summary
+        is included.
       parameters:
       - description: Addon name
         in: path
@@ -630,6 +636,11 @@ paths:
       - description: Target version — inclusive upper bound
         in: query
         name: to
+        type: string
+      - description: Set to 'true' to include an AI-generated summary (requires AI
+          provider)
+        in: query
+        name: ai_summary
         type: string
       produces:
       - application/json

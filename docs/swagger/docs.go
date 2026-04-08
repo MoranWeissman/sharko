@@ -595,7 +595,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns chart versions between two semver versions for comparison",
+                "description": "Returns chart versions between two semver versions for comparison. When ?ai_summary=true and an AI provider is configured, an AI-generated summary is included.",
                 "produces": [
                     "application/json"
                 ],
@@ -621,6 +621,12 @@ const docTemplate = `{
                         "type": "string",
                         "description": "Target version — inclusive upper bound",
                         "name": "to",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Set to 'true' to include an AI-generated summary (requires AI provider)",
+                        "name": "ai_summary",
                         "in": "query"
                     }
                 ],
@@ -4432,6 +4438,12 @@ const docTemplate = `{
                 },
                 "chart": {
                     "type": "string"
+                },
+                "depends_on": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "extra_helm_values": {
                     "type": "object",
