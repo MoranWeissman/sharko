@@ -179,13 +179,23 @@ func (s *Server) SetDefaultAddons(defaults map[string]bool) {
 // so that write-API operations pick up the new settings immediately without a restart.
 // Also called at startup so that a pod restart does not leave the provider nil.
 func (s *Server) ReinitializeFromConnection() {
+	slog.Info("[startup] ReinitializeFromConnection called")
+
 	conn, err := s.connSvc.GetActiveConnection()
-	if err != nil || conn == nil {
+	if err != nil {
+		slog.Warn("[startup] no active connection", "error", err)
+		return
+	}
+	if conn == nil {
+		slog.Info("[startup] no active connection configured")
 		return
 	}
 
+	slog.Info("[startup] active connection found", "name", conn.Name, "has_provider", conn.Provider != nil)
+
 	// Reinit secrets provider from connection.
 	if pc := conn.Provider; pc != nil && pc.Type != "" {
+		slog.Info("[startup] initializing provider", "type", pc.Type, "region", pc.Region)
 		namespace := pc.Namespace
 		if namespace == "" {
 			namespace = os.Getenv("SHARKO_NAMESPACE")
@@ -203,12 +213,14 @@ func (s *Server) ReinitializeFromConnection() {
 
 		p, err := providers.New(cfg)
 		if err != nil {
-			slog.Warn("reinitializeProvider: failed to create provider from connection", "error", err)
+			slog.Warn("[startup] failed to create provider from connection", "error", err)
 		} else {
 			s.credProvider = p
 			s.providerCfg = &cfg
-			slog.Info("provider reinitialized from connection", "type", cfg.Type, "region", cfg.Region, "prefix", cfg.Prefix)
+			slog.Info("[startup] provider reinitialized from connection", "type", cfg.Type, "region", cfg.Region, "prefix", cfg.Prefix)
 		}
+	} else {
+		slog.Info("[startup] no provider config in connection")
 	}
 
 	// Reinit GitOps config from connection.
