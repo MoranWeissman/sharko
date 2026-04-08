@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -49,6 +50,21 @@ var serveCmd = &cobra.Command{
 	Use:   "serve",
 	Short: "Start the Sharko API server",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Configure structured logging from SHARKO_LOG_LEVEL env var (default: info).
+		logLevel := getEnvDefault("SHARKO_LOG_LEVEL", "info")
+		var level slog.Level
+		switch strings.ToLower(logLevel) {
+		case "debug":
+			level = slog.LevelDebug
+		case "warn":
+			level = slog.LevelWarn
+		case "error":
+			level = slog.LevelError
+		default:
+			level = slog.LevelInfo
+		}
+		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level})))
+
 		port, _ := cmd.Flags().GetInt("port")
 		configPath, _ := cmd.Flags().GetString("config")
 		staticDir, _ := cmd.Flags().GetString("static")

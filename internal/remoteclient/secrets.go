@@ -3,6 +3,7 @@ package remoteclient
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -22,6 +23,7 @@ type ManagedSecretInfo struct {
 // EnsureSecret creates or updates a K8s Secret on the remote cluster.
 // The secret is labeled with app.kubernetes.io/managed-by=sharko.
 func EnsureSecret(ctx context.Context, client kubernetes.Interface, namespace, name string, data map[string][]byte) error {
+	slog.Info("[remoteclient] EnsureSecret called", "namespace", namespace, "name", name, "keys", len(data))
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -40,6 +42,7 @@ func EnsureSecret(ctx context.Context, client kubernetes.Interface, namespace, n
 		if createErr != nil {
 			return fmt.Errorf("creating secret %s/%s: %w", namespace, name, createErr)
 		}
+		slog.Info("[remoteclient] secret created", "namespace", namespace, "name", name)
 		return nil
 	}
 	if err != nil {
@@ -56,6 +59,7 @@ func EnsureSecret(ctx context.Context, client kubernetes.Interface, namespace, n
 	if err != nil {
 		return fmt.Errorf("updating secret %s/%s: %w", namespace, name, err)
 	}
+	slog.Info("[remoteclient] secret updated", "namespace", namespace, "name", name)
 	return nil
 }
 
@@ -81,6 +85,7 @@ func DeleteManagedSecrets(ctx context.Context, client kubernetes.Interface, name
 
 // ListManagedSecrets lists all Sharko-managed secrets across all namespaces (or a specific one).
 func ListManagedSecrets(ctx context.Context, client kubernetes.Interface, namespace string) ([]ManagedSecretInfo, error) {
+	slog.Debug("[remoteclient] ListManagedSecrets", "namespace", namespace)
 	opts := metav1.ListOptions{
 		LabelSelector: managedByLabel + "=" + managedByValue,
 	}

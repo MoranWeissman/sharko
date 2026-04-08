@@ -288,6 +288,7 @@ func (r *Reconciler) reconcileSecret(
 	ref models.AddonSecretRef,
 ) error {
 	// Get kubeconfig for the cluster.
+	slog.Info("[reconciler] connecting to cluster", "cluster", clusterName)
 	creds, err := r.credProvider.GetCredentials(clusterName)
 	if err != nil {
 		return fmt.Errorf("getting credentials: %w", err)
@@ -333,6 +334,11 @@ func (r *Reconciler) reconcileSecret(
 
 	// Secret exists — compare hashes to decide whether an update is needed.
 	existingHash := hashSecretData(existing.Data)
+	slog.Debug("[reconciler] hash comparison",
+		"cluster", clusterName,
+		"secret", ref.SecretName,
+		"match", desiredHash == existingHash,
+	)
 	if existingHash == desiredHash {
 		slog.Info("[secrets] secret up-to-date",
 			"cluster", clusterName, "addon", addonName, "secret", ref.SecretName,

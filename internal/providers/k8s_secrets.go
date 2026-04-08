@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -56,6 +57,7 @@ func newKubernetesSecretProviderWithClient(client kubernetes.Interface, namespac
 //   - "secret-name/key"              — uses provider namespace
 //   - "namespace/secret-name/key"    — explicit namespace
 func (p *KubernetesSecretProvider) GetSecretValue(ctx context.Context, path string) ([]byte, error) {
+	slog.Debug("[provider] GetSecretValue called (k8s)", "path", path)
 	parts := strings.Split(path, "/")
 	var namespace, secretName, key string
 	switch len(parts) {
@@ -79,11 +81,13 @@ func (p *KubernetesSecretProvider) GetSecretValue(ctx context.Context, path stri
 	if !ok {
 		return nil, fmt.Errorf("secret %q/%q has no key %q", namespace, secretName, key)
 	}
+	slog.Debug("[provider] GetSecretValue success (k8s)", "path", path, "size", len(val))
 	return val, nil
 }
 
 // fetchK8sSecret retrieves and parses a kubeconfig from a Kubernetes Secret by exact name.
 func (p *KubernetesSecretProvider) fetchK8sSecret(secretName string) (*Kubeconfig, error) {
+	slog.Debug("[provider] fetching k8s secret", "namespace", p.namespace, "name", secretName)
 	secret, err := p.client.CoreV1().Secrets(p.namespace).Get(context.Background(), secretName, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("getting secret %q in namespace %q: %w", secretName, p.namespace, err)
@@ -93,6 +97,7 @@ func (p *KubernetesSecretProvider) fetchK8sSecret(secretName string) (*Kubeconfi
 	if !ok {
 		return nil, fmt.Errorf("secret %q has no 'kubeconfig' key", secretName)
 	}
+	slog.Info("[provider] k8s secret fetched", "name", secretName, "keys", len(secret.Data))
 
 	kc := &Kubeconfig{Raw: raw}
 
@@ -112,6 +117,8 @@ func (p *KubernetesSecretProvider) fetchK8sSecret(secretName string) (*Kubeconfi
 // secret name first; if not found it searches for secrets whose name contains
 // the cluster name as a substring and returns them as suggestions.
 func (p *KubernetesSecretProvider) GetCredentials(clusterName string) (*Kubeconfig, error) {
+	slog.Info("[provider] GetCredentials called (k8s)", "cluster", clusterName)
+
 	// Step 1: Try exact name.
 	if kc, err := p.fetchK8sSecret(clusterName); err == nil {
 		return kc, nil
@@ -120,10 +127,12 @@ func (p *KubernetesSecretProvider) GetCredentials(clusterName string) (*Kubeconf
 	// Step 2: Search for similar names and include them in the error.
 	suggestions, searchErr := p.searchSimilarK8s(clusterName)
 	if searchErr == nil && len(suggestions) > 0 {
+		slog.Info("[provider] searching for similar secrets", "query", clusterName, "found", len(suggestions))
 		return nil, fmt.Errorf("secret for cluster %q not found in namespace %q. Similar secrets: %s",
 			clusterName, p.namespace, strings.Join(suggestions, ", "))
 	}
 
+	slog.Error("[provider] GetCredentials failed (k8s)", "cluster", clusterName, "step", "fetch", "error", "secret not found in namespace "+p.namespace)
 	return nil, fmt.Errorf("secret for cluster %q not found in namespace %q", clusterName, p.namespace)
 }
 
