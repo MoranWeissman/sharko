@@ -563,38 +563,36 @@ export function Connections({ embedded }: { embedded?: boolean } = {}) {
     e.preventDefault()
     setSaving(true)
     setSaveError(null)
-    setTestStatus({ git: 'testing', argocd: 'testing' })
     try {
       const payload = buildPayload(form, existingConn?.name)
-      const res = await api.testCredentials(payload)
-      const gitOk = res.git.status === 'ok'
-      const argocdOk = res.argocd.status === 'ok'
-      setTestStatus({
-        git: gitOk ? 'ok' : 'error',
-        argocd: argocdOk ? 'ok' : 'error',
-        gitMessage: res.git.message,
-        argocdMessage: res.argocd.message,
-        gitAuth: res.git.auth,
-        argocdAuth: res.argocd.auth,
-      })
-      if (!gitOk || !argocdOk) {
-        const errors = []
-        if (!gitOk) errors.push(`Git: ${res.git.message || 'failed'}`)
-        if (!argocdOk) errors.push(`ArgoCD: ${res.argocd.message || 'failed'}`)
-        setSaveError(`Connection test failed — ${errors.join(', ')}`)
-        setSaving(false)
-        return
+
+      // Test credentials (non-blocking — warn but don't block save)
+      try {
+        const res = await api.testCredentials(payload)
+        setTestStatus({
+          git: res.git.status === 'ok' ? 'ok' : 'error',
+          argocd: res.argocd.status === 'ok' ? 'ok' : 'error',
+          gitMessage: res.git.message,
+          argocdMessage: res.argocd.message,
+          gitAuth: res.git.auth,
+          argocdAuth: res.argocd.auth,
+        })
+      } catch {
+        // Test failed — warn but continue saving
+        setTestStatus({ git: 'error', argocd: 'error' })
       }
+
+      // ALWAYS save regardless of test result
       if (isEdit && existingConn) {
-        await api.updateConnection(existingConn.name, buildPayload(form, existingConn.name))
+        await api.updateConnection(existingConn.name, payload)
       } else {
-        await api.createConnection(buildPayload(form))
+        await api.createConnection(payload)
       }
       refreshConnections()
       setJustSaved(true)
       fetchLiveStatus()
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : 'Failed to save connection')
+      setSaveError(err instanceof Error ? err.message : 'Save failed')
     } finally {
       setSaving(false)
     }
