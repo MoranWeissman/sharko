@@ -54,6 +54,7 @@ func getEKSToken(ctx context.Context, clusterName, region string) (string, error
 	}
 
 	slog.Debug("[auth] STS presigned URL generated", "cluster", clusterName, "urlLength", len(req.URL))
+	slog.Debug("[auth] STS presigned URL details", "cluster", clusterName, "urlHost", req.URL[:60])
 
 	// Encode the presigned URL as a k8s-aws-v1 token (base64url, no padding).
 	token := v1Prefix + base64.RawURLEncoding.EncodeToString([]byte(req.URL))
