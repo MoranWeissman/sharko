@@ -67,10 +67,10 @@ export function ClustersOverview() {
   const navigate = useNavigate();
 
   // Test connection state per cluster
-  const [testResults, setTestResults] = useState<Record<string, { reachable: boolean; version?: string; error?: string } | 'testing'>>({});
+  const [testResults, setTestResults] = useState<Record<string, { reachable: boolean; server_version?: string; platform?: string; error?: string } | 'testing'>>({});
 
   // Adopt (start managing) state per cluster
-  const [adoptingCluster, setAdoptingCluster] = useState<string | null>(null);
+  const [manageStatus, setManageStatus] = useState<Record<string, { loading?: boolean; success?: string; error?: string }>>({});
 
   // Add Cluster dialog state
   const [addClusterOpen, setAddClusterOpen] = useState(false);
@@ -149,14 +149,14 @@ export function ClustersOverview() {
 
   const handleAdoptCluster = useCallback(async (name: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    setAdoptingCluster(name);
+    setManageStatus(prev => ({ ...prev, [name]: { loading: true } }));
     try {
-      await registerCluster({ name });
+      const result = await registerCluster({ name, addons: {} });
+      const prUrl = result?.git?.pr_url || result?.pr_url || result?.pull_request_url;
+      setManageStatus(prev => ({ ...prev, [name]: { success: prUrl || 'Cluster adopted' } }));
       void fetchData();
-    } catch {
-      // ignore — fetchData will refresh state
-    } finally {
-      setAdoptingCluster(null);
+    } catch (err) {
+      setManageStatus(prev => ({ ...prev, [name]: { error: err instanceof Error ? err.message : 'Failed to adopt cluster' } }));
     }
   }, [fetchData]);
 
@@ -666,11 +666,11 @@ export function ClustersOverview() {
                             testResult.reachable
                               ? <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
                                   <CheckCircle className="h-3 w-3" />
-                                  {testResult.version ? `v${testResult.version}` : 'OK'}
+                                  {[testResult.server_version, testResult.platform].filter(Boolean).join(' — ') || 'Reachable'}
                                 </span>
                               : <span className="flex items-center gap-1 text-xs text-red-500 dark:text-red-400">
                                   <WifiOff className="h-3 w-3" />
-                                  {testResult.error ?? 'Unreachable'}
+                                  Error: {testResult.error ?? 'Unreachable'}
                                 </span>
                           )}
                         </div>
@@ -724,11 +724,11 @@ export function ClustersOverview() {
                       {testResult.reachable
                         ? <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
                             <CheckCircle className="h-3 w-3" />
-                            Reachable{testResult.version ? ` (v${testResult.version})` : ''}
+                            {[testResult.server_version, testResult.platform].filter(Boolean).join(' — ') || 'Reachable'}
                           </span>
                         : <span className="flex items-center gap-1 text-xs text-red-500 dark:text-red-400">
                             <WifiOff className="h-3 w-3" />
-                            {testResult.error ?? 'Unreachable'}
+                            Error: {testResult.error ?? 'Unreachable'}
                           </span>
                       }
                     </div>
@@ -784,7 +784,7 @@ export function ClustersOverview() {
                 <tbody className="divide-y divide-amber-100 dark:divide-amber-900/30">
                   {discoveredClusters.map((cluster) => {
                     const testResult = testResults[cluster.name];
-                    const isAdopting = adoptingCluster === cluster.name;
+                    const ms = manageStatus[cluster.name];
                     return (
                       <tr key={cluster.name} className="hover:bg-amber-50/60 dark:hover:bg-amber-950/20">
                         <td className="px-6 py-3 font-medium text-[#0a2a4a] dark:text-gray-100">
@@ -797,38 +797,48 @@ export function ClustersOverview() {
                           {cluster.server_version ?? '--'}
                         </td>
                         <td className="px-6 py-3">
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={(e) => handleTestCluster(cluster.name, e)}
-                              disabled={testResult === 'testing'}
-                              className="inline-flex items-center gap-1 rounded border border-[#5a9dd0] px-2 py-1 text-xs text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
-                            >
-                              {testResult === 'testing' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wifi className="h-3 w-3" />}
-                              Test
-                            </button>
-                            {testResult && testResult !== 'testing' && (
-                              testResult.reachable
-                                ? <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
-                                    <CheckCircle className="h-3 w-3" />
-                                    {testResult.version ? `v${testResult.version}` : 'OK'}
-                                  </span>
-                                : <span className="flex items-center gap-1 text-xs text-red-500 dark:text-red-400">
-                                    <WifiOff className="h-3 w-3" />
-                                    {testResult.error ?? 'Unreachable'}
-                                  </span>
-                            )}
-                            <RoleGuard adminOnly>
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-2">
                               <button
                                 type="button"
-                                onClick={(e) => handleAdoptCluster(cluster.name, e)}
-                                disabled={isAdopting}
-                                className="inline-flex items-center gap-1 rounded bg-teal-600 px-2 py-1 text-xs font-medium text-white hover:bg-teal-700 disabled:opacity-50"
+                                onClick={(e) => handleTestCluster(cluster.name, e)}
+                                disabled={testResult === 'testing'}
+                                className="inline-flex items-center gap-1 rounded border border-[#5a9dd0] px-2 py-1 text-xs text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
                               >
-                                {isAdopting ? <Loader2 className="h-3 w-3 animate-spin" /> : <GitMerge className="h-3 w-3" />}
-                                Start Managing
+                                {testResult === 'testing' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wifi className="h-3 w-3" />}
+                                Test
                               </button>
-                            </RoleGuard>
+                              {testResult && testResult !== 'testing' && (
+                                testResult.reachable
+                                  ? <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+                                      <CheckCircle className="h-3 w-3" />
+                                      {[testResult.server_version, testResult.platform].filter(Boolean).join(' — ') || 'Reachable'}
+                                    </span>
+                                  : <span className="flex items-center gap-1 text-xs text-red-500 dark:text-red-400">
+                                      <WifiOff className="h-3 w-3" />
+                                      Error: {testResult.error ?? 'Unreachable'}
+                                    </span>
+                              )}
+                              <RoleGuard adminOnly>
+                                <button
+                                  type="button"
+                                  onClick={(e) => handleAdoptCluster(cluster.name, e)}
+                                  disabled={!!ms?.loading}
+                                  className="inline-flex items-center gap-1 rounded bg-teal-600 px-2 py-1 text-xs font-medium text-white hover:bg-teal-700 disabled:opacity-50"
+                                >
+                                  {ms?.loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <GitMerge className="h-3 w-3" />}
+                                  Start Managing
+                                </button>
+                              </RoleGuard>
+                            </div>
+                            {ms?.success && (
+                              <span className="text-xs text-green-700 dark:text-green-400">
+                                Cluster adopted!{ms.success !== 'Cluster adopted' ? <> PR: <a href={ms.success} target="_blank" rel="noopener noreferrer" className="underline">{ms.success}</a></> : ''}
+                              </span>
+                            )}
+                            {ms?.error && (
+                              <span className="text-xs text-red-600 dark:text-red-400">{ms.error}</span>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -841,7 +851,7 @@ export function ClustersOverview() {
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {discoveredClusters.map((cluster) => {
                 const testResult = testResults[cluster.name];
-                const isAdopting = adoptingCluster === cluster.name;
+                const ms = manageStatus[cluster.name];
                 return (
                   <div key={cluster.name} className="rounded-lg ring-2 ring-amber-200 bg-[#fffbf0] p-4 shadow-sm dark:border-amber-800 dark:bg-gray-800">
                     <div className="mb-2 flex items-center justify-between">
@@ -859,8 +869,14 @@ export function ClustersOverview() {
                     {testResult && testResult !== 'testing' && (
                       <div className="mb-2">
                         {testResult.reachable
-                          ? <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400"><CheckCircle className="h-3 w-3" /> Reachable</span>
-                          : <span className="flex items-center gap-1 text-xs text-red-500 dark:text-red-400"><WifiOff className="h-3 w-3" /> {testResult.error ?? 'Unreachable'}</span>
+                          ? <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+                              <CheckCircle className="h-3 w-3" />
+                              {[testResult.server_version, testResult.platform].filter(Boolean).join(' — ') || 'Reachable'}
+                            </span>
+                          : <span className="flex items-center gap-1 text-xs text-red-500 dark:text-red-400">
+                              <WifiOff className="h-3 w-3" />
+                              Error: {testResult.error ?? 'Unreachable'}
+                            </span>
                         }
                       </div>
                     )}
@@ -874,13 +890,21 @@ export function ClustersOverview() {
                       <button
                         type="button"
                         onClick={(e) => handleAdoptCluster(cluster.name, e)}
-                        disabled={isAdopting}
+                        disabled={!!ms?.loading}
                         className="inline-flex w-full items-center justify-center gap-1 rounded bg-teal-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-teal-700 disabled:opacity-50"
                       >
-                        {isAdopting ? <Loader2 className="h-3 w-3 animate-spin" /> : <GitMerge className="h-3 w-3" />}
+                        {ms?.loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <GitMerge className="h-3 w-3" />}
                         Start Managing
                       </button>
                     </RoleGuard>
+                    {ms?.success && (
+                      <p className="mt-2 text-xs text-green-700 dark:text-green-400">
+                        Cluster adopted!{ms.success !== 'Cluster adopted' ? <> PR: <a href={ms.success} target="_blank" rel="noopener noreferrer" className="underline">{ms.success}</a></> : ''}
+                      </p>
+                    )}
+                    {ms?.error && (
+                      <p className="mt-2 text-xs text-red-600 dark:text-red-400">{ms.error}</p>
+                    )}
                   </div>
                 );
               })}
