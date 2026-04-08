@@ -255,6 +255,57 @@ func (c *Client) GetVersion(ctx context.Context) (map[string]string, error) {
 	return result, nil
 }
 
+// ApplicationSetStatus holds status information for an ArgoCD ApplicationSet.
+type ApplicationSetStatus struct {
+	Name       string `json:"name"`
+	Conditions []struct {
+		Type    string `json:"type"`
+		Status  string `json:"status"`
+		Message string `json:"message"`
+	} `json:"conditions"`
+	GeneratedApps int `json:"generated_apps"` // count from status.applicationStatus
+}
+
+// GetApplicationSet returns status information for a specific ArgoCD ApplicationSet.
+func (c *Client) GetApplicationSet(ctx context.Context, name string) (*ApplicationSetStatus, error) {
+	body, err := c.doGet(ctx, "/api/v1/applicationsets/"+name)
+	if err != nil {
+		return nil, fmt.Errorf("getting applicationset %q: %w", name, err)
+	}
+
+	var raw struct {
+		Metadata struct {
+			Name string `json:"name"`
+		} `json:"metadata"`
+		Status struct {
+			Conditions []struct {
+				Type    string `json:"type"`
+				Status  string `json:"status"`
+				Message string `json:"message"`
+			} `json:"conditions"`
+			ApplicationStatus []struct {
+				Application string `json:"application"`
+			} `json:"applicationStatus"`
+		} `json:"status"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, fmt.Errorf("decoding applicationset response: %w", err)
+	}
+
+	result := &ApplicationSetStatus{
+		Name:          raw.Metadata.Name,
+		GeneratedApps: len(raw.Status.ApplicationStatus),
+	}
+	for _, c := range raw.Status.Conditions {
+		result.Conditions = append(result.Conditions, struct {
+			Type    string `json:"type"`
+			Status  string `json:"status"`
+			Message string `json:"message"`
+		}{Type: c.Type, Status: c.Status, Message: c.Message})
+	}
+	return result, nil
+}
+
 // GetResourceTree returns the full resource tree for an ArgoCD application as raw JSON.
 func (c *Client) GetResourceTree(ctx context.Context, appName string) (map[string]interface{}, error) {
 	body, err := c.doGet(ctx, "/api/v1/applications/"+appName+"/resource-tree")

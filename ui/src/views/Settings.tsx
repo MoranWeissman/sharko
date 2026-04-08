@@ -1,10 +1,13 @@
 import { useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Plug, Users, Key, Bot } from 'lucide-react'
+import { Plug, Users, Key, Bot, Shield, GitMerge } from 'lucide-react'
 import { DetailNavPanel } from '@/components/DetailNavPanel'
-import { Connections } from '@/views/Connections'
+import { ConnectionSection } from '@/views/settings/ConnectionSection'
+import { SecretsProviderSection } from '@/views/settings/SecretsProviderSection'
+import { GitOpsSection } from '@/views/settings/GitOpsSection'
 import { UserManagement } from '@/views/UserManagement'
 import { ApiKeys } from '@/views/ApiKeys'
+import { AIConfigSection } from '@/views/settings/AIConfigSection'
 import { useAuth } from '@/hooks/useAuth'
 
 export function Settings() {
@@ -14,7 +17,7 @@ export function Settings() {
   const setSection = (s: string) => setSearchParams({ section: s }, { replace: true })
 
   useEffect(() => {
-    if (!isAdmin && section !== 'connections') {
+    if (!isAdmin && section !== 'connections' && section !== 'secrets-provider' && section !== 'gitops' && section !== 'ai') {
       setSearchParams({ section: 'connections' }, { replace: true })
     }
   }, [isAdmin, section, setSearchParams])
@@ -22,7 +25,11 @@ export function Settings() {
   const sections = [
     {
       label: 'Connection',
-      items: [{ key: 'connections', label: 'Connection', icon: Plug }],
+      items: [
+        { key: 'connections', label: 'Connection', icon: Plug },
+        { key: 'secrets-provider', label: 'Secrets Provider', icon: Shield },
+        { key: 'gitops', label: 'GitOps', icon: GitMerge },
+      ],
     },
     ...(isAdmin
       ? [
@@ -57,14 +64,12 @@ export function Settings() {
           onSelect={setSection}
         />
         <div className="flex-1">
-          {section === 'connections' && <Connections embedded />}
+          {section === 'connections' && <ConnectionSection />}
+          {section === 'secrets-provider' && <SecretsProviderSection />}
+          {section === 'gitops' && <GitOpsSection />}
           {section === 'users' && isAdmin && <UserManagement embedded />}
           {section === 'api-keys' && isAdmin && <ApiKeys embedded />}
-          {section === 'ai' && (
-            <div className="text-sm text-[#2a5a7a] dark:text-gray-400">
-              AI Provider configuration coming soon.
-            </div>
-          )}
+          {section === 'ai' && <AIConfigSection />}
         </div>
       </div>
     </div>

@@ -45,8 +45,9 @@ type ConflictCheckEntry struct {
 
 // AvailableVersionsResponse is the API response for listing available chart versions.
 type AvailableVersionsResponse struct {
-	AddonName string             `json:"addon_name"`
-	Chart     string             `json:"chart"`
-	RepoURL   string             `json:"repo_url"`
-	Versions  []AvailableVersion `json:"versions"`
+	AddonName      string             `json:"addon_name"`
+	Chart          string             `json:"chart"`
+	RepoURL        string             `json:"repo_url"`
+	CurrentVersion string             `json:"current_version,omitempty"` // catalog default version
+	Versions       []AvailableVersion `json:"versions"`
 }

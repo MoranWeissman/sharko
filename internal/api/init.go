@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/operations"
@@ -257,6 +258,13 @@ func (s *Server) runInitOperation(
 		s.opsStore.UpdateStep(sessionID, operations.StatusCompleted, "skipped")
 		s.opsStore.Complete(sessionID, "init complete (no ArgoCD bootstrap)")
 	}
+
+	s.auditLog.Add(audit.Entry{
+		Source:  "api",
+		Action:  "init",
+		Actor:   "sharko",
+		Details: "addons repository initialized and ArgoCD bootstrapped",
+	})
 }
 
 // pollPRMerge polls for the PR to be merged by checking whether the bootstrap
