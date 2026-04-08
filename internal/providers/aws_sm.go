@@ -101,7 +101,8 @@ func (p *AWSSecretsManagerProvider) GetCredentials(clusterName string) (*Kubecon
 }
 
 // buildFromStructured constructs a Kubeconfig from the EKS JSON metadata format.
-// It base64-decodes the CA cert and obtains a short-lived STS bearer token.
+// It base64-decodes the CA cert, obtains a short-lived STS bearer token, and
+// builds a kubeconfig YAML for use by remoteclient.NewClientFromKubeconfig.
 func (p *AWSSecretsManagerProvider) buildFromStructured(s structuredEKSSecret) (*Kubeconfig, error) {
 	caData, err := base64.StdEncoding.DecodeString(s.CAData)
 	if err != nil {
@@ -120,7 +121,29 @@ func (p *AWSSecretsManagerProvider) buildFromStructured(s structuredEKSSecret) (
 		return nil, fmt.Errorf("generating EKS token for cluster %q: %w", name, err)
 	}
 
+	// Build kubeconfig YAML so remoteclient.NewClientFromKubeconfig can use Raw.
+	// certificate-authority-data expects base64 — use s.CAData (original base64 string).
+	kubeconfigYAML := fmt.Sprintf(`apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+    server: %s
+    certificate-authority-data: %s
+  name: %s
+contexts:
+- context:
+    cluster: %s
+    user: %s
+  name: %s
+current-context: %s
+users:
+- name: %s
+  user:
+    token: %s
+`, s.Host, s.CAData, name, name, name, name, name, name, token)
+
 	return &Kubeconfig{
+		Raw:    []byte(kubeconfigYAML),
 		Server: s.Host,
 		CAData: caData,
 		Token:  token,
