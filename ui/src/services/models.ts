@@ -144,6 +144,8 @@ export interface ConnectionResponse {
   argocd_namespace: string
   is_default: boolean
   is_active: boolean
+  provider?: { type: string; region?: string; prefix?: string }
+  gitops?: { base_branch?: string; branch_prefix?: string; commit_prefix?: string; pr_auto_merge?: boolean; host_cluster_name?: string; default_addons?: string }
 }
 
 export interface ConnectionsListResponse {
