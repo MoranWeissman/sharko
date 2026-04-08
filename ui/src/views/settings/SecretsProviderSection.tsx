@@ -14,6 +14,7 @@ interface ProviderFormData {
 interface ProviderInfo {
   type: string
   region: string
+  prefix?: string
   status: string
   error?: string
 }
@@ -50,7 +51,7 @@ export function SecretsProviderSection() {
           setForm({
             provider_type: (p.type as '' | 'aws-sm' | 'k8s-secrets') || '',
             provider_region: p.region || '',
-            provider_prefix: '',
+            provider_prefix: p.prefix || '',
           })
         }
       })

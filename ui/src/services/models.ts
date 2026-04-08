@@ -144,6 +144,11 @@ export interface ConnectionResponse {
   argocd_namespace: string
   is_default: boolean
   is_active: boolean
+  provider?: {
+    type: string
+    region?: string
+    prefix?: string
+  }
 }
 
 export interface ConnectionsListResponse {
