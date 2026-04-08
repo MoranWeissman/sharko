@@ -11,6 +11,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
@@ -47,6 +48,7 @@ func TestHandleGitWebhook_Ping(t *testing.T) {
 func TestHandleGitWebhook_PushToBaseBranch(t *testing.T) {
 	srv := &Server{
 		gitopsCfg: orchestrator.GitOpsConfig{BaseBranch: "main"},
+		auditLog:  audit.NewLog(10),
 	}
 
 	payload := map[string]interface{}{
@@ -78,6 +80,7 @@ func TestHandleGitWebhook_ValidSignature(t *testing.T) {
 
 	srv := &Server{
 		gitopsCfg: orchestrator.GitOpsConfig{BaseBranch: "main"},
+		auditLog:  audit.NewLog(10),
 	}
 
 	payload := []byte(`{"ref":"refs/heads/main","pusher":{"name":"ci"},"commits":[]}`)

@@ -231,3 +231,169 @@ func findAddon(addons []models.ClusterAddonInfo, name string) *models.ClusterAdd
 	}
 	return nil
 }
+
+// ---------------------------------------------------------------------------
+// ParseAddonsCatalog — secrets field
+// ---------------------------------------------------------------------------
+
+func TestParseAddonsCatalog_WithSecrets(t *testing.T) {
+	input := []byte(`
+applicationsets:
+  - name: datadog
+    repoURL: https://helm.datadoghq.com
+    chart: datadog
+    version: 3.160.1
+    secrets:
+      - secretName: datadog-api-key
+        namespace: datadog
+        keys:
+          api-key: secrets/datadog/api-key
+          app-key: secrets/datadog/app-key
+`)
+
+	parser := NewParser()
+	addons, err := parser.ParseAddonsCatalog(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(addons) != 1 {
+		t.Fatalf("expected 1 addon, got %d", len(addons))
+	}
+
+	dd := addons[0]
+	if len(dd.Secrets) != 1 {
+		t.Fatalf("expected 1 secret ref, got %d", len(dd.Secrets))
+	}
+
+	s := dd.Secrets[0]
+	if s.SecretName != "datadog-api-key" {
+		t.Errorf("expected secretName=datadog-api-key, got %q", s.SecretName)
+	}
+	if s.Namespace != "datadog" {
+		t.Errorf("expected namespace=datadog, got %q", s.Namespace)
+	}
+	if s.Keys["api-key"] != "secrets/datadog/api-key" {
+		t.Errorf("expected api-key path, got %q", s.Keys["api-key"])
+	}
+	if s.Keys["app-key"] != "secrets/datadog/app-key" {
+		t.Errorf("expected app-key path, got %q", s.Keys["app-key"])
+	}
+}
+
+func TestParseAddonsCatalog_MultipleSecrets(t *testing.T) {
+	input := []byte(`
+applicationsets:
+  - name: external-secrets
+    repoURL: https://charts.external-secrets.io
+    chart: external-secrets
+    version: 0.9.0
+    secrets:
+      - secretName: es-api-key
+        namespace: external-secrets
+        keys:
+          token: secrets/es/token
+      - secretName: es-tls-certs
+        namespace: external-secrets
+        keys:
+          tls.crt: secrets/es/tls-crt
+          tls.key: secrets/es/tls-key
+`)
+
+	parser := NewParser()
+	addons, err := parser.ParseAddonsCatalog(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(addons[0].Secrets) != 2 {
+		t.Fatalf("expected 2 secret refs, got %d", len(addons[0].Secrets))
+	}
+}
+
+func TestParseAddonsCatalog_NoSecrets(t *testing.T) {
+	input := []byte(`
+applicationsets:
+  - name: keda
+    repoURL: https://kedacore.github.io/charts
+    chart: keda
+    version: 2.14.2
+`)
+
+	parser := NewParser()
+	addons, err := parser.ParseAddonsCatalog(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(addons[0].Secrets) != 0 {
+		t.Errorf("expected 0 secrets, got %d", len(addons[0].Secrets))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ParseClusterAddons — secretPath field
+// ---------------------------------------------------------------------------
+
+func TestParseClusterAddons_WithSecretPath(t *testing.T) {
+	input := []byte(`
+clusters:
+  - name: cluster-prod
+    secretPath: secrets/clusters/prod
+    labels:
+      datadog: enabled
+  - name: cluster-dev
+    labels:
+      datadog: enabled
+`)
+
+	parser := NewParser()
+	clusters, err := parser.ParseClusterAddons(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(clusters) != 2 {
+		t.Fatalf("expected 2 clusters, got %d", len(clusters))
+	}
+
+	// cluster-prod should have secretPath set.
+	prod := clusters[0]
+	if prod.Name != "cluster-prod" {
+		t.Fatalf("expected cluster-prod, got %q", prod.Name)
+	}
+	if prod.SecretPath != "secrets/clusters/prod" {
+		t.Errorf("expected secretPath=secrets/clusters/prod, got %q", prod.SecretPath)
+	}
+
+	// cluster-dev should have empty secretPath.
+	dev := clusters[1]
+	if dev.SecretPath != "" {
+		t.Errorf("expected empty secretPath for cluster-dev, got %q", dev.SecretPath)
+	}
+}
+
+func TestParseClusterAddons_SecretPathPreservedInLabels(t *testing.T) {
+	input := []byte(`
+clusters:
+  - name: cluster-staging
+    secretPath: aws-sm/clusters/staging
+    labels:
+      nginx: enabled
+      nginx-version: "1.9.0"
+`)
+
+	parser := NewParser()
+	clusters, err := parser.ParseClusterAddons(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	c := clusters[0]
+	// secretPath should not bleed into labels.
+	if _, ok := c.Labels["secretPath"]; ok {
+		t.Error("secretPath should not appear in labels map")
+	}
+	if c.SecretPath != "aws-sm/clusters/staging" {
+		t.Errorf("expected secretPath=aws-sm/clusters/staging, got %q", c.SecretPath)
+	}
+	if c.Labels["nginx"] != "enabled" {
+		t.Errorf("expected nginx=enabled in labels, got %q", c.Labels["nginx"])
+	}
+}
