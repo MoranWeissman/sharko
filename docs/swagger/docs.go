@@ -4492,6 +4492,9 @@ const docTemplate = `{
                 },
                 "region": {
                     "type": "string"
+                },
+                "secret_path": {
+                    "type": "string"
                 }
             }
         },
