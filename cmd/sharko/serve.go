@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/ai"
 	"github.com/MoranWeissman/sharko/internal/api"
+	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/demo"
@@ -27,6 +29,8 @@ import (
 	"github.com/MoranWeissman/sharko/internal/service"
 	"github.com/MoranWeissman/sharko/templates"
 	"github.com/spf13/cobra"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
 
 func init() {
@@ -387,6 +391,94 @@ var serveCmd = &cobra.Command{
 				reconciler.Start()
 				defer reconciler.Stop()
 				log.Printf("Secret reconciler started (interval: %s)", dur)
+			}
+		}
+
+		// ArgoCD cluster secrets reconciler — writes ArgoCD cluster secrets into the argocd namespace
+		// so that ArgoCD's ApplicationSet cluster generator can discover Sharko-managed clusters.
+		// Only starts if credProvider is configured (same guard as the existing secrets reconciler).
+		if credProvider != nil {
+			inClusterCfg, inClusterErr := rest.InClusterConfig()
+			if inClusterErr != nil {
+				log.Printf("WARNING: Not running in-cluster (%v) — skipping ArgoCD secrets reconciler", inClusterErr)
+			} else {
+				k8sClient, k8sErr := kubernetes.NewForConfig(inClusterCfg)
+				if k8sErr != nil {
+					log.Printf("WARNING: Could not create in-cluster K8s client: %v — skipping ArgoCD secrets reconciler", k8sErr)
+				} else {
+					argocdNamespace := getEnvDefault("SHARKO_ARGOCD_NAMESPACE", "argocd")
+
+					argoIntervalStr := getEnvDefault("SHARKO_ARGOCD_RECONCILE_INTERVAL", "3m")
+					argoDur, argoParseErr := time.ParseDuration(argoIntervalStr)
+					if argoParseErr != nil {
+						log.Printf("WARNING: Invalid SHARKO_ARGOCD_RECONCILE_INTERVAL %q, using 3m", argoIntervalStr)
+						argoDur = 3 * time.Minute
+					}
+
+					argoParser := config.NewParser()
+					argoBaseBranch := gitopsCfg.BaseBranch
+					if argoBaseBranch == "" {
+						argoBaseBranch = "main"
+					}
+
+					argoGitReaderFn := func() argosecrets.GitReader {
+						gp, err := connSvc.GetActiveGitProvider()
+						if err != nil {
+							return nil
+						}
+						return gp
+					}
+
+					argoDefaultRoleARN := ""
+					if provCfgPtr != nil {
+						argoDefaultRoleARN = provCfgPtr.RoleARN
+					}
+
+					argoManager := argosecrets.NewManager(k8sClient, argocdNamespace)
+					argoReconciler := argosecrets.NewReconciler(
+						argoManager,
+						credProvider,
+						argoGitReaderFn,
+						argoParser,
+						argoBaseBranch,
+						argoDefaultRoleARN,
+						argoDur,
+					)
+
+					auditLog := srv.AuditLog()
+					argoReconciler.SetAuditFunc(func(created, updated, deleted int) {
+						auditLog.Add(audit.Entry{
+							Source:  "argosecrets-reconciler",
+							Action:  "cluster_secret_sync",
+							Actor:   "sharko",
+							Details: fmt.Sprintf("ArgoCD secrets reconciled — created: %d, updated: %d, deleted: %d", created, updated, deleted),
+						})
+					})
+
+					srv.SetArgoSecretManager(argoManager)
+					srv.SetArgoSecretReconciler(argoReconciler)
+
+					// Store stable config for ReinitializeFromConnection to use.
+					srv.SetArgoReconcilerConfig(&api.ArgoReconcilerCfg{
+						K8sClient:       k8sClient,
+						ArgocdNamespace: argocdNamespace,
+						Interval:        argoDur,
+						GitReaderFn:     argoGitReaderFn,
+						Parser:          argoParser,
+					})
+
+					argoReconciler.Start(context.Background())
+					// Use a closure that reads through the getter so that if
+					// ReinitializeFromConnection replaces the reconciler the correct
+					// (current) instance is stopped on shutdown, not the one captured
+					// at startup time.
+					defer func() {
+						if r := srv.ArgoSecretReconciler(); r != nil {
+							r.Stop()
+						}
+					}()
+					log.Printf("ArgoCD secrets reconciler started (namespace: %s, interval: %s)", argocdNamespace, argoDur)
+				}
 			}
 		}
 

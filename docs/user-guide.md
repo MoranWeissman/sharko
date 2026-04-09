@@ -306,6 +306,41 @@ curl -H "Authorization: Bearer $TOKEN" \
 
 ---
 
+## ArgoCD Cluster Secret Management
+
+Sharko creates and reconciles ArgoCD cluster secrets automatically. You do not need External Secrets Operator (ESO) or any other operator to make ArgoCD aware of your clusters.
+
+### How It Works
+
+When a cluster is registered via `sharko add-cluster`, Sharko writes a Kubernetes Secret in the `argocd` namespace with the label `argocd.argoproj.io/secret-type: cluster`. ArgoCD's ApplicationSet cluster generator picks up this secret and starts deploying addons to the cluster.
+
+A background reconciler runs every 3 minutes (configurable) and keeps all ArgoCD cluster secrets in sync with `configuration/cluster-addons.yaml` in Git. If a cluster is added or removed from that file, the reconciler creates or deletes the corresponding secret automatically.
+
+### RBAC
+
+The Helm chart automatically creates a namespaced Role + RoleBinding granting Sharko write access to Secrets in the `argocd` namespace. No manual RBAC setup is needed. The ArgoCD namespace is configurable:
+
+```yaml
+rbac:
+  argocdNamespace: argocd   # default
+```
+
+### Adopting Pre-Existing Cluster Secrets
+
+If a cluster secret already exists in the `argocd` namespace but was not created by Sharko (i.e., it lacks the `app.kubernetes.io/managed-by: sharko` label), clicking **"Start Managing"** in the UI — or registering the cluster via `sharko add-cluster` — will adopt it. Sharko overwrites the labels and credentials to match its desired state and begins managing the secret going forward.
+
+### Reconcile Interval
+
+The reconciler interval defaults to 3 minutes. Override via environment variable:
+
+```yaml
+extraEnv:
+  - name: SHARKO_ARGOCD_RECONCILE_INTERVAL
+    value: "5m"
+```
+
+---
+
 ## Batch Operations
 
 ### Batch Cluster Registration
@@ -608,6 +643,7 @@ If ArgoCD or Git connections fail:
 | `SHARKO_GITOPS_BASE_BRANCH` | Target branch for PRs | `main` |
 | `SHARKO_GITOPS_REPO_URL` | Git repo URL for template placeholders | (none) |
 | `SHARKO_ADDON_SECRETS` | JSON-encoded addon secret definitions (see Addon Secrets section) | (none) |
+| `SHARKO_ARGOCD_RECONCILE_INTERVAL` | Interval for ArgoCD cluster secret reconciliation (e.g. `3m`, `5m`) | `3m` |
 | `SHARKO_DEFAULT_ADDONS` | Comma-separated default addons applied to new clusters | (none) |
 | `SHARKO_HOST_CLUSTER_NAME` | Name of the host cluster running Sharko (for in-cluster deployment) | (none) |
 | `SHARKO_INIT_AUTO_BOOTSTRAP` | Auto-bootstrap ArgoCD during init (not yet implemented, post-v1) | `false` |

@@ -40,6 +40,12 @@ type RegisterClusterResult struct {
 	Error          string        `json:"error,omitempty"`
 	Message        string        `json:"message,omitempty"`
 	Adopted        bool          `json:"adopted,omitempty"` // true if cluster was already in ArgoCD
+
+	// ArgoCD cluster secret outcome. Set by the API handler after calling Manager.Ensure().
+	// Possible values: "created", "adopted", "updated", "skipped", "error".
+	ArgoSecretStatus string `json:"argocd_secret_status,omitempty"`
+	// ArgoSecretError holds the error message if the ArgoCD secret step failed (non-fatal).
+	ArgoSecretError string `json:"argocd_secret_error,omitempty"`
 }
 
 // ClusterResult holds cluster details in operation results.

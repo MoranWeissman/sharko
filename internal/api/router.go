@@ -1,9 +1,11 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"log"
 	"log/slog"
@@ -13,20 +15,33 @@ import (
 	"sync"
 	"time"
 
+	httpSwagger "github.com/swaggo/http-swagger"
+	"golang.org/x/crypto/bcrypt"
+	"k8s.io/client-go/kubernetes"
+
 	"github.com/MoranWeissman/sharko/internal/ai"
+	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/auth"
 	"github.com/MoranWeissman/sharko/internal/config"
+	_ "github.com/MoranWeissman/sharko/docs/swagger" // swagger docs
 	"github.com/MoranWeissman/sharko/internal/notifications"
 	"github.com/MoranWeissman/sharko/internal/operations"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/providers"
 	"github.com/MoranWeissman/sharko/internal/service"
-	httpSwagger "github.com/swaggo/http-swagger"
-	"golang.org/x/crypto/bcrypt"
-
-	_ "github.com/MoranWeissman/sharko/docs/swagger" // swagger docs
 )
+
+// ArgoReconcilerCfg holds the stable parameters needed to (re)create the
+// argosecrets reconciler. The K8sClient and ArgocdNamespace are set once at
+// startup and never change between reinits.
+type ArgoReconcilerCfg struct {
+	K8sClient       kubernetes.Interface
+	ArgocdNamespace string
+	Interval        time.Duration
+	GitReaderFn     func() argosecrets.GitReader
+	Parser          *config.Parser
+}
 
 // SecretReconciler is the interface the server uses to trigger and query the reconciler.
 // It is implemented by internal/secrets.Reconciler but defined here to avoid an import cycle.
@@ -77,6 +92,15 @@ type Server struct {
 
 	// secretReconciler reconciles addon secrets across remote clusters (optional — set via SetSecretReconciler).
 	secretReconciler SecretReconciler
+
+	// ArgoCD cluster secret management (optional — set via SetArgoSecretManager/SetArgoSecretReconciler).
+	argoSecretManager    *argosecrets.Manager
+	argoSecretReconciler *argosecrets.Reconciler
+
+	// argoReconcilerConfig holds the stable parameters needed to restart the
+	// argosecrets reconciler on ReinitializeFromConnection without re-creating the
+	// in-cluster K8s client (which does not change between reinits).
+	argoReconcilerConfig *ArgoReconcilerCfg
 
 	// startTime records when the server was created (used for uptime reporting).
 	startTime time.Time
@@ -135,6 +159,35 @@ func (s *Server) SetVersion(v string) {
 // Call this after NewServer, before starting the HTTP listener.
 func (s *Server) SetSecretReconciler(r SecretReconciler) {
 	s.secretReconciler = r
+}
+
+// SetArgoSecretManager stores the ArgoCD secrets Manager for use by downstream handlers.
+func (s *Server) SetArgoSecretManager(m *argosecrets.Manager) {
+	s.argoSecretManager = m
+}
+
+// ArgoSecretManager returns the ArgoCD secrets Manager (may be nil if not configured).
+func (s *Server) ArgoSecretManager() *argosecrets.Manager {
+	return s.argoSecretManager
+}
+
+// SetArgoSecretReconciler stores the ArgoCD secrets Reconciler.
+func (s *Server) SetArgoSecretReconciler(r *argosecrets.Reconciler) {
+	s.argoSecretReconciler = r
+}
+
+// ArgoSecretReconciler returns the current ArgoCD secrets Reconciler (may be nil or
+// replaced by ReinitializeFromConnection). Always use this getter — never cache the
+// pointer returned by this method, as it can be swapped on reinit.
+func (s *Server) ArgoSecretReconciler() *argosecrets.Reconciler {
+	return s.argoSecretReconciler
+}
+
+// SetArgoReconcilerConfig stores the stable parameters (k8s client, namespace, interval,
+// gitReaderFn, parser) needed to restart the argosecrets reconciler on reinit.
+// Called once at startup from serve.go after the in-cluster client is created.
+func (s *Server) SetArgoReconcilerConfig(cfg *ArgoReconcilerCfg) {
+	s.argoReconcilerConfig = cfg
 }
 
 // SetAIConfigStore sets the persistent AI config store (K8s mode only).
@@ -248,6 +301,50 @@ func (s *Server) ReinitializeFromConnection() {
 	// Populate RepoURL from Git connection if not already set.
 	if s.gitopsCfg.RepoURL == "" && conn.Git.RepoURL != "" {
 		s.gitopsCfg.RepoURL = conn.Git.RepoURL
+	}
+
+	// Restart argosecrets reconciler with the updated provider/config.
+	if s.argoReconcilerConfig != nil && s.credProvider != nil {
+		// Stop the existing reconciler before replacing it.
+		if s.argoSecretReconciler != nil {
+			s.argoSecretReconciler.Stop()
+		}
+
+		cfg := s.argoReconcilerConfig
+		baseBranch := s.gitopsCfg.BaseBranch
+		if baseBranch == "" {
+			baseBranch = "main"
+		}
+		defaultRoleARN := ""
+		if s.providerCfg != nil {
+			defaultRoleARN = s.providerCfg.RoleARN
+		}
+
+		newManager := argosecrets.NewManager(cfg.K8sClient, cfg.ArgocdNamespace)
+		newReconciler := argosecrets.NewReconciler(
+			newManager,
+			s.credProvider,
+			cfg.GitReaderFn,
+			cfg.Parser,
+			baseBranch,
+			defaultRoleARN,
+			cfg.Interval,
+		)
+
+		auditLog := s.auditLog
+		newReconciler.SetAuditFunc(func(created, updated, deleted int) {
+			auditLog.Add(audit.Entry{
+				Source:  "argosecrets-reconciler",
+				Action:  "cluster_secret_sync",
+				Actor:   "sharko",
+				Details: fmt.Sprintf("ArgoCD secrets reconciled — created: %d, updated: %d, deleted: %d", created, updated, deleted),
+			})
+		})
+
+		s.argoSecretManager = newManager
+		s.argoSecretReconciler = newReconciler
+		newReconciler.Start(context.Background())
+		slog.Info("argosecrets reconciler restarted after connection reinit")
 	}
 }
 
