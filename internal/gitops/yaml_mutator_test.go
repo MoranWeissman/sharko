@@ -316,6 +316,129 @@ func TestDisableAddonLabel_CommentedOutEnabled(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// AddClusterEntry tests
+// ---------------------------------------------------------------------------
+
+const clusterAddonsForAddEntry = `# Managed clusters
+clusters:
+  - name: prod-us
+    labels:
+      cert-manager: "true"
+      keda: "false"
+`
+
+func TestAddClusterEntry_AppendsEntry(t *testing.T) {
+	entry := ClusterEntryInput{
+		Name: "prod-eu",
+		Labels: map[string]string{
+			"cert-manager": "true",
+			"keda":         "true",
+		},
+	}
+	out, err := AddClusterEntry([]byte(clusterAddonsForAddEntry), entry)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	s := string(out)
+
+	// New cluster present.
+	if !strings.Contains(s, "  - name: prod-eu") {
+		t.Errorf("expected prod-eu entry, got:\n%s", s)
+	}
+	// Labels written in true/false format.
+	if !containsInCluster(s, "prod-eu", "cert-manager: \"true\"") && !containsInCluster(s, "prod-eu", "cert-manager: true") {
+		t.Errorf("expected cert-manager: true for prod-eu:\n%s", s)
+	}
+	// Existing cluster untouched.
+	if !strings.Contains(s, "  - name: prod-us") {
+		t.Errorf("prod-us cluster was removed:\n%s", s)
+	}
+	// Comments preserved.
+	if !strings.Contains(s, "# Managed clusters") {
+		t.Errorf("top-level comment was lost:\n%s", s)
+	}
+}
+
+func TestAddClusterEntry_WithOptionalFields(t *testing.T) {
+	entry := ClusterEntryInput{
+		Name:       "prod-eu",
+		Region:     "eu-west-1",
+		SecretPath: "clusters/prod/prod-eu",
+		Labels: map[string]string{
+			"cert-manager": "true",
+		},
+	}
+	out, err := AddClusterEntry([]byte(clusterAddonsForAddEntry), entry)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	s := string(out)
+
+	if !containsInCluster(s, "prod-eu", "region: eu-west-1") {
+		t.Errorf("expected region field for prod-eu:\n%s", s)
+	}
+	if !containsInCluster(s, "prod-eu", "secretPath: clusters/prod/prod-eu") {
+		t.Errorf("expected secretPath field for prod-eu:\n%s", s)
+	}
+}
+
+func TestAddClusterEntry_DuplicateSkipped(t *testing.T) {
+	entry := ClusterEntryInput{
+		Name: "prod-us", // already exists
+		Labels: map[string]string{
+			"cert-manager": "true",
+		},
+	}
+	out, err := AddClusterEntry([]byte(clusterAddonsForAddEntry), entry)
+	if err != nil {
+		t.Fatalf("expected no error for duplicate (adoption path), got: %v", err)
+	}
+	// Output should be identical — no second entry added.
+	if string(out) != clusterAddonsForAddEntry {
+		t.Errorf("expected unchanged document for duplicate entry:\ngot:\n%s", string(out))
+	}
+}
+
+func TestAddClusterEntry_EmptyLabels(t *testing.T) {
+	entry := ClusterEntryInput{
+		Name:   "staging-eu",
+		Labels: map[string]string{},
+	}
+	out, err := AddClusterEntry([]byte(clusterAddonsForAddEntry), entry)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	s := string(out)
+	if !strings.Contains(s, "  - name: staging-eu") {
+		t.Errorf("expected staging-eu entry:\n%s", s)
+	}
+	// Empty labels written as empty map.
+	if !containsInCluster(s, "staging-eu", "labels: {}") {
+		t.Errorf("expected labels: {} for empty labels:\n%s", s)
+	}
+}
+
+func TestAddClusterEntry_EmptyDocument(t *testing.T) {
+	entry := ClusterEntryInput{
+		Name: "first-cluster",
+		Labels: map[string]string{
+			"cert-manager": "true",
+		},
+	}
+	out, err := AddClusterEntry([]byte(""), entry)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	s := string(out)
+	if !strings.Contains(s, "clusters:") {
+		t.Errorf("expected clusters: key in bootstrapped document:\n%s", s)
+	}
+	if !strings.Contains(s, "  - name: first-cluster") {
+		t.Errorf("expected first-cluster entry:\n%s", s)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // helper
 // ---------------------------------------------------------------------------
 

@@ -303,6 +303,119 @@ func AddCatalogEntry(data []byte, entry CatalogEntryInput) ([]byte, error) {
 	return []byte(strings.Join(lines, "\n")), nil
 }
 
+// ---------------------------------------------------------------------------
+// Cluster entry helpers
+// ---------------------------------------------------------------------------
+
+// ClusterEntryInput holds the fields for a new cluster-addons.yaml entry.
+// Region and SecretPath are optional (zero value means not set).
+// Labels should use "true"/"false" format to match cluster-addons.yaml convention.
+type ClusterEntryInput struct {
+	Name       string
+	Region     string            // optional
+	SecretPath string            // optional
+	Labels     map[string]string // addon labels, e.g. {"cert-manager": "true"}
+}
+
+// AddClusterEntry appends a new entry to the clusters array in a
+// cluster-addons.yaml document.  It returns an error if an entry with the
+// same name already exists.  If the document has no clusters: key, one is
+// created.
+//
+// If data is empty or contains only whitespace, a minimal document is
+// bootstrapped with a clusters: header before inserting.
+func AddClusterEntry(data []byte, entry ClusterEntryInput) ([]byte, error) {
+	// Bootstrap empty document.
+	if len(strings.TrimSpace(string(data))) == 0 {
+		data = []byte("clusters:\n")
+	}
+
+	lines := strings.Split(string(data), "\n")
+
+	// Locate clusters: key.
+	clustersIdx := -1
+	for i, line := range lines {
+		if strings.TrimSpace(line) == "clusters:" {
+			clustersIdx = i
+			break
+		}
+	}
+	if clustersIdx == -1 {
+		// Append clusters: section at the end.
+		lines = append(lines, "clusters:")
+		clustersIdx = len(lines) - 1
+	}
+
+	// Check for duplicate.
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "- name: "+entry.Name {
+			// Already present — skip silently (adoption path).
+			return data, nil
+		}
+	}
+
+	// Find the last line that belongs to the clusters array.
+	// Lines with indent >= 2, or blank lines between entries, belong to the block.
+	// A non-blank line with indent < 2 is a new top-level key — stop there.
+	lastContentIdx := clustersIdx
+	for i := clustersIdx + 1; i < len(lines); i++ {
+		line := lines[i]
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if leadingSpaces(line) < 2 {
+			break
+		}
+		lastContentIdx = i
+	}
+
+	// Build the new entry block (2-space list indent, 4-space field indent).
+	newLines := []string{
+		"  - name: " + entry.Name,
+	}
+	if entry.Region != "" {
+		newLines = append(newLines, "    region: "+entry.Region)
+	}
+	if entry.SecretPath != "" {
+		newLines = append(newLines, "    secretPath: "+entry.SecretPath)
+	}
+	if len(entry.Labels) > 0 {
+		newLines = append(newLines, "    labels:")
+		// Sort label keys for deterministic output.
+		keys := make([]string, 0, len(entry.Labels))
+		for k := range entry.Labels {
+			keys = append(keys, k)
+		}
+		for i := 0; i < len(keys)-1; i++ {
+			for j := i + 1; j < len(keys); j++ {
+				if keys[i] > keys[j] {
+					keys[i], keys[j] = keys[j], keys[i]
+				}
+			}
+		}
+		for _, k := range keys {
+			newLines = append(newLines, "      "+k+": "+entry.Labels[k])
+		}
+	} else {
+		newLines = append(newLines, "    labels: {}")
+	}
+
+	// Insert a blank separator then the new block after lastContentIdx.
+	insertAt := lastContentIdx + 1
+	// Insert in reverse order so each insertLine call puts the line at the
+	// right position.
+	for j := len(newLines) - 1; j >= 0; j-- {
+		lines = insertLine(lines, insertAt, newLines[j])
+	}
+	// Add a blank line between the previous last entry and the new one,
+	// but only when there was already content in the array (not just the header).
+	if lastContentIdx > clustersIdx {
+		lines = insertLine(lines, insertAt, "")
+	}
+
+	return []byte(strings.Join(lines, "\n")), nil
+}
+
 // RemoveCatalogEntry removes the entire block for addonName from the
 // applicationsets array, including any comment lines that appear directly
 // above the entry (between the previous entry's last line and this entry's

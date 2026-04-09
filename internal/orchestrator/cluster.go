@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MoranWeissman/sharko/internal/gitops"
 	"github.com/MoranWeissman/sharko/internal/models"
 
 	"gopkg.in/yaml.v3"
@@ -147,8 +148,45 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	valuesContent := generateClusterValues(req.Name, req.Region, req.Addons, catalog)
 	valuesPath := path.Join(o.paths.ClusterValues, req.Name+".yaml")
 
+	// Read cluster-addons.yaml and add this cluster's entry so the /api/v1/clusters
+	// endpoint recognises the cluster as managed after the PR merges.
+	clusterAddonsPath := "configuration/cluster-addons.yaml"
+	clusterAddonsData, clusterAddonsErr := o.git.GetFileContent(ctx, clusterAddonsPath, o.gitops.BaseBranch)
+	if clusterAddonsErr != nil {
+		// File doesn't exist yet — bootstrap a minimal document.
+		slog.Info("cluster-addons.yaml not found, bootstrapping", "cluster", req.Name)
+		clusterAddonsData = []byte("clusters:\n")
+	}
+
+	// Build labels in "true"/"false" format to match cluster-addons.yaml convention.
+	clusterLabels := make(map[string]string, len(req.Addons))
+	for addon, enabled := range req.Addons {
+		if enabled {
+			clusterLabels[addon] = "true"
+		} else {
+			clusterLabels[addon] = "false"
+		}
+	}
+
+	updatedClusterAddons, addEntryErr := gitops.AddClusterEntry(clusterAddonsData, gitops.ClusterEntryInput{
+		Name:       req.Name,
+		Region:     req.Region,
+		SecretPath: req.SecretPath,
+		Labels:     clusterLabels,
+	})
+	if addEntryErr != nil {
+		slog.Error("failed to add cluster entry to cluster-addons.yaml — continuing with values file only",
+			"cluster", req.Name, "error", addEntryErr,
+		)
+		// Non-fatal: fall back to values-file-only commit so registration still proceeds.
+		updatedClusterAddons = nil
+	}
+
 	files := map[string][]byte{
 		valuesPath: valuesContent,
+	}
+	if updatedClusterAddons != nil {
+		files[clusterAddonsPath] = updatedClusterAddons
 	}
 
 	gitResult, err := o.commitChanges(ctx, files, nil, fmt.Sprintf("register cluster %s", req.Name))
