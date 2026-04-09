@@ -18,7 +18,6 @@ This project was extracted from an internal codebase. No references to the origi
 ## Project Context
 
 Sharko is an addon management server for Kubernetes clusters, built on ArgoCD.
-See `docs/superpowers/specs/2026-04-01-sharko-implementation-design.md` for the authoritative design spec.
 
 ## Session Startup
 
@@ -32,19 +31,22 @@ Use these whenever available to save tokens and improve reasoning:
 - **Sequential Thinking MCP** — use for complex reasoning, multi-step decisions, architectural analysis
 - **Context7 MCP** — use whenever working with libraries, frameworks, or tools (React, Vite, Tailwind, shadcn/ui, Helm, Cobra, client-go, etc.). Fetch current docs instead of relying on training data. Include in agent dispatch prompts.
 
-## Skills (Superpowers)
+## BMAD Method
 
-The tech-lead playbook maps when to use each skill. Key ones for this project:
+This project uses BMAD (BMad Method Agile-AI Driven-Development). 67 skills are registered in `.claude/skills/`. **Always prefer BMAD skills** — invoke them automatically when the user's request matches a skill's description. When unsure which skill to use, invoke `bmad-help`.
 
-- **`superpowers:write-plan`** — decompose a phase into tasks before coding
-- **`superpowers:execute-plan`** — run through tasks with checkpoints
-- **`superpowers:test-driven-development`** — for new packages and coverage gaps
-- **`superpowers:systematic-debugging`** — when something breaks, investigate before guessing
-- **`superpowers:requesting-code-review`** — after each logical chunk
-- **`superpowers:verification-before-completion`** — run tests, read output, never assume
-- **`superpowers:finishing-a-development-branch`** — wrap up phase branch for review
-- **`superpowers:dispatching-parallel-agents`** — for parallel phase work (e.g., Phase 3+4)
-- **`superpowers:brainstorming`** — when a design question isn't answered by the plan
+**Auto-invoke rules** — match user intent to BMAD skills:
+- User says "review code" / after finishing a feature → `bmad-code-review`
+- User says "brainstorm" / design question arises → `bmad-brainstorming`
+- User says "plan" / starting new work → `bmad-sprint-planning`
+- User says "build this" / implement a feature → `bmad-quick-dev` or `bmad-dev-story`
+- User says "create PRD" / define requirements → `bmad-create-prd`
+- User says "architecture" / design system → `bmad-create-architecture`
+- User says "test" / expand coverage → `bmad-testarch-automate`
+- User says "what's next" / needs orientation → `bmad-help`
+- Complex decision with trade-offs → `bmad-party-mode` (multi-persona discussion)
+
+**BMAD + Sharko agents:** BMAD drives the workflow. `.claude/team/` agents provide Sharko-specific domain knowledge (K8s/ArgoCD, security, DevOps) that BMAD personas lack. Include relevant `.claude/team/` role files as context when BMAD agents execute code.
 
 ## Agent Team
 

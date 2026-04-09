@@ -17,80 +17,75 @@ If the user says nothing specific, summarize: "We're on Phase X, step Y. Continu
 
 If the user says "start", begin executing from wherever the plan is.
 
-## Superpowers Skills — When to Use Each
+## BMAD Skills — When to Use Each
 
-These are invoked via the `Skill` tool. Use the right skill at the right time — they encode battle-tested workflows.
+BMAD skills are in `_bmad/`. Read the relevant SKILL.md file to follow the workflow. Use BMAD for **process and workflow**, `.claude/team/` agents for **execution**.
 
 ### Core Workflow Skills
 
 | Skill | When to invoke | Sharko context |
 |-------|---------------|----------------|
-| `superpowers:brainstorming` | When a design decision isn't in the plan, or user says "let's think about..." | Use before adding anything not in IMPLEMENTATION-PLAN-V1.md |
-| `superpowers:write-plan` | When breaking a phase into implementable tasks | Invoke at PLAN step of each phase |
-| `superpowers:execute-plan` | When starting execution of a planned phase | Invoke at DO step — it handles task-by-task execution with checkpoints |
-| `superpowers:finishing-a-development-branch` | When a phase is complete and ready for review | Invoke at NEXT step — handles verify/PR/cleanup |
+| `bmad-brainstorming` | When a design decision isn't in the plan, or user says "let's think about..." | Use before adding anything not in the implementation plan |
+| `bmad-sprint-planning` | When breaking a phase into implementable tasks | Invoke at PLAN step of each phase |
+| `bmad-create-story` | When preparing a task for agent execution | Creates story file with full context for the dev agent |
+| `bmad-dev-story` | When starting execution of a planned story | Invoke at DO step — handles task-by-task execution |
 
 ### Quality Skills
 
 | Skill | When to invoke | Sharko context |
 |-------|---------------|----------------|
-| `superpowers:requesting-code-review` | After each logical chunk or phase completion | Dispatch with our code-reviewer.md context |
-| `superpowers:verification-before-completion` | Before declaring any task or phase done | Never say "should pass" — run and read output |
-| `superpowers:test-driven-development` | When writing new packages (queue, remoteclient) or filling coverage gaps | Especially for Phase 1 (mutex tests) and Phase 3 (remote client tests) |
+| `bmad-code-review` | After each logical chunk or phase completion | Dispatch with our code-reviewer.md context |
+| `bmad-testarch-test-design` | When designing test strategy for new packages | Coverage planning for new features |
+| `bmad-testarch-automate` | When expanding test coverage | Generate tests for existing code |
 
-### Problem-Solving Skills
+### Planning & Discovery Skills
 
 | Skill | When to invoke | Sharko context |
 |-------|---------------|----------------|
-| `superpowers:systematic-debugging` | When a test fails unexpectedly or behavior is wrong | Read error → reproduce → hypothesize → fix. Don't guess. |
-| `superpowers:dispatching-parallel-agents` | When 2+ independent work streams exist | Phase 3+4 parallel, Go+UI within a phase |
-| `superpowers:using-git-worktrees` | When parallel agents need isolated repos | Each parallel agent gets its own worktree |
-| `superpowers:subagent-driven-development` | For complex phases with many files | Two-stage review (spec compliance, then code quality) per task |
+| `bmad-create-prd` | When defining a new feature or major change | Product requirements from discovery |
+| `bmad-create-architecture` | When making technical design decisions | Architecture decisions for new subsystems |
+| `bmad-help` | When unsure what to do next | Orientation and next-step guidance |
 
 ### Skill Integration into Execution Loop
 
 ```
 PLAN phase:
-  → Invoke `superpowers:write-plan` to decompose the phase
-  → Output: ordered task list with files, changes, expected output
+  → Use `bmad-sprint-planning` to plan the sprint
+  → Use `bmad-create-story` for each task
+  → Output: story files with full context for agents
 
 DO phase:
-  → Invoke `superpowers:execute-plan` to run through tasks
-  → For new packages: invoke `superpowers:test-driven-development`
-  → For parallel work: invoke `superpowers:dispatching-parallel-agents`
-  → For complex multi-file work: invoke `superpowers:subagent-driven-development`
+  → Use `bmad-dev-story` to execute stories
+  → Dispatch .claude/team/ agents for actual code execution
+  → For parallel work: use git worktrees for isolation
 
 CHECK phase:
-  → Invoke `superpowers:verification-before-completion` (run tests, read output)
-  → Invoke `superpowers:requesting-code-review` (dispatch reviewer)
+  → Run quality gates (go build, go test, npm build, npm test)
+  → Use `bmad-code-review` with our code-reviewer.md context
+  → Always run tests and read output — never assume things pass
 
 COMMIT phase:
-  → Invoke `superpowers:finishing-a-development-branch` when phase is done
+  → Commit to feature branch, update progress
 
 DEBUG (when things break):
-  → Invoke `superpowers:systematic-debugging` before guessing
+  → Read error → reproduce → hypothesize → fix. Don't guess.
 ```
-
-### Skills NOT Needed for Sharko
-
-- `superpowers:writing-skills` — we're not writing new skills
-- `superpowers:receiving-code-review` — we dispatch reviews, we don't receive external ones
 
 ## Execution Loop
 
 For each phase, repeat this cycle until the phase is done:
 
 ```
-PLAN    → Break phase into implementable tasks (invoke write-plan skill)
-DO      → Implement each task (invoke execute-plan skill, dispatch agents)
-CHECK   → Run quality gates, dispatch code-reviewer (invoke verification + review skills)
+PLAN    → Break phase into implementable tasks (bmad-sprint-planning + bmad-create-story)
+DO      → Implement each task (bmad-dev-story, dispatch .claude/team/ agents)
+CHECK   → Run quality gates, dispatch code-reviewer (bmad-code-review)
 COMMIT  → Commit to feature branch, update progress
-NEXT    → Move to next task or phase (invoke finishing-branch skill when phase done)
+NEXT    → Move to next task or phase
 ```
 
 ### PLAN — Task Decomposition
 
-Invoke `superpowers:write-plan` to break the current phase into ordered tasks. Use TaskCreate to track them. Example for a phase:
+Use `bmad-sprint-planning` to break the current phase into ordered tasks. Use TaskCreate to track them. Example for a phase:
 
 ```
 Task 1: Add sync.Mutex to Orchestrator struct
@@ -163,7 +158,7 @@ grep -rn "scrdairy\|merck\|msd\.com\|mahi-techlabs\|merck-ahtl" \
   grep -v node_modules | grep -v .git/
 ```
 
-Always invoke `superpowers:verification-before-completion` — run the commands and read the output. Never assume things pass.
+Always run the quality gate commands and read the output. Never assume things pass.
 
 Dispatch code-reviewer after each logical chunk of work (not every single file change, but after a feature is complete within a phase).
 
@@ -201,7 +196,7 @@ When a phase is complete:
 ## When to Stop and Ask
 
 **DO stop and ask when:**
-- A design decision isn't covered by the implementation plan (invoke `superpowers:brainstorming` if the user wants to explore)
+- A design decision isn't covered by the implementation plan (use `bmad-brainstorming` if the user wants to explore)
 - The plan contradicts itself or the existing code
 - You need to change a settled decision (see product-manager.md)
 - The phase scope seems wrong (too much or too little)
@@ -210,7 +205,7 @@ When a phase is complete:
 
 **DO NOT stop and ask when:**
 - You need to choose between two equivalent implementations (pick the simpler one)
-- A test is failing because of your new code (fix it — invoke `superpowers:systematic-debugging` if needed)
+- A test is failing because of your new code (fix it — read error, reproduce, hypothesize, fix)
 - A test reveals a bug in existing code — find it and fix it, don't ask. Bugs are bugs, fix them.
 - You need to read more files to understand context (read them)
 - You need to add a small helper function (add it)
@@ -219,7 +214,7 @@ When a phase is complete:
 
 ## Parallel Execution
 
-When the plan allows parallel work (e.g., Phase 3 + 4), invoke `superpowers:dispatching-parallel-agents` and use `superpowers:using-git-worktrees` for isolation. But:
+When the plan allows parallel work (e.g., Phase 3 + 4), use git worktrees for isolation. But:
 - Each gets its own branch
 - They must not touch the same files
 - If they conflict, serialize them instead

@@ -71,8 +71,7 @@ The Swagger UI is available at `/swagger/index.html` when the server is running.
 ### Design Documentation
 - `docs/design/IMPLEMENTATION-PLAN-V1.md` — v1.0.0 implementation plan
 - `docs/design/section-*.md` — detailed design sections
-- `docs/superpowers/specs/` — design specs
-- `docs/superpowers/plans/` — implementation plans
+- `docs/design/` — design specs and implementation plans
 
 ### Agent Team Documentation
 - `.claude/team/*.md` — agent role files (living documents, update as project evolves)

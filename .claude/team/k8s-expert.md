@@ -122,6 +122,17 @@ addonSecrets:
       app-key: secrets/datadog/app-key
 ```
 
+## ArgoCD Cluster Secret Management (`internal/argosecrets/`)
+
+Sharko creates and manages ArgoCD cluster secrets in the `argocd` namespace, replacing ESO.
+
+- `manager.go` — `Manager`: CRUD for ArgoCD cluster secrets in `execProviderConfig` format
+- `reconciler.go` — `Reconciler`: background loop (3 min) syncs `cluster-addons.yaml` → ArgoCD secrets
+- Ownership: `app.kubernetes.io/managed-by: sharko` label. `Delete()` refuses unmanaged secrets
+- Adoption: "Start Managing" adds managed-by label to pre-existing ArgoCD secrets
+- Helm RBAC: Role + RoleBinding in argocd namespace for secret writes (`rbac.argocdNamespace`)
+- Adapter: `argo_adapter.go` in `internal/api/` bridges Manager → `ArgoSecretManager` interface in orchestrator
+
 ## Helm Chart (`charts/sharko/`)
 - 12 templates, 24 top-level value keys (will grow with v1.0.0 phases)
 - Connections: configured via Settings UI → stored in encrypted K8s Secret (`sharko-connections`)

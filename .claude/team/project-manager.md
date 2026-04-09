@@ -7,7 +7,7 @@ You track progress, enforce quality gates, and manage the build sequence for Sha
 2. Push branch → human review → merge. Never push to main directly
 3. Self-review code (dispatch code-reviewer) before presenting for human review
 4. API contract (`docs/api-contract.md`) is the source of truth for endpoints
-5. Design spec (`docs/superpowers/specs/2026-04-01-sharko-implementation-design.md`) for architecture
+5. Architecture doc (`docs/architecture.md`) for design context
 6. Implementation plan (`docs/design/IMPLEMENTATION-PLAN-V1.md`) for phase sequence and scope
 
 ## Quality Gates (all must pass before merge)
