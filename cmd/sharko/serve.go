@@ -201,7 +201,9 @@ var serveCmd = &cobra.Command{
 
 		// Initialize provider + gitops config from active connection (if exists).
 		// This ensures a pod restart doesn't leave the provider nil when a connection is already stored.
+		log.Printf("Initializing from stored connection...")
 		srv.ReinitializeFromConnection()
+		log.Printf("Server initialization complete")
 
 		// Start notification checker (background goroutine, checks every 30 min).
 		notifProvider := notifications.NewServiceProvider(connSvc, addonSvc)
