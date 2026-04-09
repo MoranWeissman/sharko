@@ -126,9 +126,16 @@ export function ClustersOverview() {
         region: addClusterRegion.trim() || undefined,
         addons: Object.keys(selectedAddons).length > 0 ? selectedAddons : undefined,
       });
-      const prUrl = result?.pr_url || result?.pull_request_url;
-      setAddClusterResult(prUrl ? `Cluster registered. PR: ${prUrl}` : 'Cluster registered successfully.');
+      const prUrl = result?.git?.pr_url || result?.pr_url || result?.pull_request_url;
+      const merged = result?.git?.merged;
+      const statusMsg = merged === false && prUrl
+        ? `Cluster registered. PR pending merge: ${prUrl}`
+        : prUrl
+          ? `Cluster registered. PR: ${prUrl}`
+          : 'Cluster registered successfully.';
+      setAddClusterOpen(false);
       void fetchData();
+      setAddClusterResult(statusMsg);
     } catch (e: unknown) {
       setAddClusterError(e instanceof Error ? e.message : 'Failed to register cluster');
     } finally {
@@ -415,6 +422,21 @@ export function ClustersOverview() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Registration success banner */}
+      {addClusterResult && (
+        <div className="flex items-center justify-between rounded-md border border-green-300 bg-green-50 px-4 py-2 text-sm text-green-800 dark:border-green-700 dark:bg-green-900/30 dark:text-green-300">
+          <span>{addClusterResult}</span>
+          <button
+            type="button"
+            onClick={() => setAddClusterResult(null)}
+            className="ml-4 rounded p-0.5 hover:bg-green-100 dark:hover:bg-green-800"
+            aria-label="Dismiss"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
 
       {/* Health stat cards */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
