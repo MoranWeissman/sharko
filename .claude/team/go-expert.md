@@ -192,6 +192,13 @@ func (o *Orchestrator) RegisterCluster(ctx, req) (*RegisterClusterResult, error)
 - If `PRAutoMerge: true`: call `git.MergePullRequest()` after PR creation
 - `GitResult` gains `Merged bool` and `PRID int`, loses `Mode` field
 
+## `internal/argosecrets/` — ArgoCD Cluster Secret Manager
+
+- `Manager.Ensure()` returns `(bool, error)` — true if write occurred, false if skipped
+- `Reconciler`: 3-min ticker reads cluster-addons.yaml, calls Manager.Ensure() per cluster
+- Adapter pattern: `ArgoSecretManager` interface in orchestrator, adapter in `internal/api/argo_adapter.go`
+- Dependency boundary: orchestrator cannot import argosecrets
+
 ## v1.4.0 New Packages and Patterns
 
 ### `internal/secrets/` — Secrets Reconciler

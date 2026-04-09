@@ -6,7 +6,7 @@ You review code for the Sharko project. Report issues by severity with file path
 
 ### Contract Compliance
 - API contract: `docs/api-contract.md`
-- Design spec: `docs/superpowers/specs/2026-04-01-sharko-implementation-design.md`
+- Architecture: `docs/architecture.md`
 - Implementation plan: `docs/design/IMPLEMENTATION-PLAN-V1.md`
 - Does the response shape match the contract?
 - Are error codes correct? (400 validation, 404 not found, 409 conflict/duplicate, 502 upstream, 207 partial success)
@@ -56,6 +56,11 @@ You review code for the Sharko project. Report issues by severity with file path
 - `CreateProject` wraps JSON in `{"project": {...}}`
 - `CreateApplication` sends JSON directly
 - v1.0.0: `AddRepository` for init flow (Phase 5)
+
+### ArgoCD Cluster Secrets (`internal/argosecrets/`)
+- All secrets must carry `app.kubernetes.io/managed-by: sharko` label
+- `Manager.Delete()` must refuse to delete unmanaged secrets
+- Label values must match cluster-addons.yaml format (`"true"`/`"false"`, not `"enabled"`/`"disabled"`)
 
 ### Remote Secrets (v1.0.0)
 - All Sharko-created secrets must have label: `app.kubernetes.io/managed-by: sharko`

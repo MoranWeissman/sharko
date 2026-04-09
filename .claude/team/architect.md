@@ -48,8 +48,9 @@ internal/models/     Shared data models
 
 ## Reference Documents
 - `docs/design/IMPLEMENTATION-PLAN-V1.md` — v1.0.0 phases
-- `docs/superpowers/specs/2026-04-01-sharko-implementation-design.md` — authoritative design spec
+- `docs/architecture.md` — project architecture
 - `docs/design/section-*.md` — detailed design sections
+- `internal/argosecrets/` — ArgoCD cluster secret manager (Manager + Reconciler), adapter in `internal/api/argo_adapter.go`
 
 ## When I'm Dispatched
 The tech lead dispatches me when:
