@@ -49,13 +49,20 @@ func loadEnvironments() []string {
 
 // AddonService handles addon-related operations.
 type AddonService struct {
-	parser *config.Parser
+	parser              *config.Parser
+	managedClustersPath string // path in Git repo to managed-clusters.yaml
 }
 
 // NewAddonService creates a new AddonService.
-func NewAddonService() *AddonService {
+// managedClustersPath is the Git repo path to managed-clusters.yaml.
+// An empty string defaults to "configuration/managed-clusters.yaml".
+func NewAddonService(managedClustersPath string) *AddonService {
+	if managedClustersPath == "" {
+		managedClustersPath = "configuration/managed-clusters.yaml"
+	}
 	return &AddonService{
-		parser: config.NewParser(),
+		parser:              config.NewParser(),
+		managedClustersPath: managedClustersPath,
 	}
 }
 
@@ -75,12 +82,12 @@ func (s *AddonService) ListAddons(ctx context.Context, gp gitprovider.GitProvide
 
 // GetCatalog returns the full addon catalog with deployment stats across clusters.
 func (s *AddonService) GetCatalog(ctx context.Context, gp gitprovider.GitProvider, ac *argocd.Client) (*models.AddonCatalogResponse, error) {
-	clusterData, err := gp.GetFileContent(ctx, "configuration/cluster-addons.yaml", "main")
+	clusterData, err := gp.GetFileContent(ctx, s.managedClustersPath, "main")
 	if err != nil {
 		if strings.Contains(err.Error(), "404") {
 			clusterData = []byte("clusters: []")
 		} else {
-			return nil, fmt.Errorf("reading cluster-addons.yaml: %w", err)
+			return nil, fmt.Errorf("reading managed-clusters.yaml: %w", err)
 		}
 	}
 
@@ -248,12 +255,12 @@ func (s *AddonService) GetAddonDetail(ctx context.Context, addonName string, gp 
 
 // GetVersionMatrix returns a version matrix showing addon versions and health across all clusters.
 func (s *AddonService) GetVersionMatrix(ctx context.Context, gp gitprovider.GitProvider, ac *argocd.Client) (*models.VersionMatrixResponse, error) {
-	clusterData, err := gp.GetFileContent(ctx, "configuration/cluster-addons.yaml", "main")
+	clusterData, err := gp.GetFileContent(ctx, s.managedClustersPath, "main")
 	if err != nil {
 		if strings.Contains(err.Error(), "404") {
 			clusterData = []byte("clusters: []")
 		} else {
-			return nil, fmt.Errorf("reading cluster-addons.yaml: %w", err)
+			return nil, fmt.Errorf("reading managed-clusters.yaml: %w", err)
 		}
 	}
 

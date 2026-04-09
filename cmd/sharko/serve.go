@@ -188,11 +188,11 @@ var serveCmd = &cobra.Command{
 
 		// Wire up services
 		connSvc := service.NewConnectionService(store)
-		clusterSvc := service.NewClusterService()
-		addonSvc := service.NewAddonService()
-		dashboardSvc := service.NewDashboardService(connSvc)
+		clusterSvc := service.NewClusterService(getEnvDefault("SHARKO_REPO_PATH_MANAGED_CLUSTERS", "configuration/managed-clusters.yaml"))
+		addonSvc := service.NewAddonService(getEnvDefault("SHARKO_REPO_PATH_MANAGED_CLUSTERS", "configuration/managed-clusters.yaml"))
+		dashboardSvc := service.NewDashboardService(connSvc, getEnvDefault("SHARKO_REPO_PATH_MANAGED_CLUSTERS", "configuration/managed-clusters.yaml"))
 		observabilitySvc := service.NewObservabilityService()
-		upgradeSvc := service.NewUpgradeService(aiClient)
+		upgradeSvc := service.NewUpgradeService(aiClient, getEnvDefault("SHARKO_REPO_PATH_MANAGED_CLUSTERS", "configuration/managed-clusters.yaml"))
 
 		// Build server
 		srv := api.NewServer(connSvc, clusterSvc, addonSvc, dashboardSvc, observabilitySvc, upgradeSvc, aiClient)
@@ -242,11 +242,12 @@ var serveCmd = &cobra.Command{
 
 		// Repo path and GitOps config — always constructed (not provider-dependent).
 		repoPaths := orchestrator.RepoPathsConfig{
-			ClusterValues: "configuration/addons-clusters-values",
-			GlobalValues:  "configuration/addons-global-values",
-			Catalog:       "configuration/addons-catalog.yaml",
-			Charts:        "charts/",
-			Bootstrap:     "bootstrap/",
+			ClusterValues:   "configuration/addons-clusters-values",
+			GlobalValues:    "configuration/addons-global-values",
+			Catalog:         "configuration/addons-catalog.yaml",
+			Charts:          "charts/",
+			Bootstrap:       "bootstrap/",
+			ManagedClusters: getEnvDefault("SHARKO_REPO_PATH_MANAGED_CLUSTERS", "configuration/managed-clusters.yaml"),
 		}
 
 		gitopsCfg := orchestrator.GitOpsConfig{
@@ -373,6 +374,7 @@ var serveCmd = &cobra.Command{
 					remoteclient.NewClientFromKubeconfig,
 					parser,
 					baseBranch,
+					repoPaths.ManagedClusters,
 					dur,
 				)
 				srv.SetSecretReconciler(reconciler)
@@ -442,6 +444,7 @@ var serveCmd = &cobra.Command{
 						argoParser,
 						argoBaseBranch,
 						argoDefaultRoleARN,
+						repoPaths.ManagedClusters,
 						argoDur,
 					)
 
@@ -460,11 +463,12 @@ var serveCmd = &cobra.Command{
 
 					// Store stable config for ReinitializeFromConnection to use.
 					srv.SetArgoReconcilerConfig(&api.ArgoReconcilerCfg{
-						K8sClient:       k8sClient,
-						ArgocdNamespace: argocdNamespace,
-						Interval:        argoDur,
-						GitReaderFn:     argoGitReaderFn,
-						Parser:          argoParser,
+						K8sClient:           k8sClient,
+						ArgocdNamespace:     argocdNamespace,
+						Interval:            argoDur,
+						GitReaderFn:         argoGitReaderFn,
+						Parser:              argoParser,
+						ManagedClustersPath: repoPaths.ManagedClusters,
 					})
 
 					argoReconciler.Start(context.Background())

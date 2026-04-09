@@ -62,7 +62,7 @@ func (m *mockCredProvider) GetCredentials(name string) (*providers.Kubeconfig, e
 // Test helpers
 // --------------------------------------------------------------------------
 
-const clusterAddonsPath = "configuration/cluster-addons.yaml"
+const clusterAddonsPath = "configuration/managed-clusters.yaml"
 
 // twoClusterYAML is a valid cluster-addons.yaml with two clusters.
 const twoClusterYAML = `
@@ -115,7 +115,8 @@ func newTestReconciler(
 		parser,
 		"main",
 		"arn:aws:iam::123456789012:role/default",
-		0, // use default interval
+		clusterAddonsPath, // managed clusters path
+		0,                 // use default interval
 	)
 	return rec, mgr, client
 }
@@ -207,18 +208,35 @@ func TestReconcileOnce_OrphanCleanup(t *testing.T) {
 		},
 	}
 
-	rec := NewReconciler(mgr, creds, func() GitReader { return reader }, parser, "main", "", 0)
+	rec := NewReconciler(mgr, creds, func() GitReader { return reader }, parser, "main", "", clusterAddonsPath, 0)
+
+	// First pass: orphan is detected but deferred (two-cycle rule).
 	rec.ReconcileOnce(context.Background())
 
-	// Orphan must be gone.
+	// Orphan must still exist after the first pass.
 	_, err := client.CoreV1().Secrets(testNamespace).Get(context.Background(), "orphan-cluster", metav1.GetOptions{})
+	if err != nil {
+		t.Errorf("orphan-cluster should still exist after first pass (deferred): %v", err)
+	}
+	statsFirst := rec.GetStats()
+	if statsFirst.Deleted != 0 {
+		t.Errorf("first pass stats.Deleted = %d, want 0 (deferred)", statsFirst.Deleted)
+	}
+
+	// Second pass: orphan was in previousOrphans — now safe to delete.
+	// Update content so the hash check does not short-circuit (use twoClusterYAMLAlt).
+	reader.files[clusterAddonsPath] = []byte(twoClusterYAMLAlt)
+	rec.ReconcileOnce(context.Background())
+
+	// Orphan must be gone after the second pass.
+	_, err = client.CoreV1().Secrets(testNamespace).Get(context.Background(), "orphan-cluster", metav1.GetOptions{})
 	if err == nil {
-		t.Error("orphan-cluster should have been deleted, but still exists")
+		t.Error("orphan-cluster should have been deleted after second pass, but still exists")
 	}
 
 	stats := rec.GetStats()
 	if stats.Deleted != 1 {
-		t.Errorf("stats.Deleted = %d, want 1", stats.Deleted)
+		t.Errorf("second pass stats.Deleted = %d, want 1", stats.Deleted)
 	}
 }
 
@@ -409,7 +427,7 @@ func TestReconcileOnce_Trigger(t *testing.T) {
 	mgr := NewManager(client, testNamespace)
 	parser := config.NewParser()
 
-	rec := NewReconciler(mgr, creds, func() GitReader { return reader }, parser, "main", "", 10*time.Minute)
+	rec := NewReconciler(mgr, creds, func() GitReader { return reader }, parser, "main", "", clusterAddonsPath, 10*time.Minute)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -471,7 +489,7 @@ clusters:
 	mgr := NewManager(client, testNamespace)
 	parser := config.NewParser()
 
-	rec := NewReconciler(mgr, credProvider, func() GitReader { return reader }, parser, "main", "", 0)
+	rec := NewReconciler(mgr, credProvider, func() GitReader { return reader }, parser, "main", "", clusterAddonsPath, 0)
 	rec.ReconcileOnce(context.Background())
 
 	if calledWith != "clusters/prod/my-cluster" {

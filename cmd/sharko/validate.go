@@ -17,7 +17,7 @@ func init() {
 var validateCmd = &cobra.Command{
 	Use:   "validate [path]",
 	Short: "Validate Sharko configuration files",
-	Long: `Validates addons-catalog.yaml and cluster-addons.yaml schema.
+	Long: `Validates addons-catalog.yaml and managed-clusters.yaml schema.
 
 If a path is supplied the files are read from disk.  Each entry is checked for
 required fields and all errors are printed before exiting with a non-zero status
@@ -30,8 +30,16 @@ if any validation failed.`,
 		}
 
 		// Resolve the two canonical file locations.
+		// Try managed-clusters.yaml first; fall back to cluster-addons.yaml for
+		// repositories that have not yet been migrated.
 		catalogPath := filepath.Join(repoPath, "configuration", "addons-catalog.yaml")
-		clusterAddonsPath := filepath.Join(repoPath, "configuration", "cluster-addons.yaml")
+		managedClustersPath := filepath.Join(repoPath, "configuration", "managed-clusters.yaml")
+		if _, statErr := os.Stat(managedClustersPath); os.IsNotExist(statErr) {
+			legacyPath := filepath.Join(repoPath, "configuration", "cluster-addons.yaml")
+			if _, legacyErr := os.Stat(legacyPath); legacyErr == nil {
+				managedClustersPath = legacyPath
+			}
+		}
 
 		allOK := true
 
@@ -52,16 +60,16 @@ if any validation failed.`,
 			}
 		}
 
-		// --- cluster-addons.yaml ---
-		clusterData, err := os.ReadFile(clusterAddonsPath)
+		// --- managed-clusters.yaml ---
+		clusterData, err := os.ReadFile(managedClustersPath)
 		if err != nil {
-			fmt.Printf("  [SKIP] %s: %v\n", clusterAddonsPath, err)
+			fmt.Printf("  [SKIP] %s: %v\n", managedClustersPath, err)
 		} else {
 			errs := validateClusterAddons(clusterData)
 			if len(errs) == 0 {
-				fmt.Printf("  [OK]  %s\n", clusterAddonsPath)
+				fmt.Printf("  [OK]  %s\n", managedClustersPath)
 			} else {
-				fmt.Printf("  [FAIL] %s\n", clusterAddonsPath)
+				fmt.Printf("  [FAIL] %s\n", managedClustersPath)
 				for _, e := range errs {
 					fmt.Printf("         - %s\n", e)
 				}
@@ -132,7 +140,7 @@ func validateCatalog(data []byte) []string {
 	return errs
 }
 
-// validateClusterAddons parses cluster-addons.yaml and returns a list of
+// validateClusterAddons parses managed-clusters.yaml and returns a list of
 // validation error strings.  An empty slice means the file is valid.
 func validateClusterAddons(data []byte) []string {
 	var file clusterAddonsFile

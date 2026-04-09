@@ -42,26 +42,34 @@ type ReconcileStats struct {
 	LastRun  time.Time `json:"last_run"`
 }
 
-// Reconciler syncs ArgoCD cluster secrets with cluster-addons.yaml.
+// Reconciler syncs ArgoCD cluster secrets with managed-clusters.yaml.
 type Reconciler struct {
-	manager        *Manager
-	credProvider   ClusterCredentialsProvider
-	gitReader      func() GitReader // lazy — resolved from active connection
-	parser         *config.Parser
-	baseBranch     string
-	defaultRoleARN string // connection-level default from providers.Config.RoleARN
-	interval       time.Duration
-	triggerCh      chan struct{}
-	stopCh         chan struct{}
-	stopOnce       sync.Once
+	manager              *Manager
+	credProvider         ClusterCredentialsProvider
+	gitReader            func() GitReader // lazy — resolved from active connection
+	parser               *config.Parser
+	baseBranch           string
+	defaultRoleARN       string // connection-level default from providers.Config.RoleARN
+	managedClustersPath  string // path to managed-clusters.yaml in the Git repo
+	interval             time.Duration
+	triggerCh            chan struct{}
+	stopCh               chan struct{}
+	stopOnce             sync.Once
 
 	// Optional audit callback — set via SetAuditFunc.
 	// Protected by mu.
 	auditFn AuditFunc
 
-	// Content hash of last reconciled cluster-addons.yaml to skip no-ops.
+	// Content hash of last reconciled managed-clusters.yaml to skip no-ops.
 	// Protected by mu.
 	lastContentHash string
+
+	// previousOrphans holds the set of cluster names that were orphaned on the
+	// previous reconcile pass. A secret is only deleted if it appears in both
+	// the current orphan set AND this set — i.e., orphaned for two consecutive
+	// cycles. This gives a pending PR time to merge before deletion occurs.
+	// Protected by mu.
+	previousOrphans map[string]bool
 
 	// Last reconcile stats, run time, and errors (all protected by mu).
 	mu         sync.RWMutex
@@ -72,6 +80,9 @@ type Reconciler struct {
 
 // NewReconciler creates a Reconciler. gitReaderFn is a lazy accessor that
 // returns the currently-active GitReader, or nil when no connection is live.
+// managedClustersPath is the path in the Git repo to the managed clusters YAML
+// file (e.g. "configuration/managed-clusters.yaml"). An empty string defaults
+// to "configuration/managed-clusters.yaml".
 // interval <= 0 defaults to 3 minutes.
 func NewReconciler(
 	manager *Manager,
@@ -80,21 +91,27 @@ func NewReconciler(
 	parser *config.Parser,
 	baseBranch string,
 	defaultRoleARN string,
+	managedClustersPath string,
 	interval time.Duration,
 ) *Reconciler {
 	if interval <= 0 {
 		interval = 3 * time.Minute
 	}
+	if managedClustersPath == "" {
+		managedClustersPath = "configuration/managed-clusters.yaml"
+	}
 	return &Reconciler{
-		manager:        manager,
-		credProvider:   credProvider,
-		gitReader:      gitReaderFn,
-		parser:         parser,
-		baseBranch:     baseBranch,
-		defaultRoleARN: defaultRoleARN,
-		interval:       interval,
-		triggerCh:      make(chan struct{}, 1),
-		stopCh:         make(chan struct{}),
+		manager:             manager,
+		credProvider:        credProvider,
+		gitReader:           gitReaderFn,
+		parser:              parser,
+		baseBranch:          baseBranch,
+		defaultRoleARN:      defaultRoleARN,
+		managedClustersPath: managedClustersPath,
+		interval:            interval,
+		triggerCh:           make(chan struct{}, 1),
+		stopCh:              make(chan struct{}),
+		previousOrphans:     make(map[string]bool),
 	}
 }
 
@@ -154,10 +171,10 @@ func (r *Reconciler) ReconcileOnce(ctx context.Context) {
 		return
 	}
 
-	// 2. Read cluster-addons.yaml from Git.
-	clusterData, err := gr.GetFileContent(ctx, "configuration/cluster-addons.yaml", r.baseBranch)
+	// 2. Read managed-clusters.yaml from Git.
+	clusterData, err := gr.GetFileContent(ctx, r.managedClustersPath, r.baseBranch)
 	if err != nil {
-		slog.Error("[argosecrets] failed to read cluster-addons.yaml", "error", err)
+		slog.Error("[argosecrets] failed to read managed-clusters.yaml", "error", err, "path", r.managedClustersPath)
 		return
 	}
 
@@ -167,14 +184,14 @@ func (r *Reconciler) ReconcileOnce(ctx context.Context) {
 	lastHash := r.lastContentHash
 	r.mu.RUnlock()
 	if contentHash == lastHash {
-		slog.Debug("[argosecrets] cluster-addons.yaml unchanged, skipping reconcile")
+		slog.Debug("[argosecrets] managed-clusters.yaml unchanged, skipping reconcile")
 		return
 	}
 
 	// 4. Parse clusters from YAML.
 	clusters, err := r.parser.ParseClusterAddons(clusterData)
 	if err != nil {
-		slog.Error("[argosecrets] failed to parse cluster-addons.yaml", "error", err)
+		slog.Error("[argosecrets] failed to parse managed-clusters.yaml", "error", err)
 		return
 	}
 
@@ -215,11 +232,26 @@ func (r *Reconciler) ReconcileOnce(ctx context.Context) {
 
 	// 7. Orphan cleanup — delete managed secrets not in Git.
 	// Reuse existingManaged from step 5 (no second List() call).
+	// Two-cycle deferral: a secret is only deleted if it was also orphaned on
+	// the previous pass. This gives an in-flight PR time to merge before the
+	// reconciler treats the adopted secret as an orphan and deletes it.
 	if listErr != nil {
 		slog.Error("[argosecrets] failed to list managed secrets", "error", listErr)
 	} else {
+		currentOrphans := make(map[string]bool)
 		for _, name := range existingManaged {
 			if !desiredNames[name] {
+				currentOrphans[name] = true
+			}
+		}
+
+		r.mu.RLock()
+		prevOrphans := r.previousOrphans
+		r.mu.RUnlock()
+
+		for name := range currentOrphans {
+			if prevOrphans[name] {
+				// Orphaned on two consecutive cycles — safe to delete.
 				if delErr := r.manager.Delete(ctx, name); delErr != nil {
 					stats.Errors++
 					errors = append(errors, fmt.Sprintf("delete orphan %s: %v", name, delErr))
@@ -230,8 +262,15 @@ func (r *Reconciler) ReconcileOnce(ctx context.Context) {
 					stats.Deleted++
 					slog.Info("[argosecrets] orphan secret deleted", "cluster", name)
 				}
+			} else {
+				slog.Info("[argosecrets] orphan detected, deferring deletion to next cycle", "cluster", name)
 			}
 		}
+
+		// Update previousOrphans for the next cycle.
+		r.mu.Lock()
+		r.previousOrphans = currentOrphans
+		r.mu.Unlock()
 	}
 
 	// 8. Update content hash only when there were no errors (Fix 5: don't suppress retries on partial failure).

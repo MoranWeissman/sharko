@@ -29,24 +29,31 @@ type ToolFunction struct {
 
 // ToolExecutor can execute tools against the platform's data sources.
 type ToolExecutor struct {
-	parser      *config.Parser
-	fetcher     *helm.Fetcher
-	gp          gitprovider.GitProvider            // default/active connection
-	ac          *argocd.Client
-	memory      *MemoryStore
-	connections map[string]gitprovider.GitProvider  // named connections for multi-repo operations
+	parser              *config.Parser
+	fetcher             *helm.Fetcher
+	gp                  gitprovider.GitProvider           // default/active connection
+	ac                  *argocd.Client
+	memory              *MemoryStore
+	connections         map[string]gitprovider.GitProvider // named connections for multi-repo operations
+	managedClustersPath string                             // path in Git repo to managed-clusters.yaml
 }
 
 // NewToolExecutor creates a new ToolExecutor with the given providers.
 // connections is an optional map of named GitProviders for multi-repo operations (can be nil).
-func NewToolExecutor(gp gitprovider.GitProvider, ac *argocd.Client, memory *MemoryStore, connections map[string]gitprovider.GitProvider) *ToolExecutor {
+// managedClustersPath is the Git repo path to managed-clusters.yaml; defaults to
+// "configuration/managed-clusters.yaml" when empty.
+func NewToolExecutor(gp gitprovider.GitProvider, ac *argocd.Client, memory *MemoryStore, connections map[string]gitprovider.GitProvider, managedClustersPath string) *ToolExecutor {
+	if managedClustersPath == "" {
+		managedClustersPath = "configuration/managed-clusters.yaml"
+	}
 	return &ToolExecutor{
-		parser:      config.NewParser(),
-		fetcher:     helm.NewFetcher(),
-		gp:          gp,
-		ac:          ac,
-		memory:      memory,
-		connections: connections,
+		parser:              config.NewParser(),
+		fetcher:             helm.NewFetcher(),
+		gp:                  gp,
+		ac:                  ac,
+		memory:              memory,
+		connections:         connections,
+		managedClustersPath: managedClustersPath,
 	}
 }
 
@@ -371,7 +378,7 @@ func (e *ToolExecutor) ExecuteTool(ctx context.Context, name string, args json.R
 }
 
 func (e *ToolExecutor) listClusters(ctx context.Context) (string, error) {
-	data, err := e.gp.GetFileContent(ctx, "configuration/cluster-addons.yaml", "main")
+	data, err := e.gp.GetFileContent(ctx, e.managedClustersPath, "main")
 	if err != nil {
 		return "", err
 	}
@@ -398,7 +405,7 @@ func (e *ToolExecutor) findAddonDeployments(ctx context.Context, addonName strin
 		return "Please specify an addon name.", nil
 	}
 
-	clusterData, err := e.gp.GetFileContent(ctx, "configuration/cluster-addons.yaml", "main")
+	clusterData, err := e.gp.GetFileContent(ctx, e.managedClustersPath, "main")
 	if err != nil {
 		return "", err
 	}
@@ -445,7 +452,7 @@ func (e *ToolExecutor) findAddonDeployments(ctx context.Context, addonName strin
 }
 
 func (e *ToolExecutor) getClusterAddons(ctx context.Context, clusterName string) (string, error) {
-	clusterData, err := e.gp.GetFileContent(ctx, "configuration/cluster-addons.yaml", "main")
+	clusterData, err := e.gp.GetFileContent(ctx, e.managedClustersPath, "main")
 	if err != nil {
 		return "", err
 	}
@@ -642,7 +649,7 @@ func (e *ToolExecutor) getAddonOnCluster(ctx context.Context, addonName, cluster
 		return "Please specify a cluster name.", nil
 	}
 
-	clusterData, err := e.gp.GetFileContent(ctx, "configuration/cluster-addons.yaml", "main")
+	clusterData, err := e.gp.GetFileContent(ctx, e.managedClustersPath, "main")
 	if err != nil {
 		return "", err
 	}

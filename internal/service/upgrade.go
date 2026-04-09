@@ -15,17 +15,24 @@ import (
 
 // UpgradeService handles upgrade impact checking operations.
 type UpgradeService struct {
-	parser  *config.Parser
-	fetcher *helm.Fetcher
-	ai      *ai.Client
+	parser              *config.Parser
+	fetcher             *helm.Fetcher
+	ai                  *ai.Client
+	managedClustersPath string // path in Git repo to managed-clusters.yaml
 }
 
 // NewUpgradeService creates a new UpgradeService.
-func NewUpgradeService(aiClient *ai.Client) *UpgradeService {
+// managedClustersPath is the Git repo path to managed-clusters.yaml.
+// An empty string defaults to "configuration/managed-clusters.yaml".
+func NewUpgradeService(aiClient *ai.Client, managedClustersPath string) *UpgradeService {
+	if managedClustersPath == "" {
+		managedClustersPath = "configuration/managed-clusters.yaml"
+	}
 	return &UpgradeService{
-		parser:  config.NewParser(),
-		fetcher: helm.NewFetcher(),
-		ai:      aiClient,
+		parser:              config.NewParser(),
+		fetcher:             helm.NewFetcher(),
+		ai:                  aiClient,
+		managedClustersPath: managedClustersPath,
 	}
 }
 
@@ -220,7 +227,7 @@ func (s *UpgradeService) CheckUpgrade(ctx context.Context, addonName, targetVers
 	}
 
 	// Check for conflicts with per-cluster values
-	clusterData, err := gp.GetFileContent(ctx, "configuration/cluster-addons.yaml", "main")
+	clusterData, err := gp.GetFileContent(ctx, s.managedClustersPath, "main")
 	if err != nil && strings.Contains(err.Error(), "404") {
 		clusterData = []byte("clusters: []")
 		err = nil

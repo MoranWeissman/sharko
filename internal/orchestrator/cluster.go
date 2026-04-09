@@ -150,11 +150,14 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 
 	// Read cluster-addons.yaml and add this cluster's entry so the /api/v1/clusters
 	// endpoint recognises the cluster as managed after the PR merges.
-	clusterAddonsPath := "configuration/cluster-addons.yaml"
+	clusterAddonsPath := o.paths.ManagedClusters
+	if clusterAddonsPath == "" {
+		clusterAddonsPath = "configuration/managed-clusters.yaml"
+	}
 	clusterAddonsData, clusterAddonsErr := o.git.GetFileContent(ctx, clusterAddonsPath, o.gitops.BaseBranch)
 	if clusterAddonsErr != nil {
 		// File doesn't exist yet — bootstrap a minimal document.
-		slog.Info("cluster-addons.yaml not found, bootstrapping", "cluster", req.Name)
+		slog.Info("managed-clusters.yaml not found, bootstrapping", "cluster", req.Name)
 		clusterAddonsData = []byte("clusters:\n")
 	}
 

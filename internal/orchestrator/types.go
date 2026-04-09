@@ -19,6 +19,7 @@ type RepoPathsConfig struct {
 	Charts          string // e.g. "charts/"
 	Bootstrap       string // e.g. "bootstrap/"
 	HostClusterName string // e.g. "management" — the cluster running ArgoCD (uses in-cluster)
+	ManagedClusters string // e.g. "configuration/managed-clusters.yaml"
 }
 
 // RegisterClusterRequest is the input for cluster registration.
