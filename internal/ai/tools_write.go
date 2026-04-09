@@ -24,7 +24,7 @@ func GetWriteToolDefinitions() []ToolDefinition {
 			Type: "function",
 			Function: ToolFunction{
 				Name:        "enable_addon",
-				Description: "Enable an addon on a cluster by creating a pull request that sets the addon label to enabled in cluster-addons.yaml.",
+				Description: "Enable an addon on a cluster by creating a pull request that sets the addon label to enabled in managed-clusters.yaml.",
 				Parameters:  json.RawMessage(`{"type":"object","properties":{"cluster_name":{"type":"string","description":"Name of the cluster"},"addon_name":{"type":"string","description":"Name of the addon to enable"},"connection":{"type":"string","description":"Optional: connection name to target a specific Git repo (for multi-repo operations)"}},"required":["cluster_name","addon_name"]}`),
 			},
 		},
@@ -32,7 +32,7 @@ func GetWriteToolDefinitions() []ToolDefinition {
 			Type: "function",
 			Function: ToolFunction{
 				Name:        "disable_addon",
-				Description: "Disable an addon on a cluster by creating a pull request that sets the addon label to disabled in cluster-addons.yaml.",
+				Description: "Disable an addon on a cluster by creating a pull request that sets the addon label to disabled in managed-clusters.yaml.",
 				Parameters:  json.RawMessage(`{"type":"object","properties":{"cluster_name":{"type":"string","description":"Name of the cluster"},"addon_name":{"type":"string","description":"Name of the addon to disable"},"connection":{"type":"string","description":"Optional: connection name to target a specific Git repo (for multi-repo operations)"}},"required":["cluster_name","addon_name"]}`),
 			},
 		},
@@ -72,9 +72,9 @@ func (e *ToolExecutor) enableAddon(ctx context.Context, connectionName, clusterN
 	}
 
 	gp := e.resolveProvider(connectionName)
-	data, err := gp.GetFileContent(ctx, "configuration/cluster-addons.yaml", "main")
+	data, err := gp.GetFileContent(ctx, e.managedClustersPath, "main")
 	if err != nil {
-		return "", fmt.Errorf("reading cluster-addons.yaml: %w", err)
+		return "", fmt.Errorf("reading managed-clusters.yaml: %w", err)
 	}
 
 	mutated, err := gitops.EnableAddonLabel(data, clusterName, addonName)
@@ -90,7 +90,7 @@ func (e *ToolExecutor) enableAddon(ctx context.Context, connectionName, clusterN
 	}
 
 	commitMsg := fmt.Sprintf("Enable %s on %s", addonName, clusterName)
-	if err := gp.CreateOrUpdateFile(ctx, "configuration/cluster-addons.yaml", mutated, branch, commitMsg); err != nil {
+	if err := gp.CreateOrUpdateFile(ctx, e.managedClustersPath, mutated, branch, commitMsg); err != nil {
 		return "", fmt.Errorf("updating file: %w", err)
 	}
 
@@ -114,9 +114,9 @@ func (e *ToolExecutor) disableAddon(ctx context.Context, connectionName, cluster
 	}
 
 	gp := e.resolveProvider(connectionName)
-	data, err := gp.GetFileContent(ctx, "configuration/cluster-addons.yaml", "main")
+	data, err := gp.GetFileContent(ctx, e.managedClustersPath, "main")
 	if err != nil {
-		return "", fmt.Errorf("reading cluster-addons.yaml: %w", err)
+		return "", fmt.Errorf("reading managed-clusters.yaml: %w", err)
 	}
 
 	mutated, err := gitops.DisableAddonLabel(data, clusterName, addonName)
@@ -132,7 +132,7 @@ func (e *ToolExecutor) disableAddon(ctx context.Context, connectionName, cluster
 	}
 
 	commitMsg := fmt.Sprintf("Disable %s on %s", addonName, clusterName)
-	if err := gp.CreateOrUpdateFile(ctx, "configuration/cluster-addons.yaml", mutated, branch, commitMsg); err != nil {
+	if err := gp.CreateOrUpdateFile(ctx, e.managedClustersPath, mutated, branch, commitMsg); err != nil {
 		return "", fmt.Errorf("updating file: %w", err)
 	}
 

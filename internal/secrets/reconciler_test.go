@@ -137,6 +137,7 @@ func newReconciler(
 		clientFn,
 		parser,
 		"main",
+		"configuration/managed-clusters.yaml",
 		0, // default interval, not used in tests
 	)
 }
@@ -145,7 +146,7 @@ func standardGitReader(catalogYAML string) *mockGitReader {
 	return &mockGitReader{
 		files: map[string][]byte{
 			"configuration/addons-catalog.yaml": []byte(catalogYAML),
-			"configuration/cluster-addons.yaml": []byte(clusterAddonsYAML),
+			"configuration/managed-clusters.yaml": []byte(clusterAddonsYAML),
 		},
 	}
 }
@@ -360,6 +361,7 @@ func TestReconcile_NoGitConnection(t *testing.T) {
 		fakeRemoteClientFn(fake.NewSimpleClientset()),
 		parser,
 		"main",
+		"configuration/managed-clusters.yaml",
 		0,
 	)
 	r.reconcile()
@@ -412,7 +414,7 @@ func TestReconcile_AddonNotEnabled(t *testing.T) {
 	gitReader := &mockGitReader{
 		files: map[string][]byte{
 			"configuration/addons-catalog.yaml": []byte(catalogWithSecrets),
-			"configuration/cluster-addons.yaml": []byte(clusterAddonsNoMatch),
+			"configuration/managed-clusters.yaml": []byte(clusterAddonsNoMatch),
 		},
 	}
 

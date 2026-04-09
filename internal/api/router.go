@@ -36,11 +36,12 @@ import (
 // argosecrets reconciler. The K8sClient and ArgocdNamespace are set once at
 // startup and never change between reinits.
 type ArgoReconcilerCfg struct {
-	K8sClient       kubernetes.Interface
-	ArgocdNamespace string
-	Interval        time.Duration
-	GitReaderFn     func() argosecrets.GitReader
-	Parser          *config.Parser
+	K8sClient           kubernetes.Interface
+	ArgocdNamespace     string
+	Interval            time.Duration
+	GitReaderFn         func() argosecrets.GitReader
+	Parser              *config.Parser
+	ManagedClustersPath string // path in Git repo to managed-clusters.yaml
 }
 
 // SecretReconciler is the interface the server uses to trigger and query the reconciler.
@@ -328,6 +329,7 @@ func (s *Server) ReinitializeFromConnection() {
 			cfg.Parser,
 			baseBranch,
 			defaultRoleARN,
+			cfg.ManagedClustersPath,
 			cfg.Interval,
 		)
 

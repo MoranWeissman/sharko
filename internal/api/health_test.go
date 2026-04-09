@@ -14,12 +14,12 @@ import (
 func newTestServer() *Server {
 	store := config.NewFileStore("/tmp/sharko-test-config.yaml")
 	connSvc := service.NewConnectionService(store)
-	clusterSvc := service.NewClusterService()
-	addonSvc := service.NewAddonService()
-	dashboardSvc := service.NewDashboardService(connSvc)
+	clusterSvc := service.NewClusterService("")
+	addonSvc := service.NewAddonService("")
+	dashboardSvc := service.NewDashboardService(connSvc, "")
 
 	observabilitySvc := service.NewObservabilityService()
-	upgradeSvc := service.NewUpgradeService(ai.NewClient(ai.Config{}))
+	upgradeSvc := service.NewUpgradeService(ai.NewClient(ai.Config{}), "")
 
 	aiClient := ai.NewClient(ai.Config{})
 	return NewServer(connSvc, clusterSvc, addonSvc, dashboardSvc, observabilitySvc, upgradeSvc, aiClient)

@@ -144,13 +144,13 @@ applicationsets:
 
 	gp := &fakeGitProvider{
 		files: map[string][]byte{
-			"configuration/cluster-addons.yaml": clusterAddonsYAML,
-			"configuration/addons-catalog.yaml": addonsCatalogYAML,
+			"configuration/managed-clusters.yaml": clusterAddonsYAML,
+			"configuration/addons-catalog.yaml":   addonsCatalogYAML,
 		},
 	}
 
 	ac := argocd.NewClient(ts.URL, "fake-token", false)
-	svc := NewAddonService()
+	svc := NewAddonService("")
 
 	resp, err := svc.GetVersionMatrix(context.Background(), gp, ac)
 	if err != nil {

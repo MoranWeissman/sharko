@@ -14,15 +14,22 @@ import (
 
 // DashboardService handles dashboard-related operations.
 type DashboardService struct {
-	parser    *config.Parser
-	connSvc   *ConnectionService
+	parser              *config.Parser
+	connSvc             *ConnectionService
+	managedClustersPath string // path in Git repo to managed-clusters.yaml
 }
 
 // NewDashboardService creates a new DashboardService.
-func NewDashboardService(connSvc *ConnectionService) *DashboardService {
+// managedClustersPath is the Git repo path to managed-clusters.yaml.
+// An empty string defaults to "configuration/managed-clusters.yaml".
+func NewDashboardService(connSvc *ConnectionService, managedClustersPath string) *DashboardService {
+	if managedClustersPath == "" {
+		managedClustersPath = "configuration/managed-clusters.yaml"
+	}
 	return &DashboardService{
-		parser:  config.NewParser(),
-		connSvc: connSvc,
+		parser:              config.NewParser(),
+		connSvc:             connSvc,
+		managedClustersPath: managedClustersPath,
 	}
 }
 
@@ -39,12 +46,12 @@ func (s *DashboardService) GetStats(ctx context.Context, gp gitprovider.GitProvi
 	}
 
 	// Parse Git config
-	clusterData, err := gp.GetFileContent(ctx, "configuration/cluster-addons.yaml", "main")
+	clusterData, err := gp.GetFileContent(ctx, s.managedClustersPath, "main")
 	if err != nil {
 		if strings.Contains(err.Error(), "404") {
 			clusterData = []byte("clusters: []")
 		} else {
-			return nil, fmt.Errorf("reading cluster-addons.yaml: %w", err)
+			return nil, fmt.Errorf("reading managed-clusters.yaml: %w", err)
 		}
 	}
 

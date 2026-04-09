@@ -17,25 +17,33 @@ import (
 
 // ClusterService handles cluster-related operations.
 type ClusterService struct {
-	parser *config.Parser
+	parser              *config.Parser
+	managedClustersPath string // path in Git repo to managed-clusters.yaml
 }
 
 // NewClusterService creates a new ClusterService.
-func NewClusterService() *ClusterService {
+// managedClustersPath is the Git repo path to the managed clusters YAML
+// (e.g. "configuration/managed-clusters.yaml"). An empty string defaults to
+// "configuration/managed-clusters.yaml".
+func NewClusterService(managedClustersPath string) *ClusterService {
+	if managedClustersPath == "" {
+		managedClustersPath = "configuration/managed-clusters.yaml"
+	}
 	return &ClusterService{
-		parser: config.NewParser(),
+		parser:              config.NewParser(),
+		managedClustersPath: managedClustersPath,
 	}
 }
 
 // ListClusters returns all clusters with health stats from Git + ArgoCD.
 func (s *ClusterService) ListClusters(ctx context.Context, gp gitprovider.GitProvider, ac *argocd.Client) (*models.ClustersResponse, error) {
 	// Fetch Git config
-	clusterData, err := gp.GetFileContent(ctx, "configuration/cluster-addons.yaml", "main")
+	clusterData, err := gp.GetFileContent(ctx, s.managedClustersPath, "main")
 	if err != nil {
 		if strings.Contains(err.Error(), "404") {
 			clusterData = []byte("clusters: []")
 		} else {
-			return nil, fmt.Errorf("reading cluster-addons.yaml: %w", err)
+			return nil, fmt.Errorf("reading managed-clusters.yaml: %w", err)
 		}
 	}
 
@@ -61,7 +69,7 @@ func (s *ClusterService) ListClusters(ctx context.Context, gp gitprovider.GitPro
 		argocdMap[ac.Name] = ac
 	}
 
-	// Enrich clusters with ArgoCD status; mark as managed (in cluster-addons.yaml)
+	// Enrich clusters with ArgoCD status; mark as managed (in managed-clusters.yaml)
 	for i := range clusters {
 		clusters[i].Managed = true
 		if ac, ok := argocdMap[clusters[i].Name]; ok {
@@ -98,12 +106,12 @@ func (s *ClusterService) ListClusters(ctx context.Context, gp gitprovider.GitPro
 
 // GetClusterDetail returns detail for a single cluster.
 func (s *ClusterService) GetClusterDetail(ctx context.Context, clusterName string, gp gitprovider.GitProvider, ac *argocd.Client) (*models.ClusterDetailResponse, error) {
-	clusterData, err := gp.GetFileContent(ctx, "configuration/cluster-addons.yaml", "main")
+	clusterData, err := gp.GetFileContent(ctx, s.managedClustersPath, "main")
 	if err != nil {
 		if strings.Contains(err.Error(), "404") {
 			clusterData = []byte("clusters: []")
 		} else {
-			return nil, fmt.Errorf("reading cluster-addons.yaml: %w", err)
+			return nil, fmt.Errorf("reading managed-clusters.yaml: %w", err)
 		}
 	}
 
@@ -173,12 +181,12 @@ func (s *ClusterService) GetClusterDetail(ctx context.Context, clusterName strin
 
 // GetClusterComparison returns Git vs ArgoCD comparison for a cluster.
 func (s *ClusterService) GetClusterComparison(ctx context.Context, clusterName string, gp gitprovider.GitProvider, ac *argocd.Client) (*models.ClusterComparisonResponse, error) {
-	clusterData, err := gp.GetFileContent(ctx, "configuration/cluster-addons.yaml", "main")
+	clusterData, err := gp.GetFileContent(ctx, s.managedClustersPath, "main")
 	if err != nil {
 		if strings.Contains(err.Error(), "404") {
 			clusterData = []byte("clusters: []")
 		} else {
-			return nil, fmt.Errorf("reading cluster-addons.yaml: %w", err)
+			return nil, fmt.Errorf("reading managed-clusters.yaml: %w", err)
 		}
 	}
 

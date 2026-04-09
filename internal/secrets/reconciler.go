@@ -43,16 +43,17 @@ type AuditFunc func(clusterName string, created, updated int)
 //  2. Explicit Trigger() call (e.g. after a webhook push)
 //  3. Initial run on Start()
 type Reconciler struct {
-	credProvider   providers.ClusterCredentialsProvider
-	secretProvider providers.SecretProvider
-	gitReader      func() GitReader // lazy — resolved from active connection
-	remoteClientFn RemoteClientFactory
-	parser         *config.Parser
-	baseBranch     string
-	interval       time.Duration
-	triggerCh      chan struct{}
-	stopCh         chan struct{}
-	stopOnce       sync.Once
+	credProvider        providers.ClusterCredentialsProvider
+	secretProvider      providers.SecretProvider
+	gitReader           func() GitReader // lazy — resolved from active connection
+	remoteClientFn      RemoteClientFactory
+	parser              *config.Parser
+	baseBranch          string
+	managedClustersPath string // path in Git repo to managed-clusters.yaml
+	interval            time.Duration
+	triggerCh           chan struct{}
+	stopCh              chan struct{}
+	stopOnce            sync.Once
 
 	// Optional audit callback — set via SetAuditFunc.
 	auditFn AuditFunc
@@ -78,6 +79,9 @@ type ReconcileStats struct {
 
 // NewReconciler creates a Reconciler. gitReaderFn is a lazy accessor that
 // returns the currently-active GitReader, or nil when no connection is live.
+// managedClustersPath is the path in the Git repo to the managed clusters YAML
+// (e.g. "configuration/managed-clusters.yaml"). An empty string defaults to
+// "configuration/managed-clusters.yaml".
 // interval <= 0 defaults to 5 minutes.
 func NewReconciler(
 	credProvider providers.ClusterCredentialsProvider,
@@ -86,21 +90,26 @@ func NewReconciler(
 	remoteClientFn RemoteClientFactory,
 	parser *config.Parser,
 	baseBranch string,
+	managedClustersPath string,
 	interval time.Duration,
 ) *Reconciler {
 	if interval <= 0 {
 		interval = 5 * time.Minute
 	}
+	if managedClustersPath == "" {
+		managedClustersPath = "configuration/managed-clusters.yaml"
+	}
 	return &Reconciler{
-		credProvider:   credProvider,
-		secretProvider: secretProvider,
-		gitReader:      gitReaderFn,
-		remoteClientFn: remoteClientFn,
-		parser:         parser,
-		baseBranch:     baseBranch,
-		interval:       interval,
-		triggerCh:      make(chan struct{}, 1),
-		stopCh:         make(chan struct{}),
+		credProvider:        credProvider,
+		secretProvider:      secretProvider,
+		gitReader:           gitReaderFn,
+		remoteClientFn:      remoteClientFn,
+		parser:              parser,
+		baseBranch:          baseBranch,
+		managedClustersPath: managedClustersPath,
+		interval:            interval,
+		triggerCh:           make(chan struct{}, 1),
+		stopCh:              make(chan struct{}),
 	}
 }
 
@@ -211,15 +220,15 @@ func (r *Reconciler) reconcile() {
 		return
 	}
 
-	// 4. Read cluster-addons.yaml.
-	clusterData, err := gr.GetFileContent(ctx, "configuration/cluster-addons.yaml", r.baseBranch)
+	// 4. Read managed-clusters.yaml.
+	clusterData, err := gr.GetFileContent(ctx, r.managedClustersPath, r.baseBranch)
 	if err != nil {
-		slog.Warn("[secrets] failed to read cluster-addons", "error", err)
+		slog.Warn("[secrets] failed to read managed-clusters", "error", err, "path", r.managedClustersPath)
 		return
 	}
 	clusters, err := r.parser.ParseClusterAddons(clusterData)
 	if err != nil {
-		slog.Warn("[secrets] failed to parse cluster-addons", "error", err)
+		slog.Warn("[secrets] failed to parse managed-clusters", "error", err)
 		return
 	}
 

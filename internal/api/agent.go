@@ -86,7 +86,7 @@ func (s *Server) handleAgentChat(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		executor := ai.NewToolExecutor(gp, ac, s.agentMemory, nil)
+		executor := ai.NewToolExecutor(gp, ac, s.agentMemory, nil, s.repoPaths.ManagedClusters)
 		agent := ai.NewAgent(s.aiClient, executor, s.agentMemory)
 
 		if req.SessionID == "" {
