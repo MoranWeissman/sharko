@@ -80,6 +80,13 @@ func (s *Server) handleBatchRegisterClusters(w http.ResponseWriter, r *http.Requ
 	if len(s.defaultAddons) > 0 {
 		orch.SetDefaultAddons(s.defaultAddons)
 	}
+	if s.argoSecretManager != nil {
+		roleARN := ""
+		if s.providerCfg != nil {
+			roleARN = s.providerCfg.RoleARN
+		}
+		orch.SetArgoSecretManager(&argoManagerAdapter{mgr: s.argoSecretManager}, roleARN)
+	}
 
 	result := orch.RegisterClusterBatch(r.Context(), req.Clusters)
 

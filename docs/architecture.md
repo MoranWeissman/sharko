@@ -26,6 +26,7 @@ Sharko Server (in-cluster):
   +-- Git client (GitHub, Azure DevOps)
   +-- Secrets provider (AWS SM, K8s Secrets)
   +-- Remote client (deliver secrets to remote clusters)
+  +-- ArgoCD secret manager (create/reconcile cluster secrets in argocd namespace)
   +-- AI assistant (multi-provider)
   +-- Swagger UI (/swagger/index.html)
 ```
@@ -386,11 +387,97 @@ Sharko communicates with ArgoCD via its REST API using account token authenticat
 **Why account tokens:** ArgoCD has its own account system and RBAC (`argocd-rbac-cm` ConfigMap). This is how most tools integrate with ArgoCD. The token is stored in a Kubernetes Secret, injected via Helm values or configured through the Settings UI.
 
 Operations:
-- **Register cluster:** Creates an ArgoCD cluster secret with name, server URL, CA data, token, and addon labels
+- **Register cluster:** Creates an ArgoCD cluster secret with name, server URL, CA data, token, and addon labels; also creates/updates the local ArgoCD cluster secret via `internal/argosecrets/`
 - **Update labels:** Patches cluster secret labels (addon enable/disable)
 - **Delete cluster:** Removes the cluster secret from ArgoCD
 - **Sync application:** Triggers a manual sync on an ArgoCD Application
 - **List clusters/applications:** Read operations for cluster observability
+
+---
+
+## ArgoCD Cluster Secret Management
+
+Sharko manages ArgoCD cluster secrets directly, replacing the need for External Secrets Operator (ESO). ArgoCD discovers clusters via Kubernetes Secrets labeled `argocd.argoproj.io/secret-type: cluster` in the `argocd` namespace. Sharko creates and reconciles these secrets automatically.
+
+### Package: `internal/argosecrets/`
+
+**Manager** (`manager.go`) — creates, updates, adopts, and deletes ArgoCD cluster secrets:
+- `Ensure(ctx, ClusterSecretSpec) (bool, error)` — create-or-update with hash-based idempotency. Returns `(changed bool, err error)`.
+- `List(ctx) ([]string, error)` — lists secrets managed by Sharko (via `app.kubernetes.io/managed-by: sharko` label selector).
+- `Delete(ctx, name) error` — deletes only secrets managed by Sharko; refuses to delete unmanaged secrets.
+- **Adoption path:** if an existing secret lacks the `app.kubernetes.io/managed-by: sharko` label, `Ensure` adopts it by overwriting labels and data.
+- **Hash-based idempotency:** skips the K8s API write when labels + data are unchanged (SHA-256 over sorted keys/values).
+
+**Reconciler** (`reconciler.go`) — background sync loop that keeps ArgoCD cluster secrets in sync with `configuration/cluster-addons.yaml` in Git:
+- Default interval: 3 minutes (configurable via `SHARKO_ARGOCD_RECONCILE_INTERVAL`).
+- On each pass: reads cluster-addons.yaml from Git, compares content hash, parses clusters, calls `Manager.Ensure()` per cluster, deletes orphan secrets for clusters removed from Git.
+- Skip optimization: if cluster-addons.yaml content hash is unchanged since the last successful pass, the reconcile is skipped entirely.
+- Orphan cleanup: any Sharko-managed secret not present in Git is deleted.
+- Partial failure tolerance: per-cluster errors are logged and counted; the loop continues for remaining clusters and does not update the content hash (ensuring a retry on the next tick).
+
+### Secret Format
+
+Each ArgoCD cluster secret contains three string data fields:
+
+```
+name:   <cluster-name>
+server: <api-server-url>
+config: <JSON with execProviderConfig>
+```
+
+The `config` JSON uses `argocd-k8s-auth` for EKS token generation:
+
+```json
+{
+  "execProviderConfig": {
+    "command": "argocd-k8s-auth",
+    "args": ["aws", "--cluster-name", "<name>", "--region", "<region>"],
+    "apiVersion": "client.authentication.k8s.io/v1beta1"
+  },
+  "tlsClientConfig": {"insecure": false}
+}
+```
+
+When a `RoleARN` is set on the connection, `--role-arn <arn>` is appended to args.
+
+### Ownership
+
+All secrets written by Sharko carry two system labels that are always applied last and cannot be overridden by caller-supplied labels:
+- `argocd.argoproj.io/secret-type: cluster` — tells ArgoCD this is a cluster secret
+- `app.kubernetes.io/managed-by: sharko` — ownership marker; prevents accidental deletion of unmanaged secrets
+
+### Reconciliation Flow
+
+```
+Git (cluster-addons.yaml)
+  |
+  v
+argosecrets.Reconciler (background, every 3m)
+  |
+  +-- parse clusters
+  +-- for each cluster:
+  |     providers.GetCredentials(name) → server URL
+  |     Manager.Ensure(ClusterSecretSpec) → create/update/skip
+  +-- delete orphan managed secrets
+  |
+  v
+argocd namespace — K8s Secrets with argocd.argoproj.io/secret-type: cluster
+  |
+  v
+ArgoCD ApplicationSet cluster generator discovers clusters automatically
+```
+
+### Integration Points
+
+**Server wiring** (`cmd/sharko/serve.go`): `Manager` and `Reconciler` are created on startup when a connection is active. `ReinitializeFromConnection` restarts them when the connection changes.
+
+**Orchestrator integration** (`internal/orchestrator/cluster.go`): `RegisterCluster` calls `argoSecretManager.Ensure()` as an additional step after ArgoCD registration.
+
+**Adapter pattern** (`internal/api/argo_adapter.go`): `argoManagerAdapter` bridges `*argosecrets.Manager` to `orchestrator.ArgoSecretManager`. The adapter lives in the `api` package — the only layer that can import both `argosecrets` and `orchestrator` without creating an import cycle. The `orchestrator` package defines its own local `ArgoSecretManager` interface and `ArgoSecretSpec` struct and does not import `internal/argosecrets`.
+
+### RBAC
+
+The Helm chart (`charts/sharko/templates/rbac.yaml`) creates a namespaced Role + RoleBinding granting the Sharko service account full CRUD on Secrets in the `argocd` namespace. The namespace is configurable via `rbac.argocdNamespace` (default: `argocd`).
 
 ---
 

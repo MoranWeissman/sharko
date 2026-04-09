@@ -85,6 +85,41 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	steps = append(steps, "fetch_credentials")
 	result.Cluster.Server = creds.Server
 
+	// Step 3b: Create ArgoCD cluster secret (if Manager is configured).
+	// Non-blocking: a failure records a partial result but does not stop the remaining steps.
+	// The reconciler will retry on its next cycle, so a transient failure here is recoverable.
+	var argoSecretErr error
+	if o.argoSecretManager != nil {
+		// Use "true"/"false" to match the label format in cluster-addons.yaml.
+		// The reconciler reads labels directly from cluster-addons.yaml and writes them
+		// as-is; using the same format here prevents hash mismatches that would otherwise
+		// cause the reconciler to re-write the secret on every cycle.
+		argoLabels := make(map[string]string, len(req.Addons))
+		for addon, enabled := range req.Addons {
+			if enabled {
+				argoLabels[addon] = "true"
+			} else {
+				argoLabels[addon] = "false"
+			}
+		}
+		argoSpec := ArgoSecretSpec{
+			Name:    req.Name,
+			Server:  creds.Server,
+			Region:  req.Region,
+			RoleARN: o.defaultRoleARN,
+			Labels:  argoLabels,
+		}
+		if err := o.argoSecretManager.Ensure(ctx, argoSpec); err != nil {
+			slog.Error("ArgoCD secret creation failed — continuing with remaining steps",
+				"cluster", req.Name, "error", err,
+			)
+			argoSecretErr = err
+			// Do NOT return — continue with remaining steps.
+		} else {
+			steps = append(steps, "create_argocd_secret")
+		}
+	}
+
 	// Step 4: Create addon secrets on remote cluster (if configured).
 	// Secrets must exist before ArgoCD sees the cluster — if this fails, abort early.
 	secretNames, secretErr := o.createAddonSecrets(ctx, creds.Raw, req.Addons)
@@ -175,9 +210,19 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		}
 	}
 
-	result.Status = "success"
 	result.CompletedSteps = steps
 	result.Git = gitResult
+	// If the ArgoCD secret step failed (non-blocking) but everything else succeeded,
+	// report partial so callers know the secret was not created. The reconciler will
+	// retry on the next cycle.
+	if argoSecretErr != nil {
+		result.Status = "partial"
+		result.FailedStep = "create_argocd_secret"
+		result.Error = argoSecretErr.Error()
+		result.Message = "Registration completed but ArgoCD cluster secret creation failed. The reconciler will retry."
+	} else {
+		result.Status = "success"
+	}
 	return result, nil
 }
 

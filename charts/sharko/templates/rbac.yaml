@@ -15,7 +15,7 @@ rules:
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "list"]
-    # Restricted to ArgoCD namespace via the RoleBinding below
+    # Cluster-wide read via ClusterRoleBinding; write access in argocd namespace via argocd-secrets Role
   {{- if .Values.config.nodeAccess }}
   # Node read access (opt-in via config.nodeAccess)
   - apiGroups: [""]
@@ -39,18 +39,31 @@ subjects:
     name: {{ include "sharko.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 ---
-# RoleBinding in ArgoCD namespace for secret read access (cluster connection info)
+# Role: write access to secrets in the ArgoCD namespace (cluster secret management)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "sharko.fullname" . }}-argocd-secrets
+  namespace: {{ include "sharko.argocdNamespace" . }}
+  labels:
+    {{- include "sharko.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+# RoleBinding in ArgoCD namespace — binds argocd-secrets Role to the Sharko service account
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ include "sharko.fullname" . }}-argocd-reader
+  name: {{ include "sharko.fullname" . }}-argocd-secrets
   namespace: {{ include "sharko.argocdNamespace" . }}
   labels:
     {{- include "sharko.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: {{ include "sharko.fullname" . }}
+  kind: Role
+  name: {{ include "sharko.fullname" . }}-argocd-secrets
 subjects:
   - kind: ServiceAccount
     name: {{ include "sharko.serviceAccountName" . }}

@@ -72,10 +72,21 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 	if len(s.defaultAddons) > 0 {
 		orch.SetDefaultAddons(s.defaultAddons)
 	}
+	if s.argoSecretManager != nil {
+		roleARN := ""
+		if s.providerCfg != nil {
+			roleARN = s.providerCfg.RoleARN
+		}
+		orch.SetArgoSecretManager(&argoManagerAdapter{mgr: s.argoSecretManager}, roleARN)
+	}
 	result, err := orch.RegisterCluster(r.Context(), req)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
+	}
+
+	if s.argoSecretReconciler != nil {
+		s.argoSecretReconciler.Trigger()
 	}
 
 	status := http.StatusCreated
@@ -222,6 +233,16 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
+	}
+
+	// Trigger the ArgoCD secrets reconciler to pick up the new addon state.
+	// We do NOT call Manager.Ensure() directly here because this handler does not have
+	// access to the cluster's Region (set at RegisterCluster time), and omitting Region
+	// would produce a malformed execProviderConfig in the ArgoCD cluster secret.
+	// The reconciler reads the full cluster spec from cluster-addons.yaml (including region)
+	// and will update the secret within its next cycle (default: 3 minutes).
+	if s.argoSecretReconciler != nil {
+		s.argoSecretReconciler.Trigger()
 	}
 
 	status := http.StatusOK
