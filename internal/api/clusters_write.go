@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"regexp"
 
@@ -19,12 +20,14 @@ var validClusterNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]*$`)
 // handleRegisterCluster godoc
 //
 // @Summary Register cluster
-// @Description Registers a new cluster in ArgoCD and creates its GitOps configuration
+// @Description Registers a new cluster in ArgoCD and creates its GitOps configuration.
+// @Description Pass "dry_run": true to preview what would happen without making changes.
 // @Tags clusters
 // @Accept json
 // @Produce json
 // @Security BearerAuth
-// @Param body body orchestrator.RegisterClusterRequest true "Cluster registration request"
+// @Param body body orchestrator.RegisterClusterRequest true "Cluster registration request (supports dry_run field)"
+// @Success 200 {object} map[string]interface{} "Dry-run preview"
 // @Success 201 {object} map[string]interface{} "Cluster registered"
 // @Success 207 {object} map[string]interface{} "Partial success"
 // @Failure 400 {object} map[string]interface{} "Bad request"
@@ -86,8 +89,22 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Dry-run: return preview without side effects.
+	if req.DryRun {
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
+
 	if s.argoSecretReconciler != nil {
 		s.argoSecretReconciler.Trigger()
+	}
+
+	// Record verification observation if Stage1 ran.
+	if result.Verification != nil && s.obsStore != nil {
+		if err := s.obsStore.RecordTestResult(r.Context(), req.Name, *result.Verification); err != nil {
+			slog.Error("failed to record verification observation during registration",
+				"cluster", req.Name, "error", err)
+		}
 	}
 
 	status := http.StatusCreated
@@ -97,12 +114,12 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 
 	s.auditLog.Add(audit.Entry{
 		Level:    "info",
-		Event:    "cluster_register",
+		Event:    "cluster_registered",
 		User:     "sharko",
 		Action:   "register",
 		Resource: fmt.Sprintf("cluster:%s", req.Name),
 		Source:   "api",
-		Result:   "success",
+		Result:   result.Status,
 	})
 
 	writeJSON(w, status, result)

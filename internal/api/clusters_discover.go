@@ -5,7 +5,9 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
+	"github.com/MoranWeissman/sharko/internal/providers"
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
 	"github.com/MoranWeissman/sharko/internal/verify"
 )
@@ -195,6 +197,100 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 			slog.Error("[cluster-test] failed to record observation", "name", name, "error", err)
 		}
 	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// discoverEKSRequest is the request body for POST /api/v1/clusters/discover.
+type discoverEKSRequest struct {
+	Provider string   `json:"provider"`
+	RoleARNs []string `json:"role_arns"`
+	Region   string   `json:"region"`
+}
+
+// discoverEKSResponse wraps the discovery results.
+type discoverEKSResponse struct {
+	Clusters []providers.DiscoveredCluster `json:"clusters"`
+	Error    string                        `json:"error,omitempty"`
+}
+
+// handleDiscoverEKS godoc
+//
+// @Summary Discover EKS clusters
+// @Description Scans one or more AWS accounts for EKS clusters via the EKS API.
+// @Description If role_arns is empty, uses the default IRSA identity.
+// @Description For cross-account discovery, provide one or more IAM role ARNs to assume.
+// @Tags clusters
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param body body discoverEKSRequest true "Discovery request"
+// @Success 200 {object} discoverEKSResponse "Discovered clusters"
+// @Failure 400 {object} map[string]interface{} "Invalid request"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 502 {object} map[string]interface{} "Discovery failed"
+// @Router /clusters/discover [post]
+// handleDiscoverEKS handles POST /api/v1/clusters/discover — scan AWS for EKS clusters.
+func (s *Server) handleDiscoverEKS(w http.ResponseWriter, r *http.Request) {
+	if !authz.RequireWithResponse(w, r, "cluster.discover") {
+		return
+	}
+
+	var req discoverEKSRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+
+	if req.Provider != "eks" {
+		writeError(w, http.StatusBadRequest, "unsupported provider: "+req.Provider+"; only \"eks\" is supported")
+		return
+	}
+
+	// Default region from provider config if not specified in request.
+	region := req.Region
+	if region == "" && s.providerCfg != nil {
+		region = s.providerCfg.Region
+	}
+
+	slog.Info("[discover-eks] starting EKS discovery", "roleARNs", req.RoleARNs, "region", region)
+
+	clusters, err := providers.DiscoverEKSClusters(r.Context(), req.RoleARNs, region)
+
+	resp := discoverEKSResponse{
+		Clusters: clusters,
+	}
+	if resp.Clusters == nil {
+		resp.Clusters = []providers.DiscoveredCluster{}
+	}
+
+	if err != nil {
+		slog.Warn("[discover-eks] discovery completed with errors", "error", err)
+		// If we have partial results, return 200 with error field.
+		// If we have no results, return 502.
+		if len(clusters) == 0 {
+			writeError(w, http.StatusBadGateway, "EKS discovery failed: "+err.Error())
+			return
+		}
+		resp.Error = err.Error()
+	}
+
+	slog.Info("[discover-eks] discovery complete", "clusterCount", len(clusters))
+
+	// Emit audit event.
+	username := r.Header.Get("X-Sharko-User")
+	if username == "" {
+		username = "system"
+	}
+	s.auditLog.Add(audit.Entry{
+		Level:    "info",
+		Event:    "cluster_discovered",
+		User:     username,
+		Action:   "discover",
+		Resource: "eks",
+		Source:   "api",
+		Result:   "success",
+	})
 
 	writeJSON(w, http.StatusOK, resp)
 }

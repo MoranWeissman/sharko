@@ -1,6 +1,9 @@
 package orchestrator
 
-import "github.com/MoranWeissman/sharko/internal/models"
+import (
+	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/verify"
+)
 
 // GitOpsConfig holds gitops preferences (from server Helm values).
 type GitOpsConfig struct {
@@ -25,9 +28,11 @@ type RepoPathsConfig struct {
 // RegisterClusterRequest is the input for cluster registration.
 type RegisterClusterRequest struct {
 	Name       string          `json:"name"`
+	Provider   string          `json:"provider,omitempty"`
 	SecretPath string          `json:"secret_path,omitempty"`
 	Addons     map[string]bool `json:"addons"`
 	Region     string          `json:"region"`
+	DryRun     bool            `json:"dry_run,omitempty"`
 }
 
 // RegisterClusterResult is the output of a successful cluster registration.
@@ -36,17 +41,46 @@ type RegisterClusterResult struct {
 	Cluster        ClusterResult `json:"cluster"`
 	Git            *GitResult    `json:"git,omitempty"`
 	Secrets        []string      `json:"secrets_created,omitempty"` // names of created secrets
+	FailedSecrets  []SecretError `json:"failed_secrets,omitempty"`  // secrets that failed to create
 	CompletedSteps []string      `json:"completed_steps,omitempty"`
 	FailedStep     string        `json:"failed_step,omitempty"`
 	Error          string        `json:"error,omitempty"`
 	Message        string        `json:"message,omitempty"`
 	Adopted        bool          `json:"adopted,omitempty"` // true if cluster was already in ArgoCD
 
+	// Verification holds the Stage1 connectivity verification result (if run).
+	Verification *verify.Result `json:"verification,omitempty"`
+
+	// DryRun holds the preview result when dry_run=true. No side effects occur.
+	DryRun *DryRunResult `json:"dry_run,omitempty"`
+
 	// ArgoCD cluster secret outcome. Set by the API handler after calling Manager.Ensure().
 	// Possible values: "created", "adopted", "updated", "skipped", "error".
 	ArgoSecretStatus string `json:"argocd_secret_status,omitempty"`
 	// ArgoSecretError holds the error message if the ArgoCD secret step failed (non-fatal).
 	ArgoSecretError string `json:"argocd_secret_error,omitempty"`
+}
+
+// DryRunResult holds the preview information returned when dry_run=true.
+// No writes (Git, ArgoCD, secrets) are performed.
+type DryRunResult struct {
+	EffectiveAddons []string      `json:"effective_addons"`
+	FilesToWrite    []FilePreview `json:"files_to_write"`
+	PRTitle         string        `json:"pr_title"`
+	SecretsToCreate []string      `json:"secrets_to_create"`
+	Verification    *verify.Result `json:"verification,omitempty"`
+}
+
+// FilePreview describes a file that would be written during a non-dry-run operation.
+type FilePreview struct {
+	Path   string `json:"path"`
+	Action string `json:"action"` // "create" or "update"
+}
+
+// SecretError records a secret that failed to create on the remote cluster.
+type SecretError struct {
+	Name  string `json:"name"`
+	Error string `json:"error"`
 }
 
 // ClusterResult holds cluster details in operation results.

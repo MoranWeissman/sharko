@@ -12,6 +12,7 @@ import (
 func init() {
 	addClusterCmd.Flags().String("addons", "", "Comma-separated list of addons to enable")
 	addClusterCmd.Flags().String("region", "", "Cluster region")
+	addClusterCmd.Flags().Bool("dry-run", false, "Preview what would happen without making changes")
 	rootCmd.AddCommand(addClusterCmd)
 
 	rootCmd.AddCommand(removeClusterCmd)
@@ -36,6 +37,7 @@ var addClusterCmd = &cobra.Command{
 		name := args[0]
 		addonsFlag, _ := cmd.Flags().GetString("addons")
 		region, _ := cmd.Flags().GetString("region")
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
 
 		addons := make(map[string]bool)
 		if addonsFlag != "" {
@@ -52,17 +54,92 @@ var addClusterCmd = &cobra.Command{
 			"addons": addons,
 			"region": region,
 		}
+		if dryRun {
+			body["dry_run"] = true
+		}
 
-		fmt.Printf("Registering cluster %s... ", name)
+		if dryRun {
+			fmt.Printf("Dry-run: previewing cluster %s registration...\n", name)
+		} else {
+			fmt.Printf("Registering cluster %s... ", name)
+		}
 		respBody, status, err := apiPost("/api/v1/clusters", body)
 		if err != nil {
-			fmt.Println("failed")
+			if !dryRun {
+				fmt.Println("failed")
+			}
 			return err
 		}
 
-		if status != 201 && status != 207 {
+		if !dryRun && status != 201 && status != 207 {
 			fmt.Println("failed")
 			return printAPIError(respBody, status)
+		}
+		if dryRun && status != 200 {
+			return printAPIError(respBody, status)
+		}
+
+		// Handle dry-run response.
+		if dryRun {
+			var result struct {
+				DryRun *struct {
+					EffectiveAddons []string `json:"effective_addons"`
+					FilesToWrite    []struct {
+						Path   string `json:"path"`
+						Action string `json:"action"`
+					} `json:"files_to_write"`
+					PRTitle         string   `json:"pr_title"`
+					SecretsToCreate []string `json:"secrets_to_create"`
+					Verification    *struct {
+						Success      bool   `json:"success"`
+						ErrorCode    string `json:"error_code,omitempty"`
+						ErrorMessage string `json:"error_message,omitempty"`
+					} `json:"verification,omitempty"`
+				} `json:"dry_run"`
+				Cluster struct {
+					Server        string `json:"server"`
+					ServerVersion string `json:"server_version"`
+				} `json:"cluster"`
+			}
+			if err := json.Unmarshal(respBody, &result); err != nil {
+				return fmt.Errorf("invalid response: %w", err)
+			}
+
+			fmt.Println()
+			fmt.Println("Dry-run preview (no changes made):")
+
+			if result.Cluster.Server != "" {
+				fmt.Printf("  Server:  %s\n", result.Cluster.Server)
+			}
+			if result.Cluster.ServerVersion != "" {
+				fmt.Printf("  Version: %s\n", result.Cluster.ServerVersion)
+			}
+
+			if result.DryRun != nil {
+				if len(result.DryRun.EffectiveAddons) > 0 {
+					fmt.Printf("  Addons:  %s\n", strings.Join(result.DryRun.EffectiveAddons, ", "))
+				}
+				fmt.Printf("  PR:      %s\n", result.DryRun.PRTitle)
+				if len(result.DryRun.FilesToWrite) > 0 {
+					fmt.Println("  Files:")
+					for _, f := range result.DryRun.FilesToWrite {
+						fmt.Printf("    [%s] %s\n", f.Action, f.Path)
+					}
+				}
+				if len(result.DryRun.SecretsToCreate) > 0 {
+					fmt.Printf("  Secrets: %s\n", strings.Join(result.DryRun.SecretsToCreate, ", "))
+				}
+				if result.DryRun.Verification != nil {
+					if result.DryRun.Verification.Success {
+						fmt.Println("  Verify:  passed")
+					} else {
+						fmt.Printf("  Verify:  FAILED [%s] %s\n",
+							result.DryRun.Verification.ErrorCode,
+							result.DryRun.Verification.ErrorMessage)
+					}
+				}
+			}
+			return nil
 		}
 
 		fmt.Println("done")
@@ -82,8 +159,12 @@ var addClusterCmd = &cobra.Command{
 			} `json:"git"`
 			CompletedSteps []string `json:"completed_steps"`
 			FailedStep     string   `json:"failed_step"`
-			Error          string   `json:"error"`
-			Message        string   `json:"message"`
+			FailedSecrets  []struct {
+				Name  string `json:"name"`
+				Error string `json:"error"`
+			} `json:"failed_secrets"`
+			Error   string `json:"error"`
+			Message string `json:"message"`
 		}
 		if err := json.Unmarshal(respBody, &result); err != nil {
 			return fmt.Errorf("invalid response: %w", err)
@@ -99,6 +180,9 @@ var addClusterCmd = &cobra.Command{
 			}
 			if result.Error != "" {
 				fmt.Printf("  Error:       %s\n", result.Error)
+			}
+			for _, fs := range result.FailedSecrets {
+				fmt.Printf("  Secret failed: %s — %s\n", fs.Name, fs.Error)
 			}
 		} else {
 			fmt.Println("Cluster registered:")

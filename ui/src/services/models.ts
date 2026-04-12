@@ -404,3 +404,47 @@ export interface UpgradeCheckResponse {
   conflicts: ConflictCheckEntry[]
   release_notes?: string
 }
+
+// --- Cluster Registration (Story 3.5) ---
+
+export type ClusterProvider = 'eks' | 'gke' | 'aks' | 'generic'
+
+export interface DiscoveredClusterItem {
+  name: string
+  region: string
+  status?: string
+  arn?: string
+  version?: string
+  already_managed?: boolean
+}
+
+export interface DiscoverClustersResponse {
+  clusters: DiscoveredClusterItem[]
+  errors?: string[]
+}
+
+export interface DryRunFileEntry {
+  path: string
+  action: 'create' | 'update'
+}
+
+export interface DryRunResult {
+  effective_addons: string[]
+  files: DryRunFileEntry[]
+  pr_title: string
+  secrets_to_create: string[]
+}
+
+export interface RegisterClusterResult {
+  status: string
+  pr_url?: string
+  pull_request_url?: string
+  merged?: boolean
+  git?: {
+    pr_url?: string
+    merged?: boolean
+  }
+  dry_run?: DryRunResult
+  errors?: string[]
+  partial?: boolean
+}

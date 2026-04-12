@@ -1104,13 +1104,17 @@ func TestRegisterCluster_SecretFailure_PartialSuccess(t *testing.T) {
 	if result.FailedStep != "create_secrets" {
 		t.Errorf("expected failed step 'create_secrets', got %q", result.FailedStep)
 	}
-	// ArgoCD registration is LAST — it should NOT have happened when secrets fail.
-	if _, ok := argocd.registeredClusters["prod-eu"]; ok {
-		t.Error("cluster should NOT be registered in ArgoCD when secret creation fails (ArgoCD is last step)")
+	// With partial success, individual secret failures are recorded but Git/PR + ArgoCD proceed.
+	if len(result.FailedSecrets) != 1 {
+		t.Errorf("expected 1 failed secret, got %d", len(result.FailedSecrets))
 	}
-	// No Git commit should have happened.
-	if len(git.files) > 0 {
-		t.Error("no Git commit should happen after secret creation failure")
+	// Git commit SHOULD have happened — partial success continues with remaining steps.
+	if len(git.prs) == 0 {
+		t.Error("expected a PR to be created even when some secrets failed")
+	}
+	// ArgoCD registration SHOULD have happened (it's the last step and proceeds after partial secret failure).
+	if _, ok := argocd.registeredClusters["prod-eu"]; !ok {
+		t.Error("expected cluster to be registered in ArgoCD even with partial secret failure")
 	}
 }
 

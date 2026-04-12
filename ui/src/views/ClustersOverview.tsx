@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useContext } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Server,
@@ -16,9 +16,21 @@ import {
   Wifi,
   WifiOff,
   GitMerge,
+  Eye,
+  ScanSearch,
 } from 'lucide-react';
-import { api, registerCluster, testClusterConnection } from '@/services/api';
-import type { Cluster, ClusterHealthStats, ClustersResponse, AddonCatalogResponse } from '@/services/models';
+import { api, registerCluster, discoverEKSClusters, testClusterConnection } from '@/services/api';
+import type {
+  Cluster,
+  ClusterHealthStats,
+  ClusterProvider,
+  ClustersResponse,
+  AddonCatalogResponse,
+  DiscoveredClusterItem,
+  DryRunResult,
+  RegisterClusterResult,
+} from '@/services/models';
+import { AuthContext } from '@/hooks/useAuth';
 import { StatCard } from '@/components/StatCard';
 import { ConnectionStatus } from '@/components/ConnectionStatus';
 import { LoadingState } from '@/components/LoadingState';
@@ -82,15 +94,39 @@ export function ClustersOverview() {
   // ArgoCD unreachable detection
   const [argoCDUnreachable, setArgoCDUnreachable] = useState(false);
 
+  // Auth context for role-based auto-merge logic
+  const authCtx = useContext(AuthContext);
+
   // Add Cluster dialog state
   const [addClusterOpen, setAddClusterOpen] = useState(false);
   const [addClusterName, setAddClusterName] = useState('');
   const [addClusterRegion, setAddClusterRegion] = useState('');
+  const [addClusterRoleArn, setAddClusterRoleArn] = useState('');
   const [addClusterSubmitting, setAddClusterSubmitting] = useState(false);
   const [addClusterError, setAddClusterError] = useState<string | null>(null);
-  const [addClusterResult, setAddClusterResult] = useState<string | null>(null);
+  const [addClusterResult, setAddClusterResult] = useState<RegisterClusterResult | null>(null);
+  const [addClusterResultMsg, setAddClusterResultMsg] = useState<string | null>(null);
   const [catalogAddons, setCatalogAddons] = useState<AddonCatalogResponse | null>(null);
   const [selectedAddons, setSelectedAddons] = useState<Record<string, boolean>>({});
+
+  // Provider selection
+  const [provider, setProvider] = useState<ClusterProvider>('eks');
+
+  // Discovery mode
+  const [registrationMode, setRegistrationMode] = useState<'direct' | 'discovery'>('direct');
+  const [discoveryRoleArns, setDiscoveryRoleArns] = useState('');
+  const [discoveryRegion, setDiscoveryRegion] = useState('');
+  const [discovering, setDiscovering] = useState(false);
+  const [discoveryError, setDiscoveryError] = useState<string | null>(null);
+  const [discoveredItems, setDiscoveredItems] = useState<DiscoveredClusterItem[]>([]);
+  const [selectedDiscovered, setSelectedDiscovered] = useState<Record<string, boolean>>({});
+
+  // Auto-merge checkbox
+  const [autoMerge, setAutoMerge] = useState(false);
+
+  // Dry-run preview
+  const [dryRunResult, setDryRunResult] = useState<DryRunResult | null>(null);
+  const [dryRunLoading, setDryRunLoading] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
@@ -122,42 +158,149 @@ export function ClustersOverview() {
     setAddClusterOpen(true);
     setAddClusterError(null);
     setAddClusterResult(null);
+    setAddClusterResultMsg(null);
     setAddClusterName('');
     setAddClusterRegion('');
+    setAddClusterRoleArn('');
     setSelectedAddons({});
+    setProvider('eks');
+    setRegistrationMode('direct');
+    setDiscoveryRoleArns('');
+    setDiscoveryRegion('');
+    setDiscovering(false);
+    setDiscoveryError(null);
+    setDiscoveredItems([]);
+    setSelectedDiscovered({});
+    setAutoMerge(false);
+    setDryRunResult(null);
+    setDryRunLoading(false);
     // Fetch catalog for addon multi-select
     if (!catalogAddons) {
       api.getAddonCatalog().then(setCatalogAddons).catch(() => {});
     }
   }, [catalogAddons]);
 
+  // Determine if auto-merge checkbox should be disabled
+  const isAutoMergeDisabled = authCtx?.role === 'operator' || authCtx?.role === 'viewer';
+
+  const handleDiscoverClusters = useCallback(async () => {
+    const arns = discoveryRoleArns.split(',').map(a => a.trim()).filter(Boolean);
+    if (arns.length === 0) return;
+    setDiscovering(true);
+    setDiscoveryError(null);
+    setDiscoveredItems([]);
+    setSelectedDiscovered({});
+    try {
+      const result = await discoverEKSClusters({
+        role_arns: arns,
+        region: discoveryRegion.trim() || undefined,
+      });
+      setDiscoveredItems(result.clusters || []);
+      if (result.errors && result.errors.length > 0) {
+        setDiscoveryError(result.errors.join('; '));
+      }
+    } catch (e: unknown) {
+      setDiscoveryError(e instanceof Error ? e.message : 'Discovery failed');
+    } finally {
+      setDiscovering(false);
+    }
+  }, [discoveryRoleArns, discoveryRegion]);
+
+  const handleDryRun = useCallback(async () => {
+    const clusterName = registrationMode === 'direct' ? addClusterName.trim() : '';
+    if (registrationMode === 'direct' && !clusterName) return;
+    setDryRunLoading(true);
+    setDryRunResult(null);
+    setAddClusterError(null);
+    try {
+      const result = await registerCluster({
+        name: clusterName || 'dry-run-preview',
+        region: addClusterRegion.trim() || undefined,
+        provider,
+        role_arn: addClusterRoleArn.trim() || undefined,
+        auto_merge: autoMerge,
+        addons: Object.keys(selectedAddons).length > 0 ? selectedAddons : undefined,
+        dry_run: true,
+      });
+      if (result?.dry_run) {
+        setDryRunResult(result.dry_run);
+      }
+    } catch (e: unknown) {
+      setAddClusterError(e instanceof Error ? e.message : 'Dry run failed');
+    } finally {
+      setDryRunLoading(false);
+    }
+  }, [registrationMode, addClusterName, addClusterRegion, addClusterRoleArn, provider, autoMerge, selectedAddons]);
+
   const handleAddCluster = useCallback(async () => {
-    if (!addClusterName.trim()) return;
+    if (registrationMode === 'direct' && !addClusterName.trim()) return;
     setAddClusterSubmitting(true);
     setAddClusterError(null);
     setAddClusterResult(null);
+    setAddClusterResultMsg(null);
     try {
-      const result = await registerCluster({
-        name: addClusterName.trim(),
-        region: addClusterRegion.trim() || undefined,
-        addons: Object.keys(selectedAddons).length > 0 ? selectedAddons : undefined,
-      });
-      const prUrl = result?.git?.pr_url || result?.pr_url || result?.pull_request_url;
-      const merged = result?.git?.merged;
-      const statusMsg = merged === false && prUrl
-        ? `Cluster registered. PR pending merge: ${prUrl}`
-        : prUrl
-          ? `Cluster registered. PR: ${prUrl}`
-          : 'Cluster registered successfully.';
-      setAddClusterOpen(false);
-      void fetchData();
-      setAddClusterResult(statusMsg);
+      if (registrationMode === 'discovery') {
+        // Register all selected discovered clusters
+        const selected = discoveredItems.filter(c => selectedDiscovered[c.name]);
+        if (selected.length === 0) return;
+        const errors: string[] = [];
+        let lastResult: RegisterClusterResult | null = null;
+        for (const cluster of selected) {
+          try {
+            lastResult = await registerCluster({
+              name: cluster.name,
+              region: cluster.region,
+              provider,
+              role_arn: cluster.arn || undefined,
+              auto_merge: autoMerge,
+              addons: Object.keys(selectedAddons).length > 0 ? selectedAddons : undefined,
+            });
+          } catch (e: unknown) {
+            errors.push(`${cluster.name}: ${e instanceof Error ? e.message : 'Failed'}`);
+          }
+        }
+        if (errors.length > 0 && errors.length < selected.length) {
+          // Partial success
+          setAddClusterResultMsg(`Registered ${selected.length - errors.length} of ${selected.length} clusters. Errors: ${errors.join('; ')}`);
+          setAddClusterResult({ status: 'partial', partial: true, errors });
+        } else if (errors.length > 0) {
+          setAddClusterError(errors.join('; '));
+          return;
+        } else {
+          setAddClusterResultMsg(`${selected.length} cluster(s) registered successfully.`);
+          setAddClusterResult(lastResult);
+        }
+        setAddClusterOpen(false);
+        void fetchData();
+      } else {
+        // Direct registration
+        const result = await registerCluster({
+          name: addClusterName.trim(),
+          region: addClusterRegion.trim() || undefined,
+          provider,
+          role_arn: addClusterRoleArn.trim() || undefined,
+          auto_merge: autoMerge,
+          addons: Object.keys(selectedAddons).length > 0 ? selectedAddons : undefined,
+        });
+        const prUrl = result?.git?.pr_url || result?.pr_url || result?.pull_request_url;
+        const merged = result?.git?.merged ?? autoMerge;
+        if (merged && !prUrl) {
+          setAddClusterResultMsg('Cluster registered successfully.');
+        } else if (prUrl) {
+          setAddClusterResultMsg(prUrl);
+        } else {
+          setAddClusterResultMsg('Cluster registered successfully.');
+        }
+        setAddClusterResult(result);
+        setAddClusterOpen(false);
+        void fetchData();
+      }
     } catch (e: unknown) {
       setAddClusterError(e instanceof Error ? e.message : 'Failed to register cluster');
     } finally {
       setAddClusterSubmitting(false);
     }
-  }, [addClusterName, addClusterRegion, selectedAddons, fetchData]);
+  }, [addClusterName, addClusterRegion, addClusterRoleArn, provider, autoMerge, selectedAddons, fetchData, registrationMode, discoveredItems, selectedDiscovered]);
 
   const handleTestCluster = useCallback(async (name: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -363,42 +506,212 @@ export function ClustersOverview() {
 
       {/* Add Cluster Dialog */}
       <Dialog open={addClusterOpen} onOpenChange={(v) => { if (!v) setAddClusterOpen(false) }}>
-        <DialogContent>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Register New Cluster</DialogTitle>
             <DialogDescription>Add a new cluster to the Git catalog.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
+            {/* Provider Selection */}
             <div>
               <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
-                Cluster Name <span className="text-red-500">*</span>
+                Provider
               </label>
-              <input
-                type="text"
-                value={addClusterName}
-                onChange={(e) => setAddClusterName(e.target.value)}
-                placeholder="e.g. prod-us-east-1"
-                className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
-              />
+              <select
+                value={provider}
+                onChange={(e) => setProvider(e.target.value as ClusterProvider)}
+                className="w-full rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+              >
+                <option value="eks">Amazon EKS</option>
+                <option value="gke" disabled>Google GKE (coming soon)</option>
+                <option value="aks" disabled>Azure AKS (coming soon)</option>
+                <option value="generic" disabled>Generic K8s (coming soon)</option>
+              </select>
             </div>
+
+            {/* Registration Mode Toggle */}
             <div>
               <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
-                Region (optional)
+                Registration Mode
               </label>
-              <input
-                type="text"
-                value={addClusterRegion}
-                onChange={(e) => setAddClusterRegion(e.target.value)}
-                placeholder="e.g. us-east-1"
-                className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
-              />
+              <div className="flex rounded-md ring-2 ring-[#6aade0] dark:ring-gray-700">
+                <button
+                  type="button"
+                  onClick={() => setRegistrationMode('direct')}
+                  className={`flex-1 rounded-l-md px-4 py-2 text-sm font-medium transition-colors ${
+                    registrationMode === 'direct'
+                      ? 'bg-teal-600 text-white'
+                      : 'bg-[#f0f7ff] text-[#2a5a7a] hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
+                  }`}
+                >
+                  Direct
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRegistrationMode('discovery')}
+                  className={`flex-1 rounded-r-md px-4 py-2 text-sm font-medium transition-colors ${
+                    registrationMode === 'discovery'
+                      ? 'bg-teal-600 text-white'
+                      : 'bg-[#f0f7ff] text-[#2a5a7a] hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
+                  }`}
+                >
+                  <span className="inline-flex items-center gap-1"><ScanSearch className="h-4 w-4" /> Discovery</span>
+                </button>
+              </div>
             </div>
+
+            {registrationMode === 'direct' ? (
+              <>
+                {/* Direct mode fields */}
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
+                    Cluster Name <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={addClusterName}
+                    onChange={(e) => setAddClusterName(e.target.value)}
+                    placeholder="e.g. prod-us-east-1"
+                    className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
+                    Region (optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={addClusterRegion}
+                    onChange={(e) => setAddClusterRegion(e.target.value)}
+                    placeholder="e.g. us-east-1"
+                    className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
+                    Role ARN (optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={addClusterRoleArn}
+                    onChange={(e) => setAddClusterRoleArn(e.target.value)}
+                    placeholder="e.g. arn:aws:iam::123456789012:role/sharko-access"
+                    className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
+                  />
+                </div>
+              </>
+            ) : (
+              <>
+                {/* Discovery mode */}
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
+                    Role ARNs <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={discoveryRoleArns}
+                    onChange={(e) => setDiscoveryRoleArns(e.target.value)}
+                    placeholder="Comma-separated: arn:aws:iam::111:role/a, arn:aws:iam::222:role/b"
+                    className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
+                  />
+                  <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
+                    Enter one or more AWS IAM Role ARNs to scan for EKS clusters
+                  </p>
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
+                    Region (optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={discoveryRegion}
+                    onChange={(e) => setDiscoveryRegion(e.target.value)}
+                    placeholder="e.g. us-east-1 (leave empty for all regions)"
+                    className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleDiscoverClusters}
+                  disabled={discovering || !discoveryRoleArns.trim()}
+                  className="inline-flex items-center gap-2 rounded-md bg-[#0a2a4a] px-4 py-2 text-sm font-medium text-white hover:bg-[#0d3558] disabled:cursor-not-allowed disabled:opacity-50 dark:bg-blue-700 dark:hover:bg-blue-600"
+                >
+                  {discovering ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScanSearch className="h-4 w-4" />}
+                  Scan
+                </button>
+                {discoveryError && (
+                  <p className="text-sm text-amber-600 dark:text-amber-400">{discoveryError}</p>
+                )}
+                {discoveredItems.length > 0 && (
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
+                      Discovered Clusters ({discoveredItems.length})
+                    </label>
+                    <div className="max-h-48 overflow-y-auto rounded-md ring-2 ring-[#6aade0] dark:ring-gray-700">
+                      <table className="w-full text-left text-sm">
+                        <thead className="sticky top-0 border-b border-[#6aade0] bg-[#d0e8f8] text-xs uppercase text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
+                          <tr>
+                            <th className="px-3 py-2 w-8">
+                              <input
+                                type="checkbox"
+                                checked={discoveredItems.filter(c => !c.already_managed).length > 0 && discoveredItems.filter(c => !c.already_managed).every(c => selectedDiscovered[c.name])}
+                                onChange={(e) => {
+                                  const checked = e.target.checked;
+                                  const next: Record<string, boolean> = {};
+                                  discoveredItems.forEach(c => {
+                                    if (!c.already_managed) next[c.name] = checked;
+                                  });
+                                  setSelectedDiscovered(next);
+                                }}
+                                className="rounded border-[#5a9dd0] dark:border-gray-600"
+                              />
+                            </th>
+                            <th className="px-3 py-2">Name</th>
+                            <th className="px-3 py-2">Region</th>
+                            <th className="px-3 py-2">Version</th>
+                            <th className="px-3 py-2">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[#6aade0] dark:divide-gray-700 bg-[#f0f7ff] dark:bg-gray-800">
+                          {discoveredItems.map((cluster) => (
+                            <tr key={cluster.name} className={cluster.already_managed ? 'opacity-50' : ''}>
+                              <td className="px-3 py-2">
+                                <input
+                                  type="checkbox"
+                                  checked={!!selectedDiscovered[cluster.name]}
+                                  disabled={cluster.already_managed}
+                                  onChange={(e) => setSelectedDiscovered(prev => ({ ...prev, [cluster.name]: e.target.checked }))}
+                                  className="rounded border-[#5a9dd0] dark:border-gray-600"
+                                />
+                              </td>
+                              <td className="px-3 py-2 font-medium text-[#0a2a4a] dark:text-gray-100">
+                                {cluster.name}
+                              </td>
+                              <td className="px-3 py-2 text-[#2a5a7a] dark:text-gray-400">{cluster.region}</td>
+                              <td className="px-3 py-2 font-mono text-xs text-[#2a5a7a] dark:text-gray-400">{cluster.version ?? '--'}</td>
+                              <td className="px-3 py-2">
+                                {cluster.already_managed
+                                  ? <span className="text-xs text-[#5a8aaa]">Already managed</span>
+                                  : <span className="text-xs text-teal-600 dark:text-teal-400">{cluster.status ?? 'Available'}</span>
+                                }
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* Addons selection - shared between modes */}
             {catalogAddons && catalogAddons.addons.length > 0 && (
               <div>
                 <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
                   Enable Addons (optional)
                 </label>
-                <div className="max-h-40 space-y-1 overflow-y-auto rounded-md ring-2 ring-[#6aade0] p-2 dark:border-gray-700">
+                <div className="max-h-40 space-y-1 overflow-y-auto rounded-md ring-2 ring-[#6aade0] p-2 dark:ring-gray-700">
                   {catalogAddons.addons.map((addon) => (
                     <label
                       key={addon.addon_name}
@@ -421,45 +734,131 @@ export function ClustersOverview() {
                 </div>
               </div>
             )}
+
+            {/* Auto-merge checkbox */}
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="auto-merge-checkbox"
+                checked={autoMerge}
+                disabled={isAutoMergeDisabled}
+                onChange={(e) => setAutoMerge(e.target.checked)}
+                className="rounded border-[#5a9dd0] dark:border-gray-600 disabled:opacity-50"
+              />
+              <label
+                htmlFor="auto-merge-checkbox"
+                className={`text-sm font-medium ${isAutoMergeDisabled ? 'text-[#5a8aaa] dark:text-gray-500' : 'text-[#0a3a5a] dark:text-gray-300'}`}
+              >
+                Merge PR automatically
+              </label>
+              {isAutoMergeDisabled && (
+                <span className="text-xs text-[#5a8aaa] dark:text-gray-500">(admin only)</span>
+              )}
+            </div>
+
+            {/* Dry-run preview panel */}
+            {dryRunResult && (
+              <div className="rounded-md ring-2 ring-[#6aade0] bg-[#e8f4ff] p-3 dark:ring-gray-700 dark:bg-gray-900">
+                <h4 className="mb-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-200">Dry Run Preview</h4>
+                <div className="space-y-2 text-xs text-[#2a5a7a] dark:text-gray-400">
+                  <div>
+                    <span className="font-medium text-[#0a3a5a] dark:text-gray-300">PR Title:</span>{' '}
+                    {dryRunResult.pr_title}
+                  </div>
+                  {dryRunResult.effective_addons.length > 0 && (
+                    <div>
+                      <span className="font-medium text-[#0a3a5a] dark:text-gray-300">Effective Addons:</span>{' '}
+                      {dryRunResult.effective_addons.join(', ')}
+                    </div>
+                  )}
+                  {dryRunResult.files.length > 0 && (
+                    <div>
+                      <span className="font-medium text-[#0a3a5a] dark:text-gray-300">Files:</span>
+                      <ul className="mt-1 space-y-0.5 font-mono">
+                        {dryRunResult.files.map((f) => (
+                          <li key={f.path}>
+                            <span className={f.action === 'create' ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400'}>
+                              {f.action === 'create' ? '+' : '~'}
+                            </span>{' '}
+                            {f.path}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {dryRunResult.secrets_to_create.length > 0 && (
+                    <div>
+                      <span className="font-medium text-[#0a3a5a] dark:text-gray-300">Secrets to Create:</span>{' '}
+                      {dryRunResult.secrets_to_create.join(', ')}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             {addClusterError && (
               <p className="text-sm text-red-600 dark:text-red-400">{addClusterError}</p>
             )}
-            {addClusterResult && (
-              <p className="text-sm text-green-600 dark:text-green-400">{addClusterResult}</p>
-            )}
           </div>
-          <DialogFooter>
+          <DialogFooter className="flex-wrap gap-2">
             <button
               type="button"
               onClick={() => setAddClusterOpen(false)}
               disabled={addClusterSubmitting}
               className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
             >
-              {addClusterResult ? 'Close' : 'Cancel'}
+              Cancel
             </button>
-            {!addClusterResult && (
-              <button
-                type="button"
-                onClick={handleAddCluster}
-                disabled={!addClusterName.trim() || addClusterSubmitting}
-                className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
-              >
-                {addClusterSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
-                Register Cluster
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={handleDryRun}
+              disabled={
+                dryRunLoading ||
+                addClusterSubmitting ||
+                (registrationMode === 'direct' && !addClusterName.trim()) ||
+                (registrationMode === 'discovery' && !Object.values(selectedDiscovered).some(Boolean))
+              }
+              className="inline-flex items-center gap-2 rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+            >
+              {dryRunLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}
+              Preview
+            </button>
+            <button
+              type="button"
+              onClick={handleAddCluster}
+              disabled={
+                addClusterSubmitting ||
+                (registrationMode === 'direct' && !addClusterName.trim()) ||
+                (registrationMode === 'discovery' && !Object.values(selectedDiscovered).some(Boolean))
+              }
+              className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
+            >
+              {addClusterSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
+              Register{registrationMode === 'discovery' && Object.values(selectedDiscovered).filter(Boolean).length > 1 ? ` (${Object.values(selectedDiscovered).filter(Boolean).length})` : ''}
+            </button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       {/* Registration success banner */}
-      {addClusterResult && (
-        <div className="flex items-center justify-between rounded-md border border-green-300 bg-green-50 px-4 py-2 text-sm text-green-800 dark:border-green-700 dark:bg-green-900/30 dark:text-green-300">
-          <span>{addClusterResult}</span>
+      {addClusterResultMsg && (
+        <div className={`flex items-center justify-between rounded-md px-4 py-2 text-sm ${
+          addClusterResult?.partial
+            ? 'border border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+            : 'border border-green-300 bg-green-50 text-green-800 dark:border-green-700 dark:bg-green-900/30 dark:text-green-300'
+        }`}>
+          <span>
+            {addClusterResult?.partial
+              ? addClusterResultMsg
+              : addClusterResultMsg.startsWith('http')
+                ? <>Cluster registered. PR: <a href={addClusterResultMsg} target="_blank" rel="noopener noreferrer" className="underline font-medium">{addClusterResultMsg}</a></>
+                : addClusterResultMsg
+            }
+          </span>
           <button
             type="button"
-            onClick={() => setAddClusterResult(null)}
-            className="ml-4 rounded p-0.5 hover:bg-green-100 dark:hover:bg-green-800"
+            onClick={() => { setAddClusterResultMsg(null); setAddClusterResult(null); }}
+            className={`ml-4 rounded p-0.5 ${addClusterResult?.partial ? 'hover:bg-amber-100 dark:hover:bg-amber-800' : 'hover:bg-green-100 dark:hover:bg-green-800'}`}
             aria-label="Dismiss"
           >
             <X className="h-4 w-4" />

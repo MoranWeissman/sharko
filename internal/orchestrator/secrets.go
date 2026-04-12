@@ -38,15 +38,28 @@ func (o *Orchestrator) SetSecretManagement(defs map[string]AddonSecretDefinition
 }
 
 // CreateAddonSecretsForCluster is a public wrapper for the refresh API endpoint.
-func (o *Orchestrator) CreateAddonSecretsForCluster(ctx context.Context, kubeconfig []byte, addons map[string]bool) ([]string, error) {
-	return o.createAddonSecrets(ctx, kubeconfig, addons)
+// Returns the list of created secret names and an error if the remote client fails.
+// Individual secret failures are recorded in the result but do not cause a top-level error.
+func (o *Orchestrator) CreateAddonSecretsForCluster(ctx context.Context, kubeconfig []byte, addons map[string]bool) ([]string, []SecretError, error) {
+	res, err := o.createAddonSecrets(ctx, kubeconfig, addons)
+	if err != nil {
+		return nil, nil, err
+	}
+	return res.Created, res.Failed, nil
+}
+
+// secretCreationResult holds the outcome of a partial-success-aware secret creation loop.
+type secretCreationResult struct {
+	Created []string
+	Failed  []SecretError
 }
 
 // createAddonSecrets creates K8s Secrets on a remote cluster for all addons that have secret definitions.
-// Returns the list of created secret names. If any fail, returns partial results and the error.
-func (o *Orchestrator) createAddonSecrets(ctx context.Context, kubeconfig []byte, addons map[string]bool) ([]string, error) {
+// Uses partial-success semantics: individual failures are recorded but do not stop the loop.
+// Returns a secretCreationResult with both created and failed secret names.
+func (o *Orchestrator) createAddonSecrets(ctx context.Context, kubeconfig []byte, addons map[string]bool) (*secretCreationResult, error) {
 	if o.remoteClientFn == nil || o.secretDefs == nil || o.secretFetcher == nil {
-		return nil, nil // no secret management configured
+		return &secretCreationResult{}, nil // no secret management configured
 	}
 
 	// Filter to addons that are enabled AND have secret definitions.
@@ -60,7 +73,7 @@ func (o *Orchestrator) createAddonSecrets(ctx context.Context, kubeconfig []byte
 		}
 	}
 	if len(toCreate) == 0 {
-		return nil, nil
+		return &secretCreationResult{}, nil
 	}
 
 	slog.Info("[secrets] createAddonSecrets called", "addonCount", len(toCreate))
@@ -70,25 +83,57 @@ func (o *Orchestrator) createAddonSecrets(ctx context.Context, kubeconfig []byte
 		return nil, fmt.Errorf("connecting to remote cluster: %w", err)
 	}
 
-	var created []string
+	result := &secretCreationResult{}
 	for _, def := range toCreate {
 		data := make(map[string][]byte)
+		var fetchFailed bool
 		for key, providerPath := range def.Keys {
 			slog.Info("[secrets] fetching secret value", "addon", def.AddonName, "key", key, "path", providerPath)
 			val, fetchErr := o.secretFetcher.GetSecretValue(ctx, providerPath)
 			if fetchErr != nil {
-				return created, fmt.Errorf("fetching secret value for %s key %q from %q: %w", def.AddonName, key, providerPath, fetchErr)
+				result.Failed = append(result.Failed, SecretError{
+					Name:  def.SecretName,
+					Error: fmt.Sprintf("fetching key %q from %q: %v", key, providerPath, fetchErr),
+				})
+				fetchFailed = true
+				break
 			}
 			data[key] = val
+		}
+		if fetchFailed {
+			continue
 		}
 
 		slog.Info("[secrets] pushing secret to cluster", "addon", def.AddonName, "secret", def.SecretName, "namespace", def.Namespace)
 		if err := remoteclient.EnsureSecret(ctx, client, def.Namespace, def.SecretName, data); err != nil {
-			return created, fmt.Errorf("creating secret for addon %s: %w", def.AddonName, err)
+			slog.Error("[secrets] failed to create secret, continuing", "addon", def.AddonName, "error", err)
+			result.Failed = append(result.Failed, SecretError{
+				Name:  def.SecretName,
+				Error: fmt.Sprintf("creating secret for addon %s: %v", def.AddonName, err),
+			})
+			continue
 		}
-		created = append(created, def.SecretName)
+		result.Created = append(result.Created, def.SecretName)
 	}
-	return created, nil
+	return result, nil
+}
+
+// listSecretsToCreate returns the secret names that would be created for the given addons,
+// without actually creating them. Used by dry-run mode.
+func (o *Orchestrator) listSecretsToCreate(addons map[string]bool) []string {
+	if o.secretDefs == nil {
+		return nil
+	}
+	var names []string
+	for addonName, enabled := range addons {
+		if !enabled {
+			continue
+		}
+		if def, ok := o.secretDefs[addonName]; ok {
+			names = append(names, def.SecretName)
+		}
+	}
+	return names
 }
 
 // deleteAddonSecrets deletes Sharko-managed secrets for specific addons from a remote cluster.

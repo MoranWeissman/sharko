@@ -7,13 +7,16 @@ import type {
   AvailableVersionsResponse,
   ClusterComparisonResponse,
   ClusterDetailResponse,
+  ClusterProvider,
   ClustersResponse,
   ConfigDiffResponse,
   ConnectionsListResponse,
   DashboardStats,
   DiagnosticReport,
+  DiscoverClustersResponse,
   ObservabilityOverviewResponse,
   PullRequestsResponse,
+  RegisterClusterResult,
   SyncActivityEntry,
   UpgradeCheckResponse,
   VerifyResult,
@@ -135,8 +138,20 @@ async function fetchJSONMethod<T>(path: string, method: string, body?: unknown):
 
 // --- Write operations (Phase 7) ---
 
-export async function registerCluster(data: { name: string; addons?: Record<string, boolean>; region?: string }) {
-  return postJSON<any>('/clusters', data)
+export async function registerCluster(data: {
+  name: string;
+  addons?: Record<string, boolean>;
+  region?: string;
+  provider?: ClusterProvider;
+  role_arn?: string;
+  auto_merge?: boolean;
+  dry_run?: boolean;
+}) {
+  return postJSON<RegisterClusterResult>('/clusters', data)
+}
+
+export async function discoverEKSClusters(data: { role_arns: string[]; region?: string }) {
+  return postJSON<DiscoverClustersResponse>('/clusters/discover', data)
 }
 
 export async function testClusterConnection(name: string) {

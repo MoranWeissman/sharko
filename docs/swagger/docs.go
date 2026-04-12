@@ -1531,7 +1531,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Registers a new cluster in ArgoCD and creates its GitOps configuration",
+                "description": "Registers a new cluster in ArgoCD and creates its GitOps configuration.\nPass \"dry_run\": true to preview what would happen without making changes.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1544,7 +1544,7 @@ const docTemplate = `{
                 "summary": "Register cluster",
                 "parameters": [
                     {
-                        "description": "Cluster registration request",
+                        "description": "Cluster registration request (supports dry_run field)",
                         "name": "body",
                         "in": "body",
                         "required": true,
@@ -1554,6 +1554,13 @@ const docTemplate = `{
                     }
                 ],
                 "responses": {
+                    "200": {
+                        "description": "Dry-run preview",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
                     "201": {
                         "description": "Cluster registered",
                         "schema": {
@@ -1707,6 +1714,66 @@ const docTemplate = `{
                     },
                     "502": {
                         "description": "Gateway error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/clusters/discover": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Scans one or more AWS accounts for EKS clusters via the EKS API.\nIf role_arns is empty, uses the default IRSA identity.\nFor cross-account discovery, provide one or more IAM role ARNs to assume.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "clusters"
+                ],
+                "summary": "Discover EKS clusters",
+                "parameters": [
+                    {
+                        "description": "Discovery request",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.discoverEKSRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Discovered clusters",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.discoverEKSResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "Discovery failed",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -4784,13 +4851,46 @@ const docTemplate = `{
                         "type": "boolean"
                     }
                 },
+                "dry_run": {
+                    "type": "boolean"
+                },
                 "name": {
+                    "type": "string"
+                },
+                "provider": {
                     "type": "string"
                 },
                 "region": {
                     "type": "string"
                 },
                 "secret_path": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_providers.DiscoveredCluster": {
+            "type": "object",
+            "properties": {
+                "account": {
+                    "type": "string"
+                },
+                "endpoint": {
+                    "type": "string"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "k8s_version": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "region": {
+                    "type": "string"
+                },
+                "status": {
+                    "description": "ACTIVE, CREATING, DELETING, FAILED, UPDATING, PENDING",
                     "type": "string"
                 }
             }
@@ -4876,6 +4976,37 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.discoverEKSRequest": {
+            "type": "object",
+            "properties": {
+                "provider": {
+                    "type": "string"
+                },
+                "region": {
+                    "type": "string"
+                },
+                "role_arns": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "internal_api.discoverEKSResponse": {
+            "type": "object",
+            "properties": {
+                "clusters": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_providers.DiscoveredCluster"
+                    }
+                },
+                "error": {
                     "type": "string"
                 }
             }
