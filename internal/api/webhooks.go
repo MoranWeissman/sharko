@@ -112,10 +112,13 @@ func (s *Server) handleGitWebhook(w http.ResponseWriter, r *http.Request) {
 			details = fmt.Sprintf("%s — %s", details, event.Commits[0].Message)
 		}
 		s.auditLog.Add(audit.Entry{
-			Source:  "webhook",
-			Action:  "push",
-			Actor:   pusher,
-			Details: details,
+			Level:    "info",
+			Event:    "push",
+			User:     pusher,
+			Action:   "push",
+			Resource: details,
+			Source:   "webhook",
+			Result:   "success",
 		})
 	}
 

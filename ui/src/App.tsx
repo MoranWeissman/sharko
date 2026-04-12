@@ -19,6 +19,7 @@ const Observability = lazy(() => import('@/views/Observability'))
 const Dashboards = lazy(() => import('@/views/Dashboards'))
 const Settings = lazy(() => import('@/views/Settings'))
 const UserInfo = lazy(() => import('@/views/UserInfo'))
+const AuditViewer = lazy(() => import('@/views/AuditViewer'))
 
 function PageLoader() {
   return (
@@ -79,6 +80,7 @@ function ConnectedApp() {
           <Route path="observability" element={<Observability />} />
           <Route path="upgrade" element={<Navigate to="/addons" replace />} />
           <Route path="dashboards" element={<Dashboards />} />
+          <Route path="audit" element={<AuditViewer />} />
           <Route path="settings" element={<Settings />} />
           <Route path="users" element={<Navigate to="/settings?section=users" replace />} />
           <Route path="api-keys" element={<Navigate to="/settings?section=api-keys" replace />} />

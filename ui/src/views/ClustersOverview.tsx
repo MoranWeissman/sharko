@@ -24,6 +24,10 @@ import { ConnectionStatus } from '@/components/ConnectionStatus';
 import { LoadingState } from '@/components/LoadingState';
 import { ErrorState } from '@/components/ErrorState';
 import { RoleGuard } from '@/components/RoleGuard';
+import { StatusBadge, isClusterStatus } from '@/components/StatusBadge';
+import { ClusterStatusLegend } from '@/components/ClusterStatusLegend';
+import { DiagnoseModal } from '@/components/DiagnoseModal';
+import { ArgoCDStatusBanner } from '@/components/ArgoCDStatusBanner';
 import {
   Dialog,
   DialogContent,
@@ -67,10 +71,16 @@ export function ClustersOverview() {
   const navigate = useNavigate();
 
   // Test connection state per cluster
-  const [testResults, setTestResults] = useState<Record<string, { reachable: boolean; server_version?: string; platform?: string; error?: string } | 'testing'>>({});
+  const [testResults, setTestResults] = useState<Record<string, { reachable?: boolean; success?: boolean; server_version?: string; platform?: string; error?: string; error_message?: string } | 'testing'>>({});
 
   // Adopt (start managing) state per cluster
   const [manageStatus, setManageStatus] = useState<Record<string, { loading?: boolean; success?: string; error?: string }>>({});
+
+  // Diagnose modal state
+  const [diagnoseCluster, setDiagnoseCluster] = useState<string | null>(null);
+
+  // ArgoCD unreachable detection
+  const [argoCDUnreachable, setArgoCDUnreachable] = useState(false);
 
   // Add Cluster dialog state
   const [addClusterOpen, setAddClusterOpen] = useState(false);
@@ -89,6 +99,12 @@ export function ClustersOverview() {
       const response: ClustersResponse = await api.getClusters();
       setAllClusters(response.clusters);
       setHealthStats(response.health_stats ?? null);
+      // Detect ArgoCD unreachable: if all clusters have failed/unknown status or response is empty
+      const hasArgoError = response.clusters.length === 0 ||
+        (response.clusters.length > 0 && response.clusters.every(
+          (c) => !c.connection_status || c.connection_status === 'Failed' || c.connection_status === 'unknown'
+        ));
+      setArgoCDUnreachable(hasArgoError && response.clusters.length > 0);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to load clusters');
       setAllClusters([]);
@@ -331,6 +347,19 @@ export function ClustersOverview() {
           </button>
         </RoleGuard>
       </div>
+
+      {/* ArgoCD Status Banner */}
+      <ArgoCDStatusBanner visible={argoCDUnreachable} />
+
+      {/* Cluster Status Legend */}
+      <ClusterStatusLegend />
+
+      {/* Diagnose Modal */}
+      <DiagnoseModal
+        clusterName={diagnoseCluster ?? ''}
+        open={diagnoseCluster !== null}
+        onClose={() => setDiagnoseCluster(null)}
+      />
 
       {/* Add Cluster Dialog */}
       <Dialog open={addClusterOpen} onOpenChange={(v) => { if (!v) setAddClusterOpen(false) }}>
@@ -663,7 +692,10 @@ export function ClustersOverview() {
                         </span>
                       </td>
                       <td className="px-6 py-3">
-                        <ConnectionStatus status={cluster.connection_status ?? 'unknown'} />
+                        {isClusterStatus(cluster.connection_status ?? 'unknown')
+                          ? <StatusBadge status={cluster.connection_status ?? 'unknown'} />
+                          : <ConnectionStatus status={cluster.connection_status ?? 'unknown'} />
+                        }
                       </td>
                       <td className="px-6 py-3 font-mono text-xs text-[#2a5a7a] dark:text-gray-400">
                         {cluster.server_version ?? '--'}
@@ -684,15 +716,23 @@ export function ClustersOverview() {
                               : <Wifi className="h-3 w-3" />}
                             Test
                           </button>
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); setDiagnoseCluster(cluster.name); }}
+                            className="inline-flex items-center gap-1 rounded border border-[#5a9dd0] px-2 py-1 text-xs text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+                          >
+                            <HelpCircle className="h-3 w-3" />
+                            Diagnose
+                          </button>
                           {testResult && testResult !== 'testing' && (
-                            testResult.reachable
+                            testResult.reachable !== false && testResult.success !== false
                               ? <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
                                   <CheckCircle className="h-3 w-3" />
                                   {[testResult.server_version, testResult.platform].filter(Boolean).join(' — ') || 'Reachable'}
                                 </span>
                               : <span className="flex items-center gap-1 text-xs text-red-500 dark:text-red-400">
                                   <WifiOff className="h-3 w-3" />
-                                  Error: {testResult.error ?? 'Unreachable'}
+                                  Error: {testResult.error ?? testResult.error_message ?? 'Unreachable'}
                                 </span>
                           )}
                         </div>
@@ -731,32 +771,44 @@ export function ClustersOverview() {
                         {isInCluster && <Info className="h-4 w-4 text-blue-400" />}
                       </span>
                     </h3>
-                    <button
-                      type="button"
-                      onClick={(e) => handleTestCluster(cluster.name, e)}
-                      disabled={testResult === 'testing'}
-                      className="inline-flex items-center gap-1 rounded border border-[#5a9dd0] px-2 py-1 text-xs text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
-                    >
-                      {testResult === 'testing' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wifi className="h-3 w-3" />}
-                      Test
-                    </button>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={(e) => handleTestCluster(cluster.name, e)}
+                        disabled={testResult === 'testing'}
+                        className="inline-flex items-center gap-1 rounded border border-[#5a9dd0] px-2 py-1 text-xs text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+                      >
+                        {testResult === 'testing' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wifi className="h-3 w-3" />}
+                        Test
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setDiagnoseCluster(cluster.name); }}
+                        className="inline-flex items-center gap-1 rounded border border-[#5a9dd0] px-2 py-1 text-xs text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+                      >
+                        <HelpCircle className="h-3 w-3" />
+                      </button>
+                    </div>
                   </div>
                   {testResult && testResult !== 'testing' && (
                     <div className="mb-2">
-                      {testResult.reachable
+                      {testResult.reachable !== false && testResult.success !== false
                         ? <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
                             <CheckCircle className="h-3 w-3" />
                             {[testResult.server_version, testResult.platform].filter(Boolean).join(' — ') || 'Reachable'}
                           </span>
                         : <span className="flex items-center gap-1 text-xs text-red-500 dark:text-red-400">
                             <WifiOff className="h-3 w-3" />
-                            Error: {testResult.error ?? 'Unreachable'}
+                            Error: {testResult.error ?? testResult.error_message ?? 'Unreachable'}
                           </span>
                       }
                     </div>
                   )}
                   <div className="mb-2">
-                    <ConnectionStatus status={cluster.connection_status ?? 'unknown'} />
+                    {isClusterStatus(cluster.connection_status ?? 'unknown')
+                      ? <StatusBadge status={cluster.connection_status ?? 'unknown'} />
+                      : <ConnectionStatus status={cluster.connection_status ?? 'unknown'} />
+                    }
                   </div>
                   <p className="mb-2 font-mono text-xs text-[#2a5a7a] dark:text-gray-400">
                     {cluster.server_version ? `v${cluster.server_version}` : '--'}
@@ -831,14 +883,14 @@ export function ClustersOverview() {
                                 Test
                               </button>
                               {testResult && testResult !== 'testing' && (
-                                testResult.reachable
+                                testResult.reachable !== false && testResult.success !== false
                                   ? <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
                                       <CheckCircle className="h-3 w-3" />
                                       {[testResult.server_version, testResult.platform].filter(Boolean).join(' — ') || 'Reachable'}
                                     </span>
                                   : <span className="flex items-center gap-1 text-xs text-red-500 dark:text-red-400">
                                       <WifiOff className="h-3 w-3" />
-                                      Error: {testResult.error ?? 'Unreachable'}
+                                      Error: {testResult.error ?? testResult.error_message ?? 'Unreachable'}
                                     </span>
                               )}
                               <RoleGuard adminOnly>
@@ -890,14 +942,14 @@ export function ClustersOverview() {
                     </div>
                     {testResult && testResult !== 'testing' && (
                       <div className="mb-2">
-                        {testResult.reachable
+                        {testResult.reachable !== false && testResult.success !== false
                           ? <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
                               <CheckCircle className="h-3 w-3" />
                               {[testResult.server_version, testResult.platform].filter(Boolean).join(' — ') || 'Reachable'}
                             </span>
                           : <span className="flex items-center gap-1 text-xs text-red-500 dark:text-red-400">
                               <WifiOff className="h-3 w-3" />
-                              Error: {testResult.error ?? 'Unreachable'}
+                              Error: {testResult.error ?? testResult.error_message ?? 'Unreachable'}
                             </span>
                         }
                       </div>

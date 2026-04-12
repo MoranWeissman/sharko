@@ -3,7 +3,7 @@ package notifications
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"strconv"
 	"strings"
 	"sync"
@@ -78,7 +78,7 @@ func (c *Checker) check() {
 
 	infos, err := c.provider.GetVersionInfo(ctx)
 	if err != nil {
-		log.Printf("[notifications] check failed: %v", err)
+		slog.Error("notification check failed", "error", err, "component", "notifications")
 		return
 	}
 

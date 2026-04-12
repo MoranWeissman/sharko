@@ -1,12 +1,89 @@
+import { AlertTriangle } from 'lucide-react';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
+
 interface StatusBadgeProps {
   status: string;
   size?: 'sm' | 'md';
+  testFailing?: boolean;
 }
+
+// --- Cluster status definitions (5-state) ---
+
+interface ClusterStatusDef {
+  dot: string;
+  bg: string;
+  text: string;
+  label: string;
+  tooltip: string;
+}
+
+const clusterStatusMap: Record<string, ClusterStatusDef> = {
+  unknown: {
+    dot: 'bg-[#3a6a8a] dark:bg-gray-400',
+    bg: 'bg-[#d6eeff] dark:bg-gray-700',
+    text: 'text-[#1a4a6a] dark:text-gray-400',
+    label: 'Unknown',
+    tooltip: 'Cluster not yet tested. Run a test to verify connectivity.',
+  },
+  connected: {
+    dot: 'bg-green-500',
+    bg: 'bg-green-50 dark:bg-green-900/30',
+    text: 'text-green-700 dark:text-green-400',
+    label: 'Connected',
+    tooltip: 'Stage 1 test passed. Sharko can create and manage secrets.',
+  },
+  verified: {
+    dot: 'bg-blue-500',
+    bg: 'bg-blue-50 dark:bg-blue-900/30',
+    text: 'text-blue-700 dark:text-blue-400',
+    label: 'Verified',
+    tooltip: 'Stage 2 test passed. Full ArgoCD pipeline verified.',
+  },
+  operational: {
+    dot: 'bg-purple-500',
+    bg: 'bg-purple-50 dark:bg-purple-900/30',
+    text: 'text-purple-700 dark:text-purple-400',
+    label: 'Operational',
+    tooltip: 'At least one addon is deployed and healthy.',
+  },
+  unreachable: {
+    dot: 'bg-red-500',
+    bg: 'bg-red-50 dark:bg-red-900/30',
+    text: 'text-red-700 dark:text-red-400',
+    label: 'Unreachable',
+    tooltip: 'Last test failed. Check IAM and network access.',
+  },
+};
+
+const CLUSTER_STATUSES = ['unknown', 'connected', 'verified', 'operational', 'unreachable'];
+
+export function isClusterStatus(status: string): boolean {
+  return CLUSTER_STATUSES.includes(status.toLowerCase());
+}
+
+export function getClusterStatusDef(status: string): ClusterStatusDef {
+  return clusterStatusMap[status.toLowerCase()] ?? clusterStatusMap.unknown;
+}
+
+export { clusterStatusMap, CLUSTER_STATUSES };
+
+// --- Addon status colors (existing) ---
 
 function getStatusColor(status: string): { dot: string; bg: string; text: string } {
   const s = status.toLowerCase();
 
-  if (['healthy', 'synced', 'connected', 'completed'].includes(s)) {
+  // Check cluster statuses first
+  if (clusterStatusMap[s]) {
+    const def = clusterStatusMap[s];
+    return { dot: def.dot, bg: def.bg, text: def.text };
+  }
+
+  if (['healthy', 'synced', 'completed'].includes(s)) {
     return { dot: 'bg-green-500', bg: 'bg-green-50 dark:bg-green-900/30', text: 'text-green-700 dark:text-green-400' };
   }
   if (['degraded', 'unhealthy', 'failed', 'error'].includes(s)) {
@@ -37,13 +114,47 @@ const statusDisplayNames: Record<string, string> = {
 };
 
 export function statusDisplayName(status: string): string {
-  return statusDisplayNames[status.toLowerCase()] ?? status;
+  const s = status.toLowerCase();
+  // Cluster statuses have their own display names
+  if (clusterStatusMap[s]) return clusterStatusMap[s].label;
+  return statusDisplayNames[s] ?? status;
 }
 
-export function StatusBadge({ status, size = 'sm' }: StatusBadgeProps) {
+export function StatusBadge({ status, size = 'sm', testFailing }: StatusBadgeProps) {
   const colors = getStatusColor(status);
   const sizeClasses =
     size === 'md' ? 'px-2.5 py-1 text-sm' : 'px-2 py-0.5 text-xs';
+
+  const s = status.toLowerCase();
+  const clusterDef = clusterStatusMap[s];
+
+  // If this is a cluster status with a tooltip, wrap in Tooltip
+  if (clusterDef) {
+    const tooltipText = testFailing
+      ? `${clusterDef.tooltip} (Test currently failing — verify connectivity.)`
+      : clusterDef.tooltip;
+
+    return (
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span
+              className={`inline-flex items-center gap-1.5 rounded-full font-medium ${colors.bg} ${colors.text} ${sizeClasses} cursor-help`}
+            >
+              <span className={`inline-block h-2 w-2 rounded-full ${colors.dot}`} />
+              {statusDisplayName(status)}
+              {testFailing && (
+                <AlertTriangle className="h-3 w-3 text-amber-500" />
+              )}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p className="max-w-xs text-xs">{tooltipText}</p>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    );
+  }
 
   return (
     <span

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/models"
 )
 
@@ -42,7 +43,7 @@ func (s *Server) handleListConnections(w http.ResponseWriter, r *http.Request) {
 // @Failure 500 {object} map[string]interface{} "Internal error"
 // @Router /connections/ [post]
 func (s *Server) handleCreateConnection(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) { return }
+	if !authz.RequireWithResponse(w, r, "connection.create") { return }
 	var req models.CreateConnectionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -74,7 +75,7 @@ func (s *Server) handleCreateConnection(w http.ResponseWriter, r *http.Request) 
 // @Failure 500 {object} map[string]interface{} "Internal error"
 // @Router /connections/{name} [put]
 func (s *Server) handleUpdateConnection(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) { return }
+	if !authz.RequireWithResponse(w, r, "connection.update") { return }
 	name := r.PathValue("name")
 	if name == "" {
 		writeError(w, http.StatusBadRequest, "connection name is required")
@@ -127,7 +128,7 @@ func (s *Server) handleUpdateConnection(w http.ResponseWriter, r *http.Request) 
 // @Failure 500 {object} map[string]interface{} "Internal error"
 // @Router /connections/{name} [delete]
 func (s *Server) handleDeleteConnection(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) { return }
+	if !authz.RequireWithResponse(w, r, "connection.delete") { return }
 	name := r.PathValue("name")
 	if name == "" {
 		writeError(w, http.StatusBadRequest, "connection name is required")
@@ -157,7 +158,7 @@ func (s *Server) handleDeleteConnection(w http.ResponseWriter, r *http.Request) 
 // @Failure 500 {object} map[string]interface{} "Internal error"
 // @Router /connections/active [post]
 func (s *Server) handleSetActiveConnection(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) { return }
+	if !authz.RequireWithResponse(w, r, "connection.set-active") { return }
 	var req models.SetActiveConnectionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")

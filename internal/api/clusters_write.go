@@ -9,6 +9,7 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/audit"
+	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
 )
@@ -33,7 +34,7 @@ var validClusterNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]*$`)
 // @Router /clusters [post]
 // handleRegisterCluster handles POST /api/v1/clusters — register a new cluster.
 func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
+	if !authz.RequireWithResponse(w, r, "cluster.register") {
 		return
 	}
 	if s.credProvider == nil {
@@ -95,10 +96,13 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.auditLog.Add(audit.Entry{
-		Source:  "api",
-		Action:  "cluster_register",
-		Actor:   "sharko",
-		Details: fmt.Sprintf("cluster %q registered (status: %s)", req.Name, result.Status),
+		Level:    "info",
+		Event:    "cluster_register",
+		User:     "sharko",
+		Action:   "register",
+		Resource: fmt.Sprintf("cluster:%s", req.Name),
+		Source:   "api",
+		Result:   "success",
 	})
 
 	writeJSON(w, status, result)
@@ -121,7 +125,7 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 // @Router /clusters/{name} [delete]
 // handleDeregisterCluster handles DELETE /api/v1/clusters/{name} — remove a cluster.
 func (s *Server) handleDeregisterCluster(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
+	if !authz.RequireWithResponse(w, r, "cluster.remove") {
 		return
 	}
 	name := r.PathValue("name")
@@ -186,7 +190,7 @@ func (s *Server) handleDeregisterCluster(w http.ResponseWriter, r *http.Request)
 // @Router /clusters/{name} [patch]
 // handleUpdateClusterAddons handles PATCH /api/v1/clusters/{name} — update addon labels.
 func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
+	if !authz.RequireWithResponse(w, r, "cluster.update-addons") {
 		return
 	}
 	name := r.PathValue("name")
@@ -268,7 +272,7 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 // @Router /clusters/{name}/refresh [post]
 // handleRefreshClusterCredentials handles POST /api/v1/clusters/{name}/refresh.
 func (s *Server) handleRefreshClusterCredentials(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
+	if !authz.RequireWithResponse(w, r, "cluster.refresh-credentials") {
 		return
 	}
 	name := r.PathValue("name")

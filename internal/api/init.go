@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
+	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/operations"
@@ -33,7 +34,7 @@ import (
 // @Failure 502 {object} map[string]interface{} "Gateway error"
 // @Router /init [post]
 func (s *Server) handleInit(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
+	if !authz.RequireWithResponse(w, r, "init") {
 		return
 	}
 
@@ -260,10 +261,13 @@ func (s *Server) runInitOperation(
 	}
 
 	s.auditLog.Add(audit.Entry{
-		Source:  "api",
-		Action:  "init",
-		Actor:   "sharko",
-		Details: "addons repository initialized and ArgoCD bootstrapped",
+		Level:    "info",
+		Event:    "init",
+		User:     "sharko",
+		Action:   "init",
+		Resource: "addons repository initialized and ArgoCD bootstrapped",
+		Source:   "api",
+		Result:   "success",
 	})
 }
 

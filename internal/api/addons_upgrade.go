@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
 )
@@ -26,7 +27,7 @@ import (
 // handleUpgradeAddon handles POST /api/v1/addons/{name}/upgrade — upgrade an addon version.
 // Body: {"version": "1.15.0"} for global, {"version": "1.15.0", "cluster": "prod-eu"} for per-cluster.
 func (s *Server) handleUpgradeAddon(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
+	if !authz.RequireWithResponse(w, r, "addon.update-catalog") {
 		return
 	}
 
@@ -96,7 +97,7 @@ func (s *Server) handleUpgradeAddon(w http.ResponseWriter, r *http.Request) {
 // handleUpgradeAddonsBatch handles POST /api/v1/addons/upgrade-batch — upgrade multiple addons.
 // Body: {"upgrades": {"cert-manager": "1.15.0", "metrics-server": "0.7.1"}}
 func (s *Server) handleUpgradeAddonsBatch(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
+	if !authz.RequireWithResponse(w, r, "addon.update-catalog") {
 		return
 	}
 

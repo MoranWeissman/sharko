@@ -1,10 +1,13 @@
 package api
 
 import (
+	"encoding/json"
 	"log/slog"
 	"net/http"
 
+	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
+	"github.com/MoranWeissman/sharko/internal/verify"
 )
 
 // discoverClusterEntry is a single cluster in the discover response.
@@ -29,7 +32,7 @@ type discoverClusterEntry struct {
 // handleDiscoverClusters handles GET /api/v1/clusters/available — list provider clusters
 // and mark which are already registered in ArgoCD.
 func (s *Server) handleDiscoverClusters(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
+	if !authz.RequireWithResponse(w, r, "cluster.discover") {
 		return
 	}
 	if s.credProvider == nil {
@@ -78,26 +81,47 @@ func (s *Server) handleDiscoverClusters(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// testClusterRequest is the optional JSON body for POST /clusters/{name}/test.
+type testClusterRequest struct {
+	Deep bool `json:"deep"`
+}
+
+// testClusterResponse wraps verify.Result with backward-compatible fields.
+type testClusterResponse struct {
+	Name      string        `json:"name"`
+	Reachable bool          `json:"reachable"`
+	Result    verify.Result `json:"result"`
+}
+
 // handleTestCluster godoc
 //
 // @Summary Test cluster connectivity
-// @Description Attempts to connect to a cluster using credentials from the provider and returns the server version
+// @Description Verifies connectivity to a cluster by performing a secret CRUD cycle (Stage 1).
+// @Description Optionally runs an ArgoCD round-trip test (Stage 2) when {"deep": true} is sent.
 // @Tags clusters
+// @Accept json
 // @Produce json
 // @Security BearerAuth
 // @Param name path string true "Cluster name"
-// @Success 200 {object} map[string]interface{} "Connectivity result (reachable true/false)"
+// @Param body body testClusterRequest false "Optional test options"
+// @Success 200 {object} testClusterResponse "Connectivity result"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 503 {object} map[string]interface{} "No credentials provider configured"
 // @Router /clusters/{name}/test [post]
 // handleTestCluster handles POST /api/v1/clusters/{name}/test — test connectivity to a cluster.
 func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
+	if !authz.RequireWithResponse(w, r, "cluster.test") {
 		return
 	}
 
 	name := r.PathValue("name")
 	slog.Info("[cluster-test] testing cluster", "name", name)
+
+	// Parse optional request body.
+	var req testClusterRequest
+	if r.Body != nil && r.ContentLength > 0 {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
 
 	if s.credProvider == nil {
 		writeError(w, http.StatusServiceUnavailable, "no credentials provider configured")
@@ -108,10 +132,16 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 	creds, err := s.credProvider.GetCredentials(name)
 	if err != nil {
 		slog.Error("[cluster-test] failed", "name", name, "step", "fetch-credentials", "error", err)
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"name":      name,
-			"reachable": false,
-			"error":     err.Error(),
+		result := verify.Result{
+			Success:      false,
+			Stage:        "credentials",
+			ErrorCode:    verify.ClassifyError(err),
+			ErrorMessage: err.Error(),
+		}
+		writeJSON(w, http.StatusOK, testClusterResponse{
+			Name:      name,
+			Reachable: false,
+			Result:    result,
 		})
 		return
 	}
@@ -121,31 +151,50 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 	client, err := remoteclient.NewClientFromKubeconfig(creds.Raw)
 	if err != nil {
 		slog.Error("[cluster-test] failed", "name", name, "step", "build-client", "error", err)
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"name":      name,
-			"reachable": false,
-			"error":     "failed to build client: " + err.Error(),
+		result := verify.Result{
+			Success:      false,
+			Stage:        "client",
+			ErrorCode:    verify.ClassifyError(err),
+			ErrorMessage: "failed to build client: " + err.Error(),
+		}
+		writeJSON(w, http.StatusOK, testClusterResponse{
+			Name:      name,
+			Reachable: false,
+			Result:    result,
 		})
 		return
 	}
 
-	slog.Info("[cluster-test] calling ServerVersion", "name", name)
-	version, err := client.Discovery().ServerVersion()
-	if err != nil {
-		slog.Error("[cluster-test] failed", "name", name, "step", "server-version", "error", err)
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"name":      name,
-			"reachable": false,
-			"error":     err.Error(),
-		})
-		return
+	// Stage 1: secret CRUD cycle.
+	slog.Info("[cluster-test] running Stage 1 verification", "name", name)
+	result := verify.Stage1(r.Context(), client, verify.TestNamespace())
+
+	resp := testClusterResponse{
+		Name:      name,
+		Reachable: result.Success,
+		Result:    result,
 	}
 
-	slog.Info("[cluster-test] cluster reachable", "name", name, "version", version.GitVersion)
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"name":           name,
-		"reachable":      true,
-		"server_version": version.GitVersion,
-		"platform":       version.Platform,
-	})
+	if result.Success {
+		slog.Info("[cluster-test] Stage 1 passed", "name", name, "version", result.ServerVersion)
+	} else {
+		slog.Error("[cluster-test] Stage 1 failed", "name", name, "error", result.ErrorMessage)
+	}
+
+	// Stage 2: ArgoCD round-trip (stub).
+	if req.Deep {
+		slog.Info("[cluster-test] running Stage 2 (deep) verification", "name", name)
+		stage2Result := verify.Stage2(r.Context(), nil, name, 0)
+		resp.Result = stage2Result
+		resp.Reachable = stage2Result.Success
+	}
+
+	// Record observation for cluster status tracking.
+	if s.obsStore != nil {
+		if err := s.obsStore.RecordTestResult(r.Context(), name, resp.Result); err != nil {
+			slog.Error("[cluster-test] failed to record observation", "name", name, "error", err)
+		}
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }

@@ -123,6 +123,36 @@ sharko/
       client.go         Build a kubernetes.Interface from raw kubeconfig bytes
       secrets.go        List and upsert Kubernetes Secrets on remote clusters
 
+    verify/             Connectivity verification (Stage 1 secret CRUD, Stage 2 ArgoCD stub)
+      config.go         Test namespace configuration (env var override)
+      errors.go         ErrorCode type, ClassifyError() — 10 ERR_* codes
+      result.go         Result struct (success, stage, error code, duration, details)
+      stage1.go         Stage 1: K8s secret CRUD cycle
+      stage2.go         Stage 2: ArgoCD round-trip (stub)
+
+    observations/       Cluster observations store (ConfigMap-backed via cmstore)
+      types.go          ClusterStatus (5-state), Observation, StatusResult
+      store.go          Store backed by ConfigMap, RecordTestResult/GetObservation/ListObservations
+      status.go         ComputeStatus pure function (derives status from observation + ArgoCD health)
+      cache.go          CachedStatusProvider with configurable TTL (default 30s)
+
+    diagnose/           IAM diagnostic tool for remote clusters
+      diagnose.go       DiagnoseCluster() — runs permission checks, returns DiagnosticReport
+      fixes.go          generateFix() — copy-paste-ready K8s RBAC YAML for failures
+
+    metrics/            Prometheus metrics (20 metric definitions, auto-registered via promauto)
+      metrics.go        All metric vars (cluster, addon, reconciler, PR, HTTP, auth)
+      middleware.go     HTTP middleware for request counting/duration, NormalizePath()
+
+    cmstore/            ConfigMap-based JSON state store helper
+      store.go          Store struct, ReadModifyWrite pattern, Read, size warnings at 800KB
+
+    authz/              RBAC authorization
+      authz.go          Role type (Admin/Operator/Viewer), ActionRequirements table, Require/RequireWithResponse
+
+    audit/              In-memory ring buffer audit log (1000 entries default)
+      log.go            Log struct, Add/List/ListFiltered/Subscribe (SSE pattern)
+
     ai/                 LLM agent
       client.go         Multi-provider AI client
       agent.go          Tool-calling agent loop
@@ -263,6 +293,160 @@ The `auth` store manages both session tokens (short-lived, from `POST /auth/logi
 ### ai
 
 Multi-provider AI client supporting Ollama, OpenAI, Claude, Gemini, and custom OpenAI-compatible endpoints. Includes a tool-calling agent loop for interactive troubleshooting.
+
+### verify
+
+Connectivity verification for remote Kubernetes clusters. Runs a two-stage test:
+
+- **Stage 1** — Full secret CRUD cycle: ensure namespace exists, create a test secret, read it back, delete it. Exercises the permissions Sharko needs for addon secret delivery.
+- **Stage 2** — ArgoCD round-trip verification (stub, not yet implemented).
+
+Each stage returns a `Result` struct:
+
+```go
+type Result struct {
+    Success       bool                   `json:"success"`
+    Stage         string                 `json:"stage"`
+    ErrorCode     ErrorCode              `json:"error_code,omitempty"`
+    ErrorMessage  string                 `json:"error_message,omitempty"`
+    DurationMs    int64                  `json:"duration_ms"`
+    ServerVersion string                 `json:"server_version,omitempty"`
+    Details       map[string]interface{} `json:"details,omitempty"`
+}
+```
+
+Failures are classified into one of 10 error codes via `ClassifyError()`:
+
+| Code | Meaning |
+|------|---------|
+| `ERR_NETWORK` | Connection refused, DNS failure, dial error |
+| `ERR_TLS` | x509 / certificate errors |
+| `ERR_AUTH` | Unauthorized, expired token |
+| `ERR_RBAC` | Forbidden (insufficient K8s RBAC) |
+| `ERR_AWS_STS` | STS GetToken / identity provider failure |
+| `ERR_AWS_ASSUME` | AssumeRole failure |
+| `ERR_QUOTA` | API throttling / rate limiting |
+| `ERR_NAMESPACE` | Admission webhook or namespace errors |
+| `ERR_TIMEOUT` | Context deadline exceeded |
+| `ERR_UNKNOWN` | Unclassified error |
+
+Test namespace defaults to `sharko-test`, overridden via `SHARKO_TEST_NAMESPACE` env var.
+
+### observations
+
+Cluster observations store — persists per-cluster connectivity test results in a ConfigMap (via `cmstore`). The 5-state status model:
+
+| Status | Meaning |
+|--------|---------|
+| `Unknown` | No observation recorded yet |
+| `Connected` | Stage 1 passed (K8s API reachable, RBAC ok) |
+| `Verified` | Stage 2 passed (ArgoCD round-trip confirmed) |
+| `Operational` | Has at least one healthy addon in ArgoCD |
+| `Unreachable` | Last test failed |
+
+`ComputeStatus(obs, hasHealthyAddon)` is a pure function that derives the status from the last observation and ArgoCD health data.
+
+`CachedStatusProvider` wraps the store with an in-memory TTL cache (default 30s, configurable via `SHARKO_CLUSTER_STATUS_CACHE_TTL`). The `GetStatus` method accepts a `refresh` bool to bypass the cache.
+
+### diagnose
+
+IAM diagnostic tool for remote clusters. `DiagnoseCluster()` runs a series of permission checks (list namespaces, get namespace, create/get/delete secret) and returns a `DiagnosticReport`:
+
+```go
+type DiagnosticReport struct {
+    Identity        string      `json:"identity"`
+    RoleAssumption  string      `json:"role_assumption"`
+    NamespaceAccess []PermCheck `json:"namespace_access"`
+    SuggestedFixes  []Fix       `json:"suggested_fixes"`
+}
+```
+
+For each failed check, `generateFix()` produces copy-paste-ready K8s RBAC YAML (ClusterRole/ClusterRoleBinding for namespace access, Role/RoleBinding for secret CRUD). The generated YAML uses a `sharko-access` group as the subject.
+
+### metrics
+
+Prometheus metrics for the entire Sharko server. All metrics are auto-registered with the default registry via `promauto`. 20 metric definitions across 6 categories:
+
+| Category | Metrics | Example |
+|----------|---------|---------|
+| Cluster | count, status, last_verified, test_duration, test_failures | `sharko_cluster_count{status="Connected"}` |
+| Addon | sync_status, health, version, catalog_entries_count | `sharko_addon_sync_status{cluster,addon,status}` |
+| Reconciler | runs, duration, last_run, items_checked, items_changed | `sharko_reconciler_runs_total{reconciler,result}` |
+| PR | tracked, merge_duration | `sharko_pr_merge_duration_seconds` |
+| HTTP | requests_total, request_duration | `sharko_api_requests_total{method,path,status}` |
+| Auth | login_total, active_sessions | `sharko_auth_login_total{result}` |
+
+`Middleware(next)` is an HTTP middleware that records request count and duration for every request (except `/metrics` itself). `NormalizePath()` replaces dynamic path segments (cluster names, addon names, etc.) with placeholders like `{name}` to prevent cardinality explosion.
+
+### cmstore
+
+Reusable ConfigMap-based JSON state store. Used by `observations` and other packages that need persistent state without a database.
+
+```go
+store := cmstore.NewStore(client, namespace, "my-configmap-name")
+
+// Atomic read-modify-write (serialized with in-process mutex)
+err := store.ReadModifyWrite(ctx, func(data map[string]interface{}) error {
+    data["key"] = "value"
+    return nil
+})
+
+// Read-only
+data, err := store.Read(ctx)
+```
+
+Key behaviors:
+- ConfigMap is auto-created on first write with `version: 1`
+- State stored as JSON in the `state` key of the ConfigMap's `.data`
+- Size warning logged at 800KB (ConfigMap limit is 1MB)
+- All read-modify-write operations serialized via `sync.Mutex`
+
+### authz
+
+RBAC authorization with three roles: `Admin` (2), `Operator` (1), `Viewer` (0). Roles are compared numerically — higher values include all lower permissions.
+
+`ActionRequirements` is a declarative map from action strings to minimum role:
+
+```go
+// Examples from ActionRequirements:
+"cluster.remove":    RoleAdmin,     // destructive — admin only
+"cluster.register":  RoleOperator,  // write operation — operator+
+"cluster.list":      RoleViewer,    // read — anyone
+```
+
+Actions not in the map default to `RoleAdmin` (fail-closed).
+
+Two check functions:
+- `Require(r, action) bool` — returns true/false
+- `RequireWithResponse(w, r, action) bool` — writes a 403 JSON error if denied, returns false
+
+Role is read from the `X-Sharko-Role` header (set by auth middleware). If no auth headers are present, the request is allowed through (auth not configured).
+
+### audit (updated)
+
+In-memory ring buffer for significant events. Default capacity is 1000 entries.
+
+```go
+type Entry struct {
+    ID         string    `json:"id"`
+    Timestamp  time.Time `json:"timestamp"`
+    Level      string    `json:"level"`       // info, warn, error
+    Event      string    `json:"event"`       // cluster_registered, pr_created, etc.
+    User       string    `json:"user"`        // username or "system"
+    Action     string    `json:"action"`      // register, remove, update, test
+    Resource   string    `json:"resource"`    // cluster:prod-eu, addon:cert-manager
+    Source     string    `json:"source"`      // ui, cli, api, reconciler, webhook
+    Result     string    `json:"result"`      // success, failure, partial
+    DurationMs int64     `json:"duration_ms"`
+    Error      string    `json:"error,omitempty"`
+    RequestID  string    `json:"request_id,omitempty"`
+}
+```
+
+Three retrieval methods:
+- `List(limit)` — newest first, all entries up to limit
+- `ListFiltered(filter)` — filter by user, action, source, result, since, cluster (default limit 50)
+- `Subscribe() (<-chan Entry, unsub func())` — SSE pattern: returns a buffered channel (cap 64) that receives every new entry. Non-blocking fan-out (slow subscribers get drops). Call the returned `unsub` function to close the channel and remove the subscriber.
 
 ---
 

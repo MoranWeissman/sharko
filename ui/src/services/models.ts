@@ -338,6 +338,50 @@ export interface ConflictCheckEntry {
   source: string
 }
 
+// --- Audit & Diagnostics (Story 1.9) ---
+
+export interface AuditEntry {
+  id: string
+  timestamp: string
+  level: string
+  event: string
+  user: string
+  action: string
+  resource: string
+  source: string
+  result: string
+  duration_ms: number
+  error?: string
+  request_id?: string
+}
+
+export interface PermCheck {
+  permission: string
+  passed: boolean
+  error?: string
+}
+
+export interface Fix {
+  description: string
+  yaml: string
+}
+
+export interface DiagnosticReport {
+  identity: string
+  role_assumption: string
+  namespace_access: PermCheck[]
+  suggested_fixes: Fix[]
+}
+
+export interface VerifyResult {
+  success: boolean
+  stage: string
+  error_code?: string
+  error_message?: string
+  duration_ms: number
+  server_version?: string
+}
+
 export interface UpgradeCheckResponse {
   addon_name: string
   chart: string

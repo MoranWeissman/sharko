@@ -2,7 +2,7 @@ package notifications
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -51,7 +51,7 @@ func NewStore(maxItems int, filePath string) *Store {
 	if filePath != "" {
 		dir := filepath.Dir(filePath)
 		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-			log.Printf("[notifications] store: persistence directory %q not available, running in-memory only", dir)
+			slog.Info("persistence directory not available, running in-memory only", "dir", dir, "component", "notifications")
 			filePath = ""
 		}
 	}
@@ -63,7 +63,7 @@ func NewStore(maxItems int, filePath string) *Store {
 	}
 
 	if err := s.Load(); err != nil {
-		log.Printf("[notifications] store: could not load persisted notifications: %v", err)
+		slog.Warn("could not load persisted notifications", "error", err, "component", "notifications")
 	}
 
 	return s
@@ -85,7 +85,7 @@ func (s *Store) Add(n Notification) {
 		s.notifications = s.notifications[:s.maxItems]
 	}
 	if err := s.saveLocked(); err != nil {
-		log.Printf("[notifications] store: could not persist after Add: %v", err)
+		slog.Warn("could not persist after add", "error", err, "component", "notifications")
 	}
 }
 
@@ -106,7 +106,7 @@ func (s *Store) MarkAllRead() {
 		s.notifications[i].Read = true
 	}
 	if err := s.saveLocked(); err != nil {
-		log.Printf("[notifications] store: could not persist after MarkAllRead: %v", err)
+		slog.Warn("could not persist after mark all read", "error", err, "component", "notifications")
 	}
 }
 

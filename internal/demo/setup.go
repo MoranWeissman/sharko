@@ -2,7 +2,7 @@ package demo
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 
 	"github.com/MoranWeissman/sharko/internal/api"
@@ -24,7 +24,7 @@ func SetupDemoServer(srv *api.Server, _ int) (cleanup func(), err error) {
 	if err != nil {
 		return nil, fmt.Errorf("starting mock argocd server: %w", err)
 	}
-	log.Printf("DEMO: mock ArgoCD listening at %s", mockArgocd.URL())
+	slog.Info("demo: mock argocd listening", "url", mockArgocd.URL(), "component", "demo")
 
 	// 2. Build an in-memory config store with a demo connection pointing at the mock.
 	store := newInMemoryStore()
@@ -111,10 +111,10 @@ func SetupDemoServer(srv *api.Server, _ int) (cleanup func(), err error) {
 	// 8. Create demo users: admin/admin and qa/sharko.
 	// We use the AddDemoUser method which the api.Server exposes for demo mode.
 	if err := srv.AddDemoUser("admin", "admin", "admin"); err != nil {
-		log.Printf("DEMO: warning — could not create admin user: %v", err)
+		slog.Warn("demo: could not create admin user", "error", err, "component", "demo")
 	}
 	if err := srv.AddDemoUser("qa", "sharko", "viewer"); err != nil {
-		log.Printf("DEMO: warning — could not create qa user: %v", err)
+		slog.Warn("demo: could not create qa user", "error", err, "component", "demo")
 	}
 
 	cleanup = func() {

@@ -3,7 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 
 	"github.com/MoranWeissman/sharko/internal/argocd"
@@ -88,7 +88,7 @@ func (s *DashboardService) GetStats(ctx context.Context, gp gitprovider.GitProvi
 		}
 		clusterStats.DisconnectedFromArgocd = clusterStats.Total - clusterStats.ConnectedToArgocd
 	} else {
-		log.Printf("Warning: could not fetch ArgoCD clusters for dashboard: %v", err)
+		slog.Warn("could not fetch argocd clusters for dashboard", "error", err)
 	}
 
 	// Application stats from ArgoCD — only count addon apps (not bootstrap/infrastructure)
@@ -133,7 +133,7 @@ func (s *DashboardService) GetStats(ctx context.Context, gp gitprovider.GitProvi
 			}
 		}
 	} else {
-		log.Printf("Warning: could not fetch ArgoCD applications for dashboard: %v", err)
+		slog.Warn("could not fetch argocd applications for dashboard", "error", err)
 	}
 
 	// Addon stats — only count enabled deployments
