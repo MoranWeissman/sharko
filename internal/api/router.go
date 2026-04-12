@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
-	"log"
 	"log/slog"
 	"net/http"
 	"os"
@@ -15,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	httpSwagger "github.com/swaggo/http-swagger"
 	"golang.org/x/crypto/bcrypt"
 	"k8s.io/client-go/kubernetes"
@@ -25,7 +25,9 @@ import (
 	"github.com/MoranWeissman/sharko/internal/auth"
 	"github.com/MoranWeissman/sharko/internal/config"
 	_ "github.com/MoranWeissman/sharko/docs/swagger" // swagger docs
+	"github.com/MoranWeissman/sharko/internal/metrics"
 	"github.com/MoranWeissman/sharko/internal/notifications"
+	"github.com/MoranWeissman/sharko/internal/observations"
 	"github.com/MoranWeissman/sharko/internal/operations"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/providers"
@@ -103,6 +105,9 @@ type Server struct {
 	// in-cluster K8s client (which does not change between reinits).
 	argoReconcilerConfig *ArgoReconcilerCfg
 
+	// obsStore persists cluster connectivity observations (optional — set via SetObservationsStore).
+	obsStore *observations.Store
+
 	// startTime records when the server was created (used for uptime reporting).
 	startTime time.Time
 
@@ -143,7 +148,7 @@ func NewServer(
 		authStore:         authStore,
 		aiConfigStore:     nil, // set via SetAIConfigStore
 		addonSecretDefs:   make(map[string]orchestrator.AddonSecretDefinition),
-		auditLog:          audit.NewLog(200),
+		auditLog:          audit.NewLog(1000),
 		notificationStore: notifications.NewStore(100, notifications.DefaultNotificationsPath),
 		opsStore:          operations.NewStore(),
 		startTime:         time.Now(),
@@ -226,6 +231,12 @@ func (s *Server) SetSecretFetcher(fetcher orchestrator.SecretValueFetcher) {
 // explicit addon selections.
 func (s *Server) SetDefaultAddons(defaults map[string]bool) {
 	s.defaultAddons = defaults
+}
+
+// SetObservationsStore wires in the cluster observations store.
+// Call this after NewServer, before starting the HTTP listener.
+func (s *Server) SetObservationsStore(store *observations.Store) {
+	s.obsStore = store
 }
 
 // ReinitializeFromConnection reads provider config and GitOps settings from the active connection
@@ -336,10 +347,13 @@ func (s *Server) ReinitializeFromConnection() {
 		auditLog := s.auditLog
 		newReconciler.SetAuditFunc(func(created, updated, deleted int) {
 			auditLog.Add(audit.Entry{
-				Source:  "argosecrets-reconciler",
-				Action:  "cluster_secret_sync",
-				Actor:   "sharko",
-				Details: fmt.Sprintf("ArgoCD secrets reconciled — created: %d, updated: %d, deleted: %d", created, updated, deleted),
+				Level:    "info",
+				Event:    "cluster_secret_sync",
+				User:     "sharko",
+				Action:   "sync",
+				Resource: fmt.Sprintf("ArgoCD secrets reconciled — created: %d, updated: %d, deleted: %d", created, updated, deleted),
+				Source:   "reconciler",
+				Result:   "success",
 			})
 		})
 
@@ -391,6 +405,9 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 		httpSwagger.URL("/swagger/doc.json"),
 	))
 
+	// Prometheus metrics (no auth — protected via ingress or separate port)
+	mux.Handle("GET /metrics", promhttp.Handler())
+
 	// Health
 	mux.HandleFunc("GET /api/v1/health", srv.handleHealth)
 
@@ -422,6 +439,7 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("PATCH /api/v1/clusters/{name}", srv.handleUpdateClusterAddons)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/refresh", srv.handleRefreshClusterCredentials)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/test", srv.handleTestCluster)
+	mux.HandleFunc("POST /api/v1/clusters/{name}/diagnose", srv.handleDiagnoseCluster)
 
 	// Init (orchestrator-backed)
 	mux.HandleFunc("POST /api/v1/init", srv.handleInit)
@@ -510,6 +528,7 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 
 	// Audit log
 	mux.HandleFunc("GET /api/v1/audit", srv.handleListAuditLog)
+	mux.HandleFunc("GET /api/v1/audit/stream", srv.handleAuditStream)
 
 	// ArgoCD resource exclusions check
 	mux.HandleFunc("GET /api/v1/argocd/resource-exclusions", srv.handleCheckResourceExclusions)
@@ -568,6 +587,7 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	handler = srv.basicAuthMiddleware(handler)
 	handler = corsMiddleware(handler)
 	handler = securityHeadersMiddleware(handler)
+	handler = metrics.Middleware(handler)                      // Prometheus request metrics
 	handler = loggingMiddleware(handler)
 
 	return handler
@@ -1034,7 +1054,7 @@ func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(data); err != nil {
-		log.Printf("Error encoding response: %v", err)
+		slog.Error("error encoding response", "error", err)
 	}
 }
 

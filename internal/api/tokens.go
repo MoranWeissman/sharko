@@ -3,6 +3,8 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+
+	"github.com/MoranWeissman/sharko/internal/authz"
 )
 
 // handleCreateToken godoc
@@ -20,7 +22,7 @@ import (
 // @Failure 403 {object} map[string]interface{} "Forbidden"
 // @Router /tokens [post]
 func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
+	if !authz.RequireWithResponse(w, r, "token.create") {
 		return
 	}
 
@@ -62,7 +64,7 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 // @Failure 403 {object} map[string]interface{} "Forbidden"
 // @Router /tokens [get]
 func (s *Server) handleListTokens(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
+	if !authz.RequireWithResponse(w, r, "token.list") {
 		return
 	}
 
@@ -84,7 +86,7 @@ func (s *Server) handleListTokens(w http.ResponseWriter, r *http.Request) {
 // @Failure 403 {object} map[string]interface{} "Forbidden"
 // @Router /tokens/{name} [delete]
 func (s *Server) handleRevokeToken(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
+	if !authz.RequireWithResponse(w, r, "token.revoke-other") {
 		return
 	}
 

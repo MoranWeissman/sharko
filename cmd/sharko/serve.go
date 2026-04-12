@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
-	"log"
 	"log/slog"
 	"net/http"
 	"os"
@@ -67,7 +66,7 @@ var serveCmd = &cobra.Command{
 		default:
 			level = slog.LevelInfo
 		}
-		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level})))
+		slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})))
 
 		port, _ := cmd.Flags().GetInt("port")
 		configPath, _ := cmd.Flags().GetString("config")
@@ -90,7 +89,7 @@ var serveCmd = &cobra.Command{
 
 		// Detect runtime mode
 		mode := platform.Detect()
-		log.Printf("Sharko starting in %s mode", mode)
+		slog.Info("sharko starting", "mode", mode)
 
 		// Initialize config store
 		var store config.Store
@@ -114,7 +113,7 @@ var serveCmd = &cobra.Command{
 			if err != nil {
 				return fmt.Errorf("failed to create K8s connection store: %w", err)
 			}
-			log.Printf("Connection config stored in encrypted K8s Secret: %s/%s", namespace, secretName)
+			slog.Info("connection config stored in encrypted k8s secret", "namespace", namespace, "secret", secretName)
 		default:
 			store = config.NewFileStore(configPath)
 		}
@@ -183,7 +182,7 @@ var serveCmd = &cobra.Command{
 			if aiCfg.Provider == ai.ProviderClaude || aiCfg.Provider == ai.ProviderOpenAI || aiCfg.Provider == ai.ProviderGemini {
 				model = aiCfg.CloudModel
 			}
-			log.Printf("AI provider enabled: %s (model: %s)", aiCfg.Provider, model)
+			slog.Info("ai provider enabled", "provider", aiCfg.Provider, "model", model)
 		}
 
 		// Wire up services
@@ -199,15 +198,13 @@ var serveCmd = &cobra.Command{
 		srv.SetVersion(version)                 // Propagate ldflags-injected version to health endpoint
 		srv.SetTemplateFS(templates.TemplateFS) // Always available — init doesn't need a provider
 
-		log.Println("========================================")
-		log.Println("  Sharko v" + version + " starting")
-		log.Println("========================================")
+		slog.Info("sharko starting", "version", version)
 
 		// Initialize provider + gitops config from active connection (if exists).
 		// This ensures a pod restart doesn't leave the provider nil when a connection is already stored.
-		log.Printf("Initializing from stored connection...")
+		slog.Info("initializing from stored connection")
 		srv.ReinitializeFromConnection()
-		log.Printf("Server initialization complete")
+		slog.Info("server initialization complete")
 
 		// Start notification checker (background goroutine, checks every 30 min).
 		notifProvider := notifications.NewServiceProvider(connSvc, addonSvc)
@@ -217,7 +214,7 @@ var serveCmd = &cobra.Command{
 
 		// Demo mode: wire up mock backends and skip all real provider setup.
 		if demoMode {
-			log.Printf("DEMO MODE: Running with mock backends. Login: admin/admin or qa/sharko")
+			slog.Info("demo mode: running with mock backends", "users", "admin/admin, qa/sharko")
 			demoCleanup, err := demo.SetupDemoServer(srv, port)
 			if err != nil {
 				return fmt.Errorf("setting up demo server: %w", err)
@@ -233,7 +230,7 @@ var serveCmd = &cobra.Command{
 			}
 			router := api.NewRouter(srv, staticFS)
 			addr := fmt.Sprintf(":%d", port)
-			log.Printf("Listening on %s", addr)
+			slog.Info("listening", "addr", addr)
 			if err := http.ListenAndServe(addr, router); err != nil {
 				return fmt.Errorf("server error: %w", err)
 			}
@@ -276,7 +273,7 @@ var serveCmd = &cobra.Command{
 				} else if mode == platform.ModeKubernetes {
 					if detected := platform.DetectClusterName(); detected != "" {
 						repoPaths.HostClusterName = detected
-						log.Printf("Host cluster name auto-detected: %s", detected)
+						slog.Info("host cluster name auto-detected", "cluster", detected)
 					}
 				}
 			}
@@ -307,13 +304,13 @@ var serveCmd = &cobra.Command{
 				Namespace: ns,
 				RoleARN:   connProv.RoleARN,
 			}
-			log.Printf("Secrets provider configured from connection: %s", connProv.Type)
+			slog.Info("secrets provider configured from connection", "type", connProv.Type)
 		}
 
 		if resolvedProvCfg != nil {
 			cp, err := providers.New(*resolvedProvCfg)
 			if err != nil {
-				log.Printf("WARNING: Could not create secrets provider: %v", err)
+				slog.Warn("could not create secrets provider", "error", err)
 			} else {
 				credProvider = cp
 				provCfgPtr = resolvedProvCfg
@@ -329,11 +326,11 @@ var serveCmd = &cobra.Command{
 					}
 					if len(defaults) > 0 {
 						srv.SetDefaultAddons(defaults)
-						log.Printf("Default addons configured: %v", connGitOps.DefaultAddons)
+						slog.Info("default addons configured", "addons", connGitOps.DefaultAddons)
 					}
 				}
 
-				log.Printf("Secrets provider enabled: %s", resolvedProvCfg.Type)
+				slog.Info("secrets provider enabled", "type", resolvedProvCfg.Type)
 			}
 		}
 
@@ -344,12 +341,12 @@ var serveCmd = &cobra.Command{
 		if credProvider != nil && provCfgPtr != nil {
 			secretProvider, spErr := providers.NewSecretProvider(*provCfgPtr)
 			if spErr != nil {
-				log.Printf("WARNING: Could not create secret provider for reconciler: %v", spErr)
+				slog.Warn("could not create secret provider for reconciler", "error", spErr)
 			} else {
 				reconcileInterval := getEnvDefault("SHARKO_SECRET_RECONCILE_INTERVAL", "5m")
 				dur, parseErr := time.ParseDuration(reconcileInterval)
 				if parseErr != nil {
-					log.Printf("WARNING: Invalid reconcile interval %q, using 5m", reconcileInterval)
+					slog.Warn("invalid reconcile interval, using 5m", "interval", reconcileInterval)
 					dur = 5 * time.Minute
 				}
 
@@ -383,16 +380,19 @@ var serveCmd = &cobra.Command{
 				auditLog := srv.AuditLog()
 				reconciler.SetAuditFunc(func(clusterName string, created, updated int) {
 					auditLog.Add(audit.Entry{
-						Source:  "reconciler",
-						Action:  "secret_push",
-						Actor:   "sharko",
-						Details: fmt.Sprintf("secrets reconciled — created: %d, updated: %d", created, updated),
+						Level:    "info",
+						Event:    "secret_push",
+						User:     "sharko",
+						Action:   "push",
+						Resource: fmt.Sprintf("secrets reconciled — created: %d, updated: %d", created, updated),
+						Source:   "reconciler",
+						Result:   "success",
 					})
 				})
 
 				reconciler.Start()
 				defer reconciler.Stop()
-				log.Printf("Secret reconciler started (interval: %s)", dur)
+				slog.Info("secret reconciler started", "interval", dur)
 			}
 		}
 
@@ -402,18 +402,18 @@ var serveCmd = &cobra.Command{
 		if credProvider != nil {
 			inClusterCfg, inClusterErr := rest.InClusterConfig()
 			if inClusterErr != nil {
-				log.Printf("WARNING: Not running in-cluster (%v) — skipping ArgoCD secrets reconciler", inClusterErr)
+				slog.Warn("not running in-cluster, skipping argocd secrets reconciler", "error", inClusterErr)
 			} else {
 				k8sClient, k8sErr := kubernetes.NewForConfig(inClusterCfg)
 				if k8sErr != nil {
-					log.Printf("WARNING: Could not create in-cluster K8s client: %v — skipping ArgoCD secrets reconciler", k8sErr)
+					slog.Warn("could not create in-cluster k8s client, skipping argocd secrets reconciler", "error", k8sErr)
 				} else {
 					argocdNamespace := getEnvDefault("SHARKO_ARGOCD_NAMESPACE", "argocd")
 
 					argoIntervalStr := getEnvDefault("SHARKO_ARGOCD_RECONCILE_INTERVAL", "3m")
 					argoDur, argoParseErr := time.ParseDuration(argoIntervalStr)
 					if argoParseErr != nil {
-						log.Printf("WARNING: Invalid SHARKO_ARGOCD_RECONCILE_INTERVAL %q, using 3m", argoIntervalStr)
+						slog.Warn("invalid argocd reconcile interval, using 3m", "interval", argoIntervalStr)
 						argoDur = 3 * time.Minute
 					}
 
@@ -451,10 +451,13 @@ var serveCmd = &cobra.Command{
 					auditLog := srv.AuditLog()
 					argoReconciler.SetAuditFunc(func(created, updated, deleted int) {
 						auditLog.Add(audit.Entry{
-							Source:  "argosecrets-reconciler",
-							Action:  "cluster_secret_sync",
-							Actor:   "sharko",
-							Details: fmt.Sprintf("ArgoCD secrets reconciled — created: %d, updated: %d, deleted: %d", created, updated, deleted),
+							Level:    "info",
+							Event:    "cluster_secret_sync",
+							User:     "sharko",
+							Action:   "sync",
+							Resource: fmt.Sprintf("ArgoCD secrets reconciled — created: %d, updated: %d, deleted: %d", created, updated, deleted),
+							Source:   "reconciler",
+							Result:   "success",
 						})
 					})
 
@@ -481,7 +484,7 @@ var serveCmd = &cobra.Command{
 							r.Stop()
 						}
 					}()
-					log.Printf("ArgoCD secrets reconciler started (namespace: %s, interval: %s)", argocdNamespace, argoDur)
+					slog.Info("argocd secrets reconciler started", "namespace", argocdNamespace, "interval", argoDur)
 				}
 			}
 		}
@@ -496,19 +499,19 @@ var serveCmd = &cobra.Command{
 			if encKey != "" {
 				aiStore, err := config.NewAIConfigStore(namespace, encKey)
 				if err != nil {
-					log.Printf("WARNING: Could not create AI config store: %v", err)
+					slog.Warn("could not create ai config store", "error", err)
 				} else {
 					srv.SetAIConfigStore(aiStore)
 					// Load persisted AI config (UI-set values override env vars)
 					if savedJSON, err := aiStore.LoadJSON(); err != nil {
-						log.Printf("WARNING: Could not load AI config: %v", err)
+						slog.Warn("could not load ai config", "error", err)
 					} else if savedJSON != nil {
 						var savedCfg ai.Config
 						if err := json.Unmarshal(savedJSON, &savedCfg); err != nil {
-							log.Printf("WARNING: Could not decode AI config: %v", err)
+							slog.Warn("could not decode ai config", "error", err)
 						} else if savedCfg.Provider != "" {
 							aiClient.SetConfig(savedCfg)
-							log.Printf("AI config loaded from K8s Secret (provider: %s)", savedCfg.Provider)
+							slog.Info("ai config loaded from k8s secret", "provider", savedCfg.Provider)
 						}
 					}
 				}
@@ -520,14 +523,14 @@ var serveCmd = &cobra.Command{
 		if staticDir != "" {
 			if info, err := os.Stat(staticDir); err == nil && info.IsDir() {
 				staticFS = os.DirFS(staticDir)
-				log.Printf("Serving static files from %s", staticDir)
+				slog.Info("serving static files", "dir", staticDir)
 			}
 		}
 
 		router := api.NewRouter(srv, staticFS)
 
 		addr := fmt.Sprintf(":%d", port)
-		log.Printf("Listening on %s", addr)
+		slog.Info("listening", "addr", addr)
 		if err := http.ListenAndServe(addr, router); err != nil {
 			return fmt.Errorf("server error: %w", err)
 		}
@@ -584,6 +587,6 @@ func loadSecretsEnv(path string) {
 		}
 	}
 	if count > 0 {
-		log.Printf("Loaded %d secrets from %s", count, path)
+		slog.Info("loaded secrets from file", "count", count, "path", path)
 	}
 }

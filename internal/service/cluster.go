@@ -3,7 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"sort"
 	"strings"
 
@@ -55,7 +55,7 @@ func (s *ClusterService) ListClusters(ctx context.Context, gp gitprovider.GitPro
 	// Fetch ArgoCD clusters for health stats
 	argocdClusters, err := ac.ListClusters(ctx)
 	if err != nil {
-		log.Printf("Warning: could not fetch ArgoCD clusters: %v", err)
+		slog.Warn("could not fetch argocd clusters", "error", err)
 		// Continue without ArgoCD data
 		return &models.ClustersResponse{
 			Clusters:    clusters,
@@ -148,7 +148,7 @@ func (s *ClusterService) GetClusterDetail(ctx context.Context, clusterName strin
 	argocdSvc := argocd.NewService(ac)
 	apps, err := argocdSvc.GetClusterApplications(ctx, clusterName)
 	if err != nil {
-		log.Printf("Warning: could not fetch ArgoCD apps for cluster %s: %v", clusterName, err)
+		slog.Warn("could not fetch argocd apps for cluster", "cluster", clusterName, "error", err)
 	} else {
 		appMap := make(map[string]models.ArgocdApplication)
 		for _, app := range apps {
@@ -222,7 +222,7 @@ func (s *ClusterService) GetClusterComparison(ctx context.Context, clusterName s
 	argocdSvc := argocd.NewService(ac)
 	argocdApps, err := argocdSvc.GetClusterApplications(ctx, clusterName)
 	if err != nil {
-		log.Printf("Warning: could not fetch ArgoCD apps: %v", err)
+		slog.Warn("could not fetch argocd apps", "error", err)
 		argocdApps = nil
 	}
 
@@ -398,7 +398,7 @@ func (s *ClusterService) GetConfigDiff(ctx context.Context, clusterName string, 
 		// Marshal cluster addon values to YAML
 		clusterYAML, err := yaml.Marshal(addonSection)
 		if err != nil {
-			log.Printf("Warning: could not marshal cluster values for addon %s: %v", addonName, err)
+			slog.Warn("could not marshal cluster values for addon", "addon", addonName, "error", err)
 			continue
 		}
 
@@ -407,7 +407,7 @@ func (s *ClusterService) GetConfigDiff(ctx context.Context, clusterName string, 
 		globalData, err := gp.GetFileContent(ctx, globalPath, "main")
 		globalYAML := ""
 		if err != nil {
-			log.Printf("Info: no global defaults found for addon %s: %v", addonName, err)
+			slog.Info("no global defaults found for addon", "addon", addonName, "error", err)
 		} else {
 			globalYAML = string(globalData)
 		}

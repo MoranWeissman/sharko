@@ -6,6 +6,7 @@ import {
   Package,
   Activity,
   BarChart3,
+  ClipboardList,
   Settings,
   ChevronLeft,
   ChevronRight,
@@ -53,6 +54,7 @@ const navSections: NavSection[] = [
     items: [
       { to: '/observability', label: 'Observability', icon: Activity },
       { to: '/dashboards', label: 'Dashboards', icon: BarChart3 },
+      { to: '/audit', label: 'Audit Log', icon: ClipboardList },
     ],
   },
   {
@@ -70,6 +72,7 @@ const routeLabels: Record<string, string> = {
   addons: 'Addons Catalog',
   observability: 'Observability',
   dashboards: 'Dashboards',
+  audit: 'Audit Log',
   settings: 'Settings',
   users: 'User Management',
   'api-keys': 'API Keys',

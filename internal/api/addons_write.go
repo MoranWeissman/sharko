@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
@@ -24,7 +25,7 @@ import (
 // @Router /addons [post]
 // handleAddAddon handles POST /api/v1/addons — add a new addon to the catalog.
 func (s *Server) handleAddAddon(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
+	if !authz.RequireWithResponse(w, r, "addon.add-to-catalog") {
 		return
 	}
 	ac, err := s.connSvc.GetActiveArgocdClient()
@@ -89,7 +90,7 @@ func (s *Server) handleAddAddon(w http.ResponseWriter, r *http.Request) {
 // handleRemoveAddon handles DELETE /api/v1/addons/{name} — remove an addon.
 // Requires ?confirm=true query parameter. Without it, returns a dry-run impact report.
 func (s *Server) handleRemoveAddon(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
+	if !authz.RequireWithResponse(w, r, "addon.remove-from-catalog") {
 		return
 	}
 	name := r.PathValue("name")
@@ -173,7 +174,7 @@ func (s *Server) handleRemoveAddon(w http.ResponseWriter, r *http.Request) {
 // @Failure 502 {object} map[string]interface{} "Gateway error"
 // @Router /addons/{name} [patch]
 func (s *Server) handleConfigureAddon(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
+	if !authz.RequireWithResponse(w, r, "addon.update-catalog") {
 		return
 	}
 	name := r.PathValue("name")

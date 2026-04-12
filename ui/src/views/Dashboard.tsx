@@ -11,6 +11,7 @@ import { ClusterCard } from '@/components/ClusterCard';
 import { WaveDecoration } from '@/components/WaveDecoration';
 import { LoadingState } from '@/components/LoadingState';
 import { ErrorState } from '@/components/ErrorState';
+import { ArgoCDStatusBanner } from '@/components/ArgoCDStatusBanner';
 
 // --- Health Bar with totals ---
 
@@ -73,6 +74,7 @@ export function Dashboard() {
   const [attentionItems, setAttentionItems] = useState<{ app_name: string; addon_name: string; cluster: string; health: string; sync: string; error?: string; error_type?: string }[]>([]);
   const [showAttention, setShowAttention] = useState(false);
   const [clusters, setClusters] = useState<{ name: string; connectionStatus: string; addons: { name: string; health: string }[]; healthy: number; total: number }[]>([]);
+  const [argoCDUnreachable, setArgoCDUnreachable] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
@@ -106,6 +108,15 @@ export function Dashboard() {
           }
         }
         setVersionDrifts(drifts);
+      }
+
+      // Detect ArgoCD unreachable
+      const typedClustersCheck = clustersData as ClustersResponse | null
+      if (typedClustersCheck?.clusters && typedClustersCheck.clusters.length > 0) {
+        const allFailed = typedClustersCheck.clusters.every(
+          (c) => !c.connection_status || c.connection_status === 'Failed' || c.connection_status === 'unknown'
+        );
+        setArgoCDUnreachable(allFailed);
       }
 
       // Build cluster cards
@@ -176,6 +187,9 @@ export function Dashboard() {
         </div>
         <WaveDecoration />
       </div>
+
+      {/* ArgoCD Status Banner */}
+      <ArgoCDStatusBanner visible={argoCDUnreachable} />
 
       {/* Needs Attention */}
       {hasIssues || attentionItems.length > 0 ? (

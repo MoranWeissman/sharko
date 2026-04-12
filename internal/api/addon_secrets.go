@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
@@ -18,7 +19,7 @@ import (
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Router /addon-secrets [get]
 func (s *Server) handleListAddonSecrets(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
+	if !authz.RequireWithResponse(w, r, "addon-secret.list") {
 		return
 	}
 	s.addonSecretDefsMu.RLock()
@@ -45,7 +46,7 @@ func (s *Server) handleListAddonSecrets(w http.ResponseWriter, r *http.Request) 
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Router /addon-secrets [post]
 func (s *Server) handleCreateAddonSecret(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
+	if !authz.RequireWithResponse(w, r, "addon-secret.create") {
 		return
 	}
 
@@ -80,7 +81,7 @@ func (s *Server) handleCreateAddonSecret(w http.ResponseWriter, r *http.Request)
 // @Failure 404 {object} map[string]interface{} "Not found"
 // @Router /addon-secrets/{addon} [delete]
 func (s *Server) handleDeleteAddonSecret(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
+	if !authz.RequireWithResponse(w, r, "addon-secret.delete") {
 		return
 	}
 	addon := r.PathValue("addon")

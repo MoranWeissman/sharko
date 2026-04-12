@@ -2,6 +2,7 @@ import type {
   AddonCatalogResponse,
   AddonDetailResponse,
   AIConfigResponse,
+  AuditEntry,
   AvailableVersionsResponse,
   ClusterComparisonResponse,
   ClusterDetailResponse,
@@ -9,10 +10,12 @@ import type {
   ConfigDiffResponse,
   ConnectionsListResponse,
   DashboardStats,
+  DiagnosticReport,
   ObservabilityOverviewResponse,
   PullRequestsResponse,
   SyncActivityEntry,
   UpgradeCheckResponse,
+  VerifyResult,
   VersionMatrixResponse,
 } from './models'
 
@@ -136,7 +139,40 @@ export async function registerCluster(data: { name: string; addons?: Record<stri
 }
 
 export async function testClusterConnection(name: string) {
-  return postJSON<{ reachable: boolean; server_version?: string; platform?: string; error?: string }>(`/clusters/${encodeURIComponent(name)}/test`, {})
+  return postJSON<VerifyResult & { reachable?: boolean; platform?: string }>(`/clusters/${encodeURIComponent(name)}/test`, {})
+}
+
+export async function diagnoseCluster(name: string) {
+  return postJSON<DiagnosticReport>(`/clusters/${encodeURIComponent(name)}/diagnose`, {})
+}
+
+export async function fetchAuditLog(filters?: {
+  user?: string
+  action?: string
+  source?: string
+  result?: string
+  cluster?: string
+  since?: string
+  limit?: number
+}) {
+  const params = new URLSearchParams()
+  if (filters) {
+    if (filters.user) params.set('user', filters.user)
+    if (filters.action) params.set('action', filters.action)
+    if (filters.source) params.set('source', filters.source)
+    if (filters.result) params.set('result', filters.result)
+    if (filters.cluster) params.set('cluster', filters.cluster)
+    if (filters.since) params.set('since', filters.since)
+    if (filters.limit) params.set('limit', String(filters.limit))
+  }
+  const qs = params.toString()
+  return fetchJSON<{ entries: AuditEntry[] }>(`/audit${qs ? `?${qs}` : ''}`)
+}
+
+export function createAuditStream(): EventSource {
+  const token = sessionStorage.getItem('sharko-auth-token')
+  const url = `/api/v1/audit/stream${token ? `?token=${encodeURIComponent(token)}` : ''}`
+  return new EventSource(url)
 }
 
 export async function deregisterCluster(name: string) {

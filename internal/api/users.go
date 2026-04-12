@@ -3,37 +3,9 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+
+	"github.com/MoranWeissman/sharko/internal/authz"
 )
-
-// requireAdmin checks that the current user has the admin role.
-func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
-	username := r.Header.Get("X-Sharko-User")
-	if username == "" {
-		// Auth may be disabled (no users configured) — allow access
-		if !s.authStore.HasUsers() {
-			return true
-		}
-		writeError(w, http.StatusForbidden, "admin access required")
-		return false
-	}
-
-	// Check X-Sharko-Role header first (set by API token auth)
-	if role := r.Header.Get("X-Sharko-Role"); role != "" {
-		if role != "admin" {
-			writeError(w, http.StatusForbidden, "admin access required")
-			return false
-		}
-		return true
-	}
-
-	// Fall back to user store lookup (session-based auth)
-	user := s.authStore.GetUser(username)
-	if user == nil || user.Role != "admin" {
-		writeError(w, http.StatusForbidden, "admin access required")
-		return false
-	}
-	return true
-}
 
 // handleListUsers godoc
 //
@@ -47,7 +19,7 @@ func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
 // @Failure 403 {object} map[string]interface{} "Forbidden"
 // @Router /users [get]
 func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
+	if !authz.RequireWithResponse(w, r, "user.list") {
 		return
 	}
 	users := s.authStore.ListUsers()
@@ -69,7 +41,7 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 // @Failure 403 {object} map[string]interface{} "Forbidden"
 // @Router /users [post]
 func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
+	if !authz.RequireWithResponse(w, r, "user.create") {
 		return
 	}
 
@@ -116,7 +88,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 // @Failure 403 {object} map[string]interface{} "Forbidden"
 // @Router /users/{username} [put]
 func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
+	if !authz.RequireWithResponse(w, r, "user.change-role") {
 		return
 	}
 
@@ -164,7 +136,7 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 // @Failure 403 {object} map[string]interface{} "Forbidden"
 // @Router /users/{username} [delete]
 func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
+	if !authz.RequireWithResponse(w, r, "user.delete") {
 		return
 	}
 
@@ -196,7 +168,7 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 // @Failure 403 {object} map[string]interface{} "Forbidden"
 // @Router /users/{username}/reset-password [post]
 func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
+	if !authz.RequireWithResponse(w, r, "user.change-role") {
 		return
 	}
 

@@ -3,7 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 
 	"github.com/MoranWeissman/sharko/internal/ai"
@@ -208,11 +208,11 @@ func (s *UpgradeService) CheckUpgrade(ctx context.Context, addonName, targetVers
 	globalValuesPath := fmt.Sprintf("configuration/addons-global-values/%s.yaml", addonName)
 	globalData, err := gp.GetFileContent(ctx, globalValuesPath, "main")
 	if err != nil {
-		log.Printf("Warning: could not fetch global values for %s: %v", addonName, err)
+		slog.Warn("could not fetch global values", "addon", addonName, "error", err)
 	} else {
 		conflicts, err := helm.FindConflicts(string(globalData), oldValues, newValues)
 		if err != nil {
-			log.Printf("Warning: conflict check failed for global values: %v", err)
+			slog.Warn("conflict check failed for global values", "error", err)
 		} else {
 			for _, c := range conflicts {
 				allConflicts = append(allConflicts, models.ConflictCheckEntry{
@@ -233,11 +233,11 @@ func (s *UpgradeService) CheckUpgrade(ctx context.Context, addonName, targetVers
 		err = nil
 	}
 	if err != nil {
-		log.Printf("Warning: could not fetch cluster addons config: %v", err)
+		slog.Warn("could not fetch cluster addons config", "error", err)
 	} else {
 		clusters, err := s.parser.ParseClusterAddons(clusterData)
 		if err != nil {
-			log.Printf("Warning: could not parse cluster addons: %v", err)
+			slog.Warn("could not parse cluster addons", "error", err)
 		} else {
 			for _, cluster := range clusters {
 				// Check if this cluster has the addon enabled
@@ -256,7 +256,7 @@ func (s *UpgradeService) CheckUpgrade(ctx context.Context, addonName, targetVers
 
 				conflicts, err := helm.FindConflicts(string(clusterValuesData), oldValues, newValues)
 				if err != nil {
-					log.Printf("Warning: conflict check failed for cluster %s: %v", cluster.Name, err)
+					slog.Warn("conflict check failed for cluster", "cluster", cluster.Name, "error", err)
 					continue
 				}
 

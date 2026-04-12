@@ -3,7 +3,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"path"
 	"strings"
 
@@ -190,9 +190,9 @@ func warnSyncWaveConflicts(catalog []models.AddonCatalogEntry, req AddAddonReque
 			continue
 		}
 		if req.SyncWave != 0 && req.SyncWave <= depWave {
-			log.Printf("WARNING: addon %q has syncWave=%d but depends on %q (syncWave=%d); "+
-				"dependency may not be ready before %q is deployed",
-				req.Name, req.SyncWave, dep, depWave, req.Name)
+			slog.Warn("addon sync wave may conflict with dependency",
+				"addon", req.Name, "syncWave", req.SyncWave,
+				"dependency", dep, "depSyncWave", depWave)
 		}
 	}
 }

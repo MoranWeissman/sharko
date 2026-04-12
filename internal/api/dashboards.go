@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/MoranWeissman/sharko/internal/authz"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -130,7 +131,7 @@ func (s *Server) handleListDashboards(w http.ResponseWriter, r *http.Request) {
 // @Failure 500 {object} map[string]interface{} "Internal error"
 // @Router /embedded-dashboards [post]
 func (s *Server) handleSaveDashboards(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
+	if !authz.RequireWithResponse(w, r, "dashboard.save") {
 		return
 	}
 	var dashboards []embeddedDashboard

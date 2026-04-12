@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/MoranWeissman/sharko/internal/ai"
+	"github.com/MoranWeissman/sharko/internal/authz"
 )
 
 type aiProviderInfo struct {
@@ -109,7 +110,7 @@ type saveAIConfigRequest struct {
 // @Failure 500 {object} map[string]interface{} "Internal error"
 // @Router /ai/config [post]
 func (s *Server) handleSaveAIConfig(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) { return }
+	if !authz.RequireWithResponse(w, r, "ai.config") { return }
 	var req saveAIConfigRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -224,7 +225,7 @@ func (s *Server) handleTestAIConfig(w http.ResponseWriter, r *http.Request) {
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Router /ai/provider [post]
 func (s *Server) handleSetAIProvider(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
+	if !authz.RequireWithResponse(w, r, "ai.provider") {
 		return
 	}
 	var req struct {

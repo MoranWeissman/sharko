@@ -3,7 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -27,7 +27,7 @@ func (s *ObservabilityService) GetOverview(ctx context.Context, ac *argocd.Clien
 	// 1. Get ArgoCD version info
 	versionInfo, err := ac.GetVersion(ctx)
 	if err != nil {
-		log.Printf("Warning: could not fetch ArgoCD version: %v", err)
+		slog.Warn("could not fetch argocd version", "error", err)
 		versionInfo = map[string]string{}
 	}
 
@@ -75,7 +75,7 @@ func (s *ObservabilityService) GetOverview(ctx context.Context, ac *argocd.Clien
 	for _, app := range addonApps {
 		detail, err := ac.GetApplication(ctx, app.Name)
 		if err != nil {
-			log.Printf("Warning: could not fetch detail for app %s: %v", app.Name, err)
+			slog.Warn("could not fetch detail for app", "app", app.Name, "error", err)
 			fullApps = append(fullApps, app) // fall back to summary
 			continue
 		}

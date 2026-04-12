@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/MoranWeissman/sharko/internal/authz"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -25,7 +26,7 @@ import (
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Router /argocd/resource-exclusions [get]
 func (s *Server) handleCheckResourceExclusions(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
+	if !authz.RequireWithResponse(w, r, "argocd.resource-exclusions") {
 		return
 	}
 

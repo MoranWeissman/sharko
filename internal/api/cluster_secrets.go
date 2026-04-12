@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
 )
@@ -23,7 +24,7 @@ import (
 // @Failure 502 {object} map[string]interface{} "Gateway error"
 // @Router /clusters/{name}/secrets [get]
 func (s *Server) handleListClusterSecrets(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
+	if !authz.RequireWithResponse(w, r, "cluster.secrets.list") {
 		return
 	}
 	name := r.PathValue("name")
@@ -102,7 +103,7 @@ func (s *Server) handleListClusterSecrets(w http.ResponseWriter, r *http.Request
 // @Failure 502 {object} map[string]interface{} "Gateway error"
 // @Router /clusters/{name}/secrets/refresh [post]
 func (s *Server) handleRefreshClusterSecrets(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
+	if !authz.RequireWithResponse(w, r, "cluster.secrets.refresh") {
 		return
 	}
 	name := r.PathValue("name")

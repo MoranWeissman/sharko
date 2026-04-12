@@ -2,7 +2,7 @@ package notifications
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"sort"
 	"sync"
 	"time"
@@ -53,13 +53,13 @@ func (p *ServiceProvider) GetVersionInfo(ctx context.Context) ([]VersionInfo, er
 	gp, err := p.connSvc.GetActiveGitProvider()
 	if err != nil {
 		// No connection configured — not an error worth logging loudly.
-		log.Printf("[notifications] provider: no active git provider, skipping check: %v", err)
+		slog.Info("no active git provider, skipping check", "error", err, "component", "notifications")
 		return nil, nil
 	}
 
 	ac, err := p.connSvc.GetActiveArgocdClient()
 	if err != nil {
-		log.Printf("[notifications] provider: no active ArgoCD client, skipping check: %v", err)
+		slog.Info("no active argocd client, skipping check", "error", err, "component", "notifications")
 		return nil, nil
 	}
 
@@ -72,7 +72,7 @@ func (p *ServiceProvider) GetVersionInfo(ctx context.Context) ([]VersionInfo, er
 	// Helm version lookups.
 	catalog, err := p.addonSvc.ListAddons(ctx, gp)
 	if err != nil {
-		log.Printf("[notifications] provider: could not load addon catalog, skipping Helm version check: %v", err)
+		slog.Warn("could not load addon catalog, skipping helm version check", "error", err, "component", "notifications")
 		catalog = nil
 	}
 
@@ -105,8 +105,7 @@ func (p *ServiceProvider) GetVersionInfo(ctx context.Context) ([]VersionInfo, er
 		if key, ok := catalogByName[row.AddonName]; ok {
 			latest, fetchErr := p.fetchLatestVersion(ctx, key.repoURL, key.chart)
 			if fetchErr != nil {
-				log.Printf("[notifications] provider: could not fetch latest version for %s from %s: %v",
-					row.AddonName, key.repoURL, fetchErr)
+				slog.Warn("could not fetch latest version", "addon", row.AddonName, "repoURL", key.repoURL, "error", fetchErr, "component", "notifications")
 			} else {
 				info.LatestVersion = latest
 			}

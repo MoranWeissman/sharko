@@ -3,7 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"sort"
 	"strings"
@@ -109,7 +109,7 @@ func (s *AddonService) GetCatalog(ctx context.Context, gp gitprovider.GitProvide
 	argocdSvc := argocd.NewService(ac)
 	allApps, err := ac.ListApplications(ctx)
 	if err != nil {
-		log.Printf("Warning: could not fetch ArgoCD applications: %v", err)
+		slog.Warn("could not fetch argocd applications", "error", err)
 	}
 
 	appMap := make(map[string]models.ArgocdApplication)
@@ -243,7 +243,7 @@ func (s *AddonService) GetAddonDetail(ctx context.Context, addonName string, gp 
 				}
 				resp.ApplicationSet = info
 			} else {
-				log.Printf("Warning: could not fetch ApplicationSet status for %q: %v", addonName, err)
+				slog.Warn("could not fetch applicationset status", "addon", addonName, "error", err)
 			}
 
 			return resp, nil
@@ -281,7 +281,7 @@ func (s *AddonService) GetVersionMatrix(ctx context.Context, gp gitprovider.GitP
 	// Fetch ArgoCD applications once and build a lookup map
 	allApps, err := ac.ListApplications(ctx)
 	if err != nil {
-		log.Printf("Warning: could not fetch ArgoCD applications: %v", err)
+		slog.Warn("could not fetch argocd applications", "error", err)
 	}
 
 	appMap := make(map[string]models.ArgocdApplication)

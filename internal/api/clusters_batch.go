@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
 )
@@ -26,7 +27,7 @@ import (
 // @Router /clusters/batch [post]
 // handleBatchRegisterClusters handles POST /api/v1/clusters/batch — register multiple clusters.
 func (s *Server) handleBatchRegisterClusters(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdmin(w, r) {
+	if !authz.RequireWithResponse(w, r, "cluster.register") {
 		return
 	}
 	if s.credProvider == nil {
