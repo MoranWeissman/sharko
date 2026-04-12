@@ -539,8 +539,8 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	// Webhooks (no user auth — signature verified inside the handler)
 	mux.HandleFunc("POST /api/v1/webhooks/git", srv.handleGitWebhook)
 
-	// Auth (login is rate-limited: 10 attempts per IP per minute)
-	loginRL := newLoginRateLimiter(10, 1*time.Minute)
+	// Auth (login is rate-limited: 5 attempts per IP per minute)
+	loginRL := newLoginRateLimiter(5, 1*time.Minute)
 	mux.HandleFunc("POST /api/v1/auth/login", func(w http.ResponseWriter, r *http.Request) {
 		if !loginRL.Allow(clientIP(r)) {
 			writeError(w, http.StatusTooManyRequests, "too many login attempts, please try again later")
@@ -548,6 +548,7 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 		}
 		srv.handleLogin(w, r)
 	})
+	mux.HandleFunc("POST /api/v1/auth/logout", srv.handleLogout)
 	mux.HandleFunc("POST /api/v1/auth/update-password", srv.handleUpdatePassword)
 	mux.HandleFunc("POST /api/v1/auth/hash", srv.handleHashPassword)
 
@@ -700,6 +701,15 @@ func clientIP(r *http.Request) string {
 }
 
 // --- Session token auth ---
+//
+// Security model: sessions use random tokens passed via the Authorization header
+// (Bearer <token>), NOT cookies. This means:
+//   - CSRF is inherently mitigated: cross-origin requests cannot set custom headers
+//     under the browser's CORS policy, so no CSRF middleware is needed.
+//   - HttpOnly/Secure/SameSite cookie attributes do not apply (no cookies used).
+//   - Token confidentiality relies on HTTPS in transit and secure client storage
+//     (the UI stores the token in sessionStorage).
+//   - Sessions expire after 24h; a background goroutine cleans expired entries.
 
 type sessionInfo struct {
 	Username string
@@ -790,6 +800,15 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !s.authStore.ValidateCredentials(req.Username, req.Password) {
+		s.auditLog.Add(audit.Entry{
+			Level:    "warn",
+			Event:    "login_failed",
+			User:     req.Username,
+			Action:   "login",
+			Resource: "session",
+			Source:   "api",
+			Result:   "failure",
+		})
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
@@ -805,8 +824,60 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		role = user.Role
 	}
 
+	s.auditLog.Add(audit.Entry{
+		Level:    "info",
+		Event:    "login",
+		User:     req.Username,
+		Action:   "login",
+		Resource: "session",
+		Source:   "api",
+		Result:   "success",
+	})
 	slog.Info("user logged in", "username", req.Username, "role", role)
 	writeJSON(w, http.StatusOK, map[string]string{"token": token, "username": req.Username, "role": role})
+}
+
+// handleLogout godoc
+//
+// @Summary Logout
+// @Description Invalidates the current session token
+// @Tags auth
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{} "Logged out"
+// @Failure 401 {object} map[string]interface{} "No valid session"
+// @Router /auth/logout [post]
+// handleLogout invalidates the caller's session token.
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	authHeader := r.Header.Get("Authorization")
+	token := strings.TrimPrefix(authHeader, "Bearer ")
+	if token == "" || token == authHeader {
+		writeError(w, http.StatusUnauthorized, "no session token provided")
+		return
+	}
+
+	username := getSessionUser(token)
+	if username == "" {
+		writeError(w, http.StatusUnauthorized, "invalid or expired session")
+		return
+	}
+
+	sessionsMu.Lock()
+	delete(activeSessions, token)
+	sessionsMu.Unlock()
+
+	s.auditLog.Add(audit.Entry{
+		Level:    "info",
+		Event:    "logout",
+		User:     username,
+		Action:   "logout",
+		Resource: "session",
+		Source:   "api",
+		Result:   "success",
+	})
+
+	slog.Info("user logged out", "username", username)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "logged out"})
 }
 
 // basicAuthMiddleware enforces token-based auth on all API routes.
@@ -886,8 +957,8 @@ func (s *Server) handleUpdatePassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request")
 		return
 	}
-	if req.NewPassword == "" || len(req.NewPassword) < 8 {
-		writeError(w, http.StatusBadRequest, "new password must be at least 8 characters")
+	if req.NewPassword == "" || len(req.NewPassword) < 12 {
+		writeError(w, http.StatusBadRequest, "new password must be at least 12 characters")
 		return
 	}
 

@@ -2,6 +2,7 @@ import type {
   AddonCatalogResponse,
   AddonDetailResponse,
   AIConfigResponse,
+  APIToken,
   AuditEntry,
   AvailableVersionsResponse,
   ClusterComparisonResponse,
@@ -213,12 +214,12 @@ export async function configureAddon(
   )
 }
 
-export async function createToken(data: { name: string; role: string }) {
+export async function createToken(data: { name: string; role: string; expires?: string }) {
   return postJSON<any>('/tokens', data)
 }
 
 export async function listTokens() {
-  return fetchJSON<any[]>('/tokens')
+  return fetchJSON<APIToken[]>('/tokens')
 }
 
 export async function revokeToken(name: string) {

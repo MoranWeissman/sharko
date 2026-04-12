@@ -1356,6 +1356,27 @@ paths:
       summary: Login
       tags:
       - auth
+  /auth/logout:
+    post:
+      description: Invalidates the current session token
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Logged out
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: No valid session
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Logout
+      tags:
+      - auth
   /auth/update-password:
     post:
       consumes:
