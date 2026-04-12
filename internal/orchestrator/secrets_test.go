@@ -21,13 +21,13 @@ func fakeClientFactoryFor(client kubernetes.Interface) RemoteClientFactory {
 
 func TestCreateAddonSecrets_NoSecretManagement(t *testing.T) {
 	orch := New(nil, defaultCreds(), newMockArgocd(), newMockGitProvider(), autoMergeGitOps(), defaultPaths(), nil)
-	// No SetSecretManagement call — should return nil, nil.
-	created, err := orch.createAddonSecrets(context.Background(), nil, map[string]bool{"datadog": true})
+	// No SetSecretManagement call — should return empty result, nil.
+	result, err := orch.createAddonSecrets(context.Background(), nil, map[string]bool{"datadog": true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(created) != 0 {
-		t.Errorf("expected no secrets created, got %v", created)
+	if len(result.Created) != 0 {
+		t.Errorf("expected no secrets created, got %v", result.Created)
 	}
 }
 
@@ -50,12 +50,12 @@ func TestCreateAddonSecrets_CreatesSecretForEnabledAddon(t *testing.T) {
 	}
 	orch.SetSecretManagement(defs, fetcher, fakeClientFactoryFor(client))
 
-	created, err := orch.createAddonSecrets(context.Background(), nil, map[string]bool{"datadog": true})
+	result, err := orch.createAddonSecrets(context.Background(), nil, map[string]bool{"datadog": true})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(created) != 1 || created[0] != "datadog-secret" {
-		t.Errorf("expected [datadog-secret], got %v", created)
+	if len(result.Created) != 1 || result.Created[0] != "datadog-secret" {
+		t.Errorf("expected [datadog-secret], got %v", result.Created)
 	}
 
 	// Verify secret exists in the fake cluster.
@@ -84,16 +84,16 @@ func TestCreateAddonSecrets_SkipsDisabledAddons(t *testing.T) {
 	orch.SetSecretManagement(defs, fetcher, fakeClientFactoryFor(client))
 
 	// datadog is disabled
-	created, err := orch.createAddonSecrets(context.Background(), nil, map[string]bool{"datadog": false})
+	result, err := orch.createAddonSecrets(context.Background(), nil, map[string]bool{"datadog": false})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(created) != 0 {
-		t.Errorf("expected no secrets for disabled addon, got %v", created)
+	if len(result.Created) != 0 {
+		t.Errorf("expected no secrets for disabled addon, got %v", result.Created)
 	}
 }
 
-func TestCreateAddonSecrets_FetcherError(t *testing.T) {
+func TestCreateAddonSecrets_FetcherError_PartialSuccess(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	orch := New(nil, defaultCreds(), newMockArgocd(), newMockGitProvider(), autoMergeGitOps(), defaultPaths(), nil)
 
@@ -108,9 +108,19 @@ func TestCreateAddonSecrets_FetcherError(t *testing.T) {
 	fetcher := &mockSecretFetcher{err: errors.New("vault unavailable")}
 	orch.SetSecretManagement(defs, fetcher, fakeClientFactoryFor(client))
 
-	_, err := orch.createAddonSecrets(context.Background(), nil, map[string]bool{"datadog": true})
-	if err == nil {
-		t.Fatal("expected error from secret fetcher")
+	// With partial success, fetcher errors are recorded as failed secrets, not top-level errors.
+	result, err := orch.createAddonSecrets(context.Background(), nil, map[string]bool{"datadog": true})
+	if err != nil {
+		t.Fatalf("unexpected top-level error: %v", err)
+	}
+	if len(result.Created) != 0 {
+		t.Errorf("expected no created secrets, got %v", result.Created)
+	}
+	if len(result.Failed) != 1 {
+		t.Fatalf("expected 1 failed secret, got %d", len(result.Failed))
+	}
+	if result.Failed[0].Name != "datadog-secret" {
+		t.Errorf("expected failed secret name 'datadog-secret', got %q", result.Failed[0].Name)
 	}
 }
 

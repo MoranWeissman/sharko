@@ -258,11 +258,33 @@ definitions:
         additionalProperties:
           type: boolean
         type: object
+      dry_run:
+        type: boolean
       name:
+        type: string
+      provider:
         type: string
       region:
         type: string
       secret_path:
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_providers.DiscoveredCluster:
+    properties:
+      account:
+        type: string
+      endpoint:
+        type: string
+      error:
+        type: string
+      k8s_version:
+        type: string
+      name:
+        type: string
+      region:
+        type: string
+      status:
+        description: ACTIVE, CREATING, DELETING, FAILED, UPDATING, PENDING
         type: string
     type: object
   github_com_MoranWeissman_sharko_internal_verify.ErrorCode:
@@ -325,6 +347,26 @@ definitions:
       model:
         type: string
       name:
+        type: string
+    type: object
+  internal_api.discoverEKSRequest:
+    properties:
+      provider:
+        type: string
+      region:
+        type: string
+      role_arns:
+        items:
+          type: string
+        type: array
+    type: object
+  internal_api.discoverEKSResponse:
+    properties:
+      clusters:
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_providers.DiscoveredCluster'
+        type: array
+      error:
         type: string
     type: object
   internal_api.embeddedDashboard:
@@ -1455,9 +1497,11 @@ paths:
     post:
       consumes:
       - application/json
-      description: Registers a new cluster in ArgoCD and creates its GitOps configuration
+      description: |-
+        Registers a new cluster in ArgoCD and creates its GitOps configuration.
+        Pass "dry_run": true to preview what would happen without making changes.
       parameters:
-      - description: Cluster registration request
+      - description: Cluster registration request (supports dry_run field)
         in: body
         name: body
         required: true
@@ -1466,6 +1510,11 @@ paths:
       produces:
       - application/json
       responses:
+        "200":
+          description: Dry-run preview
+          schema:
+            additionalProperties: true
+            type: object
         "201":
           description: Cluster registered
           schema:
@@ -2050,6 +2099,48 @@ paths:
       security:
       - BearerAuth: []
       summary: Batch register clusters
+      tags:
+      - clusters
+  /clusters/discover:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Scans one or more AWS accounts for EKS clusters via the EKS API.
+        If role_arns is empty, uses the default IRSA identity.
+        For cross-account discovery, provide one or more IAM role ARNs to assume.
+      parameters:
+      - description: Discovery request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_api.discoverEKSRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Discovered clusters
+          schema:
+            $ref: '#/definitions/internal_api.discoverEKSResponse'
+        "400":
+          description: Invalid request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Discovery failed
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Discover EKS clusters
       tags:
       - clusters
   /config:

@@ -12,6 +12,7 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/gitops"
 	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/verify"
 
 	"gopkg.in/yaml.v3"
 )
@@ -40,6 +41,11 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	}
 	if !validClusterName.MatchString(req.Name) {
 		return nil, fmt.Errorf("invalid cluster name %q: must be alphanumeric with hyphens, starting with an alphanumeric character", req.Name)
+	}
+
+	// Step 1a: Validate provider — only "eks" is supported.
+	if req.Provider != "" && req.Provider != "eks" {
+		return nil, fmt.Errorf("provider %q not yet implemented; supported: eks", req.Provider)
 	}
 
 	// Step 1b: Merge default addons if no addons specified.
@@ -85,6 +91,67 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	}
 	steps = append(steps, "fetch_credentials")
 	result.Cluster.Server = creds.Server
+
+	// Step 3a: Verify connectivity via Stage 1 (secret CRUD cycle on remote cluster).
+	// Only runs when the remote client factory is available (always in production,
+	// may be nil in legacy tests that don't call SetSecretManagement).
+	if o.remoteClientFn != nil && creds.Raw != nil {
+		remoteClient, clientErr := o.remoteClientFn(creds.Raw)
+		if clientErr != nil {
+			return nil, fmt.Errorf("building remote client for verification of cluster %q: %w", req.Name, clientErr)
+		}
+		verifyResult := verify.Stage1(ctx, remoteClient, verify.TestNamespace())
+		result.Verification = &verifyResult
+		if verifyResult.ServerVersion != "" {
+			result.Cluster.ServerVersion = verifyResult.ServerVersion
+		}
+		if !verifyResult.Success {
+			return nil, fmt.Errorf("cluster %q connectivity verification failed: [%s] %s",
+				req.Name, verifyResult.ErrorCode, verifyResult.ErrorMessage)
+		}
+		steps = append(steps, "verify_stage1")
+		slog.Info("Stage 1 verification passed", "cluster", req.Name, "version", verifyResult.ServerVersion)
+	}
+
+	// Dry-run exit point: return a preview of what would happen, with zero side effects.
+	if req.DryRun {
+		// Compute effective addon names.
+		var addonNames []string
+		for a, enabled := range req.Addons {
+			if enabled {
+				addonNames = append(addonNames, a)
+			}
+		}
+
+		valuesPath := path.Join(o.paths.ClusterValues, req.Name+".yaml")
+		clusterAddonsPath := o.paths.ManagedClusters
+		if clusterAddonsPath == "" {
+			clusterAddonsPath = "configuration/managed-clusters.yaml"
+		}
+
+		// Determine file actions: "create" or "update" based on whether the file already exists.
+		filePreviews := []FilePreview{
+			{Path: valuesPath, Action: o.fileAction(ctx, valuesPath)},
+			{Path: clusterAddonsPath, Action: o.fileAction(ctx, clusterAddonsPath)},
+		}
+
+		prTitle := fmt.Sprintf("%s register cluster %s", o.gitops.CommitPrefix, req.Name)
+
+		dryResult := &DryRunResult{
+			EffectiveAddons: addonNames,
+			FilesToWrite:    filePreviews,
+			PRTitle:         prTitle,
+			SecretsToCreate: o.listSecretsToCreate(req.Addons),
+		}
+		if result.Verification != nil {
+			dryResult.Verification = result.Verification
+		}
+
+		result.Status = "success"
+		result.DryRun = dryResult
+		result.CompletedSteps = steps
+		return result, nil
+	}
 
 	// Step 3b: Create ArgoCD cluster secret (if Manager is configured AND auto-merge is on).
 	// When PRAutoMerge is true the PR merges immediately, so the cluster will be in
@@ -136,20 +203,21 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	}
 
 	// Step 4: Create addon secrets on remote cluster (if configured).
-	// Secrets must exist before ArgoCD sees the cluster — if this fails, abort early.
-	secretNames, secretErr := o.createAddonSecrets(ctx, creds.Raw, req.Addons)
+	// Uses partial-success semantics: individual failures are tracked but don't stop the flow.
+	secretResult, secretErr := o.createAddonSecrets(ctx, creds.Raw, req.Addons)
 	if secretErr != nil {
+		// Fatal error (e.g. can't connect to remote cluster at all).
 		result.Status = "partial"
 		result.CompletedSteps = steps
-		result.Secrets = secretNames
 		result.FailedStep = "create_secrets"
 		result.Error = secretErr.Error()
 		result.Message = "Addon secret creation failed. ArgoCD registration and PR not started."
 		return result, nil
 	}
-	if len(secretNames) > 0 {
+	if len(secretResult.Created) > 0 || len(secretResult.Failed) > 0 {
 		steps = append(steps, "create_secrets")
-		result.Secrets = secretNames
+		result.Secrets = secretResult.Created
+		result.FailedSecrets = secretResult.Failed
 	}
 
 	// Step 5: Generate cluster values file and commit to Git via PR.
@@ -283,14 +351,18 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 
 	result.CompletedSteps = steps
 	result.Git = gitResult
-	// If the ArgoCD secret step failed (non-blocking) but everything else succeeded,
-	// report partial so callers know the secret was not created. The reconciler will
-	// retry on the next cycle.
+
+	// Determine final status: partial if any secrets failed or ArgoCD secret step failed.
+	hasSecretFailures := len(result.FailedSecrets) > 0
 	if argoSecretErr != nil {
 		result.Status = "partial"
 		result.FailedStep = "create_argocd_secret"
 		result.Error = argoSecretErr.Error()
 		result.Message = "Registration completed but ArgoCD cluster secret creation failed. The reconciler will retry."
+	} else if hasSecretFailures {
+		result.Status = "partial"
+		result.FailedStep = "create_secrets"
+		result.Message = fmt.Sprintf("Registration completed but %d addon secret(s) failed to create.", len(result.FailedSecrets))
 	} else {
 		result.Status = "success"
 	}
@@ -412,7 +484,7 @@ func (o *Orchestrator) UpdateClusterAddons(ctx context.Context, name string, ser
 	}
 
 	// Step 2: Create secrets for enabled addons before ArgoCD sees them.
-	// This is NOT best-effort — if secret creation fails, don't proceed.
+	// Fatal errors (can't connect) abort; individual secret failures are recorded as partial.
 	if rawKubeconfig != nil {
 		enabledAddons := make(map[string]bool)
 		for a, e := range addons {
@@ -420,9 +492,12 @@ func (o *Orchestrator) UpdateClusterAddons(ctx context.Context, name string, ser
 				enabledAddons[a] = true
 			}
 		}
-		if _, err := o.createAddonSecrets(ctx, rawKubeconfig, enabledAddons); err != nil {
-			return nil, fmt.Errorf("creating secrets for enabled addons on cluster %q: %w", name, err)
+		secretRes, secretErr := o.createAddonSecrets(ctx, rawKubeconfig, enabledAddons)
+		if secretErr != nil {
+			return nil, fmt.Errorf("creating secrets for enabled addons on cluster %q: %w", name, secretErr)
 		}
+		result.Secrets = secretRes.Created
+		result.FailedSecrets = secretRes.Failed
 	}
 
 	// Step 3: Delete secrets for disabled addons (best-effort — continue on failure).

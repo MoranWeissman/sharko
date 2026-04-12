@@ -9,6 +9,15 @@ import (
 	"strings"
 )
 
+// fileAction returns "update" if the file exists on the base branch, "create" otherwise.
+func (o *Orchestrator) fileAction(ctx context.Context, filePath string) string {
+	_, err := o.git.GetFileContent(ctx, filePath, o.gitops.BaseBranch)
+	if err != nil {
+		return "create"
+	}
+	return "update"
+}
+
 // detectConflicts checks whether any of the target files have been modified on
 // the base branch since the caller last read them.  This is a best-effort,
 // defensive check — it does not block the operation but logs a warning so
