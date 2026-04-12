@@ -154,8 +154,8 @@ func (s *Store) UpdatePassword(username, currentPassword, newPassword string) er
 		return fmt.Errorf("current password is incorrect")
 	}
 
-	if len(newPassword) < 8 {
-		return fmt.Errorf("new password must be at least 8 characters")
+	if len(newPassword) < 12 {
+		return fmt.Errorf("new password must be at least 12 characters")
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)

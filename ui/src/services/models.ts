@@ -382,6 +382,16 @@ export interface VerifyResult {
   server_version?: string
 }
 
+export interface APIToken {
+  name: string
+  role: string
+  created_at: string
+  expires_at?: string
+  last_used_at?: string
+  expiring_soon?: boolean
+  expired?: boolean
+}
+
 export interface UpgradeCheckResponse {
   addon_name: string
   chart: string

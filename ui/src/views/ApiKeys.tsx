@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Key, Plus, Trash2, Loader2, Copy, Check } from 'lucide-react'
+import { Key, Plus, Trash2, Loader2, Copy, Check, X, AlertTriangle, Clock } from 'lucide-react'
 import { listTokens, createToken, revokeToken } from '@/services/api'
 import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
@@ -12,16 +12,43 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog'
+import type { APIToken } from '@/services/models'
 
-interface TokenEntry {
-  name: string
-  role: string
-  created_at?: string
-  last_used_at?: string
+const EXPIRY_OPTIONS = [
+  { label: '30 days', value: '30d' },
+  { label: '90 days', value: '90d' },
+  { label: '180 days', value: '180d' },
+  { label: '365 days', value: '365d' },
+  { label: 'No expiry', value: '0' },
+] as const
+
+function tokenStatusBadge(token: APIToken) {
+  if (token.expired) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700 dark:bg-red-900/30 dark:text-red-400">
+        <X className="h-3 w-3" />
+        Expired
+      </span>
+    )
+  }
+  if (token.expiring_soon) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+        <AlertTriangle className="h-3 w-3" />
+        Expiring Soon
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">
+      <Check className="h-3 w-3" />
+      Active
+    </span>
+  )
 }
 
 export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
-  const [tokens, setTokens] = useState<TokenEntry[]>([])
+  const [tokens, setTokens] = useState<APIToken[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -29,6 +56,7 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
   const [createOpen, setCreateOpen] = useState(false)
   const [newName, setNewName] = useState('')
   const [newRole, setNewRole] = useState('viewer')
+  const [newExpires, setNewExpires] = useState('365d')
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
   const [createdToken, setCreatedToken] = useState<string | null>(null)
@@ -59,6 +87,7 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
     setCreateOpen(true)
     setNewName('')
     setNewRole('viewer')
+    setNewExpires('365d')
     setCreateError(null)
     setCreatedToken(null)
     setCopied(false)
@@ -69,7 +98,7 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
     setCreating(true)
     setCreateError(null)
     try {
-      const result = await createToken({ name: newName.trim(), role: newRole })
+      const result = await createToken({ name: newName.trim(), role: newRole, expires: newExpires })
       const token = result?.token || result?.api_token || result?.value || JSON.stringify(result)
       setCreatedToken(token)
       void fetchTokens()
@@ -78,7 +107,7 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
     } finally {
       setCreating(false)
     }
-  }, [newName, newRole, fetchTokens])
+  }, [newName, newRole, newExpires, fetchTokens])
 
   const handleCopy = useCallback(() => {
     if (!createdToken) return
@@ -145,14 +174,16 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
             <tr>
               <th className="px-6 py-3">Name</th>
               <th className="px-6 py-3">Role</th>
+              <th className="px-6 py-3">Status</th>
               <th className="px-6 py-3">Created</th>
+              <th className="px-6 py-3">Expires</th>
               <th className="px-6 py-3">Last Used</th>
               <th className="px-6 py-3">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#6aade0] dark:divide-gray-700">
             {tokens.map((token) => (
-              <tr key={token.name} className="hover:bg-[#d6eeff] dark:hover:bg-gray-700">
+              <tr key={token.name} className={`hover:bg-[#d6eeff] dark:hover:bg-gray-700 ${token.expired ? 'opacity-60' : ''}`}>
                 <td className="px-6 py-3 font-medium text-[#0a2a4a] dark:text-gray-100">
                   <div className="flex items-center gap-2">
                     <Key className="h-4 w-4 text-[#3a6a8a]" />
@@ -170,8 +201,21 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
                     {token.role}
                   </span>
                 </td>
+                <td className="px-6 py-3">
+                  {tokenStatusBadge(token)}
+                </td>
                 <td className="px-6 py-3 text-[#2a5a7a] dark:text-gray-400">
                   {formatDate(token.created_at)}
+                </td>
+                <td className="px-6 py-3 text-[#2a5a7a] dark:text-gray-400">
+                  {token.expires_at ? (
+                    <span className="flex items-center gap-1.5">
+                      <Clock className="h-3.5 w-3.5" />
+                      {formatDate(token.expires_at)}
+                    </span>
+                  ) : (
+                    <span className="text-[#5a8aaa]">Never</span>
+                  )}
                 </td>
                 <td className="px-6 py-3 text-[#2a5a7a] dark:text-gray-400">
                   {formatDate(token.last_used_at)}
@@ -190,7 +234,7 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
             ))}
             {tokens.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-6 py-8 text-center text-[#3a6a8a] dark:text-gray-500">
+                <td colSpan={7} className="px-6 py-8 text-center text-[#3a6a8a] dark:text-gray-500">
                   No API tokens yet. Create one to get started.
                 </td>
               </tr>
@@ -269,6 +313,20 @@ export function ApiKeys({ embedded }: { embedded?: boolean } = {}) {
                   <option value="viewer">viewer</option>
                   <option value="operator">operator</option>
                   <option value="admin">admin</option>
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
+                  Expires in
+                </label>
+                <select
+                  value={newExpires}
+                  onChange={(e) => setNewExpires(e.target.value)}
+                  className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
+                >
+                  {EXPIRY_OPTIONS.map(opt => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
                 </select>
               </div>
               {createError && <p className="text-sm text-red-600 dark:text-red-400">{createError}</p>}

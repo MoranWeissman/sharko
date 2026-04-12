@@ -21,8 +21,8 @@ export function UserInfo() {
       setStatus({ type: 'error', message: 'New passwords do not match' })
       return
     }
-    if (newPassword.length < 8) {
-      setStatus({ type: 'error', message: 'Password must be at least 8 characters' })
+    if (newPassword.length < 12) {
+      setStatus({ type: 'error', message: 'Password must be at least 12 characters' })
       return
     }
 
