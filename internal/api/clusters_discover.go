@@ -102,6 +102,7 @@ type testClusterResponse struct {
 	ServerVersion string                 `json:"server_version,omitempty"`
 	Details       map[string]interface{} `json:"details,omitempty"`
 	Suggestions   []string               `json:"suggestions,omitempty"`
+	Steps         []verify.Step          `json:"steps,omitempty"`
 	Result        verify.Result          `json:"result"`
 }
 
@@ -118,6 +119,7 @@ func newTestClusterResponse(name string, result verify.Result) testClusterRespon
 		DurationMs:    result.DurationMs,
 		ServerVersion: result.ServerVersion,
 		Details:       result.Details,
+		Steps:         result.Steps,
 		Result:        result,
 	}
 }
@@ -181,6 +183,14 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 			Stage:        "credentials",
 			ErrorCode:    "ERR_AUTH",
 			ErrorMessage: err.Error(),
+			Steps: []verify.Step{
+				{Name: "Fetch credentials", Status: "fail", Detail: err.Error()},
+				{Name: "Fetch server version", Status: "skipped"},
+				{Name: "Ensure namespace", Status: "skipped"},
+				{Name: "Create test secret", Status: "skipped"},
+				{Name: "Read back test secret", Status: "skipped"},
+				{Name: "Delete test secret", Status: "skipped"},
+			},
 		}
 		resp := newTestClusterResponse(name, result)
 
@@ -211,6 +221,14 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 			Stage:        "client",
 			ErrorCode:    verify.ClassifyError(err),
 			ErrorMessage: "failed to build client: " + err.Error(),
+			Steps: []verify.Step{
+				{Name: "Fetch credentials", Status: "pass"},
+				{Name: "Fetch server version", Status: "fail", Detail: "failed to build client: " + err.Error()},
+				{Name: "Ensure namespace", Status: "skipped"},
+				{Name: "Create test secret", Status: "skipped"},
+				{Name: "Read back test secret", Status: "skipped"},
+				{Name: "Delete test secret", Status: "skipped"},
+			},
 		}
 		writeJSON(w, http.StatusOK, newTestClusterResponse(name, result))
 		return
@@ -219,6 +237,10 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 	// Stage 1: secret CRUD cycle.
 	slog.Info("[cluster-test] running Stage 1 verification", "name", name)
 	result := verify.Stage1(r.Context(), client, verify.TestNamespace())
+
+	// Prepend the "Fetch credentials" step to the result steps.
+	credStep := verify.Step{Name: "Fetch credentials", Status: "pass"}
+	result.Steps = append([]verify.Step{credStep}, result.Steps...)
 
 	resp := newTestClusterResponse(name, result)
 

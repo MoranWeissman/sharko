@@ -28,7 +28,7 @@ import {
   KeyRound,
 } from 'lucide-react';
 import { api, deregisterCluster, updateClusterAddons, updateClusterSettings, testClusterConnection } from '@/services/api';
-import type { ClusterComparisonResponse, AddonComparisonStatus, ConfigDiffResponse, SyncActivityEntry } from '@/services/models';
+import type { ClusterComparisonResponse, AddonComparisonStatus, ConfigDiffResponse, SyncActivityEntry, VerifyStep } from '@/services/models';
 import { StatCard } from '@/components/StatCard';
 import { StatusBadge } from '@/components/StatusBadge';
 import { LoadingState } from '@/components/LoadingState';
@@ -131,7 +131,7 @@ export function ClusterDetail() {
   const [removeError, setRemoveError] = useState<string | null>(null);
 
   // Test connection
-  const [testResult, setTestResult] = useState<{ reachable?: boolean; success?: boolean; server_version?: string; error?: string; error_message?: string; suggestions?: string[] } | 'testing' | null>(null);
+  const [testResult, setTestResult] = useState<{ reachable?: boolean; success?: boolean; server_version?: string; error?: string; error_message?: string; suggestions?: string[]; steps?: VerifyStep[] } | 'testing' | null>(null);
   const [diagnoseOpen, setDiagnoseOpen] = useState(false);
 
   // Secret path editing
@@ -146,6 +146,22 @@ export function ClusterDetail() {
   const [applyingToggles, setApplyingToggles] = useState(false);
   const [toggleError, setToggleError] = useState<string | null>(null);
   const [toggleResult, setToggleResult] = useState<string | null>(null);
+
+  // Compute display status from test result + server state
+  const computedStatus = useMemo((): string => {
+    if (testResult && testResult !== 'testing') {
+      if (testResult.reachable || testResult.success) return 'connected';
+      return 'unreachable';
+    }
+    if (data?.cluster_connection_state) {
+      const state = data.cluster_connection_state.toLowerCase();
+      if (state === 'successful' || state === 'connected') return 'connected';
+      if (state === 'unreachable' || state === 'failed') return 'unreachable';
+    }
+    // If cluster has healthy addons, show operational
+    if (data && data.total_healthy > 0) return 'operational';
+    return 'unknown';
+  }, [testResult, data]);
 
   const fetchData = useCallback(async () => {
     if (!name) return;
@@ -227,10 +243,14 @@ export function ClusterDetail() {
     try {
       const result = await testClusterConnection(name);
       setTestResult(result);
+      // Refetch cluster data so server-side computed status is up to date
+      if (result.reachable || result.success) {
+        void fetchData();
+      }
     } catch (err) {
       setTestResult({ reachable: false, error: err instanceof Error ? err.message : 'Failed' });
     }
-  }, [name]);
+  }, [name, fetchData]);
 
   const handleSelectSuggestion = useCallback(async (suggestion: string) => {
     if (!name) return;
@@ -420,19 +440,61 @@ export function ClusterDetail() {
       {/* Heading + cluster meta + actions */}
       <div className="flex items-start justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">{data.cluster.name}</h2>
+          <div className="flex items-center gap-3">
+            <h2 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">{data.cluster.name}</h2>
+            <StatusBadge status={computedStatus} size="sm" />
+          </div>
           <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
             Kubernetes cluster managed by ArgoCD — deployed addons, health, and configuration overrides.
           </p>
           {testResult && testResult !== 'testing' && (
             <div className="mt-2">
+              {/* Step-by-step test results */}
+              {testResult.steps && testResult.steps.length > 0 && (
+                <div className="mb-2 rounded-lg bg-[#f8fbff] p-3 ring-1 ring-[#d0e4f5] dark:bg-gray-800 dark:ring-gray-700">
+                  <p className="mb-2 text-xs font-semibold text-[#0a2a4a] dark:text-gray-200">Test Results:</p>
+                  <div className="space-y-1">
+                    {testResult.steps.map((step, i) => (
+                      <div key={i} className="flex items-center gap-2 text-xs">
+                        {step.status === 'pass' && (
+                          <span className="text-green-600 dark:text-green-400">&#10003;</span>
+                        )}
+                        {step.status === 'fail' && (
+                          <span className="text-red-600 dark:text-red-400">&#10007;</span>
+                        )}
+                        {step.status === 'skipped' && (
+                          <span className="text-gray-400 dark:text-gray-500">&#9675;</span>
+                        )}
+                        <span className={
+                          step.status === 'pass'
+                            ? 'text-[#0a2a4a] dark:text-gray-200'
+                            : step.status === 'fail'
+                              ? 'text-red-700 dark:text-red-400'
+                              : 'text-gray-400 dark:text-gray-500'
+                        }>
+                          {step.name}
+                          {step.detail && step.status !== 'skipped' && (
+                            <span className="ml-1 text-[#3a6a8a] dark:text-gray-400">
+                              {step.status === 'fail' ? ` \u2014 ${step.detail}` : ` (${step.detail})`}
+                            </span>
+                          )}
+                          {step.status === 'skipped' && (
+                            <span className="ml-1 text-gray-400 dark:text-gray-500">(skipped)</span>
+                          )}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {/* Summary badge */}
               <div className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${
                 testResult.reachable || testResult.success
                   ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
                   : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
               }`}>
                 {testResult.reachable || testResult.success
-                  ? `Connected${testResult.server_version ? ` — ${testResult.server_version}` : ''}`
+                  ? `Connected${testResult.server_version ? ` \u2014 ${testResult.server_version}` : ''}`
                   : testResult.error || testResult.error_message || 'Unreachable'}
               </div>
               {!testResult.reachable && !testResult.success && testResult.suggestions && testResult.suggestions.length > 0 && (
@@ -565,9 +627,7 @@ export function ClusterDetail() {
                   <Server className="h-4 w-4 text-teal-500" />
                   <div>
                     <p className="text-xs text-[#2a5a7a] dark:text-gray-400">Connection</p>
-                    <p className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
-                      {data.cluster_connection_state || 'Unknown'}
-                    </p>
+                    <StatusBadge status={computedStatus} size="sm" />
                   </div>
                 </div>
                 {/* Secret Path */}
@@ -642,13 +702,15 @@ export function ClusterDetail() {
               </div>
 
               {/* Connection status banner */}
-              {data.cluster_connection_state && data.cluster_connection_state !== 'Successful' && (
+              {computedStatus === 'unreachable' && (
                 <div className="flex items-center justify-between rounded-xl border-2 border-red-300 bg-red-50 px-5 py-3 dark:border-red-700 dark:bg-red-900/20">
                   <div className="flex items-center gap-2 text-red-700 dark:text-red-400">
                     <WifiOff className="h-5 w-5 shrink-0" />
                     <div>
                       <span className="text-sm font-semibold">Cluster unreachable</span>
-                      <span className="ml-2 text-xs text-red-600 dark:text-red-400">({data.cluster_connection_state})</span>
+                      {data.cluster_connection_state && (
+                        <span className="ml-2 text-xs text-red-600 dark:text-red-400">({data.cluster_connection_state})</span>
+                      )}
                       <p className="text-xs text-red-600 dark:text-red-400">Addon health data below reflects the last known state and may be stale.</p>
                     </div>
                   </div>
@@ -659,6 +721,17 @@ export function ClusterDetail() {
                     <MessageSquare className="h-3.5 w-3.5" />
                     Ask AI
                   </button>
+                </div>
+              )}
+              {computedStatus === 'connected' && (
+                <div className="flex items-center gap-2 rounded-xl border-2 border-green-300 bg-green-50 px-5 py-3 dark:border-green-700 dark:bg-green-900/20">
+                  <Wifi className="h-5 w-5 shrink-0 text-green-600 dark:text-green-400" />
+                  <div>
+                    <span className="text-sm font-semibold text-green-700 dark:text-green-400">Cluster connected</span>
+                    {testResult && testResult !== 'testing' && (testResult.server_version) && (
+                      <span className="ml-2 text-xs text-green-600 dark:text-green-400">({testResult.server_version})</span>
+                    )}
+                  </div>
                 </div>
               )}
             </>

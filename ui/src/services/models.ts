@@ -376,6 +376,12 @@ export interface DiagnosticReport {
   suggested_fixes: Fix[]
 }
 
+export interface VerifyStep {
+  name: string
+  status: 'pass' | 'fail' | 'skipped'
+  detail?: string
+}
+
 export interface VerifyResult {
   success: boolean
   stage: string
@@ -383,6 +389,7 @@ export interface VerifyResult {
   error_message?: string
   duration_ms: number
   server_version?: string
+  steps?: VerifyStep[]
 }
 
 export interface APIToken {
