@@ -37,6 +37,11 @@ func (p *GCPSecretManagerProvider) ListClusters() ([]ClusterInfo, error) {
 	return nil, fmt.Errorf("GCP provider not implemented")
 }
 
+// SearchSecrets is not implemented.
+func (p *GCPSecretManagerProvider) SearchSecrets(query string) ([]string, error) {
+	return nil, nil
+}
+
 // GetSecretValue is not implemented.
 func (p *GCPSecretManagerProvider) GetSecretValue(ctx context.Context, path string) ([]byte, error) {
 	return nil, fmt.Errorf("GCP provider not implemented")

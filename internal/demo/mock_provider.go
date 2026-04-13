@@ -61,6 +61,11 @@ func (p *MockClusterCredentialsProvider) ListClusters() ([]providers.ClusterInfo
 	return clusters, nil
 }
 
+// SearchSecrets returns an empty list — the demo provider doesn't need secret suggestions.
+func (p *MockClusterCredentialsProvider) SearchSecrets(query string) ([]string, error) {
+	return nil, nil
+}
+
 // buildFakeKubeconfig returns a minimal valid kubeconfig YAML for a demo cluster.
 func buildFakeKubeconfig(clusterName, server string) []byte {
 	return []byte(fmt.Sprintf(`apiVersion: v1

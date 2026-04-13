@@ -157,6 +157,12 @@ func (p *KubernetesSecretProvider) searchSimilarK8s(query string) ([]string, err
 	return matches, nil
 }
 
+// SearchSecrets returns secret names in the provider namespace that contain
+// query as a substring. Delegates to the existing searchSimilarK8s method.
+func (p *KubernetesSecretProvider) SearchSecrets(query string) ([]string, error) {
+	return p.searchSimilarK8s(query)
+}
+
 func (p *KubernetesSecretProvider) ListClusters() ([]ClusterInfo, error) {
 	secrets, err := p.client.CoreV1().Secrets(p.namespace).List(context.Background(), metav1.ListOptions{
 		LabelSelector: "app.kubernetes.io/managed-by=sharko",

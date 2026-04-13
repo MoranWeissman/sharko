@@ -158,7 +158,7 @@ export async function discoverEKSClusters(data: { role_arns: string[]; region?: 
 }
 
 export async function testClusterConnection(name: string) {
-  return postJSON<VerifyResult & { reachable?: boolean; platform?: string }>(`/clusters/${encodeURIComponent(name)}/test`, {})
+  return postJSON<VerifyResult & { reachable?: boolean; platform?: string; suggestions?: string[] }>(`/clusters/${encodeURIComponent(name)}/test`, {})
 }
 
 export async function diagnoseCluster(name: string) {

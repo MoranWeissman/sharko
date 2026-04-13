@@ -19,6 +19,10 @@ type ClusterCredentialsProvider interface {
 	GetCredentials(clusterName string) (*Kubeconfig, error)
 	// ListClusters returns all clusters available in this secrets backend.
 	ListClusters() ([]ClusterInfo, error)
+	// SearchSecrets returns secret names that contain query as a substring.
+	// Used by the UI to suggest correct secret paths when GetCredentials fails.
+	// Implementations that don't support search should return (nil, nil).
+	SearchSecrets(query string) ([]string, error)
 }
 
 // Kubeconfig holds the raw kubeconfig YAML and extracted connection info.
