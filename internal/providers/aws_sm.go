@@ -108,17 +108,21 @@ func (p *AWSSecretsManagerProvider) fetchSecret(secretName string) (*Kubeconfig,
 	return p.buildFromRawKubeconfig(raw, secretName)
 }
 
-// GetCredentials fetches credentials for the named cluster using a three-step lookup:
+// GetCredentials fetches credentials for the named cluster using a multi-step lookup:
 //
 //  1. Try with the configured prefix (e.g. "clusters/prod-eu").
 //  2. Try the exact name as-is (supports secretPath passthrough from the orchestrator).
-//  3. Search Secrets Manager for names containing the query and return suggestions.
+//  3. Try common name patterns (k8s-, eks-, cluster- prefixes) using GetSecretValue only.
+//  4. Fall back to ListSecrets-based search if permitted; if AccessDenied, skip gracefully.
 func (p *AWSSecretsManagerProvider) GetCredentials(clusterName string) (*Kubeconfig, error) {
 	slog.Info("[provider] GetCredentials called", "cluster", clusterName)
+
+	var tried []string
 
 	// Step 1: Try with prefix (skipped when prefix is empty or name already contains prefix).
 	if p.prefix != "" {
 		withPrefix := p.prefix + clusterName
+		tried = append(tried, withPrefix)
 		slog.Debug("[provider] trying with prefix", "secretName", withPrefix)
 		if kc, err := p.fetchSecret(withPrefix); err == nil {
 			return kc, nil
@@ -126,23 +130,54 @@ func (p *AWSSecretsManagerProvider) GetCredentials(clusterName string) (*Kubecon
 	}
 
 	// Step 2: Try exact name (handles explicit secretPath values that don't need a prefix).
+	if !sliceContains(tried, clusterName) {
+		tried = append(tried, clusterName)
+	}
 	slog.Debug("[provider] trying exact name", "secretName", clusterName)
 	if kc, err := p.fetchSecret(clusterName); err == nil {
 		return kc, nil
 	}
 
-	// Step 3: Search for similar names and include them in the error message.
-	suggestions, searchErr := p.searchSimilar(clusterName)
-	if searchErr == nil && len(suggestions) > 0 {
-		slog.Info("[provider] found similar secrets", "query", clusterName, "found", len(suggestions))
-		return nil, fmt.Errorf("secret for cluster %q not found in AWS Secrets Manager. Similar secrets: %s. "+
-			"Set --secret-path to specify the exact secret name",
-			clusterName, strings.Join(suggestions, ", "))
+	// Step 3: Try common name patterns using GetSecretValue (no ListSecrets needed).
+	commonPrefixes := []string{"k8s-", "eks-", "cluster-"}
+	for _, cp := range commonPrefixes {
+		candidate := cp + clusterName
+		if sliceContains(tried, candidate) {
+			continue
+		}
+		tried = append(tried, candidate)
+		slog.Debug("[provider] trying common prefix pattern", "secretName", candidate)
+		if kc, err := p.fetchSecret(candidate); err == nil {
+			return kc, nil
+		}
 	}
 
-	slog.Error("[provider] GetCredentials failed", "cluster", clusterName, "step", "fetch", "error", "secret not found in AWS Secrets Manager")
-	return nil, fmt.Errorf("secret for cluster %q not found in AWS Secrets Manager. "+
-		"Set --secret-path to specify the exact secret name", clusterName)
+	// Step 4: Try ListSecrets-based search (may fail with AccessDenied — that's OK).
+	suggestions, searchErr := p.searchSimilar(clusterName)
+	if searchErr == nil && len(suggestions) > 0 {
+		slog.Info("[provider] found similar secrets via ListSecrets", "query", clusterName, "found", len(suggestions))
+		return nil, fmt.Errorf("secret for cluster %q not found in AWS Secrets Manager. Similar secrets: %s. "+
+			"Set secret_path on the cluster to specify the exact name",
+			clusterName, strings.Join(suggestions, ", "))
+	}
+	if searchErr != nil {
+		slog.Warn("[provider] ListSecrets search failed (likely AccessDenied, skipping)", "error", searchErr)
+	}
+
+	slog.Error("[provider] GetCredentials failed", "cluster", clusterName, "step", "all-lookups", "tried", strings.Join(tried, ", "))
+	return nil, fmt.Errorf("secret for cluster %q not found in AWS Secrets Manager. Tried: %s. "+
+		"Set secret_path on the cluster to specify the exact name",
+		clusterName, strings.Join(tried, ", "))
+}
+
+// sliceContains checks whether a string slice contains a value.
+func sliceContains(ss []string, s string) bool {
+	for _, v := range ss {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }
 
 // searchSimilar returns secret names that contain query as a substring.
