@@ -18,6 +18,8 @@ vi.mock('@/services/api', () => ({
     getClusterComparison: (...args: unknown[]) => mockGetClusterComparison(...args),
     getConnections: vi.fn().mockResolvedValue({ connections: [], active_connection: '' }),
     getNodeInfo: vi.fn().mockResolvedValue(null),
+    enableAddonOnCluster: vi.fn().mockResolvedValue({}),
+    getAddonCatalog: vi.fn().mockResolvedValue({ addons: [] }),
   },
 }));
 
