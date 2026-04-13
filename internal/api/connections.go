@@ -103,6 +103,30 @@ func (s *Server) handleUpdateConnection(w http.ResponseWriter, r *http.Request) 
 		if req.Provider == nil {
 			req.Provider = saved.Provider
 		}
+		// Preserve existing GitOps settings when not provided
+		if req.GitOps == nil {
+			req.GitOps = saved.GitOps
+		} else if saved.GitOps != nil {
+			// Merge: keep existing fields that aren't in the request
+			if req.GitOps.BaseBranch == "" {
+				req.GitOps.BaseBranch = saved.GitOps.BaseBranch
+			}
+			if req.GitOps.BranchPrefix == "" {
+				req.GitOps.BranchPrefix = saved.GitOps.BranchPrefix
+			}
+			if req.GitOps.CommitPrefix == "" {
+				req.GitOps.CommitPrefix = saved.GitOps.CommitPrefix
+			}
+			if req.GitOps.PRAutoMerge == nil {
+				req.GitOps.PRAutoMerge = saved.GitOps.PRAutoMerge
+			}
+			if req.GitOps.HostClusterName == "" {
+				req.GitOps.HostClusterName = saved.GitOps.HostClusterName
+			}
+			if req.GitOps.DefaultAddons == "" {
+				req.GitOps.DefaultAddons = saved.GitOps.DefaultAddons
+			}
+		}
 	}
 
 	if err := s.connSvc.Create(req); err != nil {
