@@ -71,6 +71,18 @@ export function GitOpsSection() {
     fetchPlatformInfo()
   }, [fetchCatalog, fetchPlatformInfo])
 
+  // Sync form state from saved connection data when it loads
+  useEffect(() => {
+    if (existingConn?.gitops) {
+      setForm({
+        gitops_base_branch: existingConn.gitops.base_branch || 'main',
+        gitops_pr_auto_merge: existingConn.gitops.pr_auto_merge ?? false,
+        gitops_host_cluster_name: existingConn.gitops.host_cluster_name || '',
+        gitops_default_addons: existingConn.gitops.default_addons || '',
+      })
+    }
+  }, [existingConn])
+
   // Parse default addons from form whenever form changes
   useEffect(() => {
     const defaults = form.gitops_default_addons
