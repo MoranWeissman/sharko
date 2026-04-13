@@ -278,6 +278,47 @@ definitions:
       version:
         type: string
     type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.DisableAddonRequest:
+    properties:
+      addon:
+        type: string
+      cleanup:
+        description: '"all" (default), "labels", "none"'
+        type: string
+      cluster:
+        type: string
+      dry_run:
+        type: boolean
+      "yes":
+        description: confirmation required
+        type: boolean
+    type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.DisableAddonResult:
+    properties:
+      addon:
+        type: string
+      cleanup:
+        type: string
+      cluster:
+        type: string
+      completed_steps:
+        items:
+          type: string
+        type: array
+      dry_run:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.DryRunResult'
+      error:
+        type: string
+      failed_step:
+        type: string
+      git:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.GitResult'
+      message:
+        type: string
+      status:
+        description: '"success", "partial", "failed"'
+        type: string
+    type: object
   github_com_MoranWeissman_sharko_internal_orchestrator.DryRunResult:
     properties:
       effective_addons:
@@ -346,6 +387,43 @@ definitions:
       region:
         type: string
       secret_path:
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.RemoveClusterRequest:
+    properties:
+      cleanup:
+        description: '"all" (default), "git", "none"'
+        type: string
+      dry_run:
+        type: boolean
+      name:
+        type: string
+      "yes":
+        description: confirmation required
+        type: boolean
+    type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.RemoveClusterResult:
+    properties:
+      cleanup:
+        type: string
+      completed_steps:
+        items:
+          type: string
+        type: array
+      dry_run:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.DryRunResult'
+      error:
+        type: string
+      failed_step:
+        type: string
+      git:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.GitResult'
+      message:
+        type: string
+      name:
+        type: string
+      status:
+        description: '"success", "partial", "failed"'
         type: string
     type: object
   github_com_MoranWeissman_sharko_internal_orchestrator.UnadoptClusterRequest:
@@ -1688,28 +1766,38 @@ paths:
       - clusters
   /clusters/{name}:
     delete:
-      description: Removes a cluster from ArgoCD and deletes its GitOps configuration
+      consumes:
+      - application/json
+      description: |-
+        Removes a cluster with configurable cleanup scope.
+        Pass cleanup=all (default) to remove Git config and clean up ArgoCD + remote secrets.
+        Pass cleanup=git to remove Git config only. Pass cleanup=none for managed-clusters entry only.
+        Requires yes=true for confirmation. Pass dry_run=true to preview.
       parameters:
       - description: Cluster name
         in: path
         name: name
         required: true
         type: string
+      - description: Removal request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.RemoveClusterRequest'
       produces:
       - application/json
       responses:
         "200":
-          description: Cluster deregistered
+          description: Cluster removed (or dry-run preview)
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.RemoveClusterResult'
         "207":
           description: Partial success
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.RemoveClusterResult'
         "400":
-          description: Bad request
+          description: Bad request or missing confirmation
           schema:
             additionalProperties: true
             type: object
@@ -1718,8 +1806,8 @@ paths:
           schema:
             additionalProperties: true
             type: object
-        "404":
-          description: Cluster not found
+        "403":
+          description: Forbidden
           schema:
             additionalProperties: true
             type: object
@@ -1730,7 +1818,7 @@ paths:
             type: object
       security:
       - BearerAuth: []
-      summary: Deregister cluster
+      summary: Remove cluster
       tags:
       - clusters
     get:
@@ -1823,6 +1911,68 @@ paths:
       security:
       - BearerAuth: []
       summary: Update cluster addons
+      tags:
+      - clusters
+  /clusters/{name}/addons/{addon}:
+    delete:
+      consumes:
+      - application/json
+      description: |-
+        Disables a specific addon on a cluster with configurable cleanup scope.
+        Pass cleanup=all (default) to update values + labels and delete remote secrets.
+        Pass cleanup=labels to update values + labels only. Pass cleanup=none for values only.
+        Requires yes=true for confirmation. Pass dry_run=true to preview.
+      parameters:
+      - description: Cluster name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Addon name
+        in: path
+        name: addon
+        required: true
+        type: string
+      - description: Disable addon request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.DisableAddonRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Addon disabled (or dry-run preview)
+          schema:
+            $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.DisableAddonResult'
+        "207":
+          description: Partial success
+          schema:
+            $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.DisableAddonResult'
+        "400":
+          description: Bad request or missing confirmation
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Gateway error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Disable addon on cluster
       tags:
       - clusters
   /clusters/{name}/comparison:

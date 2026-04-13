@@ -222,13 +222,42 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 
 	// Step 5: Generate cluster values file and commit to Git via PR.
 	// Values file must exist before ArgoCD labels trigger ApplicationSet deployment.
+	//
+	// Idempotency (Story 6.3): check if an open PR already exists for this cluster.
+	// If so, skip PR creation and return the existing PR info.
+	existingPR, existingPRErr := o.findOpenPRForCluster(ctx, req.Name, "register")
+	if existingPRErr == nil && existingPR != nil {
+		slog.Info("Found existing open PR for cluster registration — skipping PR creation",
+			"cluster", req.Name, "pr", existingPR.URL)
+		gitResult := &GitResult{
+			PRUrl:  existingPR.URL,
+			PRID:   existingPR.ID,
+			Branch: existingPR.SourceBranch,
+			Merged: false,
+		}
+		result.Status = "success"
+		result.CompletedSteps = steps
+		result.Git = gitResult
+		result.Message = "Existing open PR found — skipped PR creation (idempotent retry)"
+		return result, nil
+	}
+
+	// Idempotency: check if the values file already exists on the base branch.
+	valuesPath := path.Join(o.paths.ClusterValues, req.Name+".yaml")
+	valuesExist := false
+	if _, valuesCheckErr := o.git.GetFileContent(ctx, valuesPath, o.gitops.BaseBranch); valuesCheckErr == nil {
+		valuesExist = true
+		slog.Info("Values file already exists — will update instead of create",
+			"cluster", req.Name, "path", valuesPath)
+	}
+	_ = valuesExist // Used for logging; file is always (re)generated to ensure correctness.
+
 	var catalog []models.AddonCatalogEntry
 	catalogData, catalogErr := o.git.GetFileContent(ctx, "configuration/addons-catalog.yaml", o.gitops.BaseBranch)
 	if catalogErr == nil && catalogData != nil {
 		catalog, _ = parseAddonsCatalog(catalogData)
 	}
 	valuesContent := generateClusterValues(req.Name, req.Region, req.Addons, catalog)
-	valuesPath := path.Join(o.paths.ClusterValues, req.Name+".yaml")
 
 	// Read cluster-addons.yaml and add this cluster's entry so the /api/v1/clusters
 	// endpoint recognises the cluster as managed after the PR merges.
@@ -253,6 +282,8 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		}
 	}
 
+	// AddClusterEntry is itself idempotent — if the cluster already exists, it returns
+	// the data unchanged (no error). This makes retry-after-partial-failure safe.
 	updatedClusterAddons, addEntryErr := gitops.AddClusterEntry(clusterAddonsData, gitops.ClusterEntryInput{
 		Name:       req.Name,
 		Region:     req.Region,

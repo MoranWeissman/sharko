@@ -168,6 +168,50 @@ type UnadoptClusterResult struct {
 	DryRun  *DryRunResult `json:"dry_run,omitempty"`
 }
 
+// RemoveClusterRequest is the input for cluster removal with configurable cleanup.
+type RemoveClusterRequest struct {
+	Name    string `json:"name"`
+	Cleanup string `json:"cleanup"` // "all" (default), "git", "none"
+	DryRun  bool   `json:"dry_run,omitempty"`
+	Yes     bool   `json:"yes"` // confirmation required
+}
+
+// RemoveClusterResult is the output of a cluster removal operation.
+type RemoveClusterResult struct {
+	Name           string     `json:"name"`
+	Status         string     `json:"status"` // "success", "partial", "failed"
+	Cleanup        string     `json:"cleanup"`
+	Git            *GitResult `json:"git,omitempty"`
+	CompletedSteps []string   `json:"completed_steps,omitempty"`
+	FailedStep     string     `json:"failed_step,omitempty"`
+	Error          string     `json:"error,omitempty"`
+	Message        string     `json:"message,omitempty"`
+	DryRun         *DryRunResult `json:"dry_run,omitempty"`
+}
+
+// DisableAddonRequest is the input for disabling an addon on a cluster.
+type DisableAddonRequest struct {
+	Cluster string `json:"cluster"`
+	Addon   string `json:"addon"`
+	Cleanup string `json:"cleanup"` // "all" (default), "labels", "none"
+	DryRun  bool   `json:"dry_run,omitempty"`
+	Yes     bool   `json:"yes"` // confirmation required
+}
+
+// DisableAddonResult is the output of an addon disable operation.
+type DisableAddonResult struct {
+	Cluster        string     `json:"cluster"`
+	Addon          string     `json:"addon"`
+	Status         string     `json:"status"` // "success", "partial", "failed"
+	Cleanup        string     `json:"cleanup"`
+	Git            *GitResult `json:"git,omitempty"`
+	CompletedSteps []string   `json:"completed_steps,omitempty"`
+	FailedStep     string     `json:"failed_step,omitempty"`
+	Error          string     `json:"error,omitempty"`
+	Message        string     `json:"message,omitempty"`
+	DryRun         *DryRunResult `json:"dry_run,omitempty"`
+}
+
 // InitRepoRequest is the input for initializing the addons repository.
 type InitRepoRequest struct {
 	BootstrapArgoCD bool   `json:"bootstrap_argocd"`

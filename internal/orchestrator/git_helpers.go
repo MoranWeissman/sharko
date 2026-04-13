@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+
+	"github.com/MoranWeissman/sharko/internal/gitprovider"
 )
 
 // fileAction returns "update" if the file exists on the base branch, "create" otherwise.
@@ -106,4 +108,24 @@ func (o *Orchestrator) commitChanges(ctx context.Context, files map[string][]byt
 	}
 
 	return result, nil
+}
+
+// findOpenPRForCluster searches for an existing open PR that matches a specific
+// cluster operation (e.g. "register", "remove", "adopt"). This enables idempotent
+// retry: if a previous attempt created a PR but failed later, re-running the
+// operation finds the existing PR instead of creating a duplicate.
+func (o *Orchestrator) findOpenPRForCluster(ctx context.Context, clusterName, operation string) (*gitprovider.PullRequest, error) {
+	prs, err := o.git.ListPullRequests(ctx, "open")
+	if err != nil {
+		return nil, fmt.Errorf("listing open PRs: %w", err)
+	}
+
+	// Match PRs by title pattern: "<prefix> <operation> cluster <name>"
+	pattern := fmt.Sprintf("%s %s cluster %s", o.gitops.CommitPrefix, operation, clusterName)
+	for i := range prs {
+		if strings.Contains(prs[i].Title, pattern) {
+			return &prs[i], nil
+		}
+	}
+	return nil, nil
 }

@@ -127,17 +127,22 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 
 // handleDeregisterCluster godoc
 //
-// @Summary Deregister cluster
-// @Description Removes a cluster from ArgoCD and deletes its GitOps configuration
+// @Summary Remove cluster
+// @Description Removes a cluster with configurable cleanup scope.
+// @Description Pass cleanup=all (default) to remove Git config and clean up ArgoCD + remote secrets.
+// @Description Pass cleanup=git to remove Git config only. Pass cleanup=none for managed-clusters entry only.
+// @Description Requires yes=true for confirmation. Pass dry_run=true to preview.
 // @Tags clusters
+// @Accept json
 // @Produce json
 // @Security BearerAuth
 // @Param name path string true "Cluster name"
-// @Success 200 {object} map[string]interface{} "Cluster deregistered"
-// @Success 207 {object} map[string]interface{} "Partial success"
-// @Failure 400 {object} map[string]interface{} "Bad request"
+// @Param body body orchestrator.RemoveClusterRequest true "Removal request"
+// @Success 200 {object} orchestrator.RemoveClusterResult "Cluster removed (or dry-run preview)"
+// @Success 207 {object} orchestrator.RemoveClusterResult "Partial success"
+// @Failure 400 {object} map[string]interface{} "Bad request or missing confirmation"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
-// @Failure 404 {object} map[string]interface{} "Cluster not found"
+// @Failure 403 {object} map[string]interface{} "Forbidden"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
 // @Router /clusters/{name} [delete]
 // handleDeregisterCluster handles DELETE /api/v1/clusters/{name} — remove a cluster.
@@ -163,23 +168,57 @@ func (s *Server) handleDeregisterCluster(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	serverURL, err := resolveClusterServer(r.Context(), name, ac)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to list ArgoCD clusters: "+err.Error())
-		return
+	// Parse request body for cleanup/confirmation options.
+	var req orchestrator.RemoveClusterRequest
+	if r.Body != nil && r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+			return
+		}
 	}
-	if serverURL == "" {
-		writeError(w, http.StatusNotFound, "cluster not found in ArgoCD: "+name)
-		return
-	}
+	req.Name = name
 
 	orch := orchestrator.New(&s.gitMu, s.credProvider, ac, git, s.gitopsCfg, s.repoPaths, nil)
 	orch.SetSecretManagement(s.addonSecretDefs, s.secretFetcher, remoteclient.NewClientFromKubeconfig)
-	result, err := orch.DeregisterCluster(r.Context(), name, serverURL)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
+	if s.argoSecretManager != nil {
+		roleARN := ""
+		if s.providerCfg != nil {
+			roleARN = s.providerCfg.RoleARN
+		}
+		orch.SetArgoSecretManager(&argoManagerAdapter{mgr: s.argoSecretManager}, roleARN)
+	}
+
+	result, orchErr := orch.RemoveCluster(r.Context(), req)
+	if orchErr != nil {
+		// Check for confirmation error.
+		if orchErr.Error() == "confirmation required: set yes: true in request body" {
+			writeError(w, http.StatusBadRequest, orchErr.Error())
+			return
+		}
+		writeError(w, http.StatusBadGateway, orchErr.Error())
 		return
 	}
+
+	// Dry-run: return preview without side effects.
+	if req.DryRun {
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
+
+	// Trigger reconciler after removal.
+	if s.argoSecretReconciler != nil {
+		s.argoSecretReconciler.Trigger()
+	}
+
+	s.auditLog.Add(audit.Entry{
+		Level:    "info",
+		Event:    "cluster_removed",
+		User:     "sharko",
+		Action:   "remove",
+		Resource: fmt.Sprintf("cluster:%s", name),
+		Source:   "api",
+		Result:   result.Status,
+	})
 
 	status := http.StatusOK
 	if result.Status == "partial" {
