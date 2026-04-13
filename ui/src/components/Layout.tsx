@@ -27,6 +27,8 @@ import { useTheme } from '@/hooks/useTheme'
 import { useAuth } from '@/hooks/useAuth'
 import { AIAssistant } from '@/views/AIAssistant'
 import { NotificationBell } from '@/components/NotificationBell'
+import { ToastContainer } from '@/components/ToastNotification'
+import { fetchTrackedPRs } from '@/services/api'
 
 interface NavItem {
   to: string
@@ -142,12 +144,25 @@ export function Layout() {
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
   const { activeConnection, loading } = useConnections()
+  const [openPRCount, setOpenPRCount] = useState(0)
 
   useEffect(() => {
     fetch('/api/v1/health')
       .then((r) => r.json())
       .then((d) => setAppVersion(d.version ?? ''))
       .catch(() => {})
+  }, [])
+
+  // Poll open PR count for sidebar badge
+  useEffect(() => {
+    const fetchPRCount = () => {
+      fetchTrackedPRs({ status: 'open' })
+        .then((data) => setOpenPRCount(data.prs?.length ?? 0))
+        .catch(() => {})
+    }
+    fetchPRCount()
+    const interval = setInterval(fetchPRCount, 30_000)
+    return () => clearInterval(interval)
   }, [])
 
   const openAiPanel = useCallback(() => {
@@ -211,7 +226,7 @@ export function Layout() {
                     end={item.to === '/'}
                     onClick={() => setMobileOpen(false)}
                     className={({ isActive }) =>
-                      `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                      `relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
                         isActive
                           ? 'border-l-[3px] border-[#9fcffb] bg-[#14466e] text-white'
                           : 'border-l-[3px] border-transparent text-[#7ab0d8] hover:bg-[#14466e] hover:text-white'
@@ -220,7 +235,21 @@ export function Layout() {
                     title={collapsed && !mobileOpen ? item.label : undefined}
                   >
                     <item.icon className="h-5 w-5 shrink-0" />
-                    {(!collapsed || mobileOpen) && <span>{item.label}</span>}
+                    {(!collapsed || mobileOpen) && (
+                      <span className="flex flex-1 items-center justify-between">
+                        <span>{item.label}</span>
+                        {item.to === '/' && openPRCount > 0 && (
+                          <span className="ml-1 inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-teal-500 px-1.5 text-[10px] font-bold text-white">
+                            {openPRCount}
+                          </span>
+                        )}
+                      </span>
+                    )}
+                    {collapsed && !mobileOpen && item.to === '/' && openPRCount > 0 && (
+                      <span className="absolute -top-1 -right-1 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-teal-500 px-1 text-[9px] font-bold text-white">
+                        {openPRCount}
+                      </span>
+                    )}
                   </NavLink>
                 ))}
               </div>
@@ -386,6 +415,9 @@ export function Layout() {
 
       {/* Command Palette (Cmd+K) */}
       <CommandPalette />
+
+      {/* Toast notifications */}
+      <ToastContainer />
     </div>
   )
 }

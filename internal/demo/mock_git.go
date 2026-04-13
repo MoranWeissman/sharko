@@ -239,6 +239,18 @@ func (p *MockGitProvider) MergePullRequest(_ context.Context, prNumber int) erro
 	return nil
 }
 
+// GetPullRequestStatus returns the status of a pull request.
+func (p *MockGitProvider) GetPullRequestStatus(_ context.Context, prNumber int) (string, error) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	for _, pr := range p.prs {
+		if pr.ID == prNumber {
+			return pr.Status, nil
+		}
+	}
+	return "", fmt.Errorf("PR #%d not found", prNumber)
+}
+
 // DeleteBranch removes a branch from the in-memory store.
 func (p *MockGitProvider) DeleteBranch(_ context.Context, branchName string) error {
 	p.mu.Lock()

@@ -431,6 +431,40 @@ definitions:
       success:
         type: boolean
     type: object
+  internal_api.PRItem:
+    properties:
+      cluster:
+        type: string
+      created_at:
+        type: string
+      last_polled_at:
+        type: string
+      last_status:
+        type: string
+      operation:
+        type: string
+      pr_base:
+        type: string
+      pr_branch:
+        type: string
+      pr_id:
+        type: integer
+      pr_title:
+        type: string
+      pr_url:
+        type: string
+      source:
+        type: string
+      user:
+        type: string
+    type: object
+  internal_api.PRListResponse:
+    properties:
+      prs:
+        items:
+          $ref: '#/definitions/internal_api.PRItem'
+        type: array
+    type: object
   internal_api.aiConfigResponse:
     properties:
       available_providers:
@@ -3126,6 +3160,148 @@ paths:
       summary: Test ad-hoc provider config
       tags:
       - system
+  /prs:
+    get:
+      description: Returns all tracked pull requests with optional filters
+      parameters:
+      - description: Filter by status (open, merged, closed)
+        in: query
+        name: status
+        type: string
+      - description: Filter by cluster name
+        in: query
+        name: cluster
+        type: string
+      - description: Filter by user
+        in: query
+        name: user
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: List of tracked PRs
+          schema:
+            $ref: '#/definitions/internal_api.PRListResponse'
+        "500":
+          description: Internal error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List tracked pull requests
+      tags:
+      - prs
+  /prs/{id}:
+    delete:
+      description: Removes a PR from tracking (admin only)
+      parameters:
+      - description: PR ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: PR removed from tracking
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Invalid PR ID
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Stop tracking a pull request
+      tags:
+      - prs
+    get:
+      description: Returns details for a single tracked PR
+      parameters:
+      - description: PR ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: PR details
+          schema:
+            $ref: '#/definitions/internal_api.PRItem'
+        "400":
+          description: Invalid PR ID
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: PR not found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get a tracked pull request
+      tags:
+      - prs
+  /prs/{id}/refresh:
+    post:
+      description: Immediately polls the Git provider for this PR's current status
+      parameters:
+      - description: PR ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Updated PR details
+          schema:
+            $ref: '#/definitions/internal_api.PRItem'
+        "400":
+          description: Invalid PR ID
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: PR not found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Force refresh a tracked PR
+      tags:
+      - prs
   /repo/status:
     get:
       description: Checks whether the GitOps repository has been bootstrapped (bootstrap/Chart.yaml

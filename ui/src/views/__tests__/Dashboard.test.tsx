@@ -16,6 +16,8 @@ vi.mock('recharts', () => {
 });
 
 vi.mock('@/services/api', () => ({
+  fetchTrackedPRs: vi.fn().mockResolvedValue({ prs: [] }),
+  refreshPR: vi.fn().mockResolvedValue({ status: 'ok' }),
   api: {
     getObservability: vi.fn().mockResolvedValue(null),
     getVersionMatrix: vi.fn().mockResolvedValue(null),

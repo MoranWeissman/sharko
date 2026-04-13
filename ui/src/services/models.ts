@@ -423,6 +423,26 @@ export interface AdoptClustersResponse {
   results: AdoptResult[]
 }
 
+// --- Tracked PRs (Story 5.3) ---
+
+export interface TrackedPR {
+  pr_id: number
+  pr_url: string
+  pr_branch: string
+  pr_title: string
+  cluster?: string
+  operation: string
+  user: string
+  source: string
+  created_at: string
+  last_status: string
+  last_polled_at: string
+}
+
+export interface TrackedPRsResponse {
+  prs: TrackedPR[]
+}
+
 export type ClusterProvider = 'eks' | 'gke' | 'aks' | 'generic'
 
 export interface DiscoveredClusterItem {

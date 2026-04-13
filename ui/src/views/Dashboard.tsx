@@ -12,6 +12,9 @@ import { WaveDecoration } from '@/components/WaveDecoration';
 import { LoadingState } from '@/components/LoadingState';
 import { ErrorState } from '@/components/ErrorState';
 import { ArgoCDStatusBanner } from '@/components/ArgoCDStatusBanner';
+import { PendingPRsPanel } from '@/components/PendingPRsPanel';
+import { showToast } from '@/components/ToastNotification';
+import type { TrackedPR } from '@/services/models';
 
 // --- Health Bar with totals ---
 
@@ -149,6 +152,12 @@ export function Dashboard() {
       setLoading(false);
     }
   }, []);
+
+  const handlePRMerged = useCallback((pr: TrackedPR) => {
+    showToast(`PR #${pr.pr_id} merged -- ${pr.cluster ?? ''} ${pr.operation}`)
+    // Refresh dashboard data when a PR merges
+    void fetchData()
+  }, [fetchData])
 
   useEffect(() => {
     void fetchData();
@@ -317,6 +326,9 @@ export function Dashboard() {
             { label: 'Disconnected', value: stats.clusters.disconnected_from_argocd, color: '#ef4444' },
           ]} />
       </div>
+
+      {/* Pending PRs */}
+      <PendingPRsPanel onMergeDetected={handlePRMerged} />
 
       {/* Bottom row: Quick Actions + Recent Activity + Version Drift */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">

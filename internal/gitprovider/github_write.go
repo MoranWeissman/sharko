@@ -284,6 +284,19 @@ func (g *GitHubProvider) MergePullRequest(ctx context.Context, prNumber int) err
 	return nil
 }
 
+// GetPullRequestStatus returns the status of a pull request: "open", "merged", or "closed".
+func (g *GitHubProvider) GetPullRequestStatus(ctx context.Context, prNumber int) (string, error) {
+	pr, _, err := g.client.PullRequests.Get(ctx, g.owner, g.repo, prNumber)
+	if err != nil {
+		return "", fmt.Errorf("get pull request #%d: %w", prNumber, err)
+	}
+	if pr.GetMerged() {
+		return "merged", nil
+	}
+	state := pr.GetState() // "open" or "closed"
+	return state, nil
+}
+
 // DeleteBranch removes a branch by name.
 func (g *GitHubProvider) DeleteBranch(ctx context.Context, branchName string) error {
 	_, err := g.client.Git.DeleteRef(ctx, g.owner, g.repo, "refs/heads/"+branchName)

@@ -16,6 +16,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/api"
 	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/audit"
+	"github.com/MoranWeissman/sharko/internal/cmstore"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/demo"
 	"github.com/MoranWeissman/sharko/internal/models"
@@ -23,6 +24,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/platform"
 	"github.com/MoranWeissman/sharko/internal/providers"
+	"github.com/MoranWeissman/sharko/internal/prtracker"
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
 	"github.com/MoranWeissman/sharko/internal/secrets"
 	"github.com/MoranWeissman/sharko/internal/service"
@@ -486,6 +488,61 @@ var serveCmd = &cobra.Command{
 					}()
 					slog.Info("argocd secrets reconciler started", "namespace", argocdNamespace, "interval", argoDur)
 				}
+			}
+		}
+
+		// PR Tracker — polls Git provider for PR status changes and emits audit events.
+		// Uses a ConfigMap to persist tracking state across restarts.
+		{
+			prNamespace := os.Getenv("SHARKO_NAMESPACE")
+			if prNamespace == "" {
+				prNamespace = "sharko"
+			}
+
+			// Build K8s client for cmstore — in-cluster or skip if not available.
+			var prCMStore *cmstore.Store
+			if mode == platform.ModeKubernetes {
+				inClusterCfg, inClusterErr := rest.InClusterConfig()
+				if inClusterErr == nil {
+					k8sClient, k8sErr := kubernetes.NewForConfig(inClusterCfg)
+					if k8sErr == nil {
+						prCMStore = cmstore.NewStore(k8sClient, prNamespace, "sharko-pending-prs")
+					} else {
+						slog.Warn("could not create k8s client for pr tracker", "error", k8sErr)
+					}
+				} else {
+					slog.Warn("not running in-cluster, skipping pr tracker cmstore", "error", inClusterErr)
+				}
+			}
+
+			if prCMStore != nil {
+				auditLog := srv.AuditLog()
+				gitProviderFn := func() prtracker.GitProvider {
+					gp, err := connSvc.GetActiveGitProvider()
+					if err != nil {
+						return nil
+					}
+					return gp
+				}
+
+				prTracker := prtracker.NewTracker(prCMStore, gitProviderFn, func(e audit.Entry) {
+					auditLog.Add(e)
+				})
+
+				// On merge, trigger the argosecrets reconciler so it picks up changes immediately.
+				if srv.ArgoSecretReconciler() != nil {
+					prTracker.SetOnMergeFn(func(pr prtracker.PRInfo) {
+						if r := srv.ArgoSecretReconciler(); r != nil {
+							r.Trigger()
+						}
+					})
+				}
+
+				srv.SetPRTracker(prTracker)
+				prTracker.ReconcileOnStartup(context.Background())
+				prTracker.Start(context.Background())
+				defer prTracker.Stop()
+				slog.Info("pr tracker started")
 			}
 		}
 

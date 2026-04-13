@@ -63,6 +63,7 @@ var ActionRequirements = map[string]Role{
 	"argocd.resource-exclusions":    RoleAdmin,
 	"addon-secret.create":           RoleAdmin,
 	"addon-secret.delete":           RoleAdmin,
+	"pr.delete":                     RoleAdmin,
 
 	// Operator+ actions
 	"cluster.register":              RoleOperator,
