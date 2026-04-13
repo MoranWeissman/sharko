@@ -138,32 +138,8 @@ func (p *AWSSecretsManagerProvider) GetCredentials(clusterName string) (*Kubecon
 		return kc, nil
 	}
 
-	// Step 3: Try common name patterns using GetSecretValue (no ListSecrets needed).
-	commonPrefixes := []string{"k8s-", "eks-", "cluster-"}
-	for _, cp := range commonPrefixes {
-		candidate := cp + clusterName
-		if sliceContains(tried, candidate) {
-			continue
-		}
-		tried = append(tried, candidate)
-		slog.Debug("[provider] trying common prefix pattern", "secretName", candidate)
-		if kc, err := p.fetchSecret(candidate); err == nil {
-			return kc, nil
-		}
-	}
-
-	// Step 4: Try ListSecrets-based search (may fail with AccessDenied — that's OK).
-	suggestions, searchErr := p.searchSimilar(clusterName)
-	if searchErr == nil && len(suggestions) > 0 {
-		slog.Info("[provider] found similar secrets via ListSecrets", "query", clusterName, "found", len(suggestions))
-		return nil, fmt.Errorf("secret for cluster %q not found in AWS Secrets Manager. Similar secrets: %s. "+
-			"Set secret_path on the cluster to specify the exact name",
-			clusterName, strings.Join(suggestions, ", "))
-	}
-	if searchErr != nil {
-		slog.Warn("[provider] ListSecrets search failed (likely AccessDenied, skipping)", "error", searchErr)
-	}
-
+	// Both lookups failed. Return an error — the caller (handleTestCluster) will
+	// call SearchSecrets separately to find suggestions and include them in the response.
 	slog.Error("[provider] GetCredentials failed", "cluster", clusterName, "step", "all-lookups", "tried", strings.Join(tried, ", "))
 	return nil, fmt.Errorf("secret for cluster %q not found in AWS Secrets Manager. Tried: %s. "+
 		"Set secret_path on the cluster to specify the exact name",
@@ -178,6 +154,18 @@ func sliceContains(ss []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// SearchSecrets returns secret names that contain query as a substring.
+// Uses ListSecrets with a name filter. If ListSecrets fails (e.g. AccessDenied),
+// returns an empty list and nil error to degrade gracefully.
+func (p *AWSSecretsManagerProvider) SearchSecrets(query string) ([]string, error) {
+	results, err := p.searchSimilar(query)
+	if err != nil {
+		slog.Warn("[provider] SearchSecrets failed (likely AccessDenied, returning empty)", "query", query, "error", err)
+		return nil, nil
+	}
+	return results, nil
 }
 
 // searchSimilar returns secret names that contain query as a substring.

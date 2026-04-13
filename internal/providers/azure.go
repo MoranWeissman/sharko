@@ -37,6 +37,11 @@ func (p *AzureKeyVaultProvider) ListClusters() ([]ClusterInfo, error) {
 	return nil, fmt.Errorf("Azure provider not implemented")
 }
 
+// SearchSecrets is not implemented.
+func (p *AzureKeyVaultProvider) SearchSecrets(query string) ([]string, error) {
+	return nil, nil
+}
+
 // GetSecretValue is not implemented.
 func (p *AzureKeyVaultProvider) GetSecretValue(ctx context.Context, path string) ([]byte, error) {
 	return nil, fmt.Errorf("Azure provider not implemented")

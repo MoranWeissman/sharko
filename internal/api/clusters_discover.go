@@ -183,10 +183,20 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 			ErrorMessage: err.Error(),
 		}
 		resp := newTestClusterResponse(name, result)
-		// Parse suggestions from the error message if the provider included them.
-		if suggestions := parseSuggestions(err.Error()); len(suggestions) > 0 {
-			resp.Suggestions = suggestions
+
+		// If credential fetch failed with "not found", search for similar secrets
+		// and include them as suggestions so the UI can offer one-click correction.
+		if strings.Contains(err.Error(), "not found") {
+			suggestions, searchErr := s.credProvider.SearchSecrets(name)
+			if searchErr != nil {
+				slog.Warn("[cluster-test] SearchSecrets failed", "name", name, "error", searchErr)
+			}
+			if len(suggestions) > 0 {
+				resp.Suggestions = suggestions
+				slog.Info("[cluster-test] found secret suggestions", "name", name, "count", len(suggestions))
+			}
 		}
+
 		writeJSON(w, http.StatusOK, resp)
 		return
 	}
@@ -329,26 +339,3 @@ func (s *Server) handleDiscoverEKS(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// parseSuggestions extracts secret name suggestions from a provider error message.
-// The provider formats them as: "... Similar secrets: name1, name2, name3. Set ..."
-func parseSuggestions(errMsg string) []string {
-	const marker = "Similar secrets: "
-	idx := strings.Index(errMsg, marker)
-	if idx < 0 {
-		return nil
-	}
-	raw := errMsg[idx+len(marker):]
-	// Truncate at the next sentence boundary (". ") to avoid including the hint.
-	if dotIdx := strings.Index(raw, ". "); dotIdx >= 0 {
-		raw = raw[:dotIdx]
-	}
-	parts := strings.Split(raw, ", ")
-	var suggestions []string
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			suggestions = append(suggestions, p)
-		}
-	}
-	return suggestions
-}

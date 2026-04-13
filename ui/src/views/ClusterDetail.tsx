@@ -131,7 +131,7 @@ export function ClusterDetail() {
   const [removeError, setRemoveError] = useState<string | null>(null);
 
   // Test connection
-  const [testResult, setTestResult] = useState<{ reachable?: boolean; success?: boolean; server_version?: string; error?: string; error_message?: string } | 'testing' | null>(null);
+  const [testResult, setTestResult] = useState<{ reachable?: boolean; success?: boolean; server_version?: string; error?: string; error_message?: string; suggestions?: string[] } | 'testing' | null>(null);
   const [diagnoseOpen, setDiagnoseOpen] = useState(false);
 
   // Secret path editing
@@ -229,6 +229,20 @@ export function ClusterDetail() {
       setTestResult(result);
     } catch (err) {
       setTestResult({ reachable: false, error: err instanceof Error ? err.message : 'Failed' });
+    }
+  }, [name]);
+
+  const handleSelectSuggestion = useCallback(async (suggestion: string) => {
+    if (!name) return;
+    try {
+      await updateClusterSettings(name, { secret_path: suggestion });
+      showToast(`Secret path updated to: ${suggestion}`, 'success');
+      // Auto-retry the test with the new secret path
+      setTestResult('testing');
+      const result = await testClusterConnection(name);
+      setTestResult(result);
+    } catch (err) {
+      setTestResult({ reachable: false, error: err instanceof Error ? err.message : 'Failed to update secret path' });
     }
   }, [name]);
 
@@ -411,14 +425,38 @@ export function ClusterDetail() {
             Kubernetes cluster managed by ArgoCD — deployed addons, health, and configuration overrides.
           </p>
           {testResult && testResult !== 'testing' && (
-            <div className={`mt-2 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${
-              testResult.reachable || testResult.success
-                ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
-            }`}>
-              {testResult.reachable || testResult.success
-                ? `Connected${testResult.server_version ? ` — ${testResult.server_version}` : ''}`
-                : testResult.error || testResult.error_message || 'Unreachable'}
+            <div className="mt-2">
+              <div className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${
+                testResult.reachable || testResult.success
+                  ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                  : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+              }`}>
+                {testResult.reachable || testResult.success
+                  ? `Connected${testResult.server_version ? ` — ${testResult.server_version}` : ''}`
+                  : testResult.error || testResult.error_message || 'Unreachable'}
+              </div>
+              {!testResult.reachable && !testResult.success && testResult.suggestions && testResult.suggestions.length > 0 && (
+                <div className="mt-2 rounded-lg bg-[#e8f4ff] p-3 ring-2 ring-[#6aade0] dark:bg-gray-800 dark:ring-gray-700">
+                  <p className="text-xs font-semibold text-[#0a2a4a] dark:text-gray-200">Similar secrets found:</p>
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {testResult.suggestions.map((s) => (
+                      <button
+                        key={s}
+                        onClick={() => handleSelectSuggestion(s)}
+                        className="inline-flex items-center gap-1 rounded-md bg-[#f0f7ff] px-2.5 py-1 text-xs font-medium text-[#0a3a5a] ring-1 ring-[#5a9dd0] hover:bg-[#d6eeff] dark:bg-gray-700 dark:text-gray-200 dark:ring-gray-600 dark:hover:bg-gray-600"
+                      >
+                        <KeyRound className="h-3 w-3" />
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {!testResult.reachable && !testResult.success && (!testResult.suggestions || testResult.suggestions.length === 0) && (
+                <p className="mt-1.5 text-xs text-[#3a6a8a] dark:text-gray-400">
+                  Set the secret path manually in cluster settings.
+                </p>
+              )}
             </div>
           )}
         </div>

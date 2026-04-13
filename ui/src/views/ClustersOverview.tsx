@@ -86,7 +86,7 @@ export function ClustersOverview() {
   const navigate = useNavigate();
 
   // Test connection state per cluster
-  const [testResults, setTestResults] = useState<Record<string, { reachable?: boolean; success?: boolean; server_version?: string; platform?: string; error?: string; error_message?: string } | 'testing'>>({});
+  const [testResults, setTestResults] = useState<Record<string, { reachable?: boolean; success?: boolean; server_version?: string; platform?: string; error?: string; error_message?: string; suggestions?: string[] } | 'testing'>>({});
 
   // Adopt (start managing) state per cluster (populated by AdoptClustersDialog via refresh)
   const [manageStatus] = useState<Record<string, { loading?: boolean; success?: string; error?: string }>>({});
@@ -1211,10 +1211,21 @@ export function ClustersOverview() {
                                   <CheckCircle className="h-3 w-3" />
                                   {[testResult.server_version, testResult.platform].filter(Boolean).join(' — ') || 'Reachable'}
                                 </span>
-                              : <span className="flex items-center gap-1 text-xs text-red-500 dark:text-red-400">
-                                  <WifiOff className="h-3 w-3" />
-                                  Error: {testResult.error ?? testResult.error_message ?? 'Unreachable'}
-                                </span>
+                              : <div className="flex flex-col gap-1">
+                                  <span className="flex items-center gap-1 text-xs text-red-500 dark:text-red-400">
+                                    <WifiOff className="h-3 w-3" />
+                                    Error: {testResult.error ?? testResult.error_message ?? 'Unreachable'}
+                                  </span>
+                                  {testResult.suggestions && testResult.suggestions.length > 0 && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => { e.stopPropagation(); navigate(`/clusters/${cluster.name}`); }}
+                                      className="inline-flex items-center gap-1 text-xs text-[#0a3a5a] underline hover:text-[#2a5a7a] dark:text-blue-400 dark:hover:text-blue-300"
+                                    >
+                                      {testResult.suggestions.length} similar secret{testResult.suggestions.length > 1 ? 's' : ''} found — click to fix
+                                    </button>
+                                  )}
+                                </div>
                           )}
                         </div>
                       </td>
@@ -1278,10 +1289,21 @@ export function ClustersOverview() {
                             <CheckCircle className="h-3 w-3" />
                             {[testResult.server_version, testResult.platform].filter(Boolean).join(' — ') || 'Reachable'}
                           </span>
-                        : <span className="flex items-center gap-1 text-xs text-red-500 dark:text-red-400">
-                            <WifiOff className="h-3 w-3" />
-                            Error: {testResult.error ?? testResult.error_message ?? 'Unreachable'}
-                          </span>
+                        : <div className="flex flex-col gap-1">
+                            <span className="flex items-center gap-1 text-xs text-red-500 dark:text-red-400">
+                              <WifiOff className="h-3 w-3" />
+                              Error: {testResult.error ?? testResult.error_message ?? 'Unreachable'}
+                            </span>
+                            {testResult.suggestions && testResult.suggestions.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); navigate(`/clusters/${cluster.name}`); }}
+                                className="inline-flex items-center gap-1 text-xs text-[#0a3a5a] underline hover:text-[#2a5a7a] dark:text-blue-400 dark:hover:text-blue-300"
+                              >
+                                {testResult.suggestions.length} similar secret{testResult.suggestions.length > 1 ? 's' : ''} found — click to fix
+                              </button>
+                            )}
+                          </div>
                       }
                     </div>
                   )}

@@ -49,6 +49,10 @@ func (m *mockCredProvider) ListClusters() ([]providers.ClusterInfo, error) {
 	return nil, nil
 }
 
+func (m *mockCredProvider) SearchSecrets(query string) ([]string, error) {
+	return nil, nil
+}
+
 // mockSecretProvider implements providers.SecretProvider.
 type mockSecretProvider struct {
 	values map[string][]byte
