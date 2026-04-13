@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { CheckCircle, XCircle, Copy, Check, Loader2 } from 'lucide-react';
+import { CheckCircle, XCircle, Copy, Check, Loader2, ShieldCheck, ShieldAlert } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -46,6 +46,11 @@ export function DiagnoseModal({ clusterName, open, onClose }: DiagnoseModalProps
     }
   };
 
+  const totalChecks = report?.namespace_access?.length ?? 0;
+  const passedChecks = report?.namespace_access?.filter((c) => c.passed).length ?? 0;
+  const failedChecks = totalChecks - passedChecks;
+  const allPassed = totalChecks > 0 && failedChecks === 0;
+
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
       <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
@@ -70,37 +75,52 @@ export function DiagnoseModal({ clusterName, open, onClose }: DiagnoseModalProps
         )}
 
         {report && !loading && (
-          <div className="space-y-6">
-            {/* Identity & Role */}
-            <div className="space-y-2">
-              <div className="flex items-center gap-2 text-sm">
-                <span className="font-medium text-[#0a2a4a] dark:text-gray-200">Identity:</span>
-                <span className="font-mono text-xs text-[#2a5a7a] dark:text-gray-400">{report.identity || 'N/A'}</span>
+          <div className="space-y-5">
+            {/* Summary line */}
+            {totalChecks > 0 && (
+              <div className={`flex items-center gap-2 rounded-md px-4 py-3 text-sm font-medium ${
+                allPassed
+                  ? 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400'
+                  : 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400'
+              }`}>
+                {allPassed ? (
+                  <>
+                    <ShieldCheck className="h-5 w-5 shrink-0" />
+                    All {totalChecks} permission check{totalChecks !== 1 ? 's' : ''} passed — Sharko has the required access
+                  </>
+                ) : (
+                  <>
+                    <ShieldAlert className="h-5 w-5 shrink-0" />
+                    {failedChecks} of {totalChecks} check{totalChecks !== 1 ? 's' : ''} failed — see fixes below
+                  </>
+                )}
               </div>
-              <div className="flex items-center gap-2 text-sm">
-                <span className="font-medium text-[#0a2a4a] dark:text-gray-200">Role Assumption:</span>
-                <span className="font-mono text-xs text-[#2a5a7a] dark:text-gray-400">{report.role_assumption || 'N/A'}</span>
-              </div>
-            </div>
+            )}
 
             {/* Permission Checks */}
-            {report.namespace_access && report.namespace_access.length > 0 && (
+            {totalChecks > 0 && (
               <div>
                 <h4 className="mb-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-200">Permission Checks</h4>
-                <div className="space-y-1">
+                <div className="space-y-1.5">
                   {report.namespace_access.map((check, i) => (
                     <div
                       key={i}
-                      className="flex items-center gap-2 rounded-md px-3 py-2 text-sm bg-[#f0f7ff] dark:bg-gray-800"
+                      className={`flex flex-col rounded-md px-3 py-2 text-sm ${
+                        check.passed
+                          ? 'bg-green-50 dark:bg-green-900/10'
+                          : 'bg-red-50 dark:bg-red-900/10'
+                      }`}
                     >
-                      {check.passed ? (
-                        <CheckCircle className="h-4 w-4 shrink-0 text-green-500" />
-                      ) : (
-                        <XCircle className="h-4 w-4 shrink-0 text-red-500" />
-                      )}
-                      <span className="text-[#0a2a4a] dark:text-gray-200">{check.permission}</span>
+                      <div className="flex items-center gap-2">
+                        {check.passed ? (
+                          <CheckCircle className="h-4 w-4 shrink-0 text-green-600 dark:text-green-400" />
+                        ) : (
+                          <XCircle className="h-4 w-4 shrink-0 text-red-500 dark:text-red-400" />
+                        )}
+                        <span className="text-[#0a2a4a] dark:text-gray-200">{check.permission}</span>
+                      </div>
                       {check.error && (
-                        <span className="ml-auto text-xs text-red-600 dark:text-red-400">{check.error}</span>
+                        <p className="ml-6 mt-1 text-xs text-red-600 dark:text-red-400">{check.error}</p>
                       )}
                     </div>
                   ))}
@@ -108,13 +128,21 @@ export function DiagnoseModal({ clusterName, open, onClose }: DiagnoseModalProps
               </div>
             )}
 
+            {/* All-pass helpful note */}
+            {allPassed && (!report.suggested_fixes || report.suggested_fixes.length === 0) && (
+              <div className="rounded-md bg-[#f0f7ff] px-4 py-3 text-xs text-[#2a5a7a] dark:bg-gray-800 dark:text-gray-400">
+                Sharko can create, read, and delete secrets on this cluster. If the connectivity test still fails,
+                the issue may be with credential fetch (AWS Secrets Manager), not cluster permissions.
+              </div>
+            )}
+
             {/* Suggested Fixes */}
             {report.suggested_fixes && report.suggested_fixes.length > 0 && (
               <div>
-                <h4 className="mb-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-200">Suggested Fixes</h4>
+                <h4 className="mb-2 text-sm font-semibold text-red-700 dark:text-red-400">Suggested Fixes</h4>
                 <div className="space-y-4">
                   {report.suggested_fixes.map((fix, i) => (
-                    <div key={i} className="rounded-md ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:ring-gray-700 dark:bg-gray-800">
+                    <div key={i} className="rounded-md ring-2 ring-red-200 bg-[#fff5f5] p-4 dark:ring-red-800 dark:bg-gray-800">
                       <p className="mb-2 text-sm text-[#0a2a4a] dark:text-gray-200">{fix.description}</p>
                       <div className="relative">
                         <pre className="overflow-x-auto rounded-md bg-[#e8f4ff] p-3 font-mono text-xs text-[#0a2a4a] dark:bg-gray-900 dark:text-gray-300">

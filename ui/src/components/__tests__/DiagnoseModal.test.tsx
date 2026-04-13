@@ -46,7 +46,7 @@ describe('DiagnoseModal', () => {
     expect(screen.getByText('Diagnose: prod-eu')).toBeInTheDocument();
   });
 
-  it('renders permission checks after API response', async () => {
+  it('renders permission checks with summary after API response', async () => {
     mockDiagnoseCluster.mockResolvedValue(sampleReport);
     renderModal();
 
@@ -54,14 +54,14 @@ describe('DiagnoseModal', () => {
       expect(screen.getByText('Permission Checks')).toBeInTheDocument();
     });
 
+    // Summary line for failures
+    expect(screen.getByText(/1 of 2 checks? failed/)).toBeInTheDocument();
+
     // Passing check
     expect(screen.getByText('create secrets in argocd')).toBeInTheDocument();
     // Failing check
     expect(screen.getByText('list applications in argocd')).toBeInTheDocument();
     expect(screen.getByText('forbidden')).toBeInTheDocument();
-
-    // Identity info
-    expect(screen.getByText('arn:aws:iam::123456789012:role/sharko')).toBeInTheDocument();
   });
 
   it('renders suggested fixes with YAML', async () => {

@@ -19,6 +19,8 @@ import {
   Eye,
   ScanSearch,
   Unlink,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { api, registerCluster, discoverEKSClusters, testClusterConnection, unadoptCluster } from '@/services/api';
 import type {
@@ -30,6 +32,7 @@ import type {
   DiscoveredClusterItem,
   DryRunResult,
   RegisterClusterResult,
+  VerifyStep,
 } from '@/services/models';
 import { AuthContext } from '@/hooks/useAuth';
 import { StatCard } from '@/components/StatCard';
@@ -86,7 +89,10 @@ export function ClustersOverview() {
   const navigate = useNavigate();
 
   // Test connection state per cluster
-  const [testResults, setTestResults] = useState<Record<string, { reachable?: boolean; success?: boolean; server_version?: string; platform?: string; error?: string; error_message?: string; suggestions?: string[] } | 'testing'>>({});
+  const [testResults, setTestResults] = useState<Record<string, { reachable?: boolean; success?: boolean; server_version?: string; platform?: string; error?: string; error_message?: string; suggestions?: string[]; steps?: VerifyStep[] } | 'testing'>>({});
+
+  // Expanded test steps per cluster
+  const [expandedTestSteps, setExpandedTestSteps] = useState<Record<string, boolean>>({});
 
   // Adopt (start managing) state per cluster (populated by AdoptClustersDialog via refresh)
   const [manageStatus] = useState<Record<string, { loading?: boolean; success?: string; error?: string }>>({});
@@ -329,6 +335,77 @@ export function ClustersOverview() {
       setTestResults((prev) => ({ ...prev, [name]: { reachable: false, error: err instanceof Error ? err.message : 'Failed' } }));
     }
   }, []);
+
+  const toggleTestSteps = useCallback((name: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setExpandedTestSteps((prev) => ({ ...prev, [name]: !prev[name] }));
+  }, []);
+
+  /** Compact test result summary with expandable steps */
+  const renderTestResult = useCallback((clusterName: string, testResult: typeof testResults[string], opts?: { showSuggestions?: boolean }) => {
+    if (!testResult || testResult === 'testing') return null;
+    const isSuccess = testResult.reachable !== false && testResult.success !== false;
+    const steps = testResult.steps;
+    const passedCount = steps?.filter((s) => s.status === 'pass').length ?? 0;
+    const totalCount = steps?.length ?? 0;
+    const failedStep = steps?.find((s) => s.status === 'fail');
+    const expanded = expandedTestSteps[clusterName];
+
+    return (
+      <div className="flex flex-col gap-1">
+        <button
+          type="button"
+          onClick={(e) => steps && steps.length > 0 ? toggleTestSteps(clusterName, e) : e.stopPropagation()}
+          className={`inline-flex items-center gap-1 text-xs ${steps && steps.length > 0 ? 'cursor-pointer hover:underline' : 'cursor-default'}`}
+        >
+          {isSuccess ? (
+            <span className="flex items-center gap-1 text-green-600 dark:text-green-400">
+              <CheckCircle className="h-3 w-3" />
+              {steps && steps.length > 0
+                ? `Connected (${passedCount}/${totalCount} checks passed)`
+                : [testResult.server_version, testResult.platform].filter(Boolean).join(' \u2014 ') || 'Reachable'}
+            </span>
+          ) : (
+            <span className="flex items-center gap-1 text-red-500 dark:text-red-400">
+              <WifiOff className="h-3 w-3" />
+              {failedStep
+                ? `Failed at: ${failedStep.name}`
+                : `Error: ${testResult.error ?? testResult.error_message ?? 'Unreachable'}`}
+            </span>
+          )}
+          {steps && steps.length > 0 && (
+            expanded
+              ? <ChevronUp className="h-3 w-3 text-[#3a6a8a] dark:text-gray-400" />
+              : <ChevronDown className="h-3 w-3 text-[#3a6a8a] dark:text-gray-400" />
+          )}
+        </button>
+        {expanded && steps && steps.length > 0 && (
+          <div className="mt-1 rounded-md bg-[#f8fbff] p-2 ring-1 ring-[#d0e4f5] dark:bg-gray-800 dark:ring-gray-700" onClick={(e) => e.stopPropagation()}>
+            {steps.map((step, i) => (
+              <div key={i} className="flex items-start gap-1.5 py-0.5 text-xs">
+                {step.status === 'pass' && <span className="text-green-600 dark:text-green-400">&#10003;</span>}
+                {step.status === 'fail' && <span className="text-red-500 dark:text-red-400">&#10007;</span>}
+                {step.status === 'skipped' && <span className="text-[#5a8aaa] dark:text-gray-500">&#8211;</span>}
+                <span className={step.status === 'fail' ? 'text-red-600 dark:text-red-400' : 'text-[#2a5a7a] dark:text-gray-300'}>
+                  {step.name}
+                  {step.detail && <span className="ml-1 text-[#5a8aaa] dark:text-gray-500">({step.detail})</span>}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+        {!isSuccess && opts?.showSuggestions && testResult.suggestions && testResult.suggestions.length > 0 && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); navigate(`/clusters/${clusterName}`); }}
+            className="inline-flex items-center gap-1 text-xs text-[#0a3a5a] underline hover:text-[#2a5a7a] dark:text-blue-400 dark:hover:text-blue-300"
+          >
+            {testResult.suggestions.length} similar secret{testResult.suggestions.length > 1 ? 's' : ''} found — click to fix
+          </button>
+        )}
+      </div>
+    );
+  }, [expandedTestSteps, toggleTestSteps, navigate]);
 
   const handleOpenAdoptDialog = useCallback((clusters: Cluster[]) => {
     setAdoptDialogClusters(clusters);
@@ -1205,28 +1282,7 @@ export function ClustersOverview() {
                               </button>
                             </RoleGuard>
                           )}
-                          {testResult && testResult !== 'testing' && (
-                            testResult.reachable !== false && testResult.success !== false
-                              ? <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
-                                  <CheckCircle className="h-3 w-3" />
-                                  {[testResult.server_version, testResult.platform].filter(Boolean).join(' — ') || 'Reachable'}
-                                </span>
-                              : <div className="flex flex-col gap-1">
-                                  <span className="flex items-center gap-1 text-xs text-red-500 dark:text-red-400">
-                                    <WifiOff className="h-3 w-3" />
-                                    Error: {testResult.error ?? testResult.error_message ?? 'Unreachable'}
-                                  </span>
-                                  {testResult.suggestions && testResult.suggestions.length > 0 && (
-                                    <button
-                                      type="button"
-                                      onClick={(e) => { e.stopPropagation(); navigate(`/clusters/${cluster.name}`); }}
-                                      className="inline-flex items-center gap-1 text-xs text-[#0a3a5a] underline hover:text-[#2a5a7a] dark:text-blue-400 dark:hover:text-blue-300"
-                                    >
-                                      {testResult.suggestions.length} similar secret{testResult.suggestions.length > 1 ? 's' : ''} found — click to fix
-                                    </button>
-                                  )}
-                                </div>
-                          )}
+                          {renderTestResult(cluster.name, testResult, { showSuggestions: true })}
                         </div>
                       </td>
                     </tr>
@@ -1284,27 +1340,7 @@ export function ClustersOverview() {
                   </div>
                   {testResult && testResult !== 'testing' && (
                     <div className="mb-2">
-                      {testResult.reachable !== false && testResult.success !== false
-                        ? <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
-                            <CheckCircle className="h-3 w-3" />
-                            {[testResult.server_version, testResult.platform].filter(Boolean).join(' — ') || 'Reachable'}
-                          </span>
-                        : <div className="flex flex-col gap-1">
-                            <span className="flex items-center gap-1 text-xs text-red-500 dark:text-red-400">
-                              <WifiOff className="h-3 w-3" />
-                              Error: {testResult.error ?? testResult.error_message ?? 'Unreachable'}
-                            </span>
-                            {testResult.suggestions && testResult.suggestions.length > 0 && (
-                              <button
-                                type="button"
-                                onClick={(e) => { e.stopPropagation(); navigate(`/clusters/${cluster.name}`); }}
-                                className="inline-flex items-center gap-1 text-xs text-[#0a3a5a] underline hover:text-[#2a5a7a] dark:text-blue-400 dark:hover:text-blue-300"
-                              >
-                                {testResult.suggestions.length} similar secret{testResult.suggestions.length > 1 ? 's' : ''} found — click to fix
-                              </button>
-                            )}
-                          </div>
-                      }
+                      {renderTestResult(cluster.name, testResult, { showSuggestions: true })}
                     </div>
                   )}
                   <div className="mb-2">
@@ -1438,17 +1474,7 @@ export function ClustersOverview() {
                                 {testResult === 'testing' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wifi className="h-3 w-3" />}
                                 Test
                               </button>
-                              {testResult && testResult !== 'testing' && (
-                                testResult.reachable !== false && testResult.success !== false
-                                  ? <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
-                                      <CheckCircle className="h-3 w-3" />
-                                      {[testResult.server_version, testResult.platform].filter(Boolean).join(' — ') || 'Reachable'}
-                                    </span>
-                                  : <span className="flex items-center gap-1 text-xs text-red-500 dark:text-red-400">
-                                      <WifiOff className="h-3 w-3" />
-                                      Error: {testResult.error ?? testResult.error_message ?? 'Unreachable'}
-                                    </span>
-                              )}
+                              {renderTestResult(cluster.name, testResult)}
                               <RoleGuard adminOnly>
                                 <button
                                   type="button"
@@ -1513,16 +1539,7 @@ export function ClustersOverview() {
                     )}
                     {testResult && testResult !== 'testing' && (
                       <div className="mb-2">
-                        {testResult.reachable !== false && testResult.success !== false
-                          ? <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
-                              <CheckCircle className="h-3 w-3" />
-                              {[testResult.server_version, testResult.platform].filter(Boolean).join(' — ') || 'Reachable'}
-                            </span>
-                          : <span className="flex items-center gap-1 text-xs text-red-500 dark:text-red-400">
-                              <WifiOff className="h-3 w-3" />
-                              Error: {testResult.error ?? testResult.error_message ?? 'Unreachable'}
-                            </span>
-                        }
+                        {renderTestResult(cluster.name, testResult)}
                       </div>
                     )}
                     <div className="mb-3">
