@@ -134,13 +134,15 @@ func (p *AWSSecretsManagerProvider) GetCredentials(clusterName string) (*Kubecon
 	// Step 3: Search for similar names and include them in the error message.
 	suggestions, searchErr := p.searchSimilar(clusterName)
 	if searchErr == nil && len(suggestions) > 0 {
-		slog.Info("[provider] searching for similar secrets", "query", clusterName, "found", len(suggestions))
-		return nil, fmt.Errorf("secret for cluster %q not found in AWS Secrets Manager. Similar secrets: %s",
+		slog.Info("[provider] found similar secrets", "query", clusterName, "found", len(suggestions))
+		return nil, fmt.Errorf("secret for cluster %q not found in AWS Secrets Manager. Similar secrets: %s. "+
+			"Set --secret-path to specify the exact secret name",
 			clusterName, strings.Join(suggestions, ", "))
 	}
 
 	slog.Error("[provider] GetCredentials failed", "cluster", clusterName, "step", "fetch", "error", "secret not found in AWS Secrets Manager")
-	return nil, fmt.Errorf("secret for cluster %q not found in AWS Secrets Manager", clusterName)
+	return nil, fmt.Errorf("secret for cluster %q not found in AWS Secrets Manager. "+
+		"Set --secret-path to specify the exact secret name", clusterName)
 }
 
 // searchSimilar returns secret names that contain query as a substring.

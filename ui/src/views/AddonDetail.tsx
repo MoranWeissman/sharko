@@ -19,11 +19,16 @@ import {
   FileCode,
   Pencil,
   Plus,
+  Minus,
   X,
   HelpCircle,
+  RefreshCw,
+  Sparkles,
+  ChevronDown,
 } from 'lucide-react'
 import { api, removeAddon, upgradeAddon, configureAddon } from '@/services/api'
-import type { AddonCatalogItem, ConnectionsListResponse } from '@/services/models'
+import type { AddonCatalogItem, ConnectionsListResponse, UpgradeCheckResponse, ValueDiffEntry, ConflictCheckEntry } from '@/services/models'
+import { MarkdownRenderer } from '@/components/MarkdownRenderer'
 import { StatCard } from '@/components/StatCard'
 import { StatusBadge } from '@/components/StatusBadge'
 import { LoadingState } from '@/components/LoadingState'
@@ -43,14 +48,16 @@ import {
 function UpgradeVersionList({
   addonName,
   currentVersion,
+  onAnalyze,
 }: {
   addonName: string
   currentVersion: string
+  onAnalyze: (version: string) => void
 }) {
-  const navigate = useNavigate()
   const [versions, setVersions] = useState<{ version: string; app_version?: string }[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [visibleCount, setVisibleCount] = useState(5)
 
   useEffect(() => {
     api
@@ -95,6 +102,9 @@ function UpgradeVersionList({
     )
   }
 
+  const visibleVersions = versions.slice(0, visibleCount)
+  const remaining = versions.length - visibleCount
+
   return (
     <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 dark:ring-gray-700 dark:bg-gray-800">
       <h3 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">Available Versions</h3>
@@ -103,7 +113,7 @@ function UpgradeVersionList({
         {versions.length} newer version{versions.length !== 1 ? 's' : ''} available
       </p>
       <div className="space-y-2">
-        {versions.map((v, i) => (
+        {visibleVersions.map((v, i) => (
           <div
             key={v.version}
             className="flex items-center justify-between rounded-lg bg-[#e0f0ff] px-4 py-3 dark:bg-gray-700/50"
@@ -121,7 +131,7 @@ function UpgradeVersionList({
             </div>
             <button
               type="button"
-              onClick={() => navigate(`/upgrade?addon=${encodeURIComponent(addonName)}&version=${encodeURIComponent(v.version)}`)}
+              onClick={() => onAnalyze(v.version)}
               className="rounded-lg bg-teal-600 px-4 py-1.5 text-xs font-medium text-white hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-600"
             >
               Analyze Upgrade
@@ -129,27 +139,305 @@ function UpgradeVersionList({
           </div>
         ))}
       </div>
+      {remaining > 0 && (
+        <button
+          type="button"
+          onClick={() => setVisibleCount((c) => c + 5)}
+          className="mt-3 w-full rounded-lg bg-[#e0f0ff] px-4 py-2.5 text-center text-sm font-medium text-teal-600 hover:bg-[#d6eeff] dark:bg-gray-700/50 dark:text-teal-400 dark:hover:bg-gray-700"
+        >
+          Show more versions ({remaining} remaining)
+        </button>
+      )}
     </div>
   )
 }
 
-function UpgradeAnalysisLink({ addonName }: { addonName: string }) {
+type InlineChangeTab = 'added' | 'removed' | 'changed'
+
+function InlineUpgradeResults({
+  addonName,
+  targetVersion,
+  result,
+  analyzing,
+  analyzeError,
+  onRetry,
+  onClose,
+}: {
+  addonName: string
+  targetVersion: string
+  result: UpgradeCheckResponse | null
+  analyzing: boolean
+  analyzeError: string | null
+  onRetry: () => void
+  onClose: () => void
+}) {
+  const [activeTab, setActiveTab] = useState<InlineChangeTab>('added')
+  const [aiSummary, setAiSummary] = useState<string | null>(null)
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiError, setAiError] = useState<string | null>(null)
+
+  const handleGetAISummary = useCallback(async () => {
+    setAiLoading(true)
+    setAiError(null)
+    setAiSummary(null)
+    try {
+      const data = await api.getAISummary(addonName, targetVersion)
+      setAiSummary(data.summary)
+    } catch (err) {
+      setAiError(err instanceof Error ? err.message : 'AI analysis failed')
+    } finally {
+      setAiLoading(false)
+    }
+  }, [addonName, targetVersion])
+
+  if (analyzing) {
+    return <LoadingState message={`Analyzing upgrade to ${targetVersion}...`} />
+  }
+
+  if (analyzeError) {
+    return (
+      <div className="rounded-xl ring-2 ring-red-300 bg-red-50 p-5 dark:ring-red-700 dark:bg-red-950/30">
+        <div className="flex items-center gap-2 mb-2">
+          <AlertTriangle className="h-5 w-5 text-red-500" />
+          <h3 className="text-base font-semibold text-red-800 dark:text-red-300">Analysis Failed</h3>
+        </div>
+        <p className="text-sm text-red-700 dark:text-red-400 mb-3">{analyzeError}</p>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onRetry}
+            className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700"
+          >
+            <RefreshCw className="h-4 w-4" />
+            Retry
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300"
+          >
+            Dismiss
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  if (!result) return null
+
+  const risk = getRisk(result)
+
   return (
     <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 dark:ring-gray-700 dark:bg-gray-800">
-      <h3 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">Full Upgrade Analysis</h3>
-      <p className="mt-1 mb-4 text-sm text-[#2a5a7a] dark:text-gray-300">
-        Detailed diff, release notes, conflict detection, and AI assessment
-      </p>
-      <Link
-        to={`/upgrade?addon=${encodeURIComponent(addonName)}`}
-        className="inline-flex items-center gap-2 rounded-lg bg-teal-600 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-600"
-      >
-        <ArrowUpCircle className="h-4 w-4" />
-        Analyze Upgrade
-        <span className="ml-1">&rarr;</span>
-      </Link>
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          {riskIcon(risk)}
+          <h3 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
+            Upgrade Analysis: {result.current_version} &rarr; {result.target_version}
+          </h3>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-md p-1 text-[#3a6a8a] hover:bg-[#d6eeff] hover:text-[#0a2a4a] dark:text-gray-400 dark:hover:bg-gray-700"
+          aria-label="Close analysis"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+
+      {/* Risk summary */}
+      <div className={`mb-4 rounded-lg border px-4 py-3 ${
+        risk === 'conflicts' ? 'border-red-300 bg-red-50 dark:border-red-700 dark:bg-red-950/40'
+          : risk === 'minor' ? 'border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/40'
+          : 'border-green-300 bg-green-50 dark:border-green-700 dark:bg-green-950/40'
+      }`}>
+        <div className="flex items-center gap-2">
+          {riskIcon(risk)}
+          <span className="text-sm font-semibold">{riskLabel(risk)}</span>
+          <span className="text-sm text-[#2a5a7a] dark:text-gray-400">
+            &mdash; {result.total_changes} total change{result.total_changes !== 1 ? 's' : ''}
+          </span>
+        </div>
+      </div>
+
+      {/* Conflicts */}
+      {(result.conflicts ?? []).length > 0 && (
+        <div className="mb-4 rounded-lg border-2 border-red-300 bg-red-50 p-4 dark:border-red-700 dark:bg-red-950/30">
+          <div className="flex items-center gap-2 mb-3">
+            <AlertTriangle className="h-4 w-4 text-red-500" />
+            <span className="text-sm font-semibold text-red-800 dark:text-red-300">
+              {result.conflicts.length} Conflict{result.conflicts.length !== 1 ? 's' : ''}
+            </span>
+          </div>
+          <div className="space-y-2">
+            {result.conflicts.map((c: ConflictCheckEntry) => (
+              <div key={`${c.path}-${c.source}`} className="rounded bg-red-100/50 px-3 py-2 text-xs dark:bg-red-900/20">
+                <code className="font-medium text-[#0a2a4a] dark:text-gray-100">{c.path}</code>
+                <div className="mt-1 flex flex-wrap gap-2">
+                  <span>yours: <code className="rounded bg-blue-100 px-1 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">{c.configured_value}</code></span>
+                  <span>old: <code className="rounded bg-[#d6eeff] px-1 text-[#1a4a6a] dark:bg-gray-800 dark:text-gray-400">{c.old_default}</code></span>
+                  <span>new: <code className="rounded bg-amber-100 px-1 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">{c.new_default}</code></span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Change tabs */}
+      <div className="mb-3 flex gap-1 rounded-lg bg-[#d0e8f8] p-1 dark:bg-gray-900">
+        {([
+          { key: 'added' as InlineChangeTab, label: 'Added', count: (result.added ?? []).length },
+          { key: 'removed' as InlineChangeTab, label: 'Removed', count: (result.removed ?? []).length },
+          { key: 'changed' as InlineChangeTab, label: 'Changed', count: (result.changed ?? []).length },
+        ]).map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            onClick={() => setActiveTab(tab.key)}
+            className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+              activeTab === tab.key
+                ? 'bg-white text-[#0a2a4a] shadow-sm dark:bg-gray-700 dark:text-white'
+                : 'text-[#2a5a7a] hover:bg-[#e0f0ff] dark:text-gray-400 dark:hover:bg-gray-800'
+            }`}
+          >
+            {tab.label} ({tab.count})
+          </button>
+        ))}
+      </div>
+
+      {/* Change list */}
+      <div className="max-h-60 overflow-y-auto rounded-lg bg-white ring-1 ring-[#c0ddf0] dark:bg-gray-900 dark:ring-gray-700">
+        {activeTab === 'added' && (
+          (result.added ?? []).length === 0
+            ? <p className="py-4 text-center text-sm text-[#2a5a7a] dark:text-gray-400">No added fields.</p>
+            : (result.added ?? []).map((entry: ValueDiffEntry) => (
+              <div key={entry.path} className="flex items-start gap-3 border-b border-[#e0f0ff] px-4 py-2.5 last:border-0 dark:border-gray-800">
+                <Plus className="mt-0.5 h-4 w-4 shrink-0 text-green-500" />
+                <div className="min-w-0 flex-1">
+                  <code className="text-xs font-medium text-[#0a2a4a] dark:text-gray-100">{entry.path}</code>
+                  {entry.new_value != null && (
+                    <p className="mt-0.5 text-xs text-green-600 dark:text-green-400">
+                      Default: <code className="rounded bg-green-100 px-1 dark:bg-green-900/40">{entry.new_value}</code>
+                    </p>
+                  )}
+                </div>
+              </div>
+            ))
+        )}
+        {activeTab === 'removed' && (
+          (result.removed ?? []).length === 0
+            ? <p className="py-4 text-center text-sm text-[#2a5a7a] dark:text-gray-400">No removed fields.</p>
+            : (result.removed ?? []).map((entry: ValueDiffEntry) => (
+              <div key={entry.path} className="flex items-start gap-3 border-b border-[#e0f0ff] px-4 py-2.5 last:border-0 dark:border-gray-800">
+                <Minus className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
+                <div className="min-w-0 flex-1">
+                  <code className="text-xs font-medium text-[#0a2a4a] dark:text-gray-100">{entry.path}</code>
+                  {entry.old_value != null && (
+                    <p className="mt-0.5 text-xs text-red-600 dark:text-red-400">
+                      Was: <code className="rounded bg-red-100 px-1 line-through dark:bg-red-900/40">{entry.old_value}</code>
+                    </p>
+                  )}
+                </div>
+              </div>
+            ))
+        )}
+        {activeTab === 'changed' && (
+          (result.changed ?? []).length === 0
+            ? <p className="py-4 text-center text-sm text-[#2a5a7a] dark:text-gray-400">No changed defaults.</p>
+            : (result.changed ?? []).map((entry: ValueDiffEntry) => (
+              <div key={entry.path} className="flex items-start gap-3 border-b border-[#e0f0ff] px-4 py-2.5 last:border-0 dark:border-gray-800">
+                <RefreshCw className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+                <div className="min-w-0 flex-1">
+                  <code className="text-xs font-medium text-[#0a2a4a] dark:text-gray-100">{entry.path}</code>
+                  <p className="mt-0.5 flex flex-wrap items-center gap-1 text-xs">
+                    <code className="rounded bg-red-100 px-1 text-red-700 dark:bg-red-900/40 dark:text-red-400">{entry.old_value ?? '(empty)'}</code>
+                    <span className="text-[#3a6a8a]">&rarr;</span>
+                    <code className="rounded bg-green-100 px-1 text-green-700 dark:bg-green-900/40 dark:text-green-400">{entry.new_value ?? '(empty)'}</code>
+                  </p>
+                </div>
+              </div>
+            ))
+        )}
+      </div>
+
+      {/* Release notes */}
+      {result.release_notes && (
+        <details className="mt-4 rounded-lg ring-1 ring-[#c0ddf0] bg-white dark:ring-gray-700 dark:bg-gray-900">
+          <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-[#0a2a4a] dark:text-gray-100 select-none flex items-center gap-2">
+            <ChevronDown className="h-4 w-4 text-[#3a6a8a]" />
+            Release Notes
+          </summary>
+          <div className="border-t border-[#c0ddf0] px-4 py-3 dark:border-gray-700">
+            <MarkdownRenderer content={result.release_notes} />
+          </div>
+        </details>
+      )}
+
+      {/* AI Analysis button */}
+      <div className="mt-4">
+        {!aiSummary && !aiLoading && !aiError && (
+          <button
+            type="button"
+            onClick={handleGetAISummary}
+            className="inline-flex items-center gap-2 rounded-lg bg-[#0a2a4a] px-4 py-2 text-sm font-medium text-white hover:bg-[#14466e] dark:bg-teal-700 dark:hover:bg-teal-600"
+          >
+            <Sparkles className="h-4 w-4" />
+            AI Analysis
+          </button>
+        )}
+        {aiLoading && (
+          <div className="flex items-center gap-2 text-sm text-[#2a5a7a] dark:text-gray-400">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Generating AI analysis...
+          </div>
+        )}
+        {aiError && (
+          <div className="rounded-lg bg-red-50 px-4 py-3 dark:bg-red-950/30">
+            <p className="text-sm text-red-600 dark:text-red-400">{aiError}</p>
+            <button
+              type="button"
+              onClick={handleGetAISummary}
+              className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-red-600 hover:text-red-800 dark:text-red-400"
+            >
+              <RefreshCw className="h-3 w-3" />
+              Retry
+            </button>
+          </div>
+        )}
+        {aiSummary && (
+          <div className="rounded-lg ring-1 ring-[#c0ddf0] bg-white px-4 py-3 dark:ring-gray-700 dark:bg-gray-900">
+            <div className="flex items-center gap-2 mb-2">
+              <Sparkles className="h-4 w-4 text-teal-500" />
+              <span className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">AI Analysis</span>
+            </div>
+            <MarkdownRenderer content={aiSummary} />
+          </div>
+        )}
+      </div>
     </div>
   )
+}
+
+function getRisk(result: UpgradeCheckResponse): 'safe' | 'minor' | 'conflicts' {
+  if ((result.conflicts ?? []).length > 0) return 'conflicts'
+  if (result.total_changes > 0) return 'minor'
+  return 'safe'
+}
+
+function riskLabel(risk: 'safe' | 'minor' | 'conflicts') {
+  if (risk === 'conflicts') return 'Conflicts Found'
+  if (risk === 'minor') return 'Minor Changes'
+  return 'Safe to Upgrade'
+}
+
+function riskIcon(risk: 'safe' | 'minor' | 'conflicts') {
+  if (risk === 'conflicts')
+    return <AlertTriangle className="h-5 w-5 text-red-500" />
+  if (risk === 'minor')
+    return <RefreshCw className="h-5 w-5 text-amber-500" />
+  return <CheckCircle className="h-5 w-5 text-green-500" />
 }
 
 function HealthProgressBar({ healthy, total }: { healthy: number; total: number }) {
@@ -237,6 +525,12 @@ export function AddonDetail() {
   const [configSaving, setConfigSaving] = useState(false)
   const [configError, setConfigError] = useState<string | null>(null)
   const [configSuccess, setConfigSuccess] = useState<string | null>(null)
+
+  // Inline upgrade analysis
+  const [inlineAnalysisVersion, setInlineAnalysisVersion] = useState<string | null>(null)
+  const [inlineAnalysisResult, setInlineAnalysisResult] = useState<UpgradeCheckResponse | null>(null)
+  const [inlineAnalyzing, setInlineAnalyzing] = useState(false)
+  const [inlineAnalyzeError, setInlineAnalyzeError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!name) return
@@ -392,6 +686,35 @@ export function AddonDetail() {
       setConfigSaving(false)
     }
   }, [name, addon, editSyncWave, editSelfHeal, editSyncOptionsText, editHelmValues, editIgnoreDifferencesYaml, editAdditionalSourcesYaml])
+
+  const handleInlineAnalyze = useCallback(async (version: string) => {
+    if (!name) return
+    setInlineAnalysisVersion(version)
+    setInlineAnalyzing(true)
+    setInlineAnalyzeError(null)
+    setInlineAnalysisResult(null)
+    try {
+      const data = await api.checkUpgrade(name, version)
+      setInlineAnalysisResult({
+        ...data,
+        added: data.added ?? [],
+        removed: data.removed ?? [],
+        changed: data.changed ?? [],
+        conflicts: data.conflicts ?? [],
+      })
+    } catch (err) {
+      setInlineAnalyzeError(err instanceof Error ? err.message : 'Analysis failed')
+    } finally {
+      setInlineAnalyzing(false)
+    }
+  }, [name])
+
+  const handleCloseInlineAnalysis = useCallback(() => {
+    setInlineAnalysisVersion(null)
+    setInlineAnalysisResult(null)
+    setInlineAnalyzing(false)
+    setInlineAnalyzeError(null)
+  }, [])
 
   const enabledApps = useMemo(
     () => (addon ? addon.applications.filter((a) => a.enabled) : []),
@@ -1194,10 +1517,21 @@ export function AddonDetail() {
               <UpgradeVersionList
                 addonName={addon.addon_name}
                 currentVersion={addon.version}
+                onAnalyze={handleInlineAnalyze}
               />
 
-              {/* Full upgrade analysis link */}
-              <UpgradeAnalysisLink addonName={addon.addon_name} />
+              {/* Inline upgrade analysis results */}
+              {(inlineAnalysisVersion !== null) && (
+                <InlineUpgradeResults
+                  addonName={addon.addon_name}
+                  targetVersion={inlineAnalysisVersion}
+                  result={inlineAnalysisResult}
+                  analyzing={inlineAnalyzing}
+                  analyzeError={inlineAnalyzeError}
+                  onRetry={() => handleInlineAnalyze(inlineAnalysisVersion)}
+                  onClose={handleCloseInlineAnalysis}
+                />
+              )}
 
               {/* Per-cluster versions */}
               <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5">

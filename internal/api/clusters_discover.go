@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
@@ -88,11 +89,37 @@ type testClusterRequest struct {
 	Deep bool `json:"deep"`
 }
 
-// testClusterResponse wraps verify.Result with backward-compatible fields.
+// testClusterResponse wraps verify.Result with top-level fields so the UI can
+// read error details without drilling into a nested "result" object.
 type testClusterResponse struct {
-	Name      string        `json:"name"`
-	Reachable bool          `json:"reachable"`
-	Result    verify.Result `json:"result"`
+	Name          string                 `json:"name"`
+	Reachable     bool                   `json:"reachable"`
+	Success       bool                   `json:"success"`
+	Stage         string                 `json:"stage"`
+	ErrorCode     verify.ErrorCode       `json:"error_code,omitempty"`
+	ErrorMessage  string                 `json:"error_message,omitempty"`
+	DurationMs    int64                  `json:"duration_ms"`
+	ServerVersion string                 `json:"server_version,omitempty"`
+	Details       map[string]interface{} `json:"details,omitempty"`
+	Suggestions   []string               `json:"suggestions,omitempty"`
+	Result        verify.Result          `json:"result"`
+}
+
+// newTestClusterResponse builds a testClusterResponse from a verify.Result,
+// copying key fields to the top level for UI consumption.
+func newTestClusterResponse(name string, result verify.Result) testClusterResponse {
+	return testClusterResponse{
+		Name:          name,
+		Reachable:     result.Success,
+		Success:       result.Success,
+		Stage:         result.Stage,
+		ErrorCode:     result.ErrorCode,
+		ErrorMessage:  result.ErrorMessage,
+		DurationMs:    result.DurationMs,
+		ServerVersion: result.ServerVersion,
+		Details:       result.Details,
+		Result:        result,
+	}
 }
 
 // handleTestCluster godoc
@@ -130,21 +157,37 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slog.Info("[cluster-test] fetching credentials", "name", name)
-	creds, err := s.credProvider.GetCredentials(name)
+	// Resolve the credential lookup name. If the cluster is registered and has
+	// a SecretPath override, use that instead of the cluster name.
+	credLookupName := name
+	if s.clusterSvc != nil {
+		if gp, gpErr := s.connSvc.GetActiveGitProvider(); gpErr == nil {
+			if ac, acErr := s.connSvc.GetActiveArgocdClient(); acErr == nil {
+				detail, detailErr := s.clusterSvc.GetClusterDetail(r.Context(), name, gp, ac)
+				if detailErr == nil && detail != nil && detail.Cluster.SecretPath != "" {
+					credLookupName = detail.Cluster.SecretPath
+					slog.Info("[cluster-test] using secretPath override", "name", name, "secretPath", credLookupName)
+				}
+			}
+		}
+	}
+
+	slog.Info("[cluster-test] fetching credentials", "name", name, "lookupName", credLookupName)
+	creds, err := s.credProvider.GetCredentials(credLookupName)
 	if err != nil {
 		slog.Error("[cluster-test] failed", "name", name, "step", "fetch-credentials", "error", err)
 		result := verify.Result{
 			Success:      false,
 			Stage:        "credentials",
-			ErrorCode:    verify.ClassifyError(err),
+			ErrorCode:    "ERR_AUTH",
 			ErrorMessage: err.Error(),
 		}
-		writeJSON(w, http.StatusOK, testClusterResponse{
-			Name:      name,
-			Reachable: false,
-			Result:    result,
-		})
+		resp := newTestClusterResponse(name, result)
+		// Parse suggestions from the error message if the provider included them.
+		if suggestions := parseSuggestions(err.Error()); len(suggestions) > 0 {
+			resp.Suggestions = suggestions
+		}
+		writeJSON(w, http.StatusOK, resp)
 		return
 	}
 	slog.Info("[cluster-test] credentials obtained", "name", name, "server", creds.Server)
@@ -159,11 +202,7 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 			ErrorCode:    verify.ClassifyError(err),
 			ErrorMessage: "failed to build client: " + err.Error(),
 		}
-		writeJSON(w, http.StatusOK, testClusterResponse{
-			Name:      name,
-			Reachable: false,
-			Result:    result,
-		})
+		writeJSON(w, http.StatusOK, newTestClusterResponse(name, result))
 		return
 	}
 
@@ -171,11 +210,7 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 	slog.Info("[cluster-test] running Stage 1 verification", "name", name)
 	result := verify.Stage1(r.Context(), client, verify.TestNamespace())
 
-	resp := testClusterResponse{
-		Name:      name,
-		Reachable: result.Success,
-		Result:    result,
-	}
+	resp := newTestClusterResponse(name, result)
 
 	if result.Success {
 		slog.Info("[cluster-test] Stage 1 passed", "name", name, "version", result.ServerVersion)
@@ -187,8 +222,7 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 	if req.Deep {
 		slog.Info("[cluster-test] running Stage 2 (deep) verification", "name", name)
 		stage2Result := verify.Stage2(r.Context(), nil, name, 0)
-		resp.Result = stage2Result
-		resp.Reachable = stage2Result.Success
+		resp = newTestClusterResponse(name, stage2Result)
 	}
 
 	// Record observation for cluster status tracking.
@@ -293,4 +327,28 @@ func (s *Server) handleDiscoverEKS(w http.ResponseWriter, r *http.Request) {
 	})
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// parseSuggestions extracts secret name suggestions from a provider error message.
+// The provider formats them as: "... Similar secrets: name1, name2, name3. Set ..."
+func parseSuggestions(errMsg string) []string {
+	const marker = "Similar secrets: "
+	idx := strings.Index(errMsg, marker)
+	if idx < 0 {
+		return nil
+	}
+	raw := errMsg[idx+len(marker):]
+	// Truncate at the next sentence boundary (". ") to avoid including the hint.
+	if dotIdx := strings.Index(raw, ". "); dotIdx >= 0 {
+		raw = raw[:dotIdx]
+	}
+	parts := strings.Split(raw, ", ")
+	var suggestions []string
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			suggestions = append(suggestions, p)
+		}
+	}
+	return suggestions
 }

@@ -28,6 +28,7 @@ import type {
 } from '@/services/models';
 import { LoadingState } from '@/components/LoadingState';
 import { ErrorState } from '@/components/ErrorState';
+import { EmptyState } from '@/components/EmptyState';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -810,6 +811,30 @@ export function Observability() {
   if (loading) return <LoadingState message="Loading observability data..." />;
   if (error) return <ErrorState message={error} onRetry={fetchData} />;
   if (!data) return null;
+
+  // Check if there's any meaningful data to display
+  const hasControlPlane = data.control_plane && (data.control_plane.total_apps > 0 || data.control_plane.total_clusters > 0);
+  const hasAlerts = (data.resource_alerts ?? []).length > 0;
+  const hasAddonGroups = (data.addon_groups ?? []).length > 0;
+  const hasSyncs = (data.recent_syncs ?? []).length > 0;
+  const hasAnyData = hasControlPlane || hasAlerts || hasAddonGroups || hasSyncs;
+
+  if (!hasAnyData) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">Observability</h1>
+          <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
+            ArgoCD control plane health, addon health per cluster, resource alerts, and sync activity timeline.
+          </p>
+        </div>
+        <EmptyState
+          title="No observability data available yet"
+          description="Deploy addons to clusters to see sync status, health metrics, and version information."
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
