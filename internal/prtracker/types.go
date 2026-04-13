@@ -10,7 +10,8 @@ type PRInfo struct {
 	PRTitle    string    `json:"pr_title"`
 	PRBase     string    `json:"pr_base"`
 	Cluster    string    `json:"cluster,omitempty"`
-	Operation  string    `json:"operation"` // register, remove, adopt, etc.
+	Addon      string    `json:"addon,omitempty"`
+	Operation  string    `json:"operation"` // register, remove, adopt, addon-upgrade, etc.
 	User       string    `json:"user"`
 	Source     string    `json:"source"` // ui, cli, api
 	CreatedAt  time.Time `json:"created_at"`

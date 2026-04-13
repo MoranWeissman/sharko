@@ -166,6 +166,148 @@ func (o *Orchestrator) DisableAddon(ctx context.Context, req DisableAddonRequest
 	return result, nil
 }
 
+// EnableAddon enables a specific addon on a cluster.
+//
+// Steps:
+//  1. Validate input and confirmation.
+//  2. Update values file (set addon to true).
+//  3. Update managed-clusters.yaml (set addon label to enabled).
+//  4. Create single PR with both changes.
+//  5. If the cluster has a credential provider, create addon secrets on remote cluster (best-effort).
+func (o *Orchestrator) EnableAddon(ctx context.Context, req EnableAddonRequest) (*EnableAddonResult, error) {
+	if req.Cluster == "" {
+		return nil, fmt.Errorf("cluster name is required")
+	}
+	if req.Addon == "" {
+		return nil, fmt.Errorf("addon name is required")
+	}
+
+	result := &EnableAddonResult{
+		Cluster: req.Cluster,
+		Addon:   req.Addon,
+	}
+
+	valuesPath := path.Join(o.paths.ClusterValues, req.Cluster+".yaml")
+	clusterAddonsPath := o.paths.ManagedClusters
+	if clusterAddonsPath == "" {
+		clusterAddonsPath = "configuration/managed-clusters.yaml"
+	}
+
+	// Dry-run exit point.
+	if req.DryRun {
+		filePreviews := []FilePreview{
+			{Path: valuesPath, Action: "update"},
+			{Path: clusterAddonsPath, Action: "update"},
+		}
+		prTitle := fmt.Sprintf("%s enable addon %s on cluster %s", o.gitops.CommitPrefix, req.Addon, req.Cluster)
+
+		var secretsToCreate []string
+		if def, ok := o.secretDefs[req.Addon]; ok {
+			secretsToCreate = []string{def.SecretName}
+		}
+
+		result.Status = "success"
+		result.DryRun = &DryRunResult{
+			FilesToWrite:    filePreviews,
+			PRTitle:         prTitle,
+			SecretsToCreate: secretsToCreate,
+		}
+		return result, nil
+	}
+
+	// Require confirmation.
+	if !req.Yes {
+		return nil, fmt.Errorf("confirmation required: set yes: true in request body")
+	}
+
+	var steps []string
+	files := make(map[string][]byte)
+
+	// Step 1: Read and update the cluster values file — set the addon to true.
+	existingValues, valuesErr := o.git.GetFileContent(ctx, valuesPath, o.gitops.BaseBranch)
+	if valuesErr != nil {
+		return nil, fmt.Errorf("reading values file for cluster %q: %w", req.Cluster, valuesErr)
+	}
+
+	// Read current addons from managed-clusters.yaml to get the full addon map.
+	clusterAddonsData, _ := o.git.GetFileContent(ctx, clusterAddonsPath, o.gitops.BaseBranch)
+
+	// Parse existing values and set the target addon to true.
+	addons := o.extractAddonsFromValuesForEnable(existingValues, req.Addon)
+
+	var catalog []models.AddonCatalogEntry
+	catalogData, catalogErr := o.git.GetFileContent(ctx, "configuration/addons-catalog.yaml", o.gitops.BaseBranch)
+	if catalogErr == nil && catalogData != nil {
+		catalog, _ = parseAddonsCatalog(catalogData)
+	}
+
+	updatedValues := generateClusterValues(req.Cluster, "", addons, catalog)
+	files[valuesPath] = updatedValues
+	steps = append(steps, "update_values_file")
+
+	// Step 2: Update managed-clusters.yaml — set addon label to "enabled".
+	if clusterAddonsData != nil {
+		updatedClusterAddons, labelErr := gitops.EnableAddonLabel(clusterAddonsData, req.Cluster, req.Addon)
+		if labelErr != nil {
+			slog.Warn("failed to enable addon label in managed-clusters.yaml",
+				"cluster", req.Cluster, "addon", req.Addon, "error", labelErr)
+		} else {
+			files[clusterAddonsPath] = updatedClusterAddons
+			steps = append(steps, "update_addon_label")
+		}
+	}
+
+	// Step 3: Create PR with combined changes.
+	gitResult, gitErr := o.commitChanges(ctx, files, nil, fmt.Sprintf("enable addon %s on cluster %s", req.Addon, req.Cluster))
+	if gitErr != nil {
+		if gitResult != nil {
+			result.Status = "partial"
+			result.CompletedSteps = steps
+			result.FailedStep = "pr_merge"
+			result.Error = gitErr.Error()
+			result.Message = fmt.Sprintf("PR created but merge failed: %s", gitResult.PRUrl)
+			result.Git = gitResult
+			return result, nil
+		}
+		result.Status = "failed"
+		result.CompletedSteps = steps
+		result.FailedStep = "git_commit"
+		result.Error = gitErr.Error()
+		result.Message = "Git commit failed while enabling addon"
+		return result, nil
+	}
+	result.Git = gitResult
+	steps = append(steps, "git_commit")
+
+	// Step 4: Create addon secrets on remote cluster (best-effort).
+	if o.credProvider != nil {
+		creds, credErr := o.credProvider.GetCredentials(req.Cluster)
+		if credErr == nil {
+			enabledAddons := map[string]bool{req.Addon: true}
+			secretRes, _ := o.createAddonSecrets(ctx, creds.Raw, enabledAddons)
+			if secretRes != nil && len(secretRes.Created) > 0 {
+				steps = append(steps, "create_remote_secrets")
+			}
+		} else {
+			slog.Warn("could not fetch credentials for remote secret creation",
+				"cluster", req.Cluster, "addon", req.Addon, "error", credErr)
+		}
+	}
+
+	result.Status = "success"
+	result.CompletedSteps = steps
+	return result, nil
+}
+
+// extractAddonsFromValuesForEnable parses a cluster values file to extract the current addon
+// states, then sets the target addon to true.
+func (o *Orchestrator) extractAddonsFromValuesForEnable(valuesData []byte, enableAddon string) map[string]bool {
+	addons := o.extractAddonsFromValues(valuesData, enableAddon)
+	// Override: set the target addon to true.
+	addons[enableAddon] = true
+	return addons
+}
+
 // extractAddonsFromValues parses a cluster values file to extract the current addon
 // states, then sets the target addon to false. This is a best-effort parser that
 // looks for "<addon>:\n  enabled: true/false" patterns.

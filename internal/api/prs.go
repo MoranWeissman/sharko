@@ -20,6 +20,7 @@ type PRItem struct {
 	PRTitle    string `json:"pr_title"`
 	PRBase     string `json:"pr_base"`
 	Cluster    string `json:"cluster,omitempty"`
+	Addon      string `json:"addon,omitempty"`
 	Operation  string `json:"operation"`
 	User       string `json:"user"`
 	Source     string `json:"source"`
@@ -37,6 +38,7 @@ type PRItem struct {
 // @Security BearerAuth
 // @Param status query string false "Filter by status (open, merged, closed)"
 // @Param cluster query string false "Filter by cluster name"
+// @Param addon query string false "Filter by addon name"
 // @Param user query string false "Filter by user"
 // @Success 200 {object} PRListResponse "List of tracked PRs"
 // @Failure 500 {object} map[string]interface{} "Internal error"
@@ -53,9 +55,10 @@ func (s *Server) handleListPRs(w http.ResponseWriter, r *http.Request) {
 
 	status := r.URL.Query().Get("status")
 	cluster := r.URL.Query().Get("cluster")
+	addon := r.URL.Query().Get("addon")
 	user := r.URL.Query().Get("user")
 
-	prs, err := s.prTracker.ListPRs(r.Context(), status, cluster, user)
+	prs, err := s.prTracker.ListPRs(r.Context(), status, cluster, addon, user)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -70,6 +73,7 @@ func (s *Server) handleListPRs(w http.ResponseWriter, r *http.Request) {
 			PRTitle:    pr.PRTitle,
 			PRBase:     pr.PRBase,
 			Cluster:    pr.Cluster,
+			Addon:      pr.Addon,
 			Operation:  pr.Operation,
 			User:       pr.User,
 			Source:     pr.Source,

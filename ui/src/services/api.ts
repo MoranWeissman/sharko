@@ -328,6 +328,10 @@ export async function fetchTrackedPRs(filters?: { status?: string; cluster?: str
   return fetchJSON<TrackedPRsResponse>(`/prs${qs ? `?${qs}` : ''}`)
 }
 
+export async function getAddonPRs(addonName: string) {
+  return fetchJSON<TrackedPRsResponse>(`/prs?addon=${encodeURIComponent(addonName)}`)
+}
+
 export async function refreshPR(id: number) {
   return postJSON<{ status: string }>(`/prs/${id}/refresh`)
 }
@@ -429,6 +433,10 @@ export const api = {
 
   // Repo status
   getRepoStatus: () => fetchJSON<{ initialized: boolean; reason?: string }>('/repo/status'),
+
+  // Cluster addons
+  enableAddonOnCluster: (clusterName: string, addonName: string) =>
+    postJSON<any>(`/clusters/${encodeURIComponent(clusterName)}/addons/${encodeURIComponent(addonName)}`, { yes: true }),
 
   // Notifications
   getNotifications: () => fetchJSON<{

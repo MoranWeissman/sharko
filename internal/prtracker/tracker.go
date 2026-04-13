@@ -139,7 +139,7 @@ func (t *Tracker) GetPR(ctx context.Context, prID int) (*PRInfo, error) {
 }
 
 // ListPRs returns all tracked PRs, optionally filtered.
-func (t *Tracker) ListPRs(ctx context.Context, status, cluster, user string) ([]PRInfo, error) {
+func (t *Tracker) ListPRs(ctx context.Context, status, cluster, addon, user string) ([]PRInfo, error) {
 	data, err := t.cmStore.Read(ctx)
 	if err != nil {
 		return nil, err
@@ -151,6 +151,9 @@ func (t *Tracker) ListPRs(ctx context.Context, status, cluster, user string) ([]
 			continue
 		}
 		if cluster != "" && pr.Cluster != cluster {
+			continue
+		}
+		if addon != "" && pr.Addon != addon {
 			continue
 		}
 		if user != "" && pr.User != user {

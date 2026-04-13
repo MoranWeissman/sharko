@@ -26,7 +26,17 @@ import {
   ScanSearch,
   Pencil,
   KeyRound,
+  Plus,
 } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog';
+import type { AddonCatalogItem } from '@/services/models';
 import { api, deregisterCluster, updateClusterAddons, updateClusterSettings, testClusterConnection } from '@/services/api';
 import type { ClusterComparisonResponse, AddonComparisonStatus, ConfigDiffResponse, SyncActivityEntry, VerifyStep } from '@/services/models';
 import { StatCard } from '@/components/StatCard';
@@ -147,6 +157,15 @@ export function ClusterDetail() {
   const [toggleError, setToggleError] = useState<string | null>(null);
   const [toggleResult, setToggleResult] = useState<string | null>(null);
 
+  // Deploy Addon dialog
+  const [deployDialogOpen, setDeployDialogOpen] = useState(false);
+  const [catalogAddons, setCatalogAddons] = useState<AddonCatalogItem[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [selectedAddon, setSelectedAddon] = useState<AddonCatalogItem | null>(null);
+  const [deploying, setDeploying] = useState(false);
+  const [deployResult, setDeployResult] = useState<{ prUrl?: string; error?: string } | null>(null);
+
   // Compute display status from test result + server state
   const computedStatus = useMemo((): string => {
     if (testResult && testResult !== 'testing') {
@@ -251,6 +270,44 @@ export function ClusterDetail() {
       setTestResult({ reachable: false, error: err instanceof Error ? err.message : 'Failed' });
     }
   }, [name, fetchData]);
+
+  const handleOpenDeployDialog = useCallback(async () => {
+    setDeployDialogOpen(true);
+    setSelectedAddon(null);
+    setDeployResult(null);
+    setCatalogError(null);
+    setCatalogLoading(true);
+    try {
+      const catalog = await api.getAddonCatalog();
+      // Only show addons that are NOT currently enabled (git_enabled = true) on this cluster
+      const enabledNames = new Set(
+        (data?.addon_comparisons ?? [])
+          .filter((a) => a.git_enabled)
+          .map((a) => a.addon_name),
+      );
+      setCatalogAddons(catalog.addons.filter((a) => !enabledNames.has(a.addon_name)));
+    } catch (e: unknown) {
+      setCatalogError(e instanceof Error ? e.message : 'Failed to load addon catalog');
+    } finally {
+      setCatalogLoading(false);
+    }
+  }, [data]);
+
+  const handleDeployAddon = useCallback(async () => {
+    if (!name || !selectedAddon) return;
+    setDeploying(true);
+    setDeployResult(null);
+    try {
+      const result = await api.enableAddonOnCluster(name, selectedAddon.addon_name);
+      const prUrl = result?.pr_url || result?.pull_request_url;
+      setDeployResult({ prUrl });
+      void fetchData();
+    } catch (e: unknown) {
+      setDeployResult({ error: e instanceof Error ? e.message : 'Failed to deploy addon' });
+    } finally {
+      setDeploying(false);
+    }
+  }, [name, selectedAddon, fetchData]);
 
   const handleSelectSuggestion = useCallback(async (suggestion: string) => {
     if (!name) return;
@@ -740,6 +797,127 @@ export function ClusterDetail() {
           {/* Addons section */}
           {activeSection === 'addons' && (
             <>
+              {/* Section header with Deploy Addon button */}
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">Addons</h3>
+                <RoleGuard roles={['admin', 'operator']}>
+                  <button
+                    type="button"
+                    onClick={handleOpenDeployDialog}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-600"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Deploy Addon
+                  </button>
+                </RoleGuard>
+              </div>
+
+              {/* Deploy Addon Dialog */}
+              <Dialog open={deployDialogOpen} onOpenChange={(open) => { setDeployDialogOpen(open); if (!open) { setSelectedAddon(null); setDeployResult(null); } }}>
+                <DialogContent className="max-w-lg bg-[#f0f7ff] dark:bg-gray-800">
+                  <DialogHeader>
+                    <DialogTitle className="text-[#0a2a4a] dark:text-gray-100">Deploy Addon to {name}</DialogTitle>
+                    <DialogDescription className="text-[#3a6a8a] dark:text-gray-400">
+                      Select an addon from the catalog to enable on this cluster. A pull request will be created.
+                    </DialogDescription>
+                  </DialogHeader>
+
+                  {catalogLoading && (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 className="h-6 w-6 animate-spin text-teal-600" />
+                      <span className="ml-2 text-sm text-[#3a6a8a] dark:text-gray-400">Loading catalog...</span>
+                    </div>
+                  )}
+
+                  {catalogError && (
+                    <p className="text-sm text-red-600 dark:text-red-400">{catalogError}</p>
+                  )}
+
+                  {!catalogLoading && !catalogError && catalogAddons.length === 0 && (
+                    <p className="py-4 text-center text-sm text-[#3a6a8a] dark:text-gray-400">
+                      All catalog addons are already enabled on this cluster.
+                    </p>
+                  )}
+
+                  {!catalogLoading && !catalogError && catalogAddons.length > 0 && !deployResult && (
+                    <div className="max-h-64 space-y-1.5 overflow-y-auto">
+                      {catalogAddons.map((addon) => (
+                        <button
+                          key={addon.addon_name}
+                          type="button"
+                          onClick={() => setSelectedAddon(addon)}
+                          className={`w-full rounded-lg px-3 py-2.5 text-left text-sm ring-2 transition-colors ${
+                            selectedAddon?.addon_name === addon.addon_name
+                              ? 'bg-teal-50 ring-teal-500 dark:bg-teal-900/20 dark:ring-teal-400'
+                              : 'bg-[#f0f7ff] ring-[#6aade0] hover:bg-[#d6eeff] dark:bg-gray-700 dark:ring-gray-600 dark:hover:bg-gray-600'
+                          }`}
+                        >
+                          <span className="font-medium capitalize text-[#0a2a4a] dark:text-gray-100">{addon.addon_name}</span>
+                          <span className="ml-2 text-xs text-[#5a8aaa] dark:text-gray-400">v{addon.version}</span>
+                          {addon.namespace && (
+                            <span className="ml-2 text-xs text-[#5a8aaa] dark:text-gray-400">({addon.namespace})</span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {deployResult && (
+                    <div className={`rounded-lg p-3 text-sm ${deployResult.error ? 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400' : 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400'}`}>
+                      {deployResult.error ? (
+                        <p>{deployResult.error}</p>
+                      ) : (
+                        <div>
+                          <p className="font-medium">Addon deploy requested successfully.</p>
+                          {deployResult.prUrl && (
+                            <a
+                              href={deployResult.prUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="mt-1 inline-flex items-center gap-1 text-xs underline"
+                            >
+                              <ExternalLink className="h-3 w-3" />
+                              View Pull Request
+                            </a>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <DialogFooter>
+                    {!deployResult ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setDeployDialogOpen(false)}
+                          className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          disabled={!selectedAddon || deploying}
+                          onClick={handleDeployAddon}
+                          className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
+                        >
+                          {deploying && <Loader2 className="h-4 w-4 animate-spin" />}
+                          Deploy
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => { setDeployDialogOpen(false); setDeployResult(null); setSelectedAddon(null); }}
+                        className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+                      >
+                        Close
+                      </button>
+                    )}
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+
               {/* Admin: Addon Enable/Disable Toggles */}
               <RoleGuard adminOnly>
                 <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800">
