@@ -20,6 +20,7 @@ const Dashboards = lazy(() => import('@/views/Dashboards'))
 const Settings = lazy(() => import('@/views/Settings'))
 const UserInfo = lazy(() => import('@/views/UserInfo'))
 const AuditViewer = lazy(() => import('@/views/AuditViewer'))
+const UpgradeChecker = lazy(() => import('@/views/UpgradeChecker'))
 
 function PageLoader() {
   return (
@@ -78,7 +79,7 @@ function ConnectedApp() {
           <Route path="addons/:name" element={<AddonDetail />} />
           <Route path="version-matrix" element={<Navigate to="/addons" replace />} />
           <Route path="observability" element={<Observability />} />
-          <Route path="upgrade" element={<Navigate to="/addons" replace />} />
+          <Route path="upgrade" element={<UpgradeChecker />} />
           <Route path="dashboards" element={<Dashboards />} />
           <Route path="audit" element={<AuditViewer />} />
           <Route path="settings" element={<Settings />} />

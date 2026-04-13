@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   ArrowUpCircle,
   AlertTriangle,
@@ -261,13 +262,17 @@ function ConflictsSection({ conflicts }: { conflicts: ConflictCheckEntry[] }) {
 // ---------------------------------------------------------------------------
 
 export function UpgradeChecker() {
+  const [searchParams] = useSearchParams();
+  const paramAddon = searchParams.get('addon') ?? '';
+  const paramVersion = searchParams.get('version') ?? '';
+
   // Addon list
   const [addons, setAddons] = useState<AddonCatalogItem[]>([]);
   const [addonsLoading, setAddonsLoading] = useState(true);
   const [addonsError, setAddonsError] = useState<string | null>(null);
 
   // Selected addon
-  const [selectedAddon, setSelectedAddon] = useState<string>('');
+  const [selectedAddon, setSelectedAddon] = useState<string>(paramAddon);
   const [addonSearch, setAddonSearch] = useState('');
   const [addonDropdownOpen, setAddonDropdownOpen] = useState(false);
 
@@ -277,6 +282,9 @@ export function UpgradeChecker() {
 
   // Selected version
   const [selectedVersion, setSelectedVersion] = useState<string>('');
+
+  // Track whether we've applied the version param from URL (one-time)
+  const [paramVersionApplied, setParamVersionApplied] = useState(false);
 
   // Analysis result
   const [result, setResult] = useState<UpgradeCheckResponse | null>(null);
@@ -325,10 +333,20 @@ export function UpgradeChecker() {
     setAnalyzeError(null);
     api
       .getUpgradeVersions(selectedAddon)
-      .then((data) => setVersions(data.versions))
+      .then((data) => {
+        setVersions(data.versions);
+        // Auto-select version from URL param (one-time)
+        if (paramVersion && !paramVersionApplied) {
+          const match = (data.versions ?? []).find(v => v.version === paramVersion);
+          if (match) {
+            setSelectedVersion(paramVersion);
+          }
+          setParamVersionApplied(true);
+        }
+      })
       .catch(() => setVersions([]))
       .finally(() => setVersionsLoading(false));
-  }, [selectedAddon]);
+  }, [selectedAddon, paramVersion, paramVersionApplied]);
 
   const currentVersion = addons.find((a) => a.addon_name === selectedAddon)?.version;
 
@@ -721,3 +739,5 @@ export function UpgradeChecker() {
     </div>
   );
 }
+
+export default UpgradeChecker;

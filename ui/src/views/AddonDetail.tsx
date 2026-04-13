@@ -43,12 +43,11 @@ import {
 function UpgradeVersionList({
   addonName,
   currentVersion,
-  onUpgrade,
 }: {
   addonName: string
   currentVersion: string
-  onUpgrade: (version: string) => void
 }) {
+  const navigate = useNavigate()
   const [versions, setVersions] = useState<{ version: string; app_version?: string }[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -84,9 +83,12 @@ function UpgradeVersionList({
 
   if (versions.length === 0) {
     return (
-      <div className="rounded-xl ring-2 ring-green-300 bg-green-50 p-5">
-        <h3 className="text-base font-semibold text-green-800">Up to date</h3>
-        <p className="mt-1 text-sm text-green-700">
+      <div className="rounded-xl ring-2 ring-green-300 bg-green-50 p-5 dark:ring-green-700 dark:bg-green-950/30">
+        <div className="flex items-center gap-2">
+          <CheckCircle className="h-5 w-5 text-green-600 dark:text-green-400" />
+          <h3 className="text-base font-semibold text-green-800 dark:text-green-300">Running latest version</h3>
+        </div>
+        <p className="mt-1 text-sm text-green-700 dark:text-green-400">
           No newer versions available for {addonName}.
         </p>
       </div>
@@ -94,35 +96,36 @@ function UpgradeVersionList({
   }
 
   return (
-    <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5">
-      <h3 className="text-base font-semibold text-[#0a2a4a]">Available Versions</h3>
-      <p className="mb-3 text-xs text-[#3a6a8a]">from Helm repository</p>
+    <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 dark:ring-gray-700 dark:bg-gray-800">
+      <h3 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">Available Versions</h3>
+      <p className="mb-1 text-xs text-[#3a6a8a] dark:text-gray-400">from Helm repository</p>
+      <p className="mb-3 text-sm text-[#2a5a7a] dark:text-gray-300">
+        {versions.length} newer version{versions.length !== 1 ? 's' : ''} available
+      </p>
       <div className="space-y-2">
         {versions.map((v, i) => (
           <div
             key={v.version}
-            className="flex items-center justify-between rounded-lg bg-[#e0f0ff] px-4 py-3"
+            className="flex items-center justify-between rounded-lg bg-[#e0f0ff] px-4 py-3 dark:bg-gray-700/50"
           >
             <div className="flex items-center gap-2">
-              <span className="font-mono text-sm font-bold text-[#0a2a4a]">{v.version}</span>
+              <span className="font-mono text-sm font-bold text-[#0a2a4a] dark:text-gray-100">{v.version}</span>
               {i === 0 && (
-                <span className="rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-semibold text-green-700">
+                <span className="rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-semibold text-green-700 dark:bg-green-900/40 dark:text-green-400">
                   LATEST
                 </span>
               )}
               {v.app_version && (
-                <span className="text-xs text-[#3a6a8a]">app {v.app_version}</span>
+                <span className="text-xs text-[#3a6a8a] dark:text-gray-400">app {v.app_version}</span>
               )}
             </div>
-            <RoleGuard adminOnly>
-              <button
-                type="button"
-                onClick={() => onUpgrade(v.version)}
-                className="rounded-lg bg-[#0a2a4a] px-4 py-1.5 text-xs font-medium text-white hover:bg-[#14466e]"
-              >
-                Upgrade
-              </button>
-            </RoleGuard>
+            <button
+              type="button"
+              onClick={() => navigate(`/upgrade?addon=${encodeURIComponent(addonName)}&version=${encodeURIComponent(v.version)}`)}
+              className="rounded-lg bg-teal-600 px-4 py-1.5 text-xs font-medium text-white hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-600"
+            >
+              Analyze Upgrade
+            </button>
           </div>
         ))}
       </div>
@@ -130,92 +133,21 @@ function UpgradeVersionList({
   )
 }
 
-function CompareVersions({ addonName, currentVersion }: { addonName: string; currentVersion: string }) {
-  const [targetVersion, setTargetVersion] = useState('')
-  const [changelog, setChangelog] = useState<{ version: string; app_version: string; created: string; description: string }[] | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [availableVersions, setAvailableVersions] = useState<string[]>([])
-
-  // Fetch available versions on mount for the dropdown
-  useEffect(() => {
-    api.getAddonChangelog(addonName)
-      .then(data => {
-        const versions = (data.versions ?? []).map(v => v.version)
-        setAvailableVersions(versions)
-        if (versions.length > 0 && !targetVersion) {
-          setTargetVersion(versions[0]) // default to latest
-        }
-      })
-      .catch(() => {}) // silent fail for version list
-  }, [addonName])
-
-  const handleCompare = () => {
-    if (!targetVersion) return
-    setLoading(true)
-    setError(null)
-    api.getAddonChangelog(addonName, currentVersion, targetVersion)
-      .then(data => setChangelog(data.versions ?? []))
-      .catch(e => setError(e instanceof Error ? e.message : 'Failed to fetch changelog'))
-      .finally(() => setLoading(false))
-  }
-
+function UpgradeAnalysisLink({ addonName }: { addonName: string }) {
   return (
-    <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5">
-      <h3 className="text-base font-semibold text-[#0a2a4a]">Version Changelog</h3>
-      <p className="mb-4 text-xs text-[#3a6a8a]">compare release notes between versions</p>
-
-      <div className="flex items-end gap-4 mb-4">
-        <div className="flex-1">
-          <label className="block text-xs font-medium text-[#1a4a6a] mb-1">From (current)</label>
-          <div className="rounded-lg bg-[#e0f0ff] px-3 py-2 font-mono text-sm text-[#0a2a4a]">{currentVersion}</div>
-        </div>
-        <div className="text-[#3a6a8a] text-lg">→</div>
-        <div className="flex-1">
-          <label className="block text-xs font-medium text-[#1a4a6a] mb-1">To (target)</label>
-          <select
-            value={targetVersion}
-            onChange={e => setTargetVersion(e.target.value)}
-            className="w-full rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm text-[#0a2a4a]"
-          >
-            {availableVersions.map(v => (
-              <option key={v} value={v}>{v}</option>
-            ))}
-          </select>
-        </div>
-        <button
-          onClick={handleCompare}
-          disabled={!targetVersion || loading}
-          className="rounded-lg bg-[#0a2a4a] px-4 py-2 text-sm font-medium text-white hover:bg-[#14466e] disabled:opacity-50"
-        >
-          {loading ? 'Loading...' : 'Compare'}
-        </button>
-      </div>
-
-      {error && <p className="text-sm text-red-600 mb-3">{error}</p>}
-
-      {changelog && changelog.length > 0 && (
-        <div className="space-y-2">
-          <p className="text-xs text-[#3a6a8a] mb-2">{changelog.length} version{changelog.length !== 1 ? 's' : ''} between {currentVersion} and {targetVersion}</p>
-          {changelog.map(v => (
-            <div key={v.version} className="flex items-center justify-between rounded-lg bg-[#e0f0ff] px-4 py-3">
-              <div>
-                <span className="font-mono text-sm font-bold text-[#0a2a4a]">{v.version}</span>
-                {v.app_version && (
-                  <span className="ml-2 text-xs text-[#3a6a8a]">app: {v.app_version}</span>
-                )}
-              </div>
-              <span className="text-xs text-[#3a6a8a]">
-                {new Date(v.created).toLocaleDateString()}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {changelog && changelog.length === 0 && (
-        <p className="text-sm text-[#2a5a7a]">No versions found between {currentVersion} and {targetVersion}.</p>
-      )}
+    <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 dark:ring-gray-700 dark:bg-gray-800">
+      <h3 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">Full Upgrade Analysis</h3>
+      <p className="mt-1 mb-4 text-sm text-[#2a5a7a] dark:text-gray-300">
+        Detailed diff, release notes, conflict detection, and AI assessment
+      </p>
+      <Link
+        to={`/upgrade?addon=${encodeURIComponent(addonName)}`}
+        className="inline-flex items-center gap-2 rounded-lg bg-teal-600 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-600"
+      >
+        <ArrowUpCircle className="h-4 w-4" />
+        Analyze Upgrade
+        <span className="ml-1">&rarr;</span>
+      </Link>
     </div>
   )
 }
@@ -1262,17 +1194,10 @@ export function AddonDetail() {
               <UpgradeVersionList
                 addonName={addon.addon_name}
                 currentVersion={addon.version}
-                onUpgrade={(version) => {
-                  setUpgradeVersion(version)
-                  setUpgradeCluster('')
-                  setUpgradeError(null)
-                  setUpgradeResult(null)
-                  setUpgradeOpen(true)
-                }}
               />
 
-              {/* Compare versions */}
-              <CompareVersions addonName={addon.addon_name} currentVersion={addon.version} />
+              {/* Full upgrade analysis link */}
+              <UpgradeAnalysisLink addonName={addon.addon_name} />
 
               {/* Per-cluster versions */}
               <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5">
