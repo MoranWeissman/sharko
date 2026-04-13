@@ -506,8 +506,22 @@ definitions:
         type: string
       stage:
         type: string
+      steps:
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_verify.Step'
+        type: array
       success:
         type: boolean
+    type: object
+  github_com_MoranWeissman_sharko_internal_verify.Step:
+    properties:
+      detail:
+        type: string
+      name:
+        type: string
+      status:
+        description: '"pass", "fail", "skipped"'
+        type: string
     type: object
   internal_api.PRItem:
     properties:
@@ -701,6 +715,10 @@ definitions:
         type: string
       stage:
         type: string
+      steps:
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_verify.Step'
+        type: array
       success:
         type: boolean
       suggestions:

@@ -5690,8 +5690,29 @@ const docTemplate = `{
                 "stage": {
                     "type": "string"
                 },
+                "steps": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_verify.Step"
+                    }
+                },
                 "success": {
                     "type": "boolean"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_verify.Step": {
+            "type": "object",
+            "properties": {
+                "detail": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "status": {
+                    "description": "\"pass\", \"fail\", \"skipped\"",
+                    "type": "string"
                 }
             }
         },
@@ -5988,6 +6009,12 @@ const docTemplate = `{
                 },
                 "stage": {
                     "type": "string"
+                },
+                "steps": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_verify.Step"
+                    }
                 },
                 "success": {
                     "type": "boolean"
