@@ -436,9 +436,9 @@ func TestAddClusterEntry_EmptyLabels(t *testing.T) {
 	if !strings.Contains(s, "  - name: staging-eu") {
 		t.Errorf("expected staging-eu entry:\n%s", s)
 	}
-	// Empty labels written as empty map.
-	if !containsInCluster(s, "staging-eu", "labels: {}") {
-		t.Errorf("expected labels: {} for empty labels:\n%s", s)
+	// Empty labels written as bare key (no inline map).
+	if !containsInCluster(s, "staging-eu", "labels:") {
+		t.Errorf("expected labels: for empty labels:\n%s", s)
 	}
 }
 

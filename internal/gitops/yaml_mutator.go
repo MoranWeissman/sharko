@@ -397,7 +397,7 @@ func AddClusterEntry(data []byte, entry ClusterEntryInput) ([]byte, error) {
 			newLines = append(newLines, "      "+k+": "+entry.Labels[k])
 		}
 	} else {
-		newLines = append(newLines, "    labels: {}")
+		newLines = append(newLines, "    labels:")
 	}
 
 	// Insert a blank separator then the new block after lastContentIdx.
