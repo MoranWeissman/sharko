@@ -266,6 +266,30 @@ func TestDisableAddonLabel_EmptyArray(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// labels: {} (empty map) tests
+// ---------------------------------------------------------------------------
+
+func TestEnableAddonLabel_EmptyMap(t *testing.T) {
+	input := `clusters:
+  - name: test-cluster
+    labels: {}
+`
+	result, err := EnableAddonLabel([]byte(input), "test-cluster", "keda")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	s := string(result)
+	// Should produce labels block with keda: enabled
+	if !strings.Contains(s, "    labels:\n      keda: enabled") {
+		t.Errorf("expected labels block with keda: enabled, got:\n%s", s)
+	}
+	// Should NOT contain {}
+	if strings.Contains(s, "{}") {
+		t.Errorf("expected {} to be removed, got:\n%s", s)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // commented-out label tests
 // ---------------------------------------------------------------------------
 
