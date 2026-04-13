@@ -4,6 +4,8 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { AddonDetail } from '@/views/AddonDetail'
 
 vi.mock('@/services/api', () => ({
+  getAddonPRs: vi.fn().mockResolvedValue({ prs: [] }),
+  upgradeAddon: vi.fn().mockResolvedValue({ pr_url: '' }),
   api: {
     getConnections: vi.fn().mockResolvedValue({ connections: [], active_connection: '' }),
     getAddonValues: vi.fn().mockRejectedValue(new Error('not found')),
