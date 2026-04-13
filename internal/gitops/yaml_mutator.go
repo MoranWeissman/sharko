@@ -67,8 +67,8 @@ func setAddonLabel(data []byte, clusterName, addonName, value string) ([]byte, e
 		return nil, fmt.Errorf("labels block not found for cluster %q", clusterName)
 	}
 
-	// Handle labels: [] (empty array) — replace with a block and insert the label.
-	if strings.Contains(lines[labelsIdx], "[]") {
+	// Handle labels: [] (empty array) or labels: {} (empty map) — replace with a block and insert the label.
+	if strings.Contains(lines[labelsIdx], "[]") || strings.Contains(lines[labelsIdx], "{}") {
 		indent := leadingSpaces(lines[labelsIdx])
 		lines[labelsIdx] = strings.Repeat(" ", indent) + "labels:"
 		newLabel := strings.Repeat(" ", indent+2) + addonName + ": " + value
