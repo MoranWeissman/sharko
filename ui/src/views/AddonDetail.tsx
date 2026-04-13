@@ -246,6 +246,29 @@ function InlineUpgradeResults({
         </button>
       </div>
 
+      {/* Baseline unavailable banner */}
+      {result.baseline_unavailable && (
+        <div className="mb-4 flex items-start gap-2 rounded-lg border border-blue-300 bg-blue-50 px-4 py-3 dark:border-blue-700 dark:bg-blue-950/40">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" />
+          <div>
+            <p className="text-sm font-medium text-blue-800 dark:text-blue-300">
+              Current version not available in Helm repo
+            </p>
+            <p className="mt-0.5 text-xs text-blue-700 dark:text-blue-400">
+              {result.baseline_note || 'Showing target version details only. Diff comparison is not available.'}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Baseline note (fallback version used) */}
+      {result.baseline_note && !result.baseline_unavailable && (
+        <div className="mb-4 flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 dark:border-amber-700 dark:bg-amber-950/40">
+          <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
+          <p className="text-sm text-amber-700 dark:text-amber-400">{result.baseline_note}</p>
+        </div>
+      )}
+
       {/* Risk summary */}
       <div className={`mb-4 rounded-lg border px-4 py-3 ${
         risk === 'conflicts' ? 'border-red-300 bg-red-50 dark:border-red-700 dark:bg-red-950/40'

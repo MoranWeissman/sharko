@@ -115,6 +115,7 @@ export function ClustersOverview() {
   const [addClusterName, setAddClusterName] = useState('');
   const [addClusterRegion, setAddClusterRegion] = useState('');
   const [addClusterRoleArn, setAddClusterRoleArn] = useState('');
+  const [addClusterSecretPath, setAddClusterSecretPath] = useState('');
   const [addClusterSubmitting, setAddClusterSubmitting] = useState(false);
   const [addClusterError, setAddClusterError] = useState<string | null>(null);
   const [addClusterResult, setAddClusterResult] = useState<RegisterClusterResult | null>(null);
@@ -175,6 +176,7 @@ export function ClustersOverview() {
     setAddClusterName('');
     setAddClusterRegion('');
     setAddClusterRoleArn('');
+    setAddClusterSecretPath('');
     setSelectedAddons({});
     setProvider('eks');
     setRegistrationMode('direct');
@@ -229,6 +231,7 @@ export function ClustersOverview() {
       const result = await registerCluster({
         name: clusterName || 'dry-run-preview',
         region: addClusterRegion.trim() || undefined,
+        secret_path: addClusterSecretPath.trim() || undefined,
         provider,
         role_arn: addClusterRoleArn.trim() || undefined,
         auto_merge: autoMerge,
@@ -243,7 +246,7 @@ export function ClustersOverview() {
     } finally {
       setDryRunLoading(false);
     }
-  }, [registrationMode, addClusterName, addClusterRegion, addClusterRoleArn, provider, autoMerge, selectedAddons]);
+  }, [registrationMode, addClusterName, addClusterRegion, addClusterRoleArn, addClusterSecretPath, provider, autoMerge, selectedAddons]);
 
   const handleAddCluster = useCallback(async () => {
     if (registrationMode === 'direct' && !addClusterName.trim()) return;
@@ -290,6 +293,7 @@ export function ClustersOverview() {
         const result = await registerCluster({
           name: addClusterName.trim(),
           region: addClusterRegion.trim() || undefined,
+          secret_path: addClusterSecretPath.trim() || undefined,
           provider,
           role_arn: addClusterRoleArn.trim() || undefined,
           auto_merge: autoMerge,
@@ -313,7 +317,7 @@ export function ClustersOverview() {
     } finally {
       setAddClusterSubmitting(false);
     }
-  }, [addClusterName, addClusterRegion, addClusterRoleArn, provider, autoMerge, selectedAddons, fetchData, registrationMode, discoveredItems, selectedDiscovered]);
+  }, [addClusterName, addClusterRegion, addClusterRoleArn, addClusterSecretPath, provider, autoMerge, selectedAddons, fetchData, registrationMode, discoveredItems, selectedDiscovered]);
 
   const handleTestCluster = useCallback(async (name: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -649,6 +653,21 @@ export function ClustersOverview() {
                     placeholder="e.g. arn:aws:iam::123456789012:role/sharko-access"
                     className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
                   />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
+                    Secret Path (optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={addClusterSecretPath}
+                    onChange={(e) => setAddClusterSecretPath(e.target.value)}
+                    placeholder="Override AWS SM secret name (e.g., k8s-my-cluster)"
+                    className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
+                  />
+                  <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
+                    Leave empty to use cluster name as the secret key
+                  </p>
                 </div>
               </>
             ) : (

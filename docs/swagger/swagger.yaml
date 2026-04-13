@@ -1879,15 +1879,15 @@ paths:
     patch:
       consumes:
       - application/json
-      description: Updates the addon selections (enabled/disabled) for a specific
-        cluster
+      description: Updates the addon selections (enabled/disabled) and/or cluster
+        settings (secret_path) for a specific cluster
       parameters:
       - description: Cluster name
         in: path
         name: name
         required: true
         type: string
-      - description: Addon update request with addons map
+      - description: Cluster update request with addons map and/or secret_path
         in: body
         name: body
         required: true
@@ -1929,7 +1929,7 @@ paths:
             type: object
       security:
       - BearerAuth: []
-      summary: Update cluster addons
+      summary: Update cluster addons or settings
       tags:
       - clusters
   /clusters/{name}/addons/{addon}:

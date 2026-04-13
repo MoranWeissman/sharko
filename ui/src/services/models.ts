@@ -2,6 +2,7 @@ export interface Cluster {
   name: string
   labels: Record<string, string>
   region?: string
+  secret_path?: string
   server_version?: string
   server_url?: string
   connection_status?: string
@@ -405,6 +406,8 @@ export interface UpgradeCheckResponse {
   changed: ValueDiffEntry[]
   conflicts: ConflictCheckEntry[]
   release_notes?: string
+  baseline_unavailable?: boolean
+  baseline_note?: string
 }
 
 // --- Cluster Registration (Story 3.5) ---

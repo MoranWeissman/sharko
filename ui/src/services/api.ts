@@ -144,6 +144,7 @@ export async function registerCluster(data: {
   name: string;
   addons?: Record<string, boolean>;
   region?: string;
+  secret_path?: string;
   provider?: ClusterProvider;
   role_arn?: string;
   auto_merge?: boolean;
@@ -207,6 +208,10 @@ export async function unadoptCluster(name: string) {
 
 export async function updateClusterAddons(name: string, addons: Record<string, boolean>) {
   return patchJSON<any>(`/clusters/${encodeURIComponent(name)}`, { addons })
+}
+
+export async function updateClusterSettings(name: string, settings: { secret_path?: string }) {
+  return patchJSON<any>(`/clusters/${encodeURIComponent(name)}`, settings)
 }
 
 export async function addAddon(data: { name: string; chart: string; repo_url: string; version: string; namespace?: string; sync_wave?: number }) {

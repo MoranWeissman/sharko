@@ -84,6 +84,22 @@ For local development, set `config.devMode: true` in Helm values to enable envir
 
 ---
 
+## Cluster Status Model
+
+Sharko tracks five cluster states. The status is computed from connectivity test results and ArgoCD health data.
+
+| Status | Meaning |
+|--------|---------|
+| `Unknown` | No observation recorded yet. The cluster was just registered and has not been tested. |
+| `Connected` | Stage 1 connectivity test passed. The Kubernetes API is reachable and RBAC permissions are sufficient. |
+| `Verified` | Stage 2 ArgoCD round-trip passed (confirms ArgoCD can manage the cluster). |
+| `Operational` | The cluster has at least one healthy addon deployed via ArgoCD. This is the steady-state for a working cluster. |
+| `Unreachable` | The last connectivity test failed. Check credentials, network, or RBAC. |
+
+Status is computed by a pure function: `ComputeStatus(observation, hasHealthyAddon)`. Results are cached for 30 seconds (configurable via `SHARKO_CLUSTER_STATUS_CACHE_TTL`). To force a fresh check, click **Test** in the UI or call `POST /api/v1/clusters/{name}/test`.
+
+---
+
 ## CLI Usage
 
 The Sharko CLI is a thin HTTP client. Every command sends a request to the Sharko server API.
@@ -113,7 +129,7 @@ sharko add-addon cert-manager \
   --namespace cert-manager
 ```
 
-### Register a Cluster
+### Register a Cluster (Direct Mode)
 
 ```bash
 sharko add-cluster prod-eu \
@@ -121,7 +137,61 @@ sharko add-cluster prod-eu \
   --region eu-west-1
 ```
 
-The server fetches cluster credentials from the configured secrets provider, registers the cluster in ArgoCD, creates a values file, and commits to Git as a pull request.
+The server fetches cluster credentials from the configured secrets provider, verifies connectivity (Stage 1 test), registers the cluster in ArgoCD, creates a values file, and commits to Git as a pull request.
+
+### Cluster Discovery and Adoption
+
+Sharko supports two modes for onboarding clusters: **direct registration** (above) and **discovery + adoption**.
+
+#### Discover Available Clusters
+
+Find clusters that exist in the secrets provider but are not yet registered:
+
+```bash
+# GET-based discovery (Kubernetes Secrets provider)
+curl -H "Authorization: Bearer $TOKEN" \
+  https://sharko.your-cluster.com/api/v1/clusters/available
+
+# POST-based discovery (EKS — requires region + role)
+curl -H "Authorization: Bearer $TOKEN" \
+  -X POST https://sharko.your-cluster.com/api/v1/clusters/discover \
+  -d '{"region": "us-east-1"}'
+```
+
+In the UI, navigate to **Clusters** and click **Discover**. Unregistered clusters appear as candidates for adoption.
+
+#### Adopt Existing Clusters
+
+Adoption is for clusters that already have an ArgoCD cluster secret but are not managed by Sharko. It verifies connectivity, creates a values file, adds the cluster to `managed-clusters.yaml`, and creates a PR.
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  -X POST https://sharko.your-cluster.com/api/v1/clusters/adopt \
+  -d '{"clusters": ["prod-eu", "staging-us"], "auto_merge": false}'
+```
+
+In the UI, discovered clusters show a **Start Managing** button. Clicking it triggers adoption.
+
+Key behaviors:
+- Adoption rejects clusters managed by a different tool (non-`sharko` `managed-by` label).
+- A Stage 1 connectivity test runs before adoption proceeds.
+- If a PR already exists for the cluster (idempotent retry), it returns the existing PR instead of creating a duplicate.
+- After the PR is merged, Sharko sets the `sharko.sharko.io/adopted` annotation on the ArgoCD cluster secret.
+
+#### Un-adopt a Cluster
+
+Reverses an adoption without deleting the ArgoCD cluster secret:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  -X POST https://sharko.your-cluster.com/api/v1/clusters/prod-eu/unadopt
+```
+
+Steps:
+1. Verifies the cluster has the `adopted` annotation (errors if not -- use `remove-cluster` instead).
+2. Removes the `managed-by` label and `adopted` annotation from the ArgoCD secret (keeps the secret).
+3. Deletes Sharko-created addon secrets from the remote cluster (best-effort).
+4. Creates a PR to remove the cluster from `managed-clusters.yaml` and delete its values file.
 
 ### Batch Register Clusters
 
@@ -140,6 +210,40 @@ Each cluster is registered sequentially. Results are reported per-cluster; failu
 ```bash
 sharko remove-cluster prod-eu
 ```
+
+Cluster removal supports three cleanup scopes:
+
+| Scope | What it does |
+|-------|-------------|
+| `all` (default) | Removes from `managed-clusters.yaml`, deletes values file via PR, deletes addon secrets from remote cluster, deletes ArgoCD cluster secret. |
+| `git` | Same Git changes as `all`, but skips remote addon secret deletion and ArgoCD secret deletion. |
+| `none` | Only removes the `managed-clusters.yaml` entry. Values file and ArgoCD secret are kept. |
+
+Via the API, pass `cleanup` in the request body:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  -X DELETE https://sharko.your-cluster.com/api/v1/clusters/prod-eu \
+  -d '{"yes": true, "cleanup": "git"}'
+```
+
+### Disable an Addon on a Cluster
+
+Remove a specific addon from a single cluster without removing it from the catalog:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  -X DELETE https://sharko.your-cluster.com/api/v1/clusters/prod-eu/addons/monitoring \
+  -d '{"yes": true, "cleanup": "all"}'
+```
+
+Cleanup scopes for addon disable:
+
+| Scope | What it does |
+|-------|-------------|
+| `all` (default) | Updates values file, updates `managed-clusters.yaml` labels, deletes addon secrets from remote cluster. |
+| `labels` | Updates values file and `managed-clusters.yaml` labels only. |
+| `none` | Updates the values file only. |
 
 ### Update Cluster Addons
 
@@ -168,6 +272,42 @@ Upgrade multiple addons in a single pull request:
 ```bash
 sharko upgrade-addons cert-manager=1.15.0,metrics-server=0.7.1
 ```
+
+### PR Management
+
+Every write operation creates a tracked pull request. Use the `sharko pr` subcommands to manage them.
+
+#### List Tracked PRs
+
+```bash
+sharko pr list
+sharko pr list --status open --cluster prod-eu
+sharko pr list -o json
+```
+
+#### Check PR Status
+
+```bash
+sharko pr status 42
+```
+
+#### Force Refresh a PR
+
+Poll the Git provider for the latest status:
+
+```bash
+sharko pr refresh 42
+```
+
+#### Wait for a PR to Complete
+
+Block until the PR is merged (exit 0), closed without merge (exit 1), or timeout expires (exit 2):
+
+```bash
+sharko pr wait 42 --timeout 10m
+```
+
+This is useful in CI/CD pipelines where you need to wait for a Sharko-created PR to be merged before proceeding.
 
 ### Cluster Status Overview
 
@@ -199,9 +339,31 @@ sharko version
 
 ---
 
-## API Keys
+## RBAC (Role-Based Access Control)
 
-API keys provide long-lived authentication for non-interactive consumers such as Backstage plugins, Terraform providers, and CI/CD pipelines. Unlike session tokens (which expire after 24 hours), API keys are valid until explicitly revoked.
+Sharko uses three roles with hierarchical permissions. Higher roles include all permissions of lower roles.
+
+| Role | Level | Description |
+|------|-------|-------------|
+| **Admin** | 2 | Full access. Can manage users, tokens, connections, and perform destructive operations (remove cluster, remove addon). |
+| **Operator** | 1 | Write access. Can register clusters, adopt clusters, update addons, trigger upgrades, and perform day-to-day management. |
+| **Viewer** | 0 | Read-only access. Can view clusters, addons, dashboard, audit log, and status. |
+
+Example permission mapping:
+
+| Action | Minimum Role |
+|--------|-------------|
+| `cluster.list`, `addon.list` | Viewer |
+| `cluster.register`, `cluster.adopt`, `addon.upgrade` | Operator |
+| `cluster.remove`, `token.create`, `user.create` | Admin |
+
+Actions not explicitly mapped default to **Admin** (fail-closed). The role is determined from the authenticated user's role and passed via the `X-Sharko-Role` header by the auth middleware.
+
+---
+
+## API Keys (Token Management)
+
+API keys provide long-lived authentication for non-interactive consumers such as Backstage plugins, Terraform providers, and CI/CD pipelines. Unlike session tokens (which expire after 24 hours), API keys have a configurable expiry.
 
 ### Create an API Key
 
@@ -209,7 +371,11 @@ API keys provide long-lived authentication for non-interactive consumers such as
 sharko token create --name backstage --role admin
 ```
 
-The token value is printed once. Store it immediately in a secure location (e.g., a Kubernetes Secret or your CI secrets store).
+Key behaviors:
+- The token value is printed once. Store it immediately in a secure location (e.g., a Kubernetes Secret or your CI secrets store).
+- **Role bounding:** You can only create tokens with a role equal to or lower than your own. An Operator cannot create Admin tokens.
+- **Default expiry:** 365 days. Admins can set no-expiry with duration `-1`.
+- Expired tokens are automatically rejected during validation.
 
 ### List API Keys
 
@@ -217,7 +383,7 @@ The token value is printed once. Store it immediately in a secure location (e.g.
 sharko token list
 ```
 
-Token values are not shown — only names, roles, and creation timestamps.
+Token values are not shown -- only names, roles, creation timestamps, and last-used timestamps.
 
 ### Revoke an API Key
 
@@ -341,6 +507,113 @@ extraEnv:
 
 ---
 
+## Audit Log
+
+Sharko records significant events in an in-memory audit log (default capacity: 1000 entries, configurable via `SHARKO_AUDIT_BUFFER_SIZE`). Every cluster registration, adoption, removal, upgrade, PR merge, and configuration change is logged.
+
+### Query the Audit Log
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  "https://sharko.your-cluster.com/api/v1/audit?action=register&source=cli&limit=50"
+```
+
+Supported filter parameters: `user`, `action`, `source`, `result`, `cluster`, `since`, `limit` (default 50).
+
+### Real-Time Event Stream (SSE)
+
+Subscribe to audit events in real time via Server-Sent Events:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" -N \
+  https://sharko.your-cluster.com/api/v1/audit/stream
+```
+
+Events are delivered as they happen. The stream uses a buffered channel (capacity 64); slow subscribers may miss events.
+
+### UI Viewer
+
+The audit log is accessible in the Sharko UI. Events are displayed with level (info/warn/error), timestamp, user, action, resource, source, and result.
+
+Each audit entry includes:
+
+| Field | Description |
+|-------|-------------|
+| `event` | Event type (e.g., `cluster_registered`, `pr_created`, `pr_merged`) |
+| `user` | Username or `system` for background operations |
+| `action` | Operation type (register, remove, update, test, adopt, etc.) |
+| `resource` | Target (e.g., `cluster:prod-eu`, `addon:cert-manager`) |
+| `source` | Origin (ui, cli, api, reconciler, webhook, prtracker) |
+| `result` | Outcome (success, failure, partial) |
+
+---
+
+## Diagnose Tool
+
+When a cluster connectivity test fails, the diagnose tool helps identify the root cause by running a series of IAM and RBAC permission checks.
+
+### CLI / API
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  -X POST https://sharko.your-cluster.com/api/v1/clusters/prod-eu/diagnose
+```
+
+The response includes:
+- **Identity:** The caller ARN (who Sharko is authenticating as).
+- **Role assumption:** The assumed role ARN, or "N/A" if not using role assumption.
+- **Namespace access:** Pass/fail results for each permission check (list namespaces, get namespace, create/get/delete secret).
+- **Suggested fixes:** Copy-paste-ready Kubernetes RBAC YAML (ClusterRole/ClusterRoleBinding for namespace access, Role/RoleBinding for secret CRUD) using a `sharko-access` group as the subject.
+
+### UI
+
+In the cluster detail page, when a test fails, a **"Why did this fail?"** button appears. Clicking it runs the diagnose tool and displays the results inline with the suggested fixes.
+
+---
+
+## Upgrade Checker
+
+The upgrade checker helps you evaluate available chart versions before upgrading an addon.
+
+### Inline from Addon Detail
+
+In the UI, navigate to an addon's detail page and select the **Upgrade Checker** tab. This shows:
+- Available chart versions (fetched from the Helm repo index)
+- Values diff between current and target versions
+- AI-generated upgrade summary (if AI is configured)
+
+### API Endpoints
+
+```bash
+# List available versions for an addon
+curl -H "Authorization: Bearer $TOKEN" \
+  https://sharko.your-cluster.com/api/v1/upgrade/cert-manager/versions
+
+# Check upgrade impact (values diff)
+curl -H "Authorization: Bearer $TOKEN" \
+  -X POST https://sharko.your-cluster.com/api/v1/upgrade/check \
+  -d '{"addon": "cert-manager", "from_version": "1.14.5", "to_version": "1.15.0"}'
+```
+
+---
+
+## Prometheus Metrics
+
+Sharko exposes Prometheus metrics at `GET /metrics`. 20 metrics across 6 categories:
+
+| Category | Example Metric |
+|----------|---------------|
+| Cluster | `sharko_cluster_count{status="Connected"}`, `sharko_cluster_test_duration_seconds` |
+| Addon | `sharko_addon_sync_status{cluster,addon,status}`, `sharko_addon_health` |
+| Reconciler | `sharko_reconciler_runs_total{reconciler,result}` |
+| PR | `sharko_pr_merge_duration_seconds` |
+| HTTP | `sharko_api_requests_total{method,path,status}` |
+| Auth | `sharko_auth_login_total{result}` |
+
+Dynamic path segments (cluster names, addon names) are normalized to placeholders (e.g., `/clusters/{name}`) to prevent cardinality explosion.
+
+---
+
 ## Batch Operations
 
 ### Batch Cluster Registration
@@ -369,8 +642,14 @@ Clusters are registered sequentially. Each cluster gets its own PR. If one clust
 Find clusters that exist in the secrets provider but are not yet registered:
 
 ```bash
+# GET — Kubernetes Secrets provider
 curl -H "Authorization: Bearer $TOKEN" \
   https://sharko.your-cluster.com/api/v1/clusters/available
+
+# POST — EKS discovery (requires region)
+curl -H "Authorization: Bearer $TOKEN" \
+  -X POST https://sharko.your-cluster.com/api/v1/clusters/discover \
+  -d '{"region": "us-east-1"}'
 ```
 
 ---

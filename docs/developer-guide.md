@@ -153,6 +153,10 @@ sharko/
     audit/              In-memory ring buffer audit log (1000 entries default)
       log.go            Log struct, Add/List/ListFiltered/Subscribe (SSE pattern)
 
+    prtracker/          PR lifecycle tracking
+      types.go          PRInfo struct (id, url, branch, cluster, operation, status)
+      tracker.go        Background poller: polls Git for PR status, emits audit events on merge/close
+
     ai/                 LLM agent
       client.go         Multi-provider AI client
       agent.go          Tool-calling agent loop
@@ -224,6 +228,45 @@ Three upgrade methods:
 - `UpgradeAddonCluster(ctx, addonName, clusterName, newVersion)` — updates the cluster values file
 - `UpgradeAddons(ctx, upgrades map[string]string)` — batch global upgrades in one PR
 
+### orchestrator/adopt.go
+
+`AdoptClusters` orchestrates the two-phase adoption of existing ArgoCD clusters:
+1. Per-cluster Stage 1 connectivity verification.
+2. Per-cluster atomic adoption: create values file, add to `managed-clusters.yaml`, commit as PR.
+
+Rejects clusters managed by another tool (`managed-by` label check). After PR merge, sets the `sharko.sharko.io/adopted` annotation on the ArgoCD cluster secret. Supports dry-run mode.
+
+### orchestrator/unadopt.go
+
+`UnadoptCluster` reverses an adoption:
+1. Checks the `adopted` annotation (errors if missing -- use `remove-cluster` instead).
+2. Removes `managed-by` label and `adopted` annotation from the ArgoCD secret (keeps the secret).
+3. Deletes Sharko-created addon secrets from the remote cluster (best-effort).
+4. Creates PR to remove from `managed-clusters.yaml` and delete values file.
+
+### orchestrator/remove.go
+
+`RemoveCluster` orchestrates cluster removal with configurable cleanup scope (`all`, `git`, `none`). Scope controls which resources are cleaned up beyond the Git PR (addon secrets on remote, ArgoCD cluster secret).
+
+### orchestrator/addon_ops.go
+
+`DisableAddon` disables a specific addon on a cluster with configurable cleanup (`all`, `labels`, `none`). Updates the cluster values file, optionally updates `managed-clusters.yaml` labels, and optionally deletes addon secrets from the remote cluster.
+
+### Idempotent Retry Pattern
+
+Write operations that create PRs use `findOpenPRForCluster` to check for existing open PRs before creating new ones. If a previous attempt created a PR but failed in a later step, re-running the operation finds the existing PR instead of creating a duplicate.
+
+```go
+// In orchestrator/git_helpers.go
+existingPR, err := o.findOpenPRForCluster(ctx, clusterName, "register")
+if err == nil && existingPR != nil {
+    // Return existing PR info instead of creating a new one
+    return existingPR, nil
+}
+```
+
+This pattern is used in `RegisterCluster`, `AdoptClusters`, and other operations.
+
 ### orchestrator/batch.go
 
 `RegisterClusterBatch` registers clusters sequentially. `MaxBatchSize = 10` is enforced at the handler level. Returns a `BatchResult` with per-cluster results and aggregate counts.
@@ -277,14 +320,56 @@ HTTP handlers. Each handler is a method on the `Server` struct. Handlers are thi
 
 | File | Endpoints |
 |------|-----------|
-| `clusters_write.go` | POST, DELETE, PATCH `/clusters`, POST `/clusters/{name}/refresh` |
+| `clusters_write.go` | POST, DELETE, PATCH `/clusters`, POST `/clusters/{name}/refresh`, POST `/clusters/{name}/test` |
 | `clusters_batch.go` | POST `/clusters/batch` |
-| `clusters_discover.go` | GET `/clusters/available` |
+| `clusters_discover.go` | GET `/clusters/available`, POST `/clusters/discover` |
+| `clusters_adopt.go` | POST `/clusters/adopt`, POST `/clusters/{name}/unadopt` |
 | `cluster_secrets.go` | GET, POST `/clusters/{name}/secrets*` |
-| `addons_write.go` | POST, DELETE `/addons` |
+| `diagnose.go` | POST `/clusters/{name}/diagnose` |
+| `addon_ops.go` | DELETE `/clusters/{name}/addons/{addon}` (disable addon on cluster) |
+| `addons_write.go` | POST, DELETE `/addons`, PATCH `/addons/{name}` |
 | `addons_upgrade.go` | POST `/addons/{name}/upgrade`, POST `/addons/upgrade-batch` |
 | `addon_secrets.go` | GET, POST, DELETE `/addon-secrets*` |
 | `tokens.go` | GET, POST, DELETE `/tokens*` |
+| `audit.go` | GET `/audit`, GET `/audit/stream` (SSE) |
+| `prs.go` | GET `/prs`, GET `/prs/{id}`, POST `/prs/{id}/refresh`, DELETE `/prs/{id}` |
+
+### prtracker
+
+The `internal/prtracker` package tracks pull requests created by Sharko operations. It polls the Git provider for status changes and emits audit events when PRs are merged or closed. State is persisted in a Kubernetes ConfigMap via `cmstore`, so pending PRs survive pod restarts.
+
+```go
+// Create a tracker
+tracker := prtracker.NewTracker(cmStore, gitProviderFn, auditFn)
+tracker.Start(ctx) // background poll loop (default 30s, configurable via SHARKO_PR_POLL_INTERVAL)
+
+// Track a new PR
+tracker.TrackPR(ctx, prtracker.PRInfo{
+    PRID:      42,
+    PRUrl:     "https://github.com/org/repo/pull/42",
+    Cluster:   "prod-eu",
+    Operation: "register",
+    User:      "admin",
+    Source:    "cli",
+})
+
+// List tracked PRs with filters
+prs, _ := tracker.ListPRs(ctx, "open", "prod-eu", "")
+
+// Wait for a specific PR
+pr, _ := tracker.PollSinglePR(ctx, 42)
+
+// Register a callback for merged PRs (e.g., trigger reconciler)
+tracker.SetOnMergeFn(func(pr prtracker.PRInfo) {
+    // trigger argosecrets reconciler
+})
+```
+
+Key behaviors:
+- Polls Git provider every 30 seconds (configurable via `SHARKO_PR_POLL_INTERVAL`)
+- Emits `pr_merged` and `pr_closed_without_merge` audit events
+- Removes merged/closed PRs from tracking automatically
+- `ReconcileOnStartup` catches up on changes that occurred while the server was down
 
 ### auth (API key support)
 

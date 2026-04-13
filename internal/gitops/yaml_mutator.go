@@ -416,6 +416,78 @@ func AddClusterEntry(data []byte, entry ClusterEntryInput) ([]byte, error) {
 	return []byte(strings.Join(lines, "\n")), nil
 }
 
+// UpdateClusterSecretPath updates (or adds/removes) the secretPath field for a
+// cluster entry in managed-clusters.yaml. If secretPath is empty, the field is
+// removed. Returns an error if the cluster is not found.
+func UpdateClusterSecretPath(data []byte, clusterName, secretPath string) ([]byte, error) {
+	lines := strings.Split(string(data), "\n")
+
+	// Find the "  - name: <clusterName>" line.
+	entryIdx := -1
+	for i, line := range lines {
+		if strings.TrimSpace(line) == "- name: "+clusterName {
+			entryIdx = i
+			break
+		}
+	}
+	if entryIdx == -1 {
+		return nil, fmt.Errorf("cluster %q not found in managed-clusters.yaml", clusterName)
+	}
+
+	// Find the extent of this entry (ends at next list item or non-indented line).
+	endIdx := entryIdx + 1
+	for endIdx < len(lines) {
+		line := lines[endIdx]
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			endIdx++
+			continue
+		}
+		if leadingSpaces(line) < 4 && strings.HasPrefix(trimmed, "- ") {
+			break
+		}
+		if leadingSpaces(line) < 2 && trimmed != "" {
+			break
+		}
+		endIdx++
+	}
+
+	// Look for existing secretPath line within this entry.
+	secretPathIdx := -1
+	for i := entryIdx + 1; i < endIdx; i++ {
+		if strings.TrimSpace(lines[i]) == "" {
+			continue
+		}
+		if strings.HasPrefix(strings.TrimSpace(lines[i]), "secretPath:") {
+			secretPathIdx = i
+			break
+		}
+	}
+
+	if secretPath == "" {
+		// Remove the secretPath line if it exists.
+		if secretPathIdx != -1 {
+			lines = append(lines[:secretPathIdx], lines[secretPathIdx+1:]...)
+		}
+	} else if secretPathIdx != -1 {
+		// Update existing secretPath line.
+		lines[secretPathIdx] = "    secretPath: " + secretPath
+	} else {
+		// Insert secretPath after the name line (or after region if present).
+		insertAt := entryIdx + 1
+		for i := entryIdx + 1; i < endIdx; i++ {
+			trimmed := strings.TrimSpace(lines[i])
+			if strings.HasPrefix(trimmed, "region:") {
+				insertAt = i + 1
+				break
+			}
+		}
+		lines = insertLine(lines, insertAt, "    secretPath: "+secretPath)
+	}
+
+	return []byte(strings.Join(lines, "\n")), nil
+}
+
 // RemoveClusterEntry removes the named cluster entry from the clusters array
 // in a managed-clusters.yaml document. Returns an error if the cluster is not found.
 func RemoveClusterEntry(data []byte, name string) ([]byte, error) {

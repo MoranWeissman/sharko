@@ -1994,7 +1994,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Updates the addon selections (enabled/disabled) for a specific cluster",
+                "description": "Updates the addon selections (enabled/disabled) and/or cluster settings (secret_path) for a specific cluster",
                 "consumes": [
                     "application/json"
                 ],
@@ -2004,7 +2004,7 @@ const docTemplate = `{
                 "tags": [
                     "clusters"
                 ],
-                "summary": "Update cluster addons",
+                "summary": "Update cluster addons or settings",
                 "parameters": [
                     {
                         "type": "string",
@@ -2014,7 +2014,7 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "Addon update request with addons map",
+                        "description": "Cluster update request with addons map and/or secret_path",
                         "name": "body",
                         "in": "body",
                         "required": true,

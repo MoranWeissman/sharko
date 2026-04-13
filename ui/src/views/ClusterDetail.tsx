@@ -24,8 +24,10 @@ import {
   GitPullRequest,
   Wifi,
   ScanSearch,
+  Pencil,
+  KeyRound,
 } from 'lucide-react';
-import { api, deregisterCluster, updateClusterAddons, testClusterConnection } from '@/services/api';
+import { api, deregisterCluster, updateClusterAddons, updateClusterSettings, testClusterConnection } from '@/services/api';
 import type { ClusterComparisonResponse, AddonComparisonStatus, ConfigDiffResponse, SyncActivityEntry } from '@/services/models';
 import { StatCard } from '@/components/StatCard';
 import { StatusBadge } from '@/components/StatusBadge';
@@ -131,6 +133,12 @@ export function ClusterDetail() {
   // Test connection
   const [testResult, setTestResult] = useState<{ reachable?: boolean; success?: boolean; server_version?: string; error?: string; error_message?: string } | 'testing' | null>(null);
   const [diagnoseOpen, setDiagnoseOpen] = useState(false);
+
+  // Secret path editing
+  const [editingSecretPath, setEditingSecretPath] = useState(false);
+  const [secretPathValue, setSecretPathValue] = useState('');
+  const [secretPathSaving, setSecretPathSaving] = useState(false);
+  const [secretPathResult, setSecretPathResult] = useState<string | null>(null);
 
   // Addon toggles
   const [addonToggles, setAddonToggles] = useState<Record<string, boolean>>({});
@@ -522,6 +530,75 @@ export function ClusterDetail() {
                     <p className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
                       {data.cluster_connection_state || 'Unknown'}
                     </p>
+                  </div>
+                </div>
+                {/* Secret Path */}
+                <div className="flex items-center gap-2 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] px-4 py-3 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+                  <KeyRound className="h-4 w-4 text-teal-500" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs text-[#2a5a7a] dark:text-gray-400">Secret Path</p>
+                    {editingSecretPath ? (
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <input
+                          type="text"
+                          value={secretPathValue}
+                          onChange={(e) => setSecretPathValue(e.target.value)}
+                          placeholder="e.g. k8s-my-cluster"
+                          className="w-40 rounded border border-[#5a9dd0] bg-white px-2 py-0.5 text-xs focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
+                        />
+                        <button
+                          type="button"
+                          disabled={secretPathSaving}
+                          onClick={async () => {
+                            if (!name) return;
+                            setSecretPathSaving(true);
+                            setSecretPathResult(null);
+                            try {
+                              const result = await updateClusterSettings(name, { secret_path: secretPathValue });
+                              setSecretPathResult(result?.pr_url || result?.message || 'Secret path updated');
+                              setEditingSecretPath(false);
+                            } catch (e: unknown) {
+                              setSecretPathResult(e instanceof Error ? e.message : 'Failed to update');
+                            } finally {
+                              setSecretPathSaving(false);
+                            }
+                          }}
+                          className="rounded bg-teal-600 px-2 py-0.5 text-xs text-white hover:bg-teal-700 disabled:opacity-50"
+                        >
+                          {secretPathSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Save'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditingSecretPath(false)}
+                          className="text-xs text-[#3a6a8a] hover:text-[#0a2a4a] dark:text-gray-400"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1.5">
+                        <p className="font-mono text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
+                          {data.cluster.secret_path || '(cluster name)'}
+                        </p>
+                        <RoleGuard adminOnly>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSecretPathValue(data.cluster.secret_path || '');
+                              setEditingSecretPath(true);
+                              setSecretPathResult(null);
+                            }}
+                            className="text-[#5a8aaa] hover:text-[#0a2a4a] dark:text-gray-400 dark:hover:text-white"
+                            aria-label="Edit secret path"
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </button>
+                        </RoleGuard>
+                      </div>
+                    )}
+                    {secretPathResult && (
+                      <p className="mt-0.5 text-xs text-teal-600 dark:text-teal-400">{secretPathResult}</p>
+                    )}
                   </div>
                 </div>
               </div>

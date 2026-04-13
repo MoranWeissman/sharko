@@ -438,29 +438,102 @@ List clusters available in the configured secrets provider that have not yet bee
 
 ---
 
-### DELETE /api/v1/clusters/{name} — Deregister a Cluster
+### POST /api/v1/clusters/discover — Discover EKS Clusters
 
-Remove a cluster from ArgoCD and delete its values file from Git.
+POST variant of cluster discovery for EKS. Accepts region and optional role ARN to discover clusters via the AWS EKS API.
 
-**Path Parameters:**
-- `name` — cluster name
+**Request:**
+```json
+{
+  "region": "us-east-1"
+}
+```
 
-**Orchestration Steps:**
-1. Verify cluster exists in ArgoCD
-2. Remove cluster from ArgoCD (delete cluster secret)
-3. Delete values file from Git (as a PR)
+**Response (200 OK):**
+```json
+{
+  "clusters": [
+    {"name": "prod-us", "region": "us-east-1"},
+    {"name": "staging-us", "region": "us-east-1"}
+  ]
+}
+```
+
+---
+
+### POST /api/v1/clusters/adopt — Adopt Existing Clusters
+
+Adopt clusters that already have ArgoCD cluster secrets but are not managed by Sharko. Runs Stage 1 connectivity verification, creates values files, adds to `managed-clusters.yaml`, and creates PRs.
+
+**Request:**
+```json
+{
+  "clusters": ["prod-eu", "staging-us"],
+  "auto_merge": false,
+  "dry_run": false
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| clusters | array[string] | yes | Cluster names to adopt. Must exist in ArgoCD. |
+| auto_merge | bool | no | Override per-request: merge PRs immediately. |
+| dry_run | bool | no | Preview what would happen without making changes. |
 
 **Success Response (200 OK):**
 ```json
 {
+  "results": [
+    {
+      "name": "prod-eu",
+      "status": "success",
+      "verification": {"success": true, "stage": "stage1", "duration_ms": 1200},
+      "git": {
+        "pr_url": "https://github.com/example/repo/pull/42",
+        "pr_id": 42,
+        "branch": "sharko/adopt-cluster-prod-eu-a1b2c3d4",
+        "merged": false
+      }
+    }
+  ]
+}
+```
+
+**Error Responses:**
+| Code | Condition |
+|------|-----------|
+| 400 | Empty clusters array |
+| 404 | Cluster not found in ArgoCD |
+| 409 | Cluster managed by another tool (non-sharko managed-by label) |
+| 502 | Connectivity verification failed |
+
+---
+
+### POST /api/v1/clusters/{name}/unadopt — Un-adopt a Cluster
+
+Reverse a previous adoption. Removes Sharko labels from the ArgoCD secret (keeps the secret), cleans up addon secrets, and creates a PR to remove from Git.
+
+**Path Parameters:**
+- `name` — cluster name
+
+**Request:**
+```json
+{
+  "yes": true,
+  "dry_run": false
+}
+```
+
+**Success Response (200 OK):**
+```json
+{
+  "name": "prod-eu",
   "status": "success",
-  "message": "Cluster prod-eu deregistered",
   "git": {
-    "pr_url": "https://github.com/example/repo/pull/42",
-    "pr_id": 42,
-    "branch": "sharko/deregister-cluster-prod-eu-a1b2c3d4",
-    "merged": false,
-    "values_file": "configuration/addons-clusters-values/prod-eu.yaml"
+    "pr_url": "https://github.com/example/repo/pull/43",
+    "pr_id": 43,
+    "branch": "sharko/unadopt-cluster-prod-eu-a1b2c3d4",
+    "merged": false
   }
 }
 ```
@@ -468,10 +541,125 @@ Remove a cluster from ArgoCD and delete its values file from Git.
 **Error Responses:**
 | Code | Condition |
 |------|-----------|
-| 404 | Cluster not found in ArgoCD |
+| 400 | Missing cluster name or not adopted (use remove-cluster instead) |
 | 502 | ArgoCD or Git unreachable |
 
-**Warning:** Deregistering a cluster from ArgoCD will cause ArgoCD to stop managing addons on that cluster. Depending on ArgoCD's cascade delete policy, this MAY delete the addon resources from the cluster.
+---
+
+### POST /api/v1/clusters/{name}/diagnose — Diagnose Cluster
+
+Run IAM and RBAC permission checks on a remote cluster. Returns diagnostic details and copy-paste-ready fix YAML.
+
+**Path Parameters:**
+- `name` — cluster name
+
+**Success Response (200 OK):**
+```json
+{
+  "identity": "arn:aws:iam::123456789012:role/SharkoRole",
+  "role_assumption": "arn:aws:iam::123456789012:role/EKSReadRole",
+  "namespace_access": [
+    {"check": "list_namespaces", "passed": true},
+    {"check": "create_secret", "passed": false, "error": "forbidden"}
+  ],
+  "suggested_fixes": [
+    {"description": "Grant secret CRUD in sharko-test namespace", "yaml": "apiVersion: rbac.authorization.k8s.io/v1\n..."}
+  ]
+}
+```
+
+---
+
+### DELETE /api/v1/clusters/{name}/addons/{addon} — Disable Addon on Cluster
+
+Disable a specific addon on a single cluster with configurable cleanup.
+
+**Path Parameters:**
+- `name` — cluster name
+- `addon` — addon name
+
+**Request:**
+```json
+{
+  "yes": true,
+  "cleanup": "all"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| yes | bool | yes | Confirmation required. |
+| cleanup | string | no | Cleanup scope: `all` (default), `labels`, `none`. |
+| dry_run | bool | no | Preview mode. |
+
+**Success Response (200 OK):**
+```json
+{
+  "cluster": "prod-eu",
+  "addon": "monitoring",
+  "status": "success",
+  "cleanup": "all",
+  "completed_steps": ["update_values_file", "update_managed_clusters", "delete_addon_secrets"],
+  "git": {
+    "pr_url": "https://github.com/example/repo/pull/44",
+    "pr_id": 44,
+    "merged": false
+  }
+}
+```
+
+---
+
+### DELETE /api/v1/clusters/{name} — Remove a Cluster
+
+Remove a cluster with configurable cleanup scope.
+
+**Path Parameters:**
+- `name` — cluster name
+
+**Request:**
+```json
+{
+  "yes": true,
+  "cleanup": "all",
+  "dry_run": false
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| yes | bool | yes | Confirmation required. |
+| cleanup | string | no | Cleanup scope: `all` (default), `git`, `none`. |
+| dry_run | bool | no | Preview what would happen without making changes. |
+
+**Cleanup scopes:**
+- `all` — Remove from `managed-clusters.yaml`, delete values file via PR, delete addon secrets from remote cluster, delete ArgoCD cluster secret.
+- `git` — Same Git changes, skip remote secret deletion and ArgoCD secret deletion.
+- `none` — Only remove `managed-clusters.yaml` entry.
+
+**Success Response (200 OK):**
+```json
+{
+  "name": "prod-eu",
+  "status": "success",
+  "cleanup": "all",
+  "completed_steps": ["remove_managed_clusters_entry", "git_commit", "delete_values_file", "delete_remote_secrets", "delete_argocd_cluster"],
+  "git": {
+    "pr_url": "https://github.com/example/repo/pull/42",
+    "pr_id": 42,
+    "branch": "sharko/remove-cluster-prod-eu-a1b2c3d4",
+    "merged": false
+  }
+}
+```
+
+**Error Responses:**
+| Code | Condition |
+|------|-----------|
+| 400 | Missing confirmation (`yes: true`) or invalid cleanup scope |
+| 502 | ArgoCD or Git unreachable |
+
+**Warning:** With `cleanup=all`, deregistering a cluster from ArgoCD will cause ArgoCD to stop managing addons on that cluster. Depending on ArgoCD's cascade delete policy, this MAY delete the addon resources from the cluster.
 
 ---
 
@@ -1122,6 +1310,137 @@ Note: The `gitops` section reports `pr_auto_merge` (not a `mode` field). Git ope
 
 ---
 
+### GET /api/v1/metrics — Prometheus Metrics
+
+Returns Prometheus-format metrics. No auth required in default configuration.
+
+20 metrics across 6 categories (cluster, addon, reconciler, PR, HTTP, auth). Dynamic path segments are normalized to prevent cardinality explosion.
+
+---
+
+## 5b. PR Tracking API
+
+### GET /api/v1/prs — List Tracked PRs
+
+List all PRs tracked by Sharko, with optional filters.
+
+**Query Parameters:**
+- `status` — Filter by status (`open`, `merged`, `closed`)
+- `cluster` — Filter by cluster name
+- `user` — Filter by user
+
+**Response (200 OK):**
+```json
+{
+  "prs": [
+    {
+      "pr_id": 42,
+      "pr_url": "https://github.com/example/repo/pull/42",
+      "pr_branch": "sharko/register-cluster-prod-eu-a1b2c3d4",
+      "pr_title": "sharko: add cluster prod-eu",
+      "pr_base": "main",
+      "cluster": "prod-eu",
+      "operation": "register",
+      "user": "admin",
+      "source": "cli",
+      "created_at": "2026-04-10T10:00:00Z",
+      "last_status": "open",
+      "last_polled_at": "2026-04-10T10:05:00Z"
+    }
+  ]
+}
+```
+
+---
+
+### GET /api/v1/prs/{id} — Get Tracked PR
+
+Get details for a single tracked PR.
+
+**Path Parameters:**
+- `id` — PR number
+
+**Response (200 OK):** Same shape as a single element from the list response.
+
+**Error Responses:**
+| Code | Condition |
+|------|-----------|
+| 404 | PR not tracked |
+
+---
+
+### POST /api/v1/prs/{id}/refresh — Refresh PR Status
+
+Force an immediate poll of the Git provider for the PR's current status.
+
+**Path Parameters:**
+- `id` — PR number
+
+**Response (200 OK):** Updated PR info with latest status.
+
+---
+
+### DELETE /api/v1/prs/{id} — Stop Tracking a PR
+
+Remove a PR from tracking. Does not affect the PR in the Git provider.
+
+**Path Parameters:**
+- `id` — PR number
+
+**Response (200 OK):**
+```json
+{
+  "message": "PR #42 removed from tracking"
+}
+```
+
+---
+
+## 5c. Audit API
+
+### GET /api/v1/audit — Query Audit Log
+
+List audit events with optional filters. Default limit is 50 entries, newest first.
+
+**Query Parameters:**
+- `user` — Filter by username
+- `action` — Filter by action (register, remove, update, test, adopt, etc.)
+- `source` — Filter by source (ui, cli, api, reconciler, webhook, prtracker)
+- `result` — Filter by result (success, failure, partial)
+- `cluster` — Filter by cluster name (matches in the resource field)
+- `since` — ISO 8601 timestamp (only events after this time)
+- `limit` — Max entries to return (default 50)
+
+**Response (200 OK):**
+```json
+{
+  "entries": [
+    {
+      "id": "abc123",
+      "timestamp": "2026-04-10T10:00:00Z",
+      "level": "info",
+      "event": "cluster_registered",
+      "user": "admin",
+      "action": "register",
+      "resource": "cluster:prod-eu",
+      "source": "cli",
+      "result": "success",
+      "duration_ms": 3200
+    }
+  ]
+}
+```
+
+---
+
+### GET /api/v1/audit/stream — Real-Time Audit Stream (SSE)
+
+Subscribe to audit events in real time via Server-Sent Events. Each event is delivered as a JSON payload. The stream uses a buffered channel (capacity 64); slow subscribers may miss events.
+
+**Response:** `text/event-stream` with JSON-encoded audit entries.
+
+---
+
 ## 6. CLI Command Mapping
 
 Every CLI command is a thin HTTP client call to the Sharko API.
@@ -1144,6 +1463,10 @@ Every CLI command is a thin HTTP client call to the Sharko API.
 | `sharko token list` | GET | `/api/v1/tokens` | Formatted table output |
 | `sharko token revoke <name>` | DELETE | `/api/v1/tokens/{name}` | |
 | `sharko status` | GET | `/api/v1/fleet/status` | Formatted terminal output |
+| `sharko pr list [--status --cluster --user]` | GET | `/api/v1/prs` | Filter flags map to query params |
+| `sharko pr status <id>` | GET | `/api/v1/prs/{id}` | Detailed PR info |
+| `sharko pr refresh <id>` | POST | `/api/v1/prs/{id}/refresh` | Force poll Git provider |
+| `sharko pr wait <id> [--timeout 10m]` | POST | `/api/v1/prs/{id}/refresh` | Polls every 5s until merged/closed/timeout |
 
 ### CLI Auth Flow
 

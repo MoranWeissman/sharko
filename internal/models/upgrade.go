@@ -24,6 +24,13 @@ type UpgradeCheckResponse struct {
 	Changed        []ValueDiffEntry     `json:"changed"`
 	Conflicts      []ConflictCheckEntry `json:"conflicts"`
 	ReleaseNotes   string               `json:"release_notes,omitempty"`
+
+	// BaselineUnavailable is true when the current version is not available
+	// in the Helm repository and no suitable fallback was found.
+	BaselineUnavailable bool   `json:"baseline_unavailable,omitempty"`
+	// BaselineNote describes which baseline version was used for comparison
+	// (e.g., when falling back to a nearby version or when no baseline is available).
+	BaselineNote string `json:"baseline_note,omitempty"`
 }
 
 // ValueDiffEntry represents a single value difference between chart versions.

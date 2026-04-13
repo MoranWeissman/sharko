@@ -11,6 +11,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
+	"github.com/MoranWeissman/sharko/internal/gitops"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
 )
@@ -229,14 +230,14 @@ func (s *Server) handleDeregisterCluster(w http.ResponseWriter, r *http.Request)
 
 // handleUpdateClusterAddons godoc
 //
-// @Summary Update cluster addons
-// @Description Updates the addon selections (enabled/disabled) for a specific cluster
+// @Summary Update cluster addons or settings
+// @Description Updates the addon selections (enabled/disabled) and/or cluster settings (secret_path) for a specific cluster
 // @Tags clusters
 // @Accept json
 // @Produce json
 // @Security BearerAuth
 // @Param name path string true "Cluster name"
-// @Param body body map[string]interface{} true "Addon update request with addons map"
+// @Param body body map[string]interface{} true "Cluster update request with addons map and/or secret_path"
 // @Success 200 {object} map[string]interface{} "Addons updated"
 // @Success 207 {object} map[string]interface{} "Partial success"
 // @Failure 400 {object} map[string]interface{} "Bad request"
@@ -268,7 +269,8 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 	}
 
 	var req struct {
-		Addons map[string]bool `json:"addons"`
+		Addons     map[string]bool `json:"addons"`
+		SecretPath *string         `json:"secret_path,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
@@ -283,6 +285,67 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 	if serverURL == "" {
 		writeError(w, http.StatusNotFound, "cluster not found in ArgoCD: "+name)
 		return
+	}
+
+	// Handle secret_path update (metadata-only change via managed-clusters.yaml).
+	if req.SecretPath != nil {
+		managedPath := s.repoPaths.ManagedClusters
+		if managedPath == "" {
+			managedPath = "configuration/managed-clusters.yaml"
+		}
+		mcData, err := git.GetFileContent(r.Context(), managedPath, s.gitopsCfg.BaseBranch)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, "reading managed-clusters.yaml: "+err.Error())
+			return
+		}
+		updated, err := gitops.UpdateClusterSecretPath(mcData, name, *req.SecretPath)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		s.gitMu.Lock()
+		branchName := fmt.Sprintf("%supdate-secret-path-%s", s.gitopsCfg.BranchPrefix, name)
+		if err := git.CreateBranch(r.Context(), branchName, s.gitopsCfg.BaseBranch); err != nil {
+			s.gitMu.Unlock()
+			writeError(w, http.StatusBadGateway, "creating branch: "+err.Error())
+			return
+		}
+		commitMsg := fmt.Sprintf("%s update secret_path for cluster %s", s.gitopsCfg.CommitPrefix, name)
+		if err := git.CreateOrUpdateFile(r.Context(), managedPath, updated, branchName, commitMsg); err != nil {
+			s.gitMu.Unlock()
+			writeError(w, http.StatusBadGateway, "committing secret_path update: "+err.Error())
+			return
+		}
+		pr, prErr := git.CreatePullRequest(r.Context(),
+			fmt.Sprintf("Update secret_path for cluster %s", name),
+			fmt.Sprintf("Sets secret_path to %q for cluster %s", *req.SecretPath, name),
+			branchName, s.gitopsCfg.BaseBranch,
+		)
+		s.gitMu.Unlock()
+		if prErr != nil {
+			writeError(w, http.StatusBadGateway, "creating PR: "+prErr.Error())
+			return
+		}
+
+		// Auto-merge if configured.
+		if s.gitopsCfg.PRAutoMerge && pr != nil {
+			_ = git.MergePullRequest(r.Context(), pr.ID)
+		}
+
+		// If no addons to update, return early with the secret_path result.
+		if len(req.Addons) == 0 {
+			prURL := ""
+			if pr != nil {
+				prURL = pr.URL
+			}
+			writeJSON(w, http.StatusOK, map[string]interface{}{
+				"status":  "success",
+				"message": fmt.Sprintf("secret_path updated for cluster %s", name),
+				"pr_url":  prURL,
+			})
+			return
+		}
 	}
 
 	orch := orchestrator.New(&s.gitMu, s.credProvider, ac, git, s.gitopsCfg, s.repoPaths, nil)
