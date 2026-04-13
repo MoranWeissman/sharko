@@ -213,6 +213,43 @@ definitions:
       secret_name:
         type: string
     type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.AdoptClusterResult:
+    properties:
+      dry_run:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.DryRunResult'
+      error:
+        type: string
+      git:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.GitResult'
+      message:
+        type: string
+      name:
+        type: string
+      status:
+        description: '"success", "partial", "failed", "skipped"'
+        type: string
+      verification:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_verify.Result'
+    type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.AdoptClustersRequest:
+    properties:
+      auto_merge:
+        description: override per-request; if false, PRs are left open
+        type: boolean
+      clusters:
+        items:
+          type: string
+        type: array
+      dry_run:
+        type: boolean
+    type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.AdoptClustersResult:
+    properties:
+      results:
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.AdoptClusterResult'
+        type: array
+    type: object
   github_com_MoranWeissman_sharko_internal_orchestrator.ConfigureAddonRequest:
     properties:
       additional_sources:
@@ -241,6 +278,48 @@ definitions:
       version:
         type: string
     type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.DryRunResult:
+    properties:
+      effective_addons:
+        items:
+          type: string
+        type: array
+      files_to_write:
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.FilePreview'
+        type: array
+      pr_title:
+        type: string
+      secrets_to_create:
+        items:
+          type: string
+        type: array
+      verification:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_verify.Result'
+    type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.FilePreview:
+    properties:
+      action:
+        description: '"create" or "update"'
+        type: string
+      path:
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.GitResult:
+    properties:
+      branch:
+        type: string
+      commit_sha:
+        type: string
+      merged:
+        type: boolean
+      pr_id:
+        type: integer
+      pr_url:
+        type: string
+      values_file:
+        type: string
+    type: object
   github_com_MoranWeissman_sharko_internal_orchestrator.InitRepoRequest:
     properties:
       auto_merge:
@@ -267,6 +346,29 @@ definitions:
       region:
         type: string
       secret_path:
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.UnadoptClusterRequest:
+    properties:
+      dry_run:
+        type: boolean
+      "yes":
+        type: boolean
+    type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.UnadoptClusterResult:
+    properties:
+      dry_run:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.DryRunResult'
+      error:
+        type: string
+      git:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.GitResult'
+      message:
+        type: string
+      name:
+        type: string
+      status:
+        description: '"success", "partial", "failed"'
         type: string
     type: object
   github_com_MoranWeissman_sharko_internal_providers.DiscoveredCluster:
@@ -1991,6 +2093,66 @@ paths:
       summary: Test cluster connectivity
       tags:
       - clusters
+  /clusters/{name}/unadopt:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Reverses adoption of a cluster — removes Sharko management but keeps the ArgoCD secret.
+        The cluster must have been adopted (has sharko.sharko.io/adopted annotation).
+      parameters:
+      - description: Cluster name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: 'Unadopt request (requires yes: true)'
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.UnadoptClusterRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Cluster unadopted
+          schema:
+            $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.UnadoptClusterResult'
+        "207":
+          description: Partial success
+          schema:
+            $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.UnadoptClusterResult'
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: Cluster was not adopted
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Gateway error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Un-adopt a cluster
+      tags:
+      - clusters
   /clusters/{name}/values:
     get:
       description: Returns the Helm values file for a specific cluster
@@ -2021,6 +2183,56 @@ paths:
       security:
       - BearerAuth: []
       summary: Get cluster values
+      tags:
+      - clusters
+  /clusters/adopt:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Adopts one or more existing ArgoCD clusters under Sharko management.
+        Phase 1 verifies connectivity per cluster, Phase 2 creates GitOps config via PR.
+      parameters:
+      - description: Adoption request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.AdoptClustersRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Adoption results (may include dry_run)
+          schema:
+            $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.AdoptClustersResult'
+        "207":
+          description: Partial success — some clusters failed
+          schema:
+            $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.AdoptClustersResult'
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Gateway error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Adopt existing ArgoCD clusters
       tags:
       - clusters
   /clusters/available:

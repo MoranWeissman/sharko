@@ -416,6 +416,62 @@ func AddClusterEntry(data []byte, entry ClusterEntryInput) ([]byte, error) {
 	return []byte(strings.Join(lines, "\n")), nil
 }
 
+// RemoveClusterEntry removes the named cluster entry from the clusters array
+// in a managed-clusters.yaml document. Returns an error if the cluster is not found.
+func RemoveClusterEntry(data []byte, name string) ([]byte, error) {
+	lines := strings.Split(string(data), "\n")
+
+	// Find the "  - name: <name>" line.
+	entryIdx := -1
+	for i, line := range lines {
+		if strings.TrimSpace(line) == "- name: "+name {
+			entryIdx = i
+			break
+		}
+	}
+	if entryIdx == -1 {
+		return nil, fmt.Errorf("cluster %q not found in managed-clusters.yaml", name)
+	}
+
+	// Determine the entry's extent: from entryIdx to the line before the next
+	// top-level list item (line starting with "  -") or end of clusters block.
+	endIdx := entryIdx + 1
+	for endIdx < len(lines) {
+		line := lines[endIdx]
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			endIdx++
+			continue
+		}
+		// New list item at indent 2 or a new top-level key at indent 0.
+		if leadingSpaces(line) < 4 && strings.HasPrefix(trimmed, "- ") {
+			break
+		}
+		if leadingSpaces(line) < 2 && trimmed != "" {
+			break
+		}
+		endIdx++
+	}
+
+	// Consume trailing blank lines.
+	for endIdx < len(lines) && strings.TrimSpace(lines[endIdx]) == "" {
+		endIdx++
+	}
+
+	// Also consume leading blank lines above the entry (separator between entries).
+	startIdx := entryIdx
+	for startIdx > 0 && strings.TrimSpace(lines[startIdx-1]) == "" {
+		startIdx--
+	}
+
+	// Remove lines [startIdx, endIdx).
+	result := make([]string, 0, len(lines)-(endIdx-startIdx))
+	result = append(result, lines[:startIdx]...)
+	result = append(result, lines[endIdx:]...)
+
+	return []byte(strings.Join(result, "\n")), nil
+}
+
 // RemoveCatalogEntry removes the entire block for addonName from the
 // applicationsets array, including any comment lines that appear directly
 // above the entry (between the previous entry's last line and this entry's

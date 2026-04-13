@@ -1600,6 +1600,79 @@
                 }
             }
         },
+        "/clusters/adopt": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Adopts one or more existing ArgoCD clusters under Sharko management.\nPhase 1 verifies connectivity per cluster, Phase 2 creates GitOps config via PR.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "clusters"
+                ],
+                "summary": "Adopt existing ArgoCD clusters",
+                "parameters": [
+                    {
+                        "description": "Adoption request",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.AdoptClustersRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Adoption results (may include dry_run)",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.AdoptClustersResult"
+                        }
+                    },
+                    "207": {
+                        "description": "Partial success — some clusters failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.AdoptClustersResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "Gateway error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/clusters/available": {
             "get": {
                 "security": [
@@ -2423,6 +2496,93 @@
                     },
                     "503": {
                         "description": "No credentials provider configured",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/clusters/{name}/unadopt": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Reverses adoption of a cluster — removes Sharko management but keeps the ArgoCD secret.\nThe cluster must have been adopted (has sharko.sharko.io/adopted annotation).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "clusters"
+                ],
+                "summary": "Un-adopt a cluster",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Cluster name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Unadopt request (requires yes: true)",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.UnadoptClusterRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Cluster unadopted",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.UnadoptClusterResult"
+                        }
+                    },
+                    "207": {
+                        "description": "Partial success",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.UnadoptClusterResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "409": {
+                        "description": "Cluster was not adopted",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "Gateway error",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -4777,6 +4937,62 @@
                 }
             }
         },
+        "github_com_MoranWeissman_sharko_internal_orchestrator.AdoptClusterResult": {
+            "type": "object",
+            "properties": {
+                "dry_run": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.DryRunResult"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "git": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.GitResult"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "status": {
+                    "description": "\"success\", \"partial\", \"failed\", \"skipped\"",
+                    "type": "string"
+                },
+                "verification": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_verify.Result"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_orchestrator.AdoptClustersRequest": {
+            "type": "object",
+            "properties": {
+                "auto_merge": {
+                    "description": "override per-request; if false, PRs are left open",
+                    "type": "boolean"
+                },
+                "clusters": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "dry_run": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_orchestrator.AdoptClustersResult": {
+            "type": "object",
+            "properties": {
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.AdoptClusterResult"
+                    }
+                }
+            }
+        },
         "github_com_MoranWeissman_sharko_internal_orchestrator.ConfigureAddonRequest": {
             "type": "object",
             "properties": {
@@ -4815,6 +5031,70 @@
                     "type": "integer"
                 },
                 "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_orchestrator.DryRunResult": {
+            "type": "object",
+            "properties": {
+                "effective_addons": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "files_to_write": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.FilePreview"
+                    }
+                },
+                "pr_title": {
+                    "type": "string"
+                },
+                "secrets_to_create": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "verification": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_verify.Result"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_orchestrator.FilePreview": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "description": "\"create\" or \"update\"",
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_orchestrator.GitResult": {
+            "type": "object",
+            "properties": {
+                "branch": {
+                    "type": "string"
+                },
+                "commit_sha": {
+                    "type": "string"
+                },
+                "merged": {
+                    "type": "boolean"
+                },
+                "pr_id": {
+                    "type": "integer"
+                },
+                "pr_url": {
+                    "type": "string"
+                },
+                "values_file": {
                     "type": "string"
                 }
             }
@@ -4858,6 +5138,41 @@
                     "type": "string"
                 },
                 "secret_path": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_orchestrator.UnadoptClusterRequest": {
+            "type": "object",
+            "properties": {
+                "dry_run": {
+                    "type": "boolean"
+                },
+                "yes": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_orchestrator.UnadoptClusterResult": {
+            "type": "object",
+            "properties": {
+                "dry_run": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.DryRunResult"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "git": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.GitResult"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "status": {
+                    "description": "\"success\", \"partial\", \"failed\"",
                     "type": "string"
                 }
             }
