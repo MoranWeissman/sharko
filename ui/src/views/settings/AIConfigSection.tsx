@@ -108,6 +108,7 @@ export function AIConfigSection() {
       setFormTestStatus('idle')
       fetchConfig()
     } catch (err) {
+      setFormTestStatus('error')
       setFormTestMsg(err instanceof Error ? err.message : 'Save failed')
     } finally { setSaving(false) }
   }
