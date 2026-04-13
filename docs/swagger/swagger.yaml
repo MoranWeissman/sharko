@@ -682,12 +682,31 @@ definitions:
     type: object
   internal_api.testClusterResponse:
     properties:
+      details:
+        additionalProperties: true
+        type: object
+      duration_ms:
+        type: integer
+      error_code:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_verify.ErrorCode'
+      error_message:
+        type: string
       name:
         type: string
       reachable:
         type: boolean
       result:
         $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_verify.Result'
+      server_version:
+        type: string
+      stage:
+        type: string
+      success:
+        type: boolean
+      suggestions:
+        items:
+          type: string
+        type: array
     type: object
 host: localhost:8080
 info:

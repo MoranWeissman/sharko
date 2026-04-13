@@ -5961,6 +5961,19 @@ const docTemplate = `{
         "internal_api.testClusterResponse": {
             "type": "object",
             "properties": {
+                "details": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "duration_ms": {
+                    "type": "integer"
+                },
+                "error_code": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_verify.ErrorCode"
+                },
+                "error_message": {
+                    "type": "string"
+                },
                 "name": {
                     "type": "string"
                 },
@@ -5969,6 +5982,21 @@ const docTemplate = `{
                 },
                 "result": {
                     "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_verify.Result"
+                },
+                "server_version": {
+                    "type": "string"
+                },
+                "stage": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
+                },
+                "suggestions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         }
