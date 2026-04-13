@@ -3,6 +3,14 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { Layout } from '@/components/Layout'
 
+vi.mock('@/services/api', () => ({
+  fetchTrackedPRs: vi.fn().mockResolvedValue({ prs: [] }),
+  api: {
+    getNotifications: vi.fn().mockResolvedValue({ notifications: [], unread_count: 0 }),
+    markAllNotificationsRead: vi.fn().mockResolvedValue({}),
+  },
+}))
+
 vi.mock('@/hooks/useConnections', () => ({
   useConnections: () => ({
     connections: [

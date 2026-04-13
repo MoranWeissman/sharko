@@ -19,6 +19,7 @@ import type {
   PullRequestsResponse,
   RegisterClusterResult,
   SyncActivityEntry,
+  TrackedPRsResponse,
   UpgradeCheckResponse,
   VerifyResult,
   VersionMatrixResponse,
@@ -307,6 +308,23 @@ export async function operationHeartbeat(id: string): Promise<void> {
     method: 'POST',
     headers: authHeaders(),
   })
+}
+
+// --- Tracked PRs (Story 5.3) ---
+
+export async function fetchTrackedPRs(filters?: { status?: string; cluster?: string; user?: string }) {
+  const params = new URLSearchParams()
+  if (filters) {
+    if (filters.status) params.set('status', filters.status)
+    if (filters.cluster) params.set('cluster', filters.cluster)
+    if (filters.user) params.set('user', filters.user)
+  }
+  const qs = params.toString()
+  return fetchJSON<TrackedPRsResponse>(`/prs${qs ? `?${qs}` : ''}`)
+}
+
+export async function refreshPR(id: number) {
+  return postJSON<{ status: string }>(`/prs/${id}/refresh`)
 }
 
 export const api = {

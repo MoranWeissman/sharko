@@ -3810,6 +3810,224 @@ const docTemplate = `{
                 }
             }
         },
+        "/prs": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns all tracked pull requests with optional filters",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "prs"
+                ],
+                "summary": "List tracked pull requests",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Filter by status (open, merged, closed)",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by cluster name",
+                        "name": "cluster",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by user",
+                        "name": "user",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "List of tracked PRs",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.PRListResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/prs/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns details for a single tracked PR",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "prs"
+                ],
+                "summary": "Get a tracked pull request",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "PR ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "PR details",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.PRItem"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid PR ID",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "PR not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Removes a PR from tracking (admin only)",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "prs"
+                ],
+                "summary": "Stop tracking a pull request",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "PR ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "PR removed from tracking",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid PR ID",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/prs/{id}/refresh": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Immediately polls the Git provider for this PR's current status",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "prs"
+                ],
+                "summary": "Force refresh a tracked PR",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "PR ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Updated PR details",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.PRItem"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid PR ID",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "PR not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/repo/status": {
             "get": {
                 "security": [
@@ -5261,6 +5479,58 @@ const docTemplate = `{
                 },
                 "success": {
                     "type": "boolean"
+                }
+            }
+        },
+        "internal_api.PRItem": {
+            "type": "object",
+            "properties": {
+                "cluster": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "last_polled_at": {
+                    "type": "string"
+                },
+                "last_status": {
+                    "type": "string"
+                },
+                "operation": {
+                    "type": "string"
+                },
+                "pr_base": {
+                    "type": "string"
+                },
+                "pr_branch": {
+                    "type": "string"
+                },
+                "pr_id": {
+                    "type": "integer"
+                },
+                "pr_title": {
+                    "type": "string"
+                },
+                "pr_url": {
+                    "type": "string"
+                },
+                "source": {
+                    "type": "string"
+                },
+                "user": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.PRListResponse": {
+            "type": "object",
+            "properties": {
+                "prs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api.PRItem"
+                    }
                 }
             }
         },

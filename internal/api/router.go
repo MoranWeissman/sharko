@@ -30,6 +30,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/observations"
 	"github.com/MoranWeissman/sharko/internal/operations"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
+	"github.com/MoranWeissman/sharko/internal/prtracker"
 	"github.com/MoranWeissman/sharko/internal/providers"
 	"github.com/MoranWeissman/sharko/internal/service"
 )
@@ -104,6 +105,9 @@ type Server struct {
 	// argosecrets reconciler on ReinitializeFromConnection without re-creating the
 	// in-cluster K8s client (which does not change between reinits).
 	argoReconcilerConfig *ArgoReconcilerCfg
+
+	// prTracker tracks PRs created by Sharko operations (optional — set via SetPRTracker).
+	prTracker *prtracker.Tracker
 
 	// obsStore persists cluster connectivity observations (optional — set via SetObservationsStore).
 	obsStore *observations.Store
@@ -237,6 +241,16 @@ func (s *Server) SetDefaultAddons(defaults map[string]bool) {
 // Call this after NewServer, before starting the HTTP listener.
 func (s *Server) SetObservationsStore(store *observations.Store) {
 	s.obsStore = store
+}
+
+// SetPRTracker wires in the PR tracker for polling and API access.
+func (s *Server) SetPRTracker(tracker *prtracker.Tracker) {
+	s.prTracker = tracker
+}
+
+// PRTracker returns the current PR tracker (may be nil if not configured).
+func (s *Server) PRTracker() *prtracker.Tracker {
+	return s.prTracker
 }
 
 // ReinitializeFromConnection reads provider config and GitOps settings from the active connection
@@ -528,6 +542,12 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	// Notifications
 	mux.HandleFunc("GET /api/v1/notifications", srv.handleListNotifications)
 	mux.HandleFunc("POST /api/v1/notifications/read-all", srv.handleMarkAllNotificationsRead)
+
+	// Pull request tracking
+	mux.HandleFunc("GET /api/v1/prs", srv.handleListPRs)
+	mux.HandleFunc("GET /api/v1/prs/{id}", srv.handleGetPR)
+	mux.HandleFunc("POST /api/v1/prs/{id}/refresh", srv.handleRefreshPR)
+	mux.HandleFunc("DELETE /api/v1/prs/{id}", srv.handleDeletePR)
 
 	// Audit log
 	mux.HandleFunc("GET /api/v1/audit", srv.handleListAuditLog)

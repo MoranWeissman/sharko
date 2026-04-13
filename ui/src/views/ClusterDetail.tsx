@@ -21,6 +21,7 @@ import {
   Package,
   FileCode,
   Clock,
+  GitPullRequest,
 } from 'lucide-react';
 import { api, deregisterCluster, updateClusterAddons } from '@/services/api';
 import type { ClusterComparisonResponse, AddonComparisonStatus, ConfigDiffResponse, SyncActivityEntry } from '@/services/models';
@@ -33,6 +34,9 @@ import { YamlViewer } from '@/components/YamlViewer';
 import { RoleGuard } from '@/components/RoleGuard';
 import { ConfirmationModal } from '@/components/ConfirmationModal';
 import { DetailNavPanel } from '@/components/DetailNavPanel';
+import { PendingPRsPanel } from '@/components/PendingPRsPanel';
+import { showToast } from '@/components/ToastNotification';
+import type { TrackedPR } from '@/services/models';
 
 type StatusFilter =
   | 'all'
@@ -349,6 +353,7 @@ export function ClusterDetail() {
       items: [
         { key: 'overview', label: 'Overview', icon: LayoutGrid },
         { key: 'addons', label: 'Addons', badge: data ? data.addon_comparisons.length : undefined, icon: Package },
+        { key: 'prs', label: 'Pull Requests', icon: GitPullRequest },
         { key: 'config', label: 'Config', icon: FileCode },
         { key: 'history', label: 'History', icon: Clock },
       ],
@@ -638,6 +643,17 @@ export function ClusterDetail() {
                 <p className="text-sm text-[#2a5a7a]">No configuration overrides for this cluster.</p>
               )}
             </div>
+          )}
+
+          {/* Pull Requests section */}
+          {activeSection === 'prs' && (
+            <PendingPRsPanel
+              cluster={name}
+              onMergeDetected={(pr: TrackedPR) => {
+                showToast(`PR #${pr.pr_id} merged -- ${pr.cluster ?? ''} ${pr.operation}`)
+                void fetchData()
+              }}
+            />
           )}
 
           {/* History section */}

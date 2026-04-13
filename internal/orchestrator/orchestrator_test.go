@@ -238,6 +238,9 @@ func (m *mockGitProvider) MergePullRequest(_ context.Context, _ int) error {
 	defer m.mu.Unlock()
 	return m.mergeErr
 }
+func (m *mockGitProvider) GetPullRequestStatus(_ context.Context, _ int) (string, error) {
+	return "open", nil
+}
 func (m *mockGitProvider) DeleteBranch(_ context.Context, _ string) error { return nil }
 
 // ---------- helpers ----------

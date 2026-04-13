@@ -465,6 +465,34 @@ func (a *AzureDevOpsProvider) MergePullRequest(ctx context.Context, prNumber int
 	return nil
 }
 
+// GetPullRequestStatus returns the status of a pull request: "open", "merged", or "closed".
+func (a *AzureDevOpsProvider) GetPullRequestStatus(ctx context.Context, prNumber int) (string, error) {
+	prURL := fmt.Sprintf("%s/pullrequests/%d?api-version=7.1", a.baseURL, prNumber)
+	resp, body, err := a.doGet(prURL)
+	if err != nil {
+		return "", fmt.Errorf("get pull request #%d: %w", prNumber, err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("get pull request #%d failed (status %d): %s", prNumber, resp.StatusCode, string(body))
+	}
+
+	var prData struct {
+		Status string `json:"status"` // "active", "completed", "abandoned"
+	}
+	if err := json.Unmarshal(body, &prData); err != nil {
+		return "", fmt.Errorf("parse pull request #%d: %w", prNumber, err)
+	}
+
+	switch prData.Status {
+	case "completed":
+		return "merged", nil
+	case "abandoned":
+		return "closed", nil
+	default:
+		return "open", nil
+	}
+}
+
 // DeleteBranch removes a branch in Azure DevOps.
 func (a *AzureDevOpsProvider) DeleteBranch(ctx context.Context, branchName string) error {
 	// Azure DevOps deletes branches via refs endpoint with all-zero newObjectId

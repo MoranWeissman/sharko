@@ -63,6 +63,10 @@ func (f *handlerFakeGitProvider) CreatePullRequest(_ context.Context, _, _, _, _
 
 func (f *handlerFakeGitProvider) MergePullRequest(_ context.Context, _ int) error { return nil }
 
+func (f *handlerFakeGitProvider) GetPullRequestStatus(_ context.Context, _ int) (string, error) {
+	return "open", nil
+}
+
 func (f *handlerFakeGitProvider) DeleteBranch(_ context.Context, _ string) error { return nil }
 
 // ---------------------------------------------------------------------------
