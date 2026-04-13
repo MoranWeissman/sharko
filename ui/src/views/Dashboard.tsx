@@ -13,6 +13,7 @@ import { LoadingState } from '@/components/LoadingState';
 import { ErrorState } from '@/components/ErrorState';
 import { ArgoCDStatusBanner } from '@/components/ArgoCDStatusBanner';
 import { PendingPRsPanel } from '@/components/PendingPRsPanel';
+import { DriftAlertsPanel } from '@/components/DriftAlertsPanel';
 import { showToast } from '@/components/ToastNotification';
 import type { TrackedPR } from '@/services/models';
 
@@ -329,6 +330,9 @@ export function Dashboard() {
 
       {/* Pending PRs */}
       <PendingPRsPanel onMergeDetected={handlePRMerged} />
+
+      {/* Drift Alerts */}
+      <DriftAlertsPanel />
 
       {/* Bottom row: Quick Actions + Recent Activity + Version Drift */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">

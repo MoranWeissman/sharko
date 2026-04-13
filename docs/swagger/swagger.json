@@ -1910,14 +1910,17 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Removes a cluster from ArgoCD and deletes its GitOps configuration",
+                "description": "Removes a cluster with configurable cleanup scope.\nPass cleanup=all (default) to remove Git config and clean up ArgoCD + remote secrets.\nPass cleanup=git to remove Git config only. Pass cleanup=none for managed-clusters entry only.\nRequires yes=true for confirmation. Pass dry_run=true to preview.",
+                "consumes": [
+                    "application/json"
+                ],
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "clusters"
                 ],
-                "summary": "Deregister cluster",
+                "summary": "Remove cluster",
                 "parameters": [
                     {
                         "type": "string",
@@ -1925,25 +1928,32 @@
                         "name": "name",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "description": "Removal request",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.RemoveClusterRequest"
+                        }
                     }
                 ],
                 "responses": {
                     "200": {
-                        "description": "Cluster deregistered",
+                        "description": "Cluster removed (or dry-run preview)",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.RemoveClusterResult"
                         }
                     },
                     "207": {
                         "description": "Partial success",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.RemoveClusterResult"
                         }
                     },
                     "400": {
-                        "description": "Bad request",
+                        "description": "Bad request or missing confirmation",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -1956,8 +1966,8 @@
                             "additionalProperties": true
                         }
                     },
-                    "404": {
-                        "description": "Cluster not found",
+                    "403": {
+                        "description": "Forbidden",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -2039,6 +2049,93 @@
                     },
                     "404": {
                         "description": "Cluster not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "Gateway error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/clusters/{name}/addons/{addon}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Disables a specific addon on a cluster with configurable cleanup scope.\nPass cleanup=all (default) to update values + labels and delete remote secrets.\nPass cleanup=labels to update values + labels only. Pass cleanup=none for values only.\nRequires yes=true for confirmation. Pass dry_run=true to preview.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "clusters"
+                ],
+                "summary": "Disable addon on cluster",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Cluster name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Addon name",
+                        "name": "addon",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Disable addon request",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.DisableAddonRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Addon disabled (or dry-run preview)",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.DisableAddonResult"
+                        }
+                    },
+                    "207": {
+                        "description": "Partial success",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.DisableAddonResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request or missing confirmation",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -5253,6 +5350,67 @@
                 }
             }
         },
+        "github_com_MoranWeissman_sharko_internal_orchestrator.DisableAddonRequest": {
+            "type": "object",
+            "properties": {
+                "addon": {
+                    "type": "string"
+                },
+                "cleanup": {
+                    "description": "\"all\" (default), \"labels\", \"none\"",
+                    "type": "string"
+                },
+                "cluster": {
+                    "type": "string"
+                },
+                "dry_run": {
+                    "type": "boolean"
+                },
+                "yes": {
+                    "description": "confirmation required",
+                    "type": "boolean"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_orchestrator.DisableAddonResult": {
+            "type": "object",
+            "properties": {
+                "addon": {
+                    "type": "string"
+                },
+                "cleanup": {
+                    "type": "string"
+                },
+                "cluster": {
+                    "type": "string"
+                },
+                "completed_steps": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "dry_run": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.DryRunResult"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "failed_step": {
+                    "type": "string"
+                },
+                "git": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.GitResult"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "status": {
+                    "description": "\"success\", \"partial\", \"failed\"",
+                    "type": "string"
+                }
+            }
+        },
         "github_com_MoranWeissman_sharko_internal_orchestrator.DryRunResult": {
             "type": "object",
             "properties": {
@@ -5356,6 +5514,61 @@
                     "type": "string"
                 },
                 "secret_path": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_orchestrator.RemoveClusterRequest": {
+            "type": "object",
+            "properties": {
+                "cleanup": {
+                    "description": "\"all\" (default), \"git\", \"none\"",
+                    "type": "string"
+                },
+                "dry_run": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "yes": {
+                    "description": "confirmation required",
+                    "type": "boolean"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_orchestrator.RemoveClusterResult": {
+            "type": "object",
+            "properties": {
+                "cleanup": {
+                    "type": "string"
+                },
+                "completed_steps": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "dry_run": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.DryRunResult"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "failed_step": {
+                    "type": "string"
+                },
+                "git": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.GitResult"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "status": {
+                    "description": "\"success\", \"partial\", \"failed\"",
                     "type": "string"
                 }
             }

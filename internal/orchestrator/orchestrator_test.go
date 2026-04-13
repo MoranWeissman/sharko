@@ -172,7 +172,13 @@ func (m *mockGitProvider) ListDirectory(_ context.Context, _, _ string) ([]strin
 }
 
 func (m *mockGitProvider) ListPullRequests(_ context.Context, _ string) ([]gitprovider.PullRequest, error) {
-	return nil, nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var result []gitprovider.PullRequest
+	for _, pr := range m.prs {
+		result = append(result, *pr)
+	}
+	return result, nil
 }
 
 func (m *mockGitProvider) TestConnection(_ context.Context) error { return nil }

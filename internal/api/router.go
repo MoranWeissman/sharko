@@ -457,6 +457,7 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("POST /api/v1/clusters/{name}/test", srv.handleTestCluster)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/diagnose", srv.handleDiagnoseCluster)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/unadopt", srv.handleUnadoptCluster)
+	mux.HandleFunc("DELETE /api/v1/clusters/{name}/addons/{addon}", srv.handleDisableAddon)
 
 	// Init (orchestrator-backed)
 	mux.HandleFunc("POST /api/v1/init", srv.handleInit)

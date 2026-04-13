@@ -118,6 +118,22 @@ func (o *Orchestrator) AdoptClusters(ctx context.Context, req AdoptClustersReque
 			continue
 		}
 
+		// Idempotency (Story 6.3): check if an open PR already exists for this cluster adoption.
+		existingPR, existingPRErr := o.findOpenPRForCluster(ctx, clusterName, "adopt")
+		if existingPRErr == nil && existingPR != nil {
+			slog.Info("Found existing open PR for cluster adoption — skipping",
+				"cluster", clusterName, "pr", existingPR.URL)
+			cr.Status = "success"
+			cr.Git = &GitResult{
+				PRUrl:  existingPR.URL,
+				PRID:   existingPR.ID,
+				Branch: existingPR.SourceBranch,
+			}
+			cr.Message = "Existing open PR found — skipped PR creation (idempotent retry)"
+			result.Results = append(result.Results, cr)
+			continue
+		}
+
 		// Phase 2: Atomic adoption — create values file + add to managed-clusters.yaml in one PR.
 		adoptResult := o.adoptSingleCluster(ctx, clusterName, serverURL, req.AutoMerge)
 		// Preserve Phase 1 verification result.

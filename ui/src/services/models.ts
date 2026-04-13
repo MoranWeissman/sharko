@@ -443,6 +443,16 @@ export interface TrackedPRsResponse {
   prs: TrackedPR[]
 }
 
+// --- Drift Alerts (Story 6.4) ---
+
+export interface DriftAlert {
+  id: string
+  timestamp: string
+  event: string // orphan_detected, orphan_deleted_after_grace_period, drift_detected
+  resource: string
+  status: 'pending' | 'resolved'
+}
+
 export type ClusterProvider = 'eks' | 'gke' | 'aks' | 'generic'
 
 export interface DiscoveredClusterItem {
