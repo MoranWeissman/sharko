@@ -22,8 +22,10 @@ import {
   FileCode,
   Clock,
   GitPullRequest,
+  Wifi,
+  ScanSearch,
 } from 'lucide-react';
-import { api, deregisterCluster, updateClusterAddons } from '@/services/api';
+import { api, deregisterCluster, updateClusterAddons, testClusterConnection } from '@/services/api';
 import type { ClusterComparisonResponse, AddonComparisonStatus, ConfigDiffResponse, SyncActivityEntry } from '@/services/models';
 import { StatCard } from '@/components/StatCard';
 import { StatusBadge } from '@/components/StatusBadge';
@@ -34,6 +36,7 @@ import { YamlViewer } from '@/components/YamlViewer';
 import { RoleGuard } from '@/components/RoleGuard';
 import { ConfirmationModal } from '@/components/ConfirmationModal';
 import { DetailNavPanel } from '@/components/DetailNavPanel';
+import { DiagnoseModal } from '@/components/DiagnoseModal';
 import { PendingPRsPanel } from '@/components/PendingPRsPanel';
 import { showToast } from '@/components/ToastNotification';
 import type { TrackedPR } from '@/services/models';
@@ -125,6 +128,10 @@ export function ClusterDetail() {
   const [removing, setRemoving] = useState(false);
   const [removeError, setRemoveError] = useState<string | null>(null);
 
+  // Test connection
+  const [testResult, setTestResult] = useState<{ reachable?: boolean; success?: boolean; server_version?: string; error?: string; error_message?: string } | 'testing' | null>(null);
+  const [diagnoseOpen, setDiagnoseOpen] = useState(false);
+
   // Addon toggles
   const [addonToggles, setAddonToggles] = useState<Record<string, boolean>>({});
   const [originalToggles, setOriginalToggles] = useState<Record<string, boolean>>({});
@@ -205,6 +212,17 @@ export function ClusterDetail() {
       setApplyingToggles(false);
     }
   }, [name, addonToggles]);
+
+  const handleTestConnection = useCallback(async () => {
+    if (!name) return;
+    setTestResult('testing');
+    try {
+      const result = await testClusterConnection(name);
+      setTestResult(result);
+    } catch (err) {
+      setTestResult({ reachable: false, error: err instanceof Error ? err.message : 'Failed' });
+    }
+  }, [name]);
 
   const fetchConfigDiff = useCallback(async () => {
     if (!name) return;
@@ -377,12 +395,44 @@ export function ClusterDetail() {
         Back to Clusters Overview
       </button>
 
-      {/* Heading + cluster meta */}
-      <div>
-        <h2 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">{data.cluster.name}</h2>
-        <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
-          Kubernetes cluster managed by ArgoCD — deployed addons, health, and configuration overrides.
-        </p>
+      {/* Heading + cluster meta + actions */}
+      <div className="flex items-start justify-between">
+        <div>
+          <h2 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">{data.cluster.name}</h2>
+          <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
+            Kubernetes cluster managed by ArgoCD — deployed addons, health, and configuration overrides.
+          </p>
+          {testResult && testResult !== 'testing' && (
+            <div className={`mt-2 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${
+              testResult.reachable || testResult.success
+                ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+            }`}>
+              {testResult.reachable || testResult.success
+                ? `Connected${testResult.server_version ? ` — ${testResult.server_version}` : ''}`
+                : testResult.error || testResult.error_message || 'Unreachable'}
+            </div>
+          )}
+        </div>
+        <RoleGuard roles={['admin', 'operator']}>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleTestConnection}
+              disabled={testResult === 'testing'}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+            >
+              {testResult === 'testing' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wifi className="h-3.5 w-3.5" />}
+              Test
+            </button>
+            <button
+              onClick={() => setDiagnoseOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+            >
+              <ScanSearch className="h-3.5 w-3.5" />
+              Diagnose
+            </button>
+          </div>
+        </RoleGuard>
       </div>
 
       <ConfirmationModal
@@ -394,6 +444,11 @@ export function ClusterDetail() {
         confirmText="Remove"
         destructive
         loading={removing}
+      />
+      <DiagnoseModal
+        clusterName={name ?? ''}
+        open={diagnoseOpen}
+        onClose={() => setDiagnoseOpen(false)}
       />
       {removeError && (
         <p className="text-sm text-red-600 dark:text-red-400">{removeError}</p>

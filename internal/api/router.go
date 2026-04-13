@@ -931,8 +931,12 @@ func (s *Server) basicAuthMiddleware(next http.Handler) http.Handler {
 		if strings.HasPrefix(authHeader, "Bearer ") {
 			token := strings.TrimPrefix(authHeader, "Bearer ")
 			if isValidSession(token) {
-				// Inject username into request for downstream handlers
-				r.Header.Set("X-Sharko-User", getSessionUser(token))
+				username := getSessionUser(token)
+				r.Header.Set("X-Sharko-User", username)
+				// Look up user role from the store so authz middleware can enforce RBAC
+				if user := s.authStore.GetUser(username); user != nil {
+					r.Header.Set("X-Sharko-Role", user.Role)
+				}
 				next.ServeHTTP(w, r)
 				return
 			}
