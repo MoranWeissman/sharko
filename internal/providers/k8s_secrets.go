@@ -127,13 +127,15 @@ func (p *KubernetesSecretProvider) GetCredentials(clusterName string) (*Kubeconf
 	// Step 2: Search for similar names and include them in the error.
 	suggestions, searchErr := p.searchSimilarK8s(clusterName)
 	if searchErr == nil && len(suggestions) > 0 {
-		slog.Info("[provider] searching for similar secrets", "query", clusterName, "found", len(suggestions))
-		return nil, fmt.Errorf("secret for cluster %q not found in namespace %q. Similar secrets: %s",
+		slog.Info("[provider] found similar secrets", "query", clusterName, "found", len(suggestions))
+		return nil, fmt.Errorf("secret for cluster %q not found in namespace %q. Similar secrets: %s. "+
+			"Set --secret-path to specify the exact secret name",
 			clusterName, p.namespace, strings.Join(suggestions, ", "))
 	}
 
 	slog.Error("[provider] GetCredentials failed (k8s)", "cluster", clusterName, "step", "fetch", "error", "secret not found in namespace "+p.namespace)
-	return nil, fmt.Errorf("secret for cluster %q not found in namespace %q", clusterName, p.namespace)
+	return nil, fmt.Errorf("secret for cluster %q not found in namespace %q. "+
+		"Set --secret-path to specify the exact secret name", clusterName, p.namespace)
 }
 
 // searchSimilarK8s returns secret names in the provider namespace that contain
