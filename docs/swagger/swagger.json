@@ -2065,6 +2065,91 @@
             }
         },
         "/clusters/{name}/addons/{addon}": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Enables a specific addon on a cluster. Updates the cluster values file\n(sets addon to true) and managed-clusters.yaml (sets label to enabled) via PR.\nIf the cluster has a credential provider, addon secrets are created on the remote cluster.\nRequires yes=true for confirmation. Pass dry_run=true to preview.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "clusters"
+                ],
+                "summary": "Enable addon on cluster",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Cluster name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Addon name",
+                        "name": "addon",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Enable addon request",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.EnableAddonRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Addon enabled (or dry-run preview)",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.EnableAddonResult"
+                        }
+                    },
+                    "207": {
+                        "description": "Partial success",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.EnableAddonResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request or missing confirmation",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "Gateway error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
             "delete": {
                 "security": [
                     {
@@ -3931,6 +4016,12 @@
                     },
                     {
                         "type": "string",
+                        "description": "Filter by addon name",
+                        "name": "addon",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
                         "description": "Filter by user",
                         "name": "user",
                         "in": "query"
@@ -5440,6 +5531,60 @@
                 }
             }
         },
+        "github_com_MoranWeissman_sharko_internal_orchestrator.EnableAddonRequest": {
+            "type": "object",
+            "properties": {
+                "addon": {
+                    "type": "string"
+                },
+                "cluster": {
+                    "type": "string"
+                },
+                "dry_run": {
+                    "type": "boolean"
+                },
+                "yes": {
+                    "description": "confirmation required",
+                    "type": "boolean"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_orchestrator.EnableAddonResult": {
+            "type": "object",
+            "properties": {
+                "addon": {
+                    "type": "string"
+                },
+                "cluster": {
+                    "type": "string"
+                },
+                "completed_steps": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "dry_run": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.DryRunResult"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "failed_step": {
+                    "type": "string"
+                },
+                "git": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.GitResult"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "status": {
+                    "description": "\"success\", \"partial\", \"failed\"",
+                    "type": "string"
+                }
+            }
+        },
         "github_com_MoranWeissman_sharko_internal_orchestrator.FilePreview": {
             "type": "object",
             "properties": {
@@ -5713,6 +5858,9 @@
         "internal_api.PRItem": {
             "type": "object",
             "properties": {
+                "addon": {
+                    "type": "string"
+                },
                 "cluster": {
                     "type": "string"
                 },

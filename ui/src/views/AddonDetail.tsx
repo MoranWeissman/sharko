@@ -26,8 +26,8 @@ import {
   Sparkles,
   ChevronDown,
 } from 'lucide-react'
-import { api, removeAddon, upgradeAddon, configureAddon } from '@/services/api'
-import type { AddonCatalogItem, ConnectionsListResponse, UpgradeCheckResponse, ValueDiffEntry, ConflictCheckEntry } from '@/services/models'
+import { api, removeAddon, upgradeAddon, configureAddon, getAddonPRs } from '@/services/api'
+import type { AddonCatalogItem, ConnectionsListResponse, UpgradeCheckResponse, ValueDiffEntry, ConflictCheckEntry, TrackedPR } from '@/services/models'
 import { MarkdownRenderer } from '@/components/MarkdownRenderer'
 import { StatCard } from '@/components/StatCard'
 import { StatusBadge } from '@/components/StatusBadge'
@@ -36,28 +36,48 @@ import { ErrorState } from '@/components/ErrorState'
 import { YamlViewer } from '@/components/YamlViewer'
 import { RoleGuard } from '@/components/RoleGuard'
 import { ConfirmationModal } from '@/components/ConfirmationModal'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-} from '@/components/ui/dialog'
 
 function UpgradeVersionList({
   addonName,
   currentVersion,
   onAnalyze,
+  onUpgrade,
 }: {
   addonName: string
   currentVersion: string
   onAnalyze: (version: string) => void
+  onUpgrade: (version: string) => Promise<{ pr_url?: string; pull_request_url?: string }>
 }) {
   const [versions, setVersions] = useState<{ version: string; app_version?: string }[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [visibleCount, setVisibleCount] = useState(5)
+  // Per-row inline upgrade state
+  const [upgradeRowState, setUpgradeRowState] = useState<Record<string, 'confirm' | 'loading' | 'done'>>({})
+  const [upgradePrUrls, setUpgradePrUrls] = useState<Record<string, string>>({})
+  const [upgradeRowErrors, setUpgradeRowErrors] = useState<Record<string, string>>({})
+
+  const handleUpgradeClick = (version: string) => {
+    setUpgradeRowState((s) => ({ ...s, [version]: 'confirm' }))
+    setUpgradeRowErrors((e) => { const n = { ...e }; delete n[version]; return n })
+  }
+
+  const handleUpgradeConfirm = async (version: string) => {
+    setUpgradeRowState((s) => ({ ...s, [version]: 'loading' }))
+    try {
+      const result = await onUpgrade(version)
+      const prUrl = result?.pr_url || result?.pull_request_url
+      if (prUrl) setUpgradePrUrls((u) => ({ ...u, [version]: prUrl }))
+      setUpgradeRowState((s) => ({ ...s, [version]: 'done' }))
+    } catch (err) {
+      setUpgradeRowErrors((e) => ({ ...e, [version]: err instanceof Error ? err.message : 'Upgrade failed' }))
+      setUpgradeRowState((s) => { const n = { ...s }; delete n[version]; return n })
+    }
+  }
+
+  const handleUpgradeCancel = (version: string) => {
+    setUpgradeRowState((s) => { const n = { ...s }; delete n[version]; return n })
+  }
 
   useEffect(() => {
     api
@@ -81,8 +101,7 @@ function UpgradeVersionList({
         <h3 className="text-base font-semibold text-[#0a2a4a]">Available Upgrades</h3>
         <p className="mt-2 text-sm text-[#2a5a7a]">{error}</p>
         <p className="mt-1 text-xs text-[#3a6a8a]">
-          The upgrade versions API may not be configured. You can still upgrade manually using the
-          dialog above.
+          The upgrade versions API may not be configured.
         </p>
       </div>
     )
@@ -116,26 +135,89 @@ function UpgradeVersionList({
         {visibleVersions.map((v, i) => (
           <div
             key={v.version}
-            className="flex items-center justify-between rounded-lg bg-[#e0f0ff] px-4 py-3 dark:bg-gray-700/50"
+            className="rounded-lg bg-[#e0f0ff] px-4 py-3 dark:bg-gray-700/50"
           >
-            <div className="flex items-center gap-2">
-              <span className="font-mono text-sm font-bold text-[#0a2a4a] dark:text-gray-100">{v.version}</span>
-              {i === 0 && (
-                <span className="rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-semibold text-green-700 dark:bg-green-900/40 dark:text-green-400">
-                  LATEST
-                </span>
-              )}
-              {v.app_version && (
-                <span className="text-xs text-[#3a6a8a] dark:text-gray-400">app {v.app_version}</span>
-              )}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-sm font-bold text-[#0a2a4a] dark:text-gray-100">{v.version}</span>
+                {i === 0 && (
+                  <span className="rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-semibold text-green-700 dark:bg-green-900/40 dark:text-green-400">
+                    LATEST
+                  </span>
+                )}
+                {v.app_version && (
+                  <span className="text-xs text-[#3a6a8a] dark:text-gray-400">app {v.app_version}</span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => onAnalyze(v.version)}
+                  className="rounded-lg border border-teal-400 bg-white px-3 py-1.5 text-xs font-medium text-teal-700 hover:bg-teal-50 dark:border-teal-600 dark:bg-gray-800 dark:text-teal-400 dark:hover:bg-teal-900/20"
+                >
+                  Analyze
+                </button>
+                {upgradeRowState[v.version] !== 'done' && (
+                  <button
+                    type="button"
+                    onClick={() => handleUpgradeClick(v.version)}
+                    disabled={upgradeRowState[v.version] === 'loading'}
+                    className="rounded-lg bg-teal-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-teal-700 disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
+                  >
+                    Upgrade
+                  </button>
+                )}
+              </div>
             </div>
-            <button
-              type="button"
-              onClick={() => onAnalyze(v.version)}
-              className="rounded-lg bg-teal-600 px-4 py-1.5 text-xs font-medium text-white hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-600"
-            >
-              Analyze Upgrade
-            </button>
+            {/* Inline confirmation row */}
+            {upgradeRowState[v.version] === 'confirm' && (
+              <div className="mt-2 flex items-center gap-2 rounded-md bg-amber-50 px-3 py-2 dark:bg-amber-950/40">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+                <span className="text-xs text-amber-800 dark:text-amber-300">Upgrade {addonName} to {v.version}?</span>
+                <button
+                  type="button"
+                  onClick={() => handleUpgradeConfirm(v.version)}
+                  className="ml-1 rounded bg-teal-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-teal-700"
+                >
+                  Yes, upgrade
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleUpgradeCancel(v.version)}
+                  className="rounded px-2.5 py-1 text-xs font-medium text-[#3a6a8a] hover:bg-[#d6eeff] dark:text-gray-400 dark:hover:bg-gray-700"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+            {upgradeRowState[v.version] === 'loading' && (
+              <div className="mt-2 flex items-center gap-2 text-xs text-[#2a5a7a] dark:text-gray-400">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Upgrading to {v.version}...
+              </div>
+            )}
+            {upgradeRowState[v.version] === 'done' && (
+              <div className="mt-2 rounded-md bg-green-50 px-3 py-2 dark:bg-green-950/40">
+                <div className="flex items-center gap-2">
+                  <CheckCircle className="h-3.5 w-3.5 text-green-500" />
+                  <span className="text-xs font-medium text-green-700 dark:text-green-400">Upgrade to {v.version} initiated!</span>
+                </div>
+                {upgradePrUrls[v.version] && (
+                  <a
+                    href={upgradePrUrls[v.version]}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-1 inline-flex items-center gap-1 text-xs text-teal-600 hover:underline dark:text-teal-400"
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                    View Pull Request
+                  </a>
+                )}
+              </div>
+            )}
+            {upgradeRowErrors[v.version] && (
+              <p className="mt-1 text-xs text-red-600 dark:text-red-400">{upgradeRowErrors[v.version]}</p>
+            )}
           </div>
         ))}
       </div>
@@ -162,6 +244,7 @@ function InlineUpgradeResults({
   analyzeError,
   onRetry,
   onClose,
+  onUpgrade,
 }: {
   addonName: string
   targetVersion: string
@@ -170,11 +253,35 @@ function InlineUpgradeResults({
   analyzeError: string | null
   onRetry: () => void
   onClose: () => void
+  onUpgrade: (version: string) => Promise<{ pr_url?: string; pull_request_url?: string }>
 }) {
   const [activeTab, setActiveTab] = useState<InlineChangeTab>('added')
   const [aiSummary, setAiSummary] = useState<string | null>(null)
   const [aiLoading, setAiLoading] = useState(false)
   const [aiError, setAiError] = useState<string | null>(null)
+  // Inline upgrade state for this analysis
+  const [upgradeConfirming, setUpgradeConfirming] = useState(false)
+  const [upgradeSubmitting, setUpgradeSubmitting] = useState(false)
+  const [upgradePrUrl, setUpgradePrUrl] = useState<string | null>(null)
+  const [upgradeError, setUpgradeError] = useState<string | null>(null)
+  const [upgradeDone, setUpgradeDone] = useState(false)
+
+  const handleUpgradeConfirm = async () => {
+    setUpgradeSubmitting(true)
+    setUpgradeError(null)
+    try {
+      const res = await onUpgrade(targetVersion)
+      const prUrl = res?.pr_url || res?.pull_request_url || null
+      setUpgradePrUrl(prUrl)
+      setUpgradeDone(true)
+      setUpgradeConfirming(false)
+    } catch (err) {
+      setUpgradeError(err instanceof Error ? err.message : 'Upgrade failed')
+      setUpgradeConfirming(false)
+    } finally {
+      setUpgradeSubmitting(false)
+    }
+  }
 
   const handleGetAISummary = useCallback(async () => {
     setAiLoading(true)
@@ -439,6 +546,91 @@ function InlineUpgradeResults({
           </div>
         )}
       </div>
+
+      {/* Upgrade action */}
+      {!upgradeDone && !upgradeSubmitting && !upgradeConfirming && (
+        <div className="mt-4 border-t border-[#c0ddf0] pt-4 dark:border-gray-700">
+          <button
+            type="button"
+            onClick={() => { setUpgradeConfirming(true); setUpgradeError(null) }}
+            className="inline-flex items-center gap-2 rounded-lg bg-teal-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-600"
+          >
+            <ArrowUpCircle className="h-4 w-4" />
+            Upgrade to {targetVersion}
+          </button>
+        </div>
+      )}
+      {upgradeConfirming && (
+        <div className="mt-4 border-t border-[#c0ddf0] pt-4 dark:border-gray-700">
+          <div className="flex items-start gap-3 rounded-lg bg-amber-50 px-4 py-3 dark:bg-amber-950/40">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+            <div className="flex-1">
+              {result && (result.conflicts ?? []).length > 0 ? (
+                <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
+                  This upgrade has conflicts. Are you sure you want to upgrade to {targetVersion}?
+                </p>
+              ) : (
+                <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
+                  Upgrade {addonName} to {targetVersion}?
+                </p>
+              )}
+              <p className="mt-0.5 text-xs text-amber-700 dark:text-amber-400">This will create a pull request with the version change.</p>
+              <div className="mt-3 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleUpgradeConfirm}
+                  className="inline-flex items-center gap-2 rounded-lg bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-600"
+                >
+                  Yes, upgrade
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setUpgradeConfirming(false)}
+                  className="rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {upgradeSubmitting && (
+        <div className="mt-4 border-t border-[#c0ddf0] pt-4 dark:border-gray-700">
+          <div className="flex items-center gap-2 text-sm text-[#2a5a7a] dark:text-gray-400">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Creating upgrade pull request...
+          </div>
+        </div>
+      )}
+      {upgradeDone && (
+        <div className="mt-4 border-t border-[#c0ddf0] pt-4 dark:border-gray-700">
+          <div className="rounded-lg bg-green-50 px-4 py-3 dark:bg-green-950/40">
+            <div className="flex items-center gap-2">
+              <CheckCircle className="h-4 w-4 text-green-500" />
+              <span className="text-sm font-medium text-green-700 dark:text-green-400">
+                Upgrade to {targetVersion} initiated!
+              </span>
+            </div>
+            {upgradePrUrl && (
+              <a
+                href={upgradePrUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-1 inline-flex items-center gap-1 text-sm text-teal-600 hover:underline dark:text-teal-400"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+                View Pull Request
+              </a>
+            )}
+          </div>
+        </div>
+      )}
+      {upgradeError && (
+        <div className="mt-4 border-t border-[#c0ddf0] pt-4 dark:border-gray-700">
+          <p className="text-sm text-red-600 dark:text-red-400">{upgradeError}</p>
+        </div>
+      )}
     </div>
   )
 }
@@ -505,6 +697,115 @@ function HelpText({ text }: { text: string }) {
   )
 }
 
+function PerClusterUpgradeRow({
+  clusterName,
+  deployedVersion,
+  catalogVersion,
+  isDrifted,
+  onUpgrade,
+}: {
+  clusterName: string
+  deployedVersion: string
+  catalogVersion: string
+  isDrifted: boolean
+  onUpgrade: (cluster: string) => Promise<{ pr_url?: string; pull_request_url?: string }>
+}) {
+  const [state, setState] = useState<'idle' | 'confirm' | 'loading' | 'done'>('idle')
+  const [prUrl, setPrUrl] = useState<string | null>(null)
+  const [upgradeError, setUpgradeError] = useState<string | null>(null)
+
+  const handleConfirm = async () => {
+    setState('loading')
+    setUpgradeError(null)
+    try {
+      const result = await onUpgrade(clusterName)
+      const url = result?.pr_url || result?.pull_request_url || null
+      setPrUrl(url)
+      setState('done')
+    } catch (err) {
+      setUpgradeError(err instanceof Error ? err.message : 'Upgrade failed')
+      setState('idle')
+    }
+  }
+
+  return (
+    <div className="rounded-lg bg-[#e0f0ff] px-4 py-2.5">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <Link
+            to={`/clusters/${clusterName}`}
+            className="text-sm font-medium text-[#0a6aaa] hover:underline"
+          >
+            {clusterName}
+          </Link>
+          <span className="font-mono text-sm text-[#1a4a6a]">{deployedVersion}</span>
+        </div>
+        {isDrifted ? (
+          state === 'done' ? (
+            <div className="flex items-center gap-1.5 text-xs text-green-600 dark:text-green-400">
+              <CheckCircle className="h-3.5 w-3.5" />
+              Upgrade initiated
+              {prUrl && (
+                <a
+                  href={prUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="ml-1 inline-flex items-center gap-1 text-teal-600 hover:underline dark:text-teal-400"
+                >
+                  <ExternalLink className="h-3 w-3" />
+                  PR
+                </a>
+              )}
+            </div>
+          ) : state === 'loading' ? (
+            <span className="flex items-center gap-1.5 text-xs text-[#2a5a7a]">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Upgrading...
+            </span>
+          ) : (
+            <RoleGuard adminOnly>
+              <button
+                type="button"
+                onClick={() => setState('confirm')}
+                className="rounded-lg bg-[#0a2a4a] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#14466e]"
+              >
+                Upgrade to {catalogVersion}
+              </button>
+            </RoleGuard>
+          )
+        ) : (
+          <span className="text-xs text-green-600">✓ Current</span>
+        )}
+      </div>
+      {state === 'confirm' && (
+        <div className="mt-2 flex items-center gap-2 rounded-md bg-amber-50 px-3 py-1.5 dark:bg-amber-950/40">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+          <span className="text-xs text-amber-800 dark:text-amber-300">
+            Upgrade {clusterName} to {catalogVersion}?
+          </span>
+          <button
+            type="button"
+            onClick={handleConfirm}
+            className="ml-1 rounded bg-teal-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-teal-700"
+          >
+            Yes
+          </button>
+          <button
+            type="button"
+            onClick={() => setState('idle')}
+            className="rounded px-2.5 py-1 text-xs font-medium text-[#3a6a8a] hover:bg-[#d6eeff] dark:text-gray-400 dark:hover:bg-gray-700"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+      {upgradeError && (
+        <p className="mt-1 text-xs text-red-600 dark:text-red-400">{upgradeError}</p>
+      )}
+    </div>
+  )
+}
+
 export function AddonDetail() {
   const { name } = useParams<{ name: string }>()
   const navigate = useNavigate()
@@ -529,14 +830,6 @@ export function AddonDetail() {
   const [removing, setRemoving] = useState(false)
   const [removeError, setRemoveError] = useState<string | null>(null)
 
-  // Upgrade addon
-  const [upgradeOpen, setUpgradeOpen] = useState(false)
-  const [upgradeVersion, setUpgradeVersion] = useState('')
-  const [upgradeCluster, setUpgradeCluster] = useState('')
-  const [upgradeSubmitting, setUpgradeSubmitting] = useState(false)
-  const [upgradeError, setUpgradeError] = useState<string | null>(null)
-  const [upgradeResult, setUpgradeResult] = useState<string | null>(null)
-
   // Advanced config editing
   const [isEditingConfig, setIsEditingConfig] = useState(false)
   const [editSyncWave, setEditSyncWave] = useState<number>(0)
@@ -554,6 +847,9 @@ export function AddonDetail() {
   const [inlineAnalysisResult, setInlineAnalysisResult] = useState<UpgradeCheckResponse | null>(null)
   const [inlineAnalyzing, setInlineAnalyzing] = useState(false)
   const [inlineAnalyzeError, setInlineAnalyzeError] = useState<string | null>(null)
+
+  // Tracked PRs for this addon
+  const [addonPRs, setAddonPRs] = useState<TrackedPR[]>([])
 
   useEffect(() => {
     if (!name) return
@@ -583,6 +879,32 @@ export function AddonDetail() {
       .catch(() => {})
   }, [name])
 
+  // Fetch tracked PRs for this addon and auto-refresh while any are open
+  useEffect(() => {
+    if (!name) return
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+
+    const load = () => {
+      getAddonPRs(name)
+        .then((res) => {
+          if (cancelled) return
+          setAddonPRs(res.prs ?? [])
+          const hasOpen = (res.prs ?? []).some((pr) => pr.last_status === 'open')
+          if (hasOpen) {
+            timer = setTimeout(load, 15000)
+          }
+        })
+        .catch(() => {})
+    }
+
+    load()
+    return () => {
+      cancelled = true
+      if (timer) clearTimeout(timer)
+    }
+  }, [name])
+
   const handleRemoveAddon = useCallback(async () => {
     if (!name) return
     setRemoving(true)
@@ -596,24 +918,10 @@ export function AddonDetail() {
     }
   }, [name, navigate])
 
-  const handleUpgrade = useCallback(async () => {
-    if (!name || !upgradeVersion.trim()) return
-    setUpgradeSubmitting(true)
-    setUpgradeError(null)
-    setUpgradeResult(null)
-    try {
-      const result = await upgradeAddon(name, {
-        version: upgradeVersion.trim(),
-        cluster: upgradeCluster.trim() || undefined,
-      })
-      const prUrl = result?.pr_url || result?.pull_request_url
-      setUpgradeResult(prUrl ? `Upgrade initiated. PR: ${prUrl}` : 'Upgrade initiated successfully.')
-    } catch (e: unknown) {
-      setUpgradeError(e instanceof Error ? e.message : 'Failed to upgrade addon')
-    } finally {
-      setUpgradeSubmitting(false)
-    }
-  }, [name, upgradeVersion, upgradeCluster])
+  const handleUpgradeAddon = useCallback(async (version: string, cluster?: string) => {
+    if (!name) throw new Error('No addon name')
+    return upgradeAddon(name, { version, cluster })
+  }, [name])
 
   const handleStartEditConfig = useCallback(() => {
     if (!addon) return
@@ -907,7 +1215,7 @@ export function AddonDetail() {
           <div className="flex shrink-0 items-center gap-2">
             <button
               type="button"
-              onClick={() => { setUpgradeVersion(''); setUpgradeCluster(''); setUpgradeError(null); setUpgradeResult(null); setUpgradeOpen(true) }}
+              onClick={() => setActiveSection('upgrade')}
               className="inline-flex items-center gap-2 rounded-lg border border-teal-300 bg-[#f0f7ff] px-3 py-2 text-sm font-medium text-teal-700 hover:bg-teal-50 dark:border-teal-700 dark:bg-gray-800 dark:text-teal-400 dark:hover:bg-teal-900/20"
             >
               <ArrowUpCircle className="h-4 w-4" />
@@ -939,70 +1247,6 @@ export function AddonDetail() {
       {removeError && (
         <p className="text-sm text-red-600 dark:text-red-400">{removeError}</p>
       )}
-
-      {/* Upgrade Dialog */}
-      <Dialog open={upgradeOpen} onOpenChange={(v) => { if (!v) setUpgradeOpen(false) }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Upgrade {addon.addon_name}</DialogTitle>
-            <DialogDescription>Set a new version for this addon.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div>
-              <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
-                New Version <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={upgradeVersion}
-                onChange={(e) => setUpgradeVersion(e.target.value)}
-                placeholder="e.g. 4.9.0"
-                className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
-                Specific Cluster (optional)
-              </label>
-              <select
-                value={upgradeCluster}
-                onChange={(e) => setUpgradeCluster(e.target.value)}
-                className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
-              >
-                <option value="">All clusters (global)</option>
-                {enabledApps.map((app) => (
-                  <option key={app.cluster_name} value={app.cluster_name}>
-                    {app.cluster_name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            {upgradeError && <p className="text-sm text-red-600 dark:text-red-400">{upgradeError}</p>}
-            {upgradeResult && <p className="text-sm text-green-600 dark:text-green-400">{upgradeResult}</p>}
-          </div>
-          <DialogFooter>
-            <button
-              type="button"
-              onClick={() => setUpgradeOpen(false)}
-              disabled={upgradeSubmitting}
-              className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
-            >
-              {upgradeResult ? 'Close' : 'Cancel'}
-            </button>
-            {!upgradeResult && (
-              <button
-                type="button"
-                onClick={handleUpgrade}
-                disabled={!upgradeVersion.trim() || upgradeSubmitting}
-                className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
-              >
-                {upgradeSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
-                Upgrade
-              </button>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <div className="flex gap-6">
         <DetailNavPanel
@@ -1060,6 +1304,50 @@ export function AddonDetail() {
                 healthy={addon.healthy_applications}
                 total={addon.enabled_clusters}
               />
+
+              {/* Pending Upgrade Banner */}
+              {addonPRs.length > 0 && addonPRs.map((pr) => {
+                const isOpen = pr.last_status === 'open'
+                const isMerged = pr.last_status === 'merged'
+                if (!isOpen && !isMerged) return null
+                const targetVersion = pr.pr_title.match(/to\s+([\d.v][^\s]*)/i)?.[1] ?? null
+                return (
+                  <div
+                    key={pr.pr_id}
+                    className={`flex items-start gap-3 rounded-lg border px-4 py-3 ${
+                      isOpen
+                        ? 'border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/40'
+                        : 'border-green-300 bg-green-50 dark:border-green-700 dark:bg-green-950/40'
+                    }`}
+                  >
+                    <ArrowUpCircle className={`mt-0.5 h-4 w-4 shrink-0 ${isOpen ? 'text-amber-500' : 'text-green-500'}`} />
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-sm font-semibold ${isOpen ? 'text-amber-800 dark:text-amber-300' : 'text-green-800 dark:text-green-300'}`}>
+                        {isOpen ? 'Upgrade in progress' : 'Upgrade merged'}
+                        {addon && targetVersion && (
+                          <span className="ml-2 font-normal">
+                            {addon.version} &rarr; {targetVersion}
+                          </span>
+                        )}
+                      </p>
+                      <p className={`mt-0.5 text-xs ${isOpen ? 'text-amber-700 dark:text-amber-400' : 'text-green-700 dark:text-green-400'}`}>
+                        PR:{' '}
+                        <a
+                          href={pr.pr_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline hover:no-underline"
+                        >
+                          {pr.pr_title}
+                        </a>
+                        {' '}
+                        &mdash; Status:{' '}
+                        <span className="font-medium capitalize">{pr.last_status}</span>
+                      </p>
+                    </div>
+                  </div>
+                )
+              })}
 
               {/* AppSet info */}
               <div className="rounded-lg bg-[#e8f4ff] p-3 text-sm text-[#2a5a7a] dark:bg-gray-800 dark:text-gray-400">
@@ -1541,6 +1829,7 @@ export function AddonDetail() {
                 addonName={addon.addon_name}
                 currentVersion={addon.version}
                 onAnalyze={handleInlineAnalyze}
+                onUpgrade={handleUpgradeAddon}
               />
 
               {/* Inline upgrade analysis results */}
@@ -1553,6 +1842,7 @@ export function AddonDetail() {
                   analyzeError={inlineAnalyzeError}
                   onRetry={() => handleInlineAnalyze(inlineAnalysisVersion)}
                   onClose={handleCloseInlineAnalysis}
+                  onUpgrade={handleUpgradeAddon}
                 />
               )}
 
@@ -1569,41 +1859,14 @@ export function AddonDetail() {
                       const isDrifted =
                         deployedVersion !== addon.version && deployedVersion !== 'N/A'
                       return (
-                        <div
+                        <PerClusterUpgradeRow
                           key={app.cluster_name}
-                          className="flex items-center justify-between rounded-lg bg-[#e0f0ff] px-4 py-2.5"
-                        >
-                          <div className="flex items-center gap-3">
-                            <Link
-                              to={`/clusters/${app.cluster_name}`}
-                              className="text-sm font-medium text-[#0a6aaa] hover:underline"
-                            >
-                              {app.cluster_name}
-                            </Link>
-                            <span className="font-mono text-sm text-[#1a4a6a]">
-                              {deployedVersion}
-                            </span>
-                          </div>
-                          {isDrifted ? (
-                            <RoleGuard adminOnly>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setUpgradeVersion(addon.version)
-                                  setUpgradeCluster(app.cluster_name)
-                                  setUpgradeError(null)
-                                  setUpgradeResult(null)
-                                  setUpgradeOpen(true)
-                                }}
-                                className="rounded-lg bg-[#0a2a4a] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#14466e]"
-                              >
-                                Upgrade to {addon.version}
-                              </button>
-                            </RoleGuard>
-                          ) : (
-                            <span className="text-xs text-green-600">✓ Current</span>
-                          )}
-                        </div>
+                          clusterName={app.cluster_name}
+                          deployedVersion={deployedVersion}
+                          catalogVersion={addon.version}
+                          isDrifted={isDrifted}
+                          onUpgrade={(cluster) => handleUpgradeAddon(addon.version, cluster)}
+                        />
                       )
                     })}
                   </div>

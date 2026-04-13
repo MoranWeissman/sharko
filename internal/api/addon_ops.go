@@ -11,6 +11,113 @@ import (
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
 )
 
+// handleEnableAddon godoc
+//
+// @Summary Enable addon on cluster
+// @Description Enables a specific addon on a cluster. Updates the cluster values file
+// @Description (sets addon to true) and managed-clusters.yaml (sets label to enabled) via PR.
+// @Description If the cluster has a credential provider, addon secrets are created on the remote cluster.
+// @Description Requires yes=true for confirmation. Pass dry_run=true to preview.
+// @Tags clusters
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param name path string true "Cluster name"
+// @Param addon path string true "Addon name"
+// @Param body body orchestrator.EnableAddonRequest true "Enable addon request"
+// @Success 200 {object} orchestrator.EnableAddonResult "Addon enabled (or dry-run preview)"
+// @Success 207 {object} orchestrator.EnableAddonResult "Partial success"
+// @Failure 400 {object} map[string]interface{} "Bad request or missing confirmation"
+// @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 403 {object} map[string]interface{} "Forbidden"
+// @Failure 502 {object} map[string]interface{} "Gateway error"
+// @Router /clusters/{name}/addons/{addon} [post]
+func (s *Server) handleEnableAddon(w http.ResponseWriter, r *http.Request) {
+	if !authz.RequireWithResponse(w, r, "addon.enable") {
+		return
+	}
+
+	clusterName := r.PathValue("name")
+	addonName := r.PathValue("addon")
+	if clusterName == "" {
+		writeError(w, http.StatusBadRequest, "cluster name is required")
+		return
+	}
+	if addonName == "" {
+		writeError(w, http.StatusBadRequest, "addon name is required")
+		return
+	}
+
+	ac, err := s.connSvc.GetActiveArgocdClient()
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
+		return
+	}
+
+	git, err := s.connSvc.GetActiveGitProvider()
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
+		return
+	}
+
+	var req orchestrator.EnableAddonRequest
+	if r.Body != nil && r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+			return
+		}
+	}
+	req.Cluster = clusterName
+	req.Addon = addonName
+
+	orch := orchestrator.New(&s.gitMu, s.credProvider, ac, git, s.gitopsCfg, s.repoPaths, nil)
+	orch.SetSecretManagement(s.addonSecretDefs, s.secretFetcher, remoteclient.NewClientFromKubeconfig)
+	if s.argoSecretManager != nil {
+		roleARN := ""
+		if s.providerCfg != nil {
+			roleARN = s.providerCfg.RoleARN
+		}
+		orch.SetArgoSecretManager(&argoManagerAdapter{mgr: s.argoSecretManager}, roleARN)
+	}
+
+	result, orchErr := orch.EnableAddon(r.Context(), req)
+	if orchErr != nil {
+		if orchErr.Error() == "confirmation required: set yes: true in request body" {
+			writeError(w, http.StatusBadRequest, orchErr.Error())
+			return
+		}
+		writeError(w, http.StatusBadGateway, orchErr.Error())
+		return
+	}
+
+	// Dry-run: return preview without side effects.
+	if req.DryRun {
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
+
+	// Trigger reconciler after addon enable.
+	if s.argoSecretReconciler != nil {
+		s.argoSecretReconciler.Trigger()
+	}
+
+	s.auditLog.Add(audit.Entry{
+		Level:    "info",
+		Event:    "addon_enabled",
+		User:     "sharko",
+		Action:   "enable",
+		Resource: fmt.Sprintf("addon:%s/cluster:%s", addonName, clusterName),
+		Source:   "api",
+		Result:   result.Status,
+	})
+
+	status := http.StatusOK
+	if result.Status == "partial" {
+		status = http.StatusMultiStatus
+	}
+	writeJSON(w, status, result)
+}
+
 // handleDisableAddon godoc
 //
 // @Summary Disable addon on cluster

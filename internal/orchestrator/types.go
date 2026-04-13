@@ -200,15 +200,36 @@ type DisableAddonRequest struct {
 
 // DisableAddonResult is the output of an addon disable operation.
 type DisableAddonResult struct {
-	Cluster        string     `json:"cluster"`
-	Addon          string     `json:"addon"`
-	Status         string     `json:"status"` // "success", "partial", "failed"
-	Cleanup        string     `json:"cleanup"`
-	Git            *GitResult `json:"git,omitempty"`
-	CompletedSteps []string   `json:"completed_steps,omitempty"`
-	FailedStep     string     `json:"failed_step,omitempty"`
-	Error          string     `json:"error,omitempty"`
-	Message        string     `json:"message,omitempty"`
+	Cluster        string        `json:"cluster"`
+	Addon          string        `json:"addon"`
+	Status         string        `json:"status"` // "success", "partial", "failed"
+	Cleanup        string        `json:"cleanup"`
+	Git            *GitResult    `json:"git,omitempty"`
+	CompletedSteps []string      `json:"completed_steps,omitempty"`
+	FailedStep     string        `json:"failed_step,omitempty"`
+	Error          string        `json:"error,omitempty"`
+	Message        string        `json:"message,omitempty"`
+	DryRun         *DryRunResult `json:"dry_run,omitempty"`
+}
+
+// EnableAddonRequest is the input for enabling an addon on a cluster.
+type EnableAddonRequest struct {
+	Cluster string `json:"cluster"`
+	Addon   string `json:"addon"`
+	DryRun  bool   `json:"dry_run,omitempty"`
+	Yes     bool   `json:"yes"` // confirmation required
+}
+
+// EnableAddonResult is the output of an addon enable operation.
+type EnableAddonResult struct {
+	Cluster        string        `json:"cluster"`
+	Addon          string        `json:"addon"`
+	Status         string        `json:"status"` // "success", "partial", "failed"
+	Git            *GitResult    `json:"git,omitempty"`
+	CompletedSteps []string      `json:"completed_steps,omitempty"`
+	FailedStep     string        `json:"failed_step,omitempty"`
+	Error          string        `json:"error,omitempty"`
+	Message        string        `json:"message,omitempty"`
 	DryRun         *DryRunResult `json:"dry_run,omitempty"`
 }
 

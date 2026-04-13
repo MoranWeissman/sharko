@@ -66,6 +66,7 @@ var ActionRequirements = map[string]Role{
 	"pr.delete":                     RoleAdmin,
 
 	// Operator+ actions
+	"addon.enable":                  RoleOperator,
 	"addon.disable":                 RoleOperator,
 	"cluster.register":              RoleOperator,
 	"cluster.adopt":                 RoleOperator,

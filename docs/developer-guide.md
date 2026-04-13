@@ -354,7 +354,7 @@ tracker.TrackPR(ctx, prtracker.PRInfo{
 })
 
 // List tracked PRs with filters
-prs, _ := tracker.ListPRs(ctx, "open", "prod-eu", "")
+prs, _ := tracker.ListPRs(ctx, "open", "prod-eu", "", "")
 
 // Wait for a specific PR
 pr, _ := tracker.PollSinglePR(ctx, 42)

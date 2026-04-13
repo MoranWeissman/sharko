@@ -61,7 +61,7 @@ func TestTrackAndListPR(t *testing.T) {
 	}
 
 	// List all
-	prs, err := tracker.ListPRs(ctx, "", "", "")
+	prs, err := tracker.ListPRs(ctx, "", "", "", "")
 	if err != nil {
 		t.Fatalf("ListPRs: %v", err)
 	}
@@ -73,13 +73,13 @@ func TestTrackAndListPR(t *testing.T) {
 	}
 
 	// List with status filter
-	prs, _ = tracker.ListPRs(ctx, "merged", "", "")
+	prs, _ = tracker.ListPRs(ctx, "merged", "", "", "")
 	if len(prs) != 0 {
 		t.Errorf("expected 0 merged PRs, got %d", len(prs))
 	}
 
 	// List with cluster filter
-	prs, _ = tracker.ListPRs(ctx, "", "prod", "")
+	prs, _ = tracker.ListPRs(ctx, "", "prod", "", "")
 	if len(prs) != 1 {
 		t.Errorf("expected 1 PR for cluster prod, got %d", len(prs))
 	}
@@ -146,7 +146,7 @@ func TestPollOnce_MergedPR(t *testing.T) {
 	}
 
 	// PR should be removed from tracking
-	prs, _ := tracker.ListPRs(ctx, "", "", "")
+	prs, _ := tracker.ListPRs(ctx, "", "", "", "")
 	if len(prs) != 0 {
 		t.Errorf("expected 0 tracked PRs after merge, got %d", len(prs))
 	}
@@ -178,7 +178,7 @@ func TestPollOnce_ClosedPR(t *testing.T) {
 		t.Errorf("expected event pr_closed_without_merge, got %s", (*events)[0].Event)
 	}
 
-	prs, _ := tracker.ListPRs(ctx, "", "", "")
+	prs, _ := tracker.ListPRs(ctx, "", "", "", "")
 	if len(prs) != 0 {
 		t.Errorf("expected 0 tracked PRs after close, got %d", len(prs))
 	}
@@ -209,7 +209,7 @@ func TestStopTracking(t *testing.T) {
 		t.Fatalf("StopTracking: %v", err)
 	}
 
-	prs, _ := tracker.ListPRs(ctx, "", "", "")
+	prs, _ := tracker.ListPRs(ctx, "", "", "", "")
 	if len(prs) != 0 {
 		t.Errorf("expected 0 PRs after stop tracking, got %d", len(prs))
 	}

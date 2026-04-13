@@ -3,9 +3,11 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
+	"github.com/MoranWeissman/sharko/internal/prtracker"
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
 )
 
@@ -77,6 +79,27 @@ func (s *Server) handleUpgradeAddon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if s.prTracker != nil && result != nil && result.PRID > 0 {
+		user := r.Header.Get("X-Sharko-User")
+		if user == "" {
+			user = "system"
+		}
+		_ = s.prTracker.TrackPR(r.Context(), prtracker.PRInfo{
+			PRID:       result.PRID,
+			PRUrl:      result.PRUrl,
+			PRBranch:   result.Branch,
+			PRTitle:    "Upgrade " + addonName,
+			PRBase:     "main",
+			Cluster:    req.Cluster,
+			Addon:      addonName,
+			Operation:  "addon-upgrade",
+			User:       user,
+			Source:     "api",
+			CreatedAt:  time.Now(),
+			LastStatus: "open",
+		})
+	}
+
 	writeJSON(w, http.StatusOK, result)
 }
 
@@ -132,6 +155,25 @@ func (s *Server) handleUpgradeAddonsBatch(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
+	}
+
+	if s.prTracker != nil && result != nil && result.PRID > 0 {
+		user := r.Header.Get("X-Sharko-User")
+		if user == "" {
+			user = "system"
+		}
+		_ = s.prTracker.TrackPR(r.Context(), prtracker.PRInfo{
+			PRID:       result.PRID,
+			PRUrl:      result.PRUrl,
+			PRBranch:   result.Branch,
+			PRTitle:    "Batch addon upgrade",
+			PRBase:     "main",
+			Operation:  "addon-upgrade",
+			User:       user,
+			Source:     "api",
+			CreatedAt:  time.Now(),
+			LastStatus: "open",
+		})
 	}
 
 	writeJSON(w, http.StatusOK, result)
