@@ -1,6 +1,7 @@
 import type {
   AddonCatalogResponse,
   AddonDetailResponse,
+  AdoptClustersResponse,
   AIConfigResponse,
   APIToken,
   AuditEntry,
@@ -195,6 +196,14 @@ export async function deregisterCluster(name: string) {
   return deleteJSON<any>(`/clusters/${encodeURIComponent(name)}`)
 }
 
+export async function adoptClusters(data: { clusters: string[]; auto_merge?: boolean; dry_run?: boolean }) {
+  return postJSON<AdoptClustersResponse>('/clusters/adopt', data)
+}
+
+export async function unadoptCluster(name: string) {
+  return deleteJSON<{ status: string; pr_url?: string }>(`/clusters/${encodeURIComponent(name)}?unadopt=true`)
+}
+
 export async function updateClusterAddons(name: string, addons: Record<string, boolean>) {
   return patchJSON<any>(`/clusters/${encodeURIComponent(name)}`, { addons })
 }
@@ -306,6 +315,7 @@ export const api = {
 
   // Clusters
   getClusters: () => fetchJSON<ClustersResponse>('/clusters'),
+  getDiscoveredClusters: () => fetchJSON<ClustersResponse>('/clusters?managed=false'),
   getCluster: (name: string) => fetchJSON<ClusterDetailResponse>(`/clusters/${name}`),
   getClusterComparison: (name: string) => fetchJSON<ClusterComparisonResponse>(`/clusters/${name}/comparison`),
   getClusterValues: (name: string) => fetchJSON<{ cluster_name: string; values_yaml: string }>(`/clusters/${name}/values`),

@@ -3,8 +3,10 @@ export interface Cluster {
   labels: Record<string, string>
   region?: string
   server_version?: string
+  server_url?: string
   connection_status?: string
   managed?: boolean
+  adopted?: boolean
 }
 
 export interface ClusterHealthStats {
@@ -406,6 +408,20 @@ export interface UpgradeCheckResponse {
 }
 
 // --- Cluster Registration (Story 3.5) ---
+
+// --- Cluster Adoption (Story 4.4) ---
+
+export interface AdoptResult {
+  cluster: string
+  success: boolean
+  error?: string
+  pr_url?: string
+  verification?: VerifyResult
+}
+
+export interface AdoptClustersResponse {
+  results: AdoptResult[]
+}
 
 export type ClusterProvider = 'eks' | 'gke' | 'aks' | 'generic'
 

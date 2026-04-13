@@ -129,6 +129,45 @@ type ConfigureAddonRequest struct {
 	ExtraHelmValues   map[string]string        `json:"extra_helm_values,omitempty"`
 }
 
+// AdoptClustersRequest is the input for adopting existing ArgoCD clusters.
+type AdoptClustersRequest struct {
+	Clusters  []string `json:"clusters"`
+	AutoMerge bool     `json:"auto_merge"` // override per-request; if false, PRs are left open
+	DryRun    bool     `json:"dry_run,omitempty"`
+}
+
+// AdoptClusterResult holds the outcome for a single cluster adoption.
+type AdoptClusterResult struct {
+	Name         string        `json:"name"`
+	Status       string        `json:"status"` // "success", "partial", "failed", "skipped"
+	Verification *verify.Result `json:"verification,omitempty"`
+	Git          *GitResult    `json:"git,omitempty"`
+	Error        string        `json:"error,omitempty"`
+	Message      string        `json:"message,omitempty"`
+	DryRun       *DryRunResult `json:"dry_run,omitempty"`
+}
+
+// AdoptClustersResult is the aggregate response from adopting multiple clusters.
+type AdoptClustersResult struct {
+	Results []AdoptClusterResult `json:"results"`
+}
+
+// UnadoptClusterRequest is the input for un-adopting a cluster.
+type UnadoptClusterRequest struct {
+	Yes    bool `json:"yes"`
+	DryRun bool `json:"dry_run,omitempty"`
+}
+
+// UnadoptClusterResult is the output of an un-adopt operation.
+type UnadoptClusterResult struct {
+	Name    string     `json:"name"`
+	Status  string     `json:"status"` // "success", "partial", "failed"
+	Git     *GitResult `json:"git,omitempty"`
+	Error   string     `json:"error,omitempty"`
+	Message string     `json:"message,omitempty"`
+	DryRun  *DryRunResult `json:"dry_run,omitempty"`
+}
+
 // InitRepoRequest is the input for initializing the addons repository.
 type InitRepoRequest struct {
 	BootstrapArgoCD bool   `json:"bootstrap_argocd"`

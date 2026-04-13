@@ -30,16 +30,21 @@ type ArgocdClient interface {
 // The adapter in internal/api bridges the two packages.
 type ArgoSecretManager interface {
 	Ensure(ctx context.Context, spec ArgoSecretSpec) error
+	SetAnnotation(ctx context.Context, name, key, value string) error
+	GetAnnotation(ctx context.Context, name, key string) (string, error)
+	GetManagedByLabel(ctx context.Context, name string) (string, error)
+	Unadopt(ctx context.Context, name string) error
 }
 
 // ArgoSecretSpec mirrors argosecrets.ClusterSecretSpec but is defined locally
 // to keep the orchestrator free from argosecrets imports.
 type ArgoSecretSpec struct {
-	Name    string
-	Server  string
-	Region  string
-	RoleARN string
-	Labels  map[string]string
+	Name        string
+	Server      string
+	Region      string
+	RoleARN     string
+	Labels      map[string]string
+	Annotations map[string]string
 }
 
 // Orchestrator coordinates multi-step operations across providers, ArgoCD,

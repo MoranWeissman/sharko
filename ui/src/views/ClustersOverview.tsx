@@ -18,8 +18,9 @@ import {
   GitMerge,
   Eye,
   ScanSearch,
+  Unlink,
 } from 'lucide-react';
-import { api, registerCluster, discoverEKSClusters, testClusterConnection } from '@/services/api';
+import { api, registerCluster, discoverEKSClusters, testClusterConnection, unadoptCluster } from '@/services/api';
 import type {
   Cluster,
   ClusterHealthStats,
@@ -40,6 +41,8 @@ import { StatusBadge, isClusterStatus } from '@/components/StatusBadge';
 import { ClusterStatusLegend } from '@/components/ClusterStatusLegend';
 import { DiagnoseModal } from '@/components/DiagnoseModal';
 import { ArgoCDStatusBanner } from '@/components/ArgoCDStatusBanner';
+import { AdoptClustersDialog } from '@/components/AdoptClustersDialog';
+import { ConfirmationModal } from '@/components/ConfirmationModal';
 import {
   Dialog,
   DialogContent,
@@ -85,11 +88,21 @@ export function ClustersOverview() {
   // Test connection state per cluster
   const [testResults, setTestResults] = useState<Record<string, { reachable?: boolean; success?: boolean; server_version?: string; platform?: string; error?: string; error_message?: string } | 'testing'>>({});
 
-  // Adopt (start managing) state per cluster
-  const [manageStatus, setManageStatus] = useState<Record<string, { loading?: boolean; success?: string; error?: string }>>({});
+  // Adopt (start managing) state per cluster (populated by AdoptClustersDialog via refresh)
+  const [manageStatus] = useState<Record<string, { loading?: boolean; success?: string; error?: string }>>({});
 
   // Diagnose modal state
   const [diagnoseCluster, setDiagnoseCluster] = useState<string | null>(null);
+
+  // Adopt dialog state
+  const [adoptDialogOpen, setAdoptDialogOpen] = useState(false);
+  const [adoptDialogClusters, setAdoptDialogClusters] = useState<Cluster[]>([]);
+  const [selectedDiscoveredForAdopt, setSelectedDiscoveredForAdopt] = useState<Record<string, boolean>>({});
+
+  // Un-adopt state
+  const [unadoptTarget, setUnadoptTarget] = useState<string | null>(null);
+  const [unadoptLoading, setUnadoptLoading] = useState(false);
+  const [unadoptResult, setUnadoptResult] = useState<{ success?: string; error?: string } | null>(null);
 
   // ArgoCD unreachable detection
   const [argoCDUnreachable, setArgoCDUnreachable] = useState(false);
@@ -313,18 +326,39 @@ export function ClustersOverview() {
     }
   }, []);
 
-  const handleAdoptCluster = useCallback(async (name: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setManageStatus(prev => ({ ...prev, [name]: { loading: true } }));
+  const handleOpenAdoptDialog = useCallback((clusters: Cluster[]) => {
+    setAdoptDialogClusters(clusters);
+    setAdoptDialogOpen(true);
+  }, []);
+
+  const handleAdoptSuccess = useCallback(() => {
+    setSelectedDiscoveredForAdopt({});
+    void fetchData();
+  }, [fetchData]);
+
+  const handleUnadopt = useCallback(async () => {
+    if (!unadoptTarget) return;
+    setUnadoptLoading(true);
+    setUnadoptResult(null);
     try {
-      const result = await registerCluster({ name, addons: {} });
-      const prUrl = result?.git?.pr_url || result?.pr_url || result?.pull_request_url;
-      setManageStatus(prev => ({ ...prev, [name]: { success: prUrl || 'Cluster adopted' } }));
+      const result = await unadoptCluster(unadoptTarget);
+      setUnadoptResult({ success: result.pr_url || 'Cluster un-adopted successfully.' });
+      setUnadoptTarget(null);
       void fetchData();
     } catch (err) {
-      setManageStatus(prev => ({ ...prev, [name]: { error: err instanceof Error ? err.message : 'Failed to adopt cluster' } }));
+      setUnadoptResult({ error: err instanceof Error ? err.message : 'Un-adopt failed' });
+      setUnadoptTarget(null);
+    } finally {
+      setUnadoptLoading(false);
     }
-  }, [fetchData]);
+  }, [unadoptTarget, fetchData]);
+
+  const toggleDiscoveredSelection = useCallback((name: string) => {
+    setSelectedDiscoveredForAdopt((prev) => ({
+      ...prev,
+      [name]: !prev[name],
+    }));
+  }, []);
 
   const availableVersions = useMemo(() => {
     const versions = new Set(
@@ -385,6 +419,23 @@ export function ClustersOverview() {
   const discoveredClusters = useMemo(
     () => filteredClusters.filter((c) => c.managed === false || c.connection_status === 'not_in_git'),
     [filteredClusters],
+  );
+
+  const handleAdoptSelected = useCallback(() => {
+    const selected = discoveredClusters.filter((c) => selectedDiscoveredForAdopt[c.name]);
+    if (selected.length === 0) return;
+    handleOpenAdoptDialog(selected);
+  }, [discoveredClusters, selectedDiscoveredForAdopt, handleOpenAdoptDialog]);
+
+  const toggleAllDiscovered = useCallback((checked: boolean) => {
+    const next: Record<string, boolean> = {};
+    discoveredClusters.forEach((c) => { next[c.name] = checked; });
+    setSelectedDiscoveredForAdopt(next);
+  }, [discoveredClusters]);
+
+  const selectedDiscoveredCount = useMemo(
+    () => discoveredClusters.filter((c) => selectedDiscoveredForAdopt[c.name]).length,
+    [discoveredClusters, selectedDiscoveredForAdopt],
   );
 
   const handleStatusFilter = (filter: StatusFilter) => {
@@ -1123,6 +1174,18 @@ export function ClustersOverview() {
                             <HelpCircle className="h-3 w-3" />
                             Diagnose
                           </button>
+                          {cluster.adopted && (
+                            <RoleGuard adminOnly>
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); setUnadoptTarget(cluster.name); }}
+                                className="inline-flex items-center gap-1 rounded border border-red-300 px-2 py-1 text-xs text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/20"
+                              >
+                                <Unlink className="h-3 w-3" />
+                                Un-adopt
+                              </button>
+                            </RoleGuard>
+                          )}
                           {testResult && testResult !== 'testing' && (
                             testResult.reachable !== false && testResult.success !== false
                               ? <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
@@ -1212,11 +1275,25 @@ export function ClustersOverview() {
                   <p className="mb-2 font-mono text-xs text-[#2a5a7a] dark:text-gray-400">
                     {cluster.server_version ? `v${cluster.server_version}` : '--'}
                   </p>
-                  {addonCount > 0 && (
-                    <span className="inline-flex items-center rounded-full bg-[#d6eeff] px-2 py-0.5 text-xs font-medium text-[#1a4a6a] dark:bg-gray-700 dark:text-gray-300">
-                      {addonCount} addon{addonCount !== 1 ? 's' : ''}
-                    </span>
-                  )}
+                  <div className="flex items-center justify-between">
+                    {addonCount > 0 && (
+                      <span className="inline-flex items-center rounded-full bg-[#d6eeff] px-2 py-0.5 text-xs font-medium text-[#1a4a6a] dark:bg-gray-700 dark:text-gray-300">
+                        {addonCount} addon{addonCount !== 1 ? 's' : ''}
+                      </span>
+                    )}
+                    {cluster.adopted && (
+                      <RoleGuard adminOnly>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); setUnadoptTarget(cluster.name); }}
+                          className="inline-flex items-center gap-1 rounded border border-red-300 px-2 py-1 text-xs text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/20"
+                        >
+                          <Unlink className="h-3 w-3" />
+                          Un-adopt
+                        </button>
+                      </RoleGuard>
+                    )}
+                  </div>
                 </div>
               );
             })}
@@ -1232,23 +1309,49 @@ export function ClustersOverview() {
       {/* Discovered (ArgoCD-only) Clusters */}
       {discoveredClusters.length > 0 && (
         <div className="space-y-3">
-          <h3 className="flex items-center gap-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-200">
-            <AlertTriangle className="h-4 w-4 text-amber-500" />
-            Discovered (ArgoCD)
-            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
-              {discoveredClusters.length}
-            </span>
-            <span className="text-xs font-normal text-[#3a6a8a] dark:text-gray-500">
-              — present in ArgoCD but not yet managed by Sharko
-            </span>
-          </h3>
+          <div className="flex items-center justify-between">
+            <h3 className="flex items-center gap-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-200">
+              <AlertTriangle className="h-4 w-4 text-amber-500" />
+              Discovered Clusters
+              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                {discoveredClusters.length}
+              </span>
+              <span className="text-xs font-normal text-[#3a6a8a] dark:text-gray-500">
+                — present in ArgoCD but not yet managed by Sharko
+              </span>
+            </h3>
+            <RoleGuard adminOnly>
+              {selectedDiscoveredCount > 0 && (
+                <button
+                  type="button"
+                  onClick={handleAdoptSelected}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-teal-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-600"
+                >
+                  <GitMerge className="h-3.5 w-3.5" />
+                  Adopt Selected ({selectedDiscoveredCount})
+                </button>
+              )}
+            </RoleGuard>
+          </div>
 
           {viewMode === 'list' ? (
             <div className="overflow-x-auto rounded-xl ring-2 ring-amber-200 bg-[#fffbf0] shadow-sm dark:border-amber-800 dark:bg-gray-800">
               <table className="w-full text-left text-sm">
                 <thead className="border-b border-amber-200 bg-amber-50 text-xs uppercase text-amber-700 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-500">
                   <tr>
+                    <th className="px-3 py-3 w-8">
+                      <RoleGuard adminOnly>
+                        <input
+                          type="checkbox"
+                          checked={discoveredClusters.length > 0 && discoveredClusters.every((c) => selectedDiscoveredForAdopt[c.name])}
+                          onChange={(e) => toggleAllDiscovered(e.target.checked)}
+                          className="rounded border-amber-300 dark:border-gray-600"
+                          aria-label="Select all discovered clusters"
+                        />
+                      </RoleGuard>
+                    </th>
                     <th className="px-6 py-3">Name</th>
+                    <th className="px-6 py-3">Server URL</th>
                     <th className="px-6 py-3">Status</th>
                     <th className="px-6 py-3">Version</th>
                     <th className="px-6 py-3">Actions</th>
@@ -1260,8 +1363,21 @@ export function ClustersOverview() {
                     const ms = manageStatus[cluster.name];
                     return (
                       <tr key={cluster.name} className="hover:bg-amber-50/60 dark:hover:bg-amber-950/20">
+                        <td className="px-3 py-3">
+                          <RoleGuard adminOnly>
+                            <input
+                              type="checkbox"
+                              checked={!!selectedDiscoveredForAdopt[cluster.name]}
+                              onChange={() => toggleDiscoveredSelection(cluster.name)}
+                              className="rounded border-amber-300 dark:border-gray-600"
+                            />
+                          </RoleGuard>
+                        </td>
                         <td className="px-6 py-3 font-medium text-[#0a2a4a] dark:text-gray-100">
                           {cluster.name}
+                        </td>
+                        <td className="px-6 py-3 font-mono text-xs text-[#3a6a8a] dark:text-gray-400 max-w-[200px] truncate" title={cluster.server_url}>
+                          {cluster.server_url ?? '--'}
                         </td>
                         <td className="px-6 py-3">
                           <ConnectionStatus status={cluster.connection_status ?? 'unknown'} />
@@ -1295,12 +1411,12 @@ export function ClustersOverview() {
                               <RoleGuard adminOnly>
                                 <button
                                   type="button"
-                                  onClick={(e) => handleAdoptCluster(cluster.name, e)}
+                                  onClick={() => handleOpenAdoptDialog([cluster])}
                                   disabled={!!ms?.loading}
                                   className="inline-flex items-center gap-1 rounded bg-teal-600 px-2 py-1 text-xs font-medium text-white hover:bg-teal-700 disabled:opacity-50"
                                 >
                                   {ms?.loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <GitMerge className="h-3 w-3" />}
-                                  Start Managing
+                                  Adopt
                                 </button>
                               </RoleGuard>
                             </div>
@@ -1328,7 +1444,17 @@ export function ClustersOverview() {
                 return (
                   <div key={cluster.name} className="rounded-lg ring-2 ring-amber-200 bg-[#fffbf0] p-4 shadow-sm dark:border-amber-800 dark:bg-gray-800">
                     <div className="mb-2 flex items-center justify-between">
-                      <h3 className="text-sm font-bold text-[#0a2a4a] dark:text-gray-100">{cluster.name}</h3>
+                      <div className="flex items-center gap-2">
+                        <RoleGuard adminOnly>
+                          <input
+                            type="checkbox"
+                            checked={!!selectedDiscoveredForAdopt[cluster.name]}
+                            onChange={() => toggleDiscoveredSelection(cluster.name)}
+                            className="rounded border-amber-300 dark:border-gray-600"
+                          />
+                        </RoleGuard>
+                        <h3 className="text-sm font-bold text-[#0a2a4a] dark:text-gray-100">{cluster.name}</h3>
+                      </div>
                       <button
                         type="button"
                         onClick={(e) => handleTestCluster(cluster.name, e)}
@@ -1339,6 +1465,11 @@ export function ClustersOverview() {
                         Test
                       </button>
                     </div>
+                    {cluster.server_url && (
+                      <p className="mb-2 font-mono text-xs text-[#3a6a8a] dark:text-gray-400 truncate" title={cluster.server_url}>
+                        {cluster.server_url}
+                      </p>
+                    )}
                     {testResult && testResult !== 'testing' && (
                       <div className="mb-2">
                         {testResult.reachable !== false && testResult.success !== false
@@ -1362,12 +1493,12 @@ export function ClustersOverview() {
                     <RoleGuard adminOnly>
                       <button
                         type="button"
-                        onClick={(e) => handleAdoptCluster(cluster.name, e)}
+                        onClick={() => handleOpenAdoptDialog([cluster])}
                         disabled={!!ms?.loading}
                         className="inline-flex w-full items-center justify-center gap-1 rounded bg-teal-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-teal-700 disabled:opacity-50"
                       >
                         {ms?.loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <GitMerge className="h-3 w-3" />}
-                        Start Managing
+                        Adopt
                       </button>
                     </RoleGuard>
                     {ms?.success && (
@@ -1383,6 +1514,54 @@ export function ClustersOverview() {
               })}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Adopt Clusters Dialog */}
+      <AdoptClustersDialog
+        open={adoptDialogOpen}
+        onClose={() => setAdoptDialogOpen(false)}
+        clusters={adoptDialogClusters}
+        onSuccess={handleAdoptSuccess}
+        onDiagnose={(name) => { setAdoptDialogOpen(false); setDiagnoseCluster(name); }}
+      />
+
+      {/* Un-adopt Confirmation Modal */}
+      <ConfirmationModal
+        open={unadoptTarget !== null}
+        onClose={() => setUnadoptTarget(null)}
+        onConfirm={handleUnadopt}
+        title="Un-adopt Cluster"
+        description={`This will remove "${unadoptTarget}" from Sharko management. The ArgoCD connection will remain, but Sharko will no longer manage addons for this cluster.`}
+        confirmText="Un-adopt"
+        typeToConfirm={unadoptTarget ?? ''}
+        destructive
+        loading={unadoptLoading}
+      />
+
+      {/* Un-adopt result banner */}
+      {unadoptResult && (
+        <div className={`flex items-center justify-between rounded-md px-4 py-2 text-sm ${
+          unadoptResult.error
+            ? 'border border-red-300 bg-red-50 text-red-800 dark:border-red-700 dark:bg-red-900/30 dark:text-red-300'
+            : 'border border-green-300 bg-green-50 text-green-800 dark:border-green-700 dark:bg-green-900/30 dark:text-green-300'
+        }`}>
+          <span>
+            {unadoptResult.error
+              ? unadoptResult.error
+              : unadoptResult.success?.startsWith('http')
+                ? <>Cluster un-adopted. PR: <a href={unadoptResult.success} target="_blank" rel="noopener noreferrer" className="underline font-medium">{unadoptResult.success}</a></>
+                : unadoptResult.success
+            }
+          </span>
+          <button
+            type="button"
+            onClick={() => setUnadoptResult(null)}
+            className={`ml-4 rounded p-0.5 ${unadoptResult.error ? 'hover:bg-red-100 dark:hover:bg-red-800' : 'hover:bg-green-100 dark:hover:bg-green-800'}`}
+            aria-label="Dismiss"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
       )}
     </div>

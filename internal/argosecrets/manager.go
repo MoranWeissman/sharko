@@ -29,6 +29,12 @@ const (
 	ManagedByValue = "sharko"
 )
 
+// Annotation keys used by Sharko on ArgoCD cluster secrets.
+const (
+	// AnnotationAdopted marks a cluster as adopted (vs. registered from scratch).
+	AnnotationAdopted = "sharko.sharko.io/adopted"
+)
+
 // ClusterSecretSpec is the desired state for an ArgoCD cluster secret.
 type ClusterSecretSpec struct {
 	// Name is the cluster name. Used as both the K8s Secret name and stringData.name.
@@ -43,6 +49,8 @@ type ClusterSecretSpec struct {
 	// Labels contains addon labels from cluster-addons.yaml (e.g. addon-datadog: "true").
 	// These are merged with system labels before writing to the secret.
 	Labels map[string]string
+	// Annotations contains optional annotations to set on the secret (e.g. adopted marker).
+	Annotations map[string]string
 }
 
 // Manager creates and reconciles ArgoCD cluster secrets in a target namespace.
@@ -187,9 +195,10 @@ func (m *Manager) Ensure(ctx context.Context, spec ClusterSecretSpec) (bool, err
 		// Secret does not exist — create it.
 		secret := &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      spec.Name,
-				Namespace: m.namespace,
-				Labels:    desiredLabels,
+				Name:        spec.Name,
+				Namespace:   m.namespace,
+				Labels:      desiredLabels,
+				Annotations: spec.Annotations,
 			},
 			Type:       corev1.SecretTypeOpaque,
 			StringData: desiredStringData,
@@ -210,6 +219,9 @@ func (m *Manager) Ensure(ctx context.Context, spec ClusterSecretSpec) (bool, err
 		// Always write — do not compare hashes. Adoption is itself a meaningful state change.
 		adopted := existing.DeepCopy()
 		adopted.Labels = desiredLabels
+		if spec.Annotations != nil {
+			adopted.Annotations = mergeAnnotations(adopted.Annotations, spec.Annotations)
+		}
 		adopted.Data = nil
 		adopted.StringData = desiredStringData
 		if _, adoptErr := m.client.CoreV1().Secrets(m.namespace).Update(ctx, adopted, metav1.UpdateOptions{}); adoptErr != nil {
@@ -233,6 +245,9 @@ func (m *Manager) Ensure(ctx context.Context, spec ClusterSecretSpec) (bool, err
 	// Hashes differ — update in place, preserving any fields we did not set.
 	updated := existing.DeepCopy()
 	updated.Labels = desiredLabels
+	if spec.Annotations != nil {
+		updated.Annotations = mergeAnnotations(updated.Annotations, spec.Annotations)
+	}
 	updated.Data = nil
 	updated.StringData = desiredStringData
 	if _, updateErr := m.client.CoreV1().Secrets(m.namespace).Update(ctx, updated, metav1.UpdateOptions{}); updateErr != nil {
@@ -242,6 +257,17 @@ func (m *Manager) Ensure(ctx context.Context, spec ClusterSecretSpec) (bool, err
 		"cluster", spec.Name, "namespace", m.namespace,
 	)
 	return true, nil
+}
+
+// mergeAnnotations merges new annotations into existing, overwriting on conflict.
+func mergeAnnotations(existing, additions map[string]string) map[string]string {
+	if existing == nil {
+		existing = make(map[string]string, len(additions))
+	}
+	for k, v := range additions {
+		existing[k] = v
+	}
+	return existing
 }
 
 // List returns the names of all ArgoCD cluster secrets managed by Sharko.
@@ -285,6 +311,70 @@ func (m *Manager) Delete(ctx context.Context, name string) error {
 	}
 
 	slog.Info("[argosecrets] cluster secret deleted",
+		"cluster", name, "namespace", m.namespace,
+	)
+	return nil
+}
+
+// SetAnnotation adds or updates a single annotation on the named secret.
+// Returns an error if the secret does not exist.
+func (m *Manager) SetAnnotation(ctx context.Context, name, key, value string) error {
+	existing, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("getting secret %q in namespace %q: %w", name, m.namespace, err)
+	}
+
+	updated := existing.DeepCopy()
+	if updated.Annotations == nil {
+		updated.Annotations = make(map[string]string)
+	}
+	updated.Annotations[key] = value
+	if _, updateErr := m.client.CoreV1().Secrets(m.namespace).Update(ctx, updated, metav1.UpdateOptions{}); updateErr != nil {
+		return fmt.Errorf("setting annotation %q on secret %q: %w", key, name, updateErr)
+	}
+	slog.Info("[argosecrets] annotation set on cluster secret",
+		"cluster", name, "annotation", key, "value", value,
+	)
+	return nil
+}
+
+// GetAnnotation returns the value of a specific annotation on the named secret.
+// Returns ("", nil) if the secret exists but the annotation is not set.
+// Returns an error if the secret does not exist.
+func (m *Manager) GetAnnotation(ctx context.Context, name, key string) (string, error) {
+	existing, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("getting secret %q in namespace %q: %w", name, m.namespace, err)
+	}
+	return existing.Annotations[key], nil
+}
+
+// GetManagedByLabel returns the managed-by label value for the named secret.
+// Returns ("", nil) if the secret exists but the label is not set.
+func (m *Manager) GetManagedByLabel(ctx context.Context, name string) (string, error) {
+	existing, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("getting secret %q in namespace %q: %w", name, m.namespace, err)
+	}
+	return existing.Labels[LabelManagedBy], nil
+}
+
+// Unadopt removes the managed-by label and adopted annotation from the named secret
+// without deleting it. The secret remains in the argocd namespace so ArgoCD can still
+// connect to the cluster.
+func (m *Manager) Unadopt(ctx context.Context, name string) error {
+	existing, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("getting secret %q in namespace %q: %w", name, m.namespace, err)
+	}
+
+	updated := existing.DeepCopy()
+	delete(updated.Labels, LabelManagedBy)
+	delete(updated.Annotations, AnnotationAdopted)
+	if _, updateErr := m.client.CoreV1().Secrets(m.namespace).Update(ctx, updated, metav1.UpdateOptions{}); updateErr != nil {
+		return fmt.Errorf("unadopting secret %q in namespace %q: %w", name, m.namespace, updateErr)
+	}
+	slog.Info("[argosecrets] cluster secret unadopted — managed-by label and adopted annotation removed",
 		"cluster", name, "namespace", m.namespace,
 	)
 	return nil
