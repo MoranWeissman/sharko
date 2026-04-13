@@ -155,11 +155,40 @@ func (s *UpgradeService) CheckUpgrade(ctx context.Context, addonName, targetVers
 	}
 
 	currentVersion := addon.Version
+	var baselineNote string
+	baselineUnavailable := false
 
-	// Fetch values.yaml for current and target versions from Helm repo
+	// Fetch values.yaml for current and target versions from Helm repo.
+	// If the current version is missing from the repo, fall back to the nearest
+	// available version or proceed without a baseline comparison.
 	oldValues, err := s.fetcher.FetchValues(ctx, addon.RepoURL, addon.Chart, currentVersion)
 	if err != nil {
-		return nil, fmt.Errorf("fetching current version values: %w", err)
+		slog.Warn("current version not available in Helm repo, searching for fallback",
+			"addon", addonName, "version", currentVersion, "error", err)
+
+		// Try to find the nearest available version.
+		nearestVersion, findErr := s.fetcher.FindNearestVersion(ctx, addon.RepoURL, addon.Chart, currentVersion)
+		if findErr == nil && nearestVersion != "" {
+			slog.Info("using fallback version for upgrade baseline",
+				"addon", addonName, "original", currentVersion, "fallback", nearestVersion)
+			oldValues, err = s.fetcher.FetchValues(ctx, addon.RepoURL, addon.Chart, nearestVersion)
+			if err != nil {
+				slog.Warn("fallback version fetch also failed", "version", nearestVersion, "error", err)
+				oldValues = ""
+				baselineUnavailable = true
+				baselineNote = fmt.Sprintf("Current version %s is not available in the Helm repository. "+
+					"Upgrade analysis shows target version details only.", currentVersion)
+			} else {
+				baselineNote = fmt.Sprintf("Note: %s not found in repo, using %s as baseline",
+					currentVersion, nearestVersion)
+			}
+		} else {
+			// No fallback found — proceed without comparison.
+			oldValues = ""
+			baselineUnavailable = true
+			baselineNote = fmt.Sprintf("Current version %s is not available in the Helm repository. "+
+				"Upgrade analysis shows target version details only.", currentVersion)
+		}
 	}
 
 	newValues, err := s.fetcher.FetchValues(ctx, addon.RepoURL, addon.Chart, targetVersion)
@@ -167,107 +196,108 @@ func (s *UpgradeService) CheckUpgrade(ctx context.Context, addonName, targetVers
 		return nil, fmt.Errorf("fetching target version values: %w", err)
 	}
 
-	// Diff the two values.yaml files
-	added, removed, changed, err := helm.DiffValues(oldValues, newValues)
-	if err != nil {
-		return nil, fmt.Errorf("diffing values: %w", err)
-	}
+	// Diff the two values.yaml files (if baseline is available).
+	var addedEntries, removedEntries, changedEntries []models.ValueDiffEntry
+	if oldValues != "" {
+		added, removed, changed, diffErr := helm.DiffValues(oldValues, newValues)
+		if diffErr != nil {
+			return nil, fmt.Errorf("diffing values: %w", diffErr)
+		}
 
-	// Convert helm diffs to model diffs
-	addedEntries := make([]models.ValueDiffEntry, 0, len(added))
-	for _, d := range added {
-		addedEntries = append(addedEntries, models.ValueDiffEntry{
-			Path:     d.Path,
-			Type:     string(d.Type),
-			NewValue: d.NewValue,
-		})
-	}
+		addedEntries = make([]models.ValueDiffEntry, 0, len(added))
+		for _, d := range added {
+			addedEntries = append(addedEntries, models.ValueDiffEntry{
+				Path:     d.Path,
+				Type:     string(d.Type),
+				NewValue: d.NewValue,
+			})
+		}
 
-	removedEntries := make([]models.ValueDiffEntry, 0, len(removed))
-	for _, d := range removed {
-		removedEntries = append(removedEntries, models.ValueDiffEntry{
-			Path:     d.Path,
-			Type:     string(d.Type),
-			OldValue: d.OldValue,
-		})
-	}
+		removedEntries = make([]models.ValueDiffEntry, 0, len(removed))
+		for _, d := range removed {
+			removedEntries = append(removedEntries, models.ValueDiffEntry{
+				Path:     d.Path,
+				Type:     string(d.Type),
+				OldValue: d.OldValue,
+			})
+		}
 
-	changedEntries := make([]models.ValueDiffEntry, 0, len(changed))
-	for _, d := range changed {
-		changedEntries = append(changedEntries, models.ValueDiffEntry{
-			Path:     d.Path,
-			Type:     string(d.Type),
-			OldValue: d.OldValue,
-			NewValue: d.NewValue,
-		})
-	}
-
-	// Check for conflicts with global values
-	var allConflicts []models.ConflictCheckEntry
-
-	globalValuesPath := fmt.Sprintf("configuration/addons-global-values/%s.yaml", addonName)
-	globalData, err := gp.GetFileContent(ctx, globalValuesPath, "main")
-	if err != nil {
-		slog.Warn("could not fetch global values", "addon", addonName, "error", err)
-	} else {
-		conflicts, err := helm.FindConflicts(string(globalData), oldValues, newValues)
-		if err != nil {
-			slog.Warn("conflict check failed for global values", "error", err)
-		} else {
-			for _, c := range conflicts {
-				allConflicts = append(allConflicts, models.ConflictCheckEntry{
-					Path:            c.Path,
-					ConfiguredValue: c.ConfiguredValue,
-					OldDefault:      c.OldDefault,
-					NewDefault:      c.NewDefault,
-					Source:          "global",
-				})
-			}
+		changedEntries = make([]models.ValueDiffEntry, 0, len(changed))
+		for _, d := range changed {
+			changedEntries = append(changedEntries, models.ValueDiffEntry{
+				Path:     d.Path,
+				Type:     string(d.Type),
+				OldValue: d.OldValue,
+				NewValue: d.NewValue,
+			})
 		}
 	}
 
-	// Check for conflicts with per-cluster values
-	clusterData, err := gp.GetFileContent(ctx, s.managedClustersPath, "main")
-	if err != nil && strings.Contains(err.Error(), "404") {
-		clusterData = []byte("clusters: []")
-		err = nil
-	}
-	if err != nil {
-		slog.Warn("could not fetch cluster addons config", "error", err)
-	} else {
-		clusters, err := s.parser.ParseClusterAddons(clusterData)
-		if err != nil {
-			slog.Warn("could not parse cluster addons", "error", err)
+	// Check for conflicts with global values (skip if baseline unavailable).
+	var allConflicts []models.ConflictCheckEntry
+
+	if !baselineUnavailable {
+		globalValuesPath := fmt.Sprintf("configuration/addons-global-values/%s.yaml", addonName)
+		globalData, globalErr := gp.GetFileContent(ctx, globalValuesPath, "main")
+		if globalErr != nil {
+			slog.Warn("could not fetch global values", "addon", addonName, "error", globalErr)
 		} else {
-			for _, cluster := range clusters {
-				// Check if this cluster has the addon enabled
-				labelVal, hasAddon := cluster.Labels[addonName]
-				if !hasAddon || !strings.EqualFold(labelVal, "enabled") {
-					continue
-				}
-
-				// Try to fetch per-cluster addon values
-				clusterValuesPath := fmt.Sprintf("configuration/addons-cluster-values/%s/%s.yaml", cluster.Name, addonName)
-				clusterValuesData, err := gp.GetFileContent(ctx, clusterValuesPath, "main")
-				if err != nil {
-					// Cluster may not have per-addon overrides, that's fine
-					continue
-				}
-
-				conflicts, err := helm.FindConflicts(string(clusterValuesData), oldValues, newValues)
-				if err != nil {
-					slog.Warn("conflict check failed for cluster", "cluster", cluster.Name, "error", err)
-					continue
-				}
-
+			conflicts, conflictErr := helm.FindConflicts(string(globalData), oldValues, newValues)
+			if conflictErr != nil {
+				slog.Warn("conflict check failed for global values", "error", conflictErr)
+			} else {
 				for _, c := range conflicts {
 					allConflicts = append(allConflicts, models.ConflictCheckEntry{
 						Path:            c.Path,
 						ConfiguredValue: c.ConfiguredValue,
 						OldDefault:      c.OldDefault,
 						NewDefault:      c.NewDefault,
-						Source:          cluster.Name,
+						Source:          "global",
 					})
+				}
+			}
+		}
+
+		// Check for conflicts with per-cluster values
+		clusterData, clusterErr := gp.GetFileContent(ctx, s.managedClustersPath, "main")
+		if clusterErr != nil && strings.Contains(clusterErr.Error(), "404") {
+			clusterData = []byte("clusters: []")
+			clusterErr = nil
+		}
+		if clusterErr != nil {
+			slog.Warn("could not fetch cluster addons config", "error", clusterErr)
+		} else {
+			clusters, parseErr := s.parser.ParseClusterAddons(clusterData)
+			if parseErr != nil {
+				slog.Warn("could not parse cluster addons", "error", parseErr)
+			} else {
+				for _, cluster := range clusters {
+					labelVal, hasAddon := cluster.Labels[addonName]
+					if !hasAddon || !strings.EqualFold(labelVal, "enabled") {
+						continue
+					}
+
+					clusterValuesPath := fmt.Sprintf("configuration/addons-cluster-values/%s/%s.yaml", cluster.Name, addonName)
+					clusterValuesData, cvErr := gp.GetFileContent(ctx, clusterValuesPath, "main")
+					if cvErr != nil {
+						continue
+					}
+
+					conflicts, conflictErr := helm.FindConflicts(string(clusterValuesData), oldValues, newValues)
+					if conflictErr != nil {
+						slog.Warn("conflict check failed for cluster", "cluster", cluster.Name, "error", conflictErr)
+						continue
+					}
+
+					for _, c := range conflicts {
+						allConflicts = append(allConflicts, models.ConflictCheckEntry{
+							Path:            c.Path,
+							ConfiguredValue: c.ConfiguredValue,
+							OldDefault:      c.OldDefault,
+							NewDefault:      c.NewDefault,
+							Source:          cluster.Name,
+						})
+					}
 				}
 			}
 		}
@@ -279,15 +309,17 @@ func (s *UpgradeService) CheckUpgrade(ctx context.Context, addonName, targetVers
 	releaseNotes, _ := s.fetcher.FetchReleaseNotes(ctx, addon.RepoURL, addon.Chart, targetVersion)
 
 	return &models.UpgradeCheckResponse{
-		AddonName:      addonName,
-		Chart:          addon.Chart,
-		CurrentVersion: currentVersion,
-		TargetVersion:  targetVersion,
-		TotalChanges:   totalChanges,
-		Added:          addedEntries,
-		Removed:        removedEntries,
-		Changed:        changedEntries,
-		Conflicts:      allConflicts,
-		ReleaseNotes:   releaseNotes,
+		AddonName:           addonName,
+		Chart:               addon.Chart,
+		CurrentVersion:      currentVersion,
+		TargetVersion:       targetVersion,
+		TotalChanges:        totalChanges,
+		Added:               addedEntries,
+		Removed:             removedEntries,
+		Changed:             changedEntries,
+		Conflicts:           allConflicts,
+		ReleaseNotes:        releaseNotes,
+		BaselineUnavailable: baselineUnavailable,
+		BaselineNote:        baselineNote,
 	}, nil
 }

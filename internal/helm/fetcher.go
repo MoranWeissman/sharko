@@ -95,6 +95,87 @@ func (f *Fetcher) ListVersions(ctx context.Context, repoURL, chartName string) (
 	return versions, nil
 }
 
+// FindNearestVersion finds the closest available version to the target version.
+// It searches for versions with the same major.minor and a lower patch, then
+// falls back to the closest minor version within the same major.
+// Returns empty string if no suitable fallback is found.
+func (f *Fetcher) FindNearestVersion(ctx context.Context, repoURL, chartName, targetVersion string) (string, error) {
+	versions, err := f.ListVersions(ctx, repoURL, chartName)
+	if err != nil {
+		return "", err
+	}
+
+	targetParts := parseVersion(targetVersion)
+	if targetParts == nil {
+		return "", nil
+	}
+
+	// Pass 1: Find highest patch within same major.minor that is <= target patch.
+	var bestSameMajorMinor string
+	var bestPatch int = -1
+	for _, v := range versions {
+		parts := parseVersion(v.Version)
+		if parts == nil {
+			continue
+		}
+		if parts[0] == targetParts[0] && parts[1] == targetParts[1] && parts[2] < targetParts[2] {
+			if parts[2] > bestPatch {
+				bestPatch = parts[2]
+				bestSameMajorMinor = v.Version
+			}
+		}
+	}
+	if bestSameMajorMinor != "" {
+		return bestSameMajorMinor, nil
+	}
+
+	// Pass 2: Find highest version within same major that is < target minor.
+	var bestSameMajor string
+	var bestMinor int = -1
+	var bestMinorPatch int = -1
+	for _, v := range versions {
+		parts := parseVersion(v.Version)
+		if parts == nil {
+			continue
+		}
+		if parts[0] == targetParts[0] && parts[1] < targetParts[1] {
+			if parts[1] > bestMinor || (parts[1] == bestMinor && parts[2] > bestMinorPatch) {
+				bestMinor = parts[1]
+				bestMinorPatch = parts[2]
+				bestSameMajor = v.Version
+			}
+		}
+	}
+	return bestSameMajor, nil
+}
+
+// parseVersion extracts [major, minor, patch] from a version string like "1.16.3" or "v1.16.3".
+// Returns nil if parsing fails.
+func parseVersion(version string) []int {
+	v := strings.TrimPrefix(version, "v")
+	parts := strings.SplitN(v, ".", 3)
+	if len(parts) < 3 {
+		return nil
+	}
+	result := make([]int, 3)
+	for i, p := range parts {
+		// Strip pre-release suffix (e.g., "3-beta.1" -> "3")
+		numStr := p
+		for j, ch := range p {
+			if ch < '0' || ch > '9' {
+				numStr = p[:j]
+				break
+			}
+		}
+		n := 0
+		for _, ch := range numStr {
+			n = n*10 + int(ch-'0')
+		}
+		result[i] = n
+	}
+	return result
+}
+
 // FetchValues downloads a chart archive and extracts values.yaml.
 func (f *Fetcher) FetchValues(ctx context.Context, repoURL, chartName, version string) (string, error) {
 	// Check cache first
