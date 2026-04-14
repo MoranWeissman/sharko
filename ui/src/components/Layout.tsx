@@ -137,6 +137,7 @@ export function Layout() {
   const location = useLocation()
   const [collapsed, setCollapsed] = useState(false)
   const [aiPanelOpen, setAiPanelOpen] = useState(false)
+  const [aiInitialMessage, setAiInitialMessage] = useState<string | undefined>()
   const { theme, toggleTheme } = useTheme()
   const { logout, isAdmin } = useAuth()
 
@@ -171,7 +172,13 @@ export function Layout() {
   }, [])
 
   useEffect(() => {
-    const handler = () => openAiPanel()
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail
+      if (typeof detail === 'string' && detail) {
+        setAiInitialMessage(detail)
+      }
+      openAiPanel()
+    }
     window.addEventListener('open-assistant', handler)
     return () => window.removeEventListener('open-assistant', handler)
   }, [openAiPanel])
@@ -396,7 +403,7 @@ export function Layout() {
               </div>
             </div>
             <button
-              onClick={() => setAiPanelOpen(false)}
+              onClick={() => { setAiPanelOpen(false); setAiInitialMessage(undefined) }}
               className="rounded-lg p-1 text-white/80 hover:bg-white/20 hover:text-white"
               aria-label="Close AI panel"
             >
@@ -405,7 +412,7 @@ export function Layout() {
           </div>
           {/* Chat content */}
           <div className="flex-1 overflow-hidden">
-            <AIAssistant embedded pageContext={getAIPageContext(location.pathname)} />
+            <AIAssistant embedded pageContext={getAIPageContext(location.pathname)} initialMessage={aiInitialMessage} />
           </div>
         </div>
       )}

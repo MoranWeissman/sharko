@@ -794,14 +794,23 @@ export function ClusterDetail() {
 
               {/* ArgoCD connection error banner */}
               {data.argocd_connection_status && data.argocd_connection_status !== 'Successful' && (
-                <div className="flex items-start gap-3 rounded-xl ring-2 ring-red-300 bg-red-50 px-5 py-4 dark:ring-red-700 dark:bg-red-950/30">
-                  <AlertTriangle className="h-5 w-5 shrink-0 text-red-600 dark:text-red-400 mt-0.5" />
-                  <div>
-                    <p className="text-sm font-semibold text-red-700 dark:text-red-400">ArgoCD Connection Failed</p>
-                    {data.argocd_connection_message && (
-                      <p className="mt-0.5 text-xs text-red-600 dark:text-red-400">{data.argocd_connection_message}</p>
-                    )}
+                <div className="flex items-start justify-between gap-3 rounded-xl ring-2 ring-red-300 bg-red-50 px-5 py-4 dark:ring-red-700 dark:bg-red-950/30">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="h-5 w-5 shrink-0 text-red-600 dark:text-red-400 mt-0.5" />
+                    <div>
+                      <p className="text-sm font-semibold text-red-700 dark:text-red-400">ArgoCD Connection Failed</p>
+                      {data.argocd_connection_message && (
+                        <p className="mt-0.5 text-xs text-red-600 dark:text-red-400">{data.argocd_connection_message}</p>
+                      )}
+                    </div>
                   </div>
+                  <button
+                    onClick={() => window.dispatchEvent(new CustomEvent('open-assistant', { detail: `ArgoCD cannot connect to cluster ${name}. Error: ${data.argocd_connection_message}. What could cause this and how do I fix it?` }))}
+                    className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-800 dark:text-red-400"
+                  >
+                    <MessageSquare className="h-3.5 w-3.5" />
+                    Ask AI
+                  </button>
                 </div>
               )}
             </>

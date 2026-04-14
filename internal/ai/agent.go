@@ -95,6 +95,7 @@ HOW IT WORKS:
 5. NEVER ask the user for information you can look up with tools. Call the tool yourself.
 6. ALWAYS remember the full conversation context. If the user mentioned an addon earlier, use it.
 7. When in doubt, call a tool. It is ALWAYS better to call a tool than to ask the user.
+8. When a cluster shows connection failures or unhealthy status, ALWAYS call get_argocd_cluster_connection first to get the actual error message before suggesting troubleshooting steps.
 
 === TOOL SELECTION GUIDE ===
 CRITICAL DISTINCTION:
@@ -110,6 +111,7 @@ These are DIFFERENT. "deployed" = get_argocd_app_health. "available"/"catalog" =
 - "Show details of app X" → get_app_details with app_name={addon}-{cluster}
 - "Is everything healthy?" → get_unhealthy_addons
 - "What clusters are connected?" → get_cluster_status
+- "Why is cluster X failing/unreachable?" → get_argocd_cluster_connection FIRST to get the actual error
 - "Compare versions / upgrade" → list_chart_versions then compare_chart_versions
 - "Config for addon X on cluster Y?" → get_addon_config_on_cluster
 - "How many versions behind?" → list_chart_versions, then count

@@ -264,6 +264,14 @@ func GetToolDefinitions(writeEnabled bool) []ToolDefinition {
 				Parameters:  json.RawMessage(`{"type":"object","properties":{"query":{"type":"string","description":"Search term to find relevant memories"}},"required":["query"]}`),
 			},
 		},
+		{
+			Type: "function",
+			Function: ToolFunction{
+				Name:        "get_argocd_cluster_connection",
+				Description: "Get the ArgoCD connection state and error message for a specific cluster. Use this FIRST when investigating cluster connection failures.",
+				Parameters:  json.RawMessage(`{"type":"object","properties":{"cluster_name":{"type":"string","description":"Name of the cluster to check"}},"required":["cluster_name"]}`),
+			},
+		},
 	}
 	if writeEnabled {
 		tools = append(tools, GetWriteToolDefinitions()...)
@@ -357,6 +365,11 @@ func (e *ToolExecutor) ExecuteTool(ctx context.Context, name string, args json.R
 			return e.memory.Search(params["query"]), nil
 		}
 		return "Memory system not available.", nil
+	case "get_argocd_cluster_connection":
+		cn := params["cluster_name"]
+		if cn == "" { cn = params["name"] }
+		if cn == "" { cn = params["cluster"] }
+		return e.getArgoCDClusterConnection(ctx, cn)
 	case "enable_addon":
 		return e.enableAddon(ctx, params["connection"], params["cluster_name"], params["addon_name"])
 	case "disable_addon":
@@ -767,6 +780,21 @@ func (e *ToolExecutor) getClusterStatus(ctx context.Context) (string, error) {
 		return "No clusters found.", nil
 	}
 	return fmt.Sprintf("Cluster connection status (%d clusters):\n%s", len(clusters), sb.String()), nil
+}
+
+func (e *ToolExecutor) getArgoCDClusterConnection(ctx context.Context, clusterName string) (string, error) {
+	if clusterName == "" {
+		return "Please specify a cluster name.", nil
+	}
+	status, message, err := argocd.NewService(e.ac).GetClusterConnectionInfo(ctx, clusterName)
+	if err != nil {
+		return fmt.Sprintf("Error fetching connection info for cluster %q: %v", clusterName, err), nil
+	}
+	result := fmt.Sprintf("ArgoCD connection to %s: Status=%s", clusterName, status)
+	if message != "" {
+		result += fmt.Sprintf(", Message=%s", message)
+	}
+	return result, nil
 }
 
 func (e *ToolExecutor) getRecentSyncs(ctx context.Context, limit int) (string, error) {
