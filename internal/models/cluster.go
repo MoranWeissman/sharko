@@ -113,7 +113,9 @@ type ClusterComparisonResponse struct {
 	TotalUntrackedInArgocd  int `json:"total_untracked_in_argocd"`
 	TotalDisabledInGit      int `json:"total_disabled_in_git"`
 
-	ClusterConnectionState string `json:"cluster_connection_state,omitempty"`
+	ClusterConnectionState  string `json:"cluster_connection_state,omitempty"`
+	ArgocdConnectionStatus  string `json:"argocd_connection_status,omitempty"`  // e.g. "Successful", "Failed"
+	ArgocdConnectionMessage string `json:"argocd_connection_message,omitempty"` // error details from ArgoCD
 }
 
 // ClusterValuesResponse is the API response for raw cluster values YAML.

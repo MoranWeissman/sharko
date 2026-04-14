@@ -81,6 +81,8 @@ export interface ClusterComparisonResponse {
   total_untracked_in_argocd: number
   total_disabled_in_git: number
   cluster_connection_state?: string
+  argocd_connection_status?: string
+  argocd_connection_message?: string
 }
 
 export interface AddonDeploymentInfo {

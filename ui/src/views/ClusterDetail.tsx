@@ -791,6 +791,19 @@ export function ClusterDetail() {
                   </div>
                 </div>
               )}
+
+              {/* ArgoCD connection error banner */}
+              {data.argocd_connection_status && data.argocd_connection_status !== 'Successful' && (
+                <div className="flex items-start gap-3 rounded-xl ring-2 ring-red-300 bg-red-50 px-5 py-4 dark:ring-red-700 dark:bg-red-950/30">
+                  <AlertTriangle className="h-5 w-5 shrink-0 text-red-600 dark:text-red-400 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-semibold text-red-700 dark:text-red-400">ArgoCD Connection Failed</p>
+                    {data.argocd_connection_message && (
+                      <p className="mt-0.5 text-xs text-red-600 dark:text-red-400">{data.argocd_connection_message}</p>
+                    )}
+                  </div>
+                </div>
+              )}
             </>
           )}
 

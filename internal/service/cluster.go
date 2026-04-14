@@ -332,8 +332,15 @@ func (s *ClusterService) GetClusterComparison(ctx context.Context, clusterName s
 		}
 	}
 
-	connState, _ := argocdSvc.GetClusterConnectionState(ctx, clusterName)
-	cluster.ConnectionStatus = connState
+	connStatus, connMessage, connErr := argocdSvc.GetClusterConnectionInfo(ctx, clusterName)
+	if connErr != nil {
+		slog.Warn("could not fetch argocd connection info", "cluster", clusterName, "error", connErr)
+		if connStatus == "" {
+			connStatus = "Unknown"
+		}
+		connMessage = connErr.Error()
+	}
+	cluster.ConnectionStatus = connStatus
 
 	return &models.ClusterComparisonResponse{
 		Cluster:                      *cluster,
@@ -351,7 +358,9 @@ func (s *ClusterService) GetClusterComparison(ctx context.Context, clusterName s
 		TotalMissingInArgocd:         totalMissing,
 		TotalUntrackedInArgocd:       totalUntracked,
 		TotalDisabledInGit:           0,
-		ClusterConnectionState:       connState,
+		ClusterConnectionState:       connStatus,
+		ArgocdConnectionStatus:       connStatus,
+		ArgocdConnectionMessage:      connMessage,
 	}, nil
 }
 
