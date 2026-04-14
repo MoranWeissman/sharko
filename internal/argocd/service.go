@@ -99,3 +99,23 @@ func (s *Service) GetClusterConnectionState(ctx context.Context, clusterName str
 
 	return "", fmt.Errorf("cluster %q not found in ArgoCD", clusterName)
 }
+
+// GetClusterConnectionInfo looks up the named cluster in ArgoCD and returns
+// both the connection status (e.g., "Successful", "Failed") and the connection
+// message (error details when status is "Failed"). If ArgoCD is unreachable,
+// status is set to "Unknown" and the error is returned.
+func (s *Service) GetClusterConnectionInfo(ctx context.Context, clusterName string) (status, message string, err error) {
+	clusters, err := s.client.ListClusters(ctx)
+	if err != nil {
+		return "Unknown", "", fmt.Errorf("fetching clusters: %w", err)
+	}
+
+	for _, c := range clusters {
+		if c.Name == clusterName || c.Server == clusterName {
+			msg, _ := c.Info["connectionMessage"].(string)
+			return c.ConnectionState, msg, nil
+		}
+	}
+
+	return "", "", fmt.Errorf("cluster %q not found in ArgoCD", clusterName)
+}
