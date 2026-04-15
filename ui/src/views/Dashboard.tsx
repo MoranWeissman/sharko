@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Server, AppWindow, Package, Rocket, AlertTriangle, CheckCircle2,
-  ArrowUpCircle, Activity, Clock, ChevronRight
+  ArrowUpCircle, Activity, Clock, ChevronRight, ShieldAlert, RefreshCw
 } from 'lucide-react';
 import { api } from '@/services/api';
 import type { DashboardStats, SyncActivityEntry, ClustersResponse } from '@/services/models';
@@ -66,6 +66,72 @@ function timeAgo(timestamp: string): string {
   return `${Math.floor(secs / 86400)}d ago`;
 }
 
+// --- Bootstrap Health Banner ---
+
+interface BootstrapHealthBannerProps {
+  health: string;
+  sync: string;
+}
+
+function BootstrapHealthBanner({ health, sync }: BootstrapHealthBannerProps) {
+  const [dismissed, setDismissed] = useState(false);
+  if (dismissed) return null;
+
+  // Red for Degraded/Missing/Error/Unknown, amber for anything else non-Healthy
+  const isCritical = health === 'Degraded' || health === 'Missing' || health === 'Error' || health === 'Unknown';
+  const borderClass = isCritical
+    ? 'border-red-300 dark:border-red-700'
+    : 'border-amber-300 dark:border-amber-700';
+  const bgClass = isCritical
+    ? 'bg-red-50 dark:bg-red-900/20'
+    : 'bg-amber-50 dark:bg-amber-900/20';
+  const textClass = isCritical
+    ? 'text-red-800 dark:text-red-300'
+    : 'text-amber-800 dark:text-amber-300';
+  const iconClass = isCritical
+    ? 'text-red-500 dark:text-red-400'
+    : 'text-amber-500 dark:text-amber-400';
+  const badgeBg = isCritical
+    ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
+    : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300';
+  const dismissClass = isCritical
+    ? 'text-red-600 hover:bg-red-100 dark:text-red-400 dark:hover:bg-red-800'
+    : 'text-amber-600 hover:bg-amber-100 dark:text-amber-400 dark:hover:bg-amber-800';
+
+  return (
+    <div className={`flex items-start justify-between rounded-lg border-2 ${borderClass} ${bgClass} px-4 py-3`}>
+      <div className={`flex items-start gap-3 text-sm ${textClass}`}>
+        <ShieldAlert className={`h-5 w-5 shrink-0 mt-0.5 ${iconClass}`} />
+        <div>
+          <p className="font-semibold">ArgoCD Bootstrap Application Issue</p>
+          <p className="mt-0.5 text-xs opacity-90">
+            The <code className="rounded bg-black/10 px-1 dark:bg-white/10">cluster-addons-bootstrap</code> application
+            is the foundation of all addon deployments. An unhealthy bootstrap app may prevent addons from syncing.
+          </p>
+          <div className="mt-2 flex items-center gap-2">
+            <span className={`rounded px-2 py-0.5 text-xs font-medium ${badgeBg}`}>
+              Health: {health}
+            </span>
+            <span className={`rounded px-2 py-0.5 text-xs font-medium ${badgeBg}`}>
+              Sync: {sync}
+            </span>
+          </div>
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={() => setDismissed(true)}
+        className={`ml-4 mt-0.5 rounded p-0.5 ${dismissClass}`}
+        aria-label="Dismiss"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+        </svg>
+      </button>
+    </div>
+  );
+}
+
 // --- Main Dashboard ---
 
 export function Dashboard() {
@@ -74,15 +140,20 @@ export function Dashboard() {
   const [recentSyncs, setRecentSyncs] = useState<SyncActivityEntry[]>([]);
   const [versionDrifts, setVersionDrifts] = useState<{ addon: string; count: number }[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [attentionItems, setAttentionItems] = useState<{ app_name: string; addon_name: string; cluster: string; health: string; sync: string; error?: string; error_type?: string }[]>([]);
   const [showAttention, setShowAttention] = useState(false);
   const [clusters, setClusters] = useState<{ name: string; connectionStatus: string; addons: { name: string; health: string }[]; healthy: number; total: number }[]>([]);
   const [argoCDUnreachable, setArgoCDUnreachable] = useState(false);
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (background = false) => {
     try {
-      setLoading(true);
+      if (background) {
+        setIsRefreshing(true);
+      } else {
+        setLoading(true);
+      }
       setError(null);
       const [statsData, obsData, matrixData, attention, clustersData] = await Promise.all([
         api.getDashboardStats(),
@@ -148,20 +219,35 @@ export function Dashboard() {
         setClusters(problemClusters)
       }
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to load dashboard');
+      if (!background) {
+        setError(e instanceof Error ? e.message : 'Failed to load dashboard');
+      }
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
     }
   }, []);
+
+  const handleRefresh = useCallback(() => {
+    void fetchData(true);
+  }, [fetchData]);
 
   const handlePRMerged = useCallback((pr: TrackedPR) => {
     showToast(`PR #${pr.pr_id} merged -- ${pr.cluster ?? ''} ${pr.operation}`)
     // Refresh dashboard data when a PR merges
-    void fetchData()
+    void fetchData(true)
   }, [fetchData])
 
   useEffect(() => {
     void fetchData();
+  }, [fetchData]);
+
+  // Auto-refresh every 30s
+  useEffect(() => {
+    const interval = setInterval(() => {
+      void fetchData(true);
+    }, 30_000);
+    return () => clearInterval(interval);
   }, [fetchData]);
 
   if (loading) return <LoadingState message="Loading dashboard..." />;
@@ -186,7 +272,7 @@ export function Dashboard() {
             alt="Sharko"
             className="hidden h-32 w-auto sm:block"
           />
-          <div>
+          <div className="flex-1">
             <h1 className="text-2xl font-bold tracking-tight sm:text-3xl" style={{ fontFamily: '"Quicksand", sans-serif', fontWeight: 700 }}>
               Sharko
             </h1>
@@ -194,12 +280,27 @@ export function Dashboard() {
               Addon management across all your Kubernetes clusters.
             </p>
           </div>
+          <button
+            onClick={handleRefresh}
+            className="rounded-md p-2 text-white/70 hover:bg-white/10 hover:text-white"
+            title="Refresh"
+          >
+            <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+          </button>
         </div>
         <WaveDecoration />
       </div>
 
       {/* ArgoCD Status Banner */}
       <ArgoCDStatusBanner visible={argoCDUnreachable} />
+
+      {/* Bootstrap App Health Banner */}
+      {stats.bootstrap_app_health && stats.bootstrap_app_health !== 'Healthy' && (
+        <BootstrapHealthBanner
+          health={stats.bootstrap_app_health}
+          sync={stats.bootstrap_app_sync ?? 'Unknown'}
+        />
+      )}
 
       {/* Needs Attention */}
       {hasIssues || attentionItems.length > 0 ? (

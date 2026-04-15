@@ -178,6 +178,8 @@ export interface DashboardStats {
     by_health_status: { healthy: number; progressing: number; degraded: number; unknown: number }
   }
   addons: { total_available: number; total_deployments: number; enabled_deployments: number }
+  bootstrap_app_health?: string
+  bootstrap_app_sync?: string
 }
 
 export interface PullRequest {

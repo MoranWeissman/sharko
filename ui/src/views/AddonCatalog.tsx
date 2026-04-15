@@ -15,6 +15,7 @@ import {
   LayoutList,
   Plus,
   Loader2,
+  RefreshCw,
 } from 'lucide-react'
 import { api, addAddon } from '@/services/api'
 import type { AddonCatalogItem, AddonCatalogResponse } from '@/services/models'
@@ -374,6 +375,7 @@ function AddonListTable({ addons }: { addons: AddonCatalogItem[] }) {
 export function AddonCatalog() {
   const [catalogData, setCatalogData] = useState<AddonCatalogResponse | null>(null)
   const [loading, setLoading] = useState(true)
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
   const [search, setSearch] = useState('')
@@ -391,18 +393,38 @@ export function AddonCatalog() {
   const [addAddonError, setAddAddonError] = useState<string | null>(null)
   const [addAddonResult, setAddAddonResult] = useState<string | null>(null)
 
-  const fetchCatalog = useCallback(() => {
+  const fetchCatalog = useCallback((background = false) => {
+    if (background) {
+      setIsRefreshing(true)
+    }
     return api
       .getAddonCatalog()
       .then((data) => setCatalogData(data))
-      .catch((e: unknown) =>
-        setError(e instanceof Error ? e.message : 'Failed to load addon catalog'),
-      )
-      .finally(() => setLoading(false))
+      .catch((e: unknown) => {
+        if (!background) {
+          setError(e instanceof Error ? e.message : 'Failed to load addon catalog')
+        }
+      })
+      .finally(() => {
+        setLoading(false)
+        setIsRefreshing(false)
+      })
   }, [])
+
+  const handleRefresh = useCallback(() => {
+    void fetchCatalog(true)
+  }, [fetchCatalog])
 
   useEffect(() => {
     void fetchCatalog()
+  }, [fetchCatalog])
+
+  // Auto-refresh every 60s (less critical page)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      void fetchCatalog(true)
+    }, 60_000)
+    return () => clearInterval(interval)
   }, [fetchCatalog])
 
   const openAddAddon = useCallback(() => {
@@ -548,16 +570,25 @@ export function AddonCatalog() {
             All addons defined in your Git catalog. See deployment coverage, health, and version per addon. <span className="font-medium text-amber-600 dark:text-amber-400">Catalog Only</span> means the addon is defined in your catalog but not yet enabled on any cluster.
           </p>
         </div>
-        <RoleGuard adminOnly>
+        <div className="flex shrink-0 items-center gap-2">
           <button
-            type="button"
-            onClick={openAddAddon}
-            className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-[#0a2a4a] px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-[#0d3558] dark:bg-blue-700 dark:hover:bg-blue-600"
+            onClick={handleRefresh}
+            className="rounded-md p-2 text-[#3a6a8a] hover:bg-[#d6eeff] dark:text-gray-400 dark:hover:bg-gray-700"
+            title="Refresh"
           >
-            <Plus className="h-4 w-4" />
-            Add Addon
+            <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
           </button>
-        </RoleGuard>
+          <RoleGuard adminOnly>
+            <button
+              type="button"
+              onClick={openAddAddon}
+              className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-[#0a2a4a] px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-[#0d3558] dark:bg-blue-700 dark:hover:bg-blue-600"
+            >
+              <Plus className="h-4 w-4" />
+              Add Addon
+            </button>
+          </RoleGuard>
+        </div>
       </div>
 
       {/* Add Addon Dialog */}

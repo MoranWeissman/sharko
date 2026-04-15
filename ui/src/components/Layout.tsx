@@ -179,7 +179,8 @@ export function Layout() {
 
     const handleMouseMove = (e: MouseEvent) => {
       if (!isDragging.current) return
-      const newWidth = Math.min(700, Math.max(320, window.innerWidth - e.clientX))
+      const maxWidth = Math.min(700, window.innerWidth - 400)
+      const newWidth = Math.min(maxWidth, Math.max(320, window.innerWidth - e.clientX))
       setAiPanelWidth(newWidth)
     }
 
@@ -303,7 +304,7 @@ export function Layout() {
       </aside>
 
       {/* Right side: top bar + content */}
-      <div className="flex flex-1 flex-col overflow-hidden">
+      <div className="flex flex-col overflow-hidden" style={{ flex: '1 1 0', minWidth: 400 }}>
         {/* Top bar */}
         <header className="flex h-14 shrink-0 items-center justify-between border-b border-[#6aade0] bg-[#f0f7ff] px-4 dark:border-gray-700 dark:bg-gray-900">
           {/* Left: mobile hamburger + breadcrumbs */}
@@ -416,8 +417,14 @@ export function Layout() {
           {/* Resize handle */}
           <div
             onMouseDown={handleMouseDown}
-            className="w-1 cursor-col-resize bg-[#6aade0] hover:bg-teal-500 transition-colors dark:bg-gray-700 dark:hover:bg-teal-600"
-          />
+            className="group relative w-1.5 cursor-col-resize bg-[#6aade0] hover:bg-teal-500 transition-colors dark:bg-gray-700 dark:hover:bg-teal-600 flex items-center justify-center"
+          >
+            <div className="absolute flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+              <div className="h-1 w-1 rounded-full bg-white/80" />
+              <div className="h-1 w-1 rounded-full bg-white/80" />
+              <div className="h-1 w-1 rounded-full bg-white/80" />
+            </div>
+          </div>
         <div style={{ width: aiPanelWidth }} className="flex shrink-0 flex-col border-l border-[#6aade0] bg-[#f0f7ff] dark:border-gray-700 dark:bg-gray-900">
           {/* Panel header */}
           <div className="flex h-14 items-center justify-between border-b border-[#6aade0] bg-gradient-to-r from-teal-600 to-blue-700 px-4 dark:border-gray-700">
