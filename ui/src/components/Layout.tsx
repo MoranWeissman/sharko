@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { NavLink, Outlet, useNavigate, useLocation, Link } from 'react-router-dom'
 import {
   LayoutDashboard,
@@ -146,6 +146,8 @@ export function Layout() {
   const [mobileOpen, setMobileOpen] = useState(false)
   const { activeConnection, loading } = useConnections()
   const [openPRCount, setOpenPRCount] = useState(0)
+  const [aiPanelWidth, setAiPanelWidth] = useState(380)
+  const isDragging = useRef(false)
 
   useEffect(() => {
     fetch('/api/v1/health')
@@ -169,6 +171,26 @@ export function Layout() {
   const openAiPanel = useCallback(() => {
     setAiPanelOpen(true)
     setCollapsed(true)
+  }, [])
+
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    isDragging.current = true
+    e.preventDefault()
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDragging.current) return
+      const newWidth = Math.min(700, Math.max(320, window.innerWidth - e.clientX))
+      setAiPanelWidth(newWidth)
+    }
+
+    const handleMouseUp = () => {
+      isDragging.current = false
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+    }
+
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
   }, [])
 
   useEffect(() => {
@@ -390,7 +412,13 @@ export function Layout() {
 
       {/* AI Panel — right side */}
       {aiPanelOpen && (
-        <div className="flex w-[380px] shrink-0 flex-col border-l border-[#6aade0] bg-[#f0f7ff] dark:border-gray-700 dark:bg-gray-900">
+        <>
+          {/* Resize handle */}
+          <div
+            onMouseDown={handleMouseDown}
+            className="w-1 cursor-col-resize bg-[#6aade0] hover:bg-teal-500 transition-colors dark:bg-gray-700 dark:hover:bg-teal-600"
+          />
+        <div style={{ width: aiPanelWidth }} className="flex shrink-0 flex-col border-l border-[#6aade0] bg-[#f0f7ff] dark:border-gray-700 dark:bg-gray-900">
           {/* Panel header */}
           <div className="flex h-14 items-center justify-between border-b border-[#6aade0] bg-gradient-to-r from-teal-600 to-blue-700 px-4 dark:border-gray-700">
             <div className="flex items-center gap-2 text-white">
@@ -415,6 +443,7 @@ export function Layout() {
             <AIAssistant embedded pageContext={getAIPageContext(location.pathname)} initialMessage={aiInitialMessage} />
           </div>
         </div>
+        </>
       )}
 
       {/* Floating AI Assistant */}

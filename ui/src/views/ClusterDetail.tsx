@@ -759,27 +759,55 @@ export function ClusterDetail() {
               </div>
 
               {/* Connection status banner */}
-              {computedStatus === 'unreachable' && (
-                <div className="flex items-center justify-between rounded-xl border-2 border-red-300 bg-red-50 px-5 py-3 dark:border-red-700 dark:bg-red-900/20">
-                  <div className="flex items-center gap-2 text-red-700 dark:text-red-400">
-                    <WifiOff className="h-5 w-5 shrink-0" />
-                    <div>
-                      <span className="text-sm font-semibold">Cluster unreachable</span>
-                      {data.cluster_connection_state && (
-                        <span className="ml-2 text-xs text-red-600 dark:text-red-400">({data.cluster_connection_state})</span>
-                      )}
-                      <p className="text-xs text-red-600 dark:text-red-400">Addon health data below reflects the last known state and may be stale.</p>
+              {computedStatus === 'unreachable' && (() => {
+                const hasArgoCDError = data.argocd_connection_status && data.argocd_connection_status !== 'Successful';
+                if (hasArgoCDError) {
+                  // Consolidated banner: ArgoCD error IS the root cause
+                  return (
+                    <div className="flex items-start justify-between gap-3 rounded-xl border-2 border-red-300 bg-red-50 px-5 py-4 dark:border-red-700 dark:bg-red-900/20">
+                      <div className="flex items-start gap-3 text-red-700 dark:text-red-400">
+                        <WifiOff className="h-5 w-5 shrink-0 mt-0.5" />
+                        <div>
+                          <span className="text-sm font-semibold">Cluster Unreachable — ArgoCD Connection Failed</span>
+                          {data.argocd_connection_message && (
+                            <p className="mt-0.5 text-xs text-red-600 dark:text-red-400">{data.argocd_connection_message}</p>
+                          )}
+                          <p className="mt-1 text-xs text-red-600 dark:text-red-400">Addon health data below reflects the last known state and may be stale.</p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => window.dispatchEvent(new CustomEvent('open-assistant', { detail: `ArgoCD cannot connect to cluster ${name}. Error: ${data.argocd_connection_message}. What could cause this and how do I fix it?` }))}
+                        className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-800 dark:text-red-400"
+                      >
+                        <MessageSquare className="h-3.5 w-3.5" />
+                        Ask AI
+                      </button>
                     </div>
+                  );
+                }
+                // Generic unreachable banner (no ArgoCD-specific error)
+                return (
+                  <div className="flex items-center justify-between rounded-xl border-2 border-red-300 bg-red-50 px-5 py-3 dark:border-red-700 dark:bg-red-900/20">
+                    <div className="flex items-center gap-2 text-red-700 dark:text-red-400">
+                      <WifiOff className="h-5 w-5 shrink-0" />
+                      <div>
+                        <span className="text-sm font-semibold">Cluster unreachable</span>
+                        {data.cluster_connection_state && (
+                          <span className="ml-2 text-xs text-red-600 dark:text-red-400">({data.cluster_connection_state})</span>
+                        )}
+                        <p className="text-xs text-red-600 dark:text-red-400">Addon health data below reflects the last known state and may be stale.</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => window.dispatchEvent(new CustomEvent('open-assistant', { detail: `Cluster ${name} is unreachable (${data.cluster_connection_state}). What could be wrong and how can I fix it?` }))}
+                      className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-800 dark:text-red-400"
+                    >
+                      <MessageSquare className="h-3.5 w-3.5" />
+                      Ask AI
+                    </button>
                   </div>
-                  <button
-                    onClick={() => window.dispatchEvent(new CustomEvent('open-assistant', { detail: `Cluster ${name} is unreachable (${data.cluster_connection_state}). What could be wrong and how can I fix it?` }))}
-                    className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-800 dark:text-red-400"
-                  >
-                    <MessageSquare className="h-3.5 w-3.5" />
-                    Ask AI
-                  </button>
-                </div>
-              )}
+                );
+              })()}
               {computedStatus === 'connected' && (
                 <div className="flex items-center gap-2 rounded-xl border-2 border-green-300 bg-green-50 px-5 py-3 dark:border-green-700 dark:bg-green-900/20">
                   <Wifi className="h-5 w-5 shrink-0 text-green-600 dark:text-green-400" />
@@ -792,8 +820,8 @@ export function ClusterDetail() {
                 </div>
               )}
 
-              {/* ArgoCD connection error banner */}
-              {data.argocd_connection_status && data.argocd_connection_status !== 'Successful' && (
+              {/* ArgoCD connection error banner — only shown when cluster is NOT unreachable (edge case: connected but ArgoCD error) */}
+              {computedStatus !== 'unreachable' && data.argocd_connection_status && data.argocd_connection_status !== 'Successful' && (
                 <div className="flex items-start justify-between gap-3 rounded-xl ring-2 ring-red-300 bg-red-50 px-5 py-4 dark:ring-red-700 dark:bg-red-950/30">
                   <div className="flex items-start gap-3">
                     <AlertTriangle className="h-5 w-5 shrink-0 text-red-600 dark:text-red-400 mt-0.5" />
