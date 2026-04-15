@@ -3,6 +3,7 @@ package argosecrets
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"log/slog"
@@ -336,6 +337,7 @@ func (r *Reconciler) reconcileCluster(ctx context.Context, cluster models.Cluste
 		Server:  creds.Server,
 		Region:  cluster.Region,
 		RoleARN: r.defaultRoleARN,
+		CAData:  base64.StdEncoding.EncodeToString(creds.CAData),
 		Labels:  cluster.Labels,
 	}
 

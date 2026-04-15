@@ -46,6 +46,10 @@ type ClusterSecretSpec struct {
 	// RoleARN is the IAM role ARN passed to argocd-k8s-auth via --role-arn.
 	// When empty the --role-arn flag is omitted from execProviderConfig.args.
 	RoleARN string
+	// CAData is the base64-encoded PEM CA certificate for TLS verification of the cluster API server.
+	// When non-empty it is written into tlsClientConfig.caData so ArgoCD can verify the server cert.
+	// When empty, ArgoCD falls back to system trust roots.
+	CAData string
 	// Labels contains addon labels from cluster-addons.yaml (e.g. addon-datadog: "true").
 	// These are merged with system labels before writing to the secret.
 	Labels map[string]string
@@ -81,7 +85,8 @@ type execProvider struct {
 }
 
 type tlsConfig struct {
-	Insecure bool `json:"insecure"`
+	Insecure bool   `json:"insecure"`
+	CAData   string `json:"caData,omitempty"`
 }
 
 // buildSecretConfig constructs the ArgoCD execProviderConfig JSON string.
@@ -100,6 +105,7 @@ func buildSecretConfig(spec ClusterSecretSpec) (string, error) {
 		},
 		TLSClientConfig: tlsConfig{
 			Insecure: false,
+			CAData:   spec.CAData,
 		},
 	}
 
