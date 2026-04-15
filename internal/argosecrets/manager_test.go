@@ -19,6 +19,8 @@ func baseSpec() ClusterSecretSpec {
 		Server:  "https://ABC123.gr7.us-east-1.eks.amazonaws.com",
 		Region:  "us-east-1",
 		RoleARN: "arn:aws:iam::123456789012:role/argocd-manager",
+		// base64("fake-ca-cert") — a realistic stand-in for a PEM CA certificate.
+		CAData: "ZmFrZS1jYS1jZXJ0",
 		Labels: map[string]string{
 			"addon-datadog":   "true",
 			"addon-karpenter": "true",
@@ -190,6 +192,9 @@ func TestBuildSecretConfig_WithRoleARN(t *testing.T) {
 	}
 	if cfg.TLSClientConfig.Insecure {
 		t.Error("tlsClientConfig.insecure should be false")
+	}
+	if cfg.TLSClientConfig.CAData != spec.CAData {
+		t.Errorf("tlsClientConfig.caData = %q, want %q", cfg.TLSClientConfig.CAData, spec.CAData)
 	}
 
 	// Verify args contain expected values including --role-arn.
