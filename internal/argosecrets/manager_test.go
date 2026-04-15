@@ -205,13 +205,9 @@ func TestBuildSecretConfig_WithRoleARN(t *testing.T) {
 	mustContainSequence(t, args, []string{"--role-arn", spec.RoleARN})
 	for i, arg := range args {
 		if arg == "--region" {
-			t.Errorf("--region present at index %d in args; region must be passed via env vars, not args", i)
+			t.Errorf("--region present at index %d in args; argocd-k8s-auth does not support --region", i)
 		}
 	}
-
-	// Verify region is passed via environment variables.
-	mustContainEnvVar(t, cfg.ExecProviderConfig.Env, "AWS_REGION", spec.Region)
-	mustContainEnvVar(t, cfg.ExecProviderConfig.Env, "AWS_DEFAULT_REGION", spec.Region)
 }
 
 // TestBuildSecretConfig_WithoutRoleARN verifies --role-arn is omitted when RoleARN is empty.
@@ -234,33 +230,7 @@ func TestBuildSecretConfig_WithoutRoleARN(t *testing.T) {
 			t.Errorf("--role-arn present at index %d but RoleARN was empty", i)
 		}
 		if arg == "--region" {
-			t.Errorf("--region present at index %d in args; region must be passed via env vars, not args", i)
-		}
-	}
-
-	// Region env vars must still be present when Region is set.
-	mustContainEnvVar(t, cfg.ExecProviderConfig.Env, "AWS_REGION", spec.Region)
-	mustContainEnvVar(t, cfg.ExecProviderConfig.Env, "AWS_DEFAULT_REGION", spec.Region)
-}
-
-// TestBuildSecretConfig_NoRegion verifies that env vars are omitted when Region is empty.
-func TestBuildSecretConfig_NoRegion(t *testing.T) {
-	spec := baseSpec()
-	spec.Region = ""
-
-	configJSON, err := buildSecretConfig(spec)
-	if err != nil {
-		t.Fatalf("buildSecretConfig() error: %v", err)
-	}
-
-	var cfg execProviderConfig
-	if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
-		t.Fatalf("invalid JSON: %v", err)
-	}
-
-	for _, e := range cfg.ExecProviderConfig.Env {
-		if e.Name == "AWS_REGION" || e.Name == "AWS_DEFAULT_REGION" {
-			t.Errorf("env var %q should not be present when Region is empty", e.Name)
+			t.Errorf("--region present at index %d in args; argocd-k8s-auth does not support --region", i)
 		}
 	}
 }
@@ -313,20 +283,6 @@ func TestEnsure_CreateRecordsCorrectActions(t *testing.T) {
 	if verbs[1] != "create" {
 		t.Errorf("action[1] = %q, want create", verbs[1])
 	}
-}
-
-// mustContainEnvVar checks that vars contains an entry with the given name and value.
-func mustContainEnvVar(t *testing.T, vars []envVar, name, value string) {
-	t.Helper()
-	for _, e := range vars {
-		if e.Name == name {
-			if e.Value != value {
-				t.Errorf("env var %q = %q, want %q", name, e.Value, value)
-			}
-			return
-		}
-	}
-	t.Errorf("env var %q not found in %v", name, vars)
 }
 
 // mustContainSequence checks that needle appears as a contiguous subsequence in haystack.

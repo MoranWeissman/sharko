@@ -82,12 +82,6 @@ type execProvider struct {
 	Command    string   `json:"command"`
 	Args       []string `json:"args"`
 	APIVersion string   `json:"apiVersion"`
-	Env        []envVar `json:"env,omitempty"`
-}
-
-type envVar struct {
-	Name  string `json:"name"`
-	Value string `json:"value"`
 }
 
 type tlsConfig struct {
@@ -97,18 +91,12 @@ type tlsConfig struct {
 
 // buildSecretConfig constructs the ArgoCD execProviderConfig JSON string.
 // The --role-arn arg is only included when spec.RoleARN is non-empty.
-// The AWS region is passed via environment variables (AWS_REGION and AWS_DEFAULT_REGION)
-// because argocd-k8s-auth does not support a --region flag.
+// No env vars are set: argocd-k8s-auth inherits the environment from ArgoCD and
+// ArgoCD v2.14 cannot unmarshal the env field in execProviderConfig.
 func buildSecretConfig(spec ClusterSecretSpec) (string, error) {
 	args := []string{"aws", "--cluster-name", spec.Name}
 	if spec.RoleARN != "" {
 		args = append(args, "--role-arn", spec.RoleARN)
-	}
-
-	var env []envVar
-	if spec.Region != "" {
-		env = append(env, envVar{Name: "AWS_REGION", Value: spec.Region})
-		env = append(env, envVar{Name: "AWS_DEFAULT_REGION", Value: spec.Region})
 	}
 
 	cfg := execProviderConfig{
@@ -116,7 +104,6 @@ func buildSecretConfig(spec ClusterSecretSpec) (string, error) {
 			Command:    "argocd-k8s-auth",
 			Args:       args,
 			APIVersion: "client.authentication.k8s.io/v1beta1",
-			Env:        env,
 		},
 		TLSClientConfig: tlsConfig{
 			Insecure: false,
