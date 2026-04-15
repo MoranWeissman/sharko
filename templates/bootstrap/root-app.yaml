@@ -42,7 +42,7 @@ spec:
         valueFiles:
           - $values/configuration/bootstrap-config.yaml
           - $values/configuration/addons-catalog.yaml
-          - $values/configuration/cluster-addons.yaml
+          - $values/configuration/managed-clusters.yaml
     # Values repo reference
     - repoURL: {{ .Values.repoURL }}
       targetRevision: {{ .Values.targetRevision }}
