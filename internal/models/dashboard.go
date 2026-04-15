@@ -44,10 +44,12 @@ type DashboardAddonStats struct {
 
 // DashboardStatisticsResponse is the API response for dashboard stats.
 type DashboardStatisticsResponse struct {
-	Connections  DashboardConnectionStats  `json:"connections"`
-	Clusters     DashboardClusterStats     `json:"clusters"`
-	Applications DashboardApplicationStats `json:"applications"`
-	Addons       DashboardAddonStats       `json:"addons"`
+	Connections        DashboardConnectionStats  `json:"connections"`
+	Clusters           DashboardClusterStats     `json:"clusters"`
+	Applications       DashboardApplicationStats `json:"applications"`
+	Addons             DashboardAddonStats       `json:"addons"`
+	BootstrapAppHealth string                    `json:"bootstrap_app_health"`
+	BootstrapAppSync   string                    `json:"bootstrap_app_sync"`
 }
 
 // PullRequest represents a PR from the Git provider.

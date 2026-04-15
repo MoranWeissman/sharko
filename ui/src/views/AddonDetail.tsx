@@ -850,16 +850,35 @@ export function AddonDetail() {
 
   // Tracked PRs for this addon
   const [addonPRs, setAddonPRs] = useState<TrackedPR[]>([])
+  const [isRefreshing, setIsRefreshing] = useState(false)
+
+  const fetchAddonData = useCallback(async (background = false) => {
+    if (!name) return
+    if (background) {
+      setIsRefreshing(true)
+    } else {
+      setLoading(true)
+    }
+    try {
+      const res = await api.getAddonDetail(name)
+      setAddon(res.addon)
+    } catch (e: unknown) {
+      if (!background) {
+        setError(e instanceof Error ? e.message : 'Failed to load addon details')
+      }
+    } finally {
+      setLoading(false)
+      setIsRefreshing(false)
+    }
+  }, [name])
+
+  const handleRefresh = useCallback(() => {
+    void fetchAddonData(true)
+  }, [fetchAddonData])
 
   useEffect(() => {
     if (!name) return
-    api
-      .getAddonDetail(name)
-      .then((res) => setAddon(res.addon))
-      .catch((e: unknown) =>
-        setError(e instanceof Error ? e.message : 'Failed to load addon details'),
-      )
-      .finally(() => setLoading(false))
+    void fetchAddonData()
 
     api
       .getAddonValues(name)
@@ -877,7 +896,16 @@ export function AddonDetail() {
         }
       })
       .catch(() => {})
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [name])
+
+  // Auto-refresh every 30s
+  useEffect(() => {
+    const interval = setInterval(() => {
+      void fetchAddonData(true)
+    }, 30_000)
+    return () => clearInterval(interval)
+  }, [fetchAddonData])
 
   // Fetch tracked PRs for this addon and auto-refresh while any are open
   useEffect(() => {
@@ -1211,8 +1239,15 @@ export function AddonDetail() {
             </p>
           </div>
         </div>
-        <RoleGuard adminOnly>
-          <div className="flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            onClick={handleRefresh}
+            className="rounded-md p-2 text-[#3a6a8a] hover:bg-[#d6eeff] dark:text-gray-400 dark:hover:bg-gray-700"
+            title="Refresh"
+          >
+            <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+          </button>
+          <RoleGuard adminOnly>
             <button
               type="button"
               onClick={() => setActiveSection('upgrade')}
@@ -1229,8 +1264,8 @@ export function AddonDetail() {
               <Trash2 className="h-4 w-4" />
               Remove
             </button>
-          </div>
-        </RoleGuard>
+          </RoleGuard>
+        </div>
       </div>
 
       <ConfirmationModal

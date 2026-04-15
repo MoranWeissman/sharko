@@ -21,6 +21,7 @@ import {
   Unlink,
   ChevronDown,
   ChevronUp,
+  RefreshCw,
 } from 'lucide-react';
 import { api, registerCluster, discoverEKSClusters, testClusterConnection, unadoptCluster } from '@/services/api';
 import type {
@@ -72,6 +73,7 @@ export function ClustersOverview() {
   const [allClusters, setAllClusters] = useState<Cluster[]>([]);
   const [healthStats, setHealthStats] = useState<ClusterHealthStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchParams] = useSearchParams();
   const initialStatus = searchParams.get('status');
@@ -148,9 +150,13 @@ export function ClustersOverview() {
   const [dryRunResult, setDryRunResult] = useState<DryRunResult | null>(null);
   const [dryRunLoading, setDryRunLoading] = useState(false);
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (background = false) => {
     try {
-      setLoading(true);
+      if (background) {
+        setIsRefreshing(true);
+      } else {
+        setLoading(true);
+      }
       setError(null);
       const response: ClustersResponse = await api.getClusters();
       setAllClusters(response.clusters);
@@ -162,16 +168,31 @@ export function ClustersOverview() {
         ));
       setArgoCDUnreachable(hasArgoError && response.clusters.length > 0);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to load clusters');
-      setAllClusters([]);
-      setHealthStats(null);
+      if (!background) {
+        setError(e instanceof Error ? e.message : 'Failed to load clusters');
+        setAllClusters([]);
+        setHealthStats(null);
+      }
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
     }
   }, []);
 
+  const handleRefresh = useCallback(() => {
+    void fetchData(true);
+  }, [fetchData]);
+
   useEffect(() => {
     void fetchData();
+  }, [fetchData]);
+
+  // Auto-refresh every 30s
+  useEffect(() => {
+    const interval = setInterval(() => {
+      void fetchData(true);
+    }, 30_000);
+    return () => clearInterval(interval);
   }, [fetchData]);
 
   const openAddCluster = useCallback(() => {
@@ -611,16 +632,25 @@ export function ClustersOverview() {
             All Kubernetes clusters managed by ArgoCD. Click a cluster to see deployed addons, health status, and configuration.
           </p>
         </div>
-        <RoleGuard adminOnly>
+        <div className="flex shrink-0 items-center gap-2">
           <button
-            type="button"
-            onClick={openAddCluster}
-            className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-[#0a2a4a] px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-[#0d3558] dark:bg-blue-700 dark:hover:bg-blue-600"
+            onClick={handleRefresh}
+            className="rounded-md p-2 text-[#3a6a8a] hover:bg-[#d6eeff] dark:text-gray-400 dark:hover:bg-gray-700"
+            title="Refresh"
           >
-            <Plus className="h-4 w-4" />
-            Add Cluster
+            <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
           </button>
-        </RoleGuard>
+          <RoleGuard adminOnly>
+            <button
+              type="button"
+              onClick={openAddCluster}
+              className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-[#0a2a4a] px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-[#0d3558] dark:bg-blue-700 dark:hover:bg-blue-600"
+            >
+              <Plus className="h-4 w-4" />
+              Add Cluster
+            </button>
+          </RoleGuard>
+        </div>
       </div>
 
       {/* ArgoCD Status Banner */}

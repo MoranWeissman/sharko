@@ -149,11 +149,29 @@ func (s *DashboardService) GetStats(ctx context.Context, gp gitprovider.GitProvi
 	}
 	addonStats.TotalDeployments = addonStats.EnabledDeployments
 
+	// Bootstrap app health — the root ArgoCD application that drives all addon deployments.
+	// If unreachable, report "Unknown" rather than failing the whole dashboard request.
+	bootstrapHealth := "Unknown"
+	bootstrapSync := "Unknown"
+	bootstrapApp, err := ac.GetApplication(ctx, "cluster-addons-bootstrap")
+	if err == nil && bootstrapApp != nil {
+		if bootstrapApp.HealthStatus != "" {
+			bootstrapHealth = bootstrapApp.HealthStatus
+		}
+		if bootstrapApp.SyncStatus != "" {
+			bootstrapSync = bootstrapApp.SyncStatus
+		}
+	} else if err != nil {
+		slog.Warn("could not fetch bootstrap app status for dashboard", "error", err)
+	}
+
 	return &models.DashboardStatisticsResponse{
-		Connections:  connStats,
-		Clusters:     clusterStats,
-		Applications: appStats,
-		Addons:       addonStats,
+		Connections:        connStats,
+		Clusters:           clusterStats,
+		Applications:       appStats,
+		Addons:             addonStats,
+		BootstrapAppHealth: bootstrapHealth,
+		BootstrapAppSync:   bootstrapSync,
 	}, nil
 }
 

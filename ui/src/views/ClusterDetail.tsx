@@ -27,6 +27,7 @@ import {
   Pencil,
   KeyRound,
   Plus,
+  RefreshCw,
 } from 'lucide-react';
 import {
   Dialog,
@@ -121,6 +122,7 @@ export function ClusterDetail() {
   const navigate = useNavigate();
   const [data, setData] = useState<ClusterComparisonResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
@@ -182,10 +184,14 @@ export function ClusterDetail() {
     return 'unknown';
   }, [testResult, data]);
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (background = false) => {
     if (!name) return;
     try {
-      setLoading(true);
+      if (background) {
+        setIsRefreshing(true);
+      } else {
+        setLoading(true);
+      }
       setError(null);
       const [result, nodes, connections] = await Promise.all([
         api.getClusterComparison(name),
@@ -212,15 +218,22 @@ export function ClusterDetail() {
         }
       }
     } catch (e: unknown) {
-      setError(
-        e instanceof Error
-          ? e.message
-          : `Failed to load comparison for cluster: ${name}`,
-      );
+      if (!background) {
+        setError(
+          e instanceof Error
+            ? e.message
+            : `Failed to load comparison for cluster: ${name}`,
+        );
+      }
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
     }
   }, [name]);
+
+  const handleRefresh = useCallback(() => {
+    void fetchData(true);
+  }, [fetchData]);
 
   const handleRemoveCluster = useCallback(async () => {
     if (!name) return;
@@ -341,6 +354,14 @@ export function ClusterDetail() {
 
   useEffect(() => {
     void fetchData();
+  }, [fetchData]);
+
+  // Auto-refresh every 30s
+  useEffect(() => {
+    const interval = setInterval(() => {
+      void fetchData(true);
+    }, 30_000);
+    return () => clearInterval(interval);
   }, [fetchData]);
 
   useEffect(() => {
@@ -579,8 +600,15 @@ export function ClusterDetail() {
             </div>
           )}
         </div>
-        <RoleGuard roles={['admin', 'operator']}>
-          <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleRefresh}
+            className="rounded-md p-2 text-[#3a6a8a] hover:bg-[#d6eeff] dark:text-gray-400 dark:hover:bg-gray-700"
+            title="Refresh"
+          >
+            <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+          </button>
+          <RoleGuard roles={['admin', 'operator']}>
             <button
               onClick={handleTestConnection}
               disabled={testResult === 'testing'}
@@ -596,8 +624,8 @@ export function ClusterDetail() {
               <ScanSearch className="h-3.5 w-3.5" />
               Diagnose
             </button>
-          </div>
-        </RoleGuard>
+          </RoleGuard>
+        </div>
       </div>
 
       <ConfirmationModal
