@@ -519,6 +519,7 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 
 	// Upgrade Impact Checker
 	mux.HandleFunc("GET /api/v1/upgrade/{addonName}/versions", srv.handleListUpgradeVersions)
+	mux.HandleFunc("GET /api/v1/upgrade/{addonName}/recommendations", srv.handleGetRecommendations)
 	mux.HandleFunc("POST /api/v1/upgrade/check", srv.handleCheckUpgrade)
 	mux.HandleFunc("POST /api/v1/upgrade/ai-summary", srv.handleGetAISummary)
 	mux.HandleFunc("GET /api/v1/upgrade/ai-status", srv.handleGetAIStatus)

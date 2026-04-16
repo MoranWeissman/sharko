@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 
 	"github.com/MoranWeissman/sharko/internal/ai"
@@ -12,6 +13,44 @@ import (
 	"github.com/MoranWeissman/sharko/internal/helm"
 	"github.com/MoranWeissman/sharko/internal/models"
 )
+
+// semverParts holds the parsed major.minor.patch components of a version string.
+type semverParts struct {
+	major int
+	minor int
+	patch int
+	pre   string // non-empty if prerelease (contains '-')
+}
+
+// parseSemver parses a version string like "1.2.3" or "1.2.3-alpha.1".
+// Returns ok=false if the string does not look like a valid semver.
+func parseSemver(v string) (p semverParts, ok bool) {
+	// Strip optional leading 'v'
+	v = strings.TrimPrefix(v, "v")
+
+	// Split off prerelease
+	if idx := strings.IndexByte(v, '-'); idx >= 0 {
+		p.pre = v[idx+1:]
+		v = v[:idx]
+	}
+
+	parts := strings.SplitN(v, ".", 3)
+	if len(parts) != 3 {
+		return p, false
+	}
+
+	var err error
+	if p.major, err = strconv.Atoi(parts[0]); err != nil {
+		return p, false
+	}
+	if p.minor, err = strconv.Atoi(parts[1]); err != nil {
+		return p, false
+	}
+	if p.patch, err = strconv.Atoi(parts[2]); err != nil {
+		return p, false
+	}
+	return p, true
+}
 
 // UpgradeService handles upgrade impact checking operations.
 type UpgradeService struct {
@@ -322,4 +361,110 @@ func (s *UpgradeService) CheckUpgrade(ctx context.Context, addonName, targetVers
 		BaselineUnavailable: baselineUnavailable,
 		BaselineNote:        baselineNote,
 	}, nil
+}
+
+// GetRecommendations returns smart upgrade recommendations for an addon:
+// next patch (safe bugfix), next minor (feature update), and latest stable.
+func (s *UpgradeService) GetRecommendations(ctx context.Context, addonName string, gp gitprovider.GitProvider) (*models.UpgradeRecommendations, error) {
+	// Fetch catalog to get current version and chart info
+	catalogData, err := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", "main")
+	if err != nil {
+		if strings.Contains(err.Error(), "404") {
+			catalogData = []byte("applicationsets: []")
+		} else {
+			return nil, fmt.Errorf("fetching addons catalog: %w", err)
+		}
+	}
+
+	addons, err := s.parser.ParseAddonsCatalog(catalogData)
+	if err != nil {
+		return nil, fmt.Errorf("parsing addons catalog: %w", err)
+	}
+
+	var addon *models.AddonCatalogEntry
+	for i := range addons {
+		if addons[i].Name == addonName {
+			addon = &addons[i]
+			break
+		}
+	}
+	if addon == nil {
+		return nil, fmt.Errorf("addon %q not found in catalog", addonName)
+	}
+
+	current := addon.Version
+	rec := &models.UpgradeRecommendations{CurrentVersion: current}
+
+	cur, ok := parseSemver(current)
+	if !ok {
+		// Current version is not valid semver — return empty recommendations
+		return rec, nil
+	}
+
+	// Fetch all versions from Helm repo
+	chartVersions, err := s.fetcher.ListVersions(ctx, addon.RepoURL, addon.Chart)
+	if err != nil {
+		return nil, fmt.Errorf("listing chart versions: %w", err)
+	}
+
+	// Iterate over all versions and compute recommendations.
+	// chartVersions is sorted latest-first by the Helm repo index.
+	var (
+		nextPatch    string
+		nextPatchP   semverParts
+		nextMinor    string
+		nextMinorP   semverParts
+		latestStable string
+	)
+
+	for _, cv := range chartVersions {
+		v := cv.Version
+		p, valid := parseSemver(v)
+		if !valid {
+			continue
+		}
+		// Skip prereleases
+		if p.pre != "" {
+			continue
+		}
+		// Skip current version itself
+		if p.major == cur.major && p.minor == cur.minor && p.patch == cur.patch {
+			continue
+		}
+
+		// Latest stable: first (highest) stable version seen
+		if latestStable == "" {
+			latestStable = v
+		}
+
+		// Next patch: same major.minor, higher patch
+		if p.major == cur.major && p.minor == cur.minor && p.patch > cur.patch {
+			if nextPatch == "" || p.patch > nextPatchP.patch {
+				nextPatch = v
+				nextPatchP = p
+			}
+		}
+
+		// Next minor: same major, higher minor, latest patch of that minor
+		if p.major == cur.major && p.minor > cur.minor {
+			if nextMinor == "" || p.minor > nextMinorP.minor ||
+				(p.minor == nextMinorP.minor && p.patch > nextMinorP.patch) {
+				nextMinor = v
+				nextMinorP = p
+			}
+		}
+	}
+
+	// Only set a recommendation if it differs from the current version
+	if nextPatch != "" && nextPatch != current {
+		rec.NextPatch = nextPatch
+	}
+	if nextMinor != "" && nextMinor != current {
+		rec.NextMinor = nextMinor
+	}
+	if latestStable != "" && latestStable != current {
+		rec.LatestStable = latestStable
+	}
+
+	return rec, nil
 }

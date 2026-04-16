@@ -138,3 +138,38 @@ func (s *Server) handleGetAIStatus(w http.ResponseWriter, r *http.Request) {
 	enabled := s.upgradeSvc.IsAIEnabled()
 	writeJSON(w, http.StatusOK, map[string]interface{}{"enabled": enabled})
 }
+
+// handleGetRecommendations godoc
+//
+// @Summary Get upgrade recommendations
+// @Description Returns smart upgrade recommendations for an addon: next patch, next minor, and latest stable version
+// @Tags upgrade
+// @Produce json
+// @Security BearerAuth
+// @Param addonName path string true "Addon name"
+// @Success 200 {object} models.UpgradeRecommendations "Upgrade recommendations"
+// @Failure 400 {object} map[string]interface{} "Bad request"
+// @Failure 500 {object} map[string]interface{} "Internal error"
+// @Failure 503 {object} map[string]interface{} "Service unavailable"
+// @Router /upgrade/{addonName}/recommendations [get]
+func (s *Server) handleGetRecommendations(w http.ResponseWriter, r *http.Request) {
+	addonName := r.PathValue("addonName")
+	if addonName == "" {
+		writeError(w, http.StatusBadRequest, "addon name is required")
+		return
+	}
+
+	gp, err := s.connSvc.GetActiveGitProvider()
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+
+	rec, err := s.upgradeSvc.GetRecommendations(r.Context(), addonName, gp)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, rec)
+}

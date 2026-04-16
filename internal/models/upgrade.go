@@ -58,3 +58,11 @@ type AvailableVersionsResponse struct {
 	CurrentVersion string             `json:"current_version,omitempty"` // catalog default version
 	Versions       []AvailableVersion `json:"versions"`
 }
+
+// UpgradeRecommendations contains smart upgrade suggestions for an addon.
+type UpgradeRecommendations struct {
+	CurrentVersion string `json:"current_version"`
+	NextPatch      string `json:"next_patch,omitempty"`    // same major.minor, higher patch
+	NextMinor      string `json:"next_minor,omitempty"`    // same major, higher minor, latest patch of that minor
+	LatestStable   string `json:"latest_stable,omitempty"` // latest non-prerelease version overall
+}

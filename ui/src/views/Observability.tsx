@@ -18,6 +18,8 @@ import {
   ChevronDown,
   ChevronUp,
   ShieldAlert,
+  ExternalLink,
+  Heart,
 } from 'lucide-react';
 import { api } from '@/services/api';
 import type {
@@ -25,6 +27,7 @@ import type {
   AddonGroupHealth,
   ResourceAlert,
   SyncActivityEntry,
+  DashboardStats,
 } from '@/services/models';
 import { LoadingState } from '@/components/LoadingState';
 import { ErrorState } from '@/components/ErrorState';
@@ -781,11 +784,124 @@ function SyncActivitySection({
 }
 
 // ---------------------------------------------------------------------------
+// Section 5: Bootstrap Application Health
+// ---------------------------------------------------------------------------
+
+function bootstrapHealthColor(health: string): { dot: string; badge: string } {
+  const h = (health ?? '').toLowerCase();
+  if (h === 'healthy')
+    return {
+      dot: 'bg-green-500',
+      badge: 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300',
+    };
+  if (h === 'degraded')
+    return {
+      dot: 'bg-amber-500',
+      badge: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300',
+    };
+  if (h === 'missing' || h === 'error')
+    return {
+      dot: 'bg-red-500',
+      badge: 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300',
+    };
+  return {
+    dot: 'bg-[#9ca3af]',
+    badge: 'bg-[#d6eeff] text-[#1a4a6a] dark:bg-gray-800 dark:text-gray-400',
+  };
+}
+
+function BootstrapAppSection({
+  stats,
+  argoCDUrl,
+}: {
+  stats: DashboardStats | null;
+  argoCDUrl: string | null;
+}) {
+  const health = stats?.bootstrap_app_health ?? 'Unknown';
+  const sync = stats?.bootstrap_app_sync ?? 'Unknown';
+
+  const { dot, badge } = bootstrapHealthColor(health);
+
+  const appExists =
+    health !== 'Missing' && health !== 'Unknown' && health !== '';
+
+  const argoCDLink =
+    appExists && argoCDUrl
+      ? `${argoCDUrl.replace(/\/$/, '')}/applications/cluster-addons-bootstrap`
+      : null;
+
+  return (
+    <section className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <h2 className="flex items-center gap-2 text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
+          <Heart className="h-5 w-5 text-teal-500" />
+          Bootstrap Application
+        </h2>
+        {argoCDLink && (
+          <a
+            href={argoCDLink}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 rounded-md bg-[#d6eeff] px-3 py-1 text-xs font-medium text-[#1a4a6a] transition-colors hover:bg-[#bee0ff] dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+            View in ArgoCD
+          </a>
+        )}
+      </div>
+
+      <p className="mb-5 text-sm text-[#2a5a7a] dark:text-gray-400">
+        The <code className="rounded bg-[#d6eeff] px-1 py-0.5 text-[#0a3a5a] dark:bg-gray-800 dark:text-gray-300">cluster-addons-bootstrap</code> application
+        manages the foundation of your Sharko deployment. If unhealthy, addon deployments may fail.
+      </p>
+
+      <div className="flex flex-wrap gap-6">
+        {/* Health */}
+        <div className="flex flex-col gap-1">
+          <p className="text-xs font-medium uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">
+            Health
+          </p>
+          <div className="flex items-center gap-2">
+            <span className={`inline-block h-3 w-3 rounded-full ${dot}`} />
+            <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold uppercase ${badge}`}>
+              {health || 'Unknown'}
+            </span>
+          </div>
+        </div>
+
+        {/* Sync */}
+        <div className="flex flex-col gap-1">
+          <p className="text-xs font-medium uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">
+            Sync
+          </p>
+          <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold uppercase ${syncBadgeCls(sync)}`}>
+            {sync || 'Unknown'}
+          </span>
+        </div>
+      </div>
+
+      {/* Warning note if not healthy */}
+      {health && health.toLowerCase() !== 'healthy' && health.toLowerCase() !== 'unknown' && health !== '' && (
+        <div className="mt-5 flex items-start gap-2 rounded-lg bg-amber-50 p-3 ring-1 ring-amber-300 dark:bg-amber-950/30 dark:ring-amber-700">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+          <p className="text-sm text-amber-800 dark:text-amber-300">
+            Bootstrap app is <strong>{health}</strong>. Check ArgoCD for sync errors or missing resources.
+            Addon installations and updates may not work until this is resolved.
+          </p>
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main View
 // ---------------------------------------------------------------------------
 
 export function Observability() {
   const [data, setData] = useState<ObservabilityOverviewResponse | null>(null);
+  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [argoCDUrl, setArgoCDUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -793,8 +909,17 @@ export function Observability() {
     try {
       setLoading(true);
       setError(null);
-      const result = await api.getObservability();
+      const [result, dashStats, connections] = await Promise.all([
+        api.getObservability(),
+        api.getDashboardStats().catch(() => null),
+        api.getConnections().catch(() => null),
+      ]);
       setData(result);
+      setStats(dashStats);
+      const activeConn = (connections?.connections ?? []).find(
+        (c: { name: string; is_active?: boolean; argocd_server_url?: string }) => c.is_active,
+      );
+      setArgoCDUrl(activeConn?.argocd_server_url ?? null);
     } catch (e: unknown) {
       setError(
         e instanceof Error ? e.message : 'Failed to load observability data',
@@ -828,6 +953,7 @@ export function Observability() {
             ArgoCD control plane health, addon health per cluster, resource alerts, and sync activity timeline.
           </p>
         </div>
+        <BootstrapAppSection stats={stats} argoCDUrl={argoCDUrl} />
         <EmptyState
           title="No observability data available yet"
           description="Deploy addons to clusters to see sync status, health metrics, and version information."
@@ -844,6 +970,7 @@ export function Observability() {
           ArgoCD control plane health, addon health per cluster, resource alerts, and sync activity timeline.
         </p>
       </div>
+      <BootstrapAppSection stats={stats} argoCDUrl={argoCDUrl} />
       <ControlPlaneSection data={data.control_plane ?? { health_summary: {}, total_applications: 0, synced: 0, out_of_sync: 0 }} />
       <ResourceAlertsSection alerts={data.resource_alerts ?? []} />
       <AddonGroupsSection groups={data.addon_groups ?? []} />

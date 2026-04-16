@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/google/go-github/v68/github"
 )
@@ -273,15 +275,37 @@ func (g *GitHubProvider) CreatePullRequest(ctx context.Context, title, body, hea
 }
 
 // MergePullRequest merges an open pull request by number.
+// Retries up to 3 times on 405 "Base branch was modified" errors, which occur
+// when main moves between PR creation and merge.
 func (g *GitHubProvider) MergePullRequest(ctx context.Context, prNumber int) error {
-	_, _, err := g.client.PullRequests.Merge(ctx, g.owner, g.repo, prNumber, "", &github.PullRequestOptions{
-		MergeMethod: "squash",
-	})
-	if err != nil {
-		return fmt.Errorf("merge pull request #%d: %w", prNumber, err)
+	const maxRetries = 3
+	const retryDelay = 2 * time.Second
+
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			time.Sleep(retryDelay)
+			slog.Info("[git] retrying PR merge after base branch modified", "pr", prNumber, "attempt", attempt+1)
+		}
+
+		_, _, err := g.client.PullRequests.Merge(ctx, g.owner, g.repo, prNumber, "", &github.PullRequestOptions{
+			MergeMethod: "squash",
+		})
+		if err == nil {
+			slog.Info("github pull request merged", "number", prNumber)
+			return nil
+		}
+		lastErr = err
+
+		// Only retry on 405 "Base branch was modified".
+		errStr := err.Error()
+		if !strings.Contains(errStr, "Base branch was modified") && !strings.Contains(errStr, "405") {
+			return fmt.Errorf("merge pull request #%d: %w", prNumber, err)
+		}
+		slog.Warn("[git] PR merge got 405 base branch modified, will retry", "pr", prNumber, "attempt", attempt+1)
 	}
-	slog.Info("github pull request merged", "number", prNumber)
-	return nil
+
+	return fmt.Errorf("merge pull request #%d failed after %d attempts: %w", prNumber, maxRetries, lastErr)
 }
 
 // GetPullRequestStatus returns the status of a pull request: "open", "merged", or "closed".
