@@ -16,6 +16,7 @@ import {
   Plus,
   Loader2,
   RefreshCw,
+  X,
 } from 'lucide-react'
 import { api, addAddon } from '@/services/api'
 import type { AddonCatalogItem, AddonCatalogResponse } from '@/services/models'
@@ -391,7 +392,9 @@ export function AddonCatalog() {
   })
   const [addAddonSubmitting, setAddAddonSubmitting] = useState(false)
   const [addAddonError, setAddAddonError] = useState<string | null>(null)
-  const [addAddonResult, setAddAddonResult] = useState<string | null>(null)
+
+  // Toast notification state (shown after successful addon registration)
+  const [toast, setToast] = useState<{ message: string; prUrl?: string } | null>(null)
 
   const fetchCatalog = useCallback((background = false) => {
     if (background) {
@@ -430,7 +433,6 @@ export function AddonCatalog() {
   const openAddAddon = useCallback(() => {
     setAddAddonOpen(true)
     setAddAddonError(null)
-    setAddAddonResult(null)
     setAddonForm({ name: '', chart: '', repo_url: '', version: '', namespace: '', sync_wave: '' })
   }, [])
 
@@ -438,7 +440,6 @@ export function AddonCatalog() {
     if (!addonForm.name.trim() || !addonForm.chart.trim() || !addonForm.repo_url.trim() || !addonForm.version.trim()) return
     setAddAddonSubmitting(true)
     setAddAddonError(null)
-    setAddAddonResult(null)
     try {
       const result = await addAddon({
         name: addonForm.name.trim(),
@@ -449,7 +450,12 @@ export function AddonCatalog() {
         sync_wave: addonForm.sync_wave ? parseInt(addonForm.sync_wave, 10) : undefined,
       })
       const prUrl = result?.pr_url || result?.pull_request_url
-      setAddAddonResult(prUrl ? `Addon registered. PR: ${prUrl}` : 'Addon registered successfully.')
+      const addonName = addonForm.name.trim()
+      // Auto-close modal and show toast instead
+      setAddAddonOpen(false)
+      setToast({ message: `Addon \`${addonName}\` registered. PR opened.`, prUrl: prUrl || undefined })
+      // Auto-dismiss toast after 6 seconds
+      setTimeout(() => setToast(null), 6000)
       void fetchCatalog()
     } catch (e: unknown) {
       setAddAddonError(e instanceof Error ? e.message : 'Failed to add addon')
@@ -562,6 +568,39 @@ export function AddonCatalog() {
 
   return (
     <div className="space-y-6">
+      {/* Toast notification */}
+      {toast && (
+        <div className="flex items-start justify-between gap-3 rounded-lg bg-green-50 px-4 py-3 ring-1 ring-green-300 dark:bg-green-950/30 dark:ring-green-700">
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <CheckCircle className="h-4 w-4 shrink-0 text-green-600 dark:text-green-400" />
+            <p className="text-sm text-green-800 dark:text-green-300 break-all">
+              {toast.message}
+              {toast.prUrl && (
+                <>
+                  {' '}
+                  <a
+                    href={toast.prUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-0.5 font-medium underline hover:no-underline"
+                  >
+                    View PR <ExternalLink className="h-3 w-3" />
+                  </a>
+                </>
+              )}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setToast(null)}
+            className="shrink-0 rounded-md p-0.5 text-green-600 hover:bg-green-100 dark:text-green-400 dark:hover:bg-green-900/40"
+            aria-label="Dismiss"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div>
@@ -636,9 +675,6 @@ export function AddonCatalog() {
             {addAddonError && (
               <p className="text-sm text-red-600 dark:text-red-400">{addAddonError}</p>
             )}
-            {addAddonResult && (
-              <p className="text-sm text-green-600 dark:text-green-400">{addAddonResult}</p>
-            )}
           </div>
           <DialogFooter>
             <button
@@ -647,19 +683,17 @@ export function AddonCatalog() {
               disabled={addAddonSubmitting}
               className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
             >
-              {addAddonResult ? 'Close' : 'Cancel'}
+              Cancel
             </button>
-            {!addAddonResult && (
-              <button
-                type="button"
-                onClick={handleAddAddon}
-                disabled={!addonForm.name.trim() || !addonForm.chart.trim() || !addonForm.repo_url.trim() || !addonForm.version.trim() || addAddonSubmitting}
-                className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
-              >
-                {addAddonSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
-                Register Addon
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={handleAddAddon}
+              disabled={!addonForm.name.trim() || !addonForm.chart.trim() || !addonForm.repo_url.trim() || !addonForm.version.trim() || addAddonSubmitting}
+              className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
+            >
+              {addAddonSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
+              Register Addon
+            </button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
