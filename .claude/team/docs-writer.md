@@ -100,7 +100,8 @@ After each phase:
 ### CLI flags — check `cmd/sharko/*.go`
 ```
 Actual commands: login, version, init, add-cluster, remove-cluster,
-                 update-cluster, list-clusters, add-addon, remove-addon, status, serve
+                 update-cluster, list-clusters, add-addon, remove-addon, status, serve,
+                 upgrade-addon, upgrade-addons, add-clusters, token, pr
 
 Actual flags:
   login:          --server (required)
@@ -110,6 +111,9 @@ Actual flags:
   remove-addon:   --confirm
   init:           --no-bootstrap
   root (global):  --insecure, --version
+  pr list:        --status, --cluster, --user, -o (table/json)
+  pr wait:        --timeout (default 10m)
+  token create:   --name, --role
 ```
 
 **v1.0.0 planned CLI additions (document only when implemented):**
@@ -140,20 +144,27 @@ Key paths that actually exist:
 ```
 
 ### API routes — check `internal/api/router.go`
-74 routes registered in `internal/api/router.go` NewRouter function (73 HandleFunc + 1 Handle for swagger). Key ones for docs:
+85+ routes registered in `internal/api/router.go` NewRouter function. Key ones for docs:
 ```
 POST   /api/v1/auth/login              (not /auth/token)
 POST   /api/v1/clusters
 POST   /api/v1/clusters/batch
+POST   /api/v1/clusters/adopt
 GET    /api/v1/clusters/available
+POST   /api/v1/clusters/discover       (EKS discovery)
 DELETE /api/v1/clusters/{name}
 PATCH  /api/v1/clusters/{name}
 POST   /api/v1/clusters/{name}/refresh
+POST   /api/v1/clusters/{name}/test
+POST   /api/v1/clusters/{name}/diagnose
+POST   /api/v1/clusters/{name}/unadopt
+DELETE /api/v1/clusters/{name}/addons/{addon}
 GET    /api/v1/clusters/{name}/secrets
 POST   /api/v1/clusters/{name}/secrets/refresh
 POST   /api/v1/init
 POST   /api/v1/addons
 DELETE /api/v1/addons/{name}           (?confirm=true for destructive)
+PATCH  /api/v1/addons/{name}           (configure addon)
 POST   /api/v1/addons/{name}/upgrade
 POST   /api/v1/addons/upgrade-batch
 GET/POST/DELETE /api/v1/addon-secrets
@@ -161,6 +172,13 @@ POST/GET/DELETE /api/v1/tokens
 GET    /api/v1/fleet/status
 GET    /api/v1/config
 GET    /api/v1/providers
+GET    /api/v1/prs                     (list tracked PRs)
+GET    /api/v1/prs/{id}
+POST   /api/v1/prs/{id}/refresh
+DELETE /api/v1/prs/{id}
+GET    /api/v1/audit                   (query audit log)
+GET    /api/v1/audit/stream            (SSE real-time)
+GET    /metrics                        (Prometheus)
 /swagger/                              (Swagger UI)
 ```
 

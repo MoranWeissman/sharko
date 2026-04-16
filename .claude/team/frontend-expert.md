@@ -473,6 +473,17 @@ The panel uses a `ChevronDown` / `ChevronUp` toggle. While loading, a `Skeleton`
 
 `AddonCatalog.tsx` — the catalog list shows a small dependency indicator icon on addons that have `dependsOn` set.
 
+## v1.17.0 UI Changes
+
+### RecommendedVersions Component (reworked)
+
+`UpgradeChecker.tsx` (or the upgrade tab inside `AddonDetail.tsx`) renders recommendation cards from `cards[]` when the API returns them. Falls back to the legacy 3-card layout (`next_patch` / `next_minor` / `latest_stable`) when `cards` is absent.
+
+Card visual states:
+- **Security badge** — `Shield` icon (Lucide) when `has_security: true`
+- **Breaking/cross-major badge** — `AlertTriangle` icon when `has_breaking: true` or `cross_major: true`
+- **Recommended card** — teal ring + green-tinted background when `is_recommended: true`; `Star` icon label
+
 ## Update This File When
 - New views or components are added
 - shadcn/ui components are added

@@ -429,11 +429,25 @@ export interface UpgradeCheckResponse {
   baseline_note?: string
 }
 
+export interface RecommendationCard {
+  label: string
+  version: string
+  has_security: boolean
+  has_breaking: boolean
+  cross_major: boolean
+  advisory_summary?: string
+  is_recommended: boolean
+}
+
 export interface UpgradeRecommendations {
   current_version: string
+  // Legacy fields (kept — backend still sends them; new UI doesn't use them)
   next_patch?: string
   next_minor?: string
   latest_stable?: string
+  // New
+  cards?: RecommendationCard[]
+  recommended?: string
 }
 
 // --- Cluster Registration (Story 3.5) ---

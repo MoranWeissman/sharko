@@ -382,6 +382,162 @@ type Notification struct {
 
 Exposed via `GET /api/v1/notifications` (read all) and `POST /api/v1/notifications/{id}/read`.
 
+## Epic 1+2 New Packages
+
+### `internal/verify/` — Connectivity Verification
+```go
+// Stage 1: Secret CRUD test on remote cluster
+func Stage1(ctx context.Context, client kubernetes.Interface, namespace string) Result
+// Stage 2: ArgoCD round-trip (stub in V2)
+func Stage2(ctx context.Context, argoClient interface{}, clusterName string, timeout time.Duration) Result
+// Error classification
+func ClassifyError(err error) ErrorCode // ERR_NETWORK, ERR_TLS, ERR_AUTH, ERR_RBAC, ERR_AWS_STS, ERR_AWS_ASSUME, ERR_QUOTA, ERR_NAMESPACE, ERR_TIMEOUT, ERR_UNKNOWN
+// Config
+func TestNamespace() string // reads SHARKO_TEST_NAMESPACE, default "sharko-test"
+```
+
+### `internal/observations/` — Cluster Status Model
+```go
+// 5-state status: Unknown, Connected, Verified, Operational, Unreachable
+type ClusterStatus string
+// Pure function — computed from observations + ArgoCD health
+func ComputeStatus(obs *Observation, hasHealthyAddon bool) StatusResult
+// ConfigMap-backed store via cmstore
+type Store struct { ... }
+func (s *Store) RecordTestResult(ctx context.Context, clusterName string, result verify.Result) error
+func (s *Store) GetObservation(ctx context.Context, clusterName string) (*Observation, error)
+// Cached status provider (30s TTL via SHARKO_CLUSTER_STATUS_CACHE_TTL)
+type CachedStatusProvider struct { ... }
+func (c *CachedStatusProvider) GetStatus(ctx context.Context, clusterName string, refresh bool, hasHealthyAddonFn func(string) bool) StatusResult
+```
+
+### `internal/diagnose/` — IAM Diagnostic Tool
+```go
+type DiagnosticReport struct {
+    Identity        string      // caller ARN
+    RoleAssumption  string      // role ARN or "N/A"
+    NamespaceAccess []PermCheck // pass/fail per permission
+    SuggestedFixes  []Fix       // copy-paste YAML fixes
+}
+func DiagnoseCluster(ctx context.Context, client kubernetes.Interface, namespace, callerARN, roleARN string) *DiagnosticReport
+```
+
+### `internal/metrics/` — Prometheus Metrics
+```go
+// 20 metrics across 6 categories: cluster, addon, reconciler, PR, HTTP, auth
+// All registered via promauto (default registry)
+var ClusterCount, ClusterStatus, AddonSyncStatus, ReconcilerRuns, HTTPRequests, AuthLoginTotal ...
+// HTTP middleware for request counting + duration
+func Middleware(next http.Handler) http.Handler
+func NormalizePath(path string) string // /clusters/prod-eu → /clusters/{name}
+func RecordHTTPRequest(method, path string, status int, duration time.Duration)
+```
+
+### `internal/cmstore/` — ConfigMap State Store Helper
+```go
+type Store struct { ... } // wraps k8s client + mutex
+func NewStore(client kubernetes.Interface, namespace, name string) *Store
+func (s *Store) ReadModifyWrite(ctx context.Context, modifyFn func(data map[string]interface{}) error) error
+func (s *Store) Read(ctx context.Context) (map[string]interface{}, error)
+// JSON state with version field, size warning at 800KB
+```
+
+### `internal/authz/` — RBAC Authorization
+```go
+type Role int // RoleViewer=0, RoleOperator=1, RoleAdmin=2
+func RoleFromString(s string) Role
+func (r Role) AtLeast(required Role) bool
+var ActionRequirements map[string]Role // 46 actions mapped to minimum role
+func Require(r *http.Request, action string) bool
+func RequireWithResponse(w http.ResponseWriter, r *http.Request, action string) bool // writes 403 on failure
+// Fail-closed: unknown action = RoleAdmin
+```
+
+### `internal/audit/` (updated in Epic 1)
+```go
+// Expanded Entry struct (FR-7.1 fields):
+type Entry struct {
+    ID, Level, Event, User, Action, Resource, Source, Result string
+    Timestamp time.Time; DurationMs int64; Error, RequestID string
+}
+type AuditFilter struct { User, Action, Source, Result, Cluster string; Since time.Time; Limit int }
+func (l *Log) ListFiltered(filter AuditFilter) []Entry
+func (l *Log) Subscribe() (<-chan Entry, func()) // SSE support, buffered channel
+// Default buffer: 1000 events (SHARKO_AUDIT_BUFFER_SIZE)
+```
+
+### `internal/auth/` (updated in Epic 2)
+```go
+// Token lifecycle additions:
+func (s *Store) CreateToken(name, role, creatorRole string, expiresIn time.Duration) (string, error)
+// Role bounding: creator can only create tokens with role ≤ own
+// Default expiry: 365 days; Admin can set no-expiry (-1)
+// ValidateToken rejects expired tokens
+// Bootstrap admin: auto-created on first startup if no users exist
+// SHARKO_INITIAL_ADMIN_PASSWORD env var overrides random password
+```
+
+### `internal/prtracker/` — PR Lifecycle Tracking
+```go
+type PRInfo struct {
+    PRID       int       // PR number
+    PRUrl      string    // full URL
+    PRBranch   string    // source branch
+    PRTitle    string
+    PRBase     string    // target branch
+    Cluster    string    // associated cluster (if any)
+    Operation  string    // register, remove, adopt, upgrade, etc.
+    User       string    // who created it
+    Source     string    // ui, cli, api
+    CreatedAt  time.Time
+    LastStatus string    // open, merged, closed
+    LastPolled time.Time
+}
+
+// Tracker: background goroutine polls Git provider every 30s (SHARKO_PR_POLL_INTERVAL)
+// State persisted in ConfigMap via cmstore — survives pod restarts
+// Emits audit events on merge (pr_merged) and close (pr_closed_without_merge)
+// SetOnMergeFn: callback when PR merges (e.g. trigger argosecrets reconciler)
+// ReconcileOnStartup: catches up on changes that occurred while server was down
+func NewTracker(cmStore *cmstore.Store, gitProviderFn func() GitProvider, auditFn func(audit.Entry)) *Tracker
+func (t *Tracker) TrackPR(ctx, pr PRInfo) error
+func (t *Tracker) ListPRs(ctx, status, cluster, user string) ([]PRInfo, error)
+func (t *Tracker) PollSinglePR(ctx, prID int) (*PRInfo, error)
+```
+
+### Orchestrator: Adoption/Unadopt/Remove/Disable
+
+**`orchestrator/adopt.go` — AdoptClusters:**
+- Two-phase: Stage1 verify per cluster, then create values + managed-clusters.yaml PR
+- Rejects clusters with non-sharko `managed-by` label (FR-4.6)
+- Sets `sharko.sharko.io/adopted` annotation after PR merge
+- Uses `findOpenPRForCluster` for idempotent retry
+
+**`orchestrator/unadopt.go` — UnadoptCluster:**
+- Checks `adopted` annotation (errors if not present — use remove-cluster instead)
+- Removes managed-by label and adopted annotation from ArgoCD secret (keeps secret)
+- Deletes addon secrets from remote cluster (best-effort)
+- PR to remove from managed-clusters.yaml + delete values file
+
+**`orchestrator/remove.go` — RemoveCluster:**
+- Configurable cleanup scope: `all`, `git`, `none`
+- `all`: git PR + delete remote addon secrets + delete ArgoCD cluster secret
+- `git`: git PR only
+- `none`: only managed-clusters.yaml entry removal
+
+**`orchestrator/addon_ops.go` — DisableAddon:**
+- Disables specific addon on a single cluster
+- Cleanup scope: `all`, `labels`, `none`
+- Updates values file, optionally updates managed-clusters labels, optionally deletes addon secrets
+
+### Idempotent Retry with `findOpenPRForCluster`
+
+```go
+// In git_helpers.go — searches for existing open PR matching cluster + operation
+func (o *Orchestrator) findOpenPRForCluster(ctx context.Context, clusterName, operation string) (*gitprovider.PullRequest, error)
+```
+Used in `RegisterCluster`, `AdoptClusters` — if a previous attempt left an open PR, returns it instead of creating a duplicate. Branch name pattern matching: `{prefix}{operation}-cluster-{name}-`.
+
 ## Planned Packages
 
 ### `internal/notifications/`

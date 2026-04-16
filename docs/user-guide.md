@@ -587,6 +587,16 @@ When you open the **Upgrade Checker** tab on an addon detail page, Sharko automa
 
 Click a recommendation to jump to that version in the version list. You can also search for a specific version using the search box in the version list — useful when you need to analyze an arbitrary target.
 
+When viewing an addon's Upgrade tab, Sharko now shows **smart upgrade cards** that include security and breaking-change context:
+
+| Badge | Meaning |
+|-------|---------|
+| Shield | Version path includes security fixes |
+| Major change | Version crosses a major version boundary |
+| Recommended | Sharko's suggested upgrade path (highest-scored candidate) |
+
+Recommendations are sourced from ArtifactHub when available, with a release-notes keyword fallback when ArtifactHub is unreachable.
+
 ### Analyze-Before-Upgrade
 
 The UI enforces an **analyze-before-upgrade** workflow. Before the **Upgrade** button becomes active, you must:

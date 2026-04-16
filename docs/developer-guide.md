@@ -172,13 +172,15 @@ sharko/
       ai_store.go       AI config persistence
       parser.go         Git repo config parser (addons-catalog, cluster-addons)
 
+    advisories/         Chart security & release advisory data (ArtifactHub primary, release-notes fallback)
+
     service/            Read-only service layer
       connection.go     Connection management
       cluster.go        Cluster queries (via ArgoCD)
       addon.go          Addon catalog queries
       dashboard.go      Dashboard statistics
       observability.go  Observability overview
-      upgrade.go        Upgrade recommendation service (next patch, next minor, latest stable)
+      upgrade.go        Upgrade recommendation service — scores versions, emits cards with security/breaking flags
 
     platform/           Runtime detection
       detect.go         K8s vs local mode detection
@@ -231,31 +233,19 @@ Three upgrade methods:
 
 ### service/upgrade.go
 
-The upgrade recommendation service calculates smart upgrade candidates from the Helm repo index given the addon's current catalog version.
+The upgrade recommendation service scores versions using advisory data and emits smart recommendation cards.
 
 ```go
-// GetRecommendations returns up to three version recommendations.
-func (s *UpgradeService) GetRecommendations(ctx context.Context, addonName string) (*Recommendations, error)
-
-type Recommendations struct {
-    Addon          string           `json:"addon"`
-    CurrentVersion string           `json:"current_version"`
-    Recommendations []Recommendation `json:"recommendations"`
-}
-
-type Recommendation struct {
-    Type    string `json:"type"`    // "next_patch", "next_minor", "latest_stable"
-    Version string `json:"version"`
-    Label   string `json:"label"`
-}
+// GetRecommendations returns scored upgrade recommendations with advisory context.
+func (s *UpgradeService) GetRecommendations(ctx context.Context, addonName string) (*models.UpgradeRecommendations, error)
 ```
 
-The service fetches the Helm repo index, parses all available versions, and applies semver logic:
-- **next_patch** — lowest version with the same major.minor but higher patch
-- **next_minor** — lowest version with the same major but higher minor (any patch)
-- **latest_stable** — highest version with no pre-release suffix
+`models.UpgradeRecommendations` includes:
+- Legacy flat fields (`next_patch`, `next_minor`, `latest_stable`) for backwards compatibility.
+- `Cards []RecommendationCard` — scored candidates with `has_security`, `has_breaking`, `cross_major`, and `advisory_summary` fields.
+- `Recommended string` — version of the highest-scored card (`is_recommended: true`).
 
-Only types that resolve to a version strictly greater than current are included in the response.
+Advisory data is fetched from `internal/advisories/` (ArtifactHub primary, release-notes keyword fallback). Cards are returned even when advisory data is unavailable — flags default to false.
 
 ### orchestrator/adopt.go
 

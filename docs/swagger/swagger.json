@@ -5301,6 +5301,38 @@
                 }
             }
         },
+        "github_com_MoranWeissman_sharko_internal_models.RecommendationCard": {
+            "type": "object",
+            "properties": {
+                "advisory_summary": {
+                    "description": "e.g. \"2 security fixes\", \"breaking change detected\"",
+                    "type": "string"
+                },
+                "cross_major": {
+                    "description": "version major differs from current major",
+                    "type": "boolean"
+                },
+                "has_breaking": {
+                    "description": "crossing a major boundary or flagged as breaking",
+                    "type": "boolean"
+                },
+                "has_security": {
+                    "description": "one or more versions along the path fix security issues",
+                    "type": "boolean"
+                },
+                "is_recommended": {
+                    "description": "true for the single recommended card",
+                    "type": "boolean"
+                },
+                "label": {
+                    "description": "e.g. \"Patch\", \"Latest in 1.x\", \"Latest Stable\"",
+                    "type": "string"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_MoranWeissman_sharko_internal_models.SetActiveConnectionRequest": {
             "type": "object",
             "properties": {
@@ -5323,6 +5355,13 @@
         "github_com_MoranWeissman_sharko_internal_models.UpgradeRecommendations": {
             "type": "object",
             "properties": {
+                "cards": {
+                    "description": "Cards provides structured, security-aware upgrade options for richer UI rendering.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.RecommendationCard"
+                    }
+                },
                 "current_version": {
                     "type": "string"
                 },
@@ -5335,7 +5374,11 @@
                     "type": "string"
                 },
                 "next_patch": {
-                    "description": "same major.minor, higher patch",
+                    "description": "Legacy fields — kept for backwards compatibility with existing UI consumers.",
+                    "type": "string"
+                },
+                "recommended": {
+                    "description": "Recommended is the version string of the card that Sharko considers the best upgrade path.",
                     "type": "string"
                 }
             }

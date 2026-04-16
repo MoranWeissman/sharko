@@ -273,33 +273,40 @@ As of v1.16.0 the response includes bootstrap app health fields:
 
 **Response: `GET /api/v1/upgrade/{addonName}/recommendations`**
 
-Returns up to three recommended target versions based on the addon's current catalog version:
+Returns smart upgrade recommendations with security and breaking-change context.
 
 ```json
 {
   "addon": "cert-manager",
-  "current_version": "1.14.5",
-  "recommendations": [
+  "current_version": "0.20.4",
+  "next_patch": "0.20.5",
+  "next_minor": "0.21.0",
+  "latest_stable": "2.3.0",
+  "cards": [
     {
-      "type": "next_patch",
-      "version": "1.14.6",
-      "label": "Next patch"
-    },
-    {
-      "type": "next_minor",
-      "version": "1.15.0",
-      "label": "Next minor"
-    },
-    {
-      "type": "latest_stable",
-      "version": "1.16.2",
-      "label": "Latest stable"
+      "label": "Latest Stable",
+      "version": "2.3.0",
+      "has_security": true,
+      "has_breaking": true,
+      "cross_major": true,
+      "advisory_summary": "2 security fixes",
+      "is_recommended": true
     }
-  ]
+  ],
+  "recommended": "2.3.0"
 }
 ```
 
-`type` values: `next_patch`, `next_minor`, `latest_stable`. A type is omitted if no matching version exists beyond the current version. Versions are sourced from the Helm repository index at request time.
+**Field notes:**
+- `cards` — preferred field for new clients. Each card represents a candidate upgrade target with advisory context. Present when advisory data is available.
+- `next_patch`, `next_minor`, `latest_stable` — legacy flat fields kept for backwards compatibility with v1.16 and earlier clients. A field is omitted when no matching version exists.
+- `recommended` — version string of the card flagged `is_recommended: true`.
+- `cards[].has_security` — version path includes security fixes sourced from ArtifactHub.
+- `cards[].has_breaking` / `cards[].cross_major` — version crosses a breaking-change or major version boundary.
+- `cards[].advisory_summary` — human-readable summary of advisories (e.g., "2 security fixes").
+- Advisory source: ArtifactHub API (primary), release-notes keyword fallback when ArtifactHub is unreachable.
+
+Versions are scored and ranked; the highest-scoring candidate is flagged `is_recommended`.
 
 **Error Responses:**
 
