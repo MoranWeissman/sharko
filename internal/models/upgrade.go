@@ -62,7 +62,25 @@ type AvailableVersionsResponse struct {
 // UpgradeRecommendations contains smart upgrade suggestions for an addon.
 type UpgradeRecommendations struct {
 	CurrentVersion string `json:"current_version"`
-	NextPatch      string `json:"next_patch,omitempty"`    // same major.minor, higher patch
-	NextMinor      string `json:"next_minor,omitempty"`    // same major, higher minor, latest patch of that minor
-	LatestStable   string `json:"latest_stable,omitempty"` // latest non-prerelease version overall
+
+	// Legacy fields — kept for backwards compatibility with existing UI consumers.
+	NextPatch    string `json:"next_patch,omitempty"`    // same major.minor, higher patch
+	NextMinor    string `json:"next_minor,omitempty"`    // same major, higher minor, latest patch of that minor
+	LatestStable string `json:"latest_stable,omitempty"` // latest non-prerelease version overall
+
+	// Cards provides structured, security-aware upgrade options for richer UI rendering.
+	Cards []RecommendationCard `json:"cards,omitempty"`
+	// Recommended is the version string of the card that Sharko considers the best upgrade path.
+	Recommended string `json:"recommended,omitempty"`
+}
+
+// RecommendationCard is a single upgrade option with security and breaking-change metadata.
+type RecommendationCard struct {
+	Label           string `json:"label"`                      // e.g. "Patch", "Latest in 1.x", "Latest Stable"
+	Version         string `json:"version"`
+	HasSecurity     bool   `json:"has_security"`               // one or more versions along the path fix security issues
+	HasBreaking     bool   `json:"has_breaking"`               // crossing a major boundary or flagged as breaking
+	CrossMajor      bool   `json:"cross_major"`                // version major differs from current major
+	AdvisorySummary string `json:"advisory_summary,omitempty"` // e.g. "2 security fixes", "breaking change detected"
+	IsRecommended   bool   `json:"is_recommended"`             // true for the single recommended card
 }

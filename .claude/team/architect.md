@@ -37,6 +37,7 @@ internal/remoteclient/  K8s client for remote clusters (create/delete secrets)
 internal/config/     Config stores (file, K8s secret)
 internal/auth/       User auth + API token auth
 internal/models/     Shared data models
+internal/advisories/ Chart security & release advisory data (ArtifactHub primary, release-notes fallback)
 ```
 
 ### Key Patterns

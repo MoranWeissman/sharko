@@ -26,9 +26,11 @@ import {
   Sparkles,
   ChevronDown,
   MessageSquare,
+  Shield,
+  Star,
 } from 'lucide-react'
 import { api, removeAddon, upgradeAddon, configureAddon, getAddonPRs } from '@/services/api'
-import type { AddonCatalogItem, ConnectionsListResponse, UpgradeCheckResponse, UpgradeRecommendations, ValueDiffEntry, ConflictCheckEntry, TrackedPR } from '@/services/models'
+import type { AddonCatalogItem, ConnectionsListResponse, UpgradeCheckResponse, UpgradeRecommendations, RecommendationCard, ValueDiffEntry, ConflictCheckEntry, TrackedPR } from '@/services/models'
 import { MarkdownRenderer } from '@/components/MarkdownRenderer'
 import { StatCard } from '@/components/StatCard'
 import { StatusBadge } from '@/components/StatusBadge'
@@ -37,6 +39,18 @@ import { ErrorState } from '@/components/ErrorState'
 import { YamlViewer } from '@/components/YamlViewer'
 import { RoleGuard } from '@/components/RoleGuard'
 import { ConfirmationModal } from '@/components/ConfirmationModal'
+
+function cardGridClass(count: number): string {
+  if (count === 1) return 'grid gap-3 grid-cols-1'
+  if (count === 2) return 'grid gap-3 sm:grid-cols-2'
+  return 'grid gap-3 sm:grid-cols-3'
+}
+
+function cardDescription(card: RecommendationCard): string {
+  if (card.has_security) return card.advisory_summary ?? 'Includes security fix'
+  if (card.has_breaking) return 'Breaking changes — review carefully'
+  return 'Stable update'
+}
 
 function RecommendedVersions({
   addonName,
@@ -61,6 +75,74 @@ function RecommendedVersions({
 
   if (loading) return null
 
+  // NEW: prefer cards array from backend
+  if (recommendations?.cards && recommendations.cards.length > 0) {
+    const cards = recommendations.cards
+    return (
+      <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 dark:ring-gray-700 dark:bg-gray-800">
+        <h3 className="mb-1 text-base font-semibold text-[#0a2a4a] dark:text-gray-100">Recommended Upgrades</h3>
+        <p className="mb-3 text-xs text-[#3a6a8a] dark:text-gray-400">Smart suggestions based on your current version</p>
+        <div className={cardGridClass(cards.length)}>
+          {cards.map((card) => (
+            <div
+              key={card.label}
+              className={[
+                'flex flex-col gap-2 rounded-lg px-4 py-3',
+                card.is_recommended
+                  ? 'bg-[#e0f7f4] ring-2 ring-teal-500 dark:bg-teal-900/20 dark:ring-teal-500'
+                  : 'bg-[#e0f0ff] dark:bg-gray-700/50',
+              ].join(' ')}
+            >
+              {/* Recommended indicator */}
+              {card.is_recommended && (
+                <div className="flex items-center gap-1 text-teal-600 dark:text-teal-400">
+                  <Star className="h-3.5 w-3.5 fill-current" />
+                  <span className="text-xs font-semibold">Recommended</span>
+                </div>
+              )}
+
+              {/* Label + badges row */}
+              <div className="flex items-start justify-between gap-2">
+                <span className="text-xs font-semibold uppercase tracking-wide text-[#3a6a8a] dark:text-gray-400">
+                  {card.label}
+                </span>
+                <div className="flex items-center gap-1">
+                  {card.has_security && (
+                    <span className="flex items-center gap-0.5 rounded-full bg-green-100 px-1.5 py-0.5 text-[10px] font-semibold text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                      <Shield className="h-3 w-3" />
+                      Security
+                    </span>
+                  )}
+                  {(card.has_breaking || card.cross_major) && (
+                    <span className="flex items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                      <AlertTriangle className="h-3 w-3" />
+                      Major change
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Version + description */}
+              <div>
+                <p className="font-mono text-base font-bold text-[#0a2a4a] dark:text-gray-100">{card.version}</p>
+                <p className="mt-0.5 text-xs text-[#2a5a7a] dark:text-gray-400">{cardDescription(card)}</p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => onAnalyze(card.version)}
+                className="mt-auto rounded-lg border border-teal-400 bg-white px-3 py-1.5 text-xs font-medium text-teal-700 hover:bg-teal-50 dark:border-teal-600 dark:bg-gray-800 dark:text-teal-400 dark:hover:bg-teal-900/20"
+              >
+                Analyze
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  // LEGACY FALLBACK: older backends that don't return cards
   const items: { label: string; version: string; description: string }[] = []
   if (recommendations?.next_patch) {
     items.push({ label: 'Next Patch', version: recommendations.next_patch, description: 'Safe bugfix update' })
@@ -69,7 +151,6 @@ function RecommendedVersions({
     items.push({ label: 'Next Minor', version: recommendations.next_minor, description: 'Feature update, same major' })
   }
   if (recommendations?.latest_stable) {
-    // Only show latest_stable if it's different from next_patch and next_minor
     const alreadyShown = items.some((i) => i.version === recommendations.latest_stable)
     if (!alreadyShown) {
       items.push({ label: 'Latest Stable', version: recommendations.latest_stable, description: 'Latest stable release' })

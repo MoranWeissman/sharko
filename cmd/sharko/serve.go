@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MoranWeissman/sharko/internal/advisories"
 	"github.com/MoranWeissman/sharko/internal/ai"
 	"github.com/MoranWeissman/sharko/internal/api"
 	"github.com/MoranWeissman/sharko/internal/argosecrets"
@@ -193,7 +194,8 @@ var serveCmd = &cobra.Command{
 		addonSvc := service.NewAddonService(getEnvDefault("SHARKO_REPO_PATH_MANAGED_CLUSTERS", "configuration/managed-clusters.yaml"))
 		dashboardSvc := service.NewDashboardService(connSvc, getEnvDefault("SHARKO_REPO_PATH_MANAGED_CLUSTERS", "configuration/managed-clusters.yaml"))
 		observabilitySvc := service.NewObservabilityService()
-		upgradeSvc := service.NewUpgradeService(aiClient, getEnvDefault("SHARKO_REPO_PATH_MANAGED_CLUSTERS", "configuration/managed-clusters.yaml"))
+		advSvc := advisories.NewService(nil) // nil = uses default http.Client with 5s timeout
+		upgradeSvc := service.NewUpgradeService(aiClient, advSvc, getEnvDefault("SHARKO_REPO_PATH_MANAGED_CLUSTERS", "configuration/managed-clusters.yaml"))
 
 		// Build server
 		srv := api.NewServer(connSvc, clusterSvc, addonSvc, dashboardSvc, observabilitySvc, upgradeSvc, aiClient)

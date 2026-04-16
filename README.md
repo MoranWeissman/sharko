@@ -31,7 +31,7 @@ Sharko is a server that runs in your Kubernetes cluster, next to ArgoCD, and man
 - **AI assistant** — context-aware troubleshooting panel with resizable panel and error-aware pre-filled prompts; supports OpenAI, Claude, Gemini, Ollama, and any OpenAI-compatible API
 - **API keys** — long-lived tokens for Backstage, Terraform, and CI/CD integrations
 - **Unified API** — CLI, UI, and external integrations all use the same REST API
-- **Upgrade management** — smart upgrade recommendations (next patch / next minor / latest stable), analyze-before-upgrade enforcement, step-by-step progress, batch multi-addon upgrades
+- **Upgrade management** — security-aware upgrade recommendation cards (ArtifactHub advisories, security/breaking-change flags, scored best-path), analyze-before-upgrade enforcement, step-by-step progress, batch multi-addon upgrades
 - **ArgoCD diagnostics** — ArgoCD connection state surfaced per cluster; bootstrap app health shown on dashboard and observability view
 - **Auto-refresh** — dashboard, cluster detail, cluster overview, and addon detail pages refresh automatically (30s); addon catalog refreshes every 60s
 
