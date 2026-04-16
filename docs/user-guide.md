@@ -575,17 +575,49 @@ In the cluster detail page, when a test fails, a **"Why did this fail?"** button
 
 The upgrade checker helps you evaluate available chart versions before upgrading an addon.
 
-### Inline from Addon Detail
+### Upgrade Recommendations
 
-In the UI, navigate to an addon's detail page and select the **Upgrade Checker** tab. This shows:
-- Available chart versions (fetched from the Helm repo index)
-- Values diff between current and target versions
-- AI-generated upgrade summary (if AI is configured)
+When you open the **Upgrade Checker** tab on an addon detail page, Sharko automatically fetches smart recommendations for the current catalog version. Three candidate target versions are offered when available:
+
+| Recommendation | Meaning |
+|----------------|---------|
+| **Next patch** | Lowest version that increments only the patch digit (e.g., 1.14.5 → 1.14.6) |
+| **Next minor** | Lowest version that increments the minor digit (e.g., 1.14.5 → 1.15.0) |
+| **Latest stable** | Highest non-pre-release version in the Helm repo index |
+
+Click a recommendation to jump to that version in the version list. You can also search for a specific version using the search box in the version list — useful when you need to analyze an arbitrary target.
+
+### Analyze-Before-Upgrade
+
+The UI enforces an **analyze-before-upgrade** workflow. Before the **Upgrade** button becomes active, you must:
+
+1. Select a target version from the version list or recommendations.
+2. Click **Analyze** to fetch the values diff and optionally the AI-generated summary.
+3. Review the analysis result.
+
+Only after analysis completes does the **Upgrade** button become clickable. This prevents accidental blind upgrades.
+
+### Step-by-Step Upgrade Progress
+
+After clicking **Upgrade**, the UI shows a step-by-step progress view that auto-refreshes until the upgrade PR is created. Steps displayed:
+
+1. Validating version
+2. Generating values diff
+3. Creating pull request
+4. Done (with PR URL)
+
+### Ask AI on Upgrade Errors
+
+When an upgrade error banner appears, an **Ask AI** button is shown alongside the error. Clicking it opens the AI assistant panel with a pre-filled prompt that includes the addon name, current version, target version, and the error message. This saves you from manually copying context into the AI chat.
 
 ### API Endpoints
 
 ```bash
-# List available versions for an addon
+# Smart recommendations for an addon
+curl -H "Authorization: Bearer $TOKEN" \
+  https://sharko.your-cluster.com/api/v1/upgrade/cert-manager/recommendations
+
+# List all available versions
 curl -H "Authorization: Bearer $TOKEN" \
   https://sharko.your-cluster.com/api/v1/upgrade/cert-manager/versions
 
@@ -737,12 +769,18 @@ The sidebar can be collapsed to show only icons.
 
 The main dashboard shows aggregated stats: total clusters, healthy/degraded counts, total addons, sync status breakdown, and recent pull requests.
 
+**Bootstrap app health banner:** If the Sharko bootstrap ApplicationSet is degraded or out-of-sync in ArgoCD, the dashboard displays a warning banner at the top. This indicates that ArgoCD may not be deploying addons correctly. Check the Observability view for details; the dedicated **Bootstrap App** section there shows the full health and sync state.
+
+**Auto-refresh:** The dashboard refreshes automatically every 30 seconds. A **Refresh** button in the top-right corner triggers an immediate refresh without navigating away.
+
 ### Clusters View
 
 - List of all registered clusters displayed as cards with health status indicators
 - Click a cluster to open the **Cluster Detail** page
 - Cluster Detail uses a **left navigation panel** with tabs: Overview, Addons, Config Diff, Comparison, etc.
 - Register clusters, update addon assignments, and trigger credential refreshes from the detail page
+- **ArgoCD diagnostics:** When Sharko cannot reach ArgoCD for a cluster, a single consolidated error banner appears at the top of the cluster detail page with the connection error message. This is surfaced via the `argocd_connection_status` field returned by the comparison endpoint.
+- **Auto-refresh:** Cluster Detail and Clusters Overview pages refresh every 30 seconds. A **Refresh** button is available on both pages for manual refresh.
 
 ### Addon Catalog
 
@@ -751,6 +789,7 @@ The main dashboard shows aggregated stats: total clusters, healthy/degraded coun
 - Addon Detail uses a **left navigation panel** with tabs: Overview, Version Matrix, Upgrade Checker, etc.
 - Version drift and upgrade checking are inside the addon detail page (no separate pages)
 - Add addons to the catalog and trigger upgrades from the detail page
+- **Auto-refresh:** Addon Catalog auto-refreshes every 60 seconds. Addon Detail auto-refreshes every 30 seconds. Both pages have a **Refresh** button.
 
 ### Settings Page
 
@@ -777,16 +816,26 @@ Currently populated with mock data; will be connected to the notification API wh
 The AI assistant is accessed via:
 - **Floating button** in the bottom-right corner of every page
 - **"Ask AI" button** in the top bar
+- **"Ask AI" button** on error banners (pre-fills context from the error)
 
 Both open a right-side panel (not a separate page) that provides a chat interface. The AI is context-aware — it knows which page you are viewing and can answer questions about the current cluster, addon, or dashboard data.
 
 There is no dedicated AI page. The AI is always available as a side panel from any page.
+
+**Resizable panel:** Drag the left edge of the AI panel to resize it. The panel can be dragged between 320 px and 700 px wide. The main content area maintains a minimum width of 400 px regardless of panel size.
+
+**Pre-filled context prompts:** When you click **Ask AI** on an error banner (e.g., a cluster connectivity error or upgrade failure), the chat opens with a pre-filled message that includes the resource name, the error text, and relevant version or context information. This eliminates manual copy-paste when asking the AI to diagnose a specific problem.
+
+**Investigation-first protocol:** The AI uses a tool-first approach — it queries live cluster and ArgoCD data before providing advice, rather than speculating based on the error message alone. For example, when investigating an upgrade error, the AI checks the actual ArgoCD application events and pod logs before suggesting a fix.
+
+**AI tools include** (as of v1.16.0): list clusters, get cluster detail, get addon status, query ArgoCD app health/events/logs, compare Helm versions, fetch changelog, get ArgoCD cluster connection status (`get_argocd_cluster_connection`), enable/disable addons, sync/refresh ArgoCD apps.
 
 ### Observability
 
 - ArgoCD health groups (healthy, degraded, missing)
 - Sync activity timeline
 - Attention items: clusters or addons that need action
+- **Bootstrap App section:** A dedicated section shows the health and sync status of the Sharko bootstrap ApplicationSet. When the bootstrap app is degraded or out-of-sync, the section expands with the ArgoCD message to help identify the root cause. This is the canonical place to diagnose bootstrapping failures when the dashboard banner fires.
 
 ### Embedded Dashboards
 

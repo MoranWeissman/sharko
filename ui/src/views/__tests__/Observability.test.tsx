@@ -19,6 +19,13 @@ vi.mock('recharts', () => {
 
 vi.mock('@/services/api', () => ({
   api: {
+    getDashboardStats: vi.fn().mockResolvedValue({
+      total_clusters: 0,
+      connected_clusters: 0,
+      bootstrap_app_health: 'Healthy',
+      bootstrap_app_sync: 'Synced',
+    }),
+    getConnections: vi.fn().mockResolvedValue({ connections: [], active_connection: '' }),
     getObservability: vi.fn().mockResolvedValue({
       control_plane: {
         argocd_version: 'v3.2.2',

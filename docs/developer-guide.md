@@ -178,6 +178,7 @@ sharko/
       addon.go          Addon catalog queries
       dashboard.go      Dashboard statistics
       observability.go  Observability overview
+      upgrade.go        Upgrade recommendation service (next patch, next minor, latest stable)
 
     platform/           Runtime detection
       detect.go         K8s vs local mode detection
@@ -227,6 +228,34 @@ Three upgrade methods:
 - `UpgradeAddonGlobal(ctx, addonName, newVersion)` — updates `addons-catalog.yaml`
 - `UpgradeAddonCluster(ctx, addonName, clusterName, newVersion)` — updates the cluster values file
 - `UpgradeAddons(ctx, upgrades map[string]string)` — batch global upgrades in one PR
+
+### service/upgrade.go
+
+The upgrade recommendation service calculates smart upgrade candidates from the Helm repo index given the addon's current catalog version.
+
+```go
+// GetRecommendations returns up to three version recommendations.
+func (s *UpgradeService) GetRecommendations(ctx context.Context, addonName string) (*Recommendations, error)
+
+type Recommendations struct {
+    Addon          string           `json:"addon"`
+    CurrentVersion string           `json:"current_version"`
+    Recommendations []Recommendation `json:"recommendations"`
+}
+
+type Recommendation struct {
+    Type    string `json:"type"`    // "next_patch", "next_minor", "latest_stable"
+    Version string `json:"version"`
+    Label   string `json:"label"`
+}
+```
+
+The service fetches the Helm repo index, parses all available versions, and applies semver logic:
+- **next_patch** — lowest version with the same major.minor but higher patch
+- **next_minor** — lowest version with the same major but higher minor (any patch)
+- **latest_stable** — highest version with no pre-release suffix
+
+Only types that resolve to a version strictly greater than current are included in the response.
 
 ### orchestrator/adopt.go
 
@@ -312,6 +341,31 @@ REST client for ArgoCD. Uses account token authentication (Bearer header). Opera
 
 Git provider interface for creating/updating files and opening PRs. Implementations for GitHub and Azure DevOps. All write operations go through `commitChanges` in `orchestrator/git_helpers.go`, which always creates a PR. When `GitOpsConfig.PRAutoMerge` is true, the PR is merged immediately after creation.
 
+**PR merge retry pattern:** Both the GitHub and Azure DevOps implementations retry PR merges when the remote returns HTTP 405 with a "Base branch was modified" message. This race condition occurs when two PRs target the same base branch and one merges between the time another was created and when auto-merge is attempted. The retry logic:
+
+1. Attempt to merge the PR.
+2. If HTTP 405 and "Base branch was modified" — wait briefly, then retry.
+3. Up to 3 retries total before returning the error.
+
+```go
+// Pattern used in github.go and azuredevops.go
+const mergePRMaxRetries = 3
+
+for attempt := 0; attempt <= mergePRMaxRetries; attempt++ {
+    err = provider.mergePR(ctx, prID)
+    if err == nil {
+        return nil
+    }
+    if !isBranchModifiedError(err) || attempt == mergePRMaxRetries {
+        return err
+    }
+    // Brief wait before retry
+    time.Sleep(retryDelay)
+}
+```
+
+This prevents upgrade batch operations from failing when the Git provider rejects a merge due to a concurrent merge.
+
 ### api
 
 HTTP handlers. Each handler is a method on the `Server` struct. Handlers are thin — they validate input, call the orchestrator or service layer, and write JSON responses.
@@ -378,6 +432,40 @@ The `auth` store manages both session tokens (short-lived, from `POST /auth/logi
 ### ai
 
 Multi-provider AI client supporting Ollama, OpenAI, Claude, Gemini, and custom OpenAI-compatible endpoints. Includes a tool-calling agent loop for interactive troubleshooting.
+
+**Adding a new AI tool** (`internal/ai/tools.go`):
+
+1. Define the tool schema as a JSON-serializable struct and register it in the tool list:
+
+```go
+// In tools.go, add to the toolList slice:
+{
+    Name:        "get_argocd_cluster_connection",
+    Description: "Get the ArgoCD connection status for a specific cluster. Use this when diagnosing x509, auth, or connectivity errors between Sharko and ArgoCD for a cluster.",
+    InputSchema: map[string]interface{}{
+        "type": "object",
+        "properties": map[string]interface{}{
+            "cluster_name": map[string]interface{}{
+                "type":        "string",
+                "description": "The cluster name to check ArgoCD connection for",
+            },
+        },
+        "required": []string{"cluster_name"},
+    },
+},
+```
+
+2. Add a case to the tool dispatch switch in `agent.go`:
+
+```go
+case "get_argocd_cluster_connection":
+    clusterName, _ := input["cluster_name"].(string)
+    result, err = s.getArgoCDClusterConnection(ctx, clusterName)
+```
+
+3. Implement the handler method on the agent struct. The method should call the relevant service or API and return a string result (or an error that the agent surfaces as a tool error).
+
+The `get_argocd_cluster_connection` tool (added in v1.16.0) calls the cluster comparison endpoint and extracts `argocd_connection_status` and `argocd_connection_message`, giving the AI specific error context for diagnosing cluster-level ArgoCD connectivity failures rather than relying on the user to copy-paste error messages.
 
 ### verify
 

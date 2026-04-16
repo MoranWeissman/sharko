@@ -28,10 +28,12 @@ Sharko is a server that runs in your Kubernetes cluster, next to ArgoCD, and man
 - **GitOps-native** — every write operation creates a PR (auto-merge optional); branches cleaned up after merge
 - **Managed vs discovered clusters** — Sharko surfaces all ArgoCD clusters; adopt discovered clusters into full management in one click
 - **Secrets provider** — deliver addon credentials to remote clusters via AWS Secrets Manager or Kubernetes Secrets (no ESO required)
-- **AI assistant** — context-aware troubleshooting panel, supports OpenAI, Claude, Gemini, Ollama, and any OpenAI-compatible API
+- **AI assistant** — context-aware troubleshooting panel with resizable panel and error-aware pre-filled prompts; supports OpenAI, Claude, Gemini, Ollama, and any OpenAI-compatible API
 - **API keys** — long-lived tokens for Backstage, Terraform, and CI/CD integrations
 - **Unified API** — CLI, UI, and external integrations all use the same REST API
-- **Upgrade management** — upgrade addons globally or per-cluster, with drift detection and batch multi-addon upgrades
+- **Upgrade management** — smart upgrade recommendations (next patch / next minor / latest stable), analyze-before-upgrade enforcement, step-by-step progress, batch multi-addon upgrades
+- **ArgoCD diagnostics** — ArgoCD connection state surfaced per cluster; bootstrap app health shown on dashboard and observability view
+- **Auto-refresh** — dashboard, cluster detail, cluster overview, and addon detail pages refresh automatically (30s); addon catalog refreshes every 60s
 
 - **Addon dependency ordering** — declare `dependsOn` in the catalog to enforce deployment order; cycle detection prevents invalid graphs
 - **AI addon summaries** — AI-generated summaries of each addon's purpose and release notes, shown in the addon detail view
@@ -169,10 +171,13 @@ Sharko exposes a REST API that every consumer uses — the CLI, the UI, and exte
 |--------|------|-------------|
 | GET | `/api/v1/clusters` | List clusters with health stats |
 | GET | `/api/v1/clusters/{name}` | Cluster detail + addon status |
+| GET | `/api/v1/clusters/{name}/comparison` | Git vs ArgoCD comparison, including ArgoCD connection state |
 | GET | `/api/v1/clusters/available` | Discover available clusters from the secrets provider |
 | GET | `/api/v1/addons/catalog` | Addon catalog with deployment stats |
 | GET | `/api/v1/addons/version-matrix` | Version matrix: addon × cluster grid |
 | GET | `/api/v1/fleet/status` | Cluster status overview |
+| GET | `/api/v1/dashboard/stats` | Aggregated stats including bootstrap app health |
+| GET | `/api/v1/upgrade/{addonName}/recommendations` | Smart upgrade recommendations (next patch, next minor, latest stable) |
 | GET | `/api/v1/tokens` | List API keys (admin only) |
 | GET | `/api/v1/addon-secrets` | List addon secret definitions |
 | GET | `/api/v1/clusters/{name}/secrets` | List managed secrets on a cluster |

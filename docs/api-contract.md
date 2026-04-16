@@ -193,6 +193,29 @@ These endpoints are already implemented and working. Listed here for completenes
 }
 ```
 
+**Response: `GET /api/v1/clusters/{name}/comparison`**
+
+Includes ArgoCD connection state as of v1.16.0:
+
+```json
+{
+  "cluster": "prod-eu",
+  "argocd_connection_status": "connected",
+  "argocd_connection_message": "",
+  "addons": [
+    {
+      "addon_name": "monitoring",
+      "git_version": "56.6.2",
+      "argocd_version": "56.6.2",
+      "sync_status": "Synced",
+      "health_status": "Healthy"
+    }
+  ]
+}
+```
+
+`argocd_connection_status` values: `connected`, `error`. When `error`, `argocd_connection_message` contains the human-readable reason. The UI surfaces this as a single consolidated error banner at the top of the cluster detail page.
+
 ### Addons (Read)
 
 | Method | Path | Description |
@@ -212,6 +235,26 @@ These endpoints are already implemented and working. Listed here for completenes
 | GET | `/api/v1/dashboard/attention` | Items needing attention (degraded, out-of-sync) |
 | GET | `/api/v1/dashboard/pull-requests` | Recent PRs from the Git provider |
 
+**Response: `GET /api/v1/dashboard/stats`**
+
+As of v1.16.0 the response includes bootstrap app health fields:
+
+```json
+{
+  "total_clusters": 12,
+  "connected": 10,
+  "degraded": 1,
+  "unknown": 1,
+  "total_addons": 8,
+  "synced": 94,
+  "out_of_sync": 2,
+  "bootstrap_app_health": "Healthy",
+  "bootstrap_app_sync": "Synced"
+}
+```
+
+`bootstrap_app_health` and `bootstrap_app_sync` reflect the ArgoCD health and sync status of the Sharko bootstrap ApplicationSet. When `bootstrap_app_health` is not `Healthy`, the Dashboard shows a banner with guidance. Possible values follow ArgoCD conventions: `Healthy`, `Degraded`, `Progressing`, `Missing`, `Unknown`.
+
 ### Observability
 
 | Method | Path | Description |
@@ -223,9 +266,47 @@ These endpoints are already implemented and working. Listed here for completenes
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/v1/upgrade/{addonName}/versions` | Available chart versions for an addon |
+| GET | `/api/v1/upgrade/{addonName}/recommendations` | Smart upgrade recommendations (next patch, next minor, latest stable) |
 | POST | `/api/v1/upgrade/check` | Check upgrade impact (values diff) |
 | POST | `/api/v1/upgrade/ai-summary` | AI-generated upgrade summary |
 | GET | `/api/v1/upgrade/ai-status` | AI summary generation status |
+
+**Response: `GET /api/v1/upgrade/{addonName}/recommendations`**
+
+Returns up to three recommended target versions based on the addon's current catalog version:
+
+```json
+{
+  "addon": "cert-manager",
+  "current_version": "1.14.5",
+  "recommendations": [
+    {
+      "type": "next_patch",
+      "version": "1.14.6",
+      "label": "Next patch"
+    },
+    {
+      "type": "next_minor",
+      "version": "1.15.0",
+      "label": "Next minor"
+    },
+    {
+      "type": "latest_stable",
+      "version": "1.16.2",
+      "label": "Latest stable"
+    }
+  ]
+}
+```
+
+`type` values: `next_patch`, `next_minor`, `latest_stable`. A type is omitted if no matching version exists beyond the current version. Versions are sourced from the Helm repository index at request time.
+
+**Error Responses:**
+
+| Code | Condition |
+|------|-----------|
+| 404 | Addon not found in catalog |
+| 502 | Helm repo index unreachable |
 
 ### AI Agent
 
