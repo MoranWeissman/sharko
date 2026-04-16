@@ -288,6 +288,25 @@ func (p *AWSSecretsManagerProvider) buildFromRawKubeconfig(raw []byte, secretNam
 	return kc, nil
 }
 
+// HealthCheck confirms AWS Secrets Manager credentials work by calling ListSecrets
+// with MaxResults=1 and the configured prefix filter. No secret values are fetched.
+func (p *AWSSecretsManagerProvider) HealthCheck(ctx context.Context) error {
+	maxResults := int32(1)
+	_, err := p.client.ListSecrets(ctx, &secretsmanager.ListSecretsInput{
+		MaxResults: &maxResults,
+		Filters: []types.Filter{
+			{
+				Key:    types.FilterNameStringTypeName,
+				Values: []string{p.prefix},
+			},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("AWS Secrets Manager health check failed: %w", err)
+	}
+	return nil
+}
+
 func (p *AWSSecretsManagerProvider) ListClusters() ([]ClusterInfo, error) {
 	slog.Info("[provider] ListClusters called", "prefix", p.prefix)
 	var clusters []ClusterInfo

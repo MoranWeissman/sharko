@@ -42,6 +42,11 @@ func (p *GCPSecretManagerProvider) SearchSecrets(query string) ([]string, error)
 	return nil, nil
 }
 
+// HealthCheck is not implemented — GCP provider is a stub.
+func (p *GCPSecretManagerProvider) HealthCheck(ctx context.Context) error {
+	return fmt.Errorf("GCP provider not implemented")
+}
+
 // GetSecretValue is not implemented.
 func (p *GCPSecretManagerProvider) GetSecretValue(ctx context.Context, path string) ([]byte, error) {
 	return nil, fmt.Errorf("GCP provider not implemented")

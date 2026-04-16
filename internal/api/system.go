@@ -1,10 +1,12 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/MoranWeissman/sharko/internal/providers"
 )
@@ -30,16 +32,19 @@ func (s *Server) handleGetProviders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Test connectivity to report status.
+	// Test connectivity to report status using a lightweight health check.
+	// A 3-second timeout ensures this never stalls the page load.
 	status := "configured"
 	var statusError string
 	if s.credProvider != nil {
-		if _, err := s.credProvider.ListClusters(); err == nil {
+		hctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+		if err := s.credProvider.HealthCheck(hctx); err == nil {
 			status = "connected"
 		} else {
 			status = "error"
 			statusError = err.Error()
-			slog.Warn("[provider] ListClusters failed", "type", s.providerCfg.Type, "region", s.providerCfg.Region, "prefix", s.providerCfg.Prefix, "error", err)
+			slog.Warn("[provider] HealthCheck failed", "type", s.providerCfg.Type, "region", s.providerCfg.Region, "prefix", s.providerCfg.Prefix, "error", err)
 		}
 	}
 

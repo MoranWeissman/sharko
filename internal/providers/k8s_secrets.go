@@ -163,6 +163,20 @@ func (p *KubernetesSecretProvider) SearchSecrets(query string) ([]string, error)
 	return p.searchSimilarK8s(query)
 }
 
+// HealthCheck confirms Kubernetes Secret access by listing at most one secret
+// in the provider namespace with the managed-by-sharko label selector.
+func (p *KubernetesSecretProvider) HealthCheck(ctx context.Context) error {
+	limit := int64(1)
+	_, err := p.client.CoreV1().Secrets(p.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "app.kubernetes.io/managed-by=sharko",
+		Limit:         limit,
+	})
+	if err != nil {
+		return fmt.Errorf("Kubernetes Secrets health check failed: %w", err)
+	}
+	return nil
+}
+
 func (p *KubernetesSecretProvider) ListClusters() ([]ClusterInfo, error) {
 	secrets, err := p.client.CoreV1().Secrets(p.namespace).List(context.Background(), metav1.ListOptions{
 		LabelSelector: "app.kubernetes.io/managed-by=sharko",

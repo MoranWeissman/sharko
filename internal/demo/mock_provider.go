@@ -1,6 +1,7 @@
 package demo
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/MoranWeissman/sharko/internal/providers"
@@ -64,6 +65,11 @@ func (p *MockClusterCredentialsProvider) ListClusters() ([]providers.ClusterInfo
 // SearchSecrets returns an empty list — the demo provider doesn't need secret suggestions.
 func (p *MockClusterCredentialsProvider) SearchSecrets(query string) ([]string, error) {
 	return nil, nil
+}
+
+// HealthCheck always returns nil — the demo provider is always "connected".
+func (p *MockClusterCredentialsProvider) HealthCheck(ctx context.Context) error {
+	return nil
 }
 
 // buildFakeKubeconfig returns a minimal valid kubeconfig YAML for a demo cluster.

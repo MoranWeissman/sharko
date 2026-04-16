@@ -142,6 +142,10 @@ func (m *mockCredProvider) SearchSecrets(query string) ([]string, error) {
 	return nil, nil
 }
 
+func (m *mockCredProvider) HealthCheck(ctx context.Context) error {
+	return nil
+}
+
 // ---------- mock Git provider ----------
 
 type mockGitProvider struct {
