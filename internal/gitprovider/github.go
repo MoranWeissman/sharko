@@ -135,6 +135,23 @@ func (g *GitHubProvider) ListPullRequests(ctx context.Context, state string) ([]
 	return allPRs, nil
 }
 
+// commitAuthorFor returns the *github.CommitAuthor for a given attribution.
+// When the attribution carries explicit author identity (Tier 2 + per-user PAT)
+// that identity is used; otherwise we fall back to the legacy "Sharko Bot"
+// author so the commit metadata is stable for downstream consumers.
+func commitAuthorFor(attr CommitAttribution) *github.CommitAuthor {
+	if attr.HasAuthor() {
+		return &github.CommitAuthor{
+			Name:  github.Ptr(attr.AuthorName),
+			Email: github.Ptr(attr.AuthorEmail),
+		}
+	}
+	return &github.CommitAuthor{
+		Name:  github.Ptr("Sharko Bot"),
+		Email: github.Ptr("sharko-bot@users.noreply.github.com"),
+	}
+}
+
 // TestConnection verifies that the configured repository is accessible.
 func (g *GitHubProvider) TestConnection(ctx context.Context) error {
 	_, resp, err := g.client.Repositories.Get(ctx, g.owner, g.repo)

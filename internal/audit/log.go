@@ -14,26 +14,30 @@ import (
 
 // Entry is a single audit log record.
 type Entry struct {
-	ID         string    `json:"id"`
-	Timestamp  time.Time `json:"timestamp"`
-	Level      string    `json:"level"`                // info, warn, error
-	Event      string    `json:"event"`                // cluster_registered, pr_created, etc.
-	User       string    `json:"user"`                 // username or "system"
-	Action     string    `json:"action"`               // register, remove, update, test
-	Resource   string    `json:"resource"`             // cluster:prod-eu, addon:cert-manager
-	Source     string    `json:"source"`               // ui, cli, api, reconciler, webhook
-	Result     string    `json:"result"`               // success, failure, partial
-	DurationMs int64     `json:"duration_ms"`
-	Error      string    `json:"error,omitempty"`
-	RequestID  string    `json:"request_id,omitempty"`
-	Detail     string    `json:"detail,omitempty"`     // semantic detail set by handlers via Enrich
+	ID              string          `json:"id"`
+	Timestamp       time.Time       `json:"timestamp"`
+	Level           string          `json:"level"`                       // info, warn, error
+	Event           string          `json:"event"`                       // cluster_registered, pr_created, etc.
+	User            string          `json:"user"`                        // username or "system"
+	Action          string          `json:"action"`                      // register, remove, update, test
+	Resource        string          `json:"resource"`                    // cluster:prod-eu, addon:cert-manager
+	Source          string          `json:"source"`                      // ui, cli, api, reconciler, webhook
+	Result          string          `json:"result"`                      // success, failure, partial
+	DurationMs      int64           `json:"duration_ms"`
+	Error           string          `json:"error,omitempty"`
+	RequestID       string          `json:"request_id,omitempty"`
+	Detail          string          `json:"detail,omitempty"`            // semantic detail set by handlers via Enrich
+	AttributionMode AttributionMode `json:"attribution_mode,omitempty"`  // how the resulting Git commit was attributed
+	Tier            Tier            `json:"tier,omitempty"`              // attribution tier of the endpoint
 }
 
 // Fields contains semantic enrichment that handlers attach to the in-flight audit entry.
 type Fields struct {
-	Event    string
-	Resource string
-	Detail   string
+	Event           string
+	Resource        string
+	Detail          string
+	AttributionMode AttributionMode
+	Tier            Tier
 }
 
 type ctxKey struct{}
@@ -61,6 +65,20 @@ func Enrich(ctx context.Context, fields Fields) {
 	if fields.Detail != "" {
 		f.Detail = fields.Detail
 	}
+	if fields.AttributionMode != "" {
+		f.AttributionMode = fields.AttributionMode
+	}
+	if fields.Tier != "" {
+		f.Tier = fields.Tier
+	}
+}
+
+// CurrentFields returns the in-flight audit fields attached to ctx, or nil if
+// the request was not started by the audit middleware. Used by the Git-write
+// layer to record the resolved attribution mode without going through Enrich.
+func CurrentFields(ctx context.Context) *Fields {
+	f, _ := ctx.Value(ctxKey{}).(*Fields)
+	return f
 }
 
 // AuditFilter holds optional filter criteria for ListFiltered.

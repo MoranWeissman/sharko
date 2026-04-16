@@ -74,12 +74,11 @@ func (g *GitHubProvider) CreateBranch(ctx context.Context, branchName, fromRef s
 // README commit on the given branch via the Contents API.  It returns the SHA
 // of the new commit so the caller can branch from it.
 func (g *GitHubProvider) initEmptyRepo(ctx context.Context, branchName string) (string, error) {
-	author := &github.CommitAuthor{
-		Name:  github.Ptr("Sharko Bot"),
-		Email: github.Ptr("sharko-bot@users.noreply.github.com"),
-	}
+	attr := FromContext(ctx)
+	author := commitAuthorFor(attr)
+	message := attr.ApplyToMessage("Initial commit")
 	_, _, err := g.client.Repositories.CreateFile(ctx, g.owner, g.repo, "README.md", &github.RepositoryContentFileOptions{
-		Message:   github.Ptr("Initial commit"),
+		Message:   github.Ptr(message),
 		Content:   []byte("# Sharko Addons Repository\n\nManaged by [Sharko](https://github.com/MoranWeissman/sharko).\n"),
 		Author:    author,
 		Committer: author,
@@ -97,10 +96,9 @@ func (g *GitHubProvider) initEmptyRepo(ctx context.Context, branchName string) (
 
 // CreateOrUpdateFile creates a new file or updates an existing one on the given branch.
 func (g *GitHubProvider) CreateOrUpdateFile(ctx context.Context, path string, content []byte, branch, commitMessage string) error {
-	author := &github.CommitAuthor{
-		Name:  github.Ptr("Sharko Bot"),
-		Email: github.Ptr("sharko-bot@users.noreply.github.com"),
-	}
+	attr := FromContext(ctx)
+	author := commitAuthorFor(attr)
+	message := attr.ApplyToMessage(commitMessage)
 
 	existing, err := g.getContentsRaw(ctx, path, branch)
 	if err != nil {
@@ -108,7 +106,7 @@ func (g *GitHubProvider) CreateOrUpdateFile(ctx context.Context, path string, co
 	}
 
 	opts := &github.RepositoryContentFileOptions{
-		Message:   github.Ptr(commitMessage),
+		Message:   github.Ptr(message),
 		Content:   content,
 		Branch:    github.Ptr(branch),
 		Author:    author,
@@ -157,13 +155,12 @@ func (g *GitHubProvider) DeleteFile(ctx context.Context, path, branch, commitMes
 		return fmt.Errorf("delete file: file %q not found on branch %q", path, branch)
 	}
 
-	author := &github.CommitAuthor{
-		Name:  github.Ptr("Sharko Bot"),
-		Email: github.Ptr("sharko-bot@users.noreply.github.com"),
-	}
+	attr := FromContext(ctx)
+	author := commitAuthorFor(attr)
+	message := attr.ApplyToMessage(commitMessage)
 
 	opts := &github.RepositoryContentFileOptions{
-		Message:   github.Ptr(commitMessage),
+		Message:   github.Ptr(message),
 		SHA:       existing.SHA,
 		Branch:    github.Ptr(branch),
 		Author:    author,
@@ -215,12 +212,11 @@ func (g *GitHubProvider) BatchCreateFiles(ctx context.Context, files map[string]
 	}
 
 	// 5. Create a commit that points to the new tree.
-	author := &github.CommitAuthor{
-		Name:  github.Ptr("Sharko Bot"),
-		Email: github.Ptr("sharko-bot@users.noreply.github.com"),
-	}
+	attr := FromContext(ctx)
+	author := commitAuthorFor(attr)
+	message := attr.ApplyToMessage(commitMessage)
 	newCommit, _, err := g.client.Git.CreateCommit(ctx, g.owner, g.repo, &github.Commit{
-		Message: github.Ptr(commitMessage),
+		Message: github.Ptr(message),
 		Tree:    tree,
 		Parents: []*github.Commit{{SHA: github.Ptr(baseSHA)}},
 		Author:  author,

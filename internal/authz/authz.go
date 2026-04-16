@@ -89,6 +89,11 @@ var ActionRequirements = map[string]Role{
 	"init":                          RoleOperator,
 
 	// Viewer+ actions
+	// Self-service on the caller's own profile — any authenticated user.
+	"user.me":             RoleViewer,
+	"user.me.set-token":   RoleViewer,
+	"user.me.clear-token": RoleViewer,
+
 	"cluster.list":            RoleViewer,
 	"cluster.detail":          RoleViewer,
 	"cluster.list-discovered": RoleViewer,
