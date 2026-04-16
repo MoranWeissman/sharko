@@ -1,14 +1,23 @@
 import { useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Plug, Users, Key, Bot, Shield, GitMerge } from 'lucide-react'
+import { Plug, Users, Key, Bot, Shield, GitMerge, UserCog } from 'lucide-react'
 import { DetailNavPanel } from '@/components/DetailNavPanel'
 import { ConnectionSection } from '@/views/settings/ConnectionSection'
 import { SecretsProviderSection } from '@/views/settings/SecretsProviderSection'
 import { GitOpsSection } from '@/views/settings/GitOpsSection'
+import { MyAccountSection } from '@/views/settings/MyAccountSection'
 import { UserManagement } from '@/views/UserManagement'
 import { ApiKeys } from '@/views/ApiKeys'
 import { AIConfigSection } from '@/views/settings/AIConfigSection'
 import { useAuth } from '@/hooks/useAuth'
+
+const ALLOWED_NON_ADMIN = new Set([
+  'connections',
+  'secrets-provider',
+  'gitops',
+  'ai',
+  'my-account',
+])
 
 export function Settings() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -17,7 +26,7 @@ export function Settings() {
   const setSection = (s: string) => setSearchParams({ section: s }, { replace: true })
 
   useEffect(() => {
-    if (!isAdmin && section !== 'connections' && section !== 'secrets-provider' && section !== 'gitops' && section !== 'ai') {
+    if (!isAdmin && !ALLOWED_NON_ADMIN.has(section)) {
       setSearchParams({ section: 'connections' }, { replace: true })
     }
   }, [isAdmin, section, setSearchParams])
@@ -30,6 +39,10 @@ export function Settings() {
         { key: 'secrets-provider', label: 'Secrets Provider', icon: Shield },
         { key: 'gitops', label: 'GitOps', icon: GitMerge },
       ],
+    },
+    {
+      label: 'My Account',
+      items: [{ key: 'my-account', label: 'My Account', icon: UserCog }],
     },
     ...(isAdmin
       ? [
@@ -67,6 +80,7 @@ export function Settings() {
           {section === 'connections' && <ConnectionSection />}
           {section === 'secrets-provider' && <SecretsProviderSection />}
           {section === 'gitops' && <GitOpsSection />}
+          {section === 'my-account' && <MyAccountSection />}
           {section === 'users' && isAdmin && <UserManagement embedded />}
           {section === 'api-keys' && isAdmin && <ApiKeys embedded />}
           {section === 'ai' && <AIConfigSection />}

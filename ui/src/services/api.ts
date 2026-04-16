@@ -403,6 +403,12 @@ export const api = {
   // Auth
   updatePassword: (currentPassword: string, newPassword: string) => postJSON<{ status: string }>('/auth/update-password', { current_password: currentPassword, new_password: newPassword }),
 
+  // My account (v1.20 — tiered attribution)
+  getMe: () => fetchJSON<import('./models').MeResponse>('/users/me'),
+  setMyGitHubToken: (token: string) => putJSON<{ status: string; has_github_token: boolean }>('/users/me/github-token', { token }),
+  clearMyGitHubToken: () => deleteJSON<{ status: string; has_github_token: boolean }>('/users/me/github-token'),
+  testMyGitHubToken: () => postJSON<{ status: string; github_login: string }>('/users/me/github-token/test', {}),
+
   // Agent Chat
   agentChat: (sessionId: string, message: string, pageContext?: string) => postJSON<{ session_id: string; response: string }>('/agent/chat', { session_id: sessionId, message, page_context: pageContext }),
   agentReset: (sessionId: string) => postJSON<{ status: string }>('/agent/reset', { session_id: sessionId }),

@@ -40,6 +40,7 @@ nav:
     - Managing Addons: user-guide/addons.md
     - Upgrades: user-guide/upgrades.md
     - Notifications: user-guide/notifications.md
+    - Git Attribution: user-guide/attribution.md
   - Operator Manual:
     - Installation: operator/installation.md
     - Configuration: operator/configuration.md

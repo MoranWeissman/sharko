@@ -1,7 +1,34 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { ClipboardList, RefreshCw, Radio, Loader2 } from 'lucide-react';
+import { ClipboardList, RefreshCw, Radio, Loader2, Key, User as UserIcon, Users as UsersIcon } from 'lucide-react';
 import { fetchAuditLog, createAuditStream } from '@/services/api';
 import type { AuditEntry } from '@/services/models';
+
+/** Renders the small attribution-mode icon for an audit entry. */
+function AttributionIcon({ mode }: { mode?: AuditEntry['attribution_mode'] }) {
+  if (!mode) return <span className="text-[#5a8aaa] dark:text-gray-600">—</span>;
+  switch (mode) {
+    case 'service':
+      return (
+        <span title="Service token used — no human author on the commit" className="inline-flex">
+          <Key className="h-3.5 w-3.5 text-[#3a6a8a] dark:text-gray-500" aria-label="Service token" />
+        </span>
+      );
+    case 'per_user':
+      return (
+        <span title="Per-user PAT used — commit authored by the user" className="inline-flex">
+          <UserIcon className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" aria-label="Per-user PAT" />
+        </span>
+      );
+    case 'co_author':
+      return (
+        <span title="Service token used; user listed as Co-authored-by trailer" className="inline-flex">
+          <UsersIcon className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" aria-label="Co-authored" />
+        </span>
+      );
+    default:
+      return <span className="text-[#5a8aaa] dark:text-gray-600">—</span>;
+  }
+}
 
 const ACTION_OPTIONS = ['', 'create', 'update', 'delete', 'test', 'diagnose', 'sync', 'init'];
 const SOURCE_OPTIONS = ['', 'ui', 'api', 'cli', 'webhook'];
@@ -213,6 +240,7 @@ export function AuditViewer() {
               <th className="px-4 py-3">Action</th>
               <th className="px-4 py-3">Resource</th>
               <th className="px-4 py-3">Source</th>
+              <th className="px-4 py-3" title="Git commit attribution mode">Attr.</th>
               <th className="px-4 py-3">Result</th>
               <th className="px-4 py-3">Duration</th>
             </tr>
@@ -220,7 +248,7 @@ export function AuditViewer() {
           <tbody className="divide-y divide-[#6aade0] dark:divide-gray-700">
             {loading && displayEntries.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-4 py-12 text-center">
+                <td colSpan={9} className="px-4 py-12 text-center">
                   <Loader2 className="mx-auto h-5 w-5 animate-spin text-[#2a5a7a] dark:text-gray-400" />
                 </td>
               </tr>
@@ -253,6 +281,9 @@ export function AuditViewer() {
                   </td>
                   <td className="px-4 py-2 text-xs text-[#3a6a8a] dark:text-gray-500">
                     {entry.source || '-'}
+                  </td>
+                  <td className="px-4 py-2">
+                    <AttributionIcon mode={entry.attribution_mode} />
                   </td>
                   <td className="px-4 py-2">
                     <span

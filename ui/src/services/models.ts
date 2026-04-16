@@ -368,6 +368,30 @@ export interface AuditEntry {
   duration_ms: number
   error?: string
   request_id?: string
+  detail?: string
+  /**
+   * Tier-aware attribution mode for the resulting Git commit (v1.20+):
+   *  - "service"   service token, no user identity attached
+   *  - "co_author" service token + Co-authored-by trailer for the user
+   *  - "per_user"  per-user PAT — the user IS the commit author
+   */
+  attribution_mode?: 'service' | 'co_author' | 'per_user' | ''
+  /**
+   * Tier of the originating endpoint (v1.20+):
+   *  - "tier1"     operational (cluster/addon/PR/connection ops)
+   *  - "tier2"     configuration (catalog metadata, values)
+   *  - "personal"  self-service on caller's own profile
+   *  - "auth"      login/logout/hash
+   *  - "webhook"   inbound webhook (no user identity)
+   */
+  tier?: 'tier1' | 'tier2' | 'personal' | 'auth' | 'webhook' | ''
+}
+
+/** Profile of the authenticated caller (GET /users/me). */
+export interface MeResponse {
+  username: string
+  role: string
+  has_github_token: boolean
 }
 
 export interface PermCheck {
