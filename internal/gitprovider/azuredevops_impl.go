@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"time"
 )
 
 // ---------- Read operations ----------
@@ -395,7 +396,11 @@ func (a *AzureDevOpsProvider) CreatePullRequest(_ context.Context, title, body, 
 
 // MergePullRequest approves and completes (merges) a pull request in Azure DevOps.
 // Azure DevOps requires approval before completion, then a PATCH with status=completed.
+// Retries up to 3 times on 405/409 "base branch modified" or merge conflict responses.
 func (a *AzureDevOpsProvider) MergePullRequest(ctx context.Context, prNumber int) error {
+	const maxRetries = 3
+	const retryDelay = 2 * time.Second
+
 	prURL := fmt.Sprintf("%s/pullrequests/%d?api-version=7.1", a.baseURL, prNumber)
 
 	// Step 1: GET PR to retrieve lastMergeSourceCommit and reviewers info
@@ -437,7 +442,7 @@ func (a *AzureDevOpsProvider) MergePullRequest(ctx context.Context, prNumber int
 		}
 	}
 
-	// Step 3: PATCH to complete (merge) the PR, bypassing branch policies
+	// Step 3: PATCH to complete (merge) the PR with retry on base-branch-modified errors.
 	// The bypass is needed because automated migrations may not satisfy all
 	// branch policies (required reviewers, build validation, etc.)
 	patchBody, _ := json.Marshal(map[string]interface{}{
@@ -446,23 +451,42 @@ func (a *AzureDevOpsProvider) MergePullRequest(ctx context.Context, prNumber int
 			"commitId": prData.LastMergeSourceCommit.CommitID,
 		},
 		"completionOptions": map[string]interface{}{
-			"deleteSourceBranch":    true,
-			"mergeStrategy":         "squash",
-			"bypassPolicy":         true,
-			"bypassReason":         "Automated by Sharko",
+			"deleteSourceBranch": true,
+			"mergeStrategy":      "squash",
+			"bypassPolicy":       true,
+			"bypassReason":       "Automated by Sharko",
 		},
 	})
 
-	resp, respBody, err := a.doPatch(prURL, patchBody)
-	if err != nil {
-		return fmt.Errorf("merge pull request #%d: %w", prNumber, err)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("merge pull request #%d failed (status %d): %s", prNumber, resp.StatusCode, string(respBody))
+	var lastMergeErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			time.Sleep(retryDelay)
+			slog.Info("[git] retrying PR merge after base branch modified", "pr", prNumber, "attempt", attempt+1)
+		}
+
+		resp, respBody, patchErr := a.doPatch(prURL, patchBody)
+		if patchErr != nil {
+			return fmt.Errorf("merge pull request #%d: %w", prNumber, patchErr)
+		}
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			slog.Info("azure devops pull request merged", "number", prNumber)
+			return nil
+		}
+
+		lastMergeErr = fmt.Errorf("merge pull request #%d failed (status %d): %s", prNumber, resp.StatusCode, string(respBody))
+
+		// Only retry on 405 or 409 with base-branch-conflict indicators.
+		bodyStr := strings.ToLower(string(respBody))
+		isRetryable := (resp.StatusCode == 405 || resp.StatusCode == 409) &&
+			(strings.Contains(bodyStr, "base") || strings.Contains(bodyStr, "conflict") || strings.Contains(bodyStr, "modified"))
+		if !isRetryable {
+			return lastMergeErr
+		}
+		slog.Warn("[git] PR merge got base branch conflict, will retry", "pr", prNumber, "attempt", attempt+1, "status", resp.StatusCode)
 	}
 
-	slog.Info("azure devops pull request merged", "number", prNumber)
-	return nil
+	return fmt.Errorf("merge pull request #%d failed after %d attempts: %w", prNumber, maxRetries, lastMergeErr)
 }
 
 // GetPullRequestStatus returns the status of a pull request: "open", "merged", or "closed".

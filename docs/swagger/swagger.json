@@ -4623,6 +4623,61 @@
                 }
             }
         },
+        "/upgrade/{addonName}/recommendations": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns smart upgrade recommendations for an addon: next patch, next minor, and latest stable version",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "upgrade"
+                ],
+                "summary": "Get upgrade recommendations",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Addon name",
+                        "name": "addonName",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Upgrade recommendations",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.UpgradeRecommendations"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "Service unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/upgrade/{addonName}/versions": {
             "get": {
                 "security": [
@@ -5261,6 +5316,26 @@
                     "type": "string"
                 },
                 "target_version": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_models.UpgradeRecommendations": {
+            "type": "object",
+            "properties": {
+                "current_version": {
+                    "type": "string"
+                },
+                "latest_stable": {
+                    "description": "latest non-prerelease version overall",
+                    "type": "string"
+                },
+                "next_minor": {
+                    "description": "same major, higher minor, latest patch of that minor",
+                    "type": "string"
+                },
+                "next_patch": {
+                    "description": "same major.minor, higher patch",
                     "type": "string"
                 }
             }

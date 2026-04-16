@@ -161,6 +161,20 @@ definitions:
       target_version:
         type: string
     type: object
+  github_com_MoranWeissman_sharko_internal_models.UpgradeRecommendations:
+    properties:
+      current_version:
+        type: string
+      latest_stable:
+        description: latest non-prerelease version overall
+        type: string
+      next_minor:
+        description: same major, higher minor, latest patch of that minor
+        type: string
+      next_patch:
+        description: same major.minor, higher patch
+        type: string
+    type: object
   github_com_MoranWeissman_sharko_internal_orchestrator.AddAddonRequest:
     properties:
       additional_sources:
@@ -3776,6 +3790,43 @@ paths:
       summary: Revoke API token
       tags:
       - auth
+  /upgrade/{addonName}/recommendations:
+    get:
+      description: 'Returns smart upgrade recommendations for an addon: next patch,
+        next minor, and latest stable version'
+      parameters:
+      - description: Addon name
+        in: path
+        name: addonName
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Upgrade recommendations
+          schema:
+            $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.UpgradeRecommendations'
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal error
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Service unavailable
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get upgrade recommendations
+      tags:
+      - upgrade
   /upgrade/{addonName}/versions:
     get:
       description: Returns available versions for an addon from the Helm repository

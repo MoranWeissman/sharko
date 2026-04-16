@@ -429,6 +429,13 @@ export interface UpgradeCheckResponse {
   baseline_note?: string
 }
 
+export interface UpgradeRecommendations {
+  current_version: string
+  next_patch?: string
+  next_minor?: string
+  latest_stable?: string
+}
+
 // --- Cluster Registration (Story 3.5) ---
 
 // --- Cluster Adoption (Story 4.4) ---

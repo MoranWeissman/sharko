@@ -21,6 +21,7 @@ import type {
   SyncActivityEntry,
   TrackedPRsResponse,
   UpgradeCheckResponse,
+  UpgradeRecommendations,
   VerifyResult,
   VersionMatrixResponse,
 } from './models'
@@ -374,6 +375,7 @@ export const api = {
 
   // Upgrade
   getUpgradeVersions: (addonName: string) => fetchJSON<AvailableVersionsResponse>(`/upgrade/${addonName}/versions`),
+  getUpgradeRecommendations: (addonName: string) => fetchJSON<UpgradeRecommendations>(`/upgrade/${addonName}/recommendations`),
   checkUpgrade: (addonName: string, targetVersion: string) => postJSON<UpgradeCheckResponse>('/upgrade/check', { addon_name: addonName, target_version: targetVersion }),
   getAddonChangelog: (name: string, from?: string, to?: string) => {
     const params = new URLSearchParams()
