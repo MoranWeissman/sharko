@@ -595,6 +595,13 @@ When viewing an addon's Upgrade tab, Sharko now shows **smart upgrade cards** th
 | Major change | Version crosses a major version boundary |
 | Recommended | Sharko's suggested upgrade path (highest-scored candidate) |
 
+Card types shown (when applicable):
+
+- **Patch** — increments only the patch digit; safest upgrade.
+- **Latest in N.x** (in-major) — highest version within the current major series.
+- **Latest in (N+1).x** (next major) — stepping stone to the next major series before jumping to overall latest stable. For example, if you're on `0.20.4` and the chart has `1.x` and `2.x` releases, Sharko shows a `Latest in 1.x` card so you can upgrade incrementally instead of jumping straight to `2.x`.
+- **Latest Stable** — overall highest non-pre-release version across all majors. Omitted if it is the same as the next-major card (no duplicates shown).
+
 Recommendations are sourced from ArtifactHub when available, with a release-notes keyword fallback when ArtifactHub is unreachable.
 
 ### Analyze-Before-Upgrade

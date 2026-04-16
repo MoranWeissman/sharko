@@ -468,6 +468,38 @@ func (s *UpgradeService) GetRecommendations(ctx context.Context, addonName strin
 		}
 	}
 
+	// Compute nextMajorVer: latest stable version in the smallest major > cur.major.
+	// We scan all versions to find the smallest such major, then pick the highest
+	// stable patch within it.
+	var (
+		nextMajorVer  string
+		nextMajorVerP semverParts
+		nextMajorNum  = -1 // smallest major > cur.major found so far
+	)
+	for _, cv := range chartVersions {
+		p, valid := parseSemver(cv.Version)
+		if !valid || p.pre != "" {
+			continue
+		}
+		if p.major <= cur.major {
+			continue
+		}
+		// Find the smallest major > cur.major
+		if nextMajorNum == -1 || p.major < nextMajorNum {
+			nextMajorNum = p.major
+			nextMajorVer = cv.Version
+			nextMajorVerP = p
+		} else if p.major == nextMajorNum {
+			// Within that major, keep the highest minor.patch
+			if p.minor > nextMajorVerP.minor ||
+				(p.minor == nextMajorVerP.minor && p.patch > nextMajorVerP.patch) {
+				nextMajorVer = cv.Version
+				nextMajorVerP = p
+			}
+		}
+	}
+	_ = nextMajorVerP // used only for comparisons above
+
 	// Only set a recommendation if it differs from the current version
 	if nextPatch != "" && nextPatch != current {
 		rec.NextPatch = nextPatch
@@ -480,7 +512,7 @@ func (s *UpgradeService) GetRecommendations(ctx context.Context, addonName strin
 	}
 
 	// Build security-aware cards.
-	rec.Cards, rec.Recommended = buildCards(cur, nextPatch, nextMinor, latestStable, advisoryMap)
+	rec.Cards, rec.Recommended = buildCards(cur, nextPatch, nextMinor, nextMajorVer, latestStable, advisoryMap)
 
 	return rec, nil
 }
@@ -506,7 +538,7 @@ func (s *UpgradeService) fetchAdvisoryMap(ctx context.Context, repoURL, chart st
 
 // buildCards constructs RecommendationCards from the semver candidates and advisory map,
 // then selects the recommended card. Returns (cards, recommendedVersion).
-func buildCards(cur semverParts, patchVer, minorVer, latestVer string, advMap map[string]advisories.Advisory) ([]models.RecommendationCard, string) {
+func buildCards(cur semverParts, patchVer, minorVer, nextMajorVer, latestVer string, advMap map[string]advisories.Advisory) ([]models.RecommendationCard, string) {
 	type candidate struct {
 		label   string
 		version string
@@ -520,6 +552,13 @@ func buildCards(cur semverParts, patchVer, minorVer, latestVer string, advMap ma
 	}
 	if minorVer != "" && minorVer != patchVer {
 		candidates = append(candidates, candidate{fmt.Sprintf("Latest in %d.x", cur.major), minorVer})
+	}
+	if nextMajorVer != "" {
+		p, ok := parseSemver(nextMajorVer)
+		// Only add if it's not the same as what we'd already show
+		if ok && nextMajorVer != minorVer && nextMajorVer != patchVer && nextMajorVer != latestVer {
+			candidates = append(candidates, candidate{fmt.Sprintf("Latest in %d.x", p.major), nextMajorVer})
+		}
 	}
 	if latestVer != "" {
 		p, ok := parseSemver(latestVer)
