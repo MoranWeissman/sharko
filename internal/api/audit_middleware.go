@@ -61,16 +61,25 @@ func (s *Server) auditMiddleware(next http.Handler) http.Handler {
 			event = deriveEventName(r.Method, r.URL.Path)
 		}
 
+		// Resolve attribution tier and mode. If the handler didn't enrich them
+		// (e.g. addon-secret in-memory updates that never touch Git), fall back
+		// to the registry-assigned tier and an "n/a" attribution mode so the
+		// audit entry is still well-formed.
+		tier := fields.Tier
+		mode := fields.AttributionMode
+
 		s.auditLog.Add(audit.Entry{
-			Level:      level,
-			Event:      event,
-			User:       user,
-			Action:     methodToAction(r.Method),
-			Resource:   fields.Resource,
-			Detail:     fields.Detail,
-			Source:     source,
-			Result:     result,
-			DurationMs: duration.Milliseconds(),
+			Level:           level,
+			Event:           event,
+			User:            user,
+			Action:          methodToAction(r.Method),
+			Resource:        fields.Resource,
+			Detail:          fields.Detail,
+			Source:          source,
+			Result:          result,
+			DurationMs:      duration.Milliseconds(),
+			Tier:            tier,
+			AttributionMode: mode,
 		})
 	})
 }

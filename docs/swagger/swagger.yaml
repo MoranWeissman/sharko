@@ -765,6 +765,15 @@ definitions:
       ref:
         type: string
     type: object
+  internal_api.meResponse:
+    properties:
+      has_github_token:
+        type: boolean
+      role:
+        type: string
+      username:
+        type: string
+    type: object
   internal_api.saveAIConfigRequest:
     properties:
       api_key:
@@ -776,6 +785,11 @@ definitions:
       ollama_url:
         type: string
       provider:
+        type: string
+    type: object
+  internal_api.setMyGitHubTokenRequest:
+    properties:
+      token:
         type: string
     type: object
   internal_api.testClusterRequest:
@@ -4178,6 +4192,114 @@ paths:
       security:
       - BearerAuth: []
       summary: Reset user password
+      tags:
+      - auth
+  /users/me:
+    get:
+      description: Returns the authenticated caller's profile. `has_github_token`
+        indicates whether a per-user GitHub PAT is configured for tiered attribution.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Current user
+          schema:
+            $ref: '#/definitions/internal_api.meResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get current user profile
+      tags:
+      - auth
+  /users/me/github-token:
+    delete:
+      description: Removes the authenticated user's personal GitHub PAT. After clearing,
+        Tier 2 actions fall back to the service token with a co-author trailer for
+        attribution.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Token cleared
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Clear personal GitHub token
+      tags:
+      - auth
+    put:
+      consumes:
+      - application/json
+      description: Stores an encrypted personal GitHub PAT for the authenticated user.
+        The PAT is preferred over the service token when the user performs Tier 2
+        (configuration) actions, so the resulting Git commit is authored by the user
+        rather than the Sharko service account.
+      parameters:
+      - description: Token payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_api.setMyGitHubTokenRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Token saved
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Set personal GitHub token
+      tags:
+      - auth
+  /users/me/github-token/test:
+    post:
+      description: Validates the authenticated user's stored personal GitHub PAT by
+        calling GitHub's `/user` endpoint. Returns the GitHub login on success.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Token valid
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Token invalid or not set
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Test personal GitHub token
       tags:
       - auth
   /webhooks/git:

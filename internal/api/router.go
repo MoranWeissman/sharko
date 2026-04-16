@@ -586,6 +586,11 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	// User management (admin only)
 	mux.HandleFunc("GET /api/v1/users", srv.handleListUsers)
 	mux.HandleFunc("POST /api/v1/users", srv.handleCreateUser)
+	// /users/me must be registered BEFORE /users/{username} so the literal "me" path wins.
+	mux.HandleFunc("GET /api/v1/users/me", srv.handleGetMe)
+	mux.HandleFunc("PUT /api/v1/users/me/github-token", srv.handleSetMyGitHubToken)
+	mux.HandleFunc("DELETE /api/v1/users/me/github-token", srv.handleClearMyGitHubToken)
+	mux.HandleFunc("POST /api/v1/users/me/github-token/test", srv.handleTestMyGitHubToken)
 	mux.HandleFunc("PUT /api/v1/users/{username}", srv.handleUpdateUser)
 	mux.HandleFunc("DELETE /api/v1/users/{username}", srv.handleDeleteUser)
 	mux.HandleFunc("POST /api/v1/users/{username}/reset-password", srv.handleResetPassword)
