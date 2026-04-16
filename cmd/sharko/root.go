@@ -7,7 +7,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var version = "1.17.1"
+var version = "1.18.0"
 var commit = "none"
 
 var rootCmd = &cobra.Command{

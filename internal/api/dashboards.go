@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -143,5 +144,8 @@ func (s *Server) handleSaveDashboards(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to save dashboards: "+err.Error())
 		return
 	}
+	audit.Enrich(r.Context(), audit.Fields{
+		Event: "dashboards_saved",
+	})
 	writeJSON(w, http.StatusOK, dashboards)
 }

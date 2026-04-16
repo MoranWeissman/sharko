@@ -2,8 +2,10 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
+	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
 )
 
@@ -45,6 +47,11 @@ func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "token_created",
+		Resource: fmt.Sprintf("token:%s", req.Name),
+		Detail:   fmt.Sprintf("role=%s", req.Role),
+	})
 	writeJSON(w, http.StatusCreated, map[string]string{
 		"name":  req.Name,
 		"token": plaintext,
@@ -101,5 +108,9 @@ func (s *Server) handleRevokeToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "token_revoked",
+		Resource: fmt.Sprintf("token:%s", name),
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"message": "token revoked"})
 }

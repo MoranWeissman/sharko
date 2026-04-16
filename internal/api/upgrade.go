@@ -2,8 +2,10 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
+	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/models"
 )
 
@@ -80,6 +82,11 @@ func (s *Server) handleCheckUpgrade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "upgrade_analyzed",
+		Resource: fmt.Sprintf("addon:%s", req.AddonName),
+		Detail:   fmt.Sprintf("target=%s", req.TargetVersion),
+	})
 	writeJSON(w, http.StatusOK, resp)
 }
 

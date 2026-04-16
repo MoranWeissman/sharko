@@ -101,14 +101,9 @@ func (s *Server) handleEnableAddon(w http.ResponseWriter, r *http.Request) {
 		s.argoSecretReconciler.Trigger()
 	}
 
-	s.auditLog.Add(audit.Entry{
-		Level:    "info",
-		Event:    "addon_enabled",
-		User:     "sharko",
-		Action:   "enable",
-		Resource: fmt.Sprintf("addon:%s/cluster:%s", addonName, clusterName),
-		Source:   "api",
-		Result:   result.Status,
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "addon_enabled_on_cluster",
+		Resource: fmt.Sprintf("cluster:%s addon:%s", clusterName, addonName),
 	})
 
 	status := http.StatusOK
@@ -208,14 +203,9 @@ func (s *Server) handleDisableAddon(w http.ResponseWriter, r *http.Request) {
 		s.argoSecretReconciler.Trigger()
 	}
 
-	s.auditLog.Add(audit.Entry{
-		Level:    "info",
-		Event:    "addon_disabled",
-		User:     "sharko",
-		Action:   "disable",
-		Resource: fmt.Sprintf("addon:%s/cluster:%s", addonName, clusterName),
-		Source:   "api",
-		Result:   result.Status,
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "addon_disabled_on_cluster",
+		Resource: fmt.Sprintf("cluster:%s addon:%s", clusterName, addonName),
 	})
 
 	status := http.StatusOK

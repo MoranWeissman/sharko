@@ -79,20 +79,23 @@ func (s *Server) handleAdoptClusters(w http.ResponseWriter, r *http.Request) {
 		s.argoSecretReconciler.Trigger()
 	}
 
-	// Emit audit events per cluster.
+	// Enrich the audit entry. For batches we summarise all adopted clusters.
+	successNames := []string{}
 	for _, cr := range result.Results {
 		if cr.Status == "success" || cr.Status == "partial" {
-			s.auditLog.Add(audit.Entry{
-				Level:    "info",
-				Event:    "cluster_adopted",
-				User:     "sharko",
-				Action:   "adopt",
-				Resource: fmt.Sprintf("cluster:%s", cr.Name),
-				Source:   "api",
-				Result:   cr.Status,
-			})
+			successNames = append(successNames, cr.Name)
 		}
 	}
+	resource := ""
+	if len(successNames) == 1 {
+		resource = fmt.Sprintf("cluster:%s", successNames[0])
+	} else if len(successNames) > 1 {
+		resource = fmt.Sprintf("clusters:%d", len(successNames))
+	}
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "cluster_adopted",
+		Resource: resource,
+	})
 
 	// Determine HTTP status.
 	status := http.StatusOK
@@ -192,18 +195,10 @@ func (s *Server) handleUnadoptCluster(w http.ResponseWriter, r *http.Request) {
 		s.argoSecretReconciler.Trigger()
 	}
 
-	// Audit event.
-	if result.Status == "success" || result.Status == "partial" {
-		s.auditLog.Add(audit.Entry{
-			Level:    "info",
-			Event:    "cluster_unadopted",
-			User:     "sharko",
-			Action:   "unadopt",
-			Resource: fmt.Sprintf("cluster:%s", name),
-			Source:   "api",
-			Result:   result.Status,
-		})
-	}
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "cluster_unadopted",
+		Resource: fmt.Sprintf("cluster:%s", name),
+	})
 
 	status := http.StatusOK
 	if result.Status == "partial" {

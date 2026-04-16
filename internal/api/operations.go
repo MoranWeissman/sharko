@@ -1,7 +1,10 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
+
+	"github.com/MoranWeissman/sharko/internal/audit"
 )
 
 // handleGetOperation godoc
@@ -63,5 +66,9 @@ func (s *Server) handleCancelOperation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "operation not found")
 		return
 	}
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "operation_cancelled",
+		Resource: fmt.Sprintf("operation:%s", id),
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "cancelled"})
 }

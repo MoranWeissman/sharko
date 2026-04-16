@@ -129,6 +129,9 @@ func (s *Server) handleInit(w http.ResponseWriter, r *http.Request) {
 		s.runInitOperation(bgCtx, session.ID, req, gitopsCfg, gp, ac, s.templateFS)
 	}()
 
+	audit.Enrich(r.Context(), audit.Fields{
+		Event: "init_run",
+	})
 	writeJSON(w, http.StatusAccepted, map[string]interface{}{
 		"operation_id": session.ID,
 		"status":       "pending",

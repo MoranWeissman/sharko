@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/ai"
+	"github.com/MoranWeissman/sharko/internal/audit"
 )
 
 // agentSession wraps an agent with creation time for cleanup.
@@ -136,6 +137,9 @@ func (s *Server) handleAgentReset(w http.ResponseWriter, r *http.Request) {
 	}
 	agentMu.Unlock()
 
+	audit.Enrich(r.Context(), audit.Fields{
+		Event: "ai_chat_reset",
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "reset"})
 }
 

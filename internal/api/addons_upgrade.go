@@ -2,9 +2,11 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
+	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/prtracker"
@@ -100,6 +102,15 @@ func (s *Server) handleUpgradeAddon(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	detail := fmt.Sprintf("to=%s", req.Version)
+	if req.Cluster != "" {
+		detail += fmt.Sprintf(" cluster=%s", req.Cluster)
+	}
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "addon_upgraded",
+		Resource: fmt.Sprintf("addon:%s", addonName),
+		Detail:   detail,
+	})
 	writeJSON(w, http.StatusOK, result)
 }
 
@@ -176,5 +187,10 @@ func (s *Server) handleUpgradeAddonsBatch(w http.ResponseWriter, r *http.Request
 		})
 	}
 
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "addon_upgraded",
+		Resource: fmt.Sprintf("addons:%d", len(req.Upgrades)),
+		Detail:   fmt.Sprintf("batch of %d upgrades", len(req.Upgrades)),
+	})
 	writeJSON(w, http.StatusOK, result)
 }

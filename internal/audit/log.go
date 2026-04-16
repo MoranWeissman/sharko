@@ -4,6 +4,7 @@
 package audit
 
 import (
+	"context"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +26,41 @@ type Entry struct {
 	DurationMs int64     `json:"duration_ms"`
 	Error      string    `json:"error,omitempty"`
 	RequestID  string    `json:"request_id,omitempty"`
+	Detail     string    `json:"detail,omitempty"`     // semantic detail set by handlers via Enrich
+}
+
+// Fields contains semantic enrichment that handlers attach to the in-flight audit entry.
+type Fields struct {
+	Event    string
+	Resource string
+	Detail   string
+}
+
+type ctxKey struct{}
+
+// WithEnrichment attaches an empty Fields pointer to the context. The audit middleware
+// must call this at the start of each mutating request so handlers can fill it in.
+func WithEnrichment(ctx context.Context) (context.Context, *Fields) {
+	f := &Fields{}
+	return context.WithValue(ctx, ctxKey{}, f), f
+}
+
+// Enrich updates the audit fields attached to ctx. Safe to call from any handler.
+// If no enrichment context is present (e.g. internal callers), it is a no-op.
+func Enrich(ctx context.Context, fields Fields) {
+	f, ok := ctx.Value(ctxKey{}).(*Fields)
+	if !ok || f == nil {
+		return
+	}
+	if fields.Event != "" {
+		f.Event = fields.Event
+	}
+	if fields.Resource != "" {
+		f.Resource = fields.Resource
+	}
+	if fields.Detail != "" {
+		f.Detail = fields.Detail
+	}
 }
 
 // AuditFilter holds optional filter criteria for ListFiltered.

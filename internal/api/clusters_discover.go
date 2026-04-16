@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -264,6 +265,16 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	testResult := "pass"
+	if !resp.Success {
+		testResult = "fail"
+	}
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "cluster_tested",
+		Resource: fmt.Sprintf("cluster:%s", name),
+		Detail:   fmt.Sprintf("result=%s", testResult),
+	})
+
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -343,19 +354,10 @@ func (s *Server) handleDiscoverEKS(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("[discover-eks] discovery complete", "clusterCount", len(clusters))
 
-	// Emit audit event.
-	username := r.Header.Get("X-Sharko-User")
-	if username == "" {
-		username = "system"
-	}
-	s.auditLog.Add(audit.Entry{
-		Level:    "info",
-		Event:    "cluster_discovered",
-		User:     username,
-		Action:   "discover",
-		Resource: "eks",
-		Source:   "api",
-		Result:   "success",
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "cluster_discovery_run",
+		Resource: "provider:eks",
+		Detail:   fmt.Sprintf("found %d clusters", len(clusters)),
 	})
 
 	writeJSON(w, http.StatusOK, resp)

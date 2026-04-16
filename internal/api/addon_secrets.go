@@ -2,8 +2,10 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
+	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
@@ -64,6 +66,10 @@ func (s *Server) handleCreateAddonSecret(w http.ResponseWriter, r *http.Request)
 	s.addonSecretDefs[def.AddonName] = def
 	s.addonSecretDefsMu.Unlock()
 
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "addon_secret_set",
+		Resource: fmt.Sprintf("addon:%s secret:%s", def.AddonName, def.SecretName),
+	})
 	writeJSON(w, http.StatusCreated, def)
 }
 
@@ -99,5 +105,9 @@ func (s *Server) handleDeleteAddonSecret(w http.ResponseWriter, r *http.Request)
 	delete(s.addonSecretDefs, addon)
 	s.addonSecretDefsMu.Unlock()
 
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "addon_secret_deleted",
+		Resource: fmt.Sprintf("addon:%s", addon),
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted", "addon": addon})
 }

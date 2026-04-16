@@ -2,6 +2,8 @@ package api
 
 import (
 	"net/http"
+
+	"github.com/MoranWeissman/sharko/internal/audit"
 )
 
 // handleTriggerReconcile godoc
@@ -22,6 +24,9 @@ func (s *Server) handleTriggerReconcile(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	s.secretReconciler.Trigger()
+	audit.Enrich(r.Context(), audit.Fields{
+		Event: "reconcile_triggered",
+	})
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "reconcile triggered"})
 }
 

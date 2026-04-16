@@ -608,9 +608,15 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	}
 
 	// Wrap with middleware
+	// Wrapping order (innermost → outermost): mux → maxBodySize → writeRateLimiter
+	// → auditMiddleware (reads user from header set by basicAuth) → basicAuthMiddleware
+	// → cors → securityHeaders → metrics → logging.
+	// Execution order reverses: logging → metrics → securityHeaders → cors →
+	// basicAuth → auditMiddleware → writeRateLimiter → maxBodySize → mux.
 	var handler http.Handler = mux
 	handler = maxBodySize(handler, 1<<20)                     // 1MB request body limit
 	handler = writeRateLimiter(30, 1*time.Minute)(handler)    // 30 writes/min per IP
+	handler = srv.auditMiddleware(handler)                    // emit audit entry after auth sets user
 	handler = srv.basicAuthMiddleware(handler)
 	handler = corsMiddleware(handler)
 	handler = securityHeadersMiddleware(handler)
@@ -1011,6 +1017,10 @@ func (s *Server) handleUpdatePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "password_changed",
+		Resource: "user:" + username,
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "password updated"})
 }
 

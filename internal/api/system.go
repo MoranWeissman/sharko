@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/providers"
 )
 
@@ -124,6 +125,9 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	audit.Enrich(r.Context(), audit.Fields{
+		Event: "provider_tested",
+	})
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"status":         "connected",
 		"clusters_found": len(clusters),
@@ -179,6 +183,9 @@ func (s *Server) handleTestProviderConfig(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	audit.Enrich(r.Context(), audit.Fields{
+		Event: "provider_tested",
+	})
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"status":         "connected",
 		"clusters_found": len(clusters),

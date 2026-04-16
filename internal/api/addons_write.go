@@ -2,9 +2,11 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
+	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
@@ -69,6 +71,11 @@ func (s *Server) handleAddAddon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "addon_added",
+		Resource: fmt.Sprintf("addon:%s", req.Name),
+		Detail:   fmt.Sprintf("chart=%s version=%s", req.Chart, req.Version),
+	})
 	writeJSON(w, http.StatusCreated, result)
 }
 
@@ -154,6 +161,10 @@ func (s *Server) handleRemoveAddon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "addon_removed",
+		Resource: fmt.Sprintf("addon:%s", name),
+	})
 	writeJSON(w, http.StatusOK, result)
 }
 
@@ -213,5 +224,9 @@ func (s *Server) handleConfigureAddon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "addon_configured",
+		Resource: fmt.Sprintf("addon:%s", name),
+	})
 	writeJSON(w, http.StatusOK, result)
 }
