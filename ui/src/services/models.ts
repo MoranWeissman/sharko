@@ -437,6 +437,7 @@ export interface RecommendationCard {
   cross_major: boolean
   advisory_summary?: string
   is_recommended: boolean
+  reason?: string
 }
 
 export interface UpgradeRecommendations {

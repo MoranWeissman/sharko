@@ -52,6 +52,14 @@ function cardDescription(card: RecommendationCard): string {
   return 'Stable update'
 }
 
+function labelTooltip(label: string, currentMajor: number): string {
+  if (label === 'Patch') return 'Same major.minor.X — lowest risk update'
+  if (label === `Latest in ${currentMajor}.x`) return 'Latest stable in your current major'
+  if (label === 'Latest Stable') return 'Newest stable version overall — may include breaking changes'
+  if (label.startsWith('Latest in ')) return 'Stepping stone to next major — fewer breaking changes than jumping to latest'
+  return ''
+}
+
 function RecommendedVersions({
   addonName,
   onAnalyze,
@@ -78,6 +86,8 @@ function RecommendedVersions({
   // NEW: prefer cards array from backend
   if (recommendations?.cards && recommendations.cards.length > 0) {
     const cards = recommendations.cards
+    const currentMajorRaw = parseInt(recommendations.current_version.split('.')[0], 10)
+    const currentMajor = isNaN(currentMajorRaw) ? -1 : currentMajorRaw
     return (
       <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 dark:ring-gray-700 dark:bg-gray-800">
         <h3 className="mb-1 text-base font-semibold text-[#0a2a4a] dark:text-gray-100">Recommended Upgrades</h3>
@@ -93,17 +103,27 @@ function RecommendedVersions({
                   : 'bg-[#e0f0ff] dark:bg-gray-700/50',
               ].join(' ')}
             >
-              {/* Recommended indicator */}
+              {/* Recommended indicator + reason */}
               {card.is_recommended && (
-                <div className="flex items-center gap-1 text-teal-600 dark:text-teal-400">
-                  <Star className="h-3.5 w-3.5 fill-current" />
-                  <span className="text-xs font-semibold">Recommended</span>
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-1 text-teal-600 dark:text-teal-400">
+                    <Star className="h-3.5 w-3.5 fill-current" />
+                    <span className="text-xs font-semibold">Recommended</span>
+                  </div>
+                  {card.reason && (
+                    <p className="text-[11px] italic text-teal-700/80 dark:text-teal-400/80">
+                      {card.reason}
+                    </p>
+                  )}
                 </div>
               )}
 
               {/* Label + badges row */}
               <div className="flex items-start justify-between gap-2">
-                <span className="text-xs font-semibold uppercase tracking-wide text-[#3a6a8a] dark:text-gray-400">
+                <span
+                  className="text-xs font-semibold uppercase tracking-wide text-[#3a6a8a] dark:text-gray-400 cursor-help"
+                  title={currentMajor >= 0 ? labelTooltip(card.label, currentMajor) : undefined}
+                >
                   {card.label}
                 </span>
                 <div className="flex items-center gap-1">
@@ -1242,6 +1262,12 @@ export function AddonDetail() {
     setInlineAnalyzing(true)
     setInlineAnalyzeError(null)
     setInlineAnalysisResult(null)
+
+    // Scroll immediately so the user sees the "Analyzing..." state appear right away
+    setTimeout(() => {
+      inlineResultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }, 0)
+
     try {
       const data = await api.checkUpgrade(name, version)
       setInlineAnalysisResult({
@@ -1255,10 +1281,6 @@ export function AddonDetail() {
       setInlineAnalyzeError(err instanceof Error ? err.message : 'Analysis failed')
     } finally {
       setInlineAnalyzing(false)
-      // Scroll the results into view so the user can see them
-      setTimeout(() => {
-        inlineResultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
-      }, 0)
     }
   }, [name, addon, inlineAnalysisVersion])
 

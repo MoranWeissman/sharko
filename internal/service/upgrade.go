@@ -596,44 +596,64 @@ func buildCards(cur semverParts, patchVer, minorVer, nextMajorVer, latestVer str
 	}
 
 	// Pick the recommended card.
-	recommendedIdx := pickRecommended(cards)
+	recommendedIdx, reason := pickRecommended(cards)
 	if recommendedIdx >= 0 {
 		cards[recommendedIdx].IsRecommended = true
+		cards[recommendedIdx].Reason = reason
 		return cards, cards[recommendedIdx].Version
 	}
 	return cards, ""
 }
 
-// pickRecommended returns the index of the card Sharko recommends.
+// pickRecommended returns the index of the card Sharko recommends and a human-readable
+// reason string explaining the selection.
 //
 // Priority order:
 //  1. Patch card with security fix → safest upgrade path
 //  2. In-major card with security fix
 //  3. Any card with security fix
 //  4. First card overall (patch if available, otherwise in-major, then latest)
-func pickRecommended(cards []models.RecommendationCard) int {
+func pickRecommended(cards []models.RecommendationCard) (int, string) {
 	if len(cards) == 0 {
-		return -1
+		return -1, ""
 	}
 
 	// Pass 1: patch card with security fix
 	for i, c := range cards {
 		if c.Label == "Patch" && c.HasSecurity {
-			return i
+			return i, "Lowest-risk path — applies a patch that contains security fixes"
 		}
 	}
 	// Pass 2: in-major card with security fix
 	for i, c := range cards {
 		if !c.CrossMajor && c.HasSecurity {
-			return i
+			return i, "Stays in your current major while including security fixes"
 		}
 	}
 	// Pass 3: any card with security fix (e.g., only latest stable has it)
 	for i, c := range cards {
 		if c.HasSecurity {
-			return i
+			return i, "Smallest version jump that includes security fixes"
 		}
 	}
-	// Pass 4: first card (cards are ordered patch → in-major → latest, so this picks safest)
-	return 0
+	// Pass 4: no security fixes — pick the safest card based on version distance
+	if len(cards) > 0 {
+		c := cards[0]
+		switch {
+		case c.Label == "Patch":
+			return 0, "Lowest-risk path — only patch-level changes"
+		case !c.CrossMajor:
+			return 0, "Latest stable in your current major — minimizes breaking changes"
+		default:
+			// Determine if there are multiple majors to step through
+			for i, card := range cards {
+				if card.Label == "Latest Stable" && i > 0 {
+					// There's a stepping-stone card before Latest Stable
+					return 0, "Stepping stone — moves you forward one major at a time"
+				}
+			}
+			return 0, "Most up-to-date version — only choice that keeps you current"
+		}
+	}
+	return 0, ""
 }
