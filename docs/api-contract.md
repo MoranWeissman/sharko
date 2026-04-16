@@ -277,23 +277,30 @@ Returns smart upgrade recommendations with security and breaking-change context.
 
 ```json
 {
-  "addon": "cert-manager",
+  "addon": "external-secrets",
   "current_version": "0.20.4",
-  "next_patch": "0.20.5",
-  "next_minor": "0.21.0",
+  "next_patch": "",
+  "next_minor": "",
   "latest_stable": "2.3.0",
   "cards": [
+    {
+      "label": "Latest in 1.x",
+      "version": "1.5.2",
+      "has_security": false,
+      "has_breaking": true,
+      "cross_major": true,
+      "is_recommended": true
+    },
     {
       "label": "Latest Stable",
       "version": "2.3.0",
       "has_security": true,
       "has_breaking": true,
       "cross_major": true,
-      "advisory_summary": "2 security fixes",
-      "is_recommended": true
+      "advisory_summary": "2 security fixes"
     }
   ],
-  "recommended": "2.3.0"
+  "recommended": "1.5.2"
 }
 ```
 
@@ -301,10 +308,13 @@ Returns smart upgrade recommendations with security and breaking-change context.
 - `cards` — preferred field for new clients. Each card represents a candidate upgrade target with advisory context. Present when advisory data is available.
 - `next_patch`, `next_minor`, `latest_stable` — legacy flat fields kept for backwards compatibility with v1.16 and earlier clients. A field is omitted when no matching version exists.
 - `recommended` — version string of the card flagged `is_recommended: true`.
+- `cards[].label` — one of: `"Patch"`, `"Latest in N.x"` (in-major or next-major stepping stone), `"Latest Stable"`.
 - `cards[].has_security` — version path includes security fixes sourced from ArtifactHub.
 - `cards[].has_breaking` / `cards[].cross_major` — version crosses a breaking-change or major version boundary.
 - `cards[].advisory_summary` — human-readable summary of advisories (e.g., "2 security fixes").
 - Advisory source: ArtifactHub API (primary), release-notes keyword fallback when ArtifactHub is unreachable.
+
+**Next-major card (v1.17.1+):** When the current version is `N.x` and there are releases in `(N+1).x` that are not yet the overall latest stable, Sharko inserts a `"Latest in (N+1).x"` card between the in-major card and `"Latest Stable"`. This gives users a stepping-stone upgrade path (e.g., 0.x → 1.x → 2.x) instead of a single large jump. If `(N+1).x` IS the latest stable, only the `"Latest Stable"` card is shown — no duplicate.
 
 Versions are scored and ranked; the highest-scoring candidate is flagged `is_recommended`.
 

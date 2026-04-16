@@ -468,6 +468,38 @@ func (s *UpgradeService) GetRecommendations(ctx context.Context, addonName strin
 		}
 	}
 
+	// Compute nextMajorVer: latest stable version in the smallest major > cur.major.
+	// We scan all versions to find the smallest such major, then pick the highest
+	// stable patch within it.
+	var (
+		nextMajorVer  string
+		nextMajorVerP semverParts
+		nextMajorNum  = -1 // smallest major > cur.major found so far
+	)
+	for _, cv := range chartVersions {
+		p, valid := parseSemver(cv.Version)
+		if !valid || p.pre != "" {
+			continue
+		}
+		if p.major <= cur.major {
+			continue
+		}
+		// Find the smallest major > cur.major
+		if nextMajorNum == -1 || p.major < nextMajorNum {
+			nextMajorNum = p.major
+			nextMajorVer = cv.Version
+			nextMajorVerP = p
+		} else if p.major == nextMajorNum {
+			// Within that major, keep the highest minor.patch
+			if p.minor > nextMajorVerP.minor ||
+				(p.minor == nextMajorVerP.minor && p.patch > nextMajorVerP.patch) {
+				nextMajorVer = cv.Version
+				nextMajorVerP = p
+			}
+		}
+	}
+	_ = nextMajorVerP // used only for comparisons above
+
 	// Only set a recommendation if it differs from the current version
 	if nextPatch != "" && nextPatch != current {
 		rec.NextPatch = nextPatch
@@ -480,7 +512,7 @@ func (s *UpgradeService) GetRecommendations(ctx context.Context, addonName strin
 	}
 
 	// Build security-aware cards.
-	rec.Cards, rec.Recommended = buildCards(cur, nextPatch, nextMinor, latestStable, advisoryMap)
+	rec.Cards, rec.Recommended = buildCards(cur, nextPatch, nextMinor, nextMajorVer, latestStable, advisoryMap)
 
 	return rec, nil
 }
@@ -506,7 +538,7 @@ func (s *UpgradeService) fetchAdvisoryMap(ctx context.Context, repoURL, chart st
 
 // buildCards constructs RecommendationCards from the semver candidates and advisory map,
 // then selects the recommended card. Returns (cards, recommendedVersion).
-func buildCards(cur semverParts, patchVer, minorVer, latestVer string, advMap map[string]advisories.Advisory) ([]models.RecommendationCard, string) {
+func buildCards(cur semverParts, patchVer, minorVer, nextMajorVer, latestVer string, advMap map[string]advisories.Advisory) ([]models.RecommendationCard, string) {
 	type candidate struct {
 		label   string
 		version string
@@ -520,6 +552,13 @@ func buildCards(cur semverParts, patchVer, minorVer, latestVer string, advMap ma
 	}
 	if minorVer != "" && minorVer != patchVer {
 		candidates = append(candidates, candidate{fmt.Sprintf("Latest in %d.x", cur.major), minorVer})
+	}
+	if nextMajorVer != "" {
+		p, ok := parseSemver(nextMajorVer)
+		// Only add if it's not the same as what we'd already show
+		if ok && nextMajorVer != minorVer && nextMajorVer != patchVer && nextMajorVer != latestVer {
+			candidates = append(candidates, candidate{fmt.Sprintf("Latest in %d.x", p.major), nextMajorVer})
+		}
 	}
 	if latestVer != "" {
 		p, ok := parseSemver(latestVer)
@@ -557,44 +596,64 @@ func buildCards(cur semverParts, patchVer, minorVer, latestVer string, advMap ma
 	}
 
 	// Pick the recommended card.
-	recommendedIdx := pickRecommended(cards)
+	recommendedIdx, reason := pickRecommended(cards)
 	if recommendedIdx >= 0 {
 		cards[recommendedIdx].IsRecommended = true
+		cards[recommendedIdx].Reason = reason
 		return cards, cards[recommendedIdx].Version
 	}
 	return cards, ""
 }
 
-// pickRecommended returns the index of the card Sharko recommends.
+// pickRecommended returns the index of the card Sharko recommends and a human-readable
+// reason string explaining the selection.
 //
 // Priority order:
 //  1. Patch card with security fix → safest upgrade path
 //  2. In-major card with security fix
 //  3. Any card with security fix
 //  4. First card overall (patch if available, otherwise in-major, then latest)
-func pickRecommended(cards []models.RecommendationCard) int {
+func pickRecommended(cards []models.RecommendationCard) (int, string) {
 	if len(cards) == 0 {
-		return -1
+		return -1, ""
 	}
 
 	// Pass 1: patch card with security fix
 	for i, c := range cards {
 		if c.Label == "Patch" && c.HasSecurity {
-			return i
+			return i, "Lowest-risk path — applies a patch that contains security fixes"
 		}
 	}
 	// Pass 2: in-major card with security fix
 	for i, c := range cards {
 		if !c.CrossMajor && c.HasSecurity {
-			return i
+			return i, "Stays in your current major while including security fixes"
 		}
 	}
 	// Pass 3: any card with security fix (e.g., only latest stable has it)
 	for i, c := range cards {
 		if c.HasSecurity {
-			return i
+			return i, "Smallest version jump that includes security fixes"
 		}
 	}
-	// Pass 4: first card (cards are ordered patch → in-major → latest, so this picks safest)
-	return 0
+	// Pass 4: no security fixes — pick the safest card based on version distance
+	if len(cards) > 0 {
+		c := cards[0]
+		switch {
+		case c.Label == "Patch":
+			return 0, "Lowest-risk path — only patch-level changes"
+		case !c.CrossMajor:
+			return 0, "Latest stable in your current major — minimizes breaking changes"
+		default:
+			// Determine if there are multiple majors to step through
+			for i, card := range cards {
+				if card.Label == "Latest Stable" && i > 0 {
+					// There's a stepping-stone card before Latest Stable
+					return 0, "Stepping stone — moves you forward one major at a time"
+				}
+			}
+			return 0, "Most up-to-date version — only choice that keeps you current"
+		}
+	}
+	return 0, ""
 }

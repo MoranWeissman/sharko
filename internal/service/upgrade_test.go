@@ -162,6 +162,34 @@ func TestGetRecommendationsCards(t *testing.T) {
 			wantCards:       3,
 			wantRecommended: "1.2.5",
 		},
+		{
+			// Current 0.20.4: has 1.x and 2.x available → expect next-major (1.5.2) + latest stable (2.3.0) = 2 cards
+			name:            "next-major card — 0.x current with 1.x and 2.x available",
+			currentVersion:  "0.20.4",
+			availableVers:   []string{"2.3.0", "2.0.0", "1.5.2", "1.0.0", "0.20.4", "0.18.0"},
+			wantCards:       2,
+			wantRecommended: "1.5.2", // first card (no security → pick first)
+			checkCards: func(t *testing.T, cards []models.RecommendationCard) {
+				t.Helper()
+				if len(cards) < 2 {
+					return
+				}
+				if cards[0].Label != "Latest in 1.x" || cards[0].Version != "1.5.2" {
+					t.Errorf("expected first card Latest in 1.x/1.5.2, got %+v", cards[0])
+				}
+				if cards[1].Label != "Latest Stable" || cards[1].Version != "2.3.0" {
+					t.Errorf("expected second card Latest Stable/2.3.0, got %+v", cards[1])
+				}
+			},
+		},
+		{
+			// Current 1.3.0: next-major is 2.3.0, which is also latest stable → no duplicate
+			name:            "next-major same as latest stable — no duplicate card",
+			currentVersion:  "1.3.0",
+			availableVers:   []string{"2.3.0", "1.5.2", "1.3.5", "1.3.0"},
+			wantCards:       3, // Patch, Latest in 1.x, Latest Stable (next-major==latest, no dup)
+			wantRecommended: "1.3.5",
+		},
 	}
 
 	for _, tc := range tests {
@@ -227,7 +255,7 @@ func TestGetRecommendationsCards(t *testing.T) {
 func TestBuildCardsInMajorSkippedWhenEqualsLatest(t *testing.T) {
 	cur := semverParts{major: 1, minor: 2, patch: 3}
 	// latest same as in-major — should not produce duplicate card
-	cards, recommended := buildCards(cur, "1.2.5", "1.5.0", "1.5.0", map[string]advisories.Advisory{})
+	cards, recommended := buildCards(cur, "1.2.5", "1.5.0", "", "1.5.0", map[string]advisories.Advisory{})
 	if len(cards) != 2 {
 		t.Errorf("expected 2 cards (patch + in-major deduped with latest), got %d: %+v", len(cards), cards)
 	}
@@ -237,7 +265,7 @@ func TestBuildCardsInMajorSkippedWhenEqualsLatest(t *testing.T) {
 func TestBuildCardsLatestSameMajorSkipped(t *testing.T) {
 	cur := semverParts{major: 1, minor: 2, patch: 3}
 	// latestVer same major as current — no "Latest Stable" card
-	cards, _ := buildCards(cur, "1.2.5", "1.5.0", "1.5.0", map[string]advisories.Advisory{})
+	cards, _ := buildCards(cur, "1.2.5", "1.5.0", "", "1.5.0", map[string]advisories.Advisory{})
 	for _, c := range cards {
 		if c.Label == "Latest Stable" {
 			t.Error("expected no Latest Stable card when latest is same major as current")
@@ -247,7 +275,7 @@ func TestBuildCardsLatestSameMajorSkipped(t *testing.T) {
 
 func TestBuildCardsCrossMajorFlagged(t *testing.T) {
 	cur := semverParts{major: 1, minor: 2, patch: 3}
-	cards, _ := buildCards(cur, "", "", "2.0.0", map[string]advisories.Advisory{})
+	cards, _ := buildCards(cur, "", "", "", "2.0.0", map[string]advisories.Advisory{})
 	if len(cards) != 1 {
 		t.Fatalf("expected 1 card, got %d", len(cards))
 	}
@@ -259,6 +287,73 @@ func TestBuildCardsCrossMajorFlagged(t *testing.T) {
 	}
 }
 
+// --- buildCards next-major tests ---
+
+func TestBuildCardsNextMajor_On0x_NoInMajor(t *testing.T) {
+	// Current 0.20.4, no patch, no in-major, nextMajor=1.5.2, latest=2.3.0 → 2 cards
+	cur := semverParts{major: 0, minor: 20, patch: 4}
+	cards, _ := buildCards(cur, "", "", "1.5.2", "2.3.0", map[string]advisories.Advisory{})
+	if len(cards) != 2 {
+		t.Fatalf("expected 2 cards, got %d: %+v", len(cards), cards)
+	}
+	if cards[0].Label != "Latest in 1.x" || cards[0].Version != "1.5.2" {
+		t.Errorf("expected first card to be Latest in 1.x / 1.5.2, got %+v", cards[0])
+	}
+	if cards[1].Label != "Latest Stable" || cards[1].Version != "2.3.0" {
+		t.Errorf("expected second card to be Latest Stable / 2.3.0, got %+v", cards[1])
+	}
+}
+
+func TestBuildCardsNextMajor_On0x_WithInMajor(t *testing.T) {
+	// Current 0.18.0, no patch, in-major=0.20.4, nextMajor=1.5.2, latest=2.3.0 → 3 cards
+	cur := semverParts{major: 0, minor: 18, patch: 0}
+	cards, _ := buildCards(cur, "", "0.20.4", "1.5.2", "2.3.0", map[string]advisories.Advisory{})
+	if len(cards) != 3 {
+		t.Fatalf("expected 3 cards, got %d: %+v", len(cards), cards)
+	}
+	labels := []string{cards[0].Label, cards[1].Label, cards[2].Label}
+	expected := []string{"Latest in 0.x", "Latest in 1.x", "Latest Stable"}
+	for i, want := range expected {
+		if labels[i] != want {
+			t.Errorf("card[%d] label: want %q got %q", i, want, labels[i])
+		}
+	}
+}
+
+func TestBuildCardsNextMajor_SameAsLatest_NoDuplicate(t *testing.T) {
+	// Current 1.3.0, patch=1.3.5, in-major=1.5.2, nextMajor=2.3.0, latest=2.3.0
+	// nextMajor == latest → should NOT show duplicate; expect 3 cards: Patch, Latest in 1.x, Latest Stable
+	cur := semverParts{major: 1, minor: 3, patch: 0}
+	cards, _ := buildCards(cur, "1.3.5", "1.5.2", "2.3.0", "2.3.0", map[string]advisories.Advisory{})
+	if len(cards) != 3 {
+		t.Fatalf("expected 3 cards (no duplicate for nextMajor==latest), got %d: %+v", len(cards), cards)
+	}
+	// Verify no two cards have the same version
+	seen := make(map[string]bool)
+	for _, c := range cards {
+		if seen[c.Version] {
+			t.Errorf("duplicate version %q in cards", c.Version)
+		}
+		seen[c.Version] = true
+	}
+	// Latest Stable should show for 2.3.0
+	if cards[2].Label != "Latest Stable" || cards[2].Version != "2.3.0" {
+		t.Errorf("expected third card Latest Stable/2.3.0, got %+v", cards[2])
+	}
+}
+
+func TestBuildCardsNextMajor_On2x_NoNextMajor(t *testing.T) {
+	// Current 2.0.0, latest=2.3.0, no nextMajor → 1 card (in-major only, same major as latest)
+	cur := semverParts{major: 2, minor: 0, patch: 0}
+	cards, _ := buildCards(cur, "", "2.3.0", "", "2.3.0", map[string]advisories.Advisory{})
+	if len(cards) != 1 {
+		t.Fatalf("expected 1 card, got %d: %+v", len(cards), cards)
+	}
+	if cards[0].Label != "Latest in 2.x" {
+		t.Errorf("expected Latest in 2.x, got %q", cards[0].Label)
+	}
+}
+
 // --- pickRecommended unit tests ---
 
 func TestPickRecommendedSecurityPatchWins(t *testing.T) {
@@ -267,7 +362,7 @@ func TestPickRecommendedSecurityPatchWins(t *testing.T) {
 		{Label: "Latest in 1.x", Version: "1.5.0", HasSecurity: true},
 		{Label: "Latest Stable", Version: "2.0.0", CrossMajor: true},
 	}
-	idx := pickRecommended(cards)
+	idx, _ := pickRecommended(cards)
 	if idx != 0 {
 		t.Errorf("expected patch card (idx 0), got %d", idx)
 	}
@@ -278,7 +373,7 @@ func TestPickRecommendedInMajorSecurityWhenNoPatchCard(t *testing.T) {
 		{Label: "Latest in 1.x", Version: "1.5.0", HasSecurity: true},
 		{Label: "Latest Stable", Version: "2.0.0", CrossMajor: true},
 	}
-	idx := pickRecommended(cards)
+	idx, _ := pickRecommended(cards)
 	if idx != 0 {
 		t.Errorf("expected in-major card (idx 0), got %d", idx)
 	}
@@ -291,7 +386,7 @@ func TestPickRecommendedFirstCardWhenNoSecurity(t *testing.T) {
 		{Label: "Latest Stable", Version: "2.0.0", CrossMajor: true},
 	}
 	// No security on any card → first card (safest = patch)
-	idx := pickRecommended(cards)
+	idx, _ := pickRecommended(cards)
 	if idx != 0 {
 		t.Errorf("expected first card (Patch, idx 0), got %d", idx)
 	}
@@ -301,15 +396,123 @@ func TestPickRecommendedFallsBackToFirstCard(t *testing.T) {
 	cards := []models.RecommendationCard{
 		{Label: "Patch", Version: "1.2.5"},
 	}
-	idx := pickRecommended(cards)
+	idx, _ := pickRecommended(cards)
 	if idx != 0 {
 		t.Errorf("expected first card (idx 0), got %d", idx)
 	}
 }
 
 func TestPickRecommendedEmpty(t *testing.T) {
-	idx := pickRecommended(nil)
+	idx, _ := pickRecommended(nil)
 	if idx != -1 {
 		t.Errorf("expected -1 for empty cards, got %d", idx)
+	}
+}
+
+// --- pickRecommended reason string tests ---
+
+func TestPickRecommendedReason_PatchWithSecurity(t *testing.T) {
+	cards := []models.RecommendationCard{
+		{Label: "Patch", Version: "1.2.5", HasSecurity: true},
+		{Label: "Latest in 1.x", Version: "1.5.0"},
+	}
+	_, reason := pickRecommended(cards)
+	want := "Lowest-risk path — applies a patch that contains security fixes"
+	if reason != want {
+		t.Errorf("got %q, want %q", reason, want)
+	}
+}
+
+func TestPickRecommendedReason_InMajorWithSecurity(t *testing.T) {
+	cards := []models.RecommendationCard{
+		{Label: "Latest in 1.x", Version: "1.5.0", HasSecurity: true},
+		{Label: "Latest Stable", Version: "2.0.0", CrossMajor: true},
+	}
+	_, reason := pickRecommended(cards)
+	want := "Stays in your current major while including security fixes"
+	if reason != want {
+		t.Errorf("got %q, want %q", reason, want)
+	}
+}
+
+func TestPickRecommendedReason_CrossMajorWithSecurity(t *testing.T) {
+	cards := []models.RecommendationCard{
+		{Label: "Latest Stable", Version: "2.0.0", CrossMajor: true, HasSecurity: true},
+	}
+	_, reason := pickRecommended(cards)
+	want := "Smallest version jump that includes security fixes"
+	if reason != want {
+		t.Errorf("got %q, want %q", reason, want)
+	}
+}
+
+func TestPickRecommendedReason_PatchNoSecurity(t *testing.T) {
+	cards := []models.RecommendationCard{
+		{Label: "Patch", Version: "1.2.5"},
+		{Label: "Latest in 1.x", Version: "1.5.0"},
+	}
+	_, reason := pickRecommended(cards)
+	want := "Lowest-risk path — only patch-level changes"
+	if reason != want {
+		t.Errorf("got %q, want %q", reason, want)
+	}
+}
+
+func TestPickRecommendedReason_InMajorNoSecurity(t *testing.T) {
+	cards := []models.RecommendationCard{
+		{Label: "Latest in 1.x", Version: "1.5.0"},
+		{Label: "Latest Stable", Version: "2.0.0", CrossMajor: true},
+	}
+	_, reason := pickRecommended(cards)
+	want := "Latest stable in your current major — minimizes breaking changes"
+	if reason != want {
+		t.Errorf("got %q, want %q", reason, want)
+	}
+}
+
+func TestPickRecommendedReason_SteppingStone(t *testing.T) {
+	// First card is cross-major stepping stone (Latest in 1.x), second is Latest Stable
+	cards := []models.RecommendationCard{
+		{Label: "Latest in 1.x", Version: "1.5.2", CrossMajor: true},
+		{Label: "Latest Stable", Version: "2.3.0", CrossMajor: true},
+	}
+	_, reason := pickRecommended(cards)
+	want := "Stepping stone — moves you forward one major at a time"
+	if reason != want {
+		t.Errorf("got %q, want %q", reason, want)
+	}
+}
+
+func TestPickRecommendedReason_LatestStableOnly(t *testing.T) {
+	// Only one card and it's cross-major with no stepping stone before it
+	cards := []models.RecommendationCard{
+		{Label: "Latest Stable", Version: "2.0.0", CrossMajor: true},
+	}
+	_, reason := pickRecommended(cards)
+	want := "Most up-to-date version — only choice that keeps you current"
+	if reason != want {
+		t.Errorf("got %q, want %q", reason, want)
+	}
+}
+
+func TestPickRecommendedReason_SetOnCard(t *testing.T) {
+	// Verify that buildCards propagates Reason onto the recommended card
+	cur := semverParts{major: 1, minor: 2, patch: 3}
+	cards, _ := buildCards(cur, "1.2.5", "1.5.0", "", "2.0.0", map[string]advisories.Advisory{})
+	var recCard *models.RecommendationCard
+	for i := range cards {
+		if cards[i].IsRecommended {
+			recCard = &cards[i]
+			break
+		}
+	}
+	if recCard == nil {
+		t.Fatal("no recommended card found")
+	}
+	if recCard.Reason == "" {
+		t.Error("expected Reason to be set on the recommended card")
+	}
+	if recCard.Label != "Patch" {
+		t.Errorf("expected Patch card to be recommended, got %q", recCard.Label)
 	}
 }

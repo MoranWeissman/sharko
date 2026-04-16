@@ -83,4 +83,5 @@ type RecommendationCard struct {
 	CrossMajor      bool   `json:"cross_major"`                // version major differs from current major
 	AdvisorySummary string `json:"advisory_summary,omitempty"` // e.g. "2 security fixes", "breaking change detected"
 	IsRecommended   bool   `json:"is_recommended"`             // true for the single recommended card
+	Reason          string `json:"reason,omitempty"`           // human-readable explanation, only set on the recommended card
 }

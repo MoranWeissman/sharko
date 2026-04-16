@@ -5334,6 +5334,10 @@ const docTemplate = `{
                     "description": "e.g. \"Patch\", \"Latest in 1.x\", \"Latest Stable\"",
                     "type": "string"
                 },
+                "reason": {
+                    "description": "human-readable explanation, only set on the recommended card",
+                    "type": "string"
+                },
                 "version": {
                     "type": "string"
                 }
