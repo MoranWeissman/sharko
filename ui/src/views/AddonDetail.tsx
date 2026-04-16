@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import * as yaml from 'yaml'
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom'
 import { DetailNavPanel } from '@/components/DetailNavPanel'
@@ -235,16 +235,24 @@ function UpgradeVersionList({
 
       {showNotFound && (
         <div className="mt-2 rounded-lg ring-2 ring-[#6aade0] bg-[#e8f4ff] p-3 dark:ring-gray-600 dark:bg-gray-900/50">
-          <p className="text-sm text-[#2a5a7a] dark:text-gray-300">
-            Version "{searchQuery}" not in common versions. Try analyzing it directly:
-          </p>
-          <button
-            type="button"
-            onClick={() => onAnalyze(searchQuery)}
-            className="mt-2 rounded-lg bg-teal-600 px-4 py-1.5 text-xs font-medium text-white hover:bg-teal-700"
-          >
-            Analyze {searchQuery}
-          </button>
+          {searchQuery === currentVersion ? (
+            <p className="text-sm text-amber-700 dark:text-amber-400">
+              Already on version {searchQuery} — nothing to upgrade.
+            </p>
+          ) : (
+            <>
+              <p className="text-sm text-[#2a5a7a] dark:text-gray-300">
+                Version "{searchQuery}" not in common versions. Try analyzing it directly:
+              </p>
+              <button
+                type="button"
+                onClick={() => onAnalyze(searchQuery)}
+                className="mt-2 rounded-lg bg-teal-600 px-4 py-1.5 text-xs font-medium text-white hover:bg-teal-700"
+              >
+                Analyze {searchQuery}
+              </button>
+            </>
+          )}
         </div>
       )}
 
@@ -884,7 +892,14 @@ export function AddonDetail() {
   const [error, setError] = useState<string | null>(null)
   const [searchParams, setSearchParams] = useSearchParams()
   const activeSection = searchParams.get('section') || 'overview'
-  const setActiveSection = (s: string) => setSearchParams({ section: s }, { replace: true })
+  const contentPanelRef = useRef<HTMLDivElement>(null)
+  const setActiveSection = (s: string) => {
+    setSearchParams({ section: s }, { replace: true })
+    // Scroll the content panel into view so the user sees the section change
+    setTimeout(() => {
+      contentPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }, 0)
+  }
 
   const [valuesYaml, setValuesYaml] = useState<string | null>(null)
   const [argocdBaseURL, setArgocdBaseURL] = useState<string>('')
@@ -917,6 +932,7 @@ export function AddonDetail() {
   const [inlineAnalysisResult, setInlineAnalysisResult] = useState<UpgradeCheckResponse | null>(null)
   const [inlineAnalyzing, setInlineAnalyzing] = useState(false)
   const [inlineAnalyzeError, setInlineAnalyzeError] = useState<string | null>(null)
+  const inlineResultRef = useRef<HTMLDivElement>(null)
 
   // Tracked PRs for this addon
   const [addonPRs, setAddonPRs] = useState<TrackedPR[]>([])
@@ -1018,8 +1034,12 @@ export function AddonDetail() {
 
   const handleUpgradeAddon = useCallback(async (version: string, cluster?: string) => {
     if (!name) throw new Error('No addon name')
+    // Bug #3: block upgrading to the current catalog version
+    if (addon && version === addon.version && !cluster) {
+      throw new Error('Already on this version — nothing to upgrade.')
+    }
     return upgradeAddon(name, { version, cluster })
-  }, [name])
+  }, [name, addon])
 
   const handleStartEditConfig = useCallback(() => {
     if (!addon) return
@@ -1118,6 +1138,25 @@ export function AddonDetail() {
 
   const handleInlineAnalyze = useCallback(async (version: string) => {
     if (!name) return
+    // Bug #3: block analyzing the current catalog version
+    if (addon && version === addon.version) {
+      setInlineAnalysisVersion(version)
+      setInlineAnalyzeError('Already on this version — nothing to upgrade.')
+      setInlineAnalysisResult(null)
+      setInlineAnalyzing(false)
+      setTimeout(() => {
+        inlineResultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+      }, 0)
+      return
+    }
+    // Bug #2: if re-analyzing the same version, reset to null first so React
+    // sees a state change and re-renders the results panel with fresh state
+    if (inlineAnalysisVersion === version) {
+      setInlineAnalysisVersion(null)
+      setInlineAnalysisResult(null)
+      // Allow React to flush the null state before re-setting
+      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    }
     setInlineAnalysisVersion(version)
     setInlineAnalyzing(true)
     setInlineAnalyzeError(null)
@@ -1135,8 +1174,12 @@ export function AddonDetail() {
       setInlineAnalyzeError(err instanceof Error ? err.message : 'Analysis failed')
     } finally {
       setInlineAnalyzing(false)
+      // Scroll the results into view so the user can see them
+      setTimeout(() => {
+        inlineResultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+      }, 0)
     }
-  }, [name])
+  }, [name, addon, inlineAnalysisVersion])
 
   const handleCloseInlineAnalysis = useCallback(() => {
     setInlineAnalysisVersion(null)
@@ -1369,7 +1412,7 @@ export function AddonDetail() {
           onSelect={setActiveSection}
         />
 
-        <div className="flex-1 space-y-6">
+        <div ref={contentPanelRef} className="flex-1 space-y-6">
           {activeSection === 'overview' && (
             <>
               {/* Summary stat cards */}
@@ -1944,17 +1987,19 @@ export function AddonDetail() {
 
               {/* Inline upgrade analysis results */}
               {(inlineAnalysisVersion !== null) && (
-                <InlineUpgradeResults
-                  addonName={addon.addon_name}
-                  targetVersion={inlineAnalysisVersion}
-                  result={inlineAnalysisResult}
-                  analyzing={inlineAnalyzing}
-                  analyzeError={inlineAnalyzeError}
-                  onRetry={() => handleInlineAnalyze(inlineAnalysisVersion)}
-                  onClose={handleCloseInlineAnalysis}
-                  onUpgrade={handleUpgradeAddon}
-                  onUpgradeComplete={() => fetchAddonData(true)}
-                />
+                <div ref={inlineResultRef}>
+                  <InlineUpgradeResults
+                    addonName={addon.addon_name}
+                    targetVersion={inlineAnalysisVersion}
+                    result={inlineAnalysisResult}
+                    analyzing={inlineAnalyzing}
+                    analyzeError={inlineAnalyzeError}
+                    onRetry={() => handleInlineAnalyze(inlineAnalysisVersion)}
+                    onClose={handleCloseInlineAnalysis}
+                    onUpgrade={handleUpgradeAddon}
+                    onUpgradeComplete={() => fetchAddonData(true)}
+                  />
+                </div>
               )}
 
               {/* Per-cluster versions */}
