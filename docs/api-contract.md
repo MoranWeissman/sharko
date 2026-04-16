@@ -1496,6 +1496,28 @@ Remove a PR from tracking. Does not affect the PR in the Git provider.
 
 ## 5c. Audit API
 
+**Audit coverage**: every mutating endpoint (POST/PUT/PATCH/DELETE) emits an audit entry automatically via `auditMiddleware`. The `Audit Log` panel in Settings → Audit shows all activity, filterable by user/action/source/result.
+
+Read endpoints (GET) are NOT audited by default. The middleware skips GETs to keep the audit log focused on state changes.
+
+Each entry contains: timestamp, level, event name, user, action (HTTP verb), resource (e.g., `cluster:prod-eu` or `addon:cert-manager`), source (`ui`/`cli`/`api`/`reconciler`), result (`success`/`failure`), duration_ms, and optional detail.
+
+### Event Taxonomy
+
+| Domain | Events |
+|--------|--------|
+| auth | `login`, `logout`, `login_failed`, `password_changed` |
+| users | `user_created`, `user_updated`, `user_deleted`, `password_reset` |
+| tokens | `token_created`, `token_revoked` |
+| clusters | `cluster_registered`, `cluster_deregistered`, `cluster_updated`, `cluster_adopted`, `cluster_unadopted`, `cluster_tested`, `cluster_diagnosed`, `cluster_credentials_refreshed`, `cluster_secret_synced`, `cluster_discovery_run` |
+| addons | `addon_added`, `addon_removed`, `addon_configured`, `addon_upgraded`, `addon_enabled_on_cluster`, `addon_disabled_on_cluster` |
+| secrets | `addon_secret_set`, `addon_secret_deleted` |
+| connections | `connection_created`, `connection_updated`, `connection_deleted`, `active_connection_changed`, `connection_tested` |
+| settings | `ai_config_updated`, `provider_tested`, `dashboards_saved` |
+| prs | `pr_refreshed`, `pr_deleted` |
+| system | `init_run`, `webhook_received`, `reconcile_triggered`, `operation_cancelled` |
+| upgrades | `upgrade_analyzed` |
+
 ### GET /api/v1/audit — Query Audit Log
 
 List audit events with optional filters. Default limit is 50 entries, newest first.
@@ -1523,7 +1545,8 @@ List audit events with optional filters. Default limit is 50 entries, newest fir
       "resource": "cluster:prod-eu",
       "source": "cli",
       "result": "success",
-      "duration_ms": 3200
+      "duration_ms": 3200,
+      "detail": "3 addons enabled"
     }
   ]
 }

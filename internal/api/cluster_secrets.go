@@ -1,9 +1,11 @@
 package api
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 
+	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
@@ -150,6 +152,11 @@ func (s *Server) handleRefreshClusterSecrets(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadGateway, "refreshing secrets: "+secretErr.Error())
 		return
 	}
+
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "cluster_secret_synced",
+		Resource: fmt.Sprintf("cluster:%s", name),
+	})
 
 	resp := map[string]interface{}{
 		"cluster":           name,

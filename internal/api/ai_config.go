@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/MoranWeissman/sharko/internal/ai"
+	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
 )
 
@@ -160,6 +161,9 @@ func (s *Server) handleSaveAIConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	audit.Enrich(r.Context(), audit.Fields{
+		Event: "ai_config_updated",
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "provider": req.Provider})
 }
 
@@ -246,6 +250,10 @@ func (s *Server) handleSetAIProvider(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.aiClient.SetProvider(ai.Provider(req.Provider))
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:  "ai_config_updated",
+		Detail: fmt.Sprintf("provider=%s", req.Provider),
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "provider": req.Provider})
 }
 
@@ -272,5 +280,8 @@ func (s *Server) handleTestAI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	audit.Enrich(r.Context(), audit.Fields{
+		Event: "ai_tested",
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "response": result})
 }

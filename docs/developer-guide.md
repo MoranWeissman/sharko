@@ -601,6 +601,7 @@ type Entry struct {
     Source     string    `json:"source"`      // ui, cli, api, reconciler, webhook
     Result     string    `json:"result"`      // success, failure, partial
     DurationMs int64     `json:"duration_ms"`
+    Detail     string    `json:"detail,omitempty"`    // handler-supplied semantic context
     Error      string    `json:"error,omitempty"`
     RequestID  string    `json:"request_id,omitempty"`
 }
@@ -641,6 +642,27 @@ mux.HandleFunc("GET /api/v1/myfeature", srv.handleMyFeature)
 3. **If it's a write operation**, add an orchestrator method in `internal/orchestrator/` and call it from the handler. The handler should get ArgoCD and Git clients from `s.connSvc` and construct the orchestrator with the shared `&s.gitMu` mutex.
 
 4. **Verify**: `go build ./... && go vet ./...`
+
+---
+
+## Adding an Auditable Endpoint
+
+When you add a new mutating handler in `internal/api/`, call `audit.Enrich(r.Context(), audit.Fields{...})` near the top of the handler. The `auditMiddleware` will read these fields and emit ONE audit entry per request after the handler returns.
+
+```go
+func (s *Server) handleDoSomething(w http.ResponseWriter, r *http.Request) {
+    audit.Enrich(r.Context(), audit.Fields{
+        Event:    "thing_done",
+        Resource: "thing:" + name,
+        Detail:   "extra context",
+    })
+    // ... handler body ...
+}
+```
+
+The `audit_coverage_test.go` test fails CI if any new mutating handler lacks `audit.Enrich(`. To exempt a true read-only POST (e.g., a test/diagnose endpoint), add it to the allowlist in `audit_coverage_test.go` with a justification comment.
+
+**Current allowlist** (endpoints that emit their own granular audit events or are non-state-changing): `handleLogin`, `handleLogout`, `handleLoginFailed`, `handleHashPassword`, `handleOperationHeartbeat`, `handleMarkAllNotificationsRead`, `handleAgentChat`, `handleGetAISummary`, `handleTestAIConfig`, `handleGitWebhook`.
 
 ---
 

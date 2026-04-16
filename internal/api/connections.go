@@ -2,9 +2,11 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 
+	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/models"
 )
@@ -55,6 +57,10 @@ func (s *Server) handleCreateConnection(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "connection_created",
+		Resource: fmt.Sprintf("connection:%s", req.Name),
+	})
 	s.ReinitializeFromConnection()
 	writeJSON(w, http.StatusCreated, map[string]string{"status": "created", "name": req.Name})
 }
@@ -134,6 +140,10 @@ func (s *Server) handleUpdateConnection(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "connection_updated",
+		Resource: fmt.Sprintf("connection:%s", name),
+	})
 	s.ReinitializeFromConnection()
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated", "name": name})
 }
@@ -164,6 +174,10 @@ func (s *Server) handleDeleteConnection(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "connection_deleted",
+		Resource: fmt.Sprintf("connection:%s", name),
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted", "name": name})
 }
 
@@ -194,6 +208,10 @@ func (s *Server) handleSetActiveConnection(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "active_connection_changed",
+		Resource: fmt.Sprintf("connection:%s", req.ConnectionName),
+	})
 	s.ReinitializeFromConnection()
 	writeJSON(w, http.StatusOK, map[string]string{"status": "active", "connection": req.ConnectionName})
 }
@@ -255,6 +273,9 @@ func (s *Server) handleTestCredentials(w http.ResponseWriter, r *http.Request) {
 		result["argocd"] = map[string]interface{}{"status": "ok", "auth": authInfo.ArgocdSource}
 	}
 
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:  "credentials_tested",
+	})
 	writeJSON(w, http.StatusOK, result)
 }
 
@@ -307,5 +328,8 @@ func (s *Server) handleTestConnection(w http.ResponseWriter, r *http.Request) {
 		result["argocd"] = map[string]interface{}{"status": "error", "message": argocdErr.Error()}
 	}
 
+	audit.Enrich(r.Context(), audit.Fields{
+		Event: "connection_tested",
+	})
 	writeJSON(w, http.StatusOK, result)
 }

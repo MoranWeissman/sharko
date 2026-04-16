@@ -113,14 +113,9 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusMultiStatus
 	}
 
-	s.auditLog.Add(audit.Entry{
-		Level:    "info",
+	audit.Enrich(r.Context(), audit.Fields{
 		Event:    "cluster_registered",
-		User:     "sharko",
-		Action:   "register",
 		Resource: fmt.Sprintf("cluster:%s", req.Name),
-		Source:   "api",
-		Result:   result.Status,
 	})
 
 	writeJSON(w, status, result)
@@ -211,14 +206,9 @@ func (s *Server) handleDeregisterCluster(w http.ResponseWriter, r *http.Request)
 		s.argoSecretReconciler.Trigger()
 	}
 
-	s.auditLog.Add(audit.Entry{
-		Level:    "info",
-		Event:    "cluster_removed",
-		User:     "sharko",
-		Action:   "remove",
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "cluster_deregistered",
 		Resource: fmt.Sprintf("cluster:%s", name),
-		Source:   "api",
-		Result:   result.Status,
 	})
 
 	status := http.StatusOK
@@ -368,6 +358,11 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 		s.argoSecretReconciler.Trigger()
 	}
 
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "cluster_updated",
+		Resource: fmt.Sprintf("cluster:%s", name),
+	})
+
 	status := http.StatusOK
 	if result.Status == "partial" {
 		status = http.StatusMultiStatus
@@ -427,6 +422,10 @@ func (s *Server) handleRefreshClusterCredentials(w http.ResponseWriter, r *http.
 		return
 	}
 
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "cluster_credentials_refreshed",
+		Resource: fmt.Sprintf("cluster:%s", name),
+	})
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "success",
 		"message": "credentials refreshed for cluster " + name,

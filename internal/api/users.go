@@ -2,8 +2,10 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
+	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
 )
 
@@ -64,11 +66,16 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "user_created",
+		Resource: fmt.Sprintf("user:%s", req.Username),
+		Detail:   fmt.Sprintf("role=%s", req.Role),
+	})
 	writeJSON(w, http.StatusCreated, map[string]string{
-		"username":       req.Username,
-		"role":           req.Role,
-		"temp_password":  tempPassword,
-		"message":        "User created. Share the temporary password — they must change it on first login.",
+		"username":      req.Username,
+		"role":          req.Role,
+		"temp_password": tempPassword,
+		"message":       "User created. Share the temporary password — they must change it on first login.",
 	})
 }
 
@@ -119,6 +126,10 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user := s.authStore.GetUser(username)
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "user_updated",
+		Resource: fmt.Sprintf("user:%s", username),
+	})
 	writeJSON(w, http.StatusOK, user)
 }
 
@@ -151,6 +162,10 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "user_deleted",
+		Resource: fmt.Sprintf("user:%s", username),
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"message": "user deleted"})
 }
 
@@ -184,6 +199,10 @@ func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "password_reset",
+		Resource: fmt.Sprintf("user:%s", username),
+	})
 	writeJSON(w, http.StatusOK, map[string]string{
 		"username":      username,
 		"temp_password": tempPassword,

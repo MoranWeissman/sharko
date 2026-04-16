@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
@@ -90,6 +91,12 @@ func (s *Server) handleBatchRegisterClusters(w http.ResponseWriter, r *http.Requ
 	}
 
 	result := orch.RegisterClusterBatch(r.Context(), req.Clusters)
+
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "cluster_registered",
+		Resource: fmt.Sprintf("clusters:%d", len(req.Clusters)),
+		Detail:   fmt.Sprintf("batch of %d", len(req.Clusters)),
+	})
 
 	status := http.StatusOK
 	if result.Failed > 0 {

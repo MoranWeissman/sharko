@@ -1,9 +1,11 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 
+	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
 )
 
@@ -178,6 +180,10 @@ func (s *Server) handleRefreshPR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "pr_refreshed",
+		Resource: fmt.Sprintf("pr:%d", id),
+	})
 	writeJSON(w, http.StatusOK, PRItem{
 		PRID:       pr.PRID,
 		PRUrl:      pr.PRUrl,
@@ -229,5 +235,9 @@ func (s *Server) handleDeletePR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "pr_deleted",
+		Resource: fmt.Sprintf("pr:%d", id),
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "removed"})
 }

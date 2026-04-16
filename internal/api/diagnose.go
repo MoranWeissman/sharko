@@ -1,9 +1,11 @@
 package api
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 
+	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/diagnose"
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
@@ -60,5 +62,9 @@ func (s *Server) handleDiagnoseCluster(w http.ResponseWriter, r *http.Request) {
 	report := diagnose.DiagnoseCluster(r.Context(), client, namespace, callerARN, roleARN)
 
 	slog.Info("[cluster-diagnose] completed", "name", name, "checks", len(report.NamespaceAccess), "fixes", len(report.SuggestedFixes))
+	audit.Enrich(r.Context(), audit.Fields{
+		Event:    "cluster_diagnosed",
+		Resource: fmt.Sprintf("cluster:%s", name),
+	})
 	writeJSON(w, http.StatusOK, report)
 }

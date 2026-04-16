@@ -509,6 +509,8 @@ extraEnv:
 
 ## Audit Log
 
+Every change you make in Sharko — adding a cluster, configuring an addon, upgrading, removing — is recorded in the Audit Log. Open Settings → Audit to filter by who, what, when, and result. Failed operations show the error.
+
 Sharko records significant events in an in-memory audit log (default capacity: 1000 entries, configurable via `SHARKO_AUDIT_BUFFER_SIZE`). Every cluster registration, adoption, removal, upgrade, PR merge, and configuration change is logged.
 
 ### Query the Audit Log
