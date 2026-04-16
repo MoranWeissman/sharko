@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
+	"github.com/MoranWeissman/sharko/internal/prtracker"
 )
 
 // handleAddAddon godoc
@@ -69,6 +71,26 @@ func (s *Server) handleAddAddon(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
+	}
+
+	if s.prTracker != nil && result != nil && result.PRID > 0 {
+		user := r.Header.Get("X-Sharko-User")
+		if user == "" {
+			user = "system"
+		}
+		_ = s.prTracker.TrackPR(r.Context(), prtracker.PRInfo{
+			PRID:       result.PRID,
+			PRUrl:      result.PRUrl,
+			PRBranch:   result.Branch,
+			PRTitle:    "Add addon " + req.Name,
+			PRBase:     "main",
+			Addon:      req.Name,
+			Operation:  "addon-add",
+			User:       user,
+			Source:     "api",
+			CreatedAt:  time.Now(),
+			LastStatus: "open",
+		})
 	}
 
 	audit.Enrich(r.Context(), audit.Fields{

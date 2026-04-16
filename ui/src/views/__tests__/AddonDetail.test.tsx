@@ -98,7 +98,8 @@ describe('AddonDetail', () => {
     renderDetail()
 
     await waitFor(() => {
-      expect(screen.getByText('ingress-nginx')).toBeInTheDocument()
+      // 'ingress-nginx' now appears in both the page header and the info card
+      expect(screen.getAllByText('ingress-nginx').length).toBeGreaterThanOrEqual(1)
     })
 
     // Stat cards

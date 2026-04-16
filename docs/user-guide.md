@@ -809,6 +809,8 @@ The main dashboard shows aggregated stats: total clusters, healthy/degraded coun
 - Version drift and upgrade checking are inside the addon detail page (no separate pages)
 - Add addons to the catalog and trigger upgrades from the detail page
 - **Auto-refresh:** Addon Catalog auto-refreshes every 60 seconds. Addon Detail auto-refreshes every 30 seconds. Both pages have a **Refresh** button.
+- **Register New Addon:** After registering an addon, the modal auto-closes and a dismissible banner appears at the top of the catalog confirming the addon was registered and including a "View PR" link. You no longer need to click "Close" manually.
+- **Downgrade warning:** When analyzing or upgrading to a version lower than the current catalog version, an amber warning banner appears. Proceeding requires typing `DOWNGRADE` in a confirmation dialog.
 
 ### Settings Page
 

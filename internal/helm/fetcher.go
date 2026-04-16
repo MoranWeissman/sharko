@@ -27,12 +27,19 @@ type repoIndex struct {
 	Entries map[string][]ChartVersion `yaml:"entries"`
 }
 
+// chartMetadata holds the fields we extract from Chart.yaml.
+type chartMetadata struct {
+	Sources []string `yaml:"sources"`
+	Home    string   `yaml:"home"`
+}
+
 // Fetcher downloads Helm chart values.yaml for comparison.
 // Includes in-memory caching to avoid redundant downloads.
 type Fetcher struct {
-	client     *http.Client
-	indexCache map[string]*repoIndex // key: repoURL
-	valuesCache map[string]string    // key: repoURL/chart/version
+	client      *http.Client
+	indexCache  map[string]*repoIndex  // key: repoURL
+	valuesCache map[string]string      // key: repoURL/chart/version
+	chartCache  map[string]*chartMetadata // key: repoURL/chart/version
 }
 
 // NewFetcher creates a new Helm chart fetcher with caching.
@@ -41,6 +48,7 @@ func NewFetcher() *Fetcher {
 		client:      &http.Client{},
 		indexCache:  make(map[string]*repoIndex),
 		valuesCache: make(map[string]string),
+		chartCache:  make(map[string]*chartMetadata),
 	}
 }
 
@@ -254,10 +262,135 @@ func (f *Fetcher) FetchValues(ctx context.Context, repoURL, chartName, version s
 	return "", fmt.Errorf("values.yaml not found in chart archive")
 }
 
+// fetchChartYAML downloads the chart archive and extracts Chart.yaml metadata.
+// Results are cached per repoURL/chartName/version (15-minute effective TTL via process lifetime).
+func (f *Fetcher) fetchChartYAML(ctx context.Context, repoURL, chartName, version string) (*chartMetadata, error) {
+	cacheKey := repoURL + "/" + chartName + "/" + version
+	if cached, ok := f.chartCache[cacheKey]; ok {
+		return cached, nil
+	}
+
+	// Reuse chart URL lookup from the index.
+	versions, err := f.ListVersions(ctx, repoURL, chartName)
+	if err != nil {
+		return nil, err
+	}
+
+	var chartURL string
+	for _, v := range versions {
+		if v.Version == version && len(v.URLs) > 0 {
+			chartURL = v.URLs[0]
+			break
+		}
+	}
+	if chartURL == "" {
+		return nil, fmt.Errorf("version %s not found for chart %s", version, chartName)
+	}
+
+	if !strings.HasPrefix(chartURL, "http") {
+		chartURL = strings.TrimRight(repoURL, "/") + "/" + chartURL
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", chartURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating chart request: %w", err)
+	}
+
+	resp, err := f.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("downloading chart: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("chart download returned %d", resp.StatusCode)
+	}
+
+	gz, err := gzip.NewReader(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("decompressing: %w", err)
+	}
+	defer gz.Close()
+
+	tr := tar.NewReader(gz)
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("reading tar: %w", err)
+		}
+
+		// Chart.yaml is at <chart-name>/Chart.yaml
+		if strings.HasSuffix(header.Name, "/Chart.yaml") || header.Name == "Chart.yaml" {
+			data, err := io.ReadAll(io.LimitReader(tr, 1*1024*1024))
+			if err != nil {
+				return nil, fmt.Errorf("reading Chart.yaml: %w", err)
+			}
+			var meta chartMetadata
+			if err := yaml.Unmarshal(data, &meta); err != nil {
+				return nil, fmt.Errorf("parsing Chart.yaml: %w", err)
+			}
+			f.chartCache[cacheKey] = &meta
+			return &meta, nil
+		}
+	}
+
+	return nil, fmt.Errorf("Chart.yaml not found in chart archive")
+}
+
+// extractGitHubRepoFromURL extracts "owner/repo" from a GitHub URL.
+// Accepts https://github.com/owner/repo, https://github.com/owner/repo.git,
+// and URLs with additional path segments. Returns "" if not a GitHub URL.
+func extractGitHubRepoFromURL(rawURL string) string {
+	if !strings.Contains(rawURL, "github.com/") {
+		return ""
+	}
+	// Strip scheme + host
+	idx := strings.Index(rawURL, "github.com/")
+	if idx < 0 {
+		return ""
+	}
+	path := rawURL[idx+len("github.com/"):]
+	parts := strings.SplitN(path, "/", 3)
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+		return ""
+	}
+	repo := strings.TrimSuffix(parts[1], ".git")
+	// Strip any trailing query/fragment
+	if i := strings.IndexAny(repo, "?#"); i >= 0 {
+		repo = repo[:i]
+	}
+	return parts[0] + "/" + repo
+}
+
 // FetchReleaseNotes tries to get release notes for a chart version.
-// It attempts GitHub Releases API first, then falls back to chart metadata.
+// Precedence: Chart.yaml sources[] → Chart.yaml home → guessGitHubRepo heuristic.
 func (f *Fetcher) FetchReleaseNotes(ctx context.Context, repoURL, chartName, version string) (string, error) {
-	githubRepo := guessGitHubRepo(repoURL, chartName)
+	// 1. Try Chart.yaml sources/home for a GitHub URL.
+	var githubRepo string
+	if meta, err := f.fetchChartYAML(ctx, repoURL, chartName, version); err == nil {
+		// sources[] first
+		for _, src := range meta.Sources {
+			if r := extractGitHubRepoFromURL(src); r != "" {
+				githubRepo = r
+				break
+			}
+		}
+		// home fallback
+		if githubRepo == "" {
+			if r := extractGitHubRepoFromURL(meta.Home); r != "" {
+				githubRepo = r
+			}
+		}
+	}
+
+	// 2. Fall back to heuristic if Chart.yaml didn't yield a repo.
+	if githubRepo == "" {
+		githubRepo = guessGitHubRepo(repoURL, chartName)
+	}
+
 	if githubRepo == "" {
 		return "Release notes not available (no GitHub repository found for this chart).", nil
 	}

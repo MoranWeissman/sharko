@@ -40,6 +40,22 @@ import { YamlViewer } from '@/components/YamlViewer'
 import { RoleGuard } from '@/components/RoleGuard'
 import { ConfirmationModal } from '@/components/ConfirmationModal'
 
+/** Returns true if target is a strictly lower semver than current. Fails open (returns false) if either can't be parsed. */
+function isDowngrade(current: string, target: string): boolean {
+  const parseSemver = (v: string): [number, number, number] | null => {
+    const trimmed = v.replace(/^v/, '').split('-')[0]
+    const parts = trimmed.split('.').map(Number)
+    if (parts.length < 3 || parts.some(isNaN)) return null
+    return [parts[0], parts[1], parts[2]]
+  }
+  const c = parseSemver(current)
+  const t = parseSemver(target)
+  if (!c || !t) return false
+  if (t[0] !== c[0]) return t[0] < c[0]
+  if (t[1] !== c[1]) return t[1] < c[1]
+  return t[2] < c[2]
+}
+
 function cardGridClass(count: number): string {
   if (count === 1) return 'grid gap-3 grid-cols-1'
   if (count === 2) return 'grid gap-3 sm:grid-cols-2'
@@ -375,6 +391,7 @@ type InlineChangeTab = 'added' | 'removed' | 'changed'
 function InlineUpgradeResults({
   addonName,
   targetVersion,
+  currentVersion,
   result,
   analyzing,
   analyzeError,
@@ -385,6 +402,7 @@ function InlineUpgradeResults({
 }: {
   addonName: string
   targetVersion: string
+  currentVersion: string
   result: UpgradeCheckResponse | null
   analyzing: boolean
   analyzeError: string | null
@@ -403,6 +421,10 @@ function InlineUpgradeResults({
   const [upgradePrUrl, setUpgradePrUrl] = useState<string | null>(null)
   const [upgradeError, setUpgradeError] = useState<string | null>(null)
   const [upgradeDone, setUpgradeDone] = useState(false)
+  // Downgrade modal state
+  const [downgradeModalOpen, setDowngradeModalOpen] = useState(false)
+
+  const downgrade = isDowngrade(currentVersion, targetVersion)
 
   const handleUpgradeConfirm = async () => {
     setUpgradeSubmitting(true)
@@ -494,6 +516,21 @@ function InlineUpgradeResults({
           <X className="h-4 w-4" />
         </button>
       </div>
+
+      {/* Downgrade warning banner */}
+      {downgrade && (
+        <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 dark:border-amber-700 dark:bg-amber-950/40">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+          <div>
+            <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
+              ⚠ This is a downgrade.
+            </p>
+            <p className="mt-0.5 text-xs text-amber-700 dark:text-amber-400">
+              Helm values from a newer version may not be backward-compatible with <span className="font-mono">{targetVersion}</span>. Review the changes carefully before proceeding.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Baseline unavailable banner */}
       {result.baseline_unavailable && (
@@ -689,16 +726,36 @@ function InlineUpgradeResults({
         )}
       </div>
 
+      {/* Downgrade typed-confirmation modal */}
+      <ConfirmationModal
+        open={downgradeModalOpen}
+        onClose={() => setDowngradeModalOpen(false)}
+        onConfirm={handleUpgradeConfirm}
+        title={`Downgrade ${addonName} to ${targetVersion}?`}
+        description={`This is a downgrade from ${currentVersion}. Helm values may not be backward-compatible. This will create a pull request with the version change.`}
+        confirmText="Confirm Downgrade"
+        typeToConfirm="DOWNGRADE"
+        destructive
+        loading={upgradeSubmitting}
+      />
+
       {/* Upgrade action */}
       {!upgradeDone && !upgradeSubmitting && !upgradeConfirming && (
         <div className="mt-4 border-t border-[#c0ddf0] pt-4 dark:border-gray-700">
           <button
             type="button"
-            onClick={() => { setUpgradeConfirming(true); setUpgradeError(null) }}
+            onClick={() => {
+              setUpgradeError(null)
+              if (downgrade) {
+                setDowngradeModalOpen(true)
+              } else {
+                setUpgradeConfirming(true)
+              }
+            }}
             className="inline-flex items-center gap-2 rounded-lg bg-teal-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-600"
           >
             <ArrowUpCircle className="h-4 w-4" />
-            Upgrade to {targetVersion}
+            {downgrade ? 'Downgrade' : 'Upgrade'} to {targetVersion}
           </button>
         </div>
       )}
@@ -892,6 +949,9 @@ function PerClusterUpgradeRow({
   const [state, setState] = useState<'idle' | 'confirm' | 'loading' | 'done'>('idle')
   const [prUrl, setPrUrl] = useState<string | null>(null)
   const [upgradeError, setUpgradeError] = useState<string | null>(null)
+  const [downgradeModalOpen, setDowngradeModalOpen] = useState(false)
+
+  const isDowngradingCluster = isDowngrade(deployedVersion, catalogVersion)
 
   const handleConfirm = async () => {
     setState('loading')
@@ -909,6 +969,19 @@ function PerClusterUpgradeRow({
 
   return (
     <div className="rounded-lg bg-[#e0f0ff] px-4 py-2.5">
+      {/* Downgrade typed-confirmation modal */}
+      <ConfirmationModal
+        open={downgradeModalOpen}
+        onClose={() => setDowngradeModalOpen(false)}
+        onConfirm={handleConfirm}
+        title={`Downgrade ${clusterName} to ${catalogVersion}?`}
+        description={`This is a downgrade from ${deployedVersion}. Helm values may not be backward-compatible.`}
+        confirmText="Confirm Downgrade"
+        typeToConfirm="DOWNGRADE"
+        destructive
+        loading={state === 'loading'}
+      />
+
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Link
@@ -918,12 +991,18 @@ function PerClusterUpgradeRow({
             {clusterName}
           </Link>
           <span className="font-mono text-sm text-[#1a4a6a]">{deployedVersion}</span>
+          {isDowngradingCluster && isDrifted && (
+            <span className="flex items-center gap-0.5 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+              <AlertTriangle className="h-3 w-3" />
+              Downgrade
+            </span>
+          )}
         </div>
         {isDrifted ? (
           state === 'done' ? (
             <div className="flex items-center gap-1.5 text-xs text-green-600 dark:text-green-400">
               <CheckCircle className="h-3.5 w-3.5" />
-              Upgrade initiated
+              {isDowngradingCluster ? 'Downgrade' : 'Upgrade'} initiated
               {prUrl && (
                 <a
                   href={prUrl}
@@ -939,16 +1018,22 @@ function PerClusterUpgradeRow({
           ) : state === 'loading' ? (
             <span className="flex items-center gap-1.5 text-xs text-[#2a5a7a]">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              Upgrading...
+              {isDowngradingCluster ? 'Downgrading...' : 'Upgrading...'}
             </span>
           ) : (
             <RoleGuard adminOnly>
               <button
                 type="button"
-                onClick={() => setState('confirm')}
+                onClick={() => {
+                  if (isDowngradingCluster) {
+                    setDowngradeModalOpen(true)
+                  } else {
+                    setState('confirm')
+                  }
+                }}
                 className="rounded-lg bg-[#0a2a4a] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#14466e]"
               >
-                Upgrade to {catalogVersion}
+                {isDowngradingCluster ? 'Downgrade' : 'Upgrade'} to {catalogVersion}
               </button>
             </RoleGuard>
           )
@@ -956,7 +1041,7 @@ function PerClusterUpgradeRow({
           <span className="text-xs text-green-600">✓ Current</span>
         )}
       </div>
-      {state === 'confirm' && (
+      {state === 'confirm' && !isDowngradingCluster && (
         <div className="mt-2 flex items-center gap-2 rounded-md bg-amber-50 px-3 py-1.5 dark:bg-amber-950/40">
           <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-500" />
           <span className="text-xs text-amber-800 dark:text-amber-300">
@@ -1518,6 +1603,60 @@ export function AddonDetail() {
         <div ref={contentPanelRef} className="flex-1 space-y-6">
           {activeSection === 'overview' && (
             <>
+              {/* Addon info card */}
+              <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 dark:ring-gray-700 dark:bg-gray-800">
+                <div className="grid gap-x-8 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">Version</p>
+                    <p className="mt-0.5 font-mono text-sm font-bold text-[#0a2a4a] dark:text-gray-100">{addon.version}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">Chart</p>
+                    <p className="mt-0.5 font-mono text-sm text-[#0a2a4a] dark:text-gray-100">{addon.chart}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">Namespace</p>
+                    <p className="mt-0.5 text-sm text-[#0a2a4a] dark:text-gray-100">{namespace}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">Sync Wave</p>
+                    <p className="mt-0.5 font-mono text-sm text-[#0a2a4a] dark:text-gray-100">{addon.syncWave ?? 0}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">Self-Heal</p>
+                    <p className={`mt-0.5 text-sm font-medium ${addon.selfHeal !== false ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400'}`}>
+                      {addon.selfHeal !== false ? 'Enabled' : 'Disabled'}
+                    </p>
+                  </div>
+                  {addon.repo_url && (
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">Helm Repository</p>
+                      <a
+                        href={addon.repo_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-0.5 inline-flex items-center gap-1 text-sm text-[#0a6aaa] hover:underline dark:text-[#6aade0]"
+                      >
+                        {addon.repo_url.length > 40 ? addon.repo_url.slice(0, 40) + '…' : addon.repo_url}
+                        <ExternalLink className="h-3 w-3 shrink-0" />
+                      </a>
+                    </div>
+                  )}
+                </div>
+                {/* Links */}
+                <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-[#c0ddf0] pt-3 dark:border-gray-700">
+                  <a
+                    href={`https://artifacthub.io/packages/helm/${encodeURIComponent(addon.chart)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 rounded-md bg-[#e0f0ff] px-3 py-1 text-xs font-medium text-[#0a6aaa] hover:bg-[#d6eeff] dark:bg-gray-700 dark:text-[#6aade0] dark:hover:bg-gray-600"
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                    ArtifactHub
+                  </a>
+                </div>
+              </div>
+
               {/* Summary stat cards */}
               <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
                 <StatCard
@@ -2094,6 +2233,7 @@ export function AddonDetail() {
                   <InlineUpgradeResults
                     addonName={addon.addon_name}
                     targetVersion={inlineAnalysisVersion}
+                    currentVersion={addon.version}
                     result={inlineAnalysisResult}
                     analyzing={inlineAnalyzing}
                     analyzeError={inlineAnalyzeError}

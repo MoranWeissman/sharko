@@ -173,6 +173,12 @@ sharko/
       parser.go         Git repo config parser (addons-catalog, cluster-addons)
 
     advisories/         Chart security & release advisory data (ArtifactHub primary, release-notes fallback)
+    helm/               Helm chart fetching and diffing
+      fetcher.go        Downloads chart tarballs, extracts values.yaml and Chart.yaml. Release-note
+                        GitHub repo lookup now follows this precedence: (1) Chart.yaml `sources[]` —
+                        first GitHub URL wins; (2) Chart.yaml `home` — if it is a GitHub URL; (3)
+                        `guessGitHubRepo` heuristic. Results are cached per repoURL/chart/version.
+      diff.go           YAML diff logic for values.yaml comparison
 
     service/            Read-only service layer
       connection.go     Connection management
