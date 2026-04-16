@@ -42,6 +42,11 @@ func (p *AzureKeyVaultProvider) SearchSecrets(query string) ([]string, error) {
 	return nil, nil
 }
 
+// HealthCheck is not implemented — Azure provider is a stub.
+func (p *AzureKeyVaultProvider) HealthCheck(ctx context.Context) error {
+	return fmt.Errorf("Azure provider not implemented")
+}
+
 // GetSecretValue is not implemented.
 func (p *AzureKeyVaultProvider) GetSecretValue(ctx context.Context, path string) ([]byte, error) {
 	return nil, fmt.Errorf("Azure provider not implemented")

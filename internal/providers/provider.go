@@ -23,6 +23,10 @@ type ClusterCredentialsProvider interface {
 	// Used by the UI to suggest correct secret paths when GetCredentials fails.
 	// Implementations that don't support search should return (nil, nil).
 	SearchSecrets(query string) ([]string, error)
+	// HealthCheck performs a lightweight connectivity check — enough to confirm
+	// the provider credentials work, without enumerating all secrets.
+	// Returns nil on success, an error describing the failure otherwise.
+	HealthCheck(ctx context.Context) error
 }
 
 // Kubeconfig holds the raw kubeconfig YAML and extracted connection info.
