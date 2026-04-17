@@ -409,6 +409,26 @@ export const api = {
   clearMyGitHubToken: () => deleteJSON<{ status: string; has_github_token: boolean }>('/users/me/github-token'),
   testMyGitHubToken: () => postJSON<{ status: string; github_login: string }>('/users/me/github-token/test', {}),
 
+  // Values editor (v1.20)
+  getAddonValuesSchema: (addonName: string) =>
+    fetchJSON<import('./models').AddonValuesSchemaResponse>(
+      `/addons/${encodeURIComponent(addonName)}/values-schema`,
+    ),
+  setAddonValues: (addonName: string, valuesYAML: string) =>
+    putJSON<import('./models').ValuesEditResult>(
+      `/addons/${encodeURIComponent(addonName)}/values`,
+      { values: valuesYAML },
+    ),
+  getClusterAddonValues: (clusterName: string, addonName: string) =>
+    fetchJSON<import('./models').ClusterAddonValuesResponse>(
+      `/clusters/${encodeURIComponent(clusterName)}/addons/${encodeURIComponent(addonName)}/values`,
+    ),
+  setClusterAddonValues: (clusterName: string, addonName: string, valuesYAML: string) =>
+    putJSON<import('./models').ValuesEditResult>(
+      `/clusters/${encodeURIComponent(clusterName)}/addons/${encodeURIComponent(addonName)}/values`,
+      { values: valuesYAML },
+    ),
+
   // Agent Chat
   agentChat: (sessionId: string, message: string, pageContext?: string) => postJSON<{ session_id: string; response: string }>('/agent/chat', { session_id: sessionId, message, page_context: pageContext }),
   agentReset: (sessionId: string) => postJSON<{ status: string }>('/agent/reset', { session_id: sessionId }),

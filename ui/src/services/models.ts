@@ -394,6 +394,48 @@ export interface MeResponse {
   has_github_token: boolean
 }
 
+/**
+ * Response for GET /addons/{name}/values-schema.
+ * `schema` is the parsed values.schema.json object when present (best-effort);
+ * the editor falls back to plain YAML mode when it's null/undefined.
+ */
+export interface AddonValuesSchemaResponse {
+  addon_name: string
+  current_values: string
+  schema?: Record<string, unknown> | null
+}
+
+/** Response for GET /clusters/{cluster}/addons/{name}/values. */
+export interface ClusterAddonValuesResponse {
+  cluster_name: string
+  addon_name: string
+  current_overrides: string
+  schema?: Record<string, unknown> | null
+}
+
+/**
+ * Response for the two PUT endpoints (global values + per-cluster overrides).
+ * When `attribution_warning` is "no_per_user_pat", the UI should render the
+ * AttributionNudge banner — the action succeeded but used the service token.
+ */
+export interface ValuesEditResult {
+  // The orchestrator wraps results when there's an attribution warning, so the
+  // PR fields can either be top-level (no warning) or nested under `result`.
+  pr_url?: string
+  pr_id?: number
+  branch?: string
+  merged?: boolean
+  values_file?: string
+  attribution_warning?: 'no_per_user_pat'
+  result?: {
+    pr_url?: string
+    pr_id?: number
+    branch?: string
+    merged?: boolean
+    values_file?: string
+  }
+}
+
 export interface PermCheck {
   permission: string
   passed: boolean

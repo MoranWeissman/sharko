@@ -30,7 +30,8 @@ import {
   Star,
 } from 'lucide-react'
 import { api, removeAddon, upgradeAddon, configureAddon, getAddonPRs } from '@/services/api'
-import type { AddonCatalogItem, ConnectionsListResponse, UpgradeCheckResponse, UpgradeRecommendations, RecommendationCard, ValueDiffEntry, ConflictCheckEntry, TrackedPR } from '@/services/models'
+import type { AddonCatalogItem, ConnectionsListResponse, UpgradeCheckResponse, UpgradeRecommendations, RecommendationCard, ValueDiffEntry, ConflictCheckEntry, TrackedPR, AddonValuesSchemaResponse, MeResponse } from '@/services/models'
+import { ValuesEditor } from '@/components/ValuesEditor'
 import { MarkdownRenderer } from '@/components/MarkdownRenderer'
 import { StatCard } from '@/components/StatCard'
 import { StatusBadge } from '@/components/StatusBadge'
@@ -1090,6 +1091,14 @@ export function AddonDetail() {
   const [valuesYaml, setValuesYaml] = useState<string | null>(null)
   const [argocdBaseURL, setArgocdBaseURL] = useState<string>('')
 
+  // Values editor (v1.20) — schema + the user's per-user PAT signal for the
+  // proactive AttributionNudge. We fetch lazily when the user opens the tab.
+  const [valuesSchema, setValuesSchema] = useState<AddonValuesSchemaResponse | null>(null)
+  const [valuesSchemaLoading, setValuesSchemaLoading] = useState(false)
+  const [me, setMe] = useState<MeResponse | null>(null)
+  const [gitRepoBase, setGitRepoBase] = useState<string>('')
+  const [gitDefaultBranch, setGitDefaultBranch] = useState<string>('main')
+
   // Filter state
   const [search, setSearch] = useState('')
   const [envFilter, setEnvFilter] = useState('all')
@@ -1166,10 +1175,48 @@ export function AddonDetail() {
         if (active?.argocd_server_url) {
           setArgocdBaseURL(active.argocd_server_url.replace(/\/$/, ''))
         }
+        // Build the GitHub deep-link base for "Edit in GitHub". Only GitHub is
+        // supported for the deep link today — Azure DevOps URLs use a
+        // different layout and are skipped (the editor still works fine).
+        if (active?.git_provider === 'github' && active.git_repo_identifier) {
+          setGitRepoBase(`https://github.com/${active.git_repo_identifier}`)
+        }
+        if (active?.gitops?.base_branch) {
+          setGitDefaultBranch(active.gitops.base_branch)
+        }
       })
       .catch(() => {})
+
+    // Fetch /users/me once for the proactive attribution nudge in the editor.
+    api
+      .getMe()
+      .then(setMe)
+      .catch(() => setMe(null))
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [name])
+
+  // Lazy-load schema when the user clicks into the Values tab.
+  useEffect(() => {
+    if (!name) return
+    if (activeSection !== 'values') return
+    if (valuesSchema || valuesSchemaLoading) return
+    setValuesSchemaLoading(true)
+    api
+      .getAddonValuesSchema(name)
+      .then((res) => {
+        setValuesSchema(res)
+        // Sync the read-only viewer's copy too — saves a round trip.
+        if (typeof res.current_values === 'string') {
+          setValuesYaml(res.current_values)
+        }
+      })
+      .catch(() => {
+        // Schema fetch is best-effort; the editor falls back to whatever
+        // valuesYaml we already have.
+        setValuesSchema({ addon_name: name, current_values: valuesYaml ?? '', schema: null })
+      })
+      .finally(() => setValuesSchemaLoading(false))
+  }, [name, activeSection, valuesSchema, valuesSchemaLoading, valuesYaml])
 
   // Auto-refresh every 30s
   useEffect(() => {
@@ -1592,6 +1639,7 @@ export function AddonDetail() {
                 { key: 'overview', label: 'Overview', icon: LayoutGrid },
                 { key: 'clusters', label: 'Clusters', badge: enabledApps.length, icon: Server },
                 { key: 'upgrade', label: 'Upgrade', icon: ArrowUpCircle },
+                { key: 'values', label: 'Values', icon: Pencil },
                 { key: 'config', label: 'Config', icon: FileCode },
               ],
             },
@@ -1917,7 +1965,20 @@ export function AddonDetail() {
                       Extra Helm Values
                       <HelpText text="Additional Helm value overrides as key-value pairs" />
                     </p>
-                    <p className="text-xs text-[#3a6a8a] mb-2">Additional Helm parameters injected during rendering.</p>
+                    <p className="text-xs text-[#3a6a8a] mb-1">Additional Helm parameters injected during rendering.</p>
+                    {!isEditingConfig && (
+                      <p className="mb-2 text-[11px] italic text-[#3a6a8a] dark:text-gray-500">
+                        Tip: For richer YAML edits, use the{' '}
+                        <button
+                          type="button"
+                          onClick={() => setActiveSection('values')}
+                          className="font-medium text-teal-600 underline hover:no-underline dark:text-teal-400"
+                        >
+                          Values tab
+                        </button>
+                        .
+                      </p>
+                    )}
                     {isEditingConfig ? (
                       <div className="space-y-2">
                         {editHelmValues.map((row, idx) => (
@@ -2274,6 +2335,37 @@ export function AddonDetail() {
             </div>
           )}
 
+          {activeSection === 'values' && (
+            <>
+              {valuesSchemaLoading && !valuesSchema ? (
+                <LoadingState message="Loading values..." />
+              ) : (
+                <ValuesEditor
+                  title={`Global Values — ${addon.addon_name}`}
+                  subtitle="Submitting opens a PR against your GitOps repo. Once merged, ArgoCD reconciles the change to every cluster that has this addon enabled."
+                  initialYAML={valuesSchema?.current_values ?? valuesYaml ?? ''}
+                  schema={valuesSchema?.schema ?? null}
+                  hasPersonalToken={me?.has_github_token}
+                  githubFileURL={
+                    gitRepoBase
+                      ? `${gitRepoBase}/blob/${gitDefaultBranch}/configuration/addons-global-values/${addon.addon_name}.yaml`
+                      : undefined
+                  }
+                  onSubmit={async (newYAML) => {
+                    const result = await api.setAddonValues(addon.addon_name, newYAML)
+                    // Refresh the local copy so subsequent edits diff against
+                    // the latest content.
+                    setValuesSchema((prev) =>
+                      prev ? { ...prev, current_values: newYAML } : prev,
+                    )
+                    setValuesYaml(newYAML)
+                    return result
+                  }}
+                />
+              )}
+            </>
+          )}
+
           {activeSection === 'config' && (
             <>
               {valuesYaml ? (
@@ -2281,6 +2373,17 @@ export function AddonDetail() {
               ) : (
                 <p className="text-sm text-[#2a5a7a]">No default values template found for this addon.</p>
               )}
+              <p className="mt-3 text-xs italic text-[#3a6a8a] dark:text-gray-400">
+                Looking to change values? Open the{' '}
+                <button
+                  type="button"
+                  onClick={() => setActiveSection('values')}
+                  className="font-semibold text-teal-600 underline hover:no-underline dark:text-teal-400"
+                >
+                  Values tab
+                </button>{' '}
+                — it submits a PR with your edits.
+              </p>
             </>
           )}
         </div>

@@ -51,8 +51,9 @@ import { ConfirmationModal } from '@/components/ConfirmationModal';
 import { DetailNavPanel } from '@/components/DetailNavPanel';
 import { DiagnoseModal } from '@/components/DiagnoseModal';
 import { PendingPRsPanel } from '@/components/PendingPRsPanel';
+import { PerClusterAddonOverridesEditor } from '@/components/PerClusterAddonOverridesEditor';
 import { showToast } from '@/components/ToastNotification';
-import type { TrackedPR } from '@/services/models';
+import type { ConnectionsListResponse, TrackedPR } from '@/services/models';
 
 type StatusFilter =
   | 'all'
@@ -136,6 +137,10 @@ export function ClusterDetail() {
   const [configFetched, setConfigFetched] = useState(false);
   const [nodeInfo, setNodeInfo] = useState<{ total: number; ready: number; not_ready: number } | null>(null);
   const [argocdBaseURL, setArgocdBaseURL] = useState<string>('');
+  // Values editor (v1.20) — derive a GitHub deep-link from the active
+  // connection so users can pop into github.com to see the file in context.
+  const [gitRepoBase, setGitRepoBase] = useState<string>('');
+  const [gitDefaultBranch, setGitDefaultBranch] = useState<string>('main');
 
   // Remove cluster
   const [removeModalOpen, setRemoveModalOpen] = useState(false);
@@ -210,11 +215,17 @@ export function ClusterDetail() {
         setNodeInfo(nodes as { total: number; ready: number; not_ready: number });
       }
       if (connections) {
-        const active = connections.connections.find(
-          c => c.name === connections.active_connection || c.is_active
+        const active = (connections as ConnectionsListResponse).connections.find(
+          (c) => c.name === (connections as ConnectionsListResponse).active_connection || c.is_active
         );
         if (active?.argocd_server_url) {
           setArgocdBaseURL(active.argocd_server_url.replace(/\/$/, ''));
+        }
+        if (active?.git_provider === 'github' && active.git_repo_identifier) {
+          setGitRepoBase(`https://github.com/${active.git_repo_identifier}`);
+        }
+        if (active?.gitops?.base_branch) {
+          setGitDefaultBranch(active.gitops.base_branch);
         }
       }
     } catch (e: unknown) {
@@ -1117,6 +1128,20 @@ export function ClusterDetail() {
           {/* Config section */}
           {activeSection === 'config' && (
             <div className="space-y-6">
+              {/* v1.20 — per-cluster overrides editor (Tier 2) */}
+              <RoleGuard roles={['admin', 'operator']}>
+                <PerClusterAddonOverridesEditor
+                  clusterName={name!}
+                  addons={data.addon_comparisons}
+                  gitRepoBase={gitRepoBase}
+                  gitDefaultBranch={gitDefaultBranch}
+                  onSaved={() => {
+                    // Refresh the diff panel after a successful PR.
+                    setConfigFetched(false);
+                  }}
+                />
+              </RoleGuard>
+
               {configDiffLoading && <LoadingState message="Loading config..." />}
               {configDiffError && (
                 <ErrorState
