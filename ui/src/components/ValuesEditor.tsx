@@ -3,6 +3,7 @@ import * as yaml from 'yaml'
 import {
   AlertTriangle,
   CheckCircle2,
+  CloudDownload,
   ExternalLink,
   Eye,
   GitPullRequest,
@@ -59,6 +60,24 @@ export interface ValuesEditorProps {
    * Default: false.
    */
   allowEmpty?: boolean
+  /**
+   * Callback for "Pull upstream defaults". When provided, a secondary button
+   * renders next to Submit. Clicking opens a confirm modal and then calls the
+   * pull-upstream API. Omitting this hides the button — use on per-cluster
+   * editors where upstream defaults don't apply.
+   */
+  onPullUpstream?: () => Promise<ValuesEditResult & { chart?: string; chart_version?: string }>
+  /**
+   * Optional summary text ("cert-manager@v1.14.4") shown in the confirm
+   * modal body so the user knows what will be pulled.
+   */
+  pullUpstreamLabel?: string
+  /**
+   * Children rendered below the editor (before the Reset/Submit button row).
+   * Used by parents to slot in a "Recent changes" panel without requiring
+   * a ValuesEditorWrapper component.
+   */
+  belowEditor?: React.ReactNode
 }
 
 type Tab = 'yaml' | 'diff'
@@ -72,12 +91,17 @@ export function ValuesEditor({
   title,
   subtitle,
   allowEmpty = false,
+  onPullUpstream,
+  pullUpstreamLabel,
+  belowEditor,
 }: ValuesEditorProps) {
   const [draft, setDraft] = useState(initialYAML)
   const [activeTab, setActiveTab] = useState<Tab>('yaml')
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [lastResult, setLastResult] = useState<ValuesEditResult | null>(null)
+  const [pullConfirmOpen, setPullConfirmOpen] = useState(false)
+  const [pulling, setPulling] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // Reset when the underlying current values change (e.g. after a successful
@@ -159,7 +183,7 @@ export function ValuesEditor({
       </div>
 
       {/* Tabs */}
-      <div className="mb-3 flex gap-1 border-b border-[#c0ddf0] dark:border-gray-700">
+      <div className="mb-2 flex gap-1 border-b border-[#c0ddf0] dark:border-gray-700">
         <TabButton active={activeTab === 'yaml'} onClick={() => setActiveTab('yaml')}>
           YAML
         </TabButton>
@@ -167,6 +191,10 @@ export function ValuesEditor({
           Diff{isDirty && ' •'}
         </TabButton>
       </div>
+      <p className="mb-3 text-[11px] text-[#3a6a8a] dark:text-gray-500">
+        The PR will replace <span className="font-semibold">Currently in Git</span> with{' '}
+        <span className="font-semibold">Your changes</span>.
+      </p>
 
       {/* Schema hint */}
       {schemaTopLevelKeys && schemaTopLevelKeys.length > 0 && (
@@ -252,7 +280,21 @@ export function ValuesEditor({
         <p className="mt-3 text-sm text-red-600 dark:text-red-400">{submitError}</p>
       )}
 
+      {belowEditor && <div className="mt-4">{belowEditor}</div>}
+
       <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
+        {onPullUpstream && (
+          <button
+            type="button"
+            onClick={() => setPullConfirmOpen(true)}
+            disabled={submitting || pulling}
+            title="Replace the current values file with the chart's upstream defaults"
+            className="inline-flex items-center gap-1 rounded-md border border-[#c0ddf0] bg-white px-3 py-1.5 text-xs font-medium text-[#1a4a6a] hover:bg-[#e0f0ff] disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+          >
+            <CloudDownload className="h-3 w-3" />
+            Pull upstream defaults
+          </button>
+        )}
         <button
           type="button"
           onClick={() => setDraft(initialYAML)}
@@ -281,6 +323,77 @@ export function ValuesEditor({
           )}
         </button>
       </div>
+
+      {/* Pull-upstream confirm modal */}
+      {pullConfirmOpen && onPullUpstream && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+        >
+          <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl dark:bg-gray-800">
+            <h4 className="flex items-center gap-2 text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
+              <CloudDownload className="h-4 w-4 text-teal-600 dark:text-teal-400" />
+              Pull upstream defaults
+            </h4>
+            <p className="mt-2 text-sm text-[#1a4a6a] dark:text-gray-300">
+              This will replace the current <span className="font-mono">values.yaml</span>{' '}
+              {pullUpstreamLabel && (
+                <>
+                  with upstream defaults from <span className="font-mono">{pullUpstreamLabel}</span>{' '}
+                </>
+              )}
+              and open a PR. <span className="font-semibold">Your current edits will be lost.</span>{' '}
+              Continue?
+            </p>
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setPullConfirmOpen(false)}
+                disabled={pulling}
+                className="rounded-md border border-[#c0ddf0] bg-white px-3 py-1.5 text-xs font-medium text-[#1a4a6a] hover:bg-[#e0f0ff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={pulling}
+                onClick={async () => {
+                  setPulling(true)
+                  try {
+                    const res = await onPullUpstream()
+                    setLastResult(res)
+                    const prURL = res.pr_url || res.result?.pr_url
+                    if (prURL) {
+                      showToast(`Upstream pulled — ${prURL.split('/').slice(-2).join('/')}`, 'success')
+                    } else {
+                      showToast('Upstream values applied (auto-merge)', 'success')
+                    }
+                    setPullConfirmOpen(false)
+                  } catch (e) {
+                    setSubmitError(e instanceof Error ? e.message : 'Failed to pull upstream values')
+                  } finally {
+                    setPulling(false)
+                  }
+                }}
+                className="inline-flex items-center gap-1 rounded-md bg-teal-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-700 disabled:opacity-50 dark:bg-teal-500 dark:hover:bg-teal-400"
+              >
+                {pulling ? (
+                  <>
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Pulling…
+                  </>
+                ) : (
+                  <>
+                    <CloudDownload className="h-3 w-3" />
+                    Pull and open PR
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -329,49 +442,60 @@ function DiffPanel({ oldYAML, newYAML }: { oldYAML: string; newYAML: string }) {
 
   if (oldYAML === newYAML) {
     return (
-      <div className="flex h-32 items-center justify-center rounded-md border border-dashed border-[#c0ddf0] text-sm text-[#3a6a8a] dark:border-gray-700 dark:text-gray-500">
-        No changes to show.
+      <div className="space-y-2">
+        <p className="text-xs italic text-[#3a6a8a] dark:text-gray-400">
+          The pull request will replace <span className="font-semibold not-italic">Currently in Git</span> with <span className="font-semibold not-italic">Your changes</span>.
+        </p>
+        <div className="flex h-32 flex-col items-center justify-center rounded-md border border-dashed border-[#c0ddf0] text-sm text-[#3a6a8a] dark:border-gray-700 dark:text-gray-500">
+          <p className="font-medium">No changes yet</p>
+          <p className="mt-1 text-xs">Edit the YAML in the <span className="font-mono">YAML</span> tab — diffs appear here.</p>
+        </div>
       </div>
     )
   }
 
   return (
-    <div className="overflow-auto rounded-md border border-[#c0ddf0] dark:border-gray-700">
-      <table className="w-full font-mono text-[11px] leading-5">
-        <thead className="bg-[#e0f0ff] text-left text-[10px] uppercase tracking-wide text-[#3a6a8a] dark:bg-gray-700 dark:text-gray-400">
-          <tr>
-            <th className="w-10 px-2 py-1 text-right">Line</th>
-            <th className="px-2 py-1">Current</th>
-            <th className="w-10 px-2 py-1 text-right">Line</th>
-            <th className="px-2 py-1">Edited</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, i) => (
-            <tr
-              key={i}
-              className={
-                row.same
-                  ? ''
-                  : 'bg-amber-50 dark:bg-amber-950/30'
-              }
-            >
-              <td className="border-r border-[#e0f0ff] px-2 py-0.5 text-right text-[#3a6a8a] dark:border-gray-700 dark:text-gray-500">
-                {i < oldLines.length ? i + 1 : ''}
-              </td>
-              <td className="whitespace-pre border-r border-[#e0f0ff] px-2 py-0.5 text-[#0a2a4a] dark:border-gray-700 dark:text-gray-100">
-                {row.left || '\u00a0'}
-              </td>
-              <td className="border-r border-[#e0f0ff] px-2 py-0.5 text-right text-[#3a6a8a] dark:border-gray-700 dark:text-gray-500">
-                {i < newLines.length ? i + 1 : ''}
-              </td>
-              <td className="whitespace-pre px-2 py-0.5 text-[#0a2a4a] dark:text-gray-100">
-                {row.right || '\u00a0'}
-              </td>
+    <div className="space-y-2">
+      <p className="text-xs italic text-[#3a6a8a] dark:text-gray-400">
+        The pull request will replace <span className="font-semibold not-italic">Currently in Git</span> with <span className="font-semibold not-italic">Your changes</span>.
+      </p>
+      <div className="overflow-auto rounded-md border border-[#c0ddf0] dark:border-gray-700">
+        <table className="w-full font-mono text-[11px] leading-5">
+          <thead className="bg-[#e0f0ff] text-left text-[10px] uppercase tracking-wide text-[#3a6a8a] dark:bg-gray-700 dark:text-gray-400">
+            <tr>
+              <th className="w-10 px-2 py-1 text-right">Line</th>
+              <th className="px-2 py-1">Currently in Git</th>
+              <th className="w-10 px-2 py-1 text-right">Line</th>
+              <th className="px-2 py-1">Your changes</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {rows.map((row, i) => (
+              <tr
+                key={i}
+                className={
+                  row.same
+                    ? ''
+                    : 'bg-amber-50 dark:bg-amber-950/30'
+                }
+              >
+                <td className="border-r border-[#e0f0ff] px-2 py-0.5 text-right text-[#3a6a8a] dark:border-gray-700 dark:text-gray-500">
+                  {i < oldLines.length ? i + 1 : ''}
+                </td>
+                <td className="whitespace-pre border-r border-[#e0f0ff] px-2 py-0.5 text-[#0a2a4a] dark:border-gray-700 dark:text-gray-100">
+                  {row.left || '\u00a0'}
+                </td>
+                <td className="border-r border-[#e0f0ff] px-2 py-0.5 text-right text-[#3a6a8a] dark:border-gray-700 dark:text-gray-500">
+                  {i < newLines.length ? i + 1 : ''}
+                </td>
+                <td className="whitespace-pre px-2 py-0.5 text-[#0a2a4a] dark:text-gray-100">
+                  {row.right || '\u00a0'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }

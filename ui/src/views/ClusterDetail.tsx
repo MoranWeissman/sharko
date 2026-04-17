@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -129,7 +129,41 @@ export function ClusterDetail() {
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [searchParams, setSearchParams] = useSearchParams();
   const activeSection = searchParams.get('section') || 'overview';
-  const setActiveSection = (s: string) => setSearchParams({ section: s }, { replace: true });
+  // When switching section, preserve other query params (notably ?addon=…
+  // which drives the deep-link scroll + highlight for the addons section).
+  const setActiveSection = (s: string) => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.set('section', s);
+        return next;
+      },
+      { replace: true },
+    );
+  };
+  // Deep-link: /clusters/X?section=addons&addon=Y → scroll to + briefly ring
+  // the addon row. Read once; the useEffect below consumes it.
+  const highlightAddon = searchParams.get('addon') || '';
+  const [highlightedAddon, setHighlightedAddon] = useState<string>('');
+
+  // When the page loads (or the addon query param changes) on the addons
+  // section, turn the highlight on. Fade it out after 2s by clearing the
+  // state — ComparisonRow removes its ring class. We intentionally DON'T
+  // strip the ?addon= from the URL so the browser back-button returns to
+  // the addon-page cleanly.
+  useEffect(() => {
+    if (!highlightAddon) return;
+    if (activeSection !== 'addons') {
+      // Moran landed here with ?addon=X but on a different section; switch
+      // into addons so the highlight can actually run.
+      setActiveSection('addons');
+      return;
+    }
+    setHighlightedAddon(highlightAddon);
+    const t = setTimeout(() => setHighlightedAddon(''), 2000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [highlightAddon, activeSection]);
   const [configDiff, setConfigDiff] = useState<ConfigDiffResponse | null>(null);
   const [configDiffLoading, setConfigDiffLoading] = useState(false);
   const [configDiffError, setConfigDiffError] = useState<string | null>(null);
@@ -1107,6 +1141,7 @@ export function ClusterDetail() {
                         isExpanded={expandedRows.has(addon.addon_name)}
                         onToggleExpand={() => toggleExpanded(addon.addon_name)}
                         argocdBaseURL={argocdBaseURL}
+                        highlighted={highlightedAddon === addon.addon_name}
                       />
                     ))}
                     {filteredAddons.length === 0 && (
@@ -1197,12 +1232,21 @@ interface ComparisonRowProps {
   isExpanded: boolean;
   onToggleExpand: () => void;
   argocdBaseURL: string;
+  highlighted?: boolean;
 }
 
-function ComparisonRow({ addon, isExpanded, onToggleExpand, argocdBaseURL }: ComparisonRowProps) {
+function ComparisonRow({ addon, isExpanded, onToggleExpand, argocdBaseURL, highlighted }: ComparisonRowProps) {
   const allIssues = addon.issues;
   const isTruncated = shouldTruncateIssues(allIssues);
   const displayedIssues = isExpanded ? allIssues : allIssues.slice(0, 2);
+  const rowRef = useRef<HTMLTableRowElement>(null);
+
+  // Deep-link effect: when highlighted flips true, scroll into view and
+  // briefly pulse the row. Runs once per highlight flip.
+  useEffect(() => {
+    if (!highlighted) return;
+    rowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [highlighted]);
 
   // An app is NOT OK if health is non-healthy OR there are issues
   const hasProblems = allIssues.length > 0
@@ -1213,7 +1257,12 @@ function ComparisonRow({ addon, isExpanded, onToggleExpand, argocdBaseURL }: Com
     || addon.status === 'unknown_state';
 
   return (
-    <tr className="hover:bg-[#d6eeff] dark:hover:bg-gray-700">
+    <tr
+      ref={rowRef}
+      className={`hover:bg-[#d6eeff] dark:hover:bg-gray-700 ${
+        highlighted ? 'ring-2 ring-inset ring-blue-500 bg-blue-50/60 dark:bg-blue-950/30 transition-colors duration-500' : ''
+      }`}
+    >
       <td className="px-4 py-3">
         {addon.status ? (
           <StatusBadge status={addon.status} />

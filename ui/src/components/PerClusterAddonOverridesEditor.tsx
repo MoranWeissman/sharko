@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Loader2 } from 'lucide-react'
+import { Info, Loader2 } from 'lucide-react'
 import { ValuesEditor } from '@/components/ValuesEditor'
+import { RecentPRsPanel } from '@/components/RecentPRsPanel'
 import { api } from '@/services/api'
 import type {
   AddonComparisonStatus,
@@ -107,9 +108,13 @@ export function PerClusterAddonOverridesEditor({
             </option>
           ))}
         </select>
-        <p className="mt-2 text-xs text-[#3a6a8a] dark:text-gray-500">
-          Editing overrides for <span className="font-mono">{clusterName}</span>. Save submits a
-          PR; an empty submission clears the override and falls back to the global default.
+        <p className="mt-2 flex items-start gap-1.5 text-xs text-[#3a6a8a] dark:text-gray-500">
+          <Info className="mt-0.5 h-3 w-3 shrink-0" />
+          <span>
+            Anything here overrides global values for{' '}
+            <span className="font-mono">{clusterName}</span>. Leave empty to use the global
+            defaults. Save opens a PR — on merge, ArgoCD reconciles only this cluster.
+          </span>
         </p>
       </div>
 
@@ -142,6 +147,12 @@ export function PerClusterAddonOverridesEditor({
             onSaved?.()
             return result
           }}
+          belowEditor={
+            <RecentPRsPanel
+              title="Recent changes (last 5)"
+              load={() => api.getClusterAddonValuesRecentPRs(clusterName, selected, 5)}
+            />
+          }
         />
       )}
     </div>

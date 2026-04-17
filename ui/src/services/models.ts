@@ -436,6 +436,24 @@ export interface ValuesEditResult {
   }
 }
 
+/**
+ * Response for GET /addons/{name}/values/recent-prs and the per-cluster
+ * variant. Fed into the "Recent changes" panel beneath the values editor.
+ */
+export interface RecentPRsResponse {
+  entries: RecentPRsEntry[]
+  view_all_url?: string
+  values_file: string
+}
+
+export interface RecentPRsEntry {
+  pr_id: number
+  title: string
+  url: string
+  author: string
+  merged_at: string
+}
+
 export interface PermCheck {
   permission: string
   passed: boolean
