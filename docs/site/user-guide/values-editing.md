@@ -30,12 +30,43 @@ If you'd rather use GitHub's web editor, click **Edit in GitHub** in the editor 
 
 1. Open the cluster detail page (Clusters → click any cluster).
 2. Click the **Config** tab in the left rail.
-3. At the top of the Config panel you'll find an **Addon picker**. Select the addon you want to override.
+3. At the top of the Config panel you'll find an **Addon picker**. Select the addon you want to override. A banner above the editor explains: *"Anything here overrides global values. Leave empty to use the global defaults."*
 4. The editor loads the addon's current overrides section (or stays empty if no overrides exist yet). The editor and submit flow are identical to the global editor — same YAML/Diff tabs, same diff preview, same nudge logic.
 5. Submit your changes — Sharko opens a PR titled `update <addon> overrides on cluster <cluster>` that touches only the section for this addon in that cluster's overrides file. Other addons and the cluster's `clusterGlobalValues:` block are preserved.
 6. To **clear** an override (return to the global default for this cluster), submit an empty editor. Sharko removes the addon's section from the cluster file in the same PR-based flow.
 
 Below the editor you'll find the existing **Cluster Override** diff panel — once your PR merges, refresh the page and the diff updates to show the new overrides applied.
+
+## Pull upstream defaults
+
+Next to **Submit changes** in the global-values editor you'll find a **Pull upstream defaults** button. Clicking it opens a confirmation modal:
+
+> This will replace the current `values.yaml` with upstream defaults from `<chart>@<version>`. Your edits will be lost. Continue?
+
+On confirm, Sharko:
+
+1. Downloads the chart tarball from the configured Helm repo.
+2. Extracts the chart's `values.yaml` (comments and formatting preserved).
+3. Wraps it under the `<addonName>:` key that Sharko's global-values convention uses.
+4. Opens a PR titled `pull upstream defaults for <addon>` with the resulting file.
+
+This is the fastest way to refresh your global values when the chart version moves and exposes new keys you want to override. Only the `replace` merge strategy is implemented in v1.20.1 — a `merge_keep_overrides` strategy that preserves your edits and only adds new upstream keys is on the v1.21 roadmap.
+
+**Per-cluster overrides** don't offer this button — overrides should stay deltas-only. Edit the global values and let ArgoCD reconcile.
+
+## Recent changes panel
+
+Beneath each editor, the **Recent changes (last 5)** panel lists recently-merged pull requests that touched that values file (or the cluster overrides file, for per-cluster editors). Each row links straight to the GitHub PR; a **View all on GitHub** link at the top right opens GitHub's PR search filtered by the file path.
+
+The list is backed by a 5-minute in-memory cache on the server — if you just merged a PR and don't see it yet, wait a few minutes or refresh the page.
+
+## Diff labels
+
+When you flip to the **Diff** tab the two columns are labelled **Currently in Git** (the file as it exists on the default branch) and **Your changes** (your pending edits). A small caption above the diff reminds you:
+
+> The PR will replace `Currently in Git` with `Your changes`.
+
+If you haven't edited anything yet, the Diff tab shows a friendly "No changes yet" placeholder instead of an empty diff.
 
 ## Schema-aware editing (when available)
 
