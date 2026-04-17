@@ -147,12 +147,13 @@ export function PerClusterAddonOverridesEditor({
             onSaved?.()
             return result
           }}
-          belowEditor={
+          belowEditor={({ refreshKey }) => (
             <RecentPRsPanel
               title="Recent changes (last 5)"
+              refreshKey={refreshKey}
               load={() => api.getClusterAddonValuesRecentPRs(clusterName, selected, 5)}
             />
-          }
+          )}
         />
       )}
     </div>

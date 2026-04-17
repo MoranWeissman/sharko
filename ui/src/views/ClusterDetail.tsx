@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
   List,
@@ -1242,7 +1242,10 @@ function ComparisonRow({ addon, isExpanded, onToggleExpand, argocdBaseURL, highl
   const rowRef = useRef<HTMLTableRowElement>(null);
 
   // Deep-link effect: when highlighted flips true, scroll into view and
-  // briefly pulse the row. Runs once per highlight flip.
+  // briefly pulse the row. Runs once per highlight flip. The `highlighted`
+  // flag fades to false after 2s in the parent — we deliberately do NOT
+  // apply pointer-events-intercepting styles here so the addon link +
+  // ArgoCD icon stay clickable during and after the highlight window.
   useEffect(() => {
     if (!highlighted) return;
     rowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1272,7 +1275,13 @@ function ComparisonRow({ addon, isExpanded, onToggleExpand, argocdBaseURL, highl
       </td>
       <td className="px-4 py-3 font-medium text-[#0a2a4a] dark:text-gray-100">
         <div className="flex items-center gap-2">
-          {capitalizeAddonName(addon.addon_name)}
+          <Link
+            to={`/addons/${encodeURIComponent(addon.addon_name)}`}
+            className="hover:text-teal-600 hover:underline dark:hover:text-teal-400"
+            title={`Open ${addon.addon_name} details`}
+          >
+            {capitalizeAddonName(addon.addon_name)}
+          </Link>
           {addon.argocd_application_name && argocdBaseURL && (
             <a
               href={`${argocdBaseURL}/applications/${addon.argocd_application_name}`}

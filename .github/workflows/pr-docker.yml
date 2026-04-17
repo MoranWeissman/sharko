@@ -87,26 +87,38 @@ jobs:
           $MARKER
           ### PR image built
 
-          Image: \`${IMAGE}:${PR_TAG}\` (also tagged \`${SHA_TAG}\` for traceability)
+          **Recommended — use the immutable SHA tag** so Kubernetes actually pulls the new image:
 
-          Test on a cluster:
-          \`\`\`bash
-          helm upgrade sharko oci://ghcr.io/moranweissman/sharko \\
-            -n sharko \\
-            --set image.repository=${IMAGE} \\
-            --set image.tag=${PR_TAG} \\
-            --set serviceAccount.annotations."eks\\.amazonaws\\.com/role-arn"=arn:aws:iam::627176949220:role/Sharko
-          \`\`\`
-
-          Or against a local checkout of the chart:
           \`\`\`bash
           helm upgrade sharko charts/sharko -n sharko \\
             --set image.repository=${IMAGE} \\
-            --set image.tag=${PR_TAG} \\
-            --set serviceAccount.annotations."eks\\.amazonaws\\.com/role-arn"=arn:aws:iam::627176949220:role/Sharko
+            --set image.tag=${SHA_TAG}
           \`\`\`
 
-          The \`${PR_TAG}\` tag is overwritten on every push to this PR.
+          Or against the published OCI chart:
+          \`\`\`bash
+          helm upgrade sharko oci://ghcr.io/moranweissman/sharko -n sharko \\
+            --set image.repository=${IMAGE} \\
+            --set image.tag=${SHA_TAG}
+          \`\`\`
+
+          ---
+
+          <details>
+          <summary>Alternative: mutable <code>${PR_TAG}</code> tag (force a rollout after each push)</summary>
+
+          The \`${PR_TAG}\` tag is overwritten on every push to this PR. With the default \`imagePullPolicy: IfNotPresent\` the pod will keep the old image on a re-push — you must force a rollout:
+
+          \`\`\`bash
+          helm upgrade sharko charts/sharko -n sharko \\
+            --set image.repository=${IMAGE} \\
+            --set image.tag=${PR_TAG}
+          kubectl rollout restart deployment/sharko -n sharko
+          \`\`\`
+
+          </details>
+
+          Both tags point at the same image right now (\`${SHA_TAG}\` is a permanent alias).
           EOF
           )
 

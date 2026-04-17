@@ -5,9 +5,9 @@ import {
   CheckCircle2,
   CloudDownload,
   ExternalLink,
-  Eye,
   GitPullRequest,
   Loader2,
+  MoreHorizontal,
   RotateCcw,
   Save,
 } from 'lucide-react'
@@ -18,26 +18,23 @@ import type { ValuesEditResult } from '@/services/models'
 /**
  * ValuesEditor — the v1.20 in-app YAML editor for addon values.
  *
- * Two views via a tab toggle:
- *  - YAML: a monospace textarea editor with live YAML validation feedback.
- *  - Diff: side-by-side current vs. edited, line-numbered.
+ * Single textarea preloaded with the Git content. Edit. Submit. The PR-diff
+ * lives on GitHub; we don't replicate it here (v1.20.2 — diff pane removed
+ * after maintainer feedback: "values is values, Helm takes it as-is").
  *
- * Schema-driven autocomplete is intentionally NOT bundled here — Monaco was
- * not on the dependency list and pulling it in would add ~5MB to the bundle
- * for an MVP feature. When `schema` is supplied we surface a small "Schema
- * available — top-level keys" hint above the editor so the user knows what's
- * legal. Full schema-driven autocomplete is a v1.21+ enhancement.
+ * Schema-driven autocomplete intentionally not bundled — Monaco would add
+ * ~5MB to the build. When `schema` is supplied we surface a top-level-keys
+ * hint as a breadcrumb so editors know what's legal.
  *
  * Submission calls `onSubmit` (an api wrapper closure provided by the parent
- * so the same component handles both global and per-cluster endpoints).
- * On a no-PAT response we render <AttributionNudge> inline near the Submit
- * button. Once the PR is created we surface a toast with the link AND a
- * persistent banner pointing at the PR.
+ * so the same component handles both global and per-cluster endpoints). On
+ * success: toast + PR-link banner + buffer reset + parent-triggered refresh.
+ * On a no-PAT response, renders <AttributionNudge> inline.
  */
 export interface ValuesEditorProps {
   /**
-   * Current YAML on disk. Used as the diff baseline AND as the initial
-   * editor content. Pass an empty string for "no values configured yet".
+   * Current YAML on disk. Used as the baseline AND the initial editor
+   * content. Pass an empty string for "no values configured yet".
    */
   initialYAML: string
   /** Optional JSON Schema; if missing, the schema-hint section is hidden. */
@@ -61,10 +58,11 @@ export interface ValuesEditorProps {
    */
   allowEmpty?: boolean
   /**
-   * Callback for "Pull upstream defaults". When provided, a secondary button
-   * renders next to Submit. Clicking opens a confirm modal and then calls the
-   * pull-upstream API. Omitting this hides the button — use on per-cluster
-   * editors where upstream defaults don't apply.
+   * Callback for "Pull upstream defaults". When provided, the action renders
+   * in an "Actions" menu (demoted from a top-level button in v1.20.2). Clicking
+   * opens a confirm modal and then calls the pull-upstream API. Omitting this
+   * hides the action — used on per-cluster editors where upstream defaults
+   * don't apply.
    */
   onPullUpstream?: () => Promise<ValuesEditResult & { chart?: string; chart_version?: string }>
   /**
@@ -76,11 +74,12 @@ export interface ValuesEditorProps {
    * Children rendered below the editor (before the Reset/Submit button row).
    * Used by parents to slot in a "Recent changes" panel without requiring
    * a ValuesEditorWrapper component.
+   *
+   * The render-prop form receives a `refreshKey` that changes after every
+   * successful submit — pass it through to children so they re-fetch.
    */
-  belowEditor?: React.ReactNode
+  belowEditor?: React.ReactNode | ((ctx: { refreshKey: number }) => React.ReactNode)
 }
-
-type Tab = 'yaml' | 'diff'
 
 export function ValuesEditor({
   initialYAML,
@@ -96,21 +95,34 @@ export function ValuesEditor({
   belowEditor,
 }: ValuesEditorProps) {
   const [draft, setDraft] = useState(initialYAML)
-  const [activeTab, setActiveTab] = useState<Tab>('yaml')
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [lastResult, setLastResult] = useState<ValuesEditResult | null>(null)
   const [pullConfirmOpen, setPullConfirmOpen] = useState(false)
   const [pulling, setPulling] = useState(false)
+  const [actionsMenuOpen, setActionsMenuOpen] = useState(false)
+  const [refreshKey, setRefreshKey] = useState(0)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const actionsMenuRef = useRef<HTMLDivElement>(null)
 
   // Reset when the underlying current values change (e.g. after a successful
   // submit + reload from the parent).
   useEffect(() => {
     setDraft(initialYAML)
-    setLastResult(null)
     setSubmitError(null)
   }, [initialYAML])
+
+  // Close the Actions menu on any outside click.
+  useEffect(() => {
+    if (!actionsMenuOpen) return
+    const onDocClick = (e: MouseEvent) => {
+      if (actionsMenuRef.current && !actionsMenuRef.current.contains(e.target as Node)) {
+        setActionsMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onDocClick)
+    return () => document.removeEventListener('mousedown', onDocClick)
+  }, [actionsMenuOpen])
 
   // Live YAML validation — non-blocking; we surface the parser error in a
   // small inline strip above the editor and disable the Submit button when
@@ -140,18 +152,22 @@ export function ValuesEditor({
     if (!canSubmit) return
     setSubmitting(true)
     setSubmitError(null)
-    setLastResult(null)
     try {
       const res = await onSubmit(draft)
       const prURL = res.pr_url || res.result?.pr_url
       setLastResult(res)
       if (prURL) {
-        showToast(`PR opened — ${prURL.split('/').slice(-2).join('/')}`, 'success')
+        const prSlug = prURL.split('/').slice(-2).join('/')
+        showToast(`PR opened — ${prSlug}`, 'success')
       } else {
         showToast('Values saved (auto-merge enabled)', 'success')
       }
+      // Bump refresh key so <RecentPRsPanel> re-fetches and the new PR shows up.
+      setRefreshKey((k) => k + 1)
     } catch (e) {
-      setSubmitError(e instanceof Error ? e.message : 'Failed to submit values')
+      const msg = e instanceof Error ? e.message : 'Failed to submit values'
+      setSubmitError(msg)
+      showToast(`Failed to submit values — ${msg}`, 'info')
     } finally {
       setSubmitting(false)
     }
@@ -159,6 +175,18 @@ export function ValuesEditor({
 
   const showProactiveNudge = hasPersonalToken === false
   const responsePR = lastResult?.pr_url || lastResult?.result?.pr_url
+
+  // Demotion rule (v1.20.2): show "Pull upstream defaults" as a prominent
+  // button ONLY when the values file is effectively empty (< 5 non-empty
+  // lines). Otherwise bury it in the Actions menu so it isn't the first
+  // thing a user reaches for on a populated file.
+  const emptyishValues = useMemo(() => {
+    if (!onPullUpstream) return false
+    return initialYAML.split('\n').filter((l) => l.trim() !== '').length < 5
+  }, [initialYAML, onPullUpstream])
+
+  const renderedBelow =
+    typeof belowEditor === 'function' ? belowEditor({ refreshKey }) : belowEditor
 
   return (
     <div className="rounded-xl ring-2 ring-[#6aade0] bg-white p-5 dark:ring-gray-700 dark:bg-gray-800">
@@ -169,32 +197,54 @@ export function ValuesEditor({
             <p className="mt-0.5 text-xs text-[#3a6a8a] dark:text-gray-400">{subtitle}</p>
           )}
         </div>
-        {githubFileURL && (
-          <a
-            href={githubFileURL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 rounded-md border border-[#6aade0] bg-[#e0f0ff] px-3 py-1 text-xs font-medium text-[#0a6aaa] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-700 dark:text-[#6aade0] dark:hover:bg-gray-600"
-          >
-            <ExternalLink className="h-3 w-3" />
-            Edit in GitHub
-          </a>
-        )}
+        <div className="flex items-center gap-2">
+          {githubFileURL && (
+            <a
+              href={githubFileURL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 rounded-md border border-[#6aade0] bg-[#e0f0ff] px-3 py-1 text-xs font-medium text-[#0a6aaa] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-700 dark:text-[#6aade0] dark:hover:bg-gray-600"
+            >
+              <ExternalLink className="h-3 w-3" />
+              Edit in GitHub
+            </a>
+          )}
+          {/* Actions menu — holds the demoted "Pull upstream defaults" */}
+          {onPullUpstream && !emptyishValues && (
+            <div className="relative" ref={actionsMenuRef}>
+              <button
+                type="button"
+                onClick={() => setActionsMenuOpen((v) => !v)}
+                aria-haspopup="menu"
+                aria-expanded={actionsMenuOpen}
+                title="More actions"
+                className="inline-flex items-center gap-1 rounded-md border border-[#c0ddf0] bg-white px-2 py-1 text-xs font-medium text-[#1a4a6a] hover:bg-[#e0f0ff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+              >
+                <MoreHorizontal className="h-3.5 w-3.5" />
+              </button>
+              {actionsMenuOpen && (
+                <div
+                  role="menu"
+                  className="absolute right-0 z-20 mt-1 min-w-[220px] rounded-md border border-[#c0ddf0] bg-white py-1 shadow-lg dark:border-gray-600 dark:bg-gray-800"
+                >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setActionsMenuOpen(false)
+                      setPullConfirmOpen(true)
+                    }}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-[#1a4a6a] hover:bg-[#e0f0ff] dark:text-gray-300 dark:hover:bg-gray-700"
+                  >
+                    <CloudDownload className="h-3.5 w-3.5" />
+                    Pull upstream defaults…
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
-
-      {/* Tabs */}
-      <div className="mb-2 flex gap-1 border-b border-[#c0ddf0] dark:border-gray-700">
-        <TabButton active={activeTab === 'yaml'} onClick={() => setActiveTab('yaml')}>
-          YAML
-        </TabButton>
-        <TabButton active={activeTab === 'diff'} onClick={() => setActiveTab('diff')}>
-          Diff{isDirty && ' •'}
-        </TabButton>
-      </div>
-      <p className="mb-3 text-[11px] text-[#3a6a8a] dark:text-gray-500">
-        The PR will replace <span className="font-semibold">Currently in Git</span> with{' '}
-        <span className="font-semibold">Your changes</span>.
-      </p>
 
       {/* Schema hint */}
       {schemaTopLevelKeys && schemaTopLevelKeys.length > 0 && (
@@ -207,40 +257,33 @@ export function ValuesEditor({
         </div>
       )}
 
-      {/* YAML view */}
-      {activeTab === 'yaml' && (
-        <div>
-          <textarea
-            ref={textareaRef}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            spellCheck={false}
-            className="block min-h-[320px] w-full resize-y rounded-md border border-[#c0ddf0] bg-[#f8fbff] p-3 font-mono text-xs leading-5 text-[#0a2a4a] focus:border-[#6aade0] focus:outline-none focus:ring-2 focus:ring-[#6aade0]/30 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
-            placeholder="# YAML values&#10;# e.g.&#10;# replicaCount: 2&#10;# resources:&#10;#   limits:&#10;#     memory: 256Mi"
-          />
-          <div className="mt-1 flex items-center justify-between text-xs text-[#3a6a8a] dark:text-gray-500">
-            <span>{draft.split('\n').length} lines · {draft.length} chars</span>
-            {yamlError ? (
-              <span className="flex items-center gap-1 text-amber-600 dark:text-amber-400">
-                <AlertTriangle className="h-3 w-3" />
-                <span className="truncate" title={yamlError}>
-                  YAML error: {yamlError.slice(0, 80)}
-                </span>
+      {/* YAML editor — single textarea, no diff pane. GitHub renders the
+          diff on the PR; duplicating it here was confusing. */}
+      <div>
+        <textarea
+          ref={textareaRef}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          spellCheck={false}
+          className="block min-h-[320px] w-full resize-y rounded-md border border-[#c0ddf0] bg-[#f8fbff] p-3 font-mono text-xs leading-5 text-[#0a2a4a] focus:border-[#6aade0] focus:outline-none focus:ring-2 focus:ring-[#6aade0]/30 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+          placeholder="# YAML values&#10;# e.g.&#10;# replicaCount: 2&#10;# resources:&#10;#   limits:&#10;#     memory: 256Mi"
+        />
+        <div className="mt-1 flex items-center justify-between text-xs text-[#3a6a8a] dark:text-gray-500">
+          <span>{draft.split('\n').length} lines · {draft.length} chars</span>
+          {yamlError ? (
+            <span className="flex items-center gap-1 text-amber-600 dark:text-amber-400">
+              <AlertTriangle className="h-3 w-3" />
+              <span className="truncate" title={yamlError}>
+                YAML error: {yamlError.slice(0, 80)}
               </span>
-            ) : isDirty ? (
-              <span className="flex items-center gap-1 text-teal-600 dark:text-teal-400">
-                <Eye className="h-3 w-3" />
-                Unsaved changes
-              </span>
-            ) : (
-              <span>No changes</span>
-            )}
-          </div>
+            </span>
+          ) : isDirty ? (
+            <span className="text-teal-600 dark:text-teal-400">Unsaved changes</span>
+          ) : (
+            <span>No changes</span>
+          )}
         </div>
-      )}
-
-      {/* Diff view */}
-      {activeTab === 'diff' && <DiffPanel oldYAML={initialYAML} newYAML={draft} />}
+      </div>
 
       {/* Proactive nudge — render when the user has no personal PAT yet. */}
       {showProactiveNudge && (
@@ -256,7 +299,7 @@ export function ValuesEditor({
         </div>
       )}
 
-      {/* Result + actions */}
+      {/* PR-opened banner */}
       {responsePR && (
         <div className="mt-4 flex items-start gap-2 rounded-md border border-green-300 bg-green-50 p-3 text-sm text-green-900 dark:border-green-700 dark:bg-green-950/40 dark:text-green-200">
           <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
@@ -280,10 +323,13 @@ export function ValuesEditor({
         <p className="mt-3 text-sm text-red-600 dark:text-red-400">{submitError}</p>
       )}
 
-      {belowEditor && <div className="mt-4">{belowEditor}</div>}
+      {renderedBelow && <div className="mt-4">{renderedBelow}</div>}
 
       <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
-        {onPullUpstream && (
+        {/* When the file is empty-ish, surface Pull upstream as a first-class
+            CTA (users have nothing to lose). Otherwise it lives in the
+            Actions menu above. */}
+        {onPullUpstream && emptyishValues && (
           <button
             type="button"
             onClick={() => setPullConfirmOpen(true)}
@@ -308,6 +354,13 @@ export function ValuesEditor({
           type="button"
           onClick={handleSubmit}
           disabled={!canSubmit}
+          title={
+            !isDirty
+              ? 'No changes to submit'
+              : yamlError
+                ? 'Fix YAML errors first'
+                : 'Open a PR with your changes'
+          }
           className="inline-flex items-center gap-1 rounded-md bg-teal-600 px-4 py-1.5 text-xs font-semibold text-white shadow hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-500 dark:hover:bg-teal-400"
         >
           {submitting ? (
@@ -369,9 +422,12 @@ export function ValuesEditor({
                     } else {
                       showToast('Upstream values applied (auto-merge)', 'success')
                     }
+                    setRefreshKey((k) => k + 1)
                     setPullConfirmOpen(false)
                   } catch (e) {
-                    setSubmitError(e instanceof Error ? e.message : 'Failed to pull upstream values')
+                    const msg = e instanceof Error ? e.message : 'Failed to pull upstream values'
+                    setSubmitError(msg)
+                    showToast(`Failed to pull upstream — ${msg}`, 'info')
                   } finally {
                     setPulling(false)
                   }
@@ -394,108 +450,6 @@ export function ValuesEditor({
           </div>
         </div>
       )}
-    </div>
-  )
-}
-
-function TabButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean
-  onClick: () => void
-  children: React.ReactNode
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`-mb-px border-b-2 px-3 py-1.5 text-xs font-medium transition ${
-        active
-          ? 'border-teal-500 text-teal-700 dark:text-teal-400'
-          : 'border-transparent text-[#3a6a8a] hover:text-[#0a2a4a] dark:text-gray-400 dark:hover:text-gray-200'
-      }`}
-    >
-      {children}
-    </button>
-  )
-}
-
-function DiffPanel({ oldYAML, newYAML }: { oldYAML: string; newYAML: string }) {
-  const oldLines = useMemo(() => oldYAML.split('\n'), [oldYAML])
-  const newLines = useMemo(() => newYAML.split('\n'), [newYAML])
-
-  // Quick line-by-line diff: same index = compare. Lines unique to one side
-  // are flagged. This is intentionally not LCS — for human review of values
-  // files, line-aligned diff matches the way users edit YAML (in place).
-  const rows = useMemo(() => {
-    const max = Math.max(oldLines.length, newLines.length)
-    const out: { left: string; right: string; same: boolean }[] = []
-    for (let i = 0; i < max; i++) {
-      const left = oldLines[i] ?? ''
-      const right = newLines[i] ?? ''
-      out.push({ left, right, same: left === right })
-    }
-    return out
-  }, [oldLines, newLines])
-
-  if (oldYAML === newYAML) {
-    return (
-      <div className="space-y-2">
-        <p className="text-xs italic text-[#3a6a8a] dark:text-gray-400">
-          The pull request will replace <span className="font-semibold not-italic">Currently in Git</span> with <span className="font-semibold not-italic">Your changes</span>.
-        </p>
-        <div className="flex h-32 flex-col items-center justify-center rounded-md border border-dashed border-[#c0ddf0] text-sm text-[#3a6a8a] dark:border-gray-700 dark:text-gray-500">
-          <p className="font-medium">No changes yet</p>
-          <p className="mt-1 text-xs">Edit the YAML in the <span className="font-mono">YAML</span> tab — diffs appear here.</p>
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="space-y-2">
-      <p className="text-xs italic text-[#3a6a8a] dark:text-gray-400">
-        The pull request will replace <span className="font-semibold not-italic">Currently in Git</span> with <span className="font-semibold not-italic">Your changes</span>.
-      </p>
-      <div className="overflow-auto rounded-md border border-[#c0ddf0] dark:border-gray-700">
-        <table className="w-full font-mono text-[11px] leading-5">
-          <thead className="bg-[#e0f0ff] text-left text-[10px] uppercase tracking-wide text-[#3a6a8a] dark:bg-gray-700 dark:text-gray-400">
-            <tr>
-              <th className="w-10 px-2 py-1 text-right">Line</th>
-              <th className="px-2 py-1">Currently in Git</th>
-              <th className="w-10 px-2 py-1 text-right">Line</th>
-              <th className="px-2 py-1">Your changes</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row, i) => (
-              <tr
-                key={i}
-                className={
-                  row.same
-                    ? ''
-                    : 'bg-amber-50 dark:bg-amber-950/30'
-                }
-              >
-                <td className="border-r border-[#e0f0ff] px-2 py-0.5 text-right text-[#3a6a8a] dark:border-gray-700 dark:text-gray-500">
-                  {i < oldLines.length ? i + 1 : ''}
-                </td>
-                <td className="whitespace-pre border-r border-[#e0f0ff] px-2 py-0.5 text-[#0a2a4a] dark:border-gray-700 dark:text-gray-100">
-                  {row.left || '\u00a0'}
-                </td>
-                <td className="border-r border-[#e0f0ff] px-2 py-0.5 text-right text-[#3a6a8a] dark:border-gray-700 dark:text-gray-500">
-                  {i < newLines.length ? i + 1 : ''}
-                </td>
-                <td className="whitespace-pre px-2 py-0.5 text-[#0a2a4a] dark:text-gray-100">
-                  {row.right || '\u00a0'}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
     </div>
   )
 }

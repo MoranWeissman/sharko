@@ -2390,12 +2390,13 @@ export function AddonDetail() {
                     return result
                   }}
                   pullUpstreamLabel={`${addon.chart}@${addon.version}`}
-                  belowEditor={
+                  belowEditor={({ refreshKey }) => (
                     <RecentPRsPanel
                       title="Recent changes (last 5)"
+                      refreshKey={refreshKey}
                       load={() => api.getAddonValuesRecentPRs(addon.addon_name, 5)}
                     />
-                  }
+                  )}
                 />
               )}
             </>
@@ -2461,19 +2462,20 @@ export function AddonDetail() {
                   {/* Sync Wave */}
                   <div className="flex items-center justify-between gap-4">
                     <div>
-                      <p className="flex items-center gap-1.5 text-sm font-medium text-[#0a2a4a] dark:text-gray-100">
+                      <p className="text-sm font-medium text-[#0a2a4a] dark:text-gray-100">
                         Sync Wave
-                        <HelpText text="Deploy order: negative values deploy first (e.g. -1 for CRDs), positive deploy last" />
                       </p>
-                      <p className="text-xs text-[#3a6a8a] dark:text-gray-400">Controls deployment ordering. Negative = earlier, positive = later.</p>
+                      <p className="text-xs text-[#3a6a8a] dark:text-gray-400">
+                        Deploy order — lower numbers first. Use <span className="font-mono text-[#1a4a6a] dark:text-gray-300">-1</span> for CRDs, <span className="font-mono text-[#1a4a6a] dark:text-gray-300">0</span> for the default wave.
+                      </p>
                     </div>
                     {isEditingConfig ? (
                       <input
                         type="number"
                         value={editSyncWave}
                         onChange={(e) => setEditSyncWave(Number(e.target.value))}
-                        placeholder="0"
-                        className="w-24 rounded-md border border-[#5a9dd0] bg-white px-3 py-1.5 text-right text-sm font-mono text-[#0a2a4a] focus:border-[#1a6aaa] focus:outline-none focus:ring-1 focus:ring-[#1a6aaa] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                        placeholder="e.g. 0 or -1"
+                        className="w-32 rounded-md border border-[#5a9dd0] bg-white px-3 py-1.5 text-right text-sm font-mono text-[#0a2a4a] focus:border-[#1a6aaa] focus:outline-none focus:ring-1 focus:ring-[#1a6aaa] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
                       />
                     ) : (
                       <span className="font-mono text-sm text-[#0a2a4a] dark:text-gray-100">{addon.syncWave ?? 0}</span>
@@ -2483,11 +2485,10 @@ export function AddonDetail() {
                   {/* Self-Heal */}
                   <div className="flex items-center justify-between gap-4">
                     <div>
-                      <p className="flex items-center gap-1.5 text-sm font-medium text-[#0a2a4a] dark:text-gray-100">
+                      <p className="text-sm font-medium text-[#0a2a4a] dark:text-gray-100">
                         Self-Heal
-                        <HelpText text="When enabled, ArgoCD auto-reverts manual changes to match the Git state" />
                       </p>
-                      <p className="text-xs text-[#3a6a8a] dark:text-gray-400">When enabled, ArgoCD reverts manual changes automatically.</p>
+                      <p className="text-xs text-[#3a6a8a] dark:text-gray-400">ArgoCD reverts manual drift back to the Git state when enabled.</p>
                     </div>
                     {isEditingConfig ? (
                       <label className="flex cursor-pointer items-center gap-2">
@@ -2521,16 +2522,18 @@ export function AddonDetail() {
 
                   {/* Sync Options */}
                   <div>
-                    <p className="flex items-center gap-1.5 text-sm font-medium text-[#0a2a4a] dark:text-gray-100">
+                    <p className="text-sm font-medium text-[#0a2a4a] dark:text-gray-100">
                       Sync Options
-                      <HelpText text="ArgoCD sync options, e.g. ServerSideApply=true, CreateNamespace=true, PruneLast=true" />
                     </p>
-                    <p className="mb-2 text-xs text-[#3a6a8a] dark:text-gray-400">ArgoCD sync options applied to this addon.</p>
+                    <p className="mb-2 text-xs text-[#3a6a8a] dark:text-gray-400">
+                      ArgoCD sync options, comma-separated. Example:{' '}
+                      <span className="font-mono text-[#1a4a6a] dark:text-gray-300">CreateNamespace=true, ServerSideApply=true, PruneLast=true</span>.
+                    </p>
                     {isEditingConfig ? (
                       <textarea
                         value={editSyncOptionsText}
                         onChange={(e) => setEditSyncOptionsText(e.target.value)}
-                        placeholder="CreateNamespace=true, ServerSideApply=true"
+                        placeholder="e.g. CreateNamespace=true, ServerSideApply=true"
                         rows={2}
                         className="w-full rounded-md border border-[#5a9dd0] bg-white px-3 py-2 text-sm font-mono text-[#0a2a4a] focus:border-[#1a6aaa] focus:outline-none focus:ring-1 focus:ring-[#1a6aaa] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
                       />
@@ -2547,11 +2550,12 @@ export function AddonDetail() {
 
                   {/* Ignore Differences */}
                   <div>
-                    <p className="flex items-center gap-1.5 text-sm font-medium text-[#0a2a4a] dark:text-gray-100">
+                    <p className="text-sm font-medium text-[#0a2a4a] dark:text-gray-100">
                       Ignore Differences
-                      <HelpText text="Fields ArgoCD should ignore during diff. Example: group: apps, kind: Deployment, jsonPointers: [/spec/replicas]" />
                     </p>
-                    <p className="mb-2 text-xs text-[#3a6a8a] dark:text-gray-400">Fields ignored during ArgoCD sync comparison.</p>
+                    <p className="mb-2 text-xs text-[#3a6a8a] dark:text-gray-400">
+                      Fields ArgoCD ignores during diff — typically Helm-injected fields like autoscaler-managed replicas.
+                    </p>
                     {isEditingConfig ? (
                       <textarea
                         value={editIgnoreDifferencesYaml}
@@ -2571,11 +2575,10 @@ export function AddonDetail() {
 
                   {/* Additional Sources */}
                   <div>
-                    <p className="flex items-center gap-1.5 text-sm font-medium text-[#0a2a4a] dark:text-gray-100">
+                    <p className="text-sm font-medium text-[#0a2a4a] dark:text-gray-100">
                       Additional Sources
-                      <HelpText text="Extra Helm chart sources for multi-source applications" />
                     </p>
-                    <p className="mb-2 text-xs text-[#3a6a8a] dark:text-gray-400">Extra chart or manifest sources deployed alongside the main addon.</p>
+                    <p className="mb-2 text-xs text-[#3a6a8a] dark:text-gray-400">Extra chart or manifest sources deployed alongside the main addon (ArgoCD multi-source).</p>
                     {isEditingConfig ? (
                       <textarea
                         value={editAdditionalSourcesYaml}
