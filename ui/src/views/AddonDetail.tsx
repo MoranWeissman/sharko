@@ -1642,7 +1642,7 @@ export function AddonDetail() {
                 { key: 'clusters', label: 'Clusters', badge: enabledApps.length, icon: Server },
                 { key: 'upgrade', label: 'Upgrade', icon: ArrowUpCircle },
                 { key: 'values', label: 'Values', icon: Pencil },
-                { key: 'catalog', label: 'Catalog', icon: FileCode },
+                { key: 'catalog', label: 'ArgoCD App Options', icon: FileCode },
               ],
             },
           ]}
@@ -2348,7 +2348,7 @@ export function AddonDetail() {
                   onClick={() => setActiveSection('catalog')}
                   className="font-semibold text-teal-600 underline hover:no-underline dark:text-teal-400"
                 >
-                  Catalog tab →
+                  ArgoCD App Options tab →
                 </button>
               </p>
               {valuesSchemaLoading && !valuesSchema ? (
@@ -2406,10 +2406,10 @@ export function AddonDetail() {
             <div className="space-y-4">
               <div className="rounded-lg bg-[#e0f0ff] p-3 text-xs text-[#0a3a5a] dark:bg-gray-700 dark:text-gray-300">
                 <p>
-                  Catalog-level metadata for <span className="font-mono">{addon.addon_name}</span> —
-                  sync wave, sync options, ignore differences, and additional sources. Editing
-                  these opens a PR against <span className="font-mono">addons-catalog.yaml</span>.
-                  Looking for Helm values?{' '}
+                  ArgoCD Application options for <span className="font-mono">{addon.addon_name}</span> —
+                  sync wave, sync options, ignore differences, and additional sources. These control how
+                  ArgoCD deploys the addon. Editing opens a PR against{' '}
+                  <span className="font-mono">addons-catalog.yaml</span>. Looking for Helm values?{' '}
                   <button
                     type="button"
                     onClick={() => setActiveSection('values')}
@@ -2423,7 +2423,7 @@ export function AddonDetail() {
               <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 dark:ring-gray-700 dark:bg-gray-800">
                 <div className="mb-4 flex items-center justify-between">
                   <h3 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
-                    Catalog Metadata
+                    ArgoCD Application Options
                   </h3>
                   {!isEditingConfig && (
                     <RoleGuard adminOnly>
