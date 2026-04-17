@@ -15,11 +15,14 @@
 // Implementation notes:
 //   - Upstream fetch reuses helm.Fetcher.FetchValues which already unpacks
 //     the chart tarball and returns the raw YAML (comments preserved).
-//   - Recent-PRs goes to the GitProvider's ListPullRequests (state=merged)
-//     and filters by title/branch heuristic, with a 5-minute memory cache
-//     keyed by the repo-file path. We stop short of calling GitHub's
-//     per-PR file API: that requires N+1 round-trips and the heuristic
-//     (branch/title) catches Sharko-authored PRs which is the 99% case.
+//   - Recent-PRs goes to the GitProvider's ListPullRequests (state=closed)
+//     and filters by Status=="merged" plus a title/branch heuristic, with a
+//     5-minute memory cache keyed by the repo-file path. We stop short of
+//     calling GitHub's per-PR file API: that requires N+1 round-trips and
+//     the heuristic (branch/title) catches Sharko-authored PRs which is the
+//     99% case. Note: GitHub's list-PRs API doesn't accept state="merged" —
+//     merged PRs appear under state="closed" with merged=true; the provider
+//     surfaces that as Status="merged".
 
 package api
 
@@ -242,6 +245,13 @@ func (c *recentPRsCache) put(key string, data recentPRsResponse) {
 	c.entries[key] = recentPRsCacheEntry{fetchedAt: time.Now(), data: data}
 }
 
+// reset clears the cache. Used by tests to avoid cross-test bleed.
+func (c *recentPRsCache) reset() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries = map[string]recentPRsCacheEntry{}
+}
+
 // handleGetAddonValuesRecentPRs godoc
 //
 // @Summary Recent PRs that touched an addon's global values
@@ -310,11 +320,29 @@ func (s *Server) handleGetClusterAddonValuesRecentPRs(w http.ResponseWriter, r *
 
 // fetchRecentPRs is the shared body for the two recent-PRs endpoints. It
 // serves from cache when possible, else falls back to the Git provider's
-// merged-PR list and filters by title heuristic. The filter map is used to
-// narrow matches when a single file (the cluster overrides) is touched by
-// many addons — we match on PR title containing "addon" or branch prefix.
+// closed-PR list (filtered to Status=="merged") and applies a title/branch
+// heuristic scoped to Sharko's deterministic naming.
+//
+// Root-cause fix (v1.20): previously we called ListPullRequests(ctx, "merged").
+// GitHub's list-PRs API does not accept "merged" as a state — only open/closed/
+// all. The go-github library forwards the bogus value and the response was
+// empty (or erroring silently), which is why the maintainer's Recent changes
+// panel stayed empty even though pr:25 had been merged. We now ask for
+// "closed" and keep entries where pr.Status == "merged".
+//
+// Matching heuristic: Sharko's orchestrator generates PRs with deterministic
+// titles and branches (see internal/orchestrator/git_helpers.go). The PR that
+// edits `<addon>.yaml` under global-values has operation
+//   "update global values for <addon>"
+// and pull-upstream has
+//   "pull upstream defaults for <addon>"
+// The per-cluster overrides file uses
+//   "update <addon> overrides on cluster <cluster>"
+// Branches are the sanitized/hex variant of the same. So presence of the
+// addon name plus a "values"/"overrides"/"upstream" keyword catches Sharko-
+// authored PRs while rejecting unrelated repo activity.
 func (s *Server) fetchRecentPRs(r *http.Request, valuesFile string, limit int, filter map[string]string) recentPRsResponse {
-	cacheKey := valuesFile + "|" + filter["addon"]
+	cacheKey := valuesFile + "|" + filter["addon"] + "|" + filter["cluster"]
 	if cached, ok := recentPRsStore.get(cacheKey); ok {
 		cached.Entries = trimEntries(cached.Entries, limit)
 		return cached
@@ -327,33 +355,21 @@ func (s *Server) fetchRecentPRs(r *http.Request, valuesFile string, limit int, f
 		return resp
 	}
 
-	prs, err := gp.ListPullRequests(r.Context(), "merged")
+	// "closed" includes merged PRs on GitHub (state=closed + merged=true).
+	// The provider fills pr.Status = "merged" for those.
+	prs, err := gp.ListPullRequests(r.Context(), "closed")
 	if err != nil {
 		return resp
 	}
 
-	// Heuristic filter: Sharko's PR titles and branches include the addon
-	// name (e.g. "Update global values for foo", branch "update-values-foo").
-	// We also match on the literal phrase "values" or "overrides" to avoid
-	// pulling unrelated PRs when a repo has broad activity.
 	addon := filter["addon"]
 	cluster := filter["cluster"]
-	needles := []string{"values", "overrides", "upstream defaults"}
-	if addon != "" {
-		needles = append(needles, addon)
-	}
 
 	for _, pr := range prs {
-		if !matchesAny(pr.Title, needles) && !matchesAny(pr.SourceBranch, needles) {
+		if pr.Status != "merged" {
 			continue
 		}
-		if addon != "" && !strings.Contains(strings.ToLower(pr.Title+" "+pr.SourceBranch), strings.ToLower(addon)) {
-			continue
-		}
-		if cluster != "" && !strings.Contains(strings.ToLower(pr.Title+" "+pr.SourceBranch), strings.ToLower(cluster)) {
-			// When scoped to a cluster file, require the cluster name in the
-			// PR title or branch. Global-values PRs won't match and will be
-			// filtered out of per-cluster endpoints.
+		if !matchesValuesPR(pr.Title, pr.SourceBranch, addon, cluster) {
 			continue
 		}
 		resp.Entries = append(resp.Entries, recentPRsEntry{
@@ -382,10 +398,29 @@ func (s *Server) fetchRecentPRs(r *http.Request, valuesFile string, limit int, f
 	return resp
 }
 
-func matchesAny(s string, needles []string) bool {
-	l := strings.ToLower(s)
-	for _, n := range needles {
-		if strings.Contains(l, strings.ToLower(n)) {
+// matchesValuesPR returns true when the PR title or source branch looks like
+// a Sharko values/overrides PR for the given addon (and optional cluster).
+//
+// The check is forgiving: we accept any PR where the combined title+branch
+// text (lowercased) contains the addon name AND at least one of the Sharko
+// values-editor keywords ("values", "overrides", "upstream"). When a cluster
+// is supplied we additionally require the cluster name in the same text,
+// which is how we keep per-cluster endpoints from echoing global PRs.
+func matchesValuesPR(title, branch, addon, cluster string) bool {
+	hay := strings.ToLower(title + " " + branch)
+	if addon != "" {
+		if !strings.Contains(hay, strings.ToLower(addon)) {
+			return false
+		}
+	}
+	if cluster != "" {
+		if !strings.Contains(hay, strings.ToLower(cluster)) {
+			return false
+		}
+	}
+	keywords := []string{"values", "overrides", "upstream"}
+	for _, k := range keywords {
+		if strings.Contains(hay, k) {
 			return true
 		}
 	}

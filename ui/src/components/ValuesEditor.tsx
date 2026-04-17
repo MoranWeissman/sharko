@@ -101,6 +101,7 @@ export function ValuesEditor({
   const [pullConfirmOpen, setPullConfirmOpen] = useState(false)
   const [pulling, setPulling] = useState(false)
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false)
+  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const actionsMenuRef = useRef<HTMLDivElement>(null)
@@ -155,12 +156,21 @@ export function ValuesEditor({
     try {
       const res = await onSubmit(draft)
       const prURL = res.pr_url || res.result?.pr_url
+      const prID = res.pr_id ?? res.result?.pr_id
+      const merged = res.merged ?? res.result?.merged ?? false
       setLastResult(res)
       if (prURL) {
-        const prSlug = prURL.split('/').slice(-2).join('/')
-        showToast(`PR opened — ${prSlug}`, 'success')
+        // Auto-merge may already have fired server-side; don't claim
+        // "opened for review" when the PR is already merged. Otherwise
+        // stay neutral — the maintainer may have GitHub auto-merge on.
+        const label = prID ? `PR #${prID}` : 'PR'
+        if (merged) {
+          showToast(`${label} merged →`, 'success')
+        } else {
+          showToast(`${label} opened →`, 'success')
+        }
       } else {
-        showToast('Values saved (auto-merge enabled)', 'success')
+        showToast('Values saved', 'success')
       }
       // Bump refresh key so <RecentPRsPanel> re-fetches and the new PR shows up.
       setRefreshKey((k) => k + 1)
@@ -269,18 +279,19 @@ export function ValuesEditor({
           placeholder="# YAML values&#10;# e.g.&#10;# replicaCount: 2&#10;# resources:&#10;#   limits:&#10;#     memory: 256Mi"
         />
         <div className="mt-1 flex items-center justify-between text-xs text-[#3a6a8a] dark:text-gray-500">
-          <span>{draft.split('\n').length} lines · {draft.length} chars</span>
-          {yamlError ? (
+          <span>
+            {draft.split('\n').length} lines · {draft.length} chars
+            {isDirty && !yamlError && (
+              <span className="ml-2 text-[#3a6a8a] dark:text-gray-500">· edited</span>
+            )}
+          </span>
+          {yamlError && (
             <span className="flex items-center gap-1 text-amber-600 dark:text-amber-400">
               <AlertTriangle className="h-3 w-3" />
               <span className="truncate" title={yamlError}>
                 YAML error: {yamlError.slice(0, 80)}
               </span>
             </span>
-          ) : isDirty ? (
-            <span className="text-teal-600 dark:text-teal-400">Unsaved changes</span>
-          ) : (
-            <span>No changes</span>
           )}
         </div>
       </div>
@@ -299,12 +310,16 @@ export function ValuesEditor({
         </div>
       )}
 
-      {/* PR-opened banner */}
+      {/* PR banner — neutral language; auto-merge may have already fired so
+          we don't claim "opened for review". "merged" is shown when the
+          response confirms it; otherwise just "opened". */}
       {responsePR && (
         <div className="mt-4 flex items-start gap-2 rounded-md border border-green-300 bg-green-50 p-3 text-sm text-green-900 dark:border-green-700 dark:bg-green-950/40 dark:text-green-200">
           <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
           <div className="flex-1">
-            <p className="font-medium">PR opened for review</p>
+            <p className="font-medium">
+              {(lastResult?.merged ?? lastResult?.result?.merged) ? 'PR merged' : 'PR opened'}
+            </p>
             <a
               href={responsePR}
               target="_blank"
@@ -343,12 +358,13 @@ export function ValuesEditor({
         )}
         <button
           type="button"
-          onClick={() => setDraft(initialYAML)}
+          onClick={() => setDiscardConfirmOpen(true)}
           disabled={!isDirty || submitting}
+          title="Discard your edits and revert to the saved version"
           className="inline-flex items-center gap-1 rounded-md border border-[#c0ddf0] bg-white px-3 py-1.5 text-xs font-medium text-[#1a4a6a] hover:bg-[#e0f0ff] disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
         >
           <RotateCcw className="h-3 w-3" />
-          Reset
+          Discard changes
         </button>
         <button
           type="button"
@@ -376,6 +392,48 @@ export function ValuesEditor({
           )}
         </button>
       </div>
+
+      {/* Discard-changes confirm modal — uncommitted edits are easy to lose
+          by accident, so we always confirm before reverting the buffer. */}
+      {discardConfirmOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+        >
+          <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl dark:bg-gray-800">
+            <h4 className="flex items-center gap-2 text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
+              <RotateCcw className="h-4 w-4 text-[#3a6a8a] dark:text-gray-400" />
+              Discard your edits?
+            </h4>
+            <p className="mt-2 text-sm text-[#1a4a6a] dark:text-gray-300">
+              You'll lose the changes you've made. The editor will revert to the
+              currently saved version.
+            </p>
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setDiscardConfirmOpen(false)}
+                className="rounded-md border border-[#c0ddf0] bg-white px-3 py-1.5 text-xs font-medium text-[#1a4a6a] hover:bg-[#e0f0ff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+              >
+                Keep editing
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setDraft(initialYAML)
+                  setSubmitError(null)
+                  setDiscardConfirmOpen(false)
+                }}
+                className="inline-flex items-center gap-1 rounded-md bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 dark:bg-amber-500 dark:hover:bg-amber-400"
+              >
+                <RotateCcw className="h-3 w-3" />
+                Discard changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Pull-upstream confirm modal */}
       {pullConfirmOpen && onPullUpstream && (
@@ -417,10 +475,16 @@ export function ValuesEditor({
                     const res = await onPullUpstream()
                     setLastResult(res)
                     const prURL = res.pr_url || res.result?.pr_url
+                    const prID = res.pr_id ?? res.result?.pr_id
+                    const merged = res.merged ?? res.result?.merged ?? false
                     if (prURL) {
-                      showToast(`Upstream pulled — ${prURL.split('/').slice(-2).join('/')}`, 'success')
+                      const label = prID ? `PR #${prID}` : 'PR'
+                      showToast(
+                        merged ? `${label} merged →` : `${label} opened →`,
+                        'success',
+                      )
                     } else {
-                      showToast('Upstream values applied (auto-merge)', 'success')
+                      showToast('Upstream values applied', 'success')
                     }
                     setRefreshKey((k) => k + 1)
                     setPullConfirmOpen(false)
