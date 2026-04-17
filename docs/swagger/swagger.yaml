@@ -774,6 +774,47 @@ definitions:
       username:
         type: string
     type: object
+  internal_api.pullUpstreamRequest:
+    properties:
+      merge_strategy:
+        description: |-
+          MergeStrategy controls how upstream values are merged into the current
+          values file. "replace" (the only supported strategy for v1.20.1)
+          overwrites the file entirely with upstream defaults. A future
+          "merge_keep_overrides" strategy is tracked as a TODO in the handler.
+        type: string
+      version:
+        description: |-
+          Version is the chart version to pull (e.g. "v1.14.4"). When empty, the
+          handler resolves the addon's currently-configured version from the
+          catalog — the expected default for the "I want to refresh to whatever
+          we're pointing at" workflow.
+        type: string
+    type: object
+  internal_api.recentPRsEntry:
+    properties:
+      author:
+        type: string
+      merged_at:
+        type: string
+      pr_id:
+        type: integer
+      title:
+        type: string
+      url:
+        type: string
+    type: object
+  internal_api.recentPRsResponse:
+    properties:
+      entries:
+        items:
+          $ref: '#/definitions/internal_api.recentPRsEntry'
+        type: array
+      values_file:
+        type: string
+      view_all_url:
+        type: string
+    type: object
   internal_api.saveAIConfigRequest:
     properties:
       api_key:
@@ -1343,6 +1384,85 @@ paths:
       security:
       - BearerAuth: []
       summary: Get addon global values + schema
+      tags:
+      - addons
+  /addons/{name}/values/pull-upstream:
+    post:
+      consumes:
+      - application/json
+      description: Replaces the addon's global Helm values file with the chart's upstream
+        `values.yaml` (comments preserved) wrapped under the `<addonName>:` key. Opens
+        a PR. Tier 2 (configuration) — uses the caller's personal GitHub PAT when
+        configured, otherwise the service token with a `Co-authored-by:` trailer.
+      parameters:
+      - description: Addon name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Pull upstream request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_api.pullUpstreamRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: PR created
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Addon not found
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Helm or Git failure
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Pull upstream chart values.yaml
+      tags:
+      - addons
+  /addons/{name}/values/recent-prs:
+    get:
+      description: Returns up to `limit` (default 5, max 20) recently-merged PRs that
+        modified the addon's global values file. Backed by a 5-minute in-memory cache.
+      parameters:
+      - description: Addon name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Maximum entries (default 5, max 20)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_api.recentPRsResponse'
+      security:
+      - BearerAuth: []
+      summary: Recent PRs that touched an addon's global values
       tags:
       - addons
   /addons/catalog:
@@ -2094,6 +2214,37 @@ paths:
       security:
       - BearerAuth: []
       summary: Edit per-cluster addon overrides
+      tags:
+      - clusters
+  /clusters/{cluster}/addons/{name}/values/recent-prs:
+    get:
+      description: Returns up to `limit` (default 5, max 20) recently-merged PRs that
+        modified the cluster overrides file, filtered to the addon name.
+      parameters:
+      - description: Cluster name
+        in: path
+        name: cluster
+        required: true
+        type: string
+      - description: Addon name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Maximum entries (default 5, max 20)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_api.recentPRsResponse'
+      security:
+      - BearerAuth: []
+      summary: Recent PRs that touched per-cluster addon overrides
       tags:
       - clusters
   /clusters/{name}:

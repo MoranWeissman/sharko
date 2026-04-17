@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
@@ -61,12 +62,27 @@ func (s *Server) auditMiddleware(next http.Handler) http.Handler {
 			event = deriveEventName(r.Method, r.URL.Path)
 		}
 
-		// Resolve attribution tier and mode. If the handler didn't enrich them
-		// (e.g. addon-secret in-memory updates that never touch Git), fall back
-		// to the registry-assigned tier and an "n/a" attribution mode so the
-		// audit entry is still well-formed.
+		// Resolve attribution tier and mode. Handlers that use the tier-aware
+		// Git resolver (GitProviderForTier) stamp both fields before returning.
+		// Handlers that use the legacy GetActiveGitProvider path — or that
+		// never touch Git at all — leave them empty. To keep the audit log
+		// readable (so the Attribution column doesn't render as a sea of
+		// dashes on legitimate mutations), we fall back here:
+		//   • Tier is looked up from HandlerTier via the matched route pattern.
+		//   • AttributionMode is inferred from the tier + whether a user is
+		//     authenticated:
+		//       - unknown user or webhook/auth tier → service
+		//       - otherwise                         → co_author
+		//     per_user can only be reached via GitProviderForTier and is
+		//     therefore always explicitly stamped.
 		tier := fields.Tier
+		if tier == "" {
+			tier = tierFromPattern(r.Pattern)
+		}
 		mode := fields.AttributionMode
+		if mode == "" {
+			mode = inferAttributionMode(tier, user)
+		}
 
 		s.auditLog.Add(audit.Entry{
 			Level:           level,
@@ -147,6 +163,59 @@ func methodToAction(method string) string {
 	default:
 		return strings.ToLower(method)
 	}
+}
+
+// patternToTier is populated lazily by handleWithTier — every route
+// registration goes through that wrapper so we can resolve the tier for a
+// request whose handler never called audit.Enrich with Tier/AttributionMode
+// (the legacy-path handlers). The wrapper uses runtime reflection to look
+// up the handler's short name and cross-references HandlerTier.
+var patternToTier = map[string]audit.Tier{}
+var patternToTierMu sync.RWMutex
+
+// rememberTierForPattern stamps a (pattern, tier) pair so auditMiddleware can
+// fall back to it when a handler doesn't set the Tier field on the audit
+// entry. Idempotent and safe to call concurrently.
+func rememberTierForPattern(pattern string, tier audit.Tier) {
+	if pattern == "" || tier == "" {
+		return
+	}
+	patternToTierMu.Lock()
+	patternToTier[pattern] = tier
+	patternToTierMu.Unlock()
+}
+
+// tierFromPattern returns the HandlerTier for the given ServeMux pattern
+// (e.g. "POST /api/v1/clusters"). Returns "" if unknown.
+func tierFromPattern(pattern string) audit.Tier {
+	if pattern == "" {
+		return ""
+	}
+	patternToTierMu.RLock()
+	t := patternToTier[pattern]
+	patternToTierMu.RUnlock()
+	return t
+}
+
+// inferAttributionMode derives an attribution mode for an audit entry when the
+// handler didn't stamp one. See auditMiddleware for the rules.
+func inferAttributionMode(tier audit.Tier, user string) audit.AttributionMode {
+	switch tier {
+	case audit.TierAuth, audit.TierWebhook, audit.TierPersonal:
+		// These tiers never write Git as the caller; the entry is informational.
+		// Render as service so the column is non-empty and the tooltip still
+		// carries the right message ("no human author on the commit").
+		return audit.AttributionService
+	case audit.Tier1, audit.Tier2:
+		// Legacy-path Tier 1/2 handlers use the service token with a
+		// Co-authored-by trailer when a user is authenticated, else plain
+		// service token.
+		if user == "" || user == "anonymous" || user == "system" {
+			return audit.AttributionService
+		}
+		return audit.AttributionCoAuthor
+	}
+	return ""
 }
 
 // deriveEventName builds a best-effort event name from the method and path.

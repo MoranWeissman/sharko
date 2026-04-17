@@ -481,6 +481,13 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("PUT /api/v1/clusters/{cluster}/addons/{name}/values", srv.handleSetClusterAddonValues)
 	mux.HandleFunc("GET /api/v1/clusters/{cluster}/addons/{name}/values", srv.handleGetClusterAddonValues)
 
+	// Values editor extras (v1.20.1):
+	//   • Pull upstream chart defaults (Tier 2)
+	//   • Recent merged PRs touching a values file (read)
+	mux.HandleFunc("POST /api/v1/addons/{name}/values/pull-upstream", srv.handlePullUpstreamValues)
+	mux.HandleFunc("GET /api/v1/addons/{name}/values/recent-prs", srv.handleGetAddonValuesRecentPRs)
+	mux.HandleFunc("GET /api/v1/clusters/{cluster}/addons/{name}/values/recent-prs", srv.handleGetClusterAddonValuesRecentPRs)
+
 	// Addon secrets (definition CRUD)
 	mux.HandleFunc("GET /api/v1/addon-secrets", srv.handleListAddonSecrets)
 	mux.HandleFunc("POST /api/v1/addon-secrets", srv.handleCreateAddonSecret)

@@ -916,6 +916,121 @@ const docTemplate = `{
                 }
             }
         },
+        "/addons/{name}/values/pull-upstream": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Replaces the addon's global Helm values file with the chart's upstream ` + "`" + `values.yaml` + "`" + ` (comments preserved) wrapped under the ` + "`" + `\u003caddonName\u003e:` + "`" + ` key. Opens a PR. Tier 2 (configuration) — uses the caller's personal GitHub PAT when configured, otherwise the service token with a ` + "`" + `Co-authored-by:` + "`" + ` trailer.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "addons"
+                ],
+                "summary": "Pull upstream chart values.yaml",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Addon name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Pull upstream request",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.pullUpstreamRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "PR created",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Addon not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "Helm or Git failure",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/addons/{name}/values/recent-prs": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns up to ` + "`" + `limit` + "`" + ` (default 5, max 20) recently-merged PRs that modified the addon's global values file. Backed by a 5-minute in-memory cache.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "addons"
+                ],
+                "summary": "Recent PRs that touched an addon's global values",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Addon name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Maximum entries (default 5, max 20)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.recentPRsResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/agent/chat": {
             "post": {
                 "security": [
@@ -2101,6 +2216,53 @@ const docTemplate = `{
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/clusters/{cluster}/addons/{name}/values/recent-prs": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns up to ` + "`" + `limit` + "`" + ` (default 5, max 20) recently-merged PRs that modified the cluster overrides file, filtered to the addon name.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "clusters"
+                ],
+                "summary": "Recent PRs that touched per-cluster addon overrides",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Cluster name",
+                        "name": "cluster",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Addon name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Maximum entries (default 5, max 20)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.recentPRsResponse"
                         }
                     }
                 }
@@ -6639,6 +6801,56 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "username": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.pullUpstreamRequest": {
+            "type": "object",
+            "properties": {
+                "merge_strategy": {
+                    "description": "MergeStrategy controls how upstream values are merged into the current\nvalues file. \"replace\" (the only supported strategy for v1.20.1)\noverwrites the file entirely with upstream defaults. A future\n\"merge_keep_overrides\" strategy is tracked as a TODO in the handler.",
+                    "type": "string"
+                },
+                "version": {
+                    "description": "Version is the chart version to pull (e.g. \"v1.14.4\"). When empty, the\nhandler resolves the addon's currently-configured version from the\ncatalog — the expected default for the \"I want to refresh to whatever\nwe're pointing at\" workflow.",
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.recentPRsEntry": {
+            "type": "object",
+            "properties": {
+                "author": {
+                    "type": "string"
+                },
+                "merged_at": {
+                    "type": "string"
+                },
+                "pr_id": {
+                    "type": "integer"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.recentPRsResponse": {
+            "type": "object",
+            "properties": {
+                "entries": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api.recentPRsEntry"
+                    }
+                },
+                "values_file": {
+                    "type": "string"
+                },
+                "view_all_url": {
                     "type": "string"
                 }
             }
