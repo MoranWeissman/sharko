@@ -38,7 +38,8 @@ func (s *Server) handleAddAddon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	git, err := s.connSvc.GetActiveGitProvider()
+	// Tier 2: configuration change — prefer per-user PAT, fall back to service token.
+	ctx, git, tokRes, err := s.GitProviderForTier(r.Context(), r, audit.Tier2)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
 		return
@@ -67,7 +68,7 @@ func (s *Server) handleAddAddon(w http.ResponseWriter, r *http.Request) {
 	}
 
 	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
-	result, err := orch.AddAddon(r.Context(), req)
+	result, err := orch.AddAddon(ctx, req)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
@@ -78,7 +79,7 @@ func (s *Server) handleAddAddon(w http.ResponseWriter, r *http.Request) {
 		if user == "" {
 			user = "system"
 		}
-		_ = s.prTracker.TrackPR(r.Context(), prtracker.PRInfo{
+		_ = s.prTracker.TrackPR(ctx, prtracker.PRInfo{
 			PRID:       result.PRID,
 			PRUrl:      result.PRUrl,
 			PRBranch:   result.Branch,
@@ -93,12 +94,16 @@ func (s *Server) handleAddAddon(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	audit.Enrich(r.Context(), audit.Fields{
+	audit.Enrich(ctx, audit.Fields{
 		Event:    "addon_added",
 		Resource: fmt.Sprintf("addon:%s", req.Name),
 		Detail:   fmt.Sprintf("chart=%s version=%s", req.Chart, req.Version),
 	})
-	writeJSON(w, http.StatusCreated, result)
+
+	// Surface the UX nudge: when Tier 2 had no per-user PAT we fell back to
+	// the service token + co-author trailer. The UI watches for
+	// attribution_warning="no_per_user_pat" to render the banner.
+	writeJSON(w, http.StatusCreated, withAttributionWarning(result, tokRes))
 }
 
 // handleRemoveAddon godoc
@@ -134,7 +139,8 @@ func (s *Server) handleRemoveAddon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	git, err := s.connSvc.GetActiveGitProvider()
+	// Tier 2: configuration change.
+	ctx, git, tokRes, err := s.GitProviderForTier(r.Context(), r, audit.Tier2)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
 		return
@@ -142,7 +148,7 @@ func (s *Server) handleRemoveAddon(w http.ResponseWriter, r *http.Request) {
 
 	// Without ?confirm=true, return a dry-run impact report.
 	if r.URL.Query().Get("confirm") != "true" {
-		catalog, err := s.addonSvc.GetCatalog(r.Context(), git, ac)
+		catalog, err := s.addonSvc.GetCatalog(ctx, git, ac)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, "failed to fetch addon catalog: "+err.Error())
 			return
@@ -177,17 +183,17 @@ func (s *Server) handleRemoveAddon(w http.ResponseWriter, r *http.Request) {
 	}
 
 	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
-	result, err := orch.RemoveAddon(r.Context(), name)
+	result, err := orch.RemoveAddon(ctx, name)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 
-	audit.Enrich(r.Context(), audit.Fields{
+	audit.Enrich(ctx, audit.Fields{
 		Event:    "addon_removed",
 		Resource: fmt.Sprintf("addon:%s", name),
 	})
-	writeJSON(w, http.StatusOK, result)
+	writeJSON(w, http.StatusOK, withAttributionWarning(result, tokRes))
 }
 
 // handleConfigureAddon godoc
@@ -222,7 +228,8 @@ func (s *Server) handleConfigureAddon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	git, err := s.connSvc.GetActiveGitProvider()
+	// Tier 2: configuration change.
+	ctx, git, tokRes, err := s.GitProviderForTier(r.Context(), r, audit.Tier2)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
 		return
@@ -236,7 +243,7 @@ func (s *Server) handleConfigureAddon(w http.ResponseWriter, r *http.Request) {
 	req.Name = name
 
 	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
-	result, err := orch.ConfigureAddon(r.Context(), req)
+	result, err := orch.ConfigureAddon(ctx, req)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			writeError(w, http.StatusNotFound, err.Error())
@@ -246,9 +253,9 @@ func (s *Server) handleConfigureAddon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	audit.Enrich(r.Context(), audit.Fields{
+	audit.Enrich(ctx, audit.Fields{
 		Event:    "addon_configured",
 		Resource: fmt.Sprintf("addon:%s", name),
 	})
-	writeJSON(w, http.StatusOK, result)
+	writeJSON(w, http.StatusOK, withAttributionWarning(result, tokRes))
 }

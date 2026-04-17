@@ -9,6 +9,9 @@ vi.mock('@/services/api', () => ({
   api: {
     getConnections: vi.fn().mockResolvedValue({ connections: [], active_connection: '' }),
     getAddonValues: vi.fn().mockRejectedValue(new Error('not found')),
+    // v1.20 — values editor / attribution lookups
+    getMe: vi.fn().mockResolvedValue({ username: 'tester', role: 'admin', has_github_token: true }),
+    getAddonValuesSchema: vi.fn().mockResolvedValue({ addon_name: 'ingress-nginx', current_values: '', schema: null }),
     getAddonDetail: vi.fn().mockResolvedValue({
       addon: {
         addon_name: 'ingress-nginx',

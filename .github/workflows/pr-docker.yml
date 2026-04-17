@@ -1,0 +1,175 @@
+name: PR Docker Image
+
+# Build a Docker image for every PR push so the maintainer can run
+# `helm upgrade --set image.tag=pr-<NUM>` against a real cluster
+# before merging. Additive to the release workflow — does NOT touch
+# semver tags. Tag namespace `pr-*` cannot collide with `v*` releases.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+concurrency:
+  # Per-PR concurrency: a new push cancels the prior in-flight build for the
+  # same PR, but does not interfere with other PRs or the release workflow.
+  group: pr-docker-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: moranweissman/sharko
+
+jobs:
+  build-and-push:
+    name: Build & Push PR Image
+    # Only run on open/sync/reopen — not on close (close is handled by cleanup job).
+    # Skip PRs from forks: the GITHUB_TOKEN is read-only there and `packages: write` won't work.
+    if: >
+      github.event.action != 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Compute tags
+        id: tags
+        run: |
+          PR="${{ github.event.pull_request.number }}"
+          SHA="${{ github.event.pull_request.head.sha }}"
+          SHORT="${SHA:0:7}"
+          echo "PR_TAG=pr-${PR}" >> "$GITHUB_OUTPUT"
+          echo "SHA_TAG=pr-${PR}-${SHORT}" >> "$GITHUB_OUTPUT"
+          echo "SHORT_SHA=${SHORT}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          # Match release workflow: linux/amd64 only.
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.PR_TAG }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.SHA_TAG }}
+          build-args: |
+            CACHE_BUST=${{ github.event.pull_request.head.sha }}
+            VERSION=pr-${{ github.event.pull_request.number }}-${{ steps.tags.outputs.SHORT_SHA }}
+          cache-from: type=gha,scope=pr-${{ github.event.pull_request.number }}
+          cache-to: type=gha,mode=max,scope=pr-${{ github.event.pull_request.number }}
+
+      - name: Comment on PR with install command
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TAG: ${{ steps.tags.outputs.PR_TAG }}
+          SHA_TAG: ${{ steps.tags.outputs.SHA_TAG }}
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        run: |
+          MARKER="<!-- pr-docker-image -->"
+          BODY=$(cat <<EOF
+          $MARKER
+          ### PR image built
+
+          **Recommended — use the immutable SHA tag** so Kubernetes actually pulls the new image:
+
+          \`\`\`bash
+          helm upgrade sharko charts/sharko -n sharko \\
+            --set image.repository=${IMAGE} \\
+            --set image.tag=${SHA_TAG}
+          \`\`\`
+
+          Or against the published OCI chart:
+          \`\`\`bash
+          helm upgrade sharko oci://ghcr.io/moranweissman/sharko -n sharko \\
+            --set image.repository=${IMAGE} \\
+            --set image.tag=${SHA_TAG}
+          \`\`\`
+
+          ---
+
+          <details>
+          <summary>Alternative: mutable <code>${PR_TAG}</code> tag (force a rollout after each push)</summary>
+
+          The \`${PR_TAG}\` tag is overwritten on every push to this PR. With the default \`imagePullPolicy: IfNotPresent\` the pod will keep the old image on a re-push — you must force a rollout:
+
+          \`\`\`bash
+          helm upgrade sharko charts/sharko -n sharko \\
+            --set image.repository=${IMAGE} \\
+            --set image.tag=${PR_TAG}
+          kubectl rollout restart deployment/sharko -n sharko
+          \`\`\`
+
+          </details>
+
+          Both tags point at the same image right now (\`${SHA_TAG}\` is a permanent alias).
+          EOF
+          )
+
+          # Find an existing bot comment with our marker; update if present, otherwise create.
+          EXISTING=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --jq ".[] | select(.body | contains(\"${MARKER}\")) | .id" \
+            | head -n1)
+
+          if [ -n "$EXISTING" ]; then
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${EXISTING}" \
+              -f body="$BODY" >/dev/null
+            echo "Updated existing PR comment ${EXISTING}"
+          else
+            gh pr comment "$PR_NUMBER" --body "$BODY"
+            echo "Created new PR comment"
+          fi
+
+  cleanup:
+    name: Delete PR Image Tags
+    # Best-effort cleanup when a PR is closed (merged or not). Failure is non-fatal.
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - name: Delete pr-<NUM>* tags from GHCR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          # Package name in GHCR; for user-owned packages this is just the image name.
+          PACKAGE: sharko
+          OWNER: moranweissman
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          PREFIX="pr-${PR_NUMBER}"
+          echo "Looking for container versions tagged ${PREFIX} or ${PREFIX}-*"
+
+          # List all versions of the package, filter ones whose tags match our PR.
+          VERSIONS=$(gh api --paginate \
+            "/users/${OWNER}/packages/container/${PACKAGE}/versions" \
+            --jq ".[] | select(.metadata.container.tags[]? | test(\"^${PREFIX}(-|$)\")) | .id" \
+            | sort -u)
+
+          if [ -z "$VERSIONS" ]; then
+            echo "No matching versions to delete."
+            exit 0
+          fi
+
+          for ID in $VERSIONS; do
+            echo "Deleting version $ID"
+            gh api -X DELETE "/users/${OWNER}/packages/container/${PACKAGE}/versions/${ID}" || \
+              echo "Failed to delete $ID (continuing)"
+          done

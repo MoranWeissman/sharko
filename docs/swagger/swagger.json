@@ -786,6 +786,243 @@
                         }
                     }
                 }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Replaces the global default Helm values YAML for an addon and opens a PR. Tier 2 (configuration) — prefers the caller's personal GitHub PAT for proper Git authorship; otherwise falls back to the service token with a `Co-authored-by:` trailer and surfaces `attribution_warning: \"no_per_user_pat\"` in the response.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "addons"
+                ],
+                "summary": "Edit global addon values",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Addon name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Full YAML payload",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.setAddonValuesRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "PR created (or merged if auto-merge is on)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid YAML or missing field",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Addon not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "Git or ArgoCD failure",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/addons/{name}/values-schema": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the addon's current global values YAML and an optional JSON Schema (read from `\u003caddon\u003e.schema.json` next to the values file). The schema is omitted when none has been published; the UI then falls back to plain YAML mode.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "addons"
+                ],
+                "summary": "Get addon global values + schema",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Addon name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Current values + optional schema",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "Git failure",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/addons/{name}/values/pull-upstream": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Replaces the addon's global Helm values file with the chart's upstream `values.yaml` (comments preserved) wrapped under the `\u003caddonName\u003e:` key. Opens a PR. Tier 2 (configuration) — uses the caller's personal GitHub PAT when configured, otherwise the service token with a `Co-authored-by:` trailer.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "addons"
+                ],
+                "summary": "Pull upstream chart values.yaml",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Addon name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Pull upstream request",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.pullUpstreamRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "PR created",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Addon not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "Helm or Git failure",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/addons/{name}/values/recent-prs": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns up to `limit` (default 5, max 20) recently-merged PRs that modified the addon's global values file. Backed by a 5-minute in-memory cache.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "addons"
+                ],
+                "summary": "Recent PRs that touched an addon's global values",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Addon name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Maximum entries (default 5, max 20)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.recentPRsResponse"
+                        }
+                    }
+                }
             }
         },
         "/agent/chat": {
@@ -1844,6 +2081,182 @@
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/clusters/{cluster}/addons/{name}/values": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the YAML for a single addon's section in a cluster's overrides file, plus an optional JSON Schema. `current_overrides` is empty when no overrides are configured for this addon yet.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "clusters"
+                ],
+                "summary": "Get per-cluster addon overrides + schema",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Cluster name",
+                        "name": "cluster",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Addon name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Current overrides + optional schema",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "Git failure",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Replaces the per-cluster overrides YAML for one addon on one cluster and opens a PR. Pass an empty `values` string to remove the addon's overrides entirely. Tier 2 (configuration) — same attribution semantics as the global values endpoint.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "clusters"
+                ],
+                "summary": "Edit per-cluster addon overrides",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Cluster name",
+                        "name": "cluster",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Addon name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Addon-section YAML payload",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.setClusterAddonValuesRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "PR created (or merged if auto-merge is on)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid YAML or missing field",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "Git or ArgoCD failure",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/clusters/{cluster}/addons/{name}/values/recent-prs": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns up to `limit` (default 5, max 20) recently-merged PRs that modified the cluster overrides file, filtered to the addon name.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "clusters"
+                ],
+                "summary": "Recent PRs that touched per-cluster addon overrides",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Cluster name",
+                        "name": "cluster",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Addon name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Maximum entries (default 5, max 20)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.recentPRsResponse"
                         }
                     }
                 }
@@ -4834,6 +5247,163 @@
                 }
             }
         },
+        "/users/me": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the authenticated caller's profile. `has_github_token` indicates whether a per-user GitHub PAT is configured for tiered attribution.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Get current user profile",
+                "responses": {
+                    "200": {
+                        "description": "Current user",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.meResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/users/me/github-token": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Stores an encrypted personal GitHub PAT for the authenticated user. The PAT is preferred over the service token when the user performs Tier 2 (configuration) actions, so the resulting Git commit is authored by the user rather than the Sharko service account.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Set personal GitHub token",
+                "parameters": [
+                    {
+                        "description": "Token payload",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.setMyGitHubTokenRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Token saved",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Removes the authenticated user's personal GitHub PAT. After clearing, Tier 2 actions fall back to the service token with a co-author trailer for attribution.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Clear personal GitHub token",
+                "responses": {
+                    "200": {
+                        "description": "Token cleared",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/users/me/github-token/test": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Validates the authenticated user's stored personal GitHub PAT by calling GitHub's `/user` endpoint. Returns the GitHub login on success.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Test personal GitHub token",
+                "responses": {
+                    "200": {
+                        "description": "Token valid",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Token invalid or not set",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/users/{username}": {
             "put": {
                 "security": [
@@ -6215,6 +6785,70 @@
                 }
             }
         },
+        "internal_api.meResponse": {
+            "type": "object",
+            "properties": {
+                "has_github_token": {
+                    "type": "boolean"
+                },
+                "role": {
+                    "type": "string"
+                },
+                "username": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.pullUpstreamRequest": {
+            "type": "object",
+            "properties": {
+                "merge_strategy": {
+                    "description": "MergeStrategy controls how upstream values are merged into the current\nvalues file. \"replace\" (the only supported strategy for v1.20.1)\noverwrites the file entirely with upstream defaults. A future\n\"merge_keep_overrides\" strategy is tracked as a TODO in the handler.",
+                    "type": "string"
+                },
+                "version": {
+                    "description": "Version is the chart version to pull (e.g. \"v1.14.4\"). When empty, the\nhandler resolves the addon's currently-configured version from the\ncatalog — the expected default for the \"I want to refresh to whatever\nwe're pointing at\" workflow.",
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.recentPRsEntry": {
+            "type": "object",
+            "properties": {
+                "author": {
+                    "type": "string"
+                },
+                "merged_at": {
+                    "type": "string"
+                },
+                "pr_id": {
+                    "type": "integer"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.recentPRsResponse": {
+            "type": "object",
+            "properties": {
+                "entries": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api.recentPRsEntry"
+                    }
+                },
+                "values_file": {
+                    "type": "string"
+                },
+                "view_all_url": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_api.saveAIConfigRequest": {
             "type": "object",
             "properties": {
@@ -6231,6 +6865,31 @@
                     "type": "string"
                 },
                 "provider": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.setAddonValuesRequest": {
+            "type": "object",
+            "properties": {
+                "values": {
+                    "description": "Values is the full YAML file content. Sharko commits this verbatim\nas the new global default values for the addon.",
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.setClusterAddonValuesRequest": {
+            "type": "object",
+            "properties": {
+                "values": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.setMyGitHubTokenRequest": {
+            "type": "object",
+            "properties": {
+                "token": {
                     "type": "string"
                 }
             }

@@ -368,6 +368,90 @@ export interface AuditEntry {
   duration_ms: number
   error?: string
   request_id?: string
+  detail?: string
+  /**
+   * Tier-aware attribution mode for the resulting Git commit (v1.20+):
+   *  - "service"   service token, no user identity attached
+   *  - "co_author" service token + Co-authored-by trailer for the user
+   *  - "per_user"  per-user PAT — the user IS the commit author
+   */
+  attribution_mode?: 'service' | 'co_author' | 'per_user' | ''
+  /**
+   * Tier of the originating endpoint (v1.20+):
+   *  - "tier1"     operational (cluster/addon/PR/connection ops)
+   *  - "tier2"     configuration (catalog metadata, values)
+   *  - "personal"  self-service on caller's own profile
+   *  - "auth"      login/logout/hash
+   *  - "webhook"   inbound webhook (no user identity)
+   */
+  tier?: 'tier1' | 'tier2' | 'personal' | 'auth' | 'webhook' | ''
+}
+
+/** Profile of the authenticated caller (GET /users/me). */
+export interface MeResponse {
+  username: string
+  role: string
+  has_github_token: boolean
+}
+
+/**
+ * Response for GET /addons/{name}/values-schema.
+ * `schema` is the parsed values.schema.json object when present (best-effort);
+ * the editor falls back to plain YAML mode when it's null/undefined.
+ */
+export interface AddonValuesSchemaResponse {
+  addon_name: string
+  current_values: string
+  schema?: Record<string, unknown> | null
+}
+
+/** Response for GET /clusters/{cluster}/addons/{name}/values. */
+export interface ClusterAddonValuesResponse {
+  cluster_name: string
+  addon_name: string
+  current_overrides: string
+  schema?: Record<string, unknown> | null
+}
+
+/**
+ * Response for the two PUT endpoints (global values + per-cluster overrides).
+ * When `attribution_warning` is "no_per_user_pat", the UI should render the
+ * AttributionNudge banner — the action succeeded but used the service token.
+ */
+export interface ValuesEditResult {
+  // The orchestrator wraps results when there's an attribution warning, so the
+  // PR fields can either be top-level (no warning) or nested under `result`.
+  pr_url?: string
+  pr_id?: number
+  branch?: string
+  merged?: boolean
+  values_file?: string
+  attribution_warning?: 'no_per_user_pat'
+  result?: {
+    pr_url?: string
+    pr_id?: number
+    branch?: string
+    merged?: boolean
+    values_file?: string
+  }
+}
+
+/**
+ * Response for GET /addons/{name}/values/recent-prs and the per-cluster
+ * variant. Fed into the "Recent changes" panel beneath the values editor.
+ */
+export interface RecentPRsResponse {
+  entries: RecentPRsEntry[]
+  view_all_url?: string
+  values_file: string
+}
+
+export interface RecentPRsEntry {
+  pr_id: number
+  title: string
+  url: string
+  author: string
+  merged_at: string
 }
 
 export interface PermCheck {

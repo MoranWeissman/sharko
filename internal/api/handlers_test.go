@@ -23,8 +23,11 @@ import (
 
 // handlerFakeGitProvider is a minimal gitprovider.GitProvider that returns a
 // fixed set of file contents. Missing paths return a non-nil error.
+// Tests that exercise recent-PRs endpoints can optionally set `prs` to stub
+// the ListPullRequests response.
 type handlerFakeGitProvider struct {
 	files map[string][]byte
+	prs   []gitprovider.PullRequest
 }
 
 func (f *handlerFakeGitProvider) GetFileContent(_ context.Context, path, _ string) ([]byte, error) {
@@ -40,7 +43,7 @@ func (f *handlerFakeGitProvider) ListDirectory(_ context.Context, _, _ string) (
 }
 
 func (f *handlerFakeGitProvider) ListPullRequests(_ context.Context, _ string) ([]gitprovider.PullRequest, error) {
-	return nil, nil
+	return f.prs, nil
 }
 
 func (f *handlerFakeGitProvider) TestConnection(_ context.Context) error { return nil }

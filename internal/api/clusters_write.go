@@ -52,7 +52,8 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	git, err := s.connSvc.GetActiveGitProvider()
+	// Tier 1: operational action — service token + co-author trailer.
+	ctx, git, _, err := s.GitProviderForTier(r.Context(), r, audit.Tier1)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
 		return
@@ -84,7 +85,7 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 		}
 		orch.SetArgoSecretManager(&argoManagerAdapter{mgr: s.argoSecretManager}, roleARN)
 	}
-	result, err := orch.RegisterCluster(r.Context(), req)
+	result, err := orch.RegisterCluster(ctx, req)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
@@ -102,7 +103,7 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 
 	// Record verification observation if Stage1 ran.
 	if result.Verification != nil && s.obsStore != nil {
-		if err := s.obsStore.RecordTestResult(r.Context(), req.Name, *result.Verification); err != nil {
+		if err := s.obsStore.RecordTestResult(ctx, req.Name, *result.Verification); err != nil {
 			slog.Error("failed to record verification observation during registration",
 				"cluster", req.Name, "error", err)
 		}
@@ -113,7 +114,7 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusMultiStatus
 	}
 
-	audit.Enrich(r.Context(), audit.Fields{
+	audit.Enrich(ctx, audit.Fields{
 		Event:    "cluster_registered",
 		Resource: fmt.Sprintf("cluster:%s", req.Name),
 	})
@@ -158,7 +159,8 @@ func (s *Server) handleDeregisterCluster(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	git, err := s.connSvc.GetActiveGitProvider()
+	// Tier 1: operational action — service token + co-author trailer.
+	ctx, git, _, err := s.GitProviderForTier(r.Context(), r, audit.Tier1)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
 		return
@@ -184,7 +186,7 @@ func (s *Server) handleDeregisterCluster(w http.ResponseWriter, r *http.Request)
 		orch.SetArgoSecretManager(&argoManagerAdapter{mgr: s.argoSecretManager}, roleARN)
 	}
 
-	result, orchErr := orch.RemoveCluster(r.Context(), req)
+	result, orchErr := orch.RemoveCluster(ctx, req)
 	if orchErr != nil {
 		// Check for confirmation error.
 		if orchErr.Error() == "confirmation required: set yes: true in request body" {
@@ -206,7 +208,7 @@ func (s *Server) handleDeregisterCluster(w http.ResponseWriter, r *http.Request)
 		s.argoSecretReconciler.Trigger()
 	}
 
-	audit.Enrich(r.Context(), audit.Fields{
+	audit.Enrich(ctx, audit.Fields{
 		Event:    "cluster_deregistered",
 		Resource: fmt.Sprintf("cluster:%s", name),
 	})
@@ -252,7 +254,8 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	git, err := s.connSvc.GetActiveGitProvider()
+	// Tier 1: operational action — service token + co-author trailer.
+	ctx, git, _, err := s.GitProviderForTier(r.Context(), r, audit.Tier1)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
 		return
@@ -267,7 +270,7 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	serverURL, err := resolveClusterServer(r.Context(), name, ac)
+	serverURL, err := resolveClusterServer(ctx, name, ac)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "failed to list ArgoCD clusters: "+err.Error())
 		return
@@ -283,7 +286,7 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 		if managedPath == "" {
 			managedPath = "configuration/managed-clusters.yaml"
 		}
-		mcData, err := git.GetFileContent(r.Context(), managedPath, s.gitopsCfg.BaseBranch)
+		mcData, err := git.GetFileContent(ctx, managedPath, s.gitopsCfg.BaseBranch)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, "reading managed-clusters.yaml: "+err.Error())
 			return
@@ -296,18 +299,18 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 
 		s.gitMu.Lock()
 		branchName := fmt.Sprintf("%supdate-secret-path-%s", s.gitopsCfg.BranchPrefix, name)
-		if err := git.CreateBranch(r.Context(), branchName, s.gitopsCfg.BaseBranch); err != nil {
+		if err := git.CreateBranch(ctx, branchName, s.gitopsCfg.BaseBranch); err != nil {
 			s.gitMu.Unlock()
 			writeError(w, http.StatusBadGateway, "creating branch: "+err.Error())
 			return
 		}
 		commitMsg := fmt.Sprintf("%s update secret_path for cluster %s", s.gitopsCfg.CommitPrefix, name)
-		if err := git.CreateOrUpdateFile(r.Context(), managedPath, updated, branchName, commitMsg); err != nil {
+		if err := git.CreateOrUpdateFile(ctx, managedPath, updated, branchName, commitMsg); err != nil {
 			s.gitMu.Unlock()
 			writeError(w, http.StatusBadGateway, "committing secret_path update: "+err.Error())
 			return
 		}
-		pr, prErr := git.CreatePullRequest(r.Context(),
+		pr, prErr := git.CreatePullRequest(ctx,
 			fmt.Sprintf("Update secret_path for cluster %s", name),
 			fmt.Sprintf("Sets secret_path to %q for cluster %s", *req.SecretPath, name),
 			branchName, s.gitopsCfg.BaseBranch,
@@ -320,7 +323,7 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 
 		// Auto-merge if configured.
 		if s.gitopsCfg.PRAutoMerge && pr != nil {
-			_ = git.MergePullRequest(r.Context(), pr.ID)
+			_ = git.MergePullRequest(ctx, pr.ID)
 		}
 
 		// If no addons to update, return early with the secret_path result.
@@ -342,7 +345,7 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 	orch.SetSecretManagement(s.addonSecretDefs, s.secretFetcher, remoteclient.NewClientFromKubeconfig)
 	// Region is empty — PATCH only updates addon labels, not cluster metadata.
 	// Region is set during RegisterCluster and not exposed via the update API.
-	result, err := orch.UpdateClusterAddons(r.Context(), name, serverURL, "", req.Addons)
+	result, err := orch.UpdateClusterAddons(ctx, name, serverURL, "", req.Addons)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
@@ -358,7 +361,7 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 		s.argoSecretReconciler.Trigger()
 	}
 
-	audit.Enrich(r.Context(), audit.Fields{
+	audit.Enrich(ctx, audit.Fields{
 		Event:    "cluster_updated",
 		Resource: fmt.Sprintf("cluster:%s", name),
 	})

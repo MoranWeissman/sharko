@@ -241,7 +241,7 @@ func (a *AzureDevOpsProvider) CreateBranch(_ context.Context, branchName, fromRe
 }
 
 // CreateOrUpdateFile creates a new file or updates an existing one on the given branch.
-func (a *AzureDevOpsProvider) CreateOrUpdateFile(_ context.Context, filePath string, content []byte, branch, commitMessage string) error {
+func (a *AzureDevOpsProvider) CreateOrUpdateFile(ctx context.Context, filePath string, content []byte, branch, commitMessage string) error {
 	currentSHA, err := a.getRefSHA(branch)
 	if err != nil {
 		return fmt.Errorf("create or update file: %w", err)
@@ -254,6 +254,11 @@ func (a *AzureDevOpsProvider) CreateOrUpdateFile(_ context.Context, filePath str
 
 	encoded := base64.StdEncoding.EncodeToString(content)
 
+	// Append Co-authored-by trailer when an attribution context is set.
+	// Azure DevOps does not render the trailer the same way GitHub does, but
+	// it is harmless and gives parity for log scrapers.
+	message := FromContext(ctx).ApplyToMessage(commitMessage)
+
 	payload, _ := json.Marshal(map[string]interface{}{
 		"refUpdates": []map[string]string{
 			{
@@ -263,7 +268,7 @@ func (a *AzureDevOpsProvider) CreateOrUpdateFile(_ context.Context, filePath str
 		},
 		"commits": []map[string]interface{}{
 			{
-				"comment": commitMessage,
+				"comment": message,
 				"changes": []map[string]interface{}{
 					{
 						"changeType": changeType,
@@ -304,11 +309,13 @@ func (a *AzureDevOpsProvider) BatchCreateFiles(ctx context.Context, files map[st
 }
 
 // DeleteFile removes a file from the given branch.
-func (a *AzureDevOpsProvider) DeleteFile(_ context.Context, filePath, branch, commitMessage string) error {
+func (a *AzureDevOpsProvider) DeleteFile(ctx context.Context, filePath, branch, commitMessage string) error {
 	currentSHA, err := a.getRefSHA(branch)
 	if err != nil {
 		return fmt.Errorf("delete file: %w", err)
 	}
+
+	message := FromContext(ctx).ApplyToMessage(commitMessage)
 
 	payload, _ := json.Marshal(map[string]interface{}{
 		"refUpdates": []map[string]string{
@@ -319,7 +326,7 @@ func (a *AzureDevOpsProvider) DeleteFile(_ context.Context, filePath, branch, co
 		},
 		"commits": []map[string]interface{}{
 			{
-				"comment": commitMessage,
+				"comment": message,
 				"changes": []map[string]interface{}{
 					{
 						"changeType": "delete",

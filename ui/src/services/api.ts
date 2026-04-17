@@ -239,8 +239,18 @@ export async function configureAddon(
     additional_sources?: Record<string, unknown>[]
   },
 ) {
-  return patchJSON<{ status: string; pr_url?: string; pull_request_url?: string }>(
-    `/addons/${encodeURIComponent(name)}/configure`,
+  // NOTE: the backend handler is registered at PATCH /api/v1/addons/{name}
+  // (see internal/api/router.go). The earlier implementation posted to
+  // `.../configure` which 404s — fixed alongside the v1.20.1 catalog editor.
+  return patchJSON<{
+    status?: string
+    pr_url?: string
+    pr_id?: number
+    pull_request_url?: string
+    attribution_warning?: 'no_per_user_pat'
+    result?: { pr_url?: string; pr_id?: number }
+  }>(
+    `/addons/${encodeURIComponent(name)}`,
     { name, ...config },
   )
 }
@@ -402,6 +412,71 @@ export const api = {
 
   // Auth
   updatePassword: (currentPassword: string, newPassword: string) => postJSON<{ status: string }>('/auth/update-password', { current_password: currentPassword, new_password: newPassword }),
+
+  // My account (v1.20 — tiered attribution)
+  getMe: () => fetchJSON<import('./models').MeResponse>('/users/me'),
+  setMyGitHubToken: (token: string) => putJSON<{ status: string; has_github_token: boolean }>('/users/me/github-token', { token }),
+  clearMyGitHubToken: () => deleteJSON<{ status: string; has_github_token: boolean }>('/users/me/github-token'),
+  testMyGitHubToken: () => postJSON<{ status: string; github_login: string }>('/users/me/github-token/test', {}),
+
+  // Values editor (v1.20)
+  getAddonValuesSchema: (addonName: string) =>
+    fetchJSON<import('./models').AddonValuesSchemaResponse>(
+      `/addons/${encodeURIComponent(addonName)}/values-schema`,
+    ),
+  setAddonValues: (addonName: string, valuesYAML: string) =>
+    putJSON<import('./models').ValuesEditResult>(
+      `/addons/${encodeURIComponent(addonName)}/values`,
+      { values: valuesYAML },
+    ),
+  getClusterAddonValues: (clusterName: string, addonName: string) =>
+    fetchJSON<import('./models').ClusterAddonValuesResponse>(
+      `/clusters/${encodeURIComponent(clusterName)}/addons/${encodeURIComponent(addonName)}/values`,
+    ),
+  setClusterAddonValues: (clusterName: string, addonName: string, valuesYAML: string) =>
+    putJSON<import('./models').ValuesEditResult>(
+      `/clusters/${encodeURIComponent(clusterName)}/addons/${encodeURIComponent(addonName)}/values`,
+      { values: valuesYAML },
+    ),
+
+  // Values editor extras (v1.20.1)
+  pullUpstreamValues: (
+    addonName: string,
+    body?: { version?: string; merge_strategy?: 'replace' | 'merge_keep_overrides' },
+  ) =>
+    postJSON<import('./models').ValuesEditResult & { chart?: string; chart_version?: string }>(
+      `/addons/${encodeURIComponent(addonName)}/values/pull-upstream`,
+      body ?? {},
+    ),
+  getAddonValuesRecentPRs: (addonName: string, limit = 5) =>
+    fetchJSON<import('./models').RecentPRsResponse>(
+      `/addons/${encodeURIComponent(addonName)}/values/recent-prs?limit=${limit}`,
+    ),
+  getClusterAddonValuesRecentPRs: (clusterName: string, addonName: string, limit = 5) =>
+    fetchJSON<import('./models').RecentPRsResponse>(
+      `/clusters/${encodeURIComponent(clusterName)}/addons/${encodeURIComponent(addonName)}/values/recent-prs?limit=${limit}`,
+    ),
+
+  // Catalog editor (v1.20.1) — same endpoint as existing configureAddon() but
+  // a typed wrapper that understands the ValuesEditResult shape with the
+  // attribution_warning field.
+  setAddonCatalog: (
+    addonName: string,
+    body: {
+      version?: string
+      sync_wave?: number
+      self_heal?: boolean
+      sync_options?: string[]
+      ignore_differences?: Record<string, unknown>[]
+      additional_sources?: Record<string, unknown>[]
+      extra_helm_values?: Record<string, string>
+    },
+  ) =>
+    fetchJSONMethod<import('./models').ValuesEditResult>(
+      `/addons/${encodeURIComponent(addonName)}`,
+      'PATCH',
+      { name: addonName, ...body },
+    ),
 
   // Agent Chat
   agentChat: (sessionId: string, message: string, pageContext?: string) => postJSON<{ session_id: string; response: string }>('/agent/chat', { session_id: sessionId, message, page_context: pageContext }),

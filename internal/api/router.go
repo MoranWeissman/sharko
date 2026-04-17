@@ -475,6 +475,19 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("DELETE /api/v1/addons/{name}", srv.handleRemoveAddon)
 	mux.HandleFunc("PATCH /api/v1/addons/{name}", srv.handleConfigureAddon)
 
+	// Values editor (v1.20) — Tier 2 writes + read-side schema/current-values
+	mux.HandleFunc("PUT /api/v1/addons/{name}/values", srv.handleSetAddonValues)
+	mux.HandleFunc("GET /api/v1/addons/{name}/values-schema", srv.handleGetAddonValuesSchema)
+	mux.HandleFunc("PUT /api/v1/clusters/{cluster}/addons/{name}/values", srv.handleSetClusterAddonValues)
+	mux.HandleFunc("GET /api/v1/clusters/{cluster}/addons/{name}/values", srv.handleGetClusterAddonValues)
+
+	// Values editor extras (v1.20.1):
+	//   • Pull upstream chart defaults (Tier 2)
+	//   • Recent merged PRs touching a values file (read)
+	mux.HandleFunc("POST /api/v1/addons/{name}/values/pull-upstream", srv.handlePullUpstreamValues)
+	mux.HandleFunc("GET /api/v1/addons/{name}/values/recent-prs", srv.handleGetAddonValuesRecentPRs)
+	mux.HandleFunc("GET /api/v1/clusters/{cluster}/addons/{name}/values/recent-prs", srv.handleGetClusterAddonValuesRecentPRs)
+
 	// Addon secrets (definition CRUD)
 	mux.HandleFunc("GET /api/v1/addon-secrets", srv.handleListAddonSecrets)
 	mux.HandleFunc("POST /api/v1/addon-secrets", srv.handleCreateAddonSecret)
@@ -586,6 +599,11 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	// User management (admin only)
 	mux.HandleFunc("GET /api/v1/users", srv.handleListUsers)
 	mux.HandleFunc("POST /api/v1/users", srv.handleCreateUser)
+	// /users/me must be registered BEFORE /users/{username} so the literal "me" path wins.
+	mux.HandleFunc("GET /api/v1/users/me", srv.handleGetMe)
+	mux.HandleFunc("PUT /api/v1/users/me/github-token", srv.handleSetMyGitHubToken)
+	mux.HandleFunc("DELETE /api/v1/users/me/github-token", srv.handleClearMyGitHubToken)
+	mux.HandleFunc("POST /api/v1/users/me/github-token/test", srv.handleTestMyGitHubToken)
 	mux.HandleFunc("PUT /api/v1/users/{username}", srv.handleUpdateUser)
 	mux.HandleFunc("DELETE /api/v1/users/{username}", srv.handleDeleteUser)
 	mux.HandleFunc("POST /api/v1/users/{username}/reset-password", srv.handleResetPassword)

@@ -817,3 +817,5 @@ go tool cover -html=coverage.out
 6. Merge after approval
 
 Never push directly to `main`. All changes go through feature branches and pull request review.
+
+Every PR push triggers a Docker build that publishes `ghcr.io/moranweissman/sharko:pr-<NUM>` (and a sha-suffixed variant for traceability) and comments the exact `helm upgrade` command on the PR — use it to test the change against a real cluster before merging. Tags are deleted when the PR is closed.

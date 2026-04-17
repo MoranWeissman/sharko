@@ -47,6 +47,11 @@ type Store struct {
 	users    map[string]*UserAccount
 	passHash map[string]string // username -> bcrypt hash
 
+	// Per-user GitHub PATs, encrypted at rest. See user_tokens.go.
+	// In K8s mode this mirrors the `<username>.github_token` keys in the auth Secret;
+	// in local mode it is in-memory only.
+	userTokens map[string]string // username -> AES-256-GCM ciphertext (base64)
+
 	// API tokens (in-memory)
 	tokens map[string]*APIToken // name -> token
 }
@@ -55,9 +60,10 @@ type Store struct {
 // It tries K8s in-cluster config first, then falls back to env vars.
 func NewStore() *Store {
 	s := &Store{
-		users:    make(map[string]*UserAccount),
-		passHash: make(map[string]string),
-		tokens:   make(map[string]*APIToken),
+		users:      make(map[string]*UserAccount),
+		passHash:   make(map[string]string),
+		userTokens: make(map[string]string),
+		tokens:     make(map[string]*APIToken),
 	}
 
 	// Try K8s mode first
@@ -506,6 +512,7 @@ func (s *Store) reload() error {
 	s.mu.Lock()
 	s.users = users
 	s.passHash = passHash
+	s.hydrateTokensFromSecretData(secret.Data)
 	s.mu.Unlock()
 
 	return nil

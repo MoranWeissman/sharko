@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { Link, useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
   List,
@@ -51,8 +51,9 @@ import { ConfirmationModal } from '@/components/ConfirmationModal';
 import { DetailNavPanel } from '@/components/DetailNavPanel';
 import { DiagnoseModal } from '@/components/DiagnoseModal';
 import { PendingPRsPanel } from '@/components/PendingPRsPanel';
+import { PerClusterAddonOverridesEditor } from '@/components/PerClusterAddonOverridesEditor';
 import { showToast } from '@/components/ToastNotification';
-import type { TrackedPR } from '@/services/models';
+import type { ConnectionsListResponse, TrackedPR } from '@/services/models';
 
 type StatusFilter =
   | 'all'
@@ -128,7 +129,41 @@ export function ClusterDetail() {
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [searchParams, setSearchParams] = useSearchParams();
   const activeSection = searchParams.get('section') || 'overview';
-  const setActiveSection = (s: string) => setSearchParams({ section: s }, { replace: true });
+  // When switching section, preserve other query params (notably ?addon=…
+  // which drives the deep-link scroll + highlight for the addons section).
+  const setActiveSection = (s: string) => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.set('section', s);
+        return next;
+      },
+      { replace: true },
+    );
+  };
+  // Deep-link: /clusters/X?section=addons&addon=Y → scroll to + briefly ring
+  // the addon row. Read once; the useEffect below consumes it.
+  const highlightAddon = searchParams.get('addon') || '';
+  const [highlightedAddon, setHighlightedAddon] = useState<string>('');
+
+  // When the page loads (or the addon query param changes) on the addons
+  // section, turn the highlight on. Fade it out after 2s by clearing the
+  // state — ComparisonRow removes its ring class. We intentionally DON'T
+  // strip the ?addon= from the URL so the browser back-button returns to
+  // the addon-page cleanly.
+  useEffect(() => {
+    if (!highlightAddon) return;
+    if (activeSection !== 'addons') {
+      // Moran landed here with ?addon=X but on a different section; switch
+      // into addons so the highlight can actually run.
+      setActiveSection('addons');
+      return;
+    }
+    setHighlightedAddon(highlightAddon);
+    const t = setTimeout(() => setHighlightedAddon(''), 2000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [highlightAddon, activeSection]);
   const [configDiff, setConfigDiff] = useState<ConfigDiffResponse | null>(null);
   const [configDiffLoading, setConfigDiffLoading] = useState(false);
   const [configDiffError, setConfigDiffError] = useState<string | null>(null);
@@ -136,6 +171,10 @@ export function ClusterDetail() {
   const [configFetched, setConfigFetched] = useState(false);
   const [nodeInfo, setNodeInfo] = useState<{ total: number; ready: number; not_ready: number } | null>(null);
   const [argocdBaseURL, setArgocdBaseURL] = useState<string>('');
+  // Values editor (v1.20) — derive a GitHub deep-link from the active
+  // connection so users can pop into github.com to see the file in context.
+  const [gitRepoBase, setGitRepoBase] = useState<string>('');
+  const [gitDefaultBranch, setGitDefaultBranch] = useState<string>('main');
 
   // Remove cluster
   const [removeModalOpen, setRemoveModalOpen] = useState(false);
@@ -210,11 +249,17 @@ export function ClusterDetail() {
         setNodeInfo(nodes as { total: number; ready: number; not_ready: number });
       }
       if (connections) {
-        const active = connections.connections.find(
-          c => c.name === connections.active_connection || c.is_active
+        const active = (connections as ConnectionsListResponse).connections.find(
+          (c) => c.name === (connections as ConnectionsListResponse).active_connection || c.is_active
         );
         if (active?.argocd_server_url) {
           setArgocdBaseURL(active.argocd_server_url.replace(/\/$/, ''));
+        }
+        if (active?.git_provider === 'github' && active.git_repo_identifier) {
+          setGitRepoBase(`https://github.com/${active.git_repo_identifier}`);
+        }
+        if (active?.gitops?.base_branch) {
+          setGitDefaultBranch(active.gitops.base_branch);
         }
       }
     } catch (e: unknown) {
@@ -1096,6 +1141,7 @@ export function ClusterDetail() {
                         isExpanded={expandedRows.has(addon.addon_name)}
                         onToggleExpand={() => toggleExpanded(addon.addon_name)}
                         argocdBaseURL={argocdBaseURL}
+                        highlighted={highlightedAddon === addon.addon_name}
                       />
                     ))}
                     {filteredAddons.length === 0 && (
@@ -1117,6 +1163,20 @@ export function ClusterDetail() {
           {/* Config section */}
           {activeSection === 'config' && (
             <div className="space-y-6">
+              {/* v1.20 — per-cluster overrides editor (Tier 2) */}
+              <RoleGuard roles={['admin', 'operator']}>
+                <PerClusterAddonOverridesEditor
+                  clusterName={name!}
+                  addons={data.addon_comparisons}
+                  gitRepoBase={gitRepoBase}
+                  gitDefaultBranch={gitDefaultBranch}
+                  onSaved={() => {
+                    // Refresh the diff panel after a successful PR.
+                    setConfigFetched(false);
+                  }}
+                />
+              </RoleGuard>
+
               {configDiffLoading && <LoadingState message="Loading config..." />}
               {configDiffError && (
                 <ErrorState
@@ -1172,12 +1232,24 @@ interface ComparisonRowProps {
   isExpanded: boolean;
   onToggleExpand: () => void;
   argocdBaseURL: string;
+  highlighted?: boolean;
 }
 
-function ComparisonRow({ addon, isExpanded, onToggleExpand, argocdBaseURL }: ComparisonRowProps) {
+function ComparisonRow({ addon, isExpanded, onToggleExpand, argocdBaseURL, highlighted }: ComparisonRowProps) {
   const allIssues = addon.issues;
   const isTruncated = shouldTruncateIssues(allIssues);
   const displayedIssues = isExpanded ? allIssues : allIssues.slice(0, 2);
+  const rowRef = useRef<HTMLTableRowElement>(null);
+
+  // Deep-link effect: when highlighted flips true, scroll into view and
+  // briefly pulse the row. Runs once per highlight flip. The `highlighted`
+  // flag fades to false after 2s in the parent — we deliberately do NOT
+  // apply pointer-events-intercepting styles here so the addon link +
+  // ArgoCD icon stay clickable during and after the highlight window.
+  useEffect(() => {
+    if (!highlighted) return;
+    rowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [highlighted]);
 
   // An app is NOT OK if health is non-healthy OR there are issues
   const hasProblems = allIssues.length > 0
@@ -1188,7 +1260,12 @@ function ComparisonRow({ addon, isExpanded, onToggleExpand, argocdBaseURL }: Com
     || addon.status === 'unknown_state';
 
   return (
-    <tr className="hover:bg-[#d6eeff] dark:hover:bg-gray-700">
+    <tr
+      ref={rowRef}
+      className={`hover:bg-[#d6eeff] dark:hover:bg-gray-700 ${
+        highlighted ? 'ring-2 ring-inset ring-blue-500 bg-blue-50/60 dark:bg-blue-950/30 transition-colors duration-500' : ''
+      }`}
+    >
       <td className="px-4 py-3">
         {addon.status ? (
           <StatusBadge status={addon.status} />
@@ -1198,7 +1275,13 @@ function ComparisonRow({ addon, isExpanded, onToggleExpand, argocdBaseURL }: Com
       </td>
       <td className="px-4 py-3 font-medium text-[#0a2a4a] dark:text-gray-100">
         <div className="flex items-center gap-2">
-          {capitalizeAddonName(addon.addon_name)}
+          <Link
+            to={`/addons/${encodeURIComponent(addon.addon_name)}`}
+            className="hover:text-teal-600 hover:underline dark:hover:text-teal-400"
+            title={`Open ${addon.addon_name} details`}
+          >
+            {capitalizeAddonName(addon.addon_name)}
+          </Link>
           {addon.argocd_application_name && argocdBaseURL && (
             <a
               href={`${argocdBaseURL}/applications/${addon.argocd_application_name}`}

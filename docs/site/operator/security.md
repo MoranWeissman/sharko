@@ -173,3 +173,27 @@ This means the blast radius of a Sharko compromise is limited to the window betw
 - Rotate GitHub PATs and ArgoCD tokens periodically via the Settings UI
 - Do not enable `config.devMode: true` in production — it allows credential fallback via environment variables
 - Set `SHARKO_WEBHOOK_SECRET` when exposing the webhook endpoint to the internet
+
+## Tiered Git Attribution (v1.20+)
+
+Sharko classifies every mutating endpoint as **Tier 1** (operational) or **Tier 2** (configuration) and resolves the Git author accordingly:
+
+| Tier | Examples | Token used | Commit author | Trailer |
+|---|---|---|---|---|
+| **Tier 1** | cluster register/remove, addon enable/disable, addon upgrade, PR refresh, connection CRUD, AI config | Service token | `Sharko Bot` | `Co-authored-by: <user>` |
+| **Tier 2** | edit addon catalog metadata, edit values | Per-user PAT if configured, else service token | The user (per-user PAT) or `Sharko Bot` (fallback) | None (per-user) or `Co-authored-by: <user>` (fallback) |
+| **Personal / Auth / Webhook** | login, set-own-PAT, inbound webhooks | n/a | n/a | n/a |
+
+Each user can configure a personal GitHub PAT under **Settings → My Account**. PATs are stored encrypted at rest with `SHARKO_ENCRYPTION_KEY` (AES-256-GCM, the same key used by the connection store) under the `<username>.github_token` key in the auth Secret.
+
+The audit log records the resolved attribution mode on every mutating entry:
+
+| `attribution_mode` | Meaning |
+|---|---|
+| `service` | Service token used; no human identified on the commit (e.g. webhooks) |
+| `co_author` | Service token used; user listed in `Co-authored-by:` trailer |
+| `per_user` | Per-user PAT used; commit `Author` IS the user |
+
+When a user performs a Tier 2 action without a personal PAT configured, the response includes `attribution_warning: "no_per_user_pat"` and the UI renders a banner pointing to **Settings → My Account**.
+
+For the full design rationale and the V2.x roadmap that builds on this foundation, see `docs/design/2026-04-16-attribution-and-permissions-model.md`.

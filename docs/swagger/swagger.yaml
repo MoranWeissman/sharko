@@ -765,6 +765,56 @@ definitions:
       ref:
         type: string
     type: object
+  internal_api.meResponse:
+    properties:
+      has_github_token:
+        type: boolean
+      role:
+        type: string
+      username:
+        type: string
+    type: object
+  internal_api.pullUpstreamRequest:
+    properties:
+      merge_strategy:
+        description: |-
+          MergeStrategy controls how upstream values are merged into the current
+          values file. "replace" (the only supported strategy for v1.20.1)
+          overwrites the file entirely with upstream defaults. A future
+          "merge_keep_overrides" strategy is tracked as a TODO in the handler.
+        type: string
+      version:
+        description: |-
+          Version is the chart version to pull (e.g. "v1.14.4"). When empty, the
+          handler resolves the addon's currently-configured version from the
+          catalog — the expected default for the "I want to refresh to whatever
+          we're pointing at" workflow.
+        type: string
+    type: object
+  internal_api.recentPRsEntry:
+    properties:
+      author:
+        type: string
+      merged_at:
+        type: string
+      pr_id:
+        type: integer
+      title:
+        type: string
+      url:
+        type: string
+    type: object
+  internal_api.recentPRsResponse:
+    properties:
+      entries:
+        items:
+          $ref: '#/definitions/internal_api.recentPRsEntry'
+        type: array
+      values_file:
+        type: string
+      view_all_url:
+        type: string
+    type: object
   internal_api.saveAIConfigRequest:
     properties:
       api_key:
@@ -776,6 +826,24 @@ definitions:
       ollama_url:
         type: string
       provider:
+        type: string
+    type: object
+  internal_api.setAddonValuesRequest:
+    properties:
+      values:
+        description: |-
+          Values is the full YAML file content. Sharko commits this verbatim
+          as the new global default values for the addon.
+        type: string
+    type: object
+  internal_api.setClusterAddonValuesRequest:
+    properties:
+      values:
+        type: string
+    type: object
+  internal_api.setMyGitHubTokenRequest:
+    properties:
+      token:
         type: string
     type: object
   internal_api.testClusterRequest:
@@ -1228,6 +1296,173 @@ paths:
       security:
       - BearerAuth: []
       summary: Get addon values
+      tags:
+      - addons
+    put:
+      consumes:
+      - application/json
+      description: 'Replaces the global default Helm values YAML for an addon and
+        opens a PR. Tier 2 (configuration) — prefers the caller''s personal GitHub
+        PAT for proper Git authorship; otherwise falls back to the service token with
+        a `Co-authored-by:` trailer and surfaces `attribution_warning: "no_per_user_pat"`
+        in the response.'
+      parameters:
+      - description: Addon name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Full YAML payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_api.setAddonValuesRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: PR created (or merged if auto-merge is on)
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid YAML or missing field
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Addon not found
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Git or ArgoCD failure
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Edit global addon values
+      tags:
+      - addons
+  /addons/{name}/values-schema:
+    get:
+      description: Returns the addon's current global values YAML and an optional
+        JSON Schema (read from `<addon>.schema.json` next to the values file). The
+        schema is omitted when none has been published; the UI then falls back to
+        plain YAML mode.
+      parameters:
+      - description: Addon name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Current values + optional schema
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Git failure
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get addon global values + schema
+      tags:
+      - addons
+  /addons/{name}/values/pull-upstream:
+    post:
+      consumes:
+      - application/json
+      description: Replaces the addon's global Helm values file with the chart's upstream
+        `values.yaml` (comments preserved) wrapped under the `<addonName>:` key. Opens
+        a PR. Tier 2 (configuration) — uses the caller's personal GitHub PAT when
+        configured, otherwise the service token with a `Co-authored-by:` trailer.
+      parameters:
+      - description: Addon name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Pull upstream request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_api.pullUpstreamRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: PR created
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Addon not found
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Helm or Git failure
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Pull upstream chart values.yaml
+      tags:
+      - addons
+  /addons/{name}/values/recent-prs:
+    get:
+      description: Returns up to `limit` (default 5, max 20) recently-merged PRs that
+        modified the addon's global values file. Backed by a 5-minute in-memory cache.
+      parameters:
+      - description: Addon name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Maximum entries (default 5, max 20)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_api.recentPRsResponse'
+      security:
+      - BearerAuth: []
+      summary: Recent PRs that touched an addon's global values
       tags:
       - addons
   /addons/catalog:
@@ -1888,6 +2123,128 @@ paths:
       security:
       - BearerAuth: []
       summary: Register cluster
+      tags:
+      - clusters
+  /clusters/{cluster}/addons/{name}/values:
+    get:
+      description: Returns the YAML for a single addon's section in a cluster's overrides
+        file, plus an optional JSON Schema. `current_overrides` is empty when no overrides
+        are configured for this addon yet.
+      parameters:
+      - description: Cluster name
+        in: path
+        name: cluster
+        required: true
+        type: string
+      - description: Addon name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Current overrides + optional schema
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Git failure
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get per-cluster addon overrides + schema
+      tags:
+      - clusters
+    put:
+      consumes:
+      - application/json
+      description: Replaces the per-cluster overrides YAML for one addon on one cluster
+        and opens a PR. Pass an empty `values` string to remove the addon's overrides
+        entirely. Tier 2 (configuration) — same attribution semantics as the global
+        values endpoint.
+      parameters:
+      - description: Cluster name
+        in: path
+        name: cluster
+        required: true
+        type: string
+      - description: Addon name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Addon-section YAML payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_api.setClusterAddonValuesRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: PR created (or merged if auto-merge is on)
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid YAML or missing field
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Git or ArgoCD failure
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Edit per-cluster addon overrides
+      tags:
+      - clusters
+  /clusters/{cluster}/addons/{name}/values/recent-prs:
+    get:
+      description: Returns up to `limit` (default 5, max 20) recently-merged PRs that
+        modified the cluster overrides file, filtered to the addon name.
+      parameters:
+      - description: Cluster name
+        in: path
+        name: cluster
+        required: true
+        type: string
+      - description: Addon name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Maximum entries (default 5, max 20)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_api.recentPRsResponse'
+      security:
+      - BearerAuth: []
+      summary: Recent PRs that touched per-cluster addon overrides
       tags:
       - clusters
   /clusters/{name}:
@@ -4178,6 +4535,114 @@ paths:
       security:
       - BearerAuth: []
       summary: Reset user password
+      tags:
+      - auth
+  /users/me:
+    get:
+      description: Returns the authenticated caller's profile. `has_github_token`
+        indicates whether a per-user GitHub PAT is configured for tiered attribution.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Current user
+          schema:
+            $ref: '#/definitions/internal_api.meResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get current user profile
+      tags:
+      - auth
+  /users/me/github-token:
+    delete:
+      description: Removes the authenticated user's personal GitHub PAT. After clearing,
+        Tier 2 actions fall back to the service token with a co-author trailer for
+        attribution.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Token cleared
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Clear personal GitHub token
+      tags:
+      - auth
+    put:
+      consumes:
+      - application/json
+      description: Stores an encrypted personal GitHub PAT for the authenticated user.
+        The PAT is preferred over the service token when the user performs Tier 2
+        (configuration) actions, so the resulting Git commit is authored by the user
+        rather than the Sharko service account.
+      parameters:
+      - description: Token payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_api.setMyGitHubTokenRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Token saved
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Set personal GitHub token
+      tags:
+      - auth
+  /users/me/github-token/test:
+    post:
+      description: Validates the authenticated user's stored personal GitHub PAT by
+        calling GitHub's `/user` endpoint. Returns the GitHub login on success.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Token valid
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Token invalid or not set
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Test personal GitHub token
       tags:
       - auth
   /webhooks/git:

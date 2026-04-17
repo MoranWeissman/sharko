@@ -69,6 +69,7 @@ func (s *Server) handleCreateAddonSecret(w http.ResponseWriter, r *http.Request)
 	audit.Enrich(r.Context(), audit.Fields{
 		Event:    "addon_secret_set",
 		Resource: fmt.Sprintf("addon:%s secret:%s", def.AddonName, def.SecretName),
+		Tier:     audit.Tier2,
 	})
 	writeJSON(w, http.StatusCreated, def)
 }
