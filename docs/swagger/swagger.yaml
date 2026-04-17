@@ -787,6 +787,19 @@ definitions:
       provider:
         type: string
     type: object
+  internal_api.setAddonValuesRequest:
+    properties:
+      values:
+        description: |-
+          Values is the full YAML file content. Sharko commits this verbatim
+          as the new global default values for the addon.
+        type: string
+    type: object
+  internal_api.setClusterAddonValuesRequest:
+    properties:
+      values:
+        type: string
+    type: object
   internal_api.setMyGitHubTokenRequest:
     properties:
       token:
@@ -1242,6 +1255,94 @@ paths:
       security:
       - BearerAuth: []
       summary: Get addon values
+      tags:
+      - addons
+    put:
+      consumes:
+      - application/json
+      description: 'Replaces the global default Helm values YAML for an addon and
+        opens a PR. Tier 2 (configuration) — prefers the caller''s personal GitHub
+        PAT for proper Git authorship; otherwise falls back to the service token with
+        a `Co-authored-by:` trailer and surfaces `attribution_warning: "no_per_user_pat"`
+        in the response.'
+      parameters:
+      - description: Addon name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Full YAML payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_api.setAddonValuesRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: PR created (or merged if auto-merge is on)
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid YAML or missing field
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Addon not found
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Git or ArgoCD failure
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Edit global addon values
+      tags:
+      - addons
+  /addons/{name}/values-schema:
+    get:
+      description: Returns the addon's current global values YAML and an optional
+        JSON Schema (read from `<addon>.schema.json` next to the values file). The
+        schema is omitted when none has been published; the UI then falls back to
+        plain YAML mode.
+      parameters:
+      - description: Addon name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Current values + optional schema
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Git failure
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get addon global values + schema
       tags:
       - addons
   /addons/catalog:
@@ -1902,6 +2003,97 @@ paths:
       security:
       - BearerAuth: []
       summary: Register cluster
+      tags:
+      - clusters
+  /clusters/{cluster}/addons/{name}/values:
+    get:
+      description: Returns the YAML for a single addon's section in a cluster's overrides
+        file, plus an optional JSON Schema. `current_overrides` is empty when no overrides
+        are configured for this addon yet.
+      parameters:
+      - description: Cluster name
+        in: path
+        name: cluster
+        required: true
+        type: string
+      - description: Addon name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Current overrides + optional schema
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Git failure
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get per-cluster addon overrides + schema
+      tags:
+      - clusters
+    put:
+      consumes:
+      - application/json
+      description: Replaces the per-cluster overrides YAML for one addon on one cluster
+        and opens a PR. Pass an empty `values` string to remove the addon's overrides
+        entirely. Tier 2 (configuration) — same attribution semantics as the global
+        values endpoint.
+      parameters:
+      - description: Cluster name
+        in: path
+        name: cluster
+        required: true
+        type: string
+      - description: Addon name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Addon-section YAML payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_api.setClusterAddonValuesRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: PR created (or merged if auto-merge is on)
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid YAML or missing field
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Git or ArgoCD failure
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Edit per-cluster addon overrides
       tags:
       - clusters
   /clusters/{name}:

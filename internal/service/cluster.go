@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -491,6 +492,51 @@ func (s *ClusterService) GetClusterValues(ctx context.Context, clusterName strin
 		ClusterName: clusterName,
 		ValuesYAML:  string(data),
 	}, nil
+}
+
+// GetClusterAddonValues extracts the YAML for one addon's section in a
+// cluster's overrides file. CurrentOverrides is the empty string when the
+// cluster file does not exist yet, or when the file exists but does not
+// contain a section for this addon.
+//
+// Schema lookup mirrors AddonService.GetAddonValuesAndSchema — best-effort
+// read of `configuration/addons-global-values/<addon>.schema.json`.
+func (s *ClusterService) GetClusterAddonValues(ctx context.Context, clusterName, addonName string, gp gitprovider.GitProvider) (*models.ClusterAddonValuesResponse, error) {
+	if clusterName == "" {
+		return nil, fmt.Errorf("cluster name is required")
+	}
+	if addonName == "" {
+		return nil, fmt.Errorf("addon name is required")
+	}
+
+	resp := &models.ClusterAddonValuesResponse{
+		ClusterName: clusterName,
+		AddonName:   addonName,
+	}
+
+	clusterPath := fmt.Sprintf("configuration/addons-clusters-values/%s.yaml", clusterName)
+	if data, err := gp.GetFileContent(ctx, clusterPath, "main"); err == nil && len(data) > 0 {
+		root := map[string]interface{}{}
+		if uerr := yaml.Unmarshal(data, &root); uerr != nil {
+			slog.Warn("could not parse cluster overrides file", "cluster", clusterName, "error", uerr)
+		} else if section, ok := root[addonName]; ok {
+			if marshalled, merr := yaml.Marshal(section); merr == nil {
+				resp.CurrentOverrides = string(marshalled)
+			}
+		}
+	}
+
+	schemaPath := fmt.Sprintf("configuration/addons-global-values/%s.schema.json", addonName)
+	if schemaData, err := gp.GetFileContent(ctx, schemaPath, "main"); err == nil && len(schemaData) > 0 {
+		var schema map[string]interface{}
+		if jerr := json.Unmarshal(schemaData, &schema); jerr != nil {
+			slog.Warn("ignoring unparseable values schema", "addon", addonName, "error", jerr)
+		} else {
+			resp.Schema = schema
+		}
+	}
+
+	return resp, nil
 }
 
 func classifyHealth(healthStatus, _ string) string {

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -13,6 +14,17 @@ import (
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/models"
 )
+
+// parseJSONObject decodes data as a JSON object. Used by the values-editor
+// schema lookup where we accept any well-formed JSON object as the schema —
+// validation is the UI's job (monaco-yaml does it client-side).
+func parseJSONObject(data []byte) (map[string]interface{}, error) {
+	var out map[string]interface{}
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
 
 // extractEnvironment returns the environment segment from a cluster name by
 // matching each dash-separated part against the configured environments list.
@@ -377,4 +389,44 @@ func (s *AddonService) GetAddonValues(ctx context.Context, addonName string, gp 
 		AddonName:  addonName,
 		ValuesYAML: string(data),
 	}, nil
+}
+
+// GetAddonValuesAndSchema returns the current global values YAML for an
+// addon plus an optional JSON Schema. The schema is read best-effort from
+// `configuration/addons-global-values/<addonName>.schema.json`; if absent or
+// unparseable, the returned schema is nil and the caller falls back to a
+// plain YAML editor.
+//
+// Unlike GetAddonValues this returns an empty CurrentValues string (rather
+// than an error) when the file does not exist yet, so the editor can still
+// open with a blank document for first-time configuration.
+func (s *AddonService) GetAddonValuesAndSchema(ctx context.Context, addonName string, gp gitprovider.GitProvider) (*models.AddonValuesSchemaResponse, error) {
+	if addonName == "" {
+		return nil, fmt.Errorf("addon name is required")
+	}
+
+	valuesPath := fmt.Sprintf("configuration/addons-global-values/%s.yaml", addonName)
+	current := ""
+	if data, err := gp.GetFileContent(ctx, valuesPath, "main"); err == nil {
+		current = string(data)
+	} else {
+		slog.Info("global values file missing — opening editor blank", "addon", addonName, "path", valuesPath)
+	}
+
+	resp := &models.AddonValuesSchemaResponse{
+		AddonName:     addonName,
+		CurrentValues: current,
+	}
+
+	schemaPath := fmt.Sprintf("configuration/addons-global-values/%s.schema.json", addonName)
+	if schemaData, err := gp.GetFileContent(ctx, schemaPath, "main"); err == nil && len(schemaData) > 0 {
+		schema, perr := parseJSONObject(schemaData)
+		if perr != nil {
+			slog.Warn("ignoring unparseable values schema", "addon", addonName, "error", perr)
+		} else {
+			resp.Schema = schema
+		}
+	}
+
+	return resp, nil
 }

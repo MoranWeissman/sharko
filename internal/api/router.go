@@ -475,6 +475,12 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("DELETE /api/v1/addons/{name}", srv.handleRemoveAddon)
 	mux.HandleFunc("PATCH /api/v1/addons/{name}", srv.handleConfigureAddon)
 
+	// Values editor (v1.20) — Tier 2 writes + read-side schema/current-values
+	mux.HandleFunc("PUT /api/v1/addons/{name}/values", srv.handleSetAddonValues)
+	mux.HandleFunc("GET /api/v1/addons/{name}/values-schema", srv.handleGetAddonValuesSchema)
+	mux.HandleFunc("PUT /api/v1/clusters/{cluster}/addons/{name}/values", srv.handleSetClusterAddonValues)
+	mux.HandleFunc("GET /api/v1/clusters/{cluster}/addons/{name}/values", srv.handleGetClusterAddonValues)
+
 	// Addon secrets (definition CRUD)
 	mux.HandleFunc("GET /api/v1/addon-secrets", srv.handleListAddonSecrets)
 	mux.HandleFunc("POST /api/v1/addon-secrets", srv.handleCreateAddonSecret)

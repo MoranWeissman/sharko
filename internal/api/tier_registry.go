@@ -83,6 +83,10 @@ var HandlerTier = map[string]audit.Tier{
 	"handleCreateAddonSecret":          audit.Tier2,
 	"handleDeleteAddonSecret":          audit.Tier2,
 
+	// Values editor (v1.20) — Tier 2: changes WHAT gets deployed.
+	"handleSetAddonValues":             audit.Tier2,
+	"handleSetClusterAddonValues":      audit.Tier2,
+
 	// ─── Personal: self-service on caller's own profile ─────────────────────
 	"handleUpdatePassword":             audit.TierPersonal,
 

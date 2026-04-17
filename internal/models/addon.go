@@ -122,6 +122,28 @@ type AddonValuesResponse struct {
 	ValuesYAML string `json:"values_yaml"`
 }
 
+// AddonValuesSchemaResponse is the API response for the values editor — the
+// current global values YAML plus an optional parsed JSON Schema fetched
+// from the chart's `values.schema.json`. The schema may be nil when the
+// chart does not publish one (most charts do not); the UI then falls back
+// to plain YAML mode without autocomplete.
+type AddonValuesSchemaResponse struct {
+	AddonName     string                 `json:"addon_name"`
+	CurrentValues string                 `json:"current_values"`
+	Schema        map[string]interface{} `json:"schema,omitempty"`
+}
+
+// ClusterAddonValuesResponse is the API response for the per-cluster
+// overrides editor — the YAML for the addon's section in the cluster's
+// overrides file, plus the same optional schema. CurrentOverrides is the
+// empty string when no overrides exist for this addon yet.
+type ClusterAddonValuesResponse struct {
+	ClusterName      string                 `json:"cluster_name"`
+	AddonName        string                 `json:"addon_name"`
+	CurrentOverrides string                 `json:"current_overrides"`
+	Schema           map[string]interface{} `json:"schema,omitempty"`
+}
+
 // VersionMatrixCell holds version and health info for one addon on one cluster.
 type VersionMatrixCell struct {
 	Version          string `json:"version"`            // Deployed or configured version
