@@ -38,6 +38,7 @@ nav:
     - Managing Connections: user-guide/connections.md
     - Managing Clusters: user-guide/clusters.md
     - Managing Addons: user-guide/addons.md
+    - Editing Values: user-guide/values-editing.md
     - Upgrades: user-guide/upgrades.md
     - Notifications: user-guide/notifications.md
     - Git Attribution: user-guide/attribution.md
