@@ -46,6 +46,7 @@ internal/advisories/ Chart security & release advisory data (ArtifactHub primary
 - **PR-only Git flow**: every Git change creates a PR, optional auto-merge
 - **Provider interface**: `ClusterCredentialsProvider` abstracts K8s/AWS/mock backends
 - **Partial success**: batch operations return 207 with per-item results
+- **Audit middleware + Enrich**: `auditMiddleware` in `internal/api/audit_middleware.go` auto-emits one audit entry per mutating request; handlers call `audit.Enrich(ctx, audit.Fields{Event, Resource, Detail})` to attach semantic data before the middleware fires
 
 ## Reference Documents
 - `docs/design/IMPLEMENTATION-PLAN-V1.md` — v1.0.0 phases

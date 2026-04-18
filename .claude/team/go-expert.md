@@ -565,6 +565,23 @@ store.go      — In-memory notification store with read/unread state,
 - `platform.Detect()` — returns ModeKubernetes or default
 - Line-level YAML mutation in `internal/gitops/yaml_mutator.go` — preserves comments
 
+## Audit Enrichment Pattern
+
+Every mutating handler (`POST`/`PUT`/`PATCH`/`DELETE`) must call `audit.Enrich` near the top. `auditMiddleware` (`internal/api/audit_middleware.go`) reads these fields after the handler returns and emits ONE audit entry per request.
+
+```go
+func (s *Server) handleDoSomething(w http.ResponseWriter, r *http.Request) {
+    audit.Enrich(r.Context(), audit.Fields{
+        Event:    "thing_done",           // snake_case event name
+        Resource: "thing:" + name,        // domain:identifier
+        Detail:   "extra context",        // optional, omitempty
+    })
+    // ... handler body ...
+}
+```
+
+CI fails if any mutating handler in `internal/api/` lacks `audit.Enrich(` — enforced by `internal/api/audit_coverage_test.go`. To exempt a handler (e.g., a side-effect-free POST like a test or diagnose endpoint), add it to the allowlist in that file with a justification comment.
+
 ## Write Rate Limiting
 
 Write endpoints (admin, POST/DELETE/PATCH) are rate-limited to **30 requests/minute** per IP.

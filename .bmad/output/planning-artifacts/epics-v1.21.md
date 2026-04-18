@@ -300,9 +300,17 @@ No requirement is uncovered.
 
 ## Epic V121-1: Catalog Foundation
 
+**Status:** in-progress (V121-1.1 → V121-1.5 implemented on `dev/v1.21`).
+
 Ship the embedded catalog and its read-only surface — loader, schema, search index, curated APIs, and daily Scorecard refresh.
 
-### Story V121-1.1: Ship `catalog/addons.yaml` + `catalog/schema.json` + embed hook
+**Implementation notes (filled in during dev/v1.21):**
+
+- Embed lives in a top-level `catalog` Go package (`catalog/embed.go`) holding `//go:embed addons.yaml` + `//go:embed schema.json`. The story text said "from `internal/catalog/embed.go`", which is impossible — Go's embed paths must be relative to the package directory, and the YAML lives at the repo root. The loader/search/scorecard live in `internal/catalog` and consume the bytes via `catalog.AddonsYAML()`. Net effect matches the design's intent (single canonical YAML at repo root, no runtime FS reads).
+- JSON Schema validation is done in pure Go in `internal/catalog/loader.go` rather than via a JSON Schema library — no new dependency, identical guarantees for the fields we care about (required keys, closed enums, value bounds). The shipped `catalog/schema.json` remains the contract for the future `catalog-validate` CI workflow (Epic V121-8) and external tooling.
+- The `repo` field accepts `oci://` URLs in addition to `http(s)://` — Karpenter is shipped as `oci://public.ecr.aws/karpenter`, which is a valid Helm 3.8+ source. Schema + loader updated to match.
+
+### Story V121-1.1: Ship `catalog/addons.yaml` + `catalog/schema.json` + embed hook  `[done]`
 
 As a **Sharko maintainer**,
 I want the ~50-entry curated catalog and its JSON Schema to live in the repo and be embedded in the binary,
@@ -335,7 +343,7 @@ So that the Sharko server ships with a self-contained curated list and cannot dr
 
 ---
 
-### Story V121-1.2: Loader with startup validation + tolerate-unknown
+### Story V121-1.2: Loader with startup validation + tolerate-unknown  `[done]`
 
 As a **Sharko server**,
 I want to parse the embedded catalog YAML into typed structs at startup and fail fast on schema violations,
@@ -365,7 +373,7 @@ So that a malformed catalog cannot silently produce a broken marketplace.
 
 ---
 
-### Story V121-1.3: In-memory search index + filter predicate
+### Story V121-1.3: In-memory search index + filter predicate  `[done]`
 
 As a **Sharko server**,
 I want an in-memory index over curated entries supporting name/description/maintainers full-text and category / `curated_by` / min-score / min-K8s-version filters,
@@ -395,7 +403,7 @@ So that the API can serve Browse tab queries with no database.
 
 ---
 
-### Story V121-1.4: `GET /api/v1/catalog/addons` + `GET /api/v1/catalog/addons/{name}`
+### Story V121-1.4: `GET /api/v1/catalog/addons` + `GET /api/v1/catalog/addons/{name}`  `[done]`
 
 As an **API consumer**,
 I want to list and fetch curated catalog entries via REST,
@@ -430,7 +438,7 @@ So that the UI and CLI have a stable contract for the Browse tab.
 
 ---
 
-### Story V121-1.5: Daily OpenSSF Scorecard refresh job + Prometheus metrics
+### Story V121-1.5: Daily OpenSSF Scorecard refresh job + Prometheus metrics  `[done]`
 
 As a **Sharko operator**,
 I want each catalog entry's Scorecard aggregate score refreshed daily at 04:00 UTC and exposed via Prometheus,
@@ -802,6 +810,8 @@ So that I can find any chart, not just curated ones.
 
 The power-user tab.
 
+**Locked decision (2026-04-19, Moran):** Epic V121-4 stays as its own epic — kept separate from Epic V121-2 so it can ship even if ArtifactHub work is blocked.
+
 ### Story V121-4.1: Paste URL tab with live `index.yaml` validation
 
 As a **power user**,
@@ -837,6 +847,8 @@ So that I can add charts that aren't on ArtifactHub.
 ## Epic V121-5: Add Flow — Tier 2 PR via Existing Endpoint
 
 Wire Submit to the existing `POST /api/v1/addons` through v1.20 tiered-Git.
+
+**Locked decision (2026-04-19, Moran):** Story V121-5.2's audit event reuses the existing `addon_added` event name and adds a `source: marketplace` detail field — no new event name. Keeps the audit log filterable by the existing event vocabulary.
 
 ### Story V121-5.1: Duplicate-guard on Submit
 
@@ -877,7 +889,7 @@ So that attribution and audit behave identically to v1.20's other Tier 2 writes.
 
 **Given** the handler runs
 **When** the audit middleware emits
-**Then** the event name is `addon_added_from_catalog` (or existing `addon_added` event extended with detail), and `TestAuditCoverage` passes with this handler included.
+**Then** the event name is the existing `addon_added` event with a new `source: marketplace` field added to the audit detail (LOCKED 2026-04-19, Moran — no new event name), and `TestAuditCoverage` passes with this handler included.
 
 **Given** the handler runs
 **Then** `TestTierCoverage` (`internal/api/pattern_tier.go`) classifies the route as Tier 2 (matches existing v1.20 registration).
@@ -1015,6 +1027,8 @@ So that the version-mismatch detector and the `sharko: managed=true` signal work
 
 ### Story V121-6.4: Version-mismatch detection + Values tab banner
 
+**Locked decision (2026-04-19, Moran):** the "Refresh now" action extends the existing values PUT endpoint with a `refresh_from_upstream: true` flag — no new endpoint. Reuses v1.20's audit + tier wiring on the same handler so we don't fragment the values-edit surface.
+
 As an **operator looking at Values**,
 I want a banner when my catalog version is ahead of the generated file,
 So that I know to refresh.
@@ -1026,7 +1040,7 @@ So that I know to refresh.
 **Then** a banner reads: "Chart upgraded to v1.20.2 — values were generated for v1.19.0. Refresh values from upstream?" with `[Refresh now]` and `[Dismiss]` buttons.
 
 **Given** I click "Refresh now"
-**Then** the UI calls a new `POST /api/v1/addons/{name}/values/refresh` (or reuses existing refresh endpoint, implementer's choice) which regenerates via Stories V121-6.1/2/3 and opens a **Tier 2 PR** rewriting `addons-global-values/<addon>.yaml`.
+**Then** the UI calls the existing `PUT /api/v1/addons/{name}/values` with `{"refresh_from_upstream": true}` in the body (no new endpoint), which regenerates via Stories V121-6.1/2/3 and opens a **Tier 2 PR** rewriting `addons-global-values/<addon>.yaml`.
 
 **Given** the regeneration preserves existing per-cluster files in `configuration/addons-clusters-values/<cluster>.yaml`
 **Then** no per-cluster file is modified.
@@ -1035,8 +1049,9 @@ So that I know to refresh.
 **Then** the banner is suppressed.
 
 **Technical notes:**
-- Files: `internal/api/values_refresh.go`, `ui/src/components/ValuesEditor.tsx` (banner).
-- Tier 2 registration in `internal/api/pattern_tier.go`; audit enrich event `values_refreshed_from_upstream`.
+- Backend: extend the existing `PUT /api/v1/addons/{name}/values` handler (`handleSetAddonValues` in `internal/api/values_editor.go`) to accept a `refresh_from_upstream` flag in the request body. When true, ignore any client-provided `values` and regenerate via Stories V121-6.1/2/3. No new file, no new route, no new tier registration — the handler is already Tier 2.
+- Audit enrich: when `refresh_from_upstream` is true, the existing handler should emit `event: values_refreshed_from_upstream` (overriding the default `values_set` event for the refresh path) so audit consumers can distinguish manual edits from upstream refreshes.
+- Frontend: `ui/src/components/ValuesEditor.tsx` (banner + Refresh now button hooked to the same `setAddonValues` API call with the new flag).
 
 **Role file:** `.claude/team/go-expert.md` + `.claude/team/frontend-expert.md`.
 **Effort:** M.

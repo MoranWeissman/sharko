@@ -819,3 +819,34 @@ go tool cover -html=coverage.out
 Never push directly to `main`. All changes go through feature branches and pull request review.
 
 Every PR push triggers a Docker build that publishes `ghcr.io/moranweissman/sharko:pr-<NUM>` (and a sha-suffixed variant for traceability) and comments the exact `helm upgrade` command on the PR — use it to test the change against a real cluster before merging. Tags are deleted when the PR is closed.
+
+---
+
+## Curated Catalog (v1.21)
+
+The Sharko binary ships an embedded curated addon catalog used by the Marketplace UI's Browse tab.
+
+### Files
+
+- `catalog/addons.yaml` — single YAML file with the curated entry list (one stanza per addon under `addons:`).
+- `catalog/schema.json` — JSON Schema reference for the entry shape (also used by the `catalog-validate` CI workflow once it lands in v1.21 Epic 8).
+- `catalog/embed.go` — top-level `catalog` Go package that holds the `//go:embed` directives. Exposes `catalog.AddonsYAML()` and `catalog.SchemaJSON()` helpers that return copies of the embedded bytes.
+- `internal/catalog/loader.go` — parses + validates the YAML at startup. Strict on required fields and on the closed enums for `category` / `curated_by`; tolerant of unknown fields so older binaries can parse newer catalogs (forward compatibility per design §4.2).
+- `internal/catalog/search.go` — in-memory filter predicate: free-text on name/description/maintainers, plus filters for `category`, `curated_by` (AND match), `license`, `min_score`, `min_k8s_version`, `include_deprecated`.
+- `internal/catalog/scorecard.go` — daily background goroutine that calls `https://api.scorecard.dev/projects/github.com/<owner>/<repo>` for every entry whose `source_url` is on GitHub and updates the in-memory `security_score`. Failures are non-fatal; entries keep their last-known score.
+
+### REST API
+
+Both endpoints are read-only, require authentication, and have full swaggo annotations (regenerate with `swag init -g cmd/sharko/serve.go -o docs/swagger --parseDependency --parseInternal`):
+
+- `GET /api/v1/catalog/addons` — list with optional filters: `category`, `curated_by` (comma-separated AND), `license`, `q`, `min_score`, `min_k8s_version`, `include_deprecated`.
+- `GET /api/v1/catalog/addons/{name}` — single entry with derived `security_tier` label (Strong / Moderate / Weak) and `security_score_updated` date.
+
+### Adding an entry
+
+1. Edit `catalog/addons.yaml` and append a stanza under `addons:` matching the schema in `catalog/schema.json`. Required fields: `name`, `description`, `chart`, `repo`, `default_namespace`, `maintainers`, `license`, `category`, `curated_by`. The closed enums for `category` and `curated_by` are listed in the schema.
+2. Run `go test ./internal/catalog/...` — `TestLoad_Embedded` will catch any structural error and name the offending entry.
+3. Run `go test ./...` to confirm full backend health.
+4. Open a PR. CODEOWNERS gates `catalog/**` to the maintainer.
+
+The catalog is metadata-only — Sharko does not host or proxy Helm charts. ArgoCD pulls charts from the upstream `repo` URL at deploy time. Air-gap is the operator's infrastructure problem (typically solved by running an internal Helm mirror and pointing the user's `addons-catalog.yaml` at it).
