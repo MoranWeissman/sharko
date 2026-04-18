@@ -1,5 +1,64 @@
 basePath: /api/v1
 definitions:
+  github_com_MoranWeissman_sharko_internal_catalog.CatalogEntry:
+    properties:
+      category:
+        type: string
+      chart:
+        type: string
+      curated_by:
+        items:
+          type: string
+        type: array
+      default_namespace:
+        type: string
+      default_sync_wave:
+        type: integer
+      deprecated:
+        type: boolean
+      description:
+        type: string
+      docs_url:
+        type: string
+      github_stars:
+        type: integer
+      homepage:
+        type: string
+      license:
+        type: string
+      maintainers:
+        items:
+          type: string
+        type: array
+      min_kubernetes_version:
+        type: string
+      name:
+        type: string
+      repo:
+        type: string
+      security_score:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_catalog.ScoreValue'
+      security_score_updated:
+        type: string
+      security_tier:
+        description: |-
+          SecurityTier is derived from SecurityScore by the API layer (Strong /
+          Moderate / Weak / unknown) and is never read from YAML.
+        type: string
+      source_url:
+        type: string
+      superseded_by:
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_catalog.ScoreValue:
+    properties:
+      known:
+        type: boolean
+      value:
+        description: 0 when Known is false
+        format: float64
+        type: number
+    type: object
   github_com_MoranWeissman_sharko_internal_diagnose.DiagnosticReport:
     properties:
       identity:
@@ -665,6 +724,15 @@ definitions:
         type: string
       name:
         type: string
+    type: object
+  internal_api.catalogListResponse:
+    properties:
+      addons:
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_catalog.CatalogEntry'
+        type: array
+      total:
+        type: integer
     type: object
   internal_api.discoverEKSRequest:
     properties:
@@ -2031,6 +2099,93 @@ paths:
       summary: Update password
       tags:
       - auth
+  /catalog/addons:
+    get:
+      description: Returns the Sharko-native curated catalog of addons that ships
+        embedded in the binary. The list is filterable by category, curated_by tag,
+        license, minimum OpenSSF Scorecard score, and by free-text over name/description/maintainers.
+        Read-only; requires authentication.
+      parameters:
+      - description: Primary category (e.g. security, observability)
+        in: query
+        name: category
+        type: string
+      - description: Comma-separated curation tags; entry must carry ALL tags
+        in: query
+        name: curated_by
+        type: string
+      - description: SPDX license identifier (exact match, case-insensitive)
+        in: query
+        name: license
+        type: string
+      - description: Free-text substring match on name/description/maintainers
+        in: query
+        name: q
+        type: string
+      - description: Minimum OpenSSF Scorecard aggregate score (0-10); entries with
+          unknown score are excluded when > 0
+        in: query
+        name: min_score
+        type: number
+      - description: Caller's Kubernetes version; entries requiring a newer cluster
+          are excluded
+        in: query
+        name: min_k8s_version
+        type: string
+      - description: Include deprecated entries (default false)
+        in: query
+        name: include_deprecated
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Filtered curated catalog
+          schema:
+            $ref: '#/definitions/internal_api.catalogListResponse'
+        "503":
+          description: Catalog not loaded
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List curated catalog addons
+      tags:
+      - catalog
+  /catalog/addons/{name}:
+    get:
+      description: Returns the full curated catalog entry for a single addon, including
+        its OpenSSF Scorecard security score + derived tier label (Strong / Moderate
+        / Weak) and last-refresh date. Read-only; requires authentication.
+      parameters:
+      - description: Addon name (case-sensitive, matches catalog.name)
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Curated catalog entry
+          schema:
+            $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_catalog.CatalogEntry'
+        "404":
+          description: Addon not found in curated catalog
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Catalog not loaded
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get a curated catalog addon by name
+      tags:
+      - catalog
   /cluster/nodes:
     get:
       description: Returns Kubernetes node capacity, allocatable resources, and readiness

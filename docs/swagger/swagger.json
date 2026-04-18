@@ -1698,6 +1698,130 @@
                 }
             }
         },
+        "/catalog/addons": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the Sharko-native curated catalog of addons that ships embedded in the binary. The list is filterable by category, curated_by tag, license, minimum OpenSSF Scorecard score, and by free-text over name/description/maintainers. Read-only; requires authentication.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "List curated catalog addons",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Primary category (e.g. security, observability)",
+                        "name": "category",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated curation tags; entry must carry ALL tags",
+                        "name": "curated_by",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "SPDX license identifier (exact match, case-insensitive)",
+                        "name": "license",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Free-text substring match on name/description/maintainers",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "number",
+                        "description": "Minimum OpenSSF Scorecard aggregate score (0-10); entries with unknown score are excluded when \u003e 0",
+                        "name": "min_score",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Caller's Kubernetes version; entries requiring a newer cluster are excluded",
+                        "name": "min_k8s_version",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Include deprecated entries (default false)",
+                        "name": "include_deprecated",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Filtered curated catalog",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.catalogListResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Catalog not loaded",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/catalog/addons/{name}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the full curated catalog entry for a single addon, including its OpenSSF Scorecard security score + derived tier label (Strong / Moderate / Weak) and last-refresh date. Read-only; requires authentication.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "Get a curated catalog addon by name",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Addon name (case-sensitive, matches catalog.name)",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Curated catalog entry",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.CatalogEntry"
+                        }
+                    },
+                    "404": {
+                        "description": "Addon not found in curated catalog",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "Catalog not loaded",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/cluster/nodes": {
             "get": {
                 "security": [
@@ -5651,6 +5775,91 @@
         }
     },
     "definitions": {
+        "github_com_MoranWeissman_sharko_internal_catalog.CatalogEntry": {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "string"
+                },
+                "chart": {
+                    "type": "string"
+                },
+                "curated_by": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "default_namespace": {
+                    "type": "string"
+                },
+                "default_sync_wave": {
+                    "type": "integer"
+                },
+                "deprecated": {
+                    "type": "boolean"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "docs_url": {
+                    "type": "string"
+                },
+                "github_stars": {
+                    "type": "integer"
+                },
+                "homepage": {
+                    "type": "string"
+                },
+                "license": {
+                    "type": "string"
+                },
+                "maintainers": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "min_kubernetes_version": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "repo": {
+                    "type": "string"
+                },
+                "security_score": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.ScoreValue"
+                },
+                "security_score_updated": {
+                    "type": "string"
+                },
+                "security_tier": {
+                    "description": "SecurityTier is derived from SecurityScore by the API layer (Strong /\nModerate / Weak / unknown) and is never read from YAML.",
+                    "type": "string"
+                },
+                "source_url": {
+                    "type": "string"
+                },
+                "superseded_by": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_catalog.ScoreValue": {
+            "type": "object",
+            "properties": {
+                "known": {
+                    "type": "boolean"
+                },
+                "value": {
+                    "description": "0 when Known is false",
+                    "type": "number",
+                    "format": "float64"
+                }
+            }
+        },
         "github_com_MoranWeissman_sharko_internal_diagnose.DiagnosticReport": {
             "type": "object",
             "properties": {
@@ -6630,6 +6839,20 @@
                 },
                 "name": {
                     "type": "string"
+                }
+            }
+        },
+        "internal_api.catalogListResponse": {
+            "type": "object",
+            "properties": {
+                "addons": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.CatalogEntry"
+                    }
+                },
+                "total": {
+                    "type": "integer"
                 }
             }
         },

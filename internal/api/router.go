@@ -23,6 +23,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/auth"
+	"github.com/MoranWeissman/sharko/internal/catalog"
 	"github.com/MoranWeissman/sharko/internal/config"
 	_ "github.com/MoranWeissman/sharko/docs/swagger" // swagger docs
 	"github.com/MoranWeissman/sharko/internal/metrics"
@@ -117,6 +118,11 @@ type Server struct {
 
 	// version is set at startup via SetVersion and reflects the ldflags-injected build version.
 	version string
+
+	// catalog holds the curated addon catalog parsed from the embedded YAML
+	// at server startup (see internal/catalog). Optional — handlers that
+	// depend on it return 503 when nil.
+	catalog *catalog.Catalog
 }
 
 // NewServer creates a new API server.
@@ -512,6 +518,13 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("POST /api/v1/providers/test", srv.handleTestProvider)
 	mux.HandleFunc("POST /api/v1/providers/test-config", srv.handleTestProviderConfig)
 	mux.HandleFunc("GET /api/v1/config", srv.handleGetConfig)
+
+	// Curated catalog (v1.21) — embedded marketplace metadata, read-only.
+	// Scope: the Sharko-native curated addon list (catalog/addons.yaml)
+	// distinct from /api/v1/addons/catalog which surfaces the USER's deployed
+	// addons for their connected GitOps repo.
+	mux.HandleFunc("GET /api/v1/catalog/addons", srv.handleListCatalogAddons)
+	mux.HandleFunc("GET /api/v1/catalog/addons/{name}", srv.handleGetCatalogAddon)
 
 	// Addons (read)
 	mux.HandleFunc("GET /api/v1/addons/list", srv.handleListAddons)
