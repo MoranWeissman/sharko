@@ -132,6 +132,35 @@ var (
 	})
 )
 
+// Catalog / OpenSSF Scorecard metrics (v1.21).
+var (
+	ScorecardRefreshTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "sharko_scorecard_refresh_total",
+		Help: "OpenSSF Scorecard refresh operations by outcome",
+	}, []string{"status"})
+
+	ScorecardLastRefresh = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "sharko_scorecard_last_refresh_timestamp",
+		Help: "Unix timestamp of last Scorecard refresh cycle",
+	})
+)
+
+// ScorecardMetricsAdapter implements internal/catalog.ScorecardMetrics against
+// the Prometheus counters declared above. Use this when wiring the Scheduler
+// from serve.go.
+type ScorecardMetricsAdapter struct{}
+
+func (ScorecardMetricsAdapter) IncRefreshTotal(status string, delta int) {
+	if delta <= 0 {
+		return
+	}
+	ScorecardRefreshTotal.WithLabelValues(status).Add(float64(delta))
+}
+
+func (ScorecardMetricsAdapter) SetLastRefreshTimestamp(ts time.Time) {
+	ScorecardLastRefresh.Set(float64(ts.Unix()))
+}
+
 // RecordHTTPRequest is a convenience function to record an HTTP request in
 // both the request counter and the duration histogram.
 func RecordHTTPRequest(method, path string, status int, duration time.Duration) {
