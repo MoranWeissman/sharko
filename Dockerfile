@@ -13,6 +13,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd/ cmd/
 COPY internal/ internal/
+COPY catalog/ catalog/
 COPY templates/ templates/
 COPY docs/swagger/ docs/swagger/
 # ARG CACHE_BUST must appear after COPY and before go build so that:
