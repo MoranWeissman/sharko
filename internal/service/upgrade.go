@@ -422,12 +422,22 @@ func (s *UpgradeService) GetRecommendations(ctx context.Context, addonName strin
 
 	// Iterate over all versions and compute recommendations.
 	// chartVersions is sorted latest-first by the Helm repo index.
+	//
+	// Root-cause fix (v1.21 QA Bundle 4, Fix #7 — downgrade as "latest"):
+	// every candidate slot must be STRICTLY GREATER than the current
+	// version. Without this guard the maintainer reported seeing
+	// `velero@12.0.0` recommend "latest stable 11.4.0" — a downgrade
+	// dressed up as a recommendation, because `latestStable` used to be
+	// "first stable seen" regardless of how it compared to current.
+	// `latestStable` is now "highest stable that is also newer than
+	// current"; if no such version exists the slot stays empty.
 	var (
 		nextPatch    string
 		nextPatchP   semverParts
 		nextMinor    string
 		nextMinorP   semverParts
 		latestStable string
+		latestStableP semverParts
 	)
 
 	for _, cv := range chartVersions {
@@ -440,14 +450,23 @@ func (s *UpgradeService) GetRecommendations(ctx context.Context, addonName strin
 		if p.pre != "" {
 			continue
 		}
-		// Skip current version itself
+		// Skip the current version itself.
 		if p.major == cur.major && p.minor == cur.minor && p.patch == cur.patch {
 			continue
 		}
 
-		// Latest stable: first (highest) stable version seen
-		if latestStable == "" {
+		// Skip anything that's not strictly newer than current — never
+		// recommend a downgrade.
+		if !semverGreater(p, cur) {
+			continue
+		}
+
+		// Latest stable: highest version overall (we take the first one
+		// because the list is sorted latest-first AND we already enforced
+		// "strictly newer than current").
+		if latestStable == "" || semverGreater(p, latestStableP) {
 			latestStable = v
+			latestStableP = p
 		}
 
 		// Next patch: same major.minor, higher patch
@@ -470,7 +489,8 @@ func (s *UpgradeService) GetRecommendations(ctx context.Context, addonName strin
 
 	// Compute nextMajorVer: latest stable version in the smallest major > cur.major.
 	// We scan all versions to find the smallest such major, then pick the highest
-	// stable patch within it.
+	// stable patch within it. By construction this is always strictly newer than
+	// current, so no extra downgrade filter is needed here.
 	var (
 		nextMajorVer  string
 		nextMajorVerP semverParts
@@ -514,7 +534,38 @@ func (s *UpgradeService) GetRecommendations(ctx context.Context, addonName strin
 	// Build security-aware cards.
 	rec.Cards, rec.Recommended = buildCards(cur, nextPatch, nextMinor, nextMajorVer, latestStable, advisoryMap)
 
+	// Fix #7 (v1.21 QA Bundle 4): when none of the candidate slots
+	// produced a card and we've seen at least one stable version that is
+	// not newer than current, mark the addon as "on latest". The UI uses
+	// this to render an explicit reassurance banner instead of silently
+	// hiding an empty panel (which previously surfaced a downgrade).
+	if len(rec.Cards) == 0 {
+		hasStable := false
+		for _, cv := range chartVersions {
+			if p, ok := parseSemver(cv.Version); ok && p.pre == "" {
+				hasStable = true
+				break
+			}
+		}
+		if hasStable {
+			rec.OnLatest = true
+		}
+	}
+
 	return rec, nil
+}
+
+// semverGreater returns true when a > b in semver order. Prerelease tags
+// are not compared here — callers strip pre-release versions out before
+// they get to this function.
+func semverGreater(a, b semverParts) bool {
+	if a.major != b.major {
+		return a.major > b.major
+	}
+	if a.minor != b.minor {
+		return a.minor > b.minor
+	}
+	return a.patch > b.patch
 }
 
 // fetchAdvisoryMap retrieves advisory data and returns a map of version → Advisory.
@@ -538,32 +589,59 @@ func (s *UpgradeService) fetchAdvisoryMap(ctx context.Context, repoURL, chart st
 
 // buildCards constructs RecommendationCards from the semver candidates and advisory map,
 // then selects the recommended card. Returns (cards, recommendedVersion).
+//
+// Defensive guard (v1.21 QA Bundle 4, Fix #7): each candidate version is
+// double-checked against `cur` and dropped if it isn't strictly greater.
+// The upstream selection logic in GetRecommendations already filters
+// downgrades out, but this layer is the final emit point for the UI cards
+// — keeping the filter here prevents future regressions from a caller
+// supplying a stale-cached `latestVer` string that points behind `cur`.
 func buildCards(cur semverParts, patchVer, minorVer, nextMajorVer, latestVer string, advMap map[string]advisories.Advisory) ([]models.RecommendationCard, string) {
 	type candidate struct {
 		label   string
 		version string
 	}
 
+	addIfNewer := func(c candidate) (candidate, bool) {
+		if c.version == "" {
+			return c, false
+		}
+		p, ok := parseSemver(c.version)
+		if !ok {
+			return c, false
+		}
+		if !semverGreater(p, cur) {
+			return c, false
+		}
+		return c, true
+	}
+
 	// Deduplicate: skip in-major if it equals patch, skip latest if same as in-major or same major as current.
 	var candidates []candidate
 
-	if patchVer != "" {
-		candidates = append(candidates, candidate{"Patch", patchVer})
+	if c, ok := addIfNewer(candidate{"Patch", patchVer}); ok {
+		candidates = append(candidates, c)
 	}
 	if minorVer != "" && minorVer != patchVer {
-		candidates = append(candidates, candidate{fmt.Sprintf("Latest in %d.x", cur.major), minorVer})
+		if c, ok := addIfNewer(candidate{fmt.Sprintf("Latest in %d.x", cur.major), minorVer}); ok {
+			candidates = append(candidates, c)
+		}
 	}
 	if nextMajorVer != "" {
 		p, ok := parseSemver(nextMajorVer)
 		// Only add if it's not the same as what we'd already show
 		if ok && nextMajorVer != minorVer && nextMajorVer != patchVer && nextMajorVer != latestVer {
-			candidates = append(candidates, candidate{fmt.Sprintf("Latest in %d.x", p.major), nextMajorVer})
+			if c, okNew := addIfNewer(candidate{fmt.Sprintf("Latest in %d.x", p.major), nextMajorVer}); okNew {
+				candidates = append(candidates, c)
+			}
 		}
 	}
 	if latestVer != "" {
 		p, ok := parseSemver(latestVer)
 		if ok && p.major != cur.major && latestVer != minorVer && latestVer != patchVer {
-			candidates = append(candidates, candidate{"Latest Stable", latestVer})
+			if c, okNew := addIfNewer(candidate{"Latest Stable", latestVer}); okNew {
+				candidates = append(candidates, c)
+			}
 		}
 	}
 

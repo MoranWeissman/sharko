@@ -72,6 +72,19 @@ type UpgradeRecommendations struct {
 	Cards []RecommendationCard `json:"cards,omitempty"`
 	// Recommended is the version string of the card that Sharko considers the best upgrade path.
 	Recommended string `json:"recommended,omitempty"`
+
+	// OnLatest is true when the addon's current version is greater than or
+	// equal to every stable version available in the chart repo. The UI uses
+	// this to render a "✓ You're on the latest stable" message instead of
+	// hiding the panel (which would look broken).
+	//
+	// v1.21 QA Bundle 4 (Fix #7): the previous logic could surface a
+	// "Latest stable X.Y.Z" card with X.Y.Z < current, which was a
+	// downgrade dressed up as a recommendation. Recommendations are now
+	// filtered to "strictly newer than current"; OnLatest captures the
+	// case where the filter empties the list because there is nothing
+	// newer.
+	OnLatest bool `json:"on_latest,omitempty"`
 }
 
 // RecommendationCard is a single upgrade option with security and breaking-change metadata.
