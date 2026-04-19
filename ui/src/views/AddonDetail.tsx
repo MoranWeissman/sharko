@@ -2137,6 +2137,10 @@ export function AddonDetail() {
                     }
                     return result
                   }}
+                  // v1.21 QA Bundle 4 Fix #4: additive merge. The editor
+                  // owns the modal and the apply-through-onSubmit path;
+                  // we just plug in the preview API call.
+                  onPreviewMerge={() => api.previewMergeAddonValues(addon.addon_name)}
                   belowEditor={({ refreshKey }) => (
                     <RecentPRsPanel
                       title="Recent changes (last 5)"

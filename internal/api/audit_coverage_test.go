@@ -46,6 +46,11 @@ var auditAllowlist = map[string]string{
 	// Read-like POSTs — these are queries/analysis that don't mutate state.
 	"handleGetAISummary":  "read-only analysis endpoint; POST because it accepts a large body",
 	"handleTestAIConfig":  "test-only endpoint that does not persist changes; not a mutating action",
+
+	// v1.21 QA Bundle 4 (Fix #4): preview-merge returns a candidate body
+	// for the UI diff — it does not write Git. POST is used so the body
+	// can grow optional knobs in the future.
+	"handlePreviewMergeAddonValues": "read-only diff preview; commit happens through PUT /addons/{name}/values",
 }
 
 // mutatingMethods is the set of HTTP methods we treat as mutating.

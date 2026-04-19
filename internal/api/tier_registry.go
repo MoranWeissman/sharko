@@ -99,6 +99,13 @@ var HandlerTier = map[string]audit.Tier{
 	"handleAnnotateAddonValues":        audit.Tier2,
 	"handleSetAddonAIOptOut":           audit.Tier2,
 
+	// v1.21 QA Bundle 4 (Fix #4): preview-merge is read-only — it returns
+	// a candidate body but does not write Git. Classified TierPersonal so
+	// it doesn't count as a real mutation in audit attribution. The actual
+	// mutation happens through the existing PUT /addons/{name}/values
+	// handler (already Tier 2) when the user clicks "Apply changes".
+	"handlePreviewMergeAddonValues":    audit.TierPersonal,
+
 	// ─── Personal: self-service on caller's own profile ─────────────────────
 	"handleUpdatePassword":             audit.TierPersonal,
 

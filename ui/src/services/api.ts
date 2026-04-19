@@ -556,6 +556,15 @@ export const api = {
       `/addons/${encodeURIComponent(addonName)}/values`,
       { values: '', refresh_from_upstream: true },
     ),
+  // v1.21 QA Bundle 4 Fix #4: preview an additive merge of upstream values
+  // into the user's current file. Returns a candidate body the UI can
+  // show in a diff modal; applying calls setAddonValues with that body
+  // (no dedicated "apply merge" endpoint — same PR flow as a manual edit).
+  previewMergeAddonValues: (addonName: string) =>
+    postJSON<import('./models').PreviewMergeResponse>(
+      `/addons/${encodeURIComponent(addonName)}/values/preview-merge`,
+      {},
+    ),
   getClusterAddonValues: (clusterName: string, addonName: string) =>
     fetchJSON<import('./models').ClusterAddonValuesResponse>(
       `/clusters/${encodeURIComponent(clusterName)}/addons/${encodeURIComponent(addonName)}/values`,

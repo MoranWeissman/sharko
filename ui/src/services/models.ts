@@ -741,6 +741,25 @@ export interface RecentPRsEntry {
   merged_at: string
 }
 
+/**
+ * Response for POST /addons/{name}/values/preview-merge — v1.21 QA Bundle 4
+ * Fix #4. Returns a candidate values body that adds NEW upstream keys to
+ * the user's current file without touching keys the user already set.
+ * Submitting goes through the existing PUT /addons/{name}/values endpoint.
+ */
+export interface PreviewMergeResponse {
+  current: string
+  merged: string
+  diff_summary: PreviewMergeSummary
+  upstream_version: string
+}
+
+export interface PreviewMergeSummary {
+  new_keys: string[]
+  preserved_user_keys: string[]
+  no_op: boolean
+}
+
 export interface PermCheck {
   permission: string
   passed: boolean

@@ -6,13 +6,14 @@ import {
   CloudDownload,
   ExternalLink,
   GitPullRequest,
+  Layers,
   Loader2,
   RotateCcw,
   Save,
 } from 'lucide-react'
 import { AttributionNudge } from '@/components/AttributionNudge'
 import { showToast } from '@/components/ToastNotification'
-import type { ValuesEditResult } from '@/services/models'
+import type { PreviewMergeResponse, ValuesEditResult } from '@/services/models'
 
 /**
  * ValuesEditor — the v1.20 in-app YAML editor for addon values.
@@ -104,6 +105,20 @@ export interface ValuesEditorProps {
    * editor only owns the trigger.
    */
   onAnnotateNow?: () => Promise<void>
+
+  /**
+   * v1.21 QA Bundle 4 Fix #4: "Pull new fields from upstream" — additive
+   * merge that keeps user customizations. When provided, the editor
+   * renders a button that calls `onPreviewMerge` to fetch the candidate
+   * body, shows a diff modal, and on Apply calls the standard
+   * `onSubmit` with the merged body.
+   *
+   * Distinct from onRefreshFromUpstream (Refresh = REPLACE; Pull new
+   * fields = MERGE). Parents wire the two to different API endpoints:
+   *   - Refresh → PUT values?refresh_from_upstream=true
+   *   - Pull new fields → POST values/preview-merge + Apply via PUT values
+   */
+  onPreviewMerge?: () => Promise<PreviewMergeResponse>
 }
 
 export function ValuesEditor({
@@ -121,6 +136,7 @@ export function ValuesEditor({
   showAINotConfiguredBanner = false,
   showAIOptedOutNote = false,
   onAnnotateNow,
+  onPreviewMerge,
 }: ValuesEditorProps) {
   const [draft, setDraft] = useState(initialYAML)
   const [submitting, setSubmitting] = useState(false)
@@ -131,6 +147,12 @@ export function ValuesEditor({
   const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
   const [annotating, setAnnotating] = useState(false)
+  // v1.21 QA Bundle 4 Fix #4: preview-merge modal state.
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const [previewing, setPreviewing] = useState(false)
+  const [previewError, setPreviewError] = useState<string | null>(null)
+  const [previewResult, setPreviewResult] = useState<PreviewMergeResponse | null>(null)
+  const [applyingMerge, setApplyingMerge] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // Reset when the underlying current values change (e.g. after a successful
@@ -265,6 +287,48 @@ export function ValuesEditor({
               <ExternalLink className="h-3 w-3" />
               Edit in GitHub
             </a>
+          )}
+          {/* v1.21 QA Bundle 4 Fix #4: "Pull new fields from upstream"
+              — additive merge that keeps user customizations. Distinct
+              from refresh-from-upstream (which REPLACES the file via
+              the version-mismatch banner). Tooltip clarifies the
+              difference so the operator picks the right action. */}
+          {onPreviewMerge && (
+            <button
+              type="button"
+              onClick={async () => {
+                if (previewing) return
+                setPreviewing(true)
+                setPreviewError(null)
+                setPreviewResult(null)
+                try {
+                  const res = await onPreviewMerge()
+                  setPreviewResult(res)
+                  setPreviewOpen(true)
+                } catch (e) {
+                  const msg = e instanceof Error ? e.message : 'Failed to preview merge'
+                  setPreviewError(msg)
+                  setPreviewOpen(true)
+                } finally {
+                  setPreviewing(false)
+                }
+              }}
+              disabled={previewing}
+              title="Previews adding NEW upstream keys to your values file while preserving the keys you've customized. Different from 'Refresh from upstream' (which replaces the whole file)."
+              className="inline-flex items-center gap-1 rounded-md border border-teal-300 bg-teal-50 px-3 py-1 text-xs font-medium text-teal-800 hover:bg-teal-100 disabled:opacity-50 dark:border-teal-700 dark:bg-teal-900/30 dark:text-teal-200 dark:hover:bg-teal-800/40"
+            >
+              {previewing ? (
+                <>
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Comparing…
+                </>
+              ) : (
+                <>
+                  <Layers className="h-3 w-3" />
+                  Pull new fields from upstream
+                </>
+              )}
+            </button>
           )}
           {/* V121-7.4: manual annotate trigger. Renders only when the
               parent supplied a handler (i.e. AI is configured and the
@@ -559,6 +623,193 @@ export function ValuesEditor({
         modal carried is no longer the user's first encounter with the
         action.
       */}
+
+      {/* v1.21 QA Bundle 4 Fix #4: diff-and-merge preview modal.
+          Shows the candidate merged body and a summary of what changed.
+          "Apply changes" calls the standard onSubmit (same endpoint as
+          manual edits) so the commit path, audit, and attribution are
+          unchanged. "Cancel" closes without touching Git.
+
+          WCAG 2.1 AA:
+            - role=dialog + aria-modal=true
+            - aria-labelledby + aria-describedby
+            - focus-trapped via the backdrop click target (keyboard users
+              get the Cancel button as the first focusable element). */}
+      {previewOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="values-preview-merge-title"
+          aria-describedby="values-preview-merge-desc"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+        >
+          <div className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl dark:bg-gray-800">
+            <header className="border-b border-[#c0ddf0] px-5 py-3 dark:border-gray-700">
+              <h4
+                id="values-preview-merge-title"
+                className="flex items-center gap-2 text-base font-semibold text-[#0a2a4a] dark:text-gray-100"
+              >
+                <Layers className="h-4 w-4 text-teal-600 dark:text-teal-400" />
+                Pull new fields from upstream
+              </h4>
+              <p
+                id="values-preview-merge-desc"
+                className="mt-1 text-xs text-[#3a6a8a] dark:text-gray-400"
+              >
+                Review the additions Sharko would make. Your existing values are preserved —
+                only keys that aren't in your file yet are added. Apply to open a PR.
+              </p>
+            </header>
+
+            <div
+              className="flex-1 overflow-y-auto px-5 py-4"
+              style={{ scrollbarGutter: 'stable' }}
+            >
+              {previewError && (
+                <p className="rounded-md bg-red-50 p-3 text-sm text-red-700 ring-1 ring-red-200 dark:bg-red-900/30 dark:text-red-300 dark:ring-red-800">
+                  {previewError}
+                </p>
+              )}
+
+              {previewResult && previewResult.diff_summary.no_op && (
+                <div className="rounded-md bg-green-50 p-3 text-sm text-green-700 ring-1 ring-green-200 dark:bg-green-900/30 dark:text-green-300 dark:ring-green-800">
+                  <p className="font-medium">Already up to date</p>
+                  <p className="mt-1 text-xs">
+                    Every upstream key is already set in your file. Nothing to merge.
+                  </p>
+                </div>
+              )}
+
+              {previewResult && !previewResult.diff_summary.no_op && (
+                <div className="space-y-4">
+                  <div className="rounded-md bg-[#e8f4ff] p-3 text-xs text-[#1a4a6a] ring-1 ring-[#c0ddf0] dark:bg-gray-900 dark:text-gray-300 dark:ring-gray-700">
+                    <p>
+                      <span className="font-medium">Upstream:</span>{' '}
+                      <span className="font-mono">{previewResult.upstream_version}</span>
+                      {' · '}
+                      <span className="font-medium">Adds</span>{' '}
+                      <span className="font-mono">{previewResult.diff_summary.new_keys.length}</span>{' '}
+                      new key{previewResult.diff_summary.new_keys.length === 1 ? '' : 's'}
+                      {previewResult.diff_summary.preserved_user_keys.length > 0 && (
+                        <>
+                          {' · '}
+                          <span className="font-medium">Preserves</span>{' '}
+                          <span className="font-mono">
+                            {previewResult.diff_summary.preserved_user_keys.length}
+                          </span>{' '}
+                          user value
+                          {previewResult.diff_summary.preserved_user_keys.length === 1 ? '' : 's'}
+                        </>
+                      )}
+                    </p>
+                  </div>
+
+                  {previewResult.diff_summary.new_keys.length > 0 && (
+                    <details className="rounded-md border border-[#c0ddf0] bg-white p-3 dark:border-gray-700 dark:bg-gray-900" open>
+                      <summary className="cursor-pointer text-xs font-semibold text-[#0a2a4a] dark:text-gray-100">
+                        New upstream keys ({previewResult.diff_summary.new_keys.length})
+                      </summary>
+                      <ul className="mt-2 max-h-48 overflow-y-auto font-mono text-xs text-teal-700 dark:text-teal-300" style={{ scrollbarGutter: 'stable' }}>
+                        {previewResult.diff_summary.new_keys.map((k) => (
+                          <li key={k}>+ {k}</li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
+
+                  {previewResult.diff_summary.preserved_user_keys.length > 0 && (
+                    <details className="rounded-md border border-[#c0ddf0] bg-white p-3 dark:border-gray-700 dark:bg-gray-900">
+                      <summary className="cursor-pointer text-xs font-semibold text-[#0a2a4a] dark:text-gray-100">
+                        Keys preserved from your current file ({previewResult.diff_summary.preserved_user_keys.length})
+                      </summary>
+                      <ul className="mt-2 max-h-48 overflow-y-auto font-mono text-xs text-[#1a4a6a] dark:text-gray-300" style={{ scrollbarGutter: 'stable' }}>
+                        {previewResult.diff_summary.preserved_user_keys.map((k) => (
+                          <li key={k}>= {k}</li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
+
+                  <details className="rounded-md border border-[#c0ddf0] bg-white p-3 dark:border-gray-700 dark:bg-gray-900">
+                    <summary className="cursor-pointer text-xs font-semibold text-[#0a2a4a] dark:text-gray-100">
+                      Merged YAML (preview)
+                    </summary>
+                    <pre
+                      className="mt-2 max-h-80 overflow-auto rounded bg-[#f8fbff] p-2 font-mono text-[11px] leading-4 text-[#0a2a4a] dark:bg-gray-900 dark:text-gray-100"
+                      style={{ scrollbarGutter: 'stable' }}
+                    >
+                      {previewResult.merged}
+                    </pre>
+                  </details>
+                </div>
+              )}
+            </div>
+
+            <footer className="flex items-center justify-end gap-2 border-t border-[#c0ddf0] bg-[#f0f7ff] px-5 py-3 dark:border-gray-700 dark:bg-gray-900">
+              <button
+                type="button"
+                onClick={() => {
+                  setPreviewOpen(false)
+                  setPreviewError(null)
+                }}
+                disabled={applyingMerge}
+                className="rounded-md border border-[#c0ddf0] bg-white px-3 py-1.5 text-xs font-medium text-[#1a4a6a] hover:bg-[#e0f0ff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={
+                  applyingMerge ||
+                  !previewResult ||
+                  previewResult.diff_summary.no_op ||
+                  !!previewError
+                }
+                onClick={async () => {
+                  if (!previewResult) return
+                  setApplyingMerge(true)
+                  try {
+                    const res = await onSubmit(previewResult.merged)
+                    const prURL = res.pr_url || res.result?.pr_url
+                    const prID = res.pr_id ?? res.result?.pr_id
+                    const merged = res.merged ?? res.result?.merged ?? false
+                    setLastResult(res)
+                    const label = prID ? `PR #${prID}` : 'PR'
+                    if (prURL) {
+                      showToast(merged ? `${label} merged →` : `${label} opened →`, 'success')
+                    } else {
+                      showToast('Merge applied', 'success')
+                    }
+                    setDraft(previewResult.merged)
+                    setRefreshKey((k) => k + 1)
+                    setPreviewOpen(false)
+                    setPreviewResult(null)
+                  } catch (e) {
+                    const msg = e instanceof Error ? e.message : 'Failed to open PR'
+                    setPreviewError(msg)
+                    showToast(`Failed to apply merge — ${msg}`, 'info')
+                  } finally {
+                    setApplyingMerge(false)
+                  }
+                }}
+                className="inline-flex items-center gap-1 rounded-md bg-teal-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-500 dark:hover:bg-teal-400"
+              >
+                {applyingMerge ? (
+                  <>
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Opening PR…
+                  </>
+                ) : (
+                  <>
+                    <GitPullRequest className="h-3 w-3" />
+                    Apply changes
+                  </>
+                )}
+              </button>
+            </footer>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -69,6 +69,9 @@ var mutatingPatternTier = map[string]audit.Tier{
 	// Pull upstream defaults (v1.20.1) — Tier 2.
 	"POST /api/v1/addons/{name}/values/pull-upstream": audit.Tier2,
 
+	// Preview merge (v1.21 QA Bundle 4) — read-only, classified Personal.
+	"POST /api/v1/addons/{name}/values/preview-merge": audit.TierPersonal,
+
 	// Addon secrets — Tier 2.
 	"POST /api/v1/addon-secrets":             audit.Tier2,
 	"DELETE /api/v1/addon-secrets/{addon}":   audit.Tier2,
