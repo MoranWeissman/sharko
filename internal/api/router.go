@@ -498,6 +498,12 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("GET /api/v1/addons/{name}/values/recent-prs", srv.handleGetAddonValuesRecentPRs)
 	mux.HandleFunc("GET /api/v1/clusters/{cluster}/addons/{name}/values/recent-prs", srv.handleGetClusterAddonValuesRecentPRs)
 
+	// v1.21 QA Bundle 4 (Fix #4): diff-and-merge preview. Tier 1 read —
+	// returns a candidate body that the user submits via the existing
+	// PUT values endpoint. POST is used for forward-compat (the body
+	// will eventually carry a "preview against version X" parameter).
+	mux.HandleFunc("POST /api/v1/addons/{name}/values/preview-merge", srv.handlePreviewMergeAddonValues)
+
 	// V121-7 Story 7.4: manual AI annotate + per-addon opt-out toggle.
 	mux.HandleFunc("POST /api/v1/addons/{name}/values/annotate", srv.handleAnnotateAddonValues)
 	mux.HandleFunc("PUT /api/v1/addons/{name}/values/ai-opt-out", srv.handleSetAddonAIOptOut)
@@ -537,6 +543,10 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	// view. Resolves curated addon → ArtifactHub package, then returns the
 	// README markdown.
 	mux.HandleFunc("GET /api/v1/catalog/addons/{name}/readme", srv.handleGetCatalogReadme)
+	// v1.21 QA Bundle 4 Fix #3b: tool README (distinct from Helm chart README).
+	// Resolved server-side so the browser doesn't need GitHub API access.
+	mux.HandleFunc("GET /api/v1/catalog/addons/{name}/project-readme", srv.handleGetCuratedProjectReadme)
+	mux.HandleFunc("GET /api/v1/catalog/remote/{repo}/{name}/project-readme", srv.handleGetRemoteProjectReadme)
 	mux.HandleFunc("GET /api/v1/catalog/addons/{name}", srv.handleGetCatalogAddon)
 
 	// V121-4: Paste Helm URL validator — confirms an arbitrary repo+chart is

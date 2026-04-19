@@ -221,6 +221,10 @@ export function MarketplaceCard({
           score={entry.security_score}
           tier={entry.security_tier}
           updated={entry.security_score_updated}
+          // v1.21 QA Bundle 4 Fix #3d: tiles skip the "Unknown" chip so
+          // users don't see every card labelled with placeholder text
+          // before the daily OpenSSF refresh populates real scores.
+          hideWhenUnknown
         />
         {stars && (
           <span

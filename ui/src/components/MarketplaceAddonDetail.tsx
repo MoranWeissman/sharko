@@ -152,10 +152,46 @@ export function MarketplaceAddonDetail({
 
   const backLinkRef = useRef<HTMLButtonElement>(null)
 
+  // v1.21 QA Bundle 4 Fix #3b: README tabs — Helm Chart (existing) vs
+  // Project (upstream GitHub repo's README). Default to the Helm chart
+  // tab so the existing behaviour is preserved; project README lazy-
+  // loads on tab click so we don't pay GitHub API round-trips for users
+  // who never click it.
+  const [readmeTab, setReadmeTab] = useState<'chart' | 'project'>('chart')
+  const [projectReadme, setProjectReadme] =
+    useState<{ readme: string; available: boolean; source_url?: string; reason?: string } | null>(null)
+  const [projectReadmeLoading, setProjectReadmeLoading] = useState(false)
+
   // ─── Initial focus on the back link for keyboard accessibility ───────────
   useEffect(() => {
     backLinkRef.current?.focus()
   }, [])
+
+  // Lazy-load the project README the first time the user clicks its tab.
+  useEffect(() => {
+    if (readmeTab !== 'project') return
+    if (projectReadme !== null) return
+    setProjectReadmeLoading(true)
+    const endpoint =
+      source === 'curated'
+        ? `/api/v1/catalog/addons/${encodeURIComponent(addonName)}/project-readme`
+        : `/api/v1/catalog/remote/${encodeURIComponent(ahRepoName ?? '')}/${encodeURIComponent(addonName)}/project-readme`
+    fetch(endpoint, {
+      headers: sessionStorage.getItem('sharko-auth-token')
+        ? { Authorization: `Bearer ${sessionStorage.getItem('sharko-auth-token') ?? ''}` }
+        : undefined,
+    })
+      .then((res) => res.json())
+      .then((data) => setProjectReadme(data))
+      .catch(() =>
+        setProjectReadme({
+          readme: '',
+          available: false,
+          reason: 'Project README not available',
+        }),
+      )
+      .finally(() => setProjectReadmeLoading(false))
+  }, [readmeTab, projectReadme, source, addonName, ahRepoName])
 
   // ─── Load metadata ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -457,7 +493,22 @@ export function MarketplaceAddonDetail({
   }
 
   return (
-    <article className="flex flex-col gap-5" aria-labelledby="mp-addon-detail-title">
+    // v1.21 QA Bundle 4 Fix #3a: constrain the detail view to a comfortable
+    // reading width centred in the available space. Previously the view
+    // spanned the full parent width which made README paragraphs 1600px+
+    // wide on desktop — unreadable. Uses max-w-5xl (64rem) which is the
+    // widely-accepted "prose" ceiling.
+    //
+    // Fix #3c (scrollbar disappearing): the outer article now reserves a
+    // stable scrollbar gutter so the document-level scrollbar doesn't
+    // pop in/out as the user scrolls. WebKit also gets a track visible
+    // at all times via the `scrollbarGutter` inline style (Tailwind has
+    // no utility for it yet).
+    <article
+      className="mx-auto flex w-full max-w-5xl flex-col gap-5"
+      aria-labelledby="mp-addon-detail-title"
+      style={{ scrollbarGutter: 'stable both-edges' }}
+    >
       {/* ─── 1. Top bar ─── */}
       <header className="flex flex-wrap items-start gap-3">
         <BackLink onBack={onBack} ref={backLinkRef} />
@@ -537,6 +588,12 @@ export function MarketplaceAddonDetail({
               score={entry.security_score}
               tier={entry.security_tier}
               updated={entry.security_score_updated}
+              // v1.21 QA Bundle 4 Fix #3d: skip the "Unknown" chip entirely.
+              // Maintainer feedback: "we have for every addon in marketplace
+              // a badge called 'Unknown' - I don't know what that is." We
+              // now render a real OpenSSF Scorecard badge only when the
+              // daily refresh job has populated a real score.
+              hideWhenUnknown
             />
             {entry.github_stars !== undefined && entry.github_stars > 0 && (
               <span
@@ -741,7 +798,7 @@ export function MarketplaceAddonDetail({
         )}
       </section>
 
-      {/* ─── 4. README ─── */}
+      {/* ─── 4. README (v1.21 QA Bundle 4 Fix #3b: tabs + stable scrollbar) ─── */}
       <section
         aria-labelledby="mp-readme-title"
         className="flex flex-col gap-2 rounded-lg border border-[#c0ddf0] bg-white p-4 dark:border-gray-700 dark:bg-gray-900"
@@ -754,7 +811,43 @@ export function MarketplaceAddonDetail({
           >
             README
           </h2>
-          {readmeResp?.ah_repo && readmeResp?.ah_chart && (
+          {/* Tab bar — Helm Chart | Project. WAI-ARIA tablist so
+              keyboard arrows cycle. The chart tab is always present;
+              the project tab is always present too but the body may
+              render the "not available" empty state. */}
+          <div
+            role="tablist"
+            aria-label="README source"
+            className="inline-flex overflow-hidden rounded-md ring-1 ring-[#c0ddf0] dark:ring-gray-700"
+          >
+            {(['chart', 'project'] as const).map((key) => {
+              const active = readmeTab === key
+              return (
+                <button
+                  key={key}
+                  role="tab"
+                  type="button"
+                  aria-selected={active}
+                  tabIndex={active ? 0 : -1}
+                  onClick={() => setReadmeTab(key)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+                      e.preventDefault()
+                      setReadmeTab(key === 'chart' ? 'project' : 'chart')
+                    }
+                  }}
+                  className={`px-3 py-1 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 ${
+                    active
+                      ? 'bg-teal-600 text-white'
+                      : 'bg-white text-[#2a5a7a] hover:bg-[#e0f0ff] dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-700'
+                  }`}
+                >
+                  {key === 'chart' ? 'Helm Chart' : 'Project'}
+                </button>
+              )
+            })}
+          </div>
+          {readmeTab === 'chart' && readmeResp?.ah_repo && readmeResp?.ah_chart && (
             <a
               href={`https://artifacthub.io/packages/helm/${encodeURIComponent(
                 readmeResp.ah_repo,
@@ -767,24 +860,67 @@ export function MarketplaceAddonDetail({
               <ExternalLink className="h-3 w-3" aria-hidden="true" />
             </a>
           )}
+          {readmeTab === 'project' && projectReadme?.source_url && (
+            <a
+              href={projectReadme.source_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-teal-700 underline hover:no-underline focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 dark:text-teal-400"
+            >
+              View on GitHub
+              <ExternalLink className="h-3 w-3" aria-hidden="true" />
+            </a>
+          )}
         </header>
 
-        {readmeLoading ? (
-          <div className="space-y-2 py-2" aria-hidden="true">
-            <div className="h-4 w-1/3 animate-pulse rounded bg-[#e0eef9] dark:bg-gray-800" />
-            <div className="h-3 w-full animate-pulse rounded bg-[#e0eef9] dark:bg-gray-800" />
-            <div className="h-3 w-5/6 animate-pulse rounded bg-[#e0eef9] dark:bg-gray-800" />
-            <div className="h-3 w-2/3 animate-pulse rounded bg-[#e0eef9] dark:bg-gray-800" />
-          </div>
-        ) : readmeResp && readmeResp.readme.trim().length > 0 ? (
-          <div className="prose prose-sm max-w-none dark:prose-invert">
-            <MarkdownRenderer content={readmeResp.readme} />
-          </div>
-        ) : (
-          <p className="py-2 text-sm italic text-[#3a6a8a] dark:text-gray-500">
-            No README available from ArtifactHub for this chart.
-          </p>
-        )}
+        {/*
+          Fix #3c: the README body container keeps its scrollbar gutter
+          stable (CSS scrollbar-gutter) so the scrollbar track is always
+          rendered — previously the track appeared only while actively
+          scrolling, which the maintainer flagged as annoying. max-h
+          anchors a scrollable region so long READMEs (argo-cd) don't
+          dominate the layout.
+        */}
+        <div
+          className="max-h-[72vh] overflow-y-auto pr-1 dark:[color-scheme:dark]"
+          style={{ scrollbarGutter: 'stable' }}
+          role="tabpanel"
+          aria-label={readmeTab === 'chart' ? 'Helm Chart README' : 'Project README'}
+        >
+          {readmeTab === 'chart' ? (
+            readmeLoading ? (
+              <div className="space-y-2 py-2" aria-hidden="true">
+                <div className="h-4 w-1/3 animate-pulse rounded bg-[#e0eef9] dark:bg-gray-800" />
+                <div className="h-3 w-full animate-pulse rounded bg-[#e0eef9] dark:bg-gray-800" />
+                <div className="h-3 w-5/6 animate-pulse rounded bg-[#e0eef9] dark:bg-gray-800" />
+                <div className="h-3 w-2/3 animate-pulse rounded bg-[#e0eef9] dark:bg-gray-800" />
+              </div>
+            ) : readmeResp && readmeResp.readme.trim().length > 0 ? (
+              <div className="prose prose-sm max-w-none dark:prose-invert">
+                <MarkdownRenderer content={readmeResp.readme} />
+              </div>
+            ) : (
+              <p className="py-2 text-sm italic text-[#3a6a8a] dark:text-gray-500">
+                No README available from ArtifactHub for this chart.
+              </p>
+            )
+          ) : projectReadmeLoading ? (
+            <div className="space-y-2 py-2" aria-hidden="true">
+              <div className="h-4 w-1/3 animate-pulse rounded bg-[#e0eef9] dark:bg-gray-800" />
+              <div className="h-3 w-full animate-pulse rounded bg-[#e0eef9] dark:bg-gray-800" />
+              <div className="h-3 w-5/6 animate-pulse rounded bg-[#e0eef9] dark:bg-gray-800" />
+              <div className="h-3 w-2/3 animate-pulse rounded bg-[#e0eef9] dark:bg-gray-800" />
+            </div>
+          ) : projectReadme?.available ? (
+            <div className="prose prose-sm max-w-none dark:prose-invert">
+              <MarkdownRenderer content={projectReadme.readme} />
+            </div>
+          ) : (
+            <p className="py-2 text-sm italic text-[#3a6a8a] dark:text-gray-500">
+              {projectReadme?.reason ?? 'Project README not available.'}
+            </p>
+          )}
+        </div>
       </section>
 
       {/* ─── 5. Metadata footer ─── */}

@@ -29,6 +29,14 @@ export interface ScorecardBadgeProps {
   /** When set, badge is wrapped in a focusable element and renders a tooltip. */
   scorecardURL?: string
   size?: 'sm' | 'md'
+  /**
+   * v1.21 QA Bundle 4 Fix #3d: when true, the badge renders nothing when the
+   * score is "unknown". Default false (legacy behaviour). Callers that render
+   * a Marketplace tile set this to true so the "Unknown" chip doesn't flood
+   * every card with placeholder metadata before the daily OpenSSF refresh
+   * job has populated real scores.
+   */
+  hideWhenUnknown?: boolean
 }
 
 const TIER_PALETTES: Record<
@@ -76,6 +84,7 @@ export function ScorecardBadge({
   updated,
   scorecardURL,
   size = 'sm',
+  hideWhenUnknown = false,
 }: ScorecardBadgeProps) {
   const effectiveTier =
     (tier as keyof typeof TIER_PALETTES | undefined) ?? deriveTier(score)
@@ -83,6 +92,12 @@ export function ScorecardBadge({
   const Icon = palette.icon
 
   const isUnknown = effectiveTier === 'unknown'
+  // v1.21 QA Bundle 4 Fix #3d: Marketplace tiles pass hideWhenUnknown=true
+  // so "Unknown" chips don't clutter every card during the initial refresh
+  // window. Detail view keeps the chip to avoid looking like data is missing.
+  if (isUnknown && hideWhenUnknown) {
+    return null
+  }
   const numeric = typeof score === 'number' ? score.toFixed(1) : null
   const label = isUnknown
     ? 'unknown'
@@ -91,10 +106,10 @@ export function ScorecardBadge({
       : effectiveTier
 
   const tooltip = isUnknown
-    ? 'OpenSSF Scorecard score not yet available — refreshed daily.'
+    ? 'OpenSSF Scorecard score not yet available for this chart. Sharko refreshes Scorecard data daily; once the next refresh runs a real score will appear here.'
     : updated
-      ? `OpenSSF Scorecard ${numeric ?? ''} (${effectiveTier}). Updated ${updated}.`
-      : `OpenSSF Scorecard tier: ${effectiveTier}.`
+      ? `OpenSSF Scorecard ${numeric ?? ''}/10 (${effectiveTier}). Refreshed daily; last update: ${updated}.`
+      : `OpenSSF Scorecard ${numeric ?? ''}/10 · tier ${effectiveTier}. Higher is better. Refreshed daily.`
 
   const ariaLabel = isUnknown
     ? 'OpenSSF Scorecard: unknown — refreshed daily'
