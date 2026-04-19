@@ -220,13 +220,19 @@ func warnSyncWaveConflicts(catalog []models.AddonCatalogEntry, req AddAddonReque
 }
 
 // generateAddonGlobalValues creates the default global values YAML for an addon.
+//
+// v1.21 Bundle 5: top-level keys are the chart's own values. The previous
+// `<addonName>:` wrap was incorrect — Helm receives this file directly via
+// `valueFiles:` in the ApplicationSet template and expects chart-level keys
+// at the document root. We emit a placeholder comment instead of a real key
+// so the file parses as an empty values document until the user populates it.
 func generateAddonGlobalValues(req AddAddonRequest) []byte {
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("# Global values for %s addon\n", req.Name))
-	b.WriteString(fmt.Sprintf("%s:\n", req.Name))
-	b.WriteString("  enabled: false\n")
+	b.WriteString(fmt.Sprintf("# Helm values for %s — applied to all clusters\n", req.Name))
+	b.WriteString("# Top-level keys are passed directly to the Helm chart.\n")
 	if req.Version != "" {
-		b.WriteString(fmt.Sprintf("  version: %s\n", req.Version))
+		b.WriteString(fmt.Sprintf("# Catalog-pinned version: %s\n", req.Version))
 	}
+	b.WriteString("\n# (no defaults — populate with chart values as needed)\n")
 	return []byte(b.String())
 }

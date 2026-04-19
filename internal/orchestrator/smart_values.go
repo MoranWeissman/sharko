@@ -16,14 +16,24 @@
 //
 // Both outputs are wrapped in a self-describing header (see header.go).
 //
-// Locked design (Moran, 2026-04-19):
+// Locked design (Moran, 2026-04-19, refined v1.21 Bundle 5):
 //   - Heuristic-only when AI is not configured. The LLM call is additive
 //     when available — it never replaces the heuristic, only adds paths.
 //   - No ConfigMap/BoltDB cache. Git is the cache: once an addon is
 //     processed, the annotated file lives in the user's addons repo.
-//   - The global values file is wrapped under the addon name as the
-//     top-level key, matching the v1.20 convention used by
-//     SetGlobalAddonValues.
+//   - The global values file is written UNWRAPPED — top-level keys are
+//     the chart's own values. The per-cluster file is the only place
+//     that uses an `<addonName>:` namespace, because one per-cluster
+//     file holds many addons. The per-cluster template block at the
+//     bottom IS still wrapped under `<addonName>:` because that block
+//     is meant to be copy-pasted INTO the per-cluster file.
+//
+// History note: v1.21 ≤ Bundle 4 wrote the global file under an
+// `<addonName>:` root key. The ApplicationSet template (`addons-appset.yaml`)
+// passes the global file directly to Helm via `valueFiles:` without
+// extracting that root, so Helm silently ignored every value in the file.
+// Bundle 5 fixes the writer to emit top-level keys; the legacy wrapped
+// files are migrated through the unwrap-globals endpoint (opt-in).
 //
 // Tradeoff in this implementation: the splitter operates on the upstream
 // values.yaml *line by line* rather than round-tripping through a YAML
@@ -378,11 +388,13 @@ func SplitUpstreamValues(in SmartValuesInput) SmartValuesOutput {
 		sort.Strings(clusterPaths)
 	}
 
-	// Step 2: emit the global body with the addon-name top-level key.
-	// We re-use the v1.20 convention: every line of the upstream values
-	// gets indented two spaces and prefixed under `<addon>:`. Lines whose
-	// dotted path matches a cluster-specific pattern are commented out
-	// with `<cluster-specific>` placeholder values.
+	// Step 2: emit the global body at TOP LEVEL — no `<addonName>:`
+	// wrapper. The ApplicationSet template passes this file directly to
+	// Helm via `valueFiles:`, so Helm needs the chart's own keys
+	// (e.g. `installCRDs:`, `replicaCount:`) at the document root.
+	// Cluster-specific scalar leaves are commented out with a
+	// `<cluster-specific>` placeholder so the file remains a sane
+	// "applies to all clusters" default.
 	var b strings.Builder
 	header := WriteSmartValuesHeader(SmartValuesHeader{
 		Chart:       in.Chart,
@@ -392,9 +404,11 @@ func SplitUpstreamValues(in SmartValuesInput) SmartValuesOutput {
 		AIOptOut:    in.AIOptOut,
 	})
 	b.WriteString(header)
-
+	// Format-shape comment so a hand reader of the file knows the
+	// top-level keys are chart values, not addon-name wrapped.
+	b.WriteString("# Helm values for ")
 	b.WriteString(in.AddonName)
-	b.WriteString(":\n")
+	b.WriteString(" — applied to all clusters (top-level keys are chart values).\n\n")
 
 	clusterSet := map[string]struct{}{}
 	for _, p := range clusterPaths {
@@ -408,14 +422,13 @@ func SplitUpstreamValues(in SmartValuesInput) SmartValuesOutput {
 		line := raw
 		trim := strings.TrimSpace(line)
 
-		// Blank lines / comments are passed through verbatim, just indented
-		// under the addon-name key.
+		// Blank lines / comments are passed through verbatim — no
+		// re-indent, no wrap.
 		if trim == "" {
 			b.WriteString("\n")
 			continue
 		}
 		if strings.HasPrefix(trim, "#") {
-			b.WriteString("  ")
 			b.WriteString(line)
 			b.WriteString("\n")
 			continue
@@ -443,8 +456,7 @@ func SplitUpstreamValues(in SmartValuesInput) SmartValuesOutput {
 			}
 			// We never comment-out individual list children — list shape
 			// matters more than item-level annotation, and the per-cluster
-			// template carries the full sub-tree below. Pass through.
-			b.WriteString("  ")
+			// template carries the full sub-tree below. Pass through verbatim.
 			b.WriteString(line)
 			b.WriteString("\n")
 			continue
@@ -452,8 +464,7 @@ func SplitUpstreamValues(in SmartValuesInput) SmartValuesOutput {
 		colonIdx := strings.Index(trim, ":")
 		if colonIdx == -1 {
 			// Continuation of a multi-line scalar (block literal etc.) —
-			// pass through.
-			b.WriteString("  ")
+			// pass through verbatim.
 			b.WriteString(line)
 			b.WriteString("\n")
 			continue
@@ -469,8 +480,7 @@ func SplitUpstreamValues(in SmartValuesInput) SmartValuesOutput {
 			// Map parent. If the parent itself matches (e.g. `*.ingress`
 			// without a `.*` suffix is in the patterns), we DO NOT comment
 			// it out — sub-map children carry the cluster-specific bits
-			// via the template block. Pass through and push the frame.
-			b.WriteString("  ")
+			// via the template block. Pass through verbatim and push the frame.
 			b.WriteString(line)
 			b.WriteString("\n")
 			stack = append(stack, smartFrame{indent: indent, key: key})
@@ -484,7 +494,6 @@ func SplitUpstreamValues(in SmartValuesInput) SmartValuesOutput {
 			// dropped from the global file because it's not a sane
 			// cluster-default.
 			leadingPad := strings.Repeat(" ", indent)
-			b.WriteString("  ")
 			b.WriteString(leadingPad)
 			b.WriteString("# ")
 			b.WriteString(key)
@@ -493,13 +502,15 @@ func SplitUpstreamValues(in SmartValuesInput) SmartValuesOutput {
 			continue
 		}
 
-		// Pass-through.
-		b.WriteString("  ")
+		// Pass-through verbatim.
 		b.WriteString(line)
 		b.WriteString("\n")
 	}
 
-	// Step 3: per-cluster template block at the bottom.
+	// Step 3: per-cluster template block at the bottom. THIS block stays
+	// wrapped under `<addonName>:` because it's intended to be copy-pasted
+	// INTO `configuration/addons-clusters-values/<cluster>.yaml`, which
+	// IS namespaced (one per-cluster file holds many addons).
 	tpl := perClusterTemplate(in.AddonName, clusterPaths)
 	b.WriteString("\n")
 	b.WriteString(tpl)

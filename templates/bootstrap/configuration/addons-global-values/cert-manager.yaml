@@ -1,6 +1,6 @@
 # Helm values for cert-manager — applied to all clusters
+# Top-level keys are passed directly to the cert-manager Helm chart.
 # Docs: https://cert-manager.io/docs/configuration/
-cert-manager:
-  enabled: false
-  # installCRDs: true
-  # replicaCount: 2
+
+# installCRDs: true
+# replicaCount: 2
