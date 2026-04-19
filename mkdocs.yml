@@ -40,6 +40,7 @@ nav:
     - Managing Addons: user-guide/addons.md
     - Marketplace: user-guide/marketplace.md
     - Editing Values: user-guide/values-editing.md
+    - Smart Values Layer: user-guide/smart-values.md
     - Editing ArgoCD App Options: user-guide/argocd-app-options.md
     - Upgrades: user-guide/upgrades.md
     - Notifications: user-guide/notifications.md
