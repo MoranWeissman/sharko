@@ -432,6 +432,39 @@ export async function refreshPR(id: number) {
   return postJSON<{ status: string }>(`/prs/${id}/refresh`)
 }
 
+// ─── Merged PRs (v1.21 QA Bundle 3) ────────────────────────────────────────
+//
+// /api/v1/prs only returns OPEN PRs (the prtracker drops PRs once they merge).
+// /api/v1/prs/merged goes back to the Git provider directly and lists merged
+// PRs. Cached server-side for 60s. Used by the Dashboard Pending/Merged toggle.
+export interface MergedPRItem {
+  pr_id: number
+  pr_url: string
+  pr_title: string
+  pr_branch: string
+  description?: string
+  author?: string
+  cluster?: string
+  addon?: string
+  operation?: string
+  created_at?: string
+  merged_at?: string
+}
+
+export interface MergedPRsResponse {
+  prs: MergedPRItem[]
+  limit: number
+}
+
+export async function fetchMergedPRs(filters?: { cluster?: string; addon?: string; limit?: number }) {
+  const params = new URLSearchParams()
+  if (filters?.cluster) params.set('cluster', filters.cluster)
+  if (filters?.addon) params.set('addon', filters.addon)
+  if (filters?.limit) params.set('limit', String(filters.limit))
+  const qs = params.toString()
+  return fetchJSON<MergedPRsResponse>(`/prs/merged${qs ? `?${qs}` : ''}`)
+}
+
 export const api = {
   // Health
   health: () => fetchJSON<{ status: string }>('/health'),

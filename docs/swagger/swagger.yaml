@@ -798,6 +798,40 @@ definitions:
         description: '"pass", "fail", "skipped"'
         type: string
     type: object
+  internal_api.MergedPRItem:
+    properties:
+      addon:
+        type: string
+      author:
+        type: string
+      cluster:
+        type: string
+      created_at:
+        type: string
+      description:
+        type: string
+      merged_at:
+        type: string
+      operation:
+        type: string
+      pr_branch:
+        type: string
+      pr_id:
+        type: integer
+      pr_title:
+        type: string
+      pr_url:
+        type: string
+    type: object
+  internal_api.MergedPRsResponse:
+    properties:
+      limit:
+        type: integer
+      prs:
+        items:
+          $ref: '#/definitions/internal_api.MergedPRItem'
+        type: array
+    type: object
   internal_api.PRItem:
     properties:
       addon:
@@ -4799,6 +4833,47 @@ paths:
       security:
       - BearerAuth: []
       summary: Force refresh a tracked PR
+      tags:
+      - prs
+  /prs/merged:
+    get:
+      description: 'Returns merged Sharko-authored PRs from the Git provider. The
+        prtracker drops PRs once merged, so this endpoint queries the provider directly.
+        Cached for 60s. Optional filters narrow by cluster or addon (best-effort:
+        inferred from PR title/branch).'
+      parameters:
+      - description: Filter by cluster name (best-effort title/branch match)
+        in: query
+        name: cluster
+        type: string
+      - description: Filter by addon name (best-effort title/branch match)
+        in: query
+        name: addon
+        type: string
+      - description: Maximum entries (default 20, max 100)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: List of merged PRs
+          schema:
+            $ref: '#/definitions/internal_api.MergedPRsResponse'
+        "500":
+          description: Internal error
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: No active Git connection
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List recently-merged pull requests
       tags:
       - prs
   /repo/status:

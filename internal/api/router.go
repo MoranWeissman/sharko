@@ -602,6 +602,9 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 
 	// Pull request tracking
 	mux.HandleFunc("GET /api/v1/prs", srv.handleListPRs)
+	// /prs/merged must be registered BEFORE /prs/{id} so the literal "merged"
+	// path wins over the {id} wildcard.
+	mux.HandleFunc("GET /api/v1/prs/merged", srv.handleListMergedPRs)
 	mux.HandleFunc("GET /api/v1/prs/{id}", srv.handleGetPR)
 	mux.HandleFunc("POST /api/v1/prs/{id}/refresh", srv.handleRefreshPR)
 	mux.HandleFunc("DELETE /api/v1/prs/{id}", srv.handleDeletePR)

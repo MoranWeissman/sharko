@@ -5009,6 +5009,65 @@
                 }
             }
         },
+        "/prs/merged": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns merged Sharko-authored PRs from the Git provider. The prtracker drops PRs once merged, so this endpoint queries the provider directly. Cached for 60s. Optional filters narrow by cluster or addon (best-effort: inferred from PR title/branch).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "prs"
+                ],
+                "summary": "List recently-merged pull requests",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Filter by cluster name (best-effort title/branch match)",
+                        "name": "cluster",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by addon name (best-effort title/branch match)",
+                        "name": "addon",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Maximum entries (default 20, max 100)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "List of merged PRs",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.MergedPRsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "No active Git connection",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/prs/{id}": {
             "get": {
                 "security": [
@@ -7368,6 +7427,58 @@
                 "status": {
                     "description": "\"pass\", \"fail\", \"skipped\"",
                     "type": "string"
+                }
+            }
+        },
+        "internal_api.MergedPRItem": {
+            "type": "object",
+            "properties": {
+                "addon": {
+                    "type": "string"
+                },
+                "author": {
+                    "type": "string"
+                },
+                "cluster": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "merged_at": {
+                    "type": "string"
+                },
+                "operation": {
+                    "type": "string"
+                },
+                "pr_branch": {
+                    "type": "string"
+                },
+                "pr_id": {
+                    "type": "integer"
+                },
+                "pr_title": {
+                    "type": "string"
+                },
+                "pr_url": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.MergedPRsResponse": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer"
+                },
+                "prs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api.MergedPRItem"
+                    }
                 }
             }
         },
