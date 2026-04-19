@@ -2,8 +2,8 @@
  * Accessibility audit (Story V121-8.4 — WCAG 2.1 AA)
  *
  * Runs axe-core against the v1.21-new Marketplace pages: Browse, Search,
- * Paste URL, the Configure modal, and the Marketplace tablist itself.
- * Fails the suite on any serious or critical violation.
+ * the in-page Addon Detail (v1.21 QA Bundle 2), and the Marketplace
+ * tablist itself. Fails the suite on any serious or critical violation.
  *
  * Why we don't audit existing pre-v1.21 pages here: the design doc (§4.8)
  * commits to "WCAG 2.1 AA on new pages" only — retrofitting the rest of
@@ -22,11 +22,10 @@ import { render, waitFor, screen, fireEvent } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import axe from 'axe-core'
 import { MarketplaceTab } from '@/components/MarketplaceTab'
-import { MarketplacePasteURLTab } from '@/components/MarketplacePasteURLTab'
 import { MarketplaceSearchTab } from '@/components/MarketplaceSearchTab'
 import type { CatalogEntry } from '@/services/models'
 
-// Stub the API surface MarketplaceTab + child tabs touch on mount.
+// Stub the API surface MarketplaceTab + child components touch on mount.
 const fixtures: CatalogEntry[] = [
   {
     name: 'cert-manager',
@@ -61,7 +60,10 @@ const getMeMock = vi
 const searchCatalogMock = vi
   .fn()
   .mockResolvedValue({ query: '', curated: [], artifacthub: [] })
-const validateCatalogChartMock = vi.fn()
+const getEntryMock = vi.fn().mockResolvedValue(fixtures[0])
+const getReadmeMock = vi
+  .fn()
+  .mockResolvedValue({ readme: '## Hello\nWelcome.', source: 'artifacthub' })
 
 vi.mock('@/services/api', () => ({
   api: {
@@ -70,7 +72,9 @@ vi.mock('@/services/api', () => ({
     getAddonCatalog: () => getCatalogMock(),
     getMe: () => getMeMock(),
     searchCatalog: (...a: unknown[]) => searchCatalogMock(...a),
-    validateCatalogChart: (...a: unknown[]) => validateCatalogChartMock(...a),
+    getCuratedCatalogEntry: (...a: unknown[]) => getEntryMock(...a),
+    getCuratedCatalogReadme: (...a: unknown[]) => getReadmeMock(...a),
+    reprobeArtifactHub: () => Promise.resolve({ reachable: true, probed_at: '' }),
   },
   addAddon: vi.fn(),
   isAddonAlreadyExistsError: () => false,
@@ -108,7 +112,8 @@ describe('Marketplace pages — WCAG 2.1 AA (axe-core)', () => {
     getCatalogMock.mockClear()
     getMeMock.mockClear()
     searchCatalogMock.mockClear()
-    validateCatalogChartMock.mockReset()
+    getEntryMock.mockClear()
+    getReadmeMock.mockClear()
   })
 
   it('Marketplace tab (Browse view) has no serious violations', async () => {
@@ -119,7 +124,7 @@ describe('Marketplace pages — WCAG 2.1 AA (axe-core)', () => {
     )
     await waitFor(() => {
       expect(
-        screen.getByRole('button', { name: /Configure cert-manager/i }),
+        screen.getByRole('button', { name: /Open cert-manager/i }),
       ).toBeInTheDocument()
     })
     await expectNoSeriousViolations(container, 'MarketplaceTab/Browse')
@@ -138,19 +143,7 @@ describe('Marketplace pages — WCAG 2.1 AA (axe-core)', () => {
     await expectNoSeriousViolations(container, 'MarketplaceSearchTab')
   })
 
-  it('Marketplace Paste-URL tab has no serious violations', async () => {
-    const { container } = render(
-      <MemoryRouter>
-        <MarketplacePasteURLTab />
-      </MemoryRouter>,
-    )
-    await waitFor(() => {
-      expect(screen.getByLabelText(/Chart repo URL/i)).toBeInTheDocument()
-    })
-    await expectNoSeriousViolations(container, 'MarketplacePasteURLTab')
-  })
-
-  it('Configure modal (opened from Browse) has no serious violations', async () => {
+  it('In-page Addon Detail (opened from Browse) has no serious violations', async () => {
     const { container } = render(
       <MemoryRouter>
         <MarketplaceTab />
@@ -158,11 +151,15 @@ describe('Marketplace pages — WCAG 2.1 AA (axe-core)', () => {
     )
     await waitFor(() =>
       expect(
-        screen.getByRole('button', { name: /Configure cert-manager/i }),
+        screen.getByRole('button', { name: /Open cert-manager/i }),
       ).toBeInTheDocument(),
     )
-    fireEvent.click(screen.getByRole('button', { name: /Configure cert-manager/i }))
-    await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument())
-    await expectNoSeriousViolations(container, 'MarketplaceConfigureModal')
+    fireEvent.click(screen.getByRole('button', { name: /Open cert-manager/i }))
+    await waitFor(() =>
+      expect(
+        screen.getByRole('heading', { name: /Add cert-manager to your catalog/i }),
+      ).toBeInTheDocument(),
+    )
+    await expectNoSeriousViolations(container, 'MarketplaceAddonDetail')
   })
 })

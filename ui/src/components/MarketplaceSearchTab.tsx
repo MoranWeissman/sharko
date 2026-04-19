@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   AlertTriangle,
   CheckCircle2,
@@ -11,12 +12,15 @@ import {
 import { api } from '@/services/api'
 import type {
   ArtifactHubSearchResult,
-  CatalogEntry,
   CatalogSearchResponse,
 } from '@/services/models'
 import { showToast } from '@/components/ToastNotification'
 import { MarketplaceCard } from '@/components/MarketplaceCard'
-import { MarketplaceConfigureModal } from '@/components/MarketplaceConfigureModal'
+
+// v1.21 QA Bundle 2: the Configure modal is gone. Both buckets now
+// navigate to the in-page detail view via ?mp_addon=<name> + ?mp_src=
+// (and ?mp_repo= for the AH bucket). The parent MarketplaceTab swaps
+// to <MarketplaceAddonDetail> when those params are set.
 
 /**
  * MarketplaceSearchTab — the discovery tab in the Marketplace.
@@ -55,15 +59,7 @@ export function MarketplaceSearchTab() {
   const [error, setError] = useState<string | null>(null)
   const [retrying, setRetrying] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
-
-  // External pkg → opens Configure modal pre-filled. We synthesise a
-  // CatalogEntry-shaped object for the existing modal to consume.
-  const [configureEntry, setConfigureEntry] = useState<CatalogEntry | null>(null)
-  const [modalOpen, setModalOpen] = useState(false)
-  // Track which result bucket opened the modal so the addon_added audit event
-  // records the right `source` (curated → "marketplace", external → "artifacthub").
-  const [configureSource, setConfigureSource] =
-    useState<'marketplace' | 'artifacthub'>('marketplace')
+  const [searchParams, setSearchParams] = useSearchParams()
 
   // Auto-focus the search box when the tab mounts.
   useEffect(() => {
@@ -125,65 +121,20 @@ export function MarketplaceSearchTab() {
     }
   }, [debounced])
 
-  // Open Configure for a curated entry (full schema already available).
-  const handleOpenCurated = useCallback((entry: CatalogEntry) => {
-    setConfigureEntry(entry)
-    setConfigureSource('marketplace')
-    setModalOpen(true)
-  }, [])
-
-  // Open Configure for an external pkg — fetch detail to enrich the entry,
-  // then open the modal. We synthesise a minimal CatalogEntry the modal can
-  // consume; missing fields (license, category, security_score) are best-effort.
-  const handleOpenExternal = useCallback(async (pkg: ArtifactHubSearchResult) => {
-    const synthesised: CatalogEntry = {
-      name: pkg.normalized_name || pkg.name,
-      description: pkg.description ?? '',
-      chart: pkg.name,
-      repo: pkg.repository.url || '',
-      default_namespace: pkg.normalized_name || pkg.name,
-      default_sync_wave: 0,
-      maintainers: [],
-      license: '',
-      // Cast — backend never sends arbitrary strings in this field. For
-      // external entries we use 'developer-tools' as the generic bucket so
-      // the modal renders without choking on the literal-union type. This is
-      // cosmetic only; the catalog write doesn't persist this value.
-      category: 'developer-tools',
-      curated_by: [],
-      github_stars: pkg.stars,
-      homepage: pkg.repository.url,
-    }
-    setConfigureEntry(synthesised)
-    setConfigureSource('artifacthub')
-    setModalOpen(true)
-    // Best-effort enrichment via /catalog/remote — license + maintainers fill
-    // the modal nicely. Failure is non-fatal.
-    try {
-      const detail = await api.getRemoteCatalogPackage(
-        pkg.repository.name,
-        pkg.name,
-      )
-      if (detail.package) {
-        setConfigureEntry((prev) =>
-          prev
-            ? {
-                ...prev,
-                description: detail.package?.description ?? prev.description,
-                license: detail.package?.license ?? prev.license,
-                maintainers:
-                  detail.package?.maintainers
-                    ?.map((m) => m.name)
-                    .filter((n): n is string => !!n) ?? prev.maintainers,
-                homepage: detail.package?.home_url ?? prev.homepage,
-              }
-            : prev,
-        )
-      }
-    } catch {
-      // ignored — the modal still works with partial data
-    }
-  }, [])
+  // External pkg → navigate to the in-page detail view with mp_src=ah +
+  // mp_repo=<ahrepo>. The detail view fetches /catalog/remote/{repo}/{name}
+  // for both metadata and README, so no synthesis or pre-fetch is needed
+  // here.
+  const handleOpenExternal = useCallback(
+    (pkg: ArtifactHubSearchResult) => {
+      const next = new URLSearchParams(searchParams.toString())
+      next.set('mp_addon', pkg.name)
+      next.set('mp_src', 'ah')
+      next.set('mp_repo', pkg.repository.name)
+      setSearchParams(next, { replace: false })
+    },
+    [searchParams, setSearchParams],
+  )
 
   const totalCount = useMemo(() => {
     if (!resp) return 0
@@ -306,7 +257,7 @@ export function MarketplaceSearchTab() {
               >
                 {resp.curated.map((entry) => (
                   <li key={entry.name} className="flex">
-                    <MarketplaceCard entry={entry} onOpen={handleOpenCurated} />
+                    <MarketplaceCard entry={entry} />
                   </li>
                 ))}
               </ul>
@@ -370,15 +321,6 @@ export function MarketplaceSearchTab() {
         </div>
       )}
 
-      <MarketplaceConfigureModal
-        entry={configureEntry}
-        open={modalOpen}
-        onOpenChange={(v) => {
-          setModalOpen(v)
-          if (!v) setConfigureEntry(null)
-        }}
-        source={configureSource}
-      />
     </div>
   )
 }

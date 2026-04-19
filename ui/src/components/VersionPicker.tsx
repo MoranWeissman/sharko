@@ -143,7 +143,11 @@ export function VersionPicker({
           delivers — clicking the field now shows real options instead of
           relying on browser datalist quirks. */}
       {versionsResp && visibleCount > 0 && (
-        <ul
+        // Use a <div role="listbox"> so the option pills can be direct
+        // children. ARIA's listbox role requires its children to be option
+        // elements; sticking a <li> in between (even with display:contents)
+        // breaks the aria-required-children invariant under axe-core.
+        <div
           role="listbox"
           aria-label="Releases available for this chart"
           className="mt-1 flex max-h-32 flex-wrap gap-1 overflow-y-auto rounded-md border border-dashed border-[#c0ddf0] bg-[#f7fbff] p-1.5 dark:border-gray-700 dark:bg-gray-900"
@@ -151,32 +155,31 @@ export function VersionPicker({
           {visibleVersions.map((v) => {
             const selected = v.version === value
             return (
-              <li key={v.version} className="contents">
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={selected}
-                  onClick={() => onChange(v.version)}
-                  title={
-                    v.app_version
-                      ? `${v.version} (app ${v.app_version})`
-                      : v.version
-                  }
-                  className={`rounded-full px-2 py-0.5 text-xs font-mono transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 ${
-                    selected
-                      ? 'bg-teal-600 text-white hover:bg-teal-700'
-                      : 'bg-white text-[#0a3a5a] ring-1 ring-[#c0ddf0] hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-200 dark:ring-gray-700 dark:hover:bg-gray-700'
-                  } ${v.prerelease ? 'italic' : ''}`}
-                >
-                  {v.version}
-                  {v.prerelease && (
-                    <span className="ml-1 text-[10px] opacity-75">pre</span>
-                  )}
-                </button>
-              </li>
+              <button
+                key={v.version}
+                type="button"
+                role="option"
+                aria-selected={selected}
+                onClick={() => onChange(v.version)}
+                title={
+                  v.app_version
+                    ? `${v.version} (app ${v.app_version})`
+                    : v.version
+                }
+                className={`rounded-full px-2 py-0.5 text-xs font-mono transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 ${
+                  selected
+                    ? 'bg-teal-600 text-white hover:bg-teal-700'
+                    : 'bg-white text-[#0a3a5a] ring-1 ring-[#c0ddf0] hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-200 dark:ring-gray-700 dark:hover:bg-gray-700'
+                } ${v.prerelease ? 'italic' : ''}`}
+              >
+                {v.version}
+                {v.prerelease && (
+                  <span className="ml-1 text-[10px] opacity-75">pre</span>
+                )}
+              </button>
             )
           })}
-        </ul>
+        </div>
       )}
 
       <label className="mt-1 flex cursor-pointer items-center gap-2 text-xs text-[#2a5a7a] dark:text-gray-400">

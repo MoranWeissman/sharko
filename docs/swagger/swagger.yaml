@@ -906,6 +906,21 @@ definitions:
       total:
         type: integer
     type: object
+  internal_api.catalogReadmeResponse:
+    properties:
+      ah_chart:
+        type: string
+      ah_repo:
+        type: string
+      cached_at:
+        type: string
+      readme:
+        type: string
+      source:
+        type: string
+      stale:
+        type: boolean
+    type: object
   internal_api.catalogRemotePackageResponse:
     properties:
       cached_at:
@@ -2536,6 +2551,53 @@ paths:
       security:
       - BearerAuth: []
       summary: Get a curated catalog addon by name
+      tags:
+      - catalog
+  /catalog/addons/{name}/readme:
+    get:
+      description: 'Resolves a curated catalog entry to its ArtifactHub package and
+        returns the README markdown for the in-page Marketplace detail view (v1.21
+        QA Bundle 2). The lookup uses the chart name (case-insensitive) against ArtifactHub''s
+        `/packages/search`, prefers verified-publisher hits, and tie-breaks by stars.
+        Returns 200 with `readme: ""` when the chart was found but didn''t ship a
+        README. Returns 404 only when no ArtifactHub package matches the curated chart
+        name. Read-only; requires authentication.'
+      parameters:
+      - description: Curated addon name (case-sensitive, matches catalog.name)
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: README content + ArtifactHub coordinates
+          schema:
+            $ref: '#/definitions/internal_api.catalogReadmeResponse'
+        "400":
+          description: Missing addon name
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Addon not in curated catalog or no ArtifactHub match
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: ArtifactHub unreachable and no cached value available
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Catalog not loaded
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get the README markdown for a curated catalog addon
       tags:
       - catalog
   /catalog/addons/{name}/versions:

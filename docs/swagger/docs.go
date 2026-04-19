@@ -1896,6 +1896,68 @@ const docTemplate = `{
                 }
             }
         },
+        "/catalog/addons/{name}/readme": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Resolves a curated catalog entry to its ArtifactHub package and returns the README markdown for the in-page Marketplace detail view (v1.21 QA Bundle 2). The lookup uses the chart name (case-insensitive) against ArtifactHub's ` + "`" + `/packages/search` + "`" + `, prefers verified-publisher hits, and tie-breaks by stars. Returns 200 with ` + "`" + `readme: \"\"` + "`" + ` when the chart was found but didn't ship a README. Returns 404 only when no ArtifactHub package matches the curated chart name. Read-only; requires authentication.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "Get the README markdown for a curated catalog addon",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Curated addon name (case-sensitive, matches catalog.name)",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "README content + ArtifactHub coordinates",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.catalogReadmeResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Missing addon name",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Addon not in curated catalog or no ArtifactHub match",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "ArtifactHub unreachable and no cached value available",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "Catalog not loaded",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/catalog/addons/{name}/versions": {
             "get": {
                 "security": [
@@ -7457,6 +7519,29 @@ const docTemplate = `{
                 },
                 "total": {
                     "type": "integer"
+                }
+            }
+        },
+        "internal_api.catalogReadmeResponse": {
+            "type": "object",
+            "properties": {
+                "ah_chart": {
+                    "type": "string"
+                },
+                "ah_repo": {
+                    "type": "string"
+                },
+                "cached_at": {
+                    "type": "string"
+                },
+                "readme": {
+                    "type": "string"
+                },
+                "source": {
+                    "type": "string"
+                },
+                "stale": {
+                    "type": "boolean"
                 }
             }
         },

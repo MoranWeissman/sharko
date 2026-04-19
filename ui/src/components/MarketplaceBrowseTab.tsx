@@ -15,7 +15,10 @@ import {
   type MarketplaceFiltersValue,
   type ScoreTierFilter,
 } from '@/components/MarketplaceFilters'
-import { MarketplaceConfigureModal } from '@/components/MarketplaceConfigureModal'
+// v1.21 QA Bundle 2: the Configure modal is gone — cards now navigate to
+// the in-page detail view (?mp_addon=<name>), which the parent
+// MarketplaceTab renders as a full-tab replacement. The Browse tab no
+// longer needs to manage modal state.
 
 /**
  * MarketplaceBrowseTab — the curated-only filterable grid (was the body of
@@ -119,9 +122,6 @@ export function MarketplaceBrowseTab() {
   // back to the default "Configure" behaviour.
   const [installedNames, setInstalledNames] = useState<Set<string>>(new Set())
 
-  const [selectedEntry, setSelectedEntry] = useState<CatalogEntry | null>(null)
-  const [modalOpen, setModalOpen] = useState(false)
-
   const filters = useMemo(() => parseFilters(searchParams), [searchParams])
   const setFilters = useCallback(
     (next: MarketplaceFiltersValue) => {
@@ -214,11 +214,6 @@ export function MarketplaceBrowseTab() {
     })
   }, [entries, filters])
 
-  const handleOpenConfigure = useCallback((entry: CatalogEntry) => {
-    setSelectedEntry(entry)
-    setModalOpen(true)
-  }, [])
-
   if (loading) {
     return <LoadingState message="Loading curated marketplace…" />
   }
@@ -268,7 +263,6 @@ export function MarketplaceBrowseTab() {
               <li key={entry.name} className="flex">
                 <MarketplaceCard
                   entry={entry}
-                  onOpen={handleOpenConfigure}
                   inCatalog={installedNames.has(entry.name.trim().toLowerCase())}
                 />
               </li>
@@ -276,15 +270,6 @@ export function MarketplaceBrowseTab() {
           </ul>
         )}
       </section>
-
-      <MarketplaceConfigureModal
-        entry={selectedEntry}
-        open={modalOpen}
-        onOpenChange={(v) => {
-          setModalOpen(v)
-          if (!v) setSelectedEntry(null)
-        }}
-      />
     </div>
   )
 }

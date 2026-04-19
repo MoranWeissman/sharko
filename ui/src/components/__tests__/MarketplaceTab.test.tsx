@@ -55,16 +55,20 @@ const fixtures: CatalogEntry[] = [
 
 const listMock = vi.fn().mockResolvedValue({ addons: fixtures, total: fixtures.length })
 const listVersionsMock = vi.fn()
-// V121-5.1 added a pre-flight catalog fetch + a getMe call inside the modal so
-// it can render the duplicate inline message and the proactive AttributionNudge.
+// v1.21 QA Bundle 2 — the in-page detail view fetches the entry, the
+// readme, the user's catalog (duplicate guard) and /me (PAT presence).
 const getCatalogMock = vi.fn().mockResolvedValue({ addons: [] })
 const getMeMock = vi.fn().mockResolvedValue({ username: 'tester', role: 'admin', has_github_token: true })
+const getEntryMock = vi.fn()
+const getReadmeMock = vi.fn().mockResolvedValue({ readme: '', source: 'artifacthub' })
 const addAddonMock = vi.fn()
 
 vi.mock('@/services/api', () => ({
   api: {
     listCuratedCatalog: () => listMock(),
     listCuratedCatalogVersions: (...args: unknown[]) => listVersionsMock(...args),
+    getCuratedCatalogEntry: (...args: unknown[]) => getEntryMock(...args),
+    getCuratedCatalogReadme: (...args: unknown[]) => getReadmeMock(...args),
     getAddonCatalog: () => getCatalogMock(),
     getMe: () => getMeMock(),
   },
@@ -87,6 +91,8 @@ describe('MarketplaceTab', () => {
     listVersionsMock.mockReset()
     getCatalogMock.mockClear()
     getMeMock.mockClear()
+    getEntryMock.mockReset()
+    getReadmeMock.mockClear()
     addAddonMock.mockReset()
   })
 
@@ -94,13 +100,13 @@ describe('MarketplaceTab', () => {
     renderTab()
     await waitFor(() => {
       expect(
-        screen.getByRole('button', { name: /Configure cert-manager/i }),
+        screen.getByRole('button', { name: /Open cert-manager/i }),
       ).toBeInTheDocument()
       expect(
-        screen.getByRole('button', { name: /Configure grafana/i }),
+        screen.getByRole('button', { name: /Open grafana/i }),
       ).toBeInTheDocument()
       expect(
-        screen.getByRole('button', { name: /Configure argo-cd/i }),
+        screen.getByRole('button', { name: /Open argo-cd/i }),
       ).toBeInTheDocument()
     })
     // Filter sidebar should expose the OpenSSF tier radio group.
@@ -113,20 +119,20 @@ describe('MarketplaceTab', () => {
     renderTab()
     await waitFor(() =>
       expect(
-        screen.getByRole('button', { name: /Configure cert-manager/i }),
+        screen.getByRole('button', { name: /Open cert-manager/i }),
       ).toBeInTheDocument(),
     )
 
     fireEvent.click(screen.getByLabelText(/^security$/i))
     await waitFor(() => {
       expect(
-        screen.getByRole('button', { name: /Configure cert-manager/i }),
+        screen.getByRole('button', { name: /Open cert-manager/i }),
       ).toBeInTheDocument()
       expect(
-        screen.queryByRole('button', { name: /Configure grafana/i }),
+        screen.queryByRole('button', { name: /Open grafana/i }),
       ).not.toBeInTheDocument()
       expect(
-        screen.queryByRole('button', { name: /Configure argo-cd/i }),
+        screen.queryByRole('button', { name: /Open argo-cd/i }),
       ).not.toBeInTheDocument()
     })
   })
@@ -135,7 +141,7 @@ describe('MarketplaceTab', () => {
     renderTab()
     await waitFor(() =>
       expect(
-        screen.getByRole('button', { name: /Configure cert-manager/i }),
+        screen.getByRole('button', { name: /Open cert-manager/i }),
       ).toBeInTheDocument(),
     )
 
@@ -148,11 +154,11 @@ describe('MarketplaceTab', () => {
     fireEvent.click(within(filtersAside).getByLabelText(/aws-eks-blueprints/i))
     await waitFor(() => {
       expect(
-        screen.getByRole('button', { name: /Configure cert-manager/i }),
+        screen.getByRole('button', { name: /Open cert-manager/i }),
       ).toBeInTheDocument()
       // argo-cd carries cncf-graduated but NOT aws-eks-blueprints, so AND drops it.
       expect(
-        screen.queryByRole('button', { name: /Configure argo-cd/i }),
+        screen.queryByRole('button', { name: /Open argo-cd/i }),
       ).not.toBeInTheDocument()
     })
   })
@@ -161,20 +167,20 @@ describe('MarketplaceTab', () => {
     renderTab()
     await waitFor(() =>
       expect(
-        screen.getByRole('button', { name: /Configure cert-manager/i }),
+        screen.getByRole('button', { name: /Open cert-manager/i }),
       ).toBeInTheDocument(),
     )
 
     fireEvent.click(screen.getByLabelText(/Strong \(/i))
     await waitFor(() => {
       expect(
-        screen.getByRole('button', { name: /Configure cert-manager/i }),
+        screen.getByRole('button', { name: /Open cert-manager/i }),
       ).toBeInTheDocument()
       expect(
-        screen.queryByRole('button', { name: /Configure argo-cd/i }),
+        screen.queryByRole('button', { name: /Open argo-cd/i }),
       ).not.toBeInTheDocument()
       expect(
-        screen.queryByRole('button', { name: /Configure grafana/i }),
+        screen.queryByRole('button', { name: /Open grafana/i }),
       ).not.toBeInTheDocument()
     })
   })
@@ -183,15 +189,16 @@ describe('MarketplaceTab', () => {
     renderTab(['/?mp_cat=security'])
     await waitFor(() => {
       expect(
-        screen.getByRole('button', { name: /Configure cert-manager/i }),
+        screen.getByRole('button', { name: /Open cert-manager/i }),
       ).toBeInTheDocument()
       expect(
-        screen.queryByRole('button', { name: /Configure grafana/i }),
+        screen.queryByRole('button', { name: /Open grafana/i }),
       ).not.toBeInTheDocument()
     })
   })
 
-  it('opens the Configure modal when a card is activated', async () => {
+  it('opens the in-page Detail view when a card is activated', async () => {
+    getEntryMock.mockResolvedValue(fixtures[0])
     listVersionsMock.mockResolvedValue({
       addon: 'cert-manager',
       chart: 'cert-manager',
@@ -206,18 +213,23 @@ describe('MarketplaceTab', () => {
     renderTab()
     await waitFor(() =>
       expect(
-        screen.getByRole('button', { name: /Configure cert-manager/i }),
+        screen.getByRole('button', { name: /Open cert-manager/i }),
       ).toBeInTheDocument(),
     )
 
-    fireEvent.click(screen.getByRole('button', { name: /Configure cert-manager/i }))
+    fireEvent.click(screen.getByRole('button', { name: /Open cert-manager/i }))
+    // The detail view replaces the tablist; assert on the Add-panel heading.
     await waitFor(() =>
-      expect(screen.getByRole('dialog')).toBeInTheDocument(),
+      expect(
+        screen.getByRole('heading', { name: /Add cert-manager to your catalog/i }),
+      ).toBeInTheDocument(),
     )
-    // Name field pre-filled.
-    expect(screen.getByLabelText(/Display name/i)).toHaveValue('cert-manager')
+    // Name field pre-filled — wait for the seeding useEffect to flush.
+    await waitFor(() =>
+      expect(screen.getByLabelText(/Display name/i)).toHaveValue('cert-manager'),
+    )
     expect(screen.getByLabelText(/Namespace/i)).toHaveValue('cert-manager')
-    // Versions endpoint was called.
-    await waitFor(() => expect(listVersionsMock).toHaveBeenCalledWith('cert-manager'))
+    // Curated entry endpoint was hit.
+    await waitFor(() => expect(getEntryMock).toHaveBeenCalledWith('cert-manager'))
   })
 })

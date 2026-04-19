@@ -3,34 +3,19 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { MarketplaceSearchTab } from '@/components/MarketplaceSearchTab'
 
-// Mocks for api + showToast — Search tab calls api.searchCatalog,
-// api.reprobeArtifactHub, api.getRemoteCatalogPackage, api.getMe (via modal),
-// api.getAddonCatalog (via modal pre-flight).
+// v1.21 QA Bundle 2: Search tab no longer renders the Configure modal — it
+// navigates curated + AH clicks to the in-page detail view via URL params.
+// So we only need to mock the surface the Search tab itself touches:
+// searchCatalog + reprobeArtifactHub.
 
 const searchMock = vi.fn()
 const reprobeMock = vi.fn()
-const getRemoteMock = vi.fn()
-const getCatalogMock = vi.fn().mockResolvedValue({ addons: [] })
-const getMeMock = vi.fn().mockResolvedValue({ has_github_token: true })
-const listVersionsMock = vi.fn().mockResolvedValue({
-  addon: '',
-  chart: '',
-  repo: '',
-  versions: [],
-  cached_at: '',
-})
 
 vi.mock('@/services/api', () => ({
   api: {
     searchCatalog: (...args: unknown[]) => searchMock(...args),
     reprobeArtifactHub: () => reprobeMock(),
-    getRemoteCatalogPackage: (...args: unknown[]) => getRemoteMock(...args),
-    listCuratedCatalogVersions: (...args: unknown[]) => listVersionsMock(...args),
-    getAddonCatalog: () => getCatalogMock(),
-    getMe: () => getMeMock(),
   },
-  addAddon: vi.fn(),
-  isAddonAlreadyExistsError: () => false,
 }))
 
 vi.mock('@/components/ToastNotification', () => ({
@@ -49,7 +34,6 @@ describe('MarketplaceSearchTab', () => {
   beforeEach(() => {
     searchMock.mockReset()
     reprobeMock.mockReset()
-    getRemoteMock.mockReset()
   })
 
   it('renders the empty state on first load', () => {

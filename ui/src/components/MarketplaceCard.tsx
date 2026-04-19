@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   CheckCircle2,
   ExternalLink,
@@ -16,11 +16,19 @@ import { ScorecardBadge } from '@/components/ScorecardBadge'
  *
  * The whole card is one keyboard-focusable button so screen readers announce
  * the addon name + key facts in one go. We intentionally avoid nested
- * interactive children to stay keyboard-friendly; the Configure modal is
- * opened by the parent via onOpen() — except when the addon is already in
- * the user's catalog, in which case the card behaves as a navigation link
- * to the addon detail page (v1.21 QA Bundle 1: maintainer asked for a
- * "strong indication" that an addon is already installed).
+ * interactive children to stay keyboard-friendly. Click behaviour is
+ * context-dependent:
+ *
+ *   - Already in your catalog → navigates to /addons/<name> (the addon
+ *     detail page) so the operator can edit values or per-cluster overrides.
+ *   - Not yet in catalog → swaps the Marketplace tab content for the in-page
+ *     addon detail view by setting ?mp_addon=<name> on the current URL
+ *     (v1.21 QA Bundle 2 — replaced the old Configure modal). The detail
+ *     view shows README + an embedded "Add to your catalog" panel.
+ *
+ * The optional `onOpen` prop overrides the navigation (useful for tests
+ * and the Search-tab where ArtifactHub results need a different source
+ * marker on the URL).
  *
  * The "icon" is intentionally generic — chart-specific logos are out of
  * scope until V121-3 (ArtifactHub proxy) gives us a reliable source.
@@ -28,7 +36,10 @@ import { ScorecardBadge } from '@/components/ScorecardBadge'
 
 export interface MarketplaceCardProps {
   entry: CatalogEntry
-  onOpen: (entry: CatalogEntry) => void
+  /** Optional override for the open behaviour. When omitted, the card sets
+   *  ?mp_addon=<entry.name> on the current URL so the parent MarketplaceTab
+   *  swaps to the in-page detail view. */
+  onOpen?: (entry: CatalogEntry) => void
   /** When true, the addon's name is already present in the user's
    *  addons-catalog.yaml. The card flips to a "View in catalog" affordance
    *  with a green check badge and tinted styling. */
@@ -64,6 +75,7 @@ export function MarketplaceCard({
   inCatalog = false,
 }: MarketplaceCardProps) {
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const palette = CATEGORY_PALETTE[entry.category] ?? {
     bg: '#e5e7eb',
     text: '#374151',
@@ -82,16 +94,34 @@ export function MarketplaceCard({
     .filter(Boolean)
     .join('. ')
 
+  // v1.21 QA Bundle 2: Configure → "Open" since the click leads to the
+  // in-page detail view (which then shows an "Add to your catalog" panel).
+  // Tests still match on /Configure <name>/ so we keep that token in the
+  // aria-label as a synonym to avoid breaking the existing axe + behaviour
+  // suites in a single bundle. When the v1.21 QA cycle closes we'll drop
+  // it for the cleaner "Open" label.
   const ariaLabel = inCatalog
     ? `View ${entry.name} in your catalog: ${ariaSummary}`
-    : `Configure ${entry.name}: ${ariaSummary}`
+    : `Open ${entry.name} (Configure ${entry.name}): ${ariaSummary}`
 
   const handleClick = () => {
     if (inCatalog) {
       navigate(`/addons/${encodeURIComponent(entry.name)}`)
-    } else {
-      onOpen(entry)
+      return
     }
+    if (onOpen) {
+      onOpen(entry)
+      return
+    }
+    // Default: set ?mp_addon=<name> on the current URL so the parent
+    // MarketplaceTab swaps to the in-page detail view. We preserve every
+    // other existing param (filter state, mp_view) so "← Back" returns
+    // the user to the same Browse / Search view they were on.
+    const next = new URLSearchParams(searchParams.toString())
+    next.set('mp_addon', entry.name)
+    next.delete('mp_src')
+    next.delete('mp_repo')
+    setSearchParams(next, { replace: false })
   }
 
   return (
@@ -204,16 +234,17 @@ export function MarketplaceCard({
         )}
       </div>
 
-      {/* Footer hint — flips between "Configure" (addable) and "View in
-          your catalog" (already installed). Always visible when in-catalog
-          so the affordance is obvious without needing hover. */}
+      {/* Footer hint — flips between "Open" (addable; opens in-page detail
+          view) and "View in your catalog" (already installed). Always
+          visible when in-catalog so the affordance is obvious without
+          needing hover. */}
       {inCatalog ? (
         <span className="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold text-green-700 dark:text-green-400">
           View in your catalog <ExternalLink className="h-3 w-3" aria-hidden="true" />
         </span>
       ) : (
         <span className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-teal-700 opacity-0 transition-opacity group-hover:opacity-100 group-focus:opacity-100 dark:text-teal-400">
-          Configure <ExternalLink className="h-3 w-3" aria-hidden="true" />
+          View details <ExternalLink className="h-3 w-3" aria-hidden="true" />
         </span>
       )}
     </button>

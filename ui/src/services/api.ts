@@ -753,6 +753,18 @@ export const api = {
     ),
 
   /**
+   * v1.21 QA Bundle 2: README markdown for a curated catalog addon.
+   * The backend resolves the curated chart → ArtifactHub package
+   * (best-match heuristic), fetches the package detail, and returns
+   * just the README. Empty `readme` means the chart was found but
+   * doesn't ship a README — render an empty state, not an error.
+   */
+  getCuratedCatalogReadme: (name: string) =>
+    fetchJSON<import('./models').CatalogReadmeResponse>(
+      `/catalog/addons/${encodeURIComponent(name)}/readme`,
+    ),
+
+  /**
    * Force ArtifactHub connectivity re-check. Resets the in-memory backoff and
    * purges the search/package caches; returns whether ArtifactHub is currently
    * reachable from the Sharko process. Tier 1 (admin) — used by the "Retry"

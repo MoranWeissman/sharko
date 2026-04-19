@@ -533,6 +533,10 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	// addons for their connected GitOps repo.
 	mux.HandleFunc("GET /api/v1/catalog/addons", srv.handleListCatalogAddons)
 	mux.HandleFunc("GET /api/v1/catalog/addons/{name}/versions", srv.handleListCatalogVersions)
+	// v1.21 QA Bundle 2: README proxy for the in-page Marketplace detail
+	// view. Resolves curated addon → ArtifactHub package, then returns the
+	// README markdown.
+	mux.HandleFunc("GET /api/v1/catalog/addons/{name}/readme", srv.handleGetCatalogReadme)
 	mux.HandleFunc("GET /api/v1/catalog/addons/{name}", srv.handleGetCatalogAddon)
 
 	// V121-4: Paste Helm URL validator — confirms an arbitrary repo+chart is

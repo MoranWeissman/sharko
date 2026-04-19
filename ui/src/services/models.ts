@@ -587,6 +587,23 @@ export interface CatalogRemotePackageResponse {
   cached_at?: string
 }
 
+/**
+ * v1.21 QA Bundle 2: README payload for a curated catalog addon. The backend
+ * resolves the curated entry to an ArtifactHub package and returns the
+ * README markdown. `readme: ""` means the chart was located but doesn't
+ * ship a README — the UI renders an empty state, not an error.
+ */
+export interface CatalogReadmeResponse {
+  readme: string
+  /** Source of the README — "artifacthub" today; "fallback" reserved for
+   *  v1.22's direct chart-tarball extractor. */
+  source: string
+  ah_repo?: string
+  ah_chart?: string
+  stale?: boolean
+  cached_at?: string
+}
+
 export interface CatalogReprobeResponse {
   reachable: boolean
   last_error?: string
