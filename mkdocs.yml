@@ -38,6 +38,7 @@ nav:
     - Managing Connections: user-guide/connections.md
     - Managing Clusters: user-guide/clusters.md
     - Managing Addons: user-guide/addons.md
+    - Marketplace: user-guide/marketplace.md
     - Editing Values: user-guide/values-editing.md
     - Editing ArgoCD App Options: user-guide/argocd-app-options.md
     - Upgrades: user-guide/upgrades.md
