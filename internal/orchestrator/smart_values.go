@@ -309,6 +309,12 @@ type SmartValuesInput struct {
 	UpstreamValues []byte // raw chart values.yaml bytes (comments preserved)
 	AIAnnotated    bool   // true if an AI annotation pass also ran
 	AIOptOut       bool   // true if the user opted out per-addon
+
+	// ExtraClusterSpecificPaths is the optional union-additive set of
+	// dotted paths the AI annotator returned (V121-7 Story 7.2). These
+	// paths are merged into the heuristic's classification — never
+	// subtractive. Empty when AI was skipped.
+	ExtraClusterSpecificPaths []string
 }
 
 // SmartValuesOutput is the result of SplitUpstreamValues.
@@ -334,6 +340,33 @@ type SmartValuesOutput struct {
 // header flag); for v1.21 the heuristic-only path ships first.
 func SplitUpstreamValues(in SmartValuesInput) SmartValuesOutput {
 	clusterPaths := ClassifyClusterSpecificFields(in.UpstreamValues)
+
+	// V121-7.2 union: merge AI-suggested cluster-specific paths into the
+	// heuristic set. We require the path to actually exist as a leaf in
+	// the upstream values (via walkLeafPaths) before honoring it — the
+	// LLM occasionally hallucinates paths and we don't want to inject
+	// `<cluster-specific>` markers under keys that aren't there.
+	if len(in.ExtraClusterSpecificPaths) > 0 {
+		valid := map[string]struct{}{}
+		for _, p := range walkLeafPaths(in.UpstreamValues) {
+			valid[p] = struct{}{}
+		}
+		seen := map[string]struct{}{}
+		for _, p := range clusterPaths {
+			seen[p] = struct{}{}
+		}
+		for _, p := range in.ExtraClusterSpecificPaths {
+			if _, ok := valid[p]; !ok {
+				continue
+			}
+			if _, dup := seen[p]; dup {
+				continue
+			}
+			seen[p] = struct{}{}
+			clusterPaths = append(clusterPaths, p)
+		}
+		sort.Strings(clusterPaths)
+	}
 
 	// Step 2: emit the global body with the addon-name top-level key.
 	// We re-use the v1.20 convention: every line of the upstream values
@@ -538,15 +571,20 @@ func renderTemplateLine(dottedPath string) string {
 // Pure function — caller is responsible for fetching upstream values and
 // committing the result. Keeping HTTP/Git out makes it trivial to unit-
 // test the splitter.
-func GenerateGlobalValuesFile(addonName, chart, version, repoURL string, upstream []byte, aiAnnotated, aiOptOut bool) []byte {
+//
+// `extraClusterPaths` is the optional set of LLM-suggested dotted paths
+// to UNION with the heuristic's classification (V121-7 Story 7.2). Pass
+// nil for the heuristic-only path (no AI, AI skipped, etc.).
+func GenerateGlobalValuesFile(addonName, chart, version, repoURL string, upstream []byte, aiAnnotated, aiOptOut bool, extraClusterPaths ...string) []byte {
 	out := SplitUpstreamValues(SmartValuesInput{
-		AddonName:      addonName,
-		Chart:          chart,
-		Version:        version,
-		RepoURL:        repoURL,
-		UpstreamValues: upstream,
-		AIAnnotated:    aiAnnotated,
-		AIOptOut:       aiOptOut,
+		AddonName:                 addonName,
+		Chart:                     chart,
+		Version:                   version,
+		RepoURL:                   repoURL,
+		UpstreamValues:            upstream,
+		AIAnnotated:               aiAnnotated,
+		AIOptOut:                  aiOptOut,
+		ExtraClusterSpecificPaths: extraClusterPaths,
 	})
 	return out.File
 }

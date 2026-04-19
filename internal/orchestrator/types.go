@@ -129,6 +129,27 @@ type AddAddonRequest struct {
 	// the wire schema — handlers populate it after `helm.FetchValues` and
 	// the smart-parser layer.
 	UpstreamValues []byte `json:"-"`
+
+	// AIAnnotated is set by the API handler after the AI annotate pass
+	// (V121-7 Story 7.3) succeeds. The orchestrator stamps the
+	// `# AI annotation: enabled` line in the file header based on this
+	// flag — see WriteSmartValuesHeader. False means heuristic-only
+	// (or AI was skipped: not configured, secret blocked, timeout, opt-out).
+	AIAnnotated bool `json:"-"`
+
+	// AIOptOut is set by the API handler when the user has explicitly
+	// opted this addon out of AI annotation via the per-addon toggle
+	// (V121-7 Story 7.3). The orchestrator stamps the
+	// `# sharko: ai-annotate=off` line in the file header so that the
+	// later refresh-from-upstream path (V121-6.4) preserves the opt-out.
+	AIOptOut bool `json:"-"`
+
+	// ExtraClusterSpecificPaths is the union-additive set of cluster-
+	// specific dotted paths from the AI annotate pass (V121-7 Story 7.2).
+	// The smart-values splitter treats this as additive — it never
+	// subtracts from the heuristic's classification. Empty when AI was
+	// skipped.
+	ExtraClusterSpecificPaths []string `json:"-"`
 }
 
 // ConfigureAddonRequest is the input for updating an addon's catalog configuration.
