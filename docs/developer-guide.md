@@ -879,3 +879,20 @@ No API token is required — ArtifactHub's read endpoints are public. We never p
 4. Open a PR. CODEOWNERS gates `catalog/**` to the maintainer.
 
 The catalog is metadata-only — Sharko does not host or proxy Helm charts. ArgoCD pulls charts from the upstream `repo` URL at deploy time. Air-gap is the operator's infrastructure problem (typically solved by running an internal Helm mirror and pointing the user's `addons-catalog.yaml` at it).
+
+### Security primitives
+
+Cross-cutting hardening helpers live under `internal/security/`:
+
+- `internal/security/url_guard.go` — `ValidateExternalURL(rawURL string) error` runs an SSRF check on user-supplied URLs (RFC1918, loopback, link-local, IPv6 ULA blocked by default; optional `SHARKO_URL_ALLOWLIST` env var pins to a fixed hostname set). Wired into every handler that fetches from a user-supplied URL — currently `GET /api/v1/catalog/validate`. Returns a typed `*SSRFError` so handlers can render a structured `ssrf_blocked` response without ambiguity.
+
+The orchestrator-side secret-leak guard (`internal/orchestrator/ai_guard.go`) is the AI-pipeline analogue — pure scanner of `values.yaml` payloads with `ScanForSecrets`, returning redacted `SecretMatch` records. Handler call sites (`addons_write.go`, `ai_annotate.go`, `values_editor.go`) emit a dedicated `secret_leak_blocked` audit-log entry via the `(*Server).emitSecretLeakAuditBlock` helper in `internal/api/secret_leak_audit.go` so security review can grep one stable token across the audit log without parsing per-event detail strings.
+
+### Release supply-chain (Story V121-8.1)
+
+Every release artifact is cosign-signed via GitHub Actions OIDC (keyless). Verification commands are in `docs/site/operator/supply-chain.md`. The signing happens in:
+
+- `.github/workflows/release.yml` — image (after `docker build-push`) and Helm OCI chart (after `helm push`). Both use `sigstore/cosign-installer` and `cosign sign --yes <ref>@<digest>` so each tag pointing at the same digest shares one Rekor entry.
+- `.goreleaser.yaml` — per-archive `.sig` and `.pem` companions for every CLI binary tarball plus `checksums.txt`, generated via the goreleaser `signs:` block calling `cosign sign-blob`.
+
+The per-PR Docker workflow (`pr-docker.yml`) does NOT sign — PR images are short-lived test artifacts and the cost of OIDC-signing every PR push is not justified. Production-bound deployments must use `vX.Y.Z` tags only.
