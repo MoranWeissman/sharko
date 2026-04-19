@@ -117,6 +117,19 @@ Beneath each editor, the **Recent changes (last 5)** panel lists recently-merged
 
 The list is backed by a 5-minute in-memory cache on the server — if you just merged a PR and don't see it yet, wait a few minutes or refresh the page.
 
+> **v1.21 QA Bundle 4 note:** a GitHub list-PRs quirk was previously causing this panel to stay empty for addons that had been edited but whose PRs were merged via the GitHub UI (the list API's `merged` boolean is deprecated; `merged_at` is the real source of truth). Fixed in 1.21 — upgrade to see your own history.
+
+## Refresh from upstream vs. Pull new fields from upstream
+
+There are two upstream-aware actions on the values editor and they do different things:
+
+| Action | When to use | What it does |
+|--------|-------------|--------------|
+| **Refresh from upstream** (contextual banner) | The chart got upgraded and the stamped version in the file header no longer matches the catalog pin. | Replaces the file with a freshly-generated smart-values output for the new version. Your edits are discarded — use when the file is stale and you want the new shape as a clean slate. |
+| **Pull new fields from upstream** (toolbar button — v1.21 QA Bundle 4) | You want to stay on your current customizations AND pick up any new keys the upstream chart has added since you first seeded. | Opens a diff modal with an additive merge: every key the user has already set is preserved; only NEW upstream keys (and their default values) are added. "Apply changes" opens a Tier 2 PR with the merged body. |
+
+Both actions surface attribution the same way (Tier 2 — personal PAT preferred). The Pull-new-fields flow is a two-step action on purpose: the first click calls `POST /api/v1/addons/{name}/values/preview-merge` to produce the candidate body (no Git write); nothing is committed until you click **Apply changes** in the modal, which commits through the same `PUT /api/v1/addons/{name}/values` handler as a manual edit.
+
 ## Diff labels
 
 When you flip to the **Diff** tab the two columns are labelled **Currently in Git** (the file as it exists on the default branch) and **Your changes** (your pending edits). A small caption above the diff reminds you:

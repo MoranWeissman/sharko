@@ -60,6 +60,20 @@ cluster registration, values edits). The Dashboard's PR panel has two tabs:
   server cache to keep the GitHub API call cost bounded under typical PAT
   rate limits (5000 requests per hour).
 
+  **Time window.** The Merged tab lists up to 20 PRs by default — whatever
+  the GitHub API returns as the most recently closed for the configured
+  repo. There is no fixed "last 30 days" cut-off; the cap is by count,
+  not age. Increase the count via the `limit` query parameter on the
+  underlying endpoint (`GET /api/v1/prs/merged?limit=50`, max 100) if you
+  need to see further back.
+
+  **Note (v1.21 QA Bundle 4):** a bug meant GitHub's list-PRs response
+  was reporting merged PRs as plain `closed`, which left this tab empty
+  until a new PR was merged through the GitHub API directly. Fixed by
+  keying on GitHub's `merged_at` timestamp instead of the (unreliable-in-
+  list-responses) `merged` boolean. Upgrade to 1.21 or later for the
+  Merged tab to populate.
+
 The current tab is preserved in the URL (`?prs_state=merged`) so deep-links
 work — share a dashboard URL with `?prs_state=merged` to land on the merged
 view directly.

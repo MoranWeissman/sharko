@@ -376,6 +376,20 @@ definitions:
         description: Legacy fields — kept for backwards compatibility with existing
           UI consumers.
         type: string
+      on_latest:
+        description: |-
+          OnLatest is true when the addon's current version is greater than or
+          equal to every stable version available in the chart repo. The UI uses
+          this to render a "✓ You're on the latest stable" message instead of
+          hiding the panel (which would look broken).
+
+          v1.21 QA Bundle 4 (Fix #7): the previous logic could surface a
+          "Latest stable X.Y.Z" card with X.Y.Z < current, which was a
+          downgrade dressed up as a recommendation. Recommendations are now
+          filtered to "strictly newer than current"; OnLatest captures the
+          case where the filter empties the list because there is nothing
+          newer.
+        type: boolean
       recommended:
         description: Recommended is the version string of the card that Sharko considers
           the best upgrade path.
@@ -1153,6 +1167,86 @@ definitions:
       username:
         type: string
     type: object
+  internal_api.previewMergeResponse:
+    properties:
+      current:
+        description: |-
+          Current is the existing global values file body, exactly as returned
+          by the GET values-schema endpoint. Returned so the UI can render a
+          before/after diff without a second request.
+        type: string
+      diff_summary:
+        allOf:
+        - $ref: '#/definitions/internal_api.previewMergeSummary'
+        description: |-
+          DiffSummary is an at-a-glance view of what changed. Used by the modal
+          header so the user can decide whether to open the diff or skip.
+      merged:
+        description: |-
+          Merged is the candidate body the user can submit through the existing
+          PUT /api/v1/addons/{name}/values endpoint. Same shape as Current
+          (full YAML with smart-values header) plus any new upstream keys the
+          user did not previously set.
+        type: string
+      upstream_version:
+        description: |-
+          UpstreamVersion is the chart version Sharko fetched the upstream
+          values.yaml for. Echo of the catalog pin — surfaced so the UI can
+          show "Merging in defaults from cert-manager@1.20.2".
+        type: string
+    type: object
+  internal_api.previewMergeSummary:
+    properties:
+      new_keys:
+        description: |-
+          NewKeys are dotted paths present in upstream but NOT in the user's
+          current file. These are the only paths that the merge actually adds.
+        items:
+          type: string
+        type: array
+      no_op:
+        description: |-
+          NoOp is true when the merge produced the same body as Current — the
+          user already has every upstream key. The UI uses this to render a
+          "Already up to date" empty state instead of an empty diff.
+        type: boolean
+      preserved_user_keys:
+        description: |-
+          PreservedUserKeys are dotted paths the user has set that already
+          exist in upstream — the merge keeps the user's value and the user's
+          inline comments are honored on the PR side. Surfaced so the modal
+          can reassure the user nothing of theirs is being overwritten.
+        items:
+          type: string
+        type: array
+    type: object
+  internal_api.projectReadmeResponse:
+    properties:
+      available:
+        description: |-
+          Available is true when we successfully resolved a GitHub repo AND
+          fetched a non-empty README. False means either (a) the chart's
+          homepage wasn't a GitHub URL, or (b) the GitHub README API returned
+          404 / the repo has no README.md.
+        type: boolean
+      readme:
+        description: |-
+          Readme is the decoded markdown body. Empty when the lookup failed
+          or the repo doesn't publish a README — the UI shows an explicit
+          empty state rather than a spinning loader.
+        type: string
+      reason:
+        description: |-
+          Reason carries a short explanation when Available is false so the
+          UI can render a concrete message instead of "something went wrong".
+        type: string
+      source_url:
+        description: |-
+          SourceURL is the resolved GitHub URL of the README (e.g.
+          https://github.com/cert-manager/cert-manager/blob/master/README.md).
+          Surfaced so the UI can render a "View on GitHub" link.
+        type: string
+    type: object
   internal_api.recentPRsEntry:
     properties:
       author:
@@ -1908,6 +2002,48 @@ paths:
       summary: Re-annotate an addon's global values via AI
       tags:
       - addons
+  /addons/{name}/values/preview-merge:
+    post:
+      consumes:
+      - application/json
+      description: Returns a candidate values YAML that adds NEW upstream keys (and
+        their default values) on top of the user's current file, preserving every
+        key the user has already set. The endpoint is Tier 1 read-only — it does NOT
+        open a PR. Submit the returned `merged` body through PUT /api/v1/addons/{name}/values
+        to commit.
+      parameters:
+      - description: Addon name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_api.previewMergeResponse'
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Addon not found
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Git or Helm-repo failure
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Preview a safe merge of upstream values into an addon's values file
+      tags:
+      - addons
   /addons/{name}/values/recent-prs:
     get:
       description: Returns up to `limit` (default 5, max 20) recently-merged PRs that
@@ -2587,6 +2723,35 @@ paths:
       summary: Get a curated catalog addon by name
       tags:
       - catalog
+  /catalog/addons/{name}/project-readme:
+    get:
+      description: Fetches the project's own README from GitHub (distinct from the
+        Helm chart README). Resolves via the curated entry's `source_url` or `homepage`;
+        returns an empty body + reason when the entry doesn't point at a GitHub repo.
+        Cached server-side so the upstream GitHub API is not hit on every page view.
+      parameters:
+      - description: Curated addon name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_api.projectReadmeResponse'
+        "404":
+          description: Addon not found
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get the upstream project README for a curated catalog addon
+      tags:
+      - catalog
   /catalog/addons/{name}/readme:
     get:
       description: 'Resolves a curated catalog entry to its ArtifactHub package and
@@ -2725,6 +2890,34 @@ paths:
       security:
       - BearerAuth: []
       summary: ArtifactHub package detail proxy
+      tags:
+      - catalog
+  /catalog/remote/{repo}/{name}/project-readme:
+    get:
+      description: Same as the curated variant but resolves the GitHub repo from the
+        ArtifactHub package's `home_url`. Used for Marketplace entries that came from
+        ArtifactHub search rather than Sharko's curated list.
+      parameters:
+      - description: ArtifactHub repo name
+        in: path
+        name: repo
+        required: true
+        type: string
+      - description: ArtifactHub package name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_api.projectReadmeResponse'
+      security:
+      - BearerAuth: []
+      summary: Get the upstream project README for an ArtifactHub-discovered addon
       tags:
       - catalog
   /catalog/repo-charts:

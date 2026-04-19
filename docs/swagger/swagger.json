@@ -1053,6 +1053,64 @@
                 }
             }
         },
+        "/addons/{name}/values/preview-merge": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns a candidate values YAML that adds NEW upstream keys (and their default values) on top of the user's current file, preserving every key the user has already set. The endpoint is Tier 1 read-only — it does NOT open a PR. Submit the returned `merged` body through PUT /api/v1/addons/{name}/values to commit.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "addons"
+                ],
+                "summary": "Preview a safe merge of upstream values into an addon's values file",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Addon name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.previewMergeResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Addon not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "Git or Helm-repo failure",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/addons/{name}/values/recent-prs": {
             "get": {
                 "security": [
@@ -1890,6 +1948,47 @@
                 }
             }
         },
+        "/catalog/addons/{name}/project-readme": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Fetches the project's own README from GitHub (distinct from the Helm chart README). Resolves via the curated entry's `source_url` or `homepage`; returns an empty body + reason when the entry doesn't point at a GitHub repo. Cached server-side so the upstream GitHub API is not hit on every page view.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "Get the upstream project README for a curated catalog addon",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Curated addon name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.projectReadmeResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Addon not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/catalog/addons/{name}/readme": {
             "get": {
                 "security": [
@@ -2070,6 +2169,47 @@
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/catalog/remote/{repo}/{name}/project-readme": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Same as the curated variant but resolves the GitHub repo from the ArtifactHub package's `home_url`. Used for Marketplace entries that came from ArtifactHub search rather than Sharko's curated list.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "Get the upstream project README for an ArtifactHub-discovered addon",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ArtifactHub repo name",
+                        "name": "repo",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "ArtifactHub package name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.projectReadmeResponse"
                         }
                     }
                 }
@@ -6815,6 +6955,10 @@
                     "description": "Legacy fields — kept for backwards compatibility with existing UI consumers.",
                     "type": "string"
                 },
+                "on_latest": {
+                    "description": "OnLatest is true when the addon's current version is greater than or\nequal to every stable version available in the chart repo. The UI uses\nthis to render a \"✓ You're on the latest stable\" message instead of\nhiding the panel (which would look broken).\n\nv1.21 QA Bundle 4 (Fix #7): the previous logic could surface a\n\"Latest stable X.Y.Z\" card with X.Y.Z \u003c current, which was a\ndowngrade dressed up as a recommendation. Recommendations are now\nfiltered to \"strictly newer than current\"; OnLatest captures the\ncase where the filter empties the list because there is nothing\nnewer.",
+                    "type": "boolean"
+                },
                 "recommended": {
                     "description": "Recommended is the version string of the card that Sharko considers the best upgrade path.",
                     "type": "string"
@@ -7950,6 +8094,75 @@
                     "type": "string"
                 },
                 "username": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.previewMergeResponse": {
+            "type": "object",
+            "properties": {
+                "current": {
+                    "description": "Current is the existing global values file body, exactly as returned\nby the GET values-schema endpoint. Returned so the UI can render a\nbefore/after diff without a second request.",
+                    "type": "string"
+                },
+                "diff_summary": {
+                    "description": "DiffSummary is an at-a-glance view of what changed. Used by the modal\nheader so the user can decide whether to open the diff or skip.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/internal_api.previewMergeSummary"
+                        }
+                    ]
+                },
+                "merged": {
+                    "description": "Merged is the candidate body the user can submit through the existing\nPUT /api/v1/addons/{name}/values endpoint. Same shape as Current\n(full YAML with smart-values header) plus any new upstream keys the\nuser did not previously set.",
+                    "type": "string"
+                },
+                "upstream_version": {
+                    "description": "UpstreamVersion is the chart version Sharko fetched the upstream\nvalues.yaml for. Echo of the catalog pin — surfaced so the UI can\nshow \"Merging in defaults from cert-manager@1.20.2\".",
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.previewMergeSummary": {
+            "type": "object",
+            "properties": {
+                "new_keys": {
+                    "description": "NewKeys are dotted paths present in upstream but NOT in the user's\ncurrent file. These are the only paths that the merge actually adds.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "no_op": {
+                    "description": "NoOp is true when the merge produced the same body as Current — the\nuser already has every upstream key. The UI uses this to render a\n\"Already up to date\" empty state instead of an empty diff.",
+                    "type": "boolean"
+                },
+                "preserved_user_keys": {
+                    "description": "PreservedUserKeys are dotted paths the user has set that already\nexist in upstream — the merge keeps the user's value and the user's\ninline comments are honored on the PR side. Surfaced so the modal\ncan reassure the user nothing of theirs is being overwritten.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "internal_api.projectReadmeResponse": {
+            "type": "object",
+            "properties": {
+                "available": {
+                    "description": "Available is true when we successfully resolved a GitHub repo AND\nfetched a non-empty README. False means either (a) the chart's\nhomepage wasn't a GitHub URL, or (b) the GitHub README API returned\n404 / the repo has no README.md.",
+                    "type": "boolean"
+                },
+                "readme": {
+                    "description": "Readme is the decoded markdown body. Empty when the lookup failed\nor the repo doesn't publish a README — the UI shows an explicit\nempty state rather than a spinning loader.",
+                    "type": "string"
+                },
+                "reason": {
+                    "description": "Reason carries a short explanation when Available is false so the\nUI can render a concrete message instead of \"something went wrong\".",
+                    "type": "string"
+                },
+                "source_url": {
+                    "description": "SourceURL is the resolved GitHub URL of the README (e.g.\nhttps://github.com/cert-manager/cert-manager/blob/master/README.md).\nSurfaced so the UI can render a \"View on GitHub\" link.",
                     "type": "string"
                 }
             }
