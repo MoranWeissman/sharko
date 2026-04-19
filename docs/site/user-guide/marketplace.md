@@ -8,10 +8,28 @@ The Marketplace is a **read-only browse experience**. Submitting an addon goes t
 
 1. Open **Addons** in the left rail.
 2. Switch to the **Marketplace** tab at the top of the page.
-3. Use the sidebar to filter by **Category**, **Curated by** (e.g. `cncf-graduated`, `aws-eks-blueprints`), **License**, or **OpenSSF tier** (Strong / Moderate / Weak / Unknown). Categories OR within the axis; curators AND.
-4. Filters are persisted in the URL, so `?mp_cat=security&mp_tier=strong` deep-links you to a specific slice.
+3. The Marketplace has two subtabs: **Browse curated** (default) and **Search ArtifactHub**. Browse is the filterable curated grid; Search is name-based discovery across our catalog and ArtifactHub.
+
+### Browse curated
+
+Use the sidebar to filter by **Category**, **Curated by** (e.g. `cncf-graduated`, `aws-eks-blueprints`), **License**, or **OpenSSF tier** (Strong / Moderate / Weak / Unknown). Categories OR within the axis; curators AND.
+
+Filters are persisted in the URL, so `?mp_cat=security&mp_tier=strong` deep-links you to a specific slice.
 
 Each card shows the chart name, a one-line description, the OpenSSF score badge, the license, the maintainers, and a docs link when one's published.
+
+### Search ArtifactHub
+
+Click **Search ArtifactHub** when you want a chart that isn't in our curated catalog. Type any name; results appear in two stacked sections:
+
+- **Curated by Sharko** (top) — full catalog cards with the same Configure flow as Browse.
+- **From ArtifactHub** (bottom) — slim cards tagged "ArtifactHub" with verified-publisher badge and star count when applicable.
+
+Sharko proxies ArtifactHub server-side — your browser never calls them directly — so search results are cached for 10 minutes per query. If ArtifactHub is unreachable (network blocked, rate-limited, or down), the curated section still works and you'll see an amber banner: *"ArtifactHub unreachable — showing curated only."* with a **Retry connectivity** button that re-probes immediately.
+
+When you click an ArtifactHub result, the Configure modal opens pre-filled with the chart name, repo URL, and (best-effort) license + maintainers fetched from ArtifactHub's package detail. The Submit & PR flow is identical to a curated entry.
+
+Use **Browse** when you know what you want from our vetted set; use **Search** for the long tail.
 
 ## Configure & submit
 

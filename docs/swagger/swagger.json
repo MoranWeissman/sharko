@@ -1890,6 +1890,154 @@
                 }
             }
         },
+        "/catalog/remote/{repo}/{name}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Proxies the ArtifactHub package detail endpoint for one Helm chart so the browser does not call ArtifactHub directly (avoids CORS issues and lets Sharko apply rate-limit handling). Returns the trimmed package shape (description, maintainers, available_versions, links, license, repo metadata). Responses are cached server-side for 1 hour; on upstream failure the last cached value is served (stale up to 24 h) with `stale: true`. The `{repo}` path segment is the ArtifactHub repository name, `{name}` is the chart name.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "ArtifactHub package detail proxy",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ArtifactHub repository name (e.g. jetstack)",
+                        "name": "repo",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Chart name (e.g. cert-manager)",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Package detail",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.catalogRemotePackageResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Missing repo or name",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Package not found on ArtifactHub",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "ArtifactHub unreachable and no cached value available",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/catalog/reprobe": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Resets the in-memory backoff/circuit-breaker for ArtifactHub, purges the search and package-detail caches, and issues a probe against the ArtifactHub API root. Returns whether ArtifactHub is currently reachable from this Sharko process. Used by the UI's \"Retry\" button on the search-unreachable banner. Tier 1 (operational); audit-logged.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "Force ArtifactHub connectivity re-check",
+                "responses": {
+                    "200": {
+                        "description": "Probe result",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.catalogReprobeResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthenticated",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/catalog/search": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns curated catalog matches and ArtifactHub Helm chart matches for the same query in one envelope. Curated hits are returned as full catalog entries; ArtifactHub hits are slimmed to the fields the marketplace UI renders. When the upstream ArtifactHub call fails, curated hits are still returned and `artifacthub_error` is set with a classification (rate_limited / server_error / timeout / not_found / malformed). Search results are cached server-side for 10 minutes; on upstream failure the last cached value is served (stale up to 24 h) with `stale: true`.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "Blended catalog search (curated + ArtifactHub)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Search term (case-insensitive substring on curated; full-text on ArtifactHub)",
+                        "name": "q",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Maximum ArtifactHub hits to return (default 20, max 60)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Blended search response",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.catalogSearchResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Empty query",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "Catalog not loaded",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/cluster/nodes": {
             "get": {
                 "security": [
@@ -5843,6 +5991,174 @@
         }
     },
     "definitions": {
+        "github_com_MoranWeissman_sharko_internal_catalog.AHLink": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_catalog.AHMaintainer": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_catalog.AHPackage": {
+            "type": "object",
+            "properties": {
+                "app_version": {
+                    "type": "string"
+                },
+                "available_versions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.AHVersionMeta"
+                    }
+                },
+                "description": {
+                    "type": "string"
+                },
+                "display_name": {
+                    "type": "string"
+                },
+                "home_url": {
+                    "type": "string"
+                },
+                "keywords": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "license": {
+                    "type": "string"
+                },
+                "links": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.AHLink"
+                    }
+                },
+                "maintainers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.AHMaintainer"
+                    }
+                },
+                "name": {
+                    "type": "string"
+                },
+                "normalized_name": {
+                    "type": "string"
+                },
+                "package_id": {
+                    "type": "string"
+                },
+                "readme": {
+                    "type": "string"
+                },
+                "repository": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.AHRepo"
+                },
+                "stars": {
+                    "type": "integer"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_catalog.AHRepo": {
+            "type": "object",
+            "properties": {
+                "display_name": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "official": {
+                    "type": "boolean"
+                },
+                "organization_name": {
+                    "type": "string"
+                },
+                "repository_id": {
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string"
+                },
+                "user_alias": {
+                    "type": "string"
+                },
+                "verified_publisher": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_catalog.AHSearchPackage": {
+            "type": "object",
+            "properties": {
+                "app_version": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "display_name": {
+                    "type": "string"
+                },
+                "logo_image_id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "normalized_name": {
+                    "type": "string"
+                },
+                "package_id": {
+                    "type": "string"
+                },
+                "repository": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.AHRepo"
+                },
+                "stars": {
+                    "type": "integer"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_catalog.AHVersionMeta": {
+            "type": "object",
+            "properties": {
+                "prerelease": {
+                    "type": "boolean"
+                },
+                "ts": {
+                    "type": "integer"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_MoranWeissman_sharko_internal_catalog.CatalogEntry": {
             "type": "object",
             "properties": {
@@ -6925,6 +7241,63 @@
                 },
                 "total": {
                     "type": "integer"
+                }
+            }
+        },
+        "internal_api.catalogRemotePackageResponse": {
+            "type": "object",
+            "properties": {
+                "cached_at": {
+                    "type": "string"
+                },
+                "package": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.AHPackage"
+                },
+                "stale": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "internal_api.catalogReprobeResponse": {
+            "type": "object",
+            "properties": {
+                "last_error": {
+                    "type": "string"
+                },
+                "probed_at": {
+                    "type": "string"
+                },
+                "reachable": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "internal_api.catalogSearchResponse": {
+            "type": "object",
+            "properties": {
+                "artifacthub": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.AHSearchPackage"
+                    }
+                },
+                "artifacthub_error": {
+                    "type": "string"
+                },
+                "cached_at": {
+                    "type": "string"
+                },
+                "curated": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.CatalogEntry"
+                    }
+                },
+                "query": {
+                    "type": "string"
+                },
+                "stale": {
+                    "type": "boolean"
                 }
             }
         },

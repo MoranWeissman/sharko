@@ -837,10 +837,39 @@ The Sharko binary ships an embedded curated addon catalog used by the Marketplac
 
 ### REST API
 
-Both endpoints are read-only, require authentication, and have full swaggo annotations (regenerate with `swag init -g cmd/sharko/serve.go -o docs/swagger --parseDependency --parseInternal`):
+All endpoints have full swaggo annotations (regenerate with `swag init -g cmd/sharko/serve.go -o docs/swagger --parseDependency --parseInternal`):
+
+Read-only (require authentication):
 
 - `GET /api/v1/catalog/addons` — list with optional filters: `category`, `curated_by` (comma-separated AND), `license`, `q`, `min_score`, `min_k8s_version`, `include_deprecated`.
 - `GET /api/v1/catalog/addons/{name}` — single entry with derived `security_tier` label (Strong / Moderate / Weak) and `security_score_updated` date.
+- `GET /api/v1/catalog/addons/{name}/versions` — chart versions for the curated entry (15 min cached, capped at 200 entries).
+- `GET /api/v1/catalog/search?q=<term>&limit=20` — blended search across the curated catalog and ArtifactHub. Returns `{curated, artifacthub, artifacthub_error?, stale?}`. Curated hits are returned even when ArtifactHub is unreachable.
+- `GET /api/v1/catalog/remote/{repo}/{name}` — proxies one ArtifactHub package detail (used to pre-fill the Configure modal for external charts). 1 h cached, capped at 500 entries.
+
+Tier 1 (admin, audit-tracked):
+
+- `POST /api/v1/catalog/reprobe` — clears the search and package caches, resets the ArtifactHub backoff, and probes `/`. Returns `{reachable, last_error?, probed_at}`.
+
+### ArtifactHub proxy + cache (V121-3)
+
+Sharko proxies ArtifactHub server-side so the browser never calls a third party from the user's network. The plumbing lives in `internal/catalog/`:
+
+- `internal/catalog/cache.go` — `TTLCache` (LRU + TTL with separate fresh/stale windows) and `Backoff` (per-host exponential backoff, 1 s → 60 s with ±25 % jitter).
+- `internal/catalog/artifacthub.go` — minimal HTTP client for `/packages/search`, `/packages/helm/{repo}/{name}`, and a tiny `/` probe. Returns typed `ArtifactHubError{Class}` so handlers can switch on `not_found` / `rate_limited` / `server_error` / `timeout` / `malformed`.
+- `internal/api/catalog_proxy_state.go` — process-global `searchCache`, `packageCache`, `ahBackoff`, `ahClient` shared by the search/remote/reprobe handlers.
+
+Cache TTLs (per design §4.5):
+
+| Tier | Fresh TTL | Stale TTL | Capacity |
+|---|---|---|---|
+| Search results | 10 min | 24 h | 200 entries (LRU) |
+| Package detail | 1 h | 24 h | 500 entries (LRU) |
+| Versions (curated) | 15 min | (no stale) | 200 entries (LRU) |
+
+On upstream failure handlers serve from the stale window with `X-Cache-Stale: true` and `stale: true` in the JSON body. On 429 / 5xx the per-host backoff extends so a flapping ArtifactHub doesn't get hammered. The Marketplace UI's "Retry connectivity" button calls `POST /catalog/reprobe`, which resets backoff + caches and immediately probes ArtifactHub.
+
+No API token is required — ArtifactHub's read endpoints are public. We never proxy chart tarballs (ArgoCD pulls those at deploy time from the upstream repo).
 
 ### Adding an entry
 
