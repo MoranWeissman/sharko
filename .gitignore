@@ -36,6 +36,8 @@ secrets.env
 .continue/
 .aider*
 .planning/
+_bmad/
+.bmad/
 # CLAUDE.md is intentionally tracked — it contains project conventions for AI sessions
 
 # Docker

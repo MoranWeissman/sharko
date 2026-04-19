@@ -48,6 +48,7 @@ nav:
   - Operator Manual:
     - Installation: operator/installation.md
     - Configuration: operator/configuration.md
+    - AI Configuration: operator/ai-config.md
     - Security: operator/security.md
     - Troubleshooting: operator/troubleshooting.md
   - CLI Reference:
