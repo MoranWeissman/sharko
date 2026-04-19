@@ -103,7 +103,18 @@ func (g *GitHubProvider) ListPullRequests(ctx context.Context, state string) ([]
 				URL:          pr.GetHTMLURL(),
 			}
 
+			// Root-cause fix (v1.21 QA Bundle 4): the GitHub /repos/{}/pulls
+			// LIST response does not reliably populate the boolean `merged`
+			// field — that field is set on per-PR Get responses but is
+			// documented as deprecated/empty for List. Use `merged_at`
+			// (which IS reliably populated for any PR that was merged) as
+			// the source of truth. Symptom of the old code: every Sharko-
+			// authored PR that the user merged on GitHub was reported as
+			// `closed`, so the Merged PRs panel and the per-addon Recent
+			// changes panel both stayed empty.
 			switch {
+			case !pr.GetMergedAt().IsZero():
+				pullRequest.Status = "merged"
 			case pr.GetMerged():
 				pullRequest.Status = "merged"
 			case pr.GetState() == "closed":
@@ -119,6 +130,13 @@ func (g *GitHubProvider) ListPullRequests(ctx context.Context, state string) ([]
 				pullRequest.UpdatedAt = t.Format("2006-01-02T15:04:05Z")
 			}
 			if t := pr.GetClosedAt(); !t.IsZero() {
+				pullRequest.ClosedAt = t.Format("2006-01-02T15:04:05Z")
+			}
+			// Prefer MergedAt over ClosedAt for the surfaced timestamp on
+			// merged PRs — same value in practice but semantically what the
+			// UI labels render ("Merged …"). Done after GetClosedAt so it
+			// wins when both are populated.
+			if t := pr.GetMergedAt(); !t.IsZero() {
 				pullRequest.ClosedAt = t.Format("2006-01-02T15:04:05Z")
 			}
 
