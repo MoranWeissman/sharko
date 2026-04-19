@@ -3,6 +3,7 @@ site_description: Addon management for Kubernetes clusters, built on ArgoCD
 site_url: https://moranweissman.github.io/sharko
 repo_url: https://github.com/MoranWeissman/sharko
 repo_name: MoranWeissman/sharko
+docs_dir: docs/site
 
 theme:
   name: material
@@ -30,6 +31,7 @@ theme:
 
 nav:
   - Home: index.md
+  - Release Notes: release-notes.md
   - Getting Started:
     - Quick Start: getting-started/quickstart.md
     - Installation: getting-started/installation.md
@@ -43,6 +45,7 @@ nav:
     - Smart Values Layer: user-guide/smart-values.md
     - Editing ArgoCD App Options: user-guide/argocd-app-options.md
     - Upgrades: user-guide/upgrades.md
+    - Dashboard: user-guide/dashboard.md
     - Notifications: user-guide/notifications.md
     - Git Attribution: user-guide/attribution.md
   - Operator Manual:
@@ -50,6 +53,7 @@ nav:
     - Configuration: operator/configuration.md
     - AI Configuration: operator/ai-config.md
     - Security: operator/security.md
+    - Supply Chain: operator/supply-chain.md
     - Troubleshooting: operator/troubleshooting.md
   - CLI Reference:
     - Overview: cli/overview.md
@@ -60,6 +64,7 @@ nav:
   - Architecture:
     - Overview: architecture/overview.md
     - Repository Structure: architecture/repo-structure.md
+  - Developer Guide: developer-guide.md
 
 markdown_extensions:
   - admonition
