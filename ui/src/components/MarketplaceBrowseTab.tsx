@@ -113,6 +113,12 @@ export function MarketplaceBrowseTab() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  // v1.21 QA Bundle 1: load the user's installed catalog so each card can
+  // show an "in your catalog" badge + flip its click affordance to "View
+  // in your catalog" → AddonDetail. Failure is non-fatal — cards fall
+  // back to the default "Configure" behaviour.
+  const [installedNames, setInstalledNames] = useState<Set<string>>(new Set())
+
   const [selectedEntry, setSelectedEntry] = useState<CatalogEntry | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
 
@@ -140,6 +146,29 @@ export function MarketplaceBrowseTab() {
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // v1.21 QA Bundle 1: pull the user's installed-addon list once when the
+  // tab mounts. Lower-cased compare to match catalog-name conventions
+  // (the same lower-casing the Configure modal does for duplicate guard).
+  useEffect(() => {
+    let cancelled = false
+    api
+      .getAddonCatalog()
+      .then((resp) => {
+        if (cancelled) return
+        const names = new Set(
+          resp.addons.map((a) => a.addon_name.trim().toLowerCase()),
+        )
+        setInstalledNames(names)
+      })
+      .catch(() => {
+        // Non-fatal — cards just won't show the "in your catalog" badge.
+        if (!cancelled) setInstalledNames(new Set())
       })
     return () => {
       cancelled = true
@@ -237,7 +266,11 @@ export function MarketplaceBrowseTab() {
           >
             {filtered.map((entry) => (
               <li key={entry.name} className="flex">
-                <MarketplaceCard entry={entry} onOpen={handleOpenConfigure} />
+                <MarketplaceCard
+                  entry={entry}
+                  onOpen={handleOpenConfigure}
+                  inCatalog={installedNames.has(entry.name.trim().toLowerCase())}
+                />
               </li>
             ))}
           </ul>

@@ -1,4 +1,12 @@
-import { Github, Star, Package, Tag, ExternalLink } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import {
+  CheckCircle2,
+  ExternalLink,
+  Github,
+  Package,
+  Star,
+  Tag,
+} from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { CatalogEntry } from '@/services/models'
 import { ScorecardBadge } from '@/components/ScorecardBadge'
@@ -9,7 +17,10 @@ import { ScorecardBadge } from '@/components/ScorecardBadge'
  * The whole card is one keyboard-focusable button so screen readers announce
  * the addon name + key facts in one go. We intentionally avoid nested
  * interactive children to stay keyboard-friendly; the Configure modal is
- * opened by the parent via onOpen().
+ * opened by the parent via onOpen() — except when the addon is already in
+ * the user's catalog, in which case the card behaves as a navigation link
+ * to the addon detail page (v1.21 QA Bundle 1: maintainer asked for a
+ * "strong indication" that an addon is already installed).
  *
  * The "icon" is intentionally generic — chart-specific logos are out of
  * scope until V121-3 (ArtifactHub proxy) gives us a reliable source.
@@ -18,6 +29,10 @@ import { ScorecardBadge } from '@/components/ScorecardBadge'
 export interface MarketplaceCardProps {
   entry: CatalogEntry
   onOpen: (entry: CatalogEntry) => void
+  /** When true, the addon's name is already present in the user's
+   *  addons-catalog.yaml. The card flips to a "View in catalog" affordance
+   *  with a green check badge and tinted styling. */
+  inCatalog?: boolean
 }
 
 const CATEGORY_PALETTE: Record<string, { bg: string; text: string }> = {
@@ -43,7 +58,12 @@ function formatStars(stars: number | undefined): string | null {
   return String(stars)
 }
 
-export function MarketplaceCard({ entry, onOpen }: MarketplaceCardProps) {
+export function MarketplaceCard({
+  entry,
+  onOpen,
+  inCatalog = false,
+}: MarketplaceCardProps) {
+  const navigate = useNavigate()
   const palette = CATEGORY_PALETTE[entry.category] ?? {
     bg: '#e5e7eb',
     text: '#374151',
@@ -57,21 +77,39 @@ export function MarketplaceCard({ entry, onOpen }: MarketplaceCardProps) {
     `license ${entry.license}`,
     entry.curated_by.length > 0 ? `curated by ${entry.curated_by.join(', ')}` : '',
     entry.deprecated ? 'deprecated' : '',
+    inCatalog ? 'already in your catalog' : '',
   ]
     .filter(Boolean)
     .join('. ')
 
+  const ariaLabel = inCatalog
+    ? `View ${entry.name} in your catalog: ${ariaSummary}`
+    : `Configure ${entry.name}: ${ariaSummary}`
+
+  const handleClick = () => {
+    if (inCatalog) {
+      navigate(`/addons/${encodeURIComponent(entry.name)}`)
+    } else {
+      onOpen(entry)
+    }
+  }
+
   return (
     <button
       type="button"
-      onClick={() => onOpen(entry)}
-      aria-label={`Configure ${entry.name}: ${ariaSummary}`}
+      onClick={handleClick}
+      aria-label={ariaLabel}
       className={cn(
-        'group flex h-full w-full flex-col items-stretch rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff]',
+        'group flex h-full w-full flex-col items-stretch rounded-lg ring-2 bg-[#f0f7ff]',
         'p-4 text-left shadow-sm transition-all duration-150',
-        'hover:-translate-y-0.5 hover:shadow-md hover:ring-teal-400',
+        'hover:-translate-y-0.5 hover:shadow-md',
         'focus:outline-none focus-visible:ring-4 focus-visible:ring-teal-400',
-        'dark:bg-gray-800 dark:ring-gray-700 dark:hover:ring-teal-500',
+        'dark:bg-gray-800 dark:hover:ring-teal-500',
+        // Tinted styling when the addon is already in the catalog so it's
+        // immediately visually distinct from "addable" cards.
+        inCatalog
+          ? 'ring-green-400 bg-green-50/60 hover:ring-green-500 dark:ring-green-700 dark:bg-green-900/20'
+          : 'ring-[#6aade0] hover:ring-teal-400 dark:ring-gray-700',
         entry.deprecated && 'opacity-75',
       )}
     >
@@ -91,18 +129,29 @@ export function MarketplaceCard({ entry, onOpen }: MarketplaceCardProps) {
             {entry.chart}
           </p>
         </div>
-        {entry.deprecated && (
-          <span
-            className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
-            title={
-              entry.superseded_by
-                ? `Deprecated — superseded by ${entry.superseded_by}`
-                : 'Deprecated'
-            }
-          >
-            Deprecated
-          </span>
-        )}
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          {inCatalog && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-green-800 dark:bg-green-900/40 dark:text-green-300"
+              title="Already present in your addons-catalog.yaml"
+            >
+              <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
+              In your catalog
+            </span>
+          )}
+          {entry.deprecated && (
+            <span
+              className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
+              title={
+                entry.superseded_by
+                  ? `Deprecated — superseded by ${entry.superseded_by}`
+                  : 'Deprecated'
+              }
+            >
+              Deprecated
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Description */}
@@ -155,10 +204,18 @@ export function MarketplaceCard({ entry, onOpen }: MarketplaceCardProps) {
         )}
       </div>
 
-      {/* "Open" hint — visually subtle, important for screen readers */}
-      <span className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-teal-700 opacity-0 transition-opacity group-hover:opacity-100 group-focus:opacity-100 dark:text-teal-400">
-        Configure <ExternalLink className="h-3 w-3" aria-hidden="true" />
-      </span>
+      {/* Footer hint — flips between "Configure" (addable) and "View in
+          your catalog" (already installed). Always visible when in-catalog
+          so the affordance is obvious without needing hover. */}
+      {inCatalog ? (
+        <span className="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold text-green-700 dark:text-green-400">
+          View in your catalog <ExternalLink className="h-3 w-3" aria-hidden="true" />
+        </span>
+      ) : (
+        <span className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-teal-700 opacity-0 transition-opacity group-hover:opacity-100 group-focus:opacity-100 dark:text-teal-400">
+          Configure <ExternalLink className="h-3 w-3" aria-hidden="true" />
+        </span>
+      )}
     </button>
   )
 }
