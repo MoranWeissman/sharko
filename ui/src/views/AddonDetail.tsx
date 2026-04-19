@@ -21,7 +21,6 @@ import {
   Plus,
   Minus,
   X,
-  HelpCircle,
   RefreshCw,
   Sparkles,
   ChevronDown,
@@ -914,26 +913,6 @@ function HealthProgressBar({ healthy, total }: { healthy: number; total: number 
         {healthy} of {total} applications are healthy ({Math.round(pct)}%)
       </p>
     </div>
-  )
-}
-
-function HelpText({ text }: { text: string }) {
-  const [open, setOpen] = useState(false)
-  return (
-    <>
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        className="inline-flex items-center text-[#5a9dd0] hover:text-[#3a7db0] cursor-help"
-      >
-        <HelpCircle className="h-3.5 w-3.5" />
-      </button>
-      {open && (
-        <p className="mt-1 text-xs text-[#3a6a8a] dark:text-gray-400 bg-[#e8f4ff] dark:bg-gray-700 rounded px-2 py-1">
-          {text}
-        </p>
-      )}
-    </>
   )
 }
 
@@ -1831,285 +1810,32 @@ export function AddonDetail() {
                 </div>
               )}
 
-              {/* Advanced Configuration — collapsed by default */}
-              <details className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff]">
-                <summary className="cursor-pointer px-5 py-4 select-none">
-                  <div className="flex items-center justify-between">
-                    <span className="text-base font-semibold text-[#0a2a4a]">Advanced Configuration</span>
-                    {!isEditingConfig && (
-                      <RoleGuard adminOnly>
-                        <button
-                          type="button"
-                          onClick={(e) => { e.preventDefault(); handleStartEditConfig() }}
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff]"
-                        >
-                          <Pencil className="h-3 w-3" />
-                          Edit
-                        </button>
-                      </RoleGuard>
-                    )}
-                  </div>
-                </summary>
-                <div className="border-t border-[#6aade0] px-5 py-4 space-y-4">
+              {/* Advanced Configuration — moved to the ArgoCD App Options
+                  tab in v1.21 QA Bundle 1 to remove the duplicate section.
+                  Overview now just points the operator to the canonical
+                  home so they don't have to hunt for it. */}
+              <div className="rounded-lg bg-[#e8f4ff] p-4 text-sm text-[#2a5a7a] ring-1 ring-[#c0ddf0] dark:bg-gray-800 dark:text-gray-300 dark:ring-gray-700">
+                <p className="flex flex-wrap items-center gap-1">
+                  <span className="font-medium text-[#0a2a4a] dark:text-gray-100">
+                    Advanced ArgoCD Application options
+                  </span>
+                  <span>(sync wave, sync options, ignore differences, additional sources) live in the</span>
+                  <button
+                    type="button"
+                    onClick={() => setActiveSection('catalog')}
+                    className="font-semibold text-teal-600 underline hover:no-underline dark:text-teal-400"
+                  >
+                    ArgoCD App Options tab &rarr;
+                  </button>
+                </p>
+              </div>
 
-                  {/* Success/Error messages */}
-                  {configSuccess && (
-                    <div className="rounded-lg bg-green-50 px-4 py-3 text-sm text-green-700 ring-1 ring-green-200">
-                      {configSuccess}
-                    </div>
-                  )}
-                  {configError && (
-                    <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600 ring-1 ring-red-200">
-                      {configError}
-                    </div>
-                  )}
-
-                  {/* Sync Wave */}
-                  <div className="flex items-center justify-between gap-4">
-                    <div>
-                      <p className="flex items-center gap-1.5 text-sm font-medium text-[#0a2a4a]">
-                        Sync Wave
-                        <HelpText text="Deploy order: negative values deploy first (e.g. -1 for CRDs), positive deploy last" />
-                      </p>
-                      <p className="text-xs text-[#3a6a8a]">Controls deployment ordering. Negative = earlier, positive = later.</p>
-                    </div>
-                    {isEditingConfig ? (
-                      <input
-                        type="number"
-                        value={editSyncWave}
-                        onChange={(e) => setEditSyncWave(Number(e.target.value))}
-                        placeholder="0"
-                        className="w-24 rounded-md border border-[#5a9dd0] bg-white px-3 py-1.5 text-right text-sm font-mono text-[#0a2a4a] placeholder-[#5a8aaa] focus:border-[#1a6aaa] focus:outline-none focus:ring-1 focus:ring-[#1a6aaa]"
-                      />
-                    ) : (
-                      <span className="font-mono text-sm text-[#0a2a4a]">{addon.syncWave ?? 0}</span>
-                    )}
-                  </div>
-
-                  {/* Self-Heal */}
-                  <div className="flex items-center justify-between gap-4">
-                    <div>
-                      <p className="flex items-center gap-1.5 text-sm font-medium text-[#0a2a4a]">
-                        Self-Heal
-                        <HelpText text="When enabled, ArgoCD auto-reverts manual changes to match the Git state" />
-                      </p>
-                      <p className="text-xs text-[#3a6a8a]">When enabled, ArgoCD reverts manual changes automatically.</p>
-                    </div>
-                    {isEditingConfig ? (
-                      <label className="flex cursor-pointer items-center gap-2">
-                        <span className="text-xs text-[#2a5a7a]">{editSelfHeal ? 'Enabled' : 'Disabled'}</span>
-                        <button
-                          type="button"
-                          role="switch"
-                          aria-checked={editSelfHeal}
-                          onClick={() => setEditSelfHeal((v) => !v)}
-                          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
-                            editSelfHeal ? 'bg-[#1a6aaa]' : 'bg-[#c0ddf0]'
-                          }`}
-                        >
-                          <span
-                            className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${
-                              editSelfHeal ? 'translate-x-4' : 'translate-x-1'
-                            }`}
-                          />
-                        </button>
-                      </label>
-                    ) : (
-                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                        addon.selfHeal === false
-                          ? 'bg-amber-100 text-amber-700'
-                          : 'bg-green-100 text-green-700'
-                      }`}>
-                        {addon.selfHeal === false ? 'Disabled' : 'Enabled'}
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Sync Options */}
-                  <div>
-                    <p className="flex items-center gap-1.5 text-sm font-medium text-[#0a2a4a]">
-                      Sync Options
-                      <HelpText text="ArgoCD sync options, e.g. ServerSideApply=true, CreateNamespace=true, PruneLast=true" />
-                    </p>
-                    <p className="text-xs text-[#3a6a8a] mb-2">ArgoCD sync options applied to this addon.</p>
-                    {isEditingConfig ? (
-                      <textarea
-                        value={editSyncOptionsText}
-                        onChange={(e) => setEditSyncOptionsText(e.target.value)}
-                        placeholder="CreateNamespace=true, ServerSideApply=true"
-                        rows={2}
-                        className="w-full rounded-md border border-[#5a9dd0] bg-white px-3 py-2 text-sm font-mono text-[#0a2a4a] placeholder-[#5a8aaa] focus:border-[#1a6aaa] focus:outline-none focus:ring-1 focus:ring-[#1a6aaa]"
-                      />
-                    ) : addon.syncOptions && addon.syncOptions.length > 0 ? (
-                      <div className="flex flex-wrap gap-1">
-                        {addon.syncOptions.map((opt: string) => (
-                          <span key={opt} className="rounded bg-[#d6eeff] px-2 py-0.5 text-xs font-mono text-[#0a2a4a]">{opt}</span>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-xs text-[#5a8aaa]">Default (CreateNamespace=true)</p>
-                    )}
-                  </div>
-
-                  {/* Ignore Differences */}
-                  <div>
-                    <p className="flex items-center gap-1.5 text-sm font-medium text-[#0a2a4a]">
-                      Ignore Differences
-                      <HelpText text="Fields ArgoCD should ignore during diff. Example: group: apps, kind: Deployment, jsonPointers: [/spec/replicas]" />
-                    </p>
-                    <p className="text-xs text-[#3a6a8a] mb-2">Fields ignored during ArgoCD sync comparison.</p>
-                    {isEditingConfig ? (
-                      <textarea
-                        value={editIgnoreDifferencesYaml}
-                        onChange={(e) => setEditIgnoreDifferencesYaml(e.target.value)}
-                        placeholder={`# Example:\n# - group: apps\n#   kind: Deployment\n#   jsonPointers:\n#     - /spec/replicas`}
-                        rows={6}
-                        className="w-full rounded-md border border-[#5a9dd0] bg-white px-3 py-2 text-sm font-mono text-[#0a2a4a] placeholder-[#5a8aaa] focus:border-[#1a6aaa] focus:outline-none focus:ring-1 focus:ring-[#1a6aaa]"
-                      />
-                    ) : addon.ignoreDifferences && addon.ignoreDifferences.length > 0 ? (
-                      <pre className="rounded bg-[#071828] p-3 text-xs text-[#bee0ff] overflow-auto">
-                        {JSON.stringify(addon.ignoreDifferences, null, 2)}
-                      </pre>
-                    ) : (
-                      <p className="text-xs text-[#5a8aaa]">None configured</p>
-                    )}
-                  </div>
-
-                  {/* Extra Helm Values */}
-                  <div>
-                    <p className="flex items-center gap-1.5 text-sm font-medium text-[#0a2a4a]">
-                      Extra Helm Values
-                      <HelpText text="Additional Helm value overrides as key-value pairs" />
-                    </p>
-                    <p className="text-xs text-[#3a6a8a] mb-1">Additional Helm parameters injected during rendering.</p>
-                    {!isEditingConfig && (
-                      <p className="mb-2 text-[11px] italic text-[#3a6a8a] dark:text-gray-500">
-                        Tip: For richer YAML edits, use the{' '}
-                        <button
-                          type="button"
-                          onClick={() => setActiveSection('values')}
-                          className="font-medium text-teal-600 underline hover:no-underline dark:text-teal-400"
-                        >
-                          Values tab
-                        </button>
-                        .
-                      </p>
-                    )}
-                    {isEditingConfig ? (
-                      <div className="space-y-2">
-                        {editHelmValues.map((row, idx) => (
-                          <div key={idx} className="flex items-center gap-2">
-                            <input
-                              type="text"
-                              value={row.key}
-                              onChange={(e) => {
-                                const updated = [...editHelmValues]
-                                updated[idx] = { ...updated[idx], key: e.target.value }
-                                setEditHelmValues(updated)
-                              }}
-                              placeholder="key"
-                              className="w-40 rounded-md border border-[#5a9dd0] bg-white px-2 py-1.5 text-xs font-mono text-[#0a2a4a] placeholder-[#5a8aaa] focus:border-[#1a6aaa] focus:outline-none focus:ring-1 focus:ring-[#1a6aaa]"
-                            />
-                            <span className="text-[#3a6a8a] text-xs">=</span>
-                            <input
-                              type="text"
-                              value={row.value}
-                              onChange={(e) => {
-                                const updated = [...editHelmValues]
-                                updated[idx] = { ...updated[idx], value: e.target.value }
-                                setEditHelmValues(updated)
-                              }}
-                              placeholder="value"
-                              className="flex-1 rounded-md border border-[#5a9dd0] bg-white px-2 py-1.5 text-xs font-mono text-[#0a2a4a] placeholder-[#5a8aaa] focus:border-[#1a6aaa] focus:outline-none focus:ring-1 focus:ring-[#1a6aaa]"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => setEditHelmValues(editHelmValues.filter((_, i) => i !== idx))}
-                              className="rounded p-1 text-[#3a6a8a] hover:bg-[#d6eeff] hover:text-red-600"
-                              aria-label="Remove row"
-                            >
-                              <X className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                        ))}
-                        <button
-                          type="button"
-                          onClick={() => setEditHelmValues([...editHelmValues, { key: '', value: '' }])}
-                          className="inline-flex items-center gap-1 rounded-md border border-dashed border-[#5a9dd0] px-3 py-1.5 text-xs text-[#2a5a7a] hover:bg-[#d6eeff]"
-                        >
-                          <Plus className="h-3 w-3" />
-                          Add row
-                        </button>
-                      </div>
-                    ) : addon.extraHelmValues && Object.keys(addon.extraHelmValues).length > 0 ? (
-                      <div className="space-y-1">
-                        {Object.entries(addon.extraHelmValues).map(([k, v]) => (
-                          <div key={k} className="flex items-center gap-2 text-xs">
-                            <span className="font-mono font-medium text-[#0a2a4a]">{k}</span>
-                            <span className="text-[#3a6a8a]">=</span>
-                            <span className="font-mono text-[#1a4a6a]">{v as string}</span>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-xs text-[#5a8aaa]">None configured</p>
-                    )}
-                  </div>
-
-                  {/* Additional Sources */}
-                  <div>
-                    <p className="flex items-center gap-1.5 text-sm font-medium text-[#0a2a4a]">
-                      Additional Sources
-                      <HelpText text="Extra Helm chart sources for multi-source applications" />
-                    </p>
-                    <p className="text-xs text-[#3a6a8a] mb-2">Extra chart or manifest sources deployed alongside the main addon.</p>
-                    {isEditingConfig ? (
-                      <textarea
-                        value={editAdditionalSourcesYaml}
-                        onChange={(e) => setEditAdditionalSourcesYaml(e.target.value)}
-                        placeholder={`# Example:\n# - repoURL: https://github.com/org/repo\n#   path: charts/my-chart\n#   version: "1.0.0"`}
-                        rows={6}
-                        className="w-full rounded-md border border-[#5a9dd0] bg-white px-3 py-2 text-sm font-mono text-[#0a2a4a] placeholder-[#5a8aaa] focus:border-[#1a6aaa] focus:outline-none focus:ring-1 focus:ring-[#1a6aaa]"
-                      />
-                    ) : addon.additionalSources && addon.additionalSources.length > 0 ? (
-                      <div className="space-y-2">
-                        {addon.additionalSources.map((src, i: number) => (
-                          <div key={i} className="rounded bg-[#e0f0ff] px-3 py-2 text-xs">
-                            {src.chart && <p><span className="text-[#3a6a8a]">Chart:</span> <span className="font-mono text-[#0a2a4a]">{src.chart} @ {src.version}</span></p>}
-                            {src.path && <p><span className="text-[#3a6a8a]">Path:</span> <span className="font-mono text-[#0a2a4a]">{src.path}</span></p>}
-                            {src.repoURL && <p><span className="text-[#3a6a8a]">Repo:</span> <span className="font-mono text-[#0a2a4a]">{src.repoURL}</span></p>}
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-xs text-[#5a8aaa]">Single source (main chart only)</p>
-                    )}
-                  </div>
-
-                  {/* Edit mode action buttons */}
-                  {isEditingConfig && (
-                    <div className="flex items-center gap-3 border-t border-[#c0ddf0] pt-4">
-                      <button
-                        type="button"
-                        onClick={handleSaveConfig}
-                        disabled={configSaving}
-                        className="inline-flex items-center gap-2 rounded-lg bg-[#0a2a4a] px-4 py-2 text-sm font-medium text-white hover:bg-[#14466e] disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {configSaving && <Loader2 className="h-4 w-4 animate-spin" />}
-                        Save
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleCancelEditConfig}
-                        disabled={configSaving}
-                        className="rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </details>
+              {/* The full Advanced Configuration form (sync wave, self-heal,
+                  sync options, ignore differences, extra Helm values,
+                  additional sources) lived here through v1.20. It was
+                  removed in v1.21 QA Bundle 1 because the same form lives
+                  in the ArgoCD App Options tab — the duplicate confused
+                  testers. The pointer card above takes them there. */}
             </>
           )}
 
