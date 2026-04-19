@@ -923,81 +923,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/addons/{name}/values/pull-upstream": {
-            "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Replaces the addon's global Helm values file with the chart's upstream ` + "`" + `values.yaml` + "`" + ` (comments preserved) wrapped under the ` + "`" + `\u003caddonName\u003e:` + "`" + ` key. Opens a PR. Tier 2 (configuration) — uses the caller's personal GitHub PAT when configured, otherwise the service token with a ` + "`" + `Co-authored-by:` + "`" + ` trailer.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "addons"
-                ],
-                "summary": "Pull upstream chart values.yaml",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Addon name",
-                        "name": "name",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Pull upstream request",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/internal_api.pullUpstreamRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "PR created",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "Bad request",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "404": {
-                        "description": "Addon not found",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "502": {
-                        "description": "Helm or Git failure",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    }
-                }
-            }
-        },
         "/addons/{name}/values/recent-prs": {
             "get": {
                 "security": [
@@ -7602,19 +7527,6 @@ const docTemplate = `{
                 }
             }
         },
-        "internal_api.pullUpstreamRequest": {
-            "type": "object",
-            "properties": {
-                "merge_strategy": {
-                    "description": "MergeStrategy controls how upstream values are merged into the current\nvalues file. \"replace\" (the only supported strategy for v1.20.1)\noverwrites the file entirely with upstream defaults. A future\n\"merge_keep_overrides\" strategy is tracked as a TODO in the handler.",
-                    "type": "string"
-                },
-                "version": {
-                    "description": "Version is the chart version to pull (e.g. \"v1.14.4\"). When empty, the\nhandler resolves the addon's currently-configured version from the\ncatalog — the expected default for the \"I want to refresh to whatever\nwe're pointing at\" workflow.",
-                    "type": "string"
-                }
-            }
-        },
         "internal_api.recentPRsEntry": {
             "type": "object",
             "properties": {
@@ -7675,8 +7587,12 @@ const docTemplate = `{
         "internal_api.setAddonValuesRequest": {
             "type": "object",
             "properties": {
+                "refresh_from_upstream": {
+                    "description": "RefreshFromUpstream, when true, regenerates the global values file\nfrom the chart's upstream values.yaml at the catalog-pinned version.\nThe audit event for this path is ` + "`" + `values_refreshed_from_upstream` + "`" + `\n(overriding the default ` + "`" + `values_set` + "`" + `) so audit consumers can\ndistinguish manual edits from upstream refreshes.",
+                    "type": "boolean"
+                },
                 "values": {
-                    "description": "Values is the full YAML file content. Sharko commits this verbatim\nas the new global default values for the addon.",
+                    "description": "Values is the full YAML file content. Sharko commits this verbatim\nas the new global default values for the addon. Ignored when\nRefreshFromUpstream is true.",
                     "type": "string"
                 }
             }

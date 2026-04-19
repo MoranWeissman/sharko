@@ -3,12 +3,14 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
+	"github.com/MoranWeissman/sharko/internal/helm"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/prtracker"
 )
@@ -66,6 +68,22 @@ func (s *Server) handleAddAddon(w http.ResponseWriter, r *http.Request) {
 	if req.Version == "" {
 		writeError(w, http.StatusBadRequest, "addon version is required")
 		return
+	}
+
+	// V121-6 smart-values seeding: best-effort pre-fetch of the chart's
+	// upstream values.yaml so AddAddon can write an annotated global values
+	// file with a per-cluster template. On any fetch failure (network,
+	// chart unreachable, version not found) we silently fall back to the
+	// pre-v1.21 minimal stub — the user can always Refresh from upstream
+	// later via V121-6.4 once connectivity is restored. This decision
+	// keeps Add Addon non-blocking on flaky upstream registries.
+	if req.RepoURL != "" && req.Chart != "" && req.Version != "" {
+		if upstream, ferr := helm.NewFetcher().FetchValues(ctx, req.RepoURL, req.Chart, req.Version); ferr == nil {
+			req.UpstreamValues = []byte(upstream)
+		} else {
+			slog.Info("smart-values pre-fetch failed; falling back to minimal stub",
+				"addon", req.Name, "chart", req.Chart, "version", req.Version, "error", ferr)
+		}
 	}
 
 	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsCfg, s.repoPaths, nil)

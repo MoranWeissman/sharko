@@ -127,10 +127,26 @@ type AddonValuesResponse struct {
 // from the chart's `values.schema.json`. The schema may be nil when the
 // chart does not publish one (most charts do not); the UI then falls back
 // to plain YAML mode without autocomplete.
+//
+// v1.21 (Story V121-6.5) adds `ValuesVersionMismatch`. When non-nil it
+// signals that the chart version pinned in `addons-catalog.yaml` is ahead
+// of the version stamped in the values file's smart-values header — the
+// UI renders a refresh banner. The field is `omitempty` so legacy files
+// without a `# sharko: managed=true` header keep working without a
+// banner.
 type AddonValuesSchemaResponse struct {
-	AddonName     string                 `json:"addon_name"`
-	CurrentValues string                 `json:"current_values"`
-	Schema        map[string]interface{} `json:"schema,omitempty"`
+	AddonName             string                  `json:"addon_name"`
+	CurrentValues         string                  `json:"current_values"`
+	Schema                map[string]interface{}  `json:"schema,omitempty"`
+	ValuesVersionMismatch *ValuesVersionMismatch  `json:"values_version_mismatch,omitempty"`
+}
+
+// ValuesVersionMismatch is set when the catalog version differs from the
+// values-file header version. Both fields are non-empty strings on
+// instantiation; the UI compares them and surfaces the refresh banner.
+type ValuesVersionMismatch struct {
+	CatalogVersion string `json:"catalog_version"`
+	ValuesVersion  string `json:"values_version"`
 }
 
 // ClusterAddonValuesResponse is the API response for the per-cluster

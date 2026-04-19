@@ -1049,23 +1049,6 @@ definitions:
       username:
         type: string
     type: object
-  internal_api.pullUpstreamRequest:
-    properties:
-      merge_strategy:
-        description: |-
-          MergeStrategy controls how upstream values are merged into the current
-          values file. "replace" (the only supported strategy for v1.20.1)
-          overwrites the file entirely with upstream defaults. A future
-          "merge_keep_overrides" strategy is tracked as a TODO in the handler.
-        type: string
-      version:
-        description: |-
-          Version is the chart version to pull (e.g. "v1.14.4"). When empty, the
-          handler resolves the addon's currently-configured version from the
-          catalog — the expected default for the "I want to refresh to whatever
-          we're pointing at" workflow.
-        type: string
-    type: object
   internal_api.recentPRsEntry:
     properties:
       author:
@@ -1105,10 +1088,19 @@ definitions:
     type: object
   internal_api.setAddonValuesRequest:
     properties:
+      refresh_from_upstream:
+        description: |-
+          RefreshFromUpstream, when true, regenerates the global values file
+          from the chart's upstream values.yaml at the catalog-pinned version.
+          The audit event for this path is `values_refreshed_from_upstream`
+          (overriding the default `values_set`) so audit consumers can
+          distinguish manual edits from upstream refreshes.
+        type: boolean
       values:
         description: |-
           Values is the full YAML file content. Sharko commits this verbatim
-          as the new global default values for the addon.
+          as the new global default values for the addon. Ignored when
+          RefreshFromUpstream is true.
         type: string
     type: object
   internal_api.setClusterAddonValuesRequest:
@@ -1678,59 +1670,6 @@ paths:
       security:
       - BearerAuth: []
       summary: Get addon global values + schema
-      tags:
-      - addons
-  /addons/{name}/values/pull-upstream:
-    post:
-      consumes:
-      - application/json
-      description: Replaces the addon's global Helm values file with the chart's upstream
-        `values.yaml` (comments preserved) wrapped under the `<addonName>:` key. Opens
-        a PR. Tier 2 (configuration) — uses the caller's personal GitHub PAT when
-        configured, otherwise the service token with a `Co-authored-by:` trailer.
-      parameters:
-      - description: Addon name
-        in: path
-        name: name
-        required: true
-        type: string
-      - description: Pull upstream request
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/internal_api.pullUpstreamRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: PR created
-          schema:
-            additionalProperties: true
-            type: object
-        "400":
-          description: Bad request
-          schema:
-            additionalProperties: true
-            type: object
-        "401":
-          description: Unauthorized
-          schema:
-            additionalProperties: true
-            type: object
-        "404":
-          description: Addon not found
-          schema:
-            additionalProperties: true
-            type: object
-        "502":
-          description: Helm or Git failure
-          schema:
-            additionalProperties: true
-            type: object
-      security:
-      - BearerAuth: []
-      summary: Pull upstream chart values.yaml
       tags:
       - addons
   /addons/{name}/values/recent-prs:

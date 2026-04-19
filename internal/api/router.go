@@ -487,10 +487,14 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("PUT /api/v1/clusters/{cluster}/addons/{name}/values", srv.handleSetClusterAddonValues)
 	mux.HandleFunc("GET /api/v1/clusters/{cluster}/addons/{name}/values", srv.handleGetClusterAddonValues)
 
-	// Values editor extras (v1.20.1):
-	//   • Pull upstream chart defaults (Tier 2)
+	// Values editor extras:
 	//   • Recent merged PRs touching a values file (read)
-	mux.HandleFunc("POST /api/v1/addons/{name}/values/pull-upstream", srv.handlePullUpstreamValues)
+	//
+	// Note: the v1.20.1 `POST /api/v1/addons/{name}/values/pull-upstream`
+	// endpoint was removed in v1.21 (Story V121-6.5). Its functionality
+	// moved to a `refresh_from_upstream: true` flag on the existing
+	// `PUT /api/v1/addons/{name}/values` handler — the locked decision is
+	// to keep the values-edit surface single-handler.
 	mux.HandleFunc("GET /api/v1/addons/{name}/values/recent-prs", srv.handleGetAddonValuesRecentPRs)
 	mux.HandleFunc("GET /api/v1/clusters/{cluster}/addons/{name}/values/recent-prs", srv.handleGetClusterAddonValuesRecentPRs)
 

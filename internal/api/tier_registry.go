@@ -88,11 +88,11 @@ var HandlerTier = map[string]audit.Tier{
 	"handleDeleteAddonSecret":          audit.Tier2,
 
 	// Values editor (v1.20) — Tier 2: changes WHAT gets deployed.
+	// In v1.21 (Story V121-6.4) the same handler also services the
+	// `refresh_from_upstream` flow that used to live on the now-removed
+	// `pull-upstream` endpoint.
 	"handleSetAddonValues":             audit.Tier2,
 	"handleSetClusterAddonValues":      audit.Tier2,
-
-	// Values editor extras (v1.20.1) — Tier 2.
-	"handlePullUpstreamValues":         audit.Tier2,
 
 	// ─── Personal: self-service on caller's own profile ─────────────────────
 	"handleUpdatePassword":             audit.TierPersonal,
