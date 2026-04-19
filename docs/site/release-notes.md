@@ -1,5 +1,27 @@
 # Release Notes
 
+## v1.21.0 (in progress) — Bundle 5: Unwrap global values
+
+Bundle 5 fixes a long-standing correctness bug: Sharko's smart-values writer was wrapping every global values file under an `<addon>:` root key, but the ApplicationSet template passes that file directly to Helm via `valueFiles:` — so Helm looked for chart values at the document root and silently ignored every value the user had set.
+
+### Fixes
+
+- **Smart-values writer (`internal/orchestrator/smart_values.go`)** — global file is now written with the chart's keys at the top level. The smart-values header still lives at the top; the per-cluster template block at the bottom stays wrapped under `<addon>:` (intentional — that block is meant to be copy-pasted into the per-cluster file, which IS namespaced).
+- **Bootstrap seed templates** — `templates/bootstrap/configuration/addons-global-values/{cert-manager,external-secrets,metrics-server}.yaml` are now in the new shape.
+- **Preview-merge endpoint (`POST /addons/{name}/values/preview-merge`)** — both `current` and `merged` are returned in unwrapped shape; if the user's existing file is still legacy-wrapped, it's transparently unwrapped before the diff so the comparison is apples-to-apples.
+
+### New
+
+- **Migration endpoint** — `POST /api/v1/addons/unwrap-globals` (Tier 2). Walks every file under `configuration/addons-global-values/`, detects legacy wraps (single non-comment top-level key matching the addon or chart name), unwraps them in place, stamps a `# Migrated from legacy wrapped format on <date>` header note, and opens ONE PR. Pass `?addon=<name>` to scope the migration to a single file. Idempotent — running it again with no wrapped files left returns 200 with `{migrated: 0, message: "all files already unwrapped"}` and does not open a PR.
+- **Detection on `GET /api/v1/addons/{name}/values-schema`** — new `legacy_wrap_detected: bool` field. The Values tab renders a yellow migration banner with a **Migrate this file** button when this fires.
+- **Pure helper** — `orchestrator.UnwrapGlobalValuesFile(yamlContent, addonName, chartName) ([]byte, bool, error)`. Comment- and ordering-preserving; covered by unit tests for wrapped, already-unwrapped, multi-key, wrong-root-key, comment-only, and inline-comment cases.
+
+### Backwards compatibility
+
+- **Read path** — legacy wrapped files still parse correctly; the editor renders them and just flags them for migration.
+- **No breaking API changes** — additive: new field on `values-schema`, new endpoint.
+- **Migration is opt-in** — existing files keep working as before (Helm still ignores them, exactly as today). Users migrate on their own schedule via the banner.
+
 ## v1.21.0 — Catalog & Discovery
 
 v1.21 turns Sharko from "you bring the chart, we wire it up" into a **discoverable platform**: a curated catalog of 45 vetted Helm addons with OpenSSF Scorecard signals, a server-side ArtifactHub search overlay, smart values seeding (heuristic + optional LLM), and a hardening pass that signs every release artifact with cosign and adds an SSRF guard to every URL-fetching endpoint.

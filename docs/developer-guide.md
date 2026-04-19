@@ -101,6 +101,8 @@ sharko/
       secrets.go        Addon secret delivery to remote clusters (AddonSecretDefinition)
       git_helpers.go    Git operations (always via PR; auto-merge when configured)
       values_generator.go Cluster values file generation
+      smart_values.go   v1.21 smart-values writer + chart-name unwrap
+      unwrap_globals.go v1.21 Bundle 5 — legacy `<addon>:` wrap detector + unwrapper
 
     providers/          Secrets provider interface + implementations
       provider.go       ClusterCredentialsProvider interface
@@ -229,6 +231,19 @@ func New(
 ```
 
 The `gitMu` mutex is created once on the `Server` struct (`internal/api/router.go`) and passed to every orchestrator instance. In tests where concurrency is not under test, pass `nil`.
+
+### Values file shape: when to wrap, when not to (v1.21 Bundle 5)
+
+Sharko writes two kinds of values files. The wrap pattern differs between them:
+
+| File | Path template | Shape | Rationale |
+|------|---------------|-------|-----------|
+| Global values | `configuration/addons-global-values/<addon>.yaml` | **Top-level chart values** (no `<addon>:` wrap) | Passed straight to Helm via `valueFiles:` in the ApplicationSet template. Must be the chart's own keys at document root. |
+| Per-cluster overrides | `configuration/addons-clusters-values/<cluster>.yaml` | Wrapped under `<addon>:` (one file per cluster, many addons) | The ApplicationSet template extracts the matching `<addon>:` section per addon at runtime via `{{ $addonKey | toYaml }}`. |
+
+**If you write to a global values file, do NOT add an `<addon>:` wrap.** The smart-values writer (`internal/orchestrator/smart_values.go`) and the migration helper (`internal/orchestrator/unwrap_globals.go`) both enforce this. Pre-Bundle-5 versions of Sharko got this wrong and the bug caused Helm to silently ignore every global value — see the migration endpoint `POST /api/v1/addons/unwrap-globals` for the fix path applied to user repos.
+
+The per-cluster template block at the BOTTOM of a smart-values-generated global file IS still wrapped under `<addon>:` — that block is meant to be copy-pasted into the per-cluster file (which IS namespaced).
 
 ### orchestrator/upgrade.go
 

@@ -4,12 +4,20 @@ Starting in **v1.20**, Sharko ships an in-app editor for the Helm values that dr
 
 ## Two scopes
 
-| Scope | What it changes | Where it lives in Git | Who's affected |
-|-------|-----------------|-----------------------|----------------|
-| **Global** | Default values for an addon | `configuration/addons-global-values/<addon>.yaml` | Every cluster running this addon |
-| **Per-cluster overrides** | Just one addon on one cluster | `configuration/addons-clusters-values/<cluster>.yaml`, under the addon's section | Only the chosen cluster |
+| Scope | What it changes | Where it lives in Git | File shape | Who's affected |
+|-------|-----------------|-----------------------|------------|----------------|
+| **Global** | Default values for an addon | `configuration/addons-global-values/<addon>.yaml` | **Top-level chart values** (no `<addon>:` wrapper) | Every cluster running this addon |
+| **Per-cluster overrides** | Just one addon on one cluster | `configuration/addons-clusters-values/<cluster>.yaml`, under the addon's section | Wrapped under `<addon>:` so one file holds many addons | Only the chosen cluster |
 
 Per-cluster overrides win when both are set, exactly the way Helm value composition works.
+
+### File shape: why global is unwrapped (v1.21 Bundle 5)
+
+The ApplicationSet template passes each global values file directly to Helm via `valueFiles:`, so the chart's keys must be at the document root. Wrapping under `<addon>:` causes Helm to silently ignore everything nested under that root.
+
+If your repo still has files written by an older Sharko version, you'll see a yellow **migration banner** above the editor: _"This values file uses a legacy wrapper..."_. Click **Migrate this file** to open a one-PR migration; the file is unwrapped in place and the banner clears once the PR merges.
+
+Per-cluster files stay wrapped — that's correct, because one file holds overrides for many addons (`cert-manager:`, `external-secrets:`, etc. side-by-side).
 
 ## Editing global values
 

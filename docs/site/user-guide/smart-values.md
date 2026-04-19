@@ -13,18 +13,18 @@ For each addon you add, Sharko writes one file at `configuration/addons-global-v
 # Chart source: https://charts.jetstack.io
 # AI annotation: disabled
 # sharko: managed=true
+# Helm values for cert-manager — applied to all clusters (top-level keys are chart values).
 
-# --- the global values body ---
-cert-manager:
-  installCRDs: true
-  ingress:
-    enabled: true
-    # host: <cluster-specific>
-  # replicaCount: <cluster-specific>
-  resources:
-    # requests: <cluster-specific>
-  serviceAccount:
-    create: true
+# --- the global values body — TOP-LEVEL chart keys, no <addon>: wrapper ---
+installCRDs: true
+ingress:
+  enabled: true
+  # host: <cluster-specific>
+# replicaCount: <cluster-specific>
+resources:
+  # requests: <cluster-specific>
+serviceAccount:
+  create: true
 
 # --- per-cluster overrides template ---
 # Copy under the addon's stanza in configuration/addons-clusters-values/<cluster>.yaml.
@@ -33,6 +33,10 @@ cert-manager:
 #   replicaCount: <set per cluster>
 #   "resources.requests.cpu": <set per cluster>
 ```
+
+**v1.21 Bundle 5 — unwrapped global file shape:** the body keys live at the document root, NOT under an `<addon>:` wrapper. The ApplicationSet template passes this file directly to Helm via `valueFiles:`, so Helm needs the chart's keys at the top level. The per-cluster template block at the bottom IS still wrapped under `<addon>:` because that block is meant to be copy-pasted into the per-cluster file (which IS namespaced).
+
+Files written by Sharko ≤ v1.21 Bundle 4 used the wrong shape (`<addon>:` wrap on the global file). Sharko detects those files and surfaces a yellow migration banner on the Values tab — click **Migrate this file** to convert in place. The migration endpoint also has a bulk mode (`POST /api/v1/addons/unwrap-globals` with no `?addon=` filter) that opens one PR for every wrapped file.
 
 ### The header
 
