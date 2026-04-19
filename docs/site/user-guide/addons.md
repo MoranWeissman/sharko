@@ -210,6 +210,13 @@ The addon detail view (UI) shows:
 - Drift: clusters where the running version differs from the catalog target
 - ArgoCD health status (Healthy / Degraded / Progressing)
 
+> **Progressing is temporary, not a hard error.** ArgoCD reports
+> `Progressing` while a workload is rolling out or waiting on a dependency.
+> Sharko shows these in a separate, blue "Progressing — usually temporary"
+> widget on the Dashboard, not in the red "Apps with issues" widget. See
+> [Dashboard state semantics](dashboard.md#unified-addon-state-model) for
+> the full mapping.
+
 From the CLI:
 
 ```bash
