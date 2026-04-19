@@ -712,6 +712,19 @@ export const api = {
     )
   },
 
+  /**
+   * v1.21 QA Bundle 1: list every chart name in a Helm repo's index.yaml.
+   * Powers the chart-name dropdown in the manual "Add Addon" form. Same
+   * `valid` + `error_code` envelope as validateCatalogChart so the UI can
+   * reuse its existing error switch table.
+   */
+  listRepoCharts: (repo: string) => {
+    const params = new URLSearchParams({ repo })
+    return fetchJSON<import('./models').CatalogRepoChartsResponse>(
+      `/catalog/repo-charts?${params.toString()}`,
+    )
+  },
+
   // ─── ArtifactHub proxy (V121-3 Search tab) ─────────────────────────────
   // Server-side proxy: the browser never calls ArtifactHub directly. The
   // backend handles caching, rate-limit backoff, and stale-serve.

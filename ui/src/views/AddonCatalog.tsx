@@ -21,13 +21,20 @@ import {
   Store,
 } from 'lucide-react'
 import { api, addAddon } from '@/services/api'
-import type { AddonCatalogItem, AddonCatalogResponse } from '@/services/models'
+import type {
+  AddonCatalogItem,
+  AddonCatalogResponse,
+  CatalogRepoChartsResponse,
+  CatalogValidateResponse,
+  CatalogVersionsResponse,
+} from '@/services/models'
 import { StatCard } from '@/components/StatCard'
 import { StatusBadge } from '@/components/StatusBadge'
 import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
 import { RoleGuard } from '@/components/RoleGuard'
 import { MarketplaceTab } from '@/components/MarketplaceTab'
+import { VersionPicker } from '@/components/VersionPicker'
 import {
   Dialog,
   DialogContent,
@@ -465,13 +472,34 @@ export function AddonCatalog() {
   const [pageSize, setPageSize] = useState<PageSize>(15)
   const [page, setPage] = useState(1)
 
-  // Add Addon dialog state
+  // Add Addon dialog state. v1.21 QA Bundle 1 dropped the sync_wave input
+  // (operators set it on the addon's ArgoCD App Options tab after the
+  // addon exists) and added auto-validate + chart/version dropdowns.
   const [addAddonOpen, setAddAddonOpen] = useState(false)
   const [addonForm, setAddonForm] = useState({
-    name: '', chart: '', repo_url: '', version: '', namespace: '', sync_wave: '',
+    name: '',
+    chart: '',
+    repo_url: '',
+    version: '',
+    namespace: '',
   })
   const [addAddonSubmitting, setAddAddonSubmitting] = useState(false)
   const [addAddonError, setAddAddonError] = useState<string | null>(null)
+
+  // Repo URL validation lifecycle. Debounced auto-fire on blur or after
+  // 500ms of typing pause. We only set validRepo=true after a successful
+  // chart-listing call so the chart dropdown can rely on it.
+  const [repoValidating, setRepoValidating] = useState(false)
+  const [repoValidState, setRepoValidState] = useState<'idle' | 'valid' | 'invalid'>('idle')
+  const [repoValidError, setRepoValidError] = useState<string | null>(null)
+  const [repoCharts, setRepoCharts] = useState<string[]>([])
+
+  // Chart version state. Populated when the user picks (or types) a chart
+  // and we successfully validate the (repo, chart) pair via /catalog/validate.
+  const [chartVersionsResp, setChartVersionsResp] = useState<CatalogVersionsResponse | null>(null)
+  const [chartVersionsLoading, setChartVersionsLoading] = useState(false)
+  const [chartVersionsError, setChartVersionsError] = useState<string | null>(null)
+  const [chartShowPrereleases, setChartShowPrereleases] = useState(false)
 
   // Toast notification state (shown after successful addon registration)
   const [toast, setToast] = useState<{ message: string; prUrl?: string } | null>(null)
@@ -510,14 +538,143 @@ export function AddonCatalog() {
     return () => clearInterval(interval)
   }, [fetchCatalog])
 
-  const openAddAddon = useCallback(() => {
-    setAddAddonOpen(true)
+  const resetAddonFormState = useCallback(() => {
     setAddAddonError(null)
-    setAddonForm({ name: '', chart: '', repo_url: '', version: '', namespace: '', sync_wave: '' })
+    setAddonForm({ name: '', chart: '', repo_url: '', version: '', namespace: '' })
+    setRepoValidating(false)
+    setRepoValidState('idle')
+    setRepoValidError(null)
+    setRepoCharts([])
+    setChartVersionsResp(null)
+    setChartVersionsLoading(false)
+    setChartVersionsError(null)
+    setChartShowPrereleases(false)
   }, [])
 
+  const openAddAddon = useCallback(() => {
+    setAddAddonOpen(true)
+    resetAddonFormState()
+  }, [resetAddonFormState])
+
+  // Trigger repo validation. Called on blur and after a 500ms typing
+  // debounce. Hits /catalog/repo-charts so we get both "is this URL OK"
+  // and "what charts can I offer in the dropdown" in one round-trip.
+  const validateRepoUrl = useCallback(async (rawUrl: string) => {
+    const url = rawUrl.trim()
+    if (!url) {
+      setRepoValidState('idle')
+      setRepoValidError(null)
+      setRepoCharts([])
+      return
+    }
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      setRepoValidState('invalid')
+      setRepoValidError('Repo URL must start with http:// or https://')
+      setRepoCharts([])
+      return
+    }
+    setRepoValidating(true)
+    setRepoValidError(null)
+    try {
+      const resp: CatalogRepoChartsResponse = await api.listRepoCharts(url)
+      if (resp.valid && resp.charts) {
+        setRepoValidState('valid')
+        setRepoCharts(resp.charts)
+        setRepoValidError(null)
+      } else {
+        setRepoValidState('invalid')
+        setRepoValidError(resp.message ?? 'Could not list charts at this URL')
+        setRepoCharts([])
+      }
+    } catch (e: unknown) {
+      setRepoValidState('invalid')
+      setRepoValidError(e instanceof Error ? e.message : 'Repo validation failed')
+      setRepoCharts([])
+    } finally {
+      setRepoValidating(false)
+    }
+  }, [])
+
+  // Debounce: when the user types a new repo URL, wait 500ms before firing
+  // validation. Covers paste-and-pause as well as continuous typing.
+  useEffect(() => {
+    if (!addAddonOpen) return
+    const url = addonForm.repo_url.trim()
+    if (!url) return
+    const t = setTimeout(() => {
+      void validateRepoUrl(url)
+    }, 500)
+    return () => clearTimeout(t)
+  }, [addAddonOpen, addonForm.repo_url, validateRepoUrl])
+
+  // When the chart name changes (and the repo is valid), fetch versions
+  // via /catalog/validate so the version picker can populate. Also acts as
+  // confirmation that the (repo, chart) pair is real.
+  useEffect(() => {
+    if (!addAddonOpen) return
+    if (repoValidState !== 'valid') return
+    const repo = addonForm.repo_url.trim()
+    const chart = addonForm.chart.trim()
+    if (!repo || !chart) {
+      setChartVersionsResp(null)
+      setChartVersionsError(null)
+      return
+    }
+    let cancelled = false
+    const t = setTimeout(async () => {
+      setChartVersionsLoading(true)
+      setChartVersionsError(null)
+      try {
+        const resp: CatalogValidateResponse = await api.validateCatalogChart(
+          repo,
+          chart,
+        )
+        if (cancelled) return
+        if (resp.valid && resp.versions) {
+          const versionsResp: CatalogVersionsResponse = {
+            addon: chart,
+            chart,
+            repo: resp.repo,
+            versions: resp.versions,
+            latest_stable: resp.latest_stable,
+            cached_at: resp.cached_at ?? new Date().toISOString(),
+          }
+          setChartVersionsResp(versionsResp)
+          // Auto-select latest stable when no version chosen yet, so the
+          // form is submittable in one step.
+          if (resp.latest_stable && !addonForm.version.trim()) {
+            setAddonForm((prev) => ({ ...prev, version: resp.latest_stable! }))
+          }
+        } else {
+          setChartVersionsResp(null)
+          setChartVersionsError(resp.message ?? 'Chart not found in repo')
+        }
+      } catch (e: unknown) {
+        if (!cancelled) {
+          setChartVersionsError(
+            e instanceof Error ? e.message : 'Failed to load chart versions',
+          )
+        }
+      } finally {
+        if (!cancelled) setChartVersionsLoading(false)
+      }
+    }, 400)
+    return () => {
+      cancelled = true
+      clearTimeout(t)
+    }
+    // We deliberately omit addonForm.version from deps so picking a version
+    // doesn't refire the validate call.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [addAddonOpen, addonForm.chart, addonForm.repo_url, repoValidState])
+
   const handleAddAddon = useCallback(async () => {
-    if (!addonForm.name.trim() || !addonForm.chart.trim() || !addonForm.repo_url.trim() || !addonForm.version.trim()) return
+    if (
+      !addonForm.name.trim() ||
+      !addonForm.chart.trim() ||
+      !addonForm.repo_url.trim() ||
+      !addonForm.version.trim()
+    ) return
     setAddAddonSubmitting(true)
     setAddAddonError(null)
     try {
@@ -527,7 +684,8 @@ export function AddonCatalog() {
         repo_url: addonForm.repo_url.trim(),
         version: addonForm.version.trim(),
         namespace: addonForm.namespace.trim() || undefined,
-        sync_wave: addonForm.sync_wave ? parseInt(addonForm.sync_wave, 10) : undefined,
+        // sync_wave intentionally omitted — operators set it on the
+        // addon's ArgoCD App Options tab after creation. v1.21 QA Bundle 1.
       })
       const prUrl = result?.pr_url || result?.pull_request_url
       const addonName = addonForm.name.trim()
@@ -732,48 +890,229 @@ export function AddonCatalog() {
         </RoleGuard>
       </div>
 
-      {/* Add Addon Dialog */}
-      <Dialog open={addAddonOpen} onOpenChange={(v) => { if (!v) setAddAddonOpen(false) }}>
-        <DialogContent>
+      {/* Add Addon Dialog — manual flow for charts NOT in the curated
+          Marketplace. v1.21 QA Bundle 1 reworked the form: auto-validate
+          repo URL, chart-name dropdown after a valid repo, version
+          dropdown shared with the Marketplace Configure modal, sync wave
+          field removed (operators set it on the addon page after
+          creation). */}
+      <Dialog
+        open={addAddonOpen}
+        onOpenChange={(v) => {
+          if (!v) {
+            setAddAddonOpen(false)
+            resetAddonFormState()
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Register New Addon</DialogTitle>
-            <DialogDescription>Add a new Helm chart to the catalog.</DialogDescription>
+            <DialogDescription>
+              For Helm charts <strong>not in the Marketplace</strong>. For
+              curated addons, browse the{' '}
+              <button
+                type="button"
+                onClick={() => {
+                  setAddAddonOpen(false)
+                  resetAddonFormState()
+                  switchTab('marketplace')
+                }}
+                className="font-semibold text-teal-600 underline hover:no-underline dark:text-teal-400"
+              >
+                Marketplace tab
+              </button>{' '}
+              instead.
+            </DialogDescription>
           </DialogHeader>
+
           <div className="space-y-3 py-2">
-            {(['name', 'chart', 'repo_url', 'version', 'namespace'] as const).map((field) => (
-              <div key={field}>
-                <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300 capitalize">
-                  {field.replace('_', ' ')}
-                  {['name', 'chart', 'repo_url', 'version'].includes(field) && (
-                    <span className="text-red-500"> *</span>
-                  )}
+            {/* Display name + Namespace — simple text inputs. */}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <label
+                  htmlFor="add-addon-name"
+                  className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300"
+                >
+                  Name <span className="text-red-500">*</span>
                 </label>
                 <input
+                  id="add-addon-name"
                   type="text"
-                  value={addonForm[field]}
-                  onChange={(e) => setAddonForm((prev) => ({ ...prev, [field]: e.target.value }))}
-                  placeholder={
-                    field === 'repo_url' ? 'https://helm.example.com'
-                    : field === 'version' ? '1.0.0'
-                    : field === 'namespace' ? 'optional, defaults to addon name'
-                    : ''
+                  value={addonForm.name}
+                  onChange={(e) =>
+                    setAddonForm((prev) => ({ ...prev, name: e.target.value }))
                   }
+                  placeholder="e.g. my-addon"
                   className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
                 />
               </div>
-            ))}
+              <div>
+                <label
+                  htmlFor="add-addon-namespace"
+                  className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300"
+                >
+                  Namespace
+                </label>
+                <input
+                  id="add-addon-namespace"
+                  type="text"
+                  value={addonForm.namespace}
+                  onChange={(e) =>
+                    setAddonForm((prev) => ({ ...prev, namespace: e.target.value }))
+                  }
+                  placeholder="optional, defaults to addon name"
+                  className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
+                />
+              </div>
+            </div>
+
+            {/* Repo URL with auto-validation. */}
             <div>
-              <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
-                Sync Wave (optional)
+              <label
+                htmlFor="add-addon-repo"
+                className="mb-1 flex items-center gap-2 text-sm font-medium text-[#0a3a5a] dark:text-gray-300"
+              >
+                Repo URL <span className="text-red-500">*</span>
+                {repoValidating && (
+                  <Loader2
+                    className="h-3.5 w-3.5 animate-spin text-[#3a6a8a]"
+                    aria-label="Validating repo URL"
+                  />
+                )}
+                {repoValidState === 'valid' && !repoValidating && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-1.5 py-0.5 text-[10px] font-semibold text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                    <CheckCircle className="h-3 w-3" aria-hidden="true" />
+                    Reachable · {repoCharts.length} chart{repoCharts.length === 1 ? '' : 's'}
+                  </span>
+                )}
               </label>
               <input
-                type="number"
-                value={addonForm.sync_wave}
-                onChange={(e) => setAddonForm((prev) => ({ ...prev, sync_wave: e.target.value }))}
-                placeholder="e.g. 1"
+                id="add-addon-repo"
+                type="url"
+                value={addonForm.repo_url}
+                onChange={(e) =>
+                  setAddonForm((prev) => ({ ...prev, repo_url: e.target.value }))
+                }
+                onBlur={() => void validateRepoUrl(addonForm.repo_url)}
+                placeholder="https://helm.example.com"
+                aria-invalid={repoValidState === 'invalid' || undefined}
                 className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
               />
+              {repoValidState === 'invalid' && repoValidError && (
+                <p
+                  role="alert"
+                  className="mt-1 flex items-center gap-1 text-xs text-red-600 dark:text-red-400"
+                >
+                  <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+                  {repoValidError}
+                </p>
+              )}
             </div>
+
+            {/* Chart name — dropdown of repo charts + free-text autocomplete. */}
+            <div>
+              <label
+                htmlFor="add-addon-chart"
+                className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300"
+              >
+                Chart <span className="text-red-500">*</span>
+              </label>
+              <input
+                id="add-addon-chart"
+                type="text"
+                list="add-addon-chart-list"
+                value={addonForm.chart}
+                onChange={(e) =>
+                  setAddonForm((prev) => ({ ...prev, chart: e.target.value }))
+                }
+                disabled={repoValidState !== 'valid'}
+                placeholder={
+                  repoValidState !== 'valid'
+                    ? 'Validate the repo URL first'
+                    : 'Pick or type a chart name'
+                }
+                className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
+              />
+              <datalist id="add-addon-chart-list">
+                {repoCharts.map((c) => (
+                  <option key={c} value={c} />
+                ))}
+              </datalist>
+              {repoValidState === 'valid' && repoCharts.length > 0 && (
+                <ul
+                  role="listbox"
+                  aria-label="Available charts in this repo"
+                  className="mt-1 flex max-h-24 flex-wrap gap-1 overflow-y-auto rounded-md border border-dashed border-[#c0ddf0] bg-[#f7fbff] p-1.5 dark:border-gray-700 dark:bg-gray-900"
+                >
+                  {repoCharts.slice(0, 50).map((c) => {
+                    const selected = c === addonForm.chart.trim()
+                    return (
+                      <li key={c} className="contents">
+                        <button
+                          type="button"
+                          role="option"
+                          aria-selected={selected}
+                          onClick={() =>
+                            setAddonForm((prev) => ({ ...prev, chart: c }))
+                          }
+                          className={`rounded-full px-2 py-0.5 text-xs font-mono transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 ${
+                            selected
+                              ? 'bg-teal-600 text-white hover:bg-teal-700'
+                              : 'bg-white text-[#0a3a5a] ring-1 ring-[#c0ddf0] hover:bg-[#d6eeff] dark:bg-gray-800 dark:text-gray-200 dark:ring-gray-700 dark:hover:bg-gray-700'
+                          }`}
+                        >
+                          {c}
+                        </button>
+                      </li>
+                    )
+                  })}
+                  {repoCharts.length > 50 && (
+                    <li className="px-2 py-0.5 text-[11px] italic text-[#3a6a8a] dark:text-gray-500">
+                      +{repoCharts.length - 50} more — type to filter
+                    </li>
+                  )}
+                </ul>
+              )}
+            </div>
+
+            {/* Version — shared VersionPicker so the UX matches the Marketplace
+                Configure modal exactly. */}
+            <div>
+              <label
+                htmlFor="add-addon-version"
+                className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300"
+              >
+                Version <span className="text-red-500">*</span>
+              </label>
+              <VersionPicker
+                inputId="add-addon-version"
+                value={addonForm.version}
+                onChange={(v) =>
+                  setAddonForm((prev) => ({ ...prev, version: v }))
+                }
+                versionsResp={chartVersionsResp}
+                loading={chartVersionsLoading}
+                error={chartVersionsError}
+                showPrereleases={chartShowPrereleases}
+                onShowPrereleasesChange={setChartShowPrereleases}
+                placeholder={
+                  repoValidState !== 'valid'
+                    ? 'Validate the repo URL first'
+                    : !addonForm.chart.trim()
+                      ? 'Select a chart first'
+                      : 'e.g. 1.20.0'
+                }
+              />
+            </div>
+
+            {/* Note: where to set sync wave / advanced options after creation. */}
+            <div className="rounded-md bg-[#e8f4ff] p-3 text-xs text-[#2a5a7a] ring-1 ring-[#c0ddf0] dark:bg-gray-800 dark:text-gray-300 dark:ring-gray-700">
+              After adding, advanced options like sync wave, sync options,
+              ignore differences, and additional sources are available on the
+              addon&rsquo;s <strong>ArgoCD App Options</strong> tab.
+            </div>
+
             {addAddonError && (
               <p className="text-sm text-red-600 dark:text-red-400">{addAddonError}</p>
             )}
@@ -781,7 +1120,10 @@ export function AddonCatalog() {
           <DialogFooter>
             <button
               type="button"
-              onClick={() => setAddAddonOpen(false)}
+              onClick={() => {
+                setAddAddonOpen(false)
+                resetAddonFormState()
+              }}
               disabled={addAddonSubmitting}
               className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
             >
@@ -790,7 +1132,14 @@ export function AddonCatalog() {
             <button
               type="button"
               onClick={handleAddAddon}
-              disabled={!addonForm.name.trim() || !addonForm.chart.trim() || !addonForm.repo_url.trim() || !addonForm.version.trim() || addAddonSubmitting}
+              disabled={
+                !addonForm.name.trim() ||
+                !addonForm.chart.trim() ||
+                !addonForm.repo_url.trim() ||
+                !addonForm.version.trim() ||
+                repoValidState !== 'valid' ||
+                addAddonSubmitting
+              }
               className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
             >
               {addAddonSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}

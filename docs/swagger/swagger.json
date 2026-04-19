@@ -2013,6 +2013,47 @@
                 }
             }
         },
+        "/catalog/repo-charts": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "v1.21 QA Bundle 1 — given a Helm repo URL, fetches `\u003crepo\u003e/index.yaml` and returns the chart names listed under `entries:`. Powers the chart-name dropdown in the manual \"Add Addon\" form so operators can pick from real chart names instead of typing blind. On failure returns HTTP 200 with `valid: false` and a structured `error_code` (invalid_input, repo_unreachable, index_parse_error, ssrf_blocked, timeout) so the UI's existing switch table can be reused. Responses are cached server-side for 15 minutes per repo URL. Read-only; requires authentication.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "List chart names available in an arbitrary Helm repository",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Helm repository base URL (e.g. https://charts.jetstack.io)",
+                        "name": "repo",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Chart list — `valid` distinguishes success vs structured failure",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.repoChartsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Missing or malformed repo query parameter",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/catalog/reprobe": {
             "post": {
                 "security": [
@@ -7751,6 +7792,32 @@
                 },
                 "view_all_url": {
                     "type": "string"
+                }
+            }
+        },
+        "internal_api.repoChartsResponse": {
+            "type": "object",
+            "properties": {
+                "cached_at": {
+                    "type": "string"
+                },
+                "charts": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "error_code": {
+                    "$ref": "#/definitions/internal_api.validateErrorCode"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "repo": {
+                    "type": "string"
+                },
+                "valid": {
+                    "type": "boolean"
                 }
             }
         },

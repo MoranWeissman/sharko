@@ -454,6 +454,7 @@ export type CatalogValidateErrorCode =
   | 'index_parse_error'
   | 'chart_not_found'
   | 'timeout'
+  | 'ssrf_blocked'
 
 export interface CatalogValidateResponse {
   valid: boolean
@@ -463,6 +464,22 @@ export interface CatalogValidateResponse {
   icon_url?: string
   versions?: CatalogVersionEntry[]
   latest_stable?: string
+  cached_at?: string
+  error_code?: CatalogValidateErrorCode
+  message?: string
+}
+
+/**
+ * v1.21 QA Bundle 1 — listing of all chart names in a Helm repo's index.yaml.
+ * Returned by `GET /api/v1/catalog/repo-charts`. Used by the manual "Add
+ * Addon" form to populate a chart-name dropdown after the operator
+ * validates a repo URL. Same `valid` + `error_code` envelope as
+ * /catalog/validate so the UI can reuse its existing switch table.
+ */
+export interface CatalogRepoChartsResponse {
+  valid: boolean
+  repo: string
+  charts?: string[]
   cached_at?: string
   error_code?: CatalogValidateErrorCode
   message?: string

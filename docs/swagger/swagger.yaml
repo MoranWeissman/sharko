@@ -1128,6 +1128,23 @@ definitions:
       view_all_url:
         type: string
     type: object
+  internal_api.repoChartsResponse:
+    properties:
+      cached_at:
+        type: string
+      charts:
+        items:
+          type: string
+        type: array
+      error_code:
+        $ref: '#/definitions/internal_api.validateErrorCode'
+      message:
+        type: string
+      repo:
+        type: string
+      valid:
+        type: boolean
+    type: object
   internal_api.saveAIConfigRequest:
     properties:
       annotate_on_seed:
@@ -2612,6 +2629,38 @@ paths:
       security:
       - BearerAuth: []
       summary: ArtifactHub package detail proxy
+      tags:
+      - catalog
+  /catalog/repo-charts:
+    get:
+      description: 'v1.21 QA Bundle 1 — given a Helm repo URL, fetches `<repo>/index.yaml`
+        and returns the chart names listed under `entries:`. Powers the chart-name
+        dropdown in the manual "Add Addon" form so operators can pick from real chart
+        names instead of typing blind. On failure returns HTTP 200 with `valid: false`
+        and a structured `error_code` (invalid_input, repo_unreachable, index_parse_error,
+        ssrf_blocked, timeout) so the UI''s existing switch table can be reused. Responses
+        are cached server-side for 15 minutes per repo URL. Read-only; requires authentication.'
+      parameters:
+      - description: Helm repository base URL (e.g. https://charts.jetstack.io)
+        in: query
+        name: repo
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Chart list — `valid` distinguishes success vs structured failure
+          schema:
+            $ref: '#/definitions/internal_api.repoChartsResponse'
+        "400":
+          description: Missing or malformed repo query parameter
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List chart names available in an arbitrary Helm repository
       tags:
       - catalog
   /catalog/reprobe:
