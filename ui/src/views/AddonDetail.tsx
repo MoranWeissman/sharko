@@ -2375,11 +2375,19 @@ export function AddonDetail() {
                     setValuesYaml(newYAML)
                     return result
                   }}
-                  onPullUpstream={async () => {
-                    const result = await api.pullUpstreamValues(addon.addon_name, { merge_strategy: 'replace' })
-                    // Refresh the editor view against the new content — we
-                    // don't know the exact YAML the backend wrote, so trigger
-                    // a re-fetch of the schema response.
+                  versionMismatch={
+                    valuesSchema?.values_version_mismatch
+                      ? {
+                          catalogVersion: valuesSchema.values_version_mismatch.catalog_version,
+                          valuesVersion: valuesSchema.values_version_mismatch.values_version,
+                        }
+                      : null
+                  }
+                  onRefreshFromUpstream={async () => {
+                    // V121-6.4: same endpoint as setAddonValues, with
+                    // refresh_from_upstream: true. Backend regenerates the
+                    // values file via the smart-values pipeline.
+                    const result = await api.refreshAddonValuesFromUpstream(addon.addon_name)
                     try {
                       const fresh = await api.getAddonValuesSchema(addon.addon_name)
                       setValuesSchema(fresh)
@@ -2389,7 +2397,6 @@ export function AddonDetail() {
                     }
                     return result
                   }}
-                  pullUpstreamLabel={`${addon.chart}@${addon.version}`}
                   belowEditor={({ refreshKey }) => (
                     <RecentPRsPanel
                       title="Recent changes (last 5)"

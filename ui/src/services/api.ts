@@ -514,6 +514,15 @@ export const api = {
       `/addons/${encodeURIComponent(addonName)}/values`,
       { values: valuesYAML },
     ),
+  // V121-6.4: refresh-from-upstream uses the SAME endpoint as
+  // setAddonValues. Backend ignores `values` when `refresh_from_upstream`
+  // is true, fetches the chart's upstream values.yaml, runs the
+  // smart-values pipeline, and overwrites the global file.
+  refreshAddonValuesFromUpstream: (addonName: string) =>
+    putJSON<import('./models').ValuesEditResult>(
+      `/addons/${encodeURIComponent(addonName)}/values`,
+      { values: '', refresh_from_upstream: true },
+    ),
   getClusterAddonValues: (clusterName: string, addonName: string) =>
     fetchJSON<import('./models').ClusterAddonValuesResponse>(
       `/clusters/${encodeURIComponent(clusterName)}/addons/${encodeURIComponent(addonName)}/values`,
@@ -524,15 +533,10 @@ export const api = {
       { values: valuesYAML },
     ),
 
-  // Values editor extras (v1.20.1)
-  pullUpstreamValues: (
-    addonName: string,
-    body?: { version?: string; merge_strategy?: 'replace' | 'merge_keep_overrides' },
-  ) =>
-    postJSON<import('./models').ValuesEditResult & { chart?: string; chart_version?: string }>(
-      `/addons/${encodeURIComponent(addonName)}/values/pull-upstream`,
-      body ?? {},
-    ),
+  // Values editor extras (v1.20.1) — note: pullUpstreamValues was
+  // removed in v1.21 (Story V121-6.5) and replaced by
+  // refreshAddonValuesFromUpstream above, which calls the existing
+  // PUT /api/v1/addons/{name}/values handler with refresh_from_upstream=true.
   getAddonValuesRecentPRs: (addonName: string, limit = 5) =>
     fetchJSON<import('./models').RecentPRsResponse>(
       `/addons/${encodeURIComponent(addonName)}/values/recent-prs?limit=${limit}`,

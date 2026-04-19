@@ -609,6 +609,13 @@ export interface AddonValuesSchemaResponse {
   addon_name: string
   current_values: string
   schema?: Record<string, unknown> | null
+  /**
+   * v1.21 (Story V121-6.5): present when the chart version pinned in
+   * `addons-catalog.yaml` is ahead of the version stamped in the values
+   * file's smart-values header. The Values tab renders a yellow refresh
+   * banner. Absent on legacy files (no `# sharko: managed=true` header).
+   */
+  values_version_mismatch?: { catalog_version: string; values_version: string } | null
 }
 
 /** Response for GET /clusters/{cluster}/addons/{name}/values. */
