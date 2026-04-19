@@ -242,6 +242,16 @@ func (o *Orchestrator) EnableAddon(ctx context.Context, req EnableAddonRequest) 
 	}
 
 	updatedValues := generateClusterValues(req.Cluster, "", addons, catalog)
+
+	// V121-6.6: seed the per-cluster stanza for this addon from the
+	// template block at the bottom of the global values file. This only
+	// fires on initial enable (the addon's stanza is added with the
+	// template fields uncommented). If the cluster already has a stanza
+	// for this addon with non-enabled fields, we leave it alone.
+	if seeded, ok := o.seedPerClusterTemplate(ctx, req.Cluster, req.Addon, existingValues, updatedValues); ok {
+		updatedValues = seeded
+	}
+
 	files[valuesPath] = updatedValues
 	steps = append(steps, "update_values_file")
 

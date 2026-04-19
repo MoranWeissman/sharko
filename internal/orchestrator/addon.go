@@ -81,13 +81,35 @@ func (o *Orchestrator) AddAddon(ctx context.Context, req AddAddonRequest) (*GitR
 		return nil, fmt.Errorf("adding addon %q to catalog: %w", req.Name, err)
 	}
 
-	// Generate global values file.
-	globalValuesContent := generateAddonGlobalValues(req)
+	// Generate the global values file. Two paths:
+	//
+	//  - Smart-values pipeline (V121-6): when the caller supplied raw
+	//    upstream chart values, run the heuristic splitter + per-cluster
+	//    template generator + self-describing header. Used by the
+	//    marketplace path and any caller that has the upstream bytes.
+	//
+	//  - Legacy stub: when no upstream is supplied, fall back to the
+	//    pre-v1.21 minimal `<name>:\n  enabled: false` payload. Keeps
+	//    older clients (raw API callers, legacy CLIs) working.
+	//
+	// Skip-on-existing: if the file is already present in the user's
+	// repo (re-add or partial-failure retry) we keep what's there. This
+	// prevents the smart-values regen from clobbering hand edits the user
+	// may have made between attempts.
 	globalValuesPath := path.Join(o.paths.GlobalValues, req.Name+".yaml")
-
 	files := map[string][]byte{
-		catalogPath:      updatedCatalog,
-		globalValuesPath: globalValuesContent,
+		catalogPath: updatedCatalog,
+	}
+	if existing, err := o.git.GetFileContent(ctx, globalValuesPath, o.gitops.BaseBranch); err != nil || len(existing) == 0 {
+		if len(req.UpstreamValues) > 0 {
+			files[globalValuesPath] = GenerateGlobalValuesFile(
+				req.Name, req.Chart, req.Version, req.RepoURL, req.UpstreamValues,
+				false, // AI annotation handled in Epic V121-7
+				false, // per-addon AI opt-out — only set via header edit
+			)
+		} else {
+			files[globalValuesPath] = generateAddonGlobalValues(req)
+		}
 	}
 
 	gitResult, err := o.commitChanges(ctx, files, nil, fmt.Sprintf("add addon %s", req.Name))

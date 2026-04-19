@@ -120,6 +120,15 @@ type AddAddonRequest struct {
 	// "manual" (raw Add Addon form), "" (caller didn't say — handler treats
 	// as "manual" for the audit detail).
 	Source string `json:"source,omitempty"`
+
+	// UpstreamValues is the raw chart `values.yaml` bytes that the API
+	// handler pre-fetched. When non-empty, AddAddon runs the smart-values
+	// pipeline (V121-6) and writes an annotated global values file with a
+	// per-cluster template block. When empty, AddAddon falls back to the
+	// pre-v1.21 minimal stub (`<name>:\n  enabled: false`). Not part of
+	// the wire schema — handlers populate it after `helm.FetchValues` and
+	// the smart-parser layer.
+	UpstreamValues []byte `json:"-"`
 }
 
 // ConfigureAddonRequest is the input for updating an addon's catalog configuration.
