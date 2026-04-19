@@ -3,7 +3,7 @@
 Sharko's AI integration powers two features:
 
 - **Upgrade analysis** (v1.18+): summarises chart upgrades, flags risk, lists action items.
-- **Smart-values AI annotation** (v1.21 Epic V121-7): adds inline `# description` comments to generated values files and improves cluster-specific field detection.
+- **Smart-values AI annotation** (v1.21 Epic V121-7): adds inline `# description` comments to generated values files and improves cluster-specific field detection. The annotation pass is an optional second pass on top of the deterministic [smart-values pipeline](../user-guide/smart-values.md) — the heuristic split runs whether or not AI is configured.
 
 Both run against the same configured provider. This guide is for operators wiring the provider, sizing token budgets, and watching cost.
 

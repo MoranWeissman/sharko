@@ -794,6 +794,18 @@ go test -coverprofile=coverage.out ./...
 go tool cover -html=coverage.out
 ```
 
+### UI accessibility (v1.21+)
+
+New UI surfaces shipped from v1.21 onward target **WCAG 2.1 AA**: keyboard navigation, focus rings on every interactive element, semantic landmarks (`role="navigation"` / `role="main"`), and contrast ratios that pass `axe-core` with zero violations. Existing pages predate the target and are tracked for a v1.22 retrofit (per the v1.21 design's out-of-scope list).
+
+When adding a new page or component:
+
+1. Run the existing axe suite: `cd ui && npm test -- a11y`.
+2. Add a fresh `describe(...)` block in `ui/src/__tests__/a11y.test.tsx` that mounts your page and asserts zero violations. The Marketplace block is the reference template.
+3. Manual keyboard pass: tab through every interactive element; verify focus is visible; verify Esc closes any modal you opened.
+
+The CI gate enforces zero a11y violations on the pages currently tested — extending the suite is part of the story for any new UI page.
+
 ---
 
 ## PR Workflow

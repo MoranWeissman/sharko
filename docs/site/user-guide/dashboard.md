@@ -69,6 +69,20 @@ view directly.
 The Dashboard surfaces only **clusters needing attention** (disconnected from
 ArgoCD or with unhealthy addons). The full fleet lives in the Clusters page.
 
+## Where to go from the Dashboard
+
+The Dashboard is intentionally read-only. Use the deep-links to drive into
+the page that owns the action:
+
+* Click an addon name in the Issues or Progressing widgets → cluster detail page,
+  scrolled to that addon's row, with the deep-link highlight applied.
+* Open **Addons** in the left rail to discover new addons via the
+  [Marketplace](marketplace.md), edit the catalog directly via
+  [Managing Addons](addons.md), or open a chart's Values editor via
+  [Editing Values](values-editing.md).
+* Open a cluster card → cluster detail page, where per-cluster overrides and
+  ArgoCD sync controls live.
+
 ## Notes on staleness
 
 * The Dashboard polls every 30 seconds. The unified addon state cache uses the
