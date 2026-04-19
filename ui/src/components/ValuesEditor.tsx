@@ -82,6 +82,28 @@ export interface ValuesEditorProps {
    * successful submit — pass it through to children so they re-fetch.
    */
   belowEditor?: React.ReactNode | ((ctx: { refreshKey: number }) => React.ReactNode)
+  /**
+   * V121-7.4: when set, the parent has determined that the values file's
+   * header says `# AI annotation: disabled` AND AI is not configured at
+   * all in Sharko's Settings. Renders the "AI annotation not configured"
+   * banner with a link to Settings → AI. Suppressed when AI is wired,
+   * even if the file isn't annotated yet.
+   */
+  showAINotConfiguredBanner?: boolean
+  /**
+   * V121-7.4: when set, the parent has determined that the values file's
+   * header says `# sharko: ai-annotate=off`. Renders an inline note
+   * explaining why the file has no comments. Different from
+   * showAINotConfiguredBanner — this state is per-addon, not global.
+   */
+  showAIOptedOutNote?: boolean
+  /**
+   * V121-7.4: optional handler for the "AI annotate this values file"
+   * action in the Edit menu. When provided, the editor renders a button
+   * that calls this handler; the parent does the API call and toast. The
+   * editor only owns the trigger.
+   */
+  onAnnotateNow?: () => Promise<void>
 }
 
 export function ValuesEditor({
@@ -96,6 +118,9 @@ export function ValuesEditor({
   versionMismatch,
   onRefreshFromUpstream,
   belowEditor,
+  showAINotConfiguredBanner = false,
+  showAIOptedOutNote = false,
+  onAnnotateNow,
 }: ValuesEditorProps) {
   const [draft, setDraft] = useState(initialYAML)
   const [submitting, setSubmitting] = useState(false)
@@ -105,6 +130,7 @@ export function ValuesEditor({
   const [bannerDismissed, setBannerDismissed] = useState(false)
   const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
+  const [annotating, setAnnotating] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // Reset when the underlying current values change (e.g. after a successful
@@ -240,6 +266,36 @@ export function ValuesEditor({
               Edit in GitHub
             </a>
           )}
+          {/* V121-7.4: manual annotate trigger. Renders only when the
+              parent supplied a handler (i.e. AI is configured and the
+              addon is not opted out). The button calls the parent and
+              the parent owns the toast + secret-block surfacing. */}
+          {onAnnotateNow && (
+            <button
+              type="button"
+              onClick={async () => {
+                if (annotating) return
+                setAnnotating(true)
+                try {
+                  await onAnnotateNow()
+                } finally {
+                  setAnnotating(false)
+                }
+              }}
+              disabled={annotating}
+              className="inline-flex items-center gap-1 rounded-md border border-purple-300 bg-purple-50 px-3 py-1 text-xs font-medium text-purple-700 hover:bg-purple-100 disabled:opacity-50 dark:border-purple-700 dark:bg-purple-900/30 dark:text-purple-300 dark:hover:bg-purple-800/50"
+              title="Re-annotate this values file via AI (opens a new PR)"
+            >
+              {annotating ? (
+                <>
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Annotating…
+                </>
+              ) : (
+                'AI annotate'
+              )}
+            </button>
+          )}
           {/*
             v1.21 (Story V121-6.5): the always-visible "Pull upstream
             defaults" actions menu was removed. The same functionality
@@ -293,6 +349,38 @@ export function ValuesEditor({
                 Dismiss
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* V121-7.4: AI annotation status banners. Three mutually exclusive
+          states are interesting:
+            1. AI not configured (global) AND file says "annotation: disabled":
+               nudge the operator toward Settings → AI.
+            2. Per-addon opt-out is set: explain why the file has no comments.
+            3. AI configured: render the "AI annotate this values file" action
+               near the editor controls (handled below in the toolbar). */}
+      {showAINotConfiguredBanner && (
+        <div className="mb-3 flex items-start gap-2 rounded-md border border-blue-300 bg-blue-50 p-3 text-sm text-blue-900 dark:border-blue-700 dark:bg-blue-950/40 dark:text-blue-200">
+          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+          <div className="flex-1">
+            <p>
+              AI annotation not configured — values are not commented.{' '}
+              <a href="/settings#ai" className="font-medium underline hover:no-underline">
+                Configure AI in Settings → AI
+              </a>{' '}
+              to enable.
+            </p>
+          </div>
+        </div>
+      )}
+      {showAIOptedOutNote && (
+        <div className="mb-3 flex items-start gap-2 rounded-md border border-[#c0ddf0] bg-[#f0f7ff] p-3 text-sm text-[#1a4a6a] dark:border-gray-700 dark:bg-gray-700/40 dark:text-gray-300">
+          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+          <div className="flex-1">
+            <p>
+              This addon is opted out of AI annotation. Toggle the opt-out from the addon's Catalog tab to re-enable.
+            </p>
           </div>
         </div>
       )}

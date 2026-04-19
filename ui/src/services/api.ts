@@ -489,7 +489,7 @@ export const api = {
   getAIStatus: () => fetchJSON<{ enabled: boolean }>('/upgrade/ai-status'),
   getAISummary: (addonName: string, targetVersion: string) => postJSON<{ summary: string }>('/upgrade/ai-summary', { addon_name: addonName, target_version: targetVersion }),
   getAIConfig: () => fetchJSON<AIConfigResponse>('/ai/config'),
-  saveAIConfig: (data: { provider: string; api_key?: string; model?: string; base_url?: string; ollama_url?: string }) => postJSON<{ status: string }>('/ai/config', data),
+  saveAIConfig: (data: { provider: string; api_key?: string; model?: string; base_url?: string; ollama_url?: string; annotate_on_seed?: boolean }) => postJSON<{ status: string }>('/ai/config', data),
   setAIProvider: (provider: string) => postJSON<{ status: string; provider: string }>('/ai/provider', { provider }),
   testAI: () => postJSON<{ status: string; response: string }>('/ai/test', {}),
   testAIConfig: (data: { provider: string; api_key?: string; model?: string; base_url?: string; ollama_url?: string }) => postJSON<{ status: string; message?: string; response?: string }>('/ai/test-config', data),
@@ -531,6 +531,40 @@ export const api = {
     putJSON<import('./models').ValuesEditResult>(
       `/clusters/${encodeURIComponent(clusterName)}/addons/${encodeURIComponent(addonName)}/values`,
       { values: valuesYAML },
+    ),
+
+  // V121-7.4: manual AI annotate. Returns 200 with an AnnotateAddonValuesResponse,
+  // 422 with an AIAnnotateBlockedResponse when the secret guard fires, or
+  // 503 when AI is not configured. We use a dedicated wrapper (not the
+  // shared postJSON) so the caller can inspect the typed 422 body via
+  // `(err as { body }).body` — the shared wrapper drops the body to a
+  // plain message string which would lose the secret-leak match list.
+  annotateAddonValues: async (addonName: string) => {
+    const res = await fetch(`${BASE_URL}/addons/${encodeURIComponent(addonName)}/values/annotate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: '{}',
+    })
+    if (res.status === 401) {
+      sessionStorage.removeItem(TOKEN_KEY)
+      window.location.reload()
+      throw new Error('Session expired')
+    }
+    const body = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      const err = new Error((body as { error?: string; message?: string }).error || (body as { message?: string }).message || res.statusText) as Error & { body?: unknown; status?: number }
+      err.body = body
+      err.status = res.status
+      throw err
+    }
+    return body as import('./models').AnnotateAddonValuesResponse
+  },
+  // V121-7.3: per-addon AI opt-out toggle. Idempotent — flipping to the
+  // current state returns 200 with `status: "noop"`.
+  setAddonAIOptOut: (addonName: string, optOut: boolean) =>
+    putJSON<{ status: string; opt_out: boolean; addon: string; pr_url?: string; pr_id?: number; merged?: boolean }>(
+      `/addons/${encodeURIComponent(addonName)}/values/ai-opt-out`,
+      { opt_out: optOut },
     ),
 
   // Values editor extras (v1.20.1) — note: pullUpstreamValues was

@@ -12,6 +12,9 @@ vi.mock('@/services/api', () => ({
     // v1.20 — values editor / attribution lookups
     getMe: vi.fn().mockResolvedValue({ username: 'tester', role: 'admin', has_github_token: true }),
     getAddonValuesSchema: vi.fn().mockResolvedValue({ addon_name: 'ingress-nginx', current_values: '', schema: null }),
+    // V121-7.4: AI config probe used by AddonDetail to render the
+    // "AI not configured" banner / annotate-now button conditionally.
+    getAIConfig: vi.fn().mockResolvedValue({ current_provider: 'none', available_providers: [], annotate_on_seed: false }),
     getAddonDetail: vi.fn().mockResolvedValue({
       addon: {
         addon_name: 'ingress-nginx',

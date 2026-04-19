@@ -33,6 +33,7 @@ import { api, removeAddon, upgradeAddon, configureAddon, getAddonPRs } from '@/s
 import type { AddonCatalogItem, ConnectionsListResponse, UpgradeCheckResponse, UpgradeRecommendations, RecommendationCard, ValueDiffEntry, ConflictCheckEntry, TrackedPR, AddonValuesSchemaResponse, MeResponse } from '@/services/models'
 import { ValuesEditor } from '@/components/ValuesEditor'
 import { RecentPRsPanel } from '@/components/RecentPRsPanel'
+import { showToast } from '@/components/ToastNotification'
 import { AttributionNudge } from '@/components/AttributionNudge'
 import { MarkdownRenderer } from '@/components/MarkdownRenderer'
 import { StatCard } from '@/components/StatCard'
@@ -1100,6 +1101,19 @@ export function AddonDetail() {
   const [me, setMe] = useState<MeResponse | null>(null)
   const [gitRepoBase, setGitRepoBase] = useState<string>('')
   const [gitDefaultBranch, setGitDefaultBranch] = useState<string>('main')
+
+  // V121-7.4: AI configuration. Pulled once for the Values + Catalog tabs
+  // to render the "AI not configured" banner and the per-addon opt-out
+  // toggle. We don't refresh — Settings changes are infrequent and the
+  // user can soft-refresh to pick up changes.
+  const [aiEnabled, setAIEnabled] = useState<boolean>(false)
+  useEffect(() => {
+    // Defensive — older test fixtures may not mock getAIConfig.
+    if (typeof api.getAIConfig !== 'function') return
+    api.getAIConfig()
+      .then((cfg) => setAIEnabled(!!cfg.current_provider && cfg.current_provider !== 'none' && cfg.current_provider !== ''))
+      .catch(() => setAIEnabled(false))
+  }, [])
 
   // Filter state
   const [search, setSearch] = useState('')
@@ -2404,6 +2418,53 @@ export function AddonDetail() {
                       load={() => api.getAddonValuesRecentPRs(addon.addon_name, 5)}
                     />
                   )}
+                  // V121-7.4: AI banner / annotate-now wiring.
+                  // - "AI not configured" banner: when the file's header
+                  //   says annotation is disabled AND the global AI
+                  //   provider is `none`.
+                  // - "Opted out" note: when the file's header carries
+                  //   the per-addon opt-out directive.
+                  // - Annotate-now button: only when AI is configured AND
+                  //   the addon is not opted out (clearing opt-out is a
+                  //   separate Catalog-tab action, deliberately).
+                  showAINotConfiguredBanner={
+                    !aiEnabled && valuesSchema?.ai_annotated === false && !valuesSchema?.ai_opt_out
+                  }
+                  showAIOptedOutNote={!!valuesSchema?.ai_opt_out}
+                  onAnnotateNow={
+                    aiEnabled && !valuesSchema?.ai_opt_out
+                      ? async () => {
+                          try {
+                            const res = await api.annotateAddonValues(addon.addon_name)
+                            if (res.pr_url || res.pr_id) {
+                              const label = res.pr_id ? `PR #${res.pr_id}` : 'PR'
+                              showToast(res.merged ? `${label} merged →` : `${label} opened →`, 'success')
+                            } else if (res.ai_skip_reason) {
+                              showToast(`AI annotate skipped: ${res.ai_skip_reason}`, 'info')
+                            } else {
+                              showToast('AI annotate completed', 'success')
+                            }
+                            // Re-fetch so the editor body reflects the new commit.
+                            const fresh = await api.getAddonValuesSchema(addon.addon_name)
+                            setValuesSchema(fresh)
+                            setValuesYaml(fresh.current_values)
+                          } catch (err) {
+                            // Backend may return 422 with the SecretLeak
+                            // payload. The fetch wrapper carries the
+                            // parsed body via `(err as { body }).body`
+                            // when present — see api.ts.
+                            const body = (err as { body?: { code?: string; message?: string; matches?: { pattern: string }[] } }).body
+                            if (body?.code === 'secret_detected_blocked') {
+                              const patterns = body.matches?.map((m) => m.pattern).join(', ') || 'unknown'
+                              showToast(`AI annotate blocked: secret-like content detected (${patterns}). No PR opened.`, 'info')
+                            } else {
+                              const msg = err instanceof Error ? err.message : 'AI annotate failed'
+                              showToast(`AI annotate failed: ${msg}`, 'info')
+                            }
+                          }
+                        }
+                      : undefined
+                  }
                 />
               )}
             </>

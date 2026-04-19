@@ -324,6 +324,38 @@ export interface AIProviderInfo {
 export interface AIConfigResponse {
   current_provider: string
   available_providers: AIProviderInfo[]
+  // V121-7.3 — global Settings toggle for "Annotate values on generate".
+  // Reported false when AI is not configured. Default-true on first install
+  // when AI is configured; the Save handler stamps the explicit value going
+  // forward so subsequent reads are authoritative.
+  annotate_on_seed?: boolean
+}
+
+// V121-7.1 / 7.4: secret-leak guard match (redacted, never carries the
+// raw secret value).
+export interface AISecretMatch {
+  pattern: string
+  field: string
+  line: number
+}
+
+// V121-7.4: response from POST /addons/{name}/values/annotate when the
+// secret-leak guard hard-blocks the LLM call. UI matches on `code` to
+// render the dedicated banner.
+export interface AIAnnotateBlockedResponse {
+  code: string // "secret_detected_blocked"
+  message: string
+  matches: AISecretMatch[]
+}
+
+// V121-7.4: success body for the manual annotate endpoint.
+export interface AnnotateAddonValuesResponse {
+  pr_url?: string
+  pr_id?: number
+  branch?: string
+  merged: boolean
+  commit_sha?: string
+  ai_skip_reason?: string
 }
 
 export interface AvailableVersion {
@@ -616,6 +648,14 @@ export interface AddonValuesSchemaResponse {
    * banner. Absent on legacy files (no `# sharko: managed=true` header).
    */
   values_version_mismatch?: { catalog_version: string; values_version: string } | null
+  /**
+   * V121-7.4: header-derived AI annotation state. Both default-false on
+   * legacy files. The Values tab uses these (with the global AI config
+   * state) to render the "AI not configured" banner and the per-addon
+   * opt-out toggle.
+   */
+  ai_annotated?: boolean
+  ai_opt_out?: boolean
 }
 
 /** Response for GET /clusters/{cluster}/addons/{name}/values. */
