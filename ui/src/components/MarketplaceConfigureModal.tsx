@@ -19,10 +19,10 @@ import {
 import { ScorecardBadge } from '@/components/ScorecardBadge'
 import { AttributionNudge } from '@/components/AttributionNudge'
 import { showToast } from '@/components/ToastNotification'
+import { VersionPicker } from '@/components/VersionPicker'
 import { api, addAddon, isAddonAlreadyExistsError, type AddAddonResponse } from '@/services/api'
 import type {
   CatalogEntry,
-  CatalogVersionEntry,
   CatalogVersionsResponse,
 } from '@/services/models'
 
@@ -221,14 +221,6 @@ export function MarketplaceConfigureModal({
     }
   }, [entry, open, skipVersionFetch, seededVersions])
 
-  // Visible version list — top 5 stable by default; full list when prereleases enabled.
-  const visibleVersions: CatalogVersionEntry[] = useMemo(() => {
-    if (!versionsResp) return []
-    const stable = versionsResp.versions.filter((v) => !v.prerelease)
-    if (showPrereleases) return versionsResp.versions
-    return stable.slice(0, 5)
-  }, [versionsResp, showPrereleases])
-
   const versionInList = useMemo(
     () =>
       versionsResp?.versions.some((v) => v.version === version) ?? false,
@@ -410,73 +402,22 @@ export function MarketplaceConfigureModal({
             />
           </Field>
           <Field label="Chart version" htmlFor="cfg-version" required>
-            <div className="flex flex-col gap-1">
-              <div className="flex items-stretch gap-1">
-                <input
-                  id="cfg-version"
-                  type="text"
-                  list="cfg-version-list"
-                  value={version}
-                  onChange={(e) => {
-                    setVersion(e.target.value)
-                    setVersionTouched(false)
-                  }}
-                  onBlur={() => setVersionTouched(true)}
-                  aria-invalid={versionInvalid || undefined}
-                  aria-describedby={
-                    versionInvalid ? 'cfg-version-error' : undefined
-                  }
-                  placeholder={
-                    versionsLoading ? 'Loading versions…' : 'e.g. 1.20.0'
-                  }
-                  className="w-full rounded-md border border-[#5a9dd0] bg-white px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-100"
-                />
-                {versionsLoading && (
-                  <Loader2
-                    className="my-auto h-4 w-4 animate-spin text-[#3a6a8a]"
-                    aria-label="Loading chart versions"
-                  />
-                )}
-              </div>
-              <datalist id="cfg-version-list">
-                {visibleVersions.map((v) => (
-                  <option
-                    key={v.version}
-                    value={v.version}
-                    label={v.app_version ? `app ${v.app_version}` : undefined}
-                  />
-                ))}
-              </datalist>
-              <label className="mt-1 flex cursor-pointer items-center gap-2 text-xs text-[#2a5a7a] dark:text-gray-400">
-                <input
-                  type="checkbox"
-                  checked={showPrereleases}
-                  onChange={(e) => setShowPrereleases(e.target.checked)}
-                  className="h-3.5 w-3.5 cursor-pointer accent-teal-600"
-                />
-                Show pre-releases
-              </label>
-              {versionsResp?.latest_stable && (
-                <p className="text-xs text-[#3a6a8a] dark:text-gray-500">
-                  Latest stable: <code>{versionsResp.latest_stable}</code>
-                </p>
-              )}
-              {versionsError && (
-                <p className="flex items-center gap-1 text-xs text-red-600 dark:text-red-400">
-                  <AlertCircle className="h-3 w-3" aria-hidden="true" />
-                  {versionsError}
-                </p>
-              )}
-              {versionInvalid && (
-                <p
-                  id="cfg-version-error"
-                  className="flex items-center gap-1 text-xs text-red-600 dark:text-red-400"
-                >
-                  <AlertCircle className="h-3 w-3" aria-hidden="true" />
-                  Version not found in index.yaml
-                </p>
-              )}
-            </div>
+            <VersionPicker
+              inputId="cfg-version"
+              value={version}
+              onChange={(v) => {
+                setVersion(v)
+                // Pill click: also mark as touched so the inline error
+                // (when the user later types a bad value) shows up.
+                setVersionTouched(true)
+              }}
+              versionsResp={versionsResp}
+              loading={versionsLoading}
+              error={versionsError}
+              showPrereleases={showPrereleases}
+              onShowPrereleasesChange={setShowPrereleases}
+              invalid={versionInvalid}
+            />
           </Field>
         </div>
 
