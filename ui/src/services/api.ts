@@ -609,6 +609,24 @@ export const api = {
       { opt_out: optOut },
     ),
 
+  // v1.21 Bundle 5: legacy `<addon>:` wrap migration. Pass `addon` to
+  // migrate a single file (used by the per-addon "Migrate this file"
+  // banner button). Omit it to migrate every wrapped file in the repo.
+  unwrapGlobalValues: (addonName?: string) => {
+    const qs = addonName ? `?addon=${encodeURIComponent(addonName)}` : ''
+    return postJSON<{
+      migrated: number
+      skipped: number
+      files: Array<{ file: string; addon: string; status: string; message?: string }>
+      message?: string
+      pr_url?: string
+      pr_id?: number
+      branch?: string
+      merged?: boolean
+      attribution_warning?: string
+    }>(`/addons/unwrap-globals${qs}`, {})
+  },
+
   // Values editor extras (v1.20.1) — note: pullUpstreamValues was
   // removed in v1.21 (Story V121-6.5) and replaced by
   // refreshAddonValuesFromUpstream above, which calls the existing

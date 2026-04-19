@@ -119,6 +119,17 @@ export interface ValuesEditorProps {
    *   - Pull new fields → POST values/preview-merge + Apply via PUT values
    */
   onPreviewMerge?: () => Promise<PreviewMergeResponse>
+
+  /**
+   * v1.21 Bundle 5: legacy `<addonName>:` wrap migration. When set, the
+   * backend reported that the current values file is wrapped under a
+   * legacy root key — Helm silently ignores those values. Editor renders
+   * a yellow banner with a "Migrate this file" button that calls
+   * `onMigrateLegacyWrap` (which opens a Tier 2 PR via the unwrap-globals
+   * endpoint scoped to this addon).
+   */
+  legacyWrapDetected?: boolean
+  onMigrateLegacyWrap?: () => Promise<void>
 }
 
 export function ValuesEditor({
@@ -137,6 +148,8 @@ export function ValuesEditor({
   showAIOptedOutNote = false,
   onAnnotateNow,
   onPreviewMerge,
+  legacyWrapDetected = false,
+  onMigrateLegacyWrap,
 }: ValuesEditorProps) {
   const [draft, setDraft] = useState(initialYAML)
   const [submitting, setSubmitting] = useState(false)
@@ -147,6 +160,7 @@ export function ValuesEditor({
   const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
   const [annotating, setAnnotating] = useState(false)
+  const [migratingWrap, setMigratingWrap] = useState(false)
   // v1.21 QA Bundle 4 Fix #4: preview-merge modal state.
   const [previewOpen, setPreviewOpen] = useState(false)
   const [previewing, setPreviewing] = useState(false)
@@ -369,6 +383,51 @@ export function ValuesEditor({
           */}
         </div>
       </div>
+
+      {/* v1.21 Bundle 5: legacy `<addon>:` wrap migration banner. Renders
+          above the version-mismatch banner so the operator sees the more
+          severe issue (Helm silently ignoring values) first. */}
+      {legacyWrapDetected && onMigrateLegacyWrap && (
+        <div
+          role="alert"
+          className="mb-3 flex items-start gap-2 rounded-md border border-yellow-300 bg-yellow-50 p-3 text-sm text-yellow-900 dark:border-yellow-700 dark:bg-yellow-950/40 dark:text-yellow-200"
+        >
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <div className="flex-1">
+            <p>
+              <span className="font-semibold">This values file uses a legacy wrapper.</span>{' '}
+              The top-level <span className="font-mono">{'<addon>:'}</span> key causes Helm to
+              silently ignore everything nested under it. Migrate now to apply these values
+              correctly.
+            </p>
+            <div className="mt-2 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  if (migratingWrap) return
+                  setMigratingWrap(true)
+                  try {
+                    await onMigrateLegacyWrap()
+                  } finally {
+                    setMigratingWrap(false)
+                  }
+                }}
+                disabled={migratingWrap}
+                className="inline-flex items-center gap-1 rounded-md bg-yellow-600 px-3 py-1 text-xs font-semibold text-white hover:bg-yellow-700 disabled:opacity-50 dark:bg-yellow-500 dark:hover:bg-yellow-400"
+              >
+                {migratingWrap ? (
+                  <>
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Migrating…
+                  </>
+                ) : (
+                  'Migrate this file'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Version-mismatch banner (Story V121-6.5). */}
       {showMismatchBanner && versionMismatch && (

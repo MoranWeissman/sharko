@@ -2141,6 +2141,30 @@ export function AddonDetail() {
                   // owns the modal and the apply-through-onSubmit path;
                   // we just plug in the preview API call.
                   onPreviewMerge={() => api.previewMergeAddonValues(addon.addon_name)}
+                  // v1.21 Bundle 5: legacy `<addon>:` wrap migration. The
+                  // backend's values-schema endpoint flags wrapped files;
+                  // the editor renders a yellow banner with a "Migrate
+                  // this file" action that opens a Tier 2 PR.
+                  legacyWrapDetected={!!valuesSchema?.legacy_wrap_detected}
+                  onMigrateLegacyWrap={async () => {
+                    try {
+                      const res = await api.unwrapGlobalValues(addon.addon_name)
+                      if (res.pr_url || res.pr_id) {
+                        const label = res.pr_id ? `PR #${res.pr_id}` : 'PR'
+                        showToast(res.merged ? `${label} merged →` : `${label} opened →`, 'success')
+                      } else if (res.message) {
+                        showToast(res.message, 'info')
+                      }
+                      // Re-fetch so the editor reflects the migrated body
+                      // and the banner clears.
+                      const fresh = await api.getAddonValuesSchema(addon.addon_name)
+                      setValuesSchema(fresh)
+                      setValuesYaml(fresh.current_values)
+                    } catch (err) {
+                      const msg = err instanceof Error ? err.message : 'Failed to migrate values file'
+                      showToast(`Migration failed: ${msg}`, 'info')
+                    }
+                  }}
                   belowEditor={({ refreshKey }) => (
                     <RecentPRsPanel
                       title="Recent changes (last 5)"

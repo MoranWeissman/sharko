@@ -690,6 +690,15 @@ export interface AddonValuesSchemaResponse {
    */
   ai_annotated?: boolean
   ai_opt_out?: boolean
+  /**
+   * v1.21 Bundle 5: true when the current values file is wrapped under a
+   * legacy `<addonName>:` (or `<chartName>:`) root key. Helm receives
+   * this file directly via `valueFiles:` in the ApplicationSet template
+   * and silently ignores everything nested under that root. The Values
+   * tab renders a yellow migration banner with a "Migrate this file"
+   * button when this is set.
+   */
+  legacy_wrap_detected?: boolean
 }
 
 /** Response for GET /clusters/{cluster}/addons/{name}/values. */
