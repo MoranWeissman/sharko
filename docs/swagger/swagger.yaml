@@ -1227,6 +1227,7 @@ definitions:
     - index_parse_error
     - chart_not_found
     - timeout
+    - ssrf_blocked
     type: string
     x-enum-varnames:
     - validateErrInvalidInput
@@ -1234,6 +1235,7 @@ definitions:
     - validateErrIndexParseError
     - validateErrChartNotFound
     - validateErrTimeout
+    - validateErrSSRFBlocked
 host: localhost:8080
 info:
   contact: {}

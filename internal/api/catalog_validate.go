@@ -36,6 +36,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/MoranWeissman/sharko/internal/security"
 )
 
 // validateRequestErrorCode enumerates the structured error codes returned in
@@ -48,6 +50,13 @@ const (
 	validateErrIndexParseError validateErrorCode = "index_parse_error"
 	validateErrChartNotFound   validateErrorCode = "chart_not_found"
 	validateErrTimeout         validateErrorCode = "timeout"
+	// validateErrSSRFBlocked is returned when the URL passes basic shape
+	// validation but its hostname resolves to a blocked range (RFC1918,
+	// loopback, link-local, IPv6 ULA) or is not in SHARKO_URL_ALLOWLIST.
+	// Defense in depth — the network policy fronting a production Sharko
+	// pod should already block these, but for self-hosted installs the
+	// guard is the sole line of defense (Story V121-8.2).
+	validateErrSSRFBlocked validateErrorCode = "ssrf_blocked"
 )
 
 // catalogValidateResponse is the success envelope. On `valid: false` only
@@ -92,6 +101,21 @@ func (s *Server) handleValidateCatalogChart(w http.ResponseWriter, r *http.Reque
 			Chart:     chart,
 			ErrorCode: validateErrInvalidInput,
 			Message:   err.Error(),
+		})
+		return
+	}
+	// SSRF guard: block hostnames that resolve to RFC1918 / loopback /
+	// link-local / IPv6 ULA, or that aren't in the optional allowlist
+	// SHARKO_URL_ALLOWLIST. Returns 200 + structured failure (matches the
+	// rest of the validation taxonomy) so the UI's switch table doesn't
+	// need to branch on HTTP status. Story V121-8.2.
+	if err := security.ValidateExternalURL(repo); err != nil {
+		writeJSON(w, http.StatusOK, catalogValidateResponse{
+			Valid:     false,
+			Repo:      repo,
+			Chart:     chart,
+			ErrorCode: validateErrSSRFBlocked,
+			Message:   "this URL is not allowed: " + err.Error(),
 		})
 		return
 	}

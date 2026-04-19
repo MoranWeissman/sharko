@@ -7884,14 +7884,16 @@ const docTemplate = `{
                 "repo_unreachable",
                 "index_parse_error",
                 "chart_not_found",
-                "timeout"
+                "timeout",
+                "ssrf_blocked"
             ],
             "x-enum-varnames": [
                 "validateErrInvalidInput",
                 "validateErrRepoUnreachable",
                 "validateErrIndexParseError",
                 "validateErrChartNotFound",
-                "validateErrTimeout"
+                "validateErrTimeout",
+                "validateErrSSRFBlocked"
             ]
         }
     },

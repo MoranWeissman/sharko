@@ -165,6 +165,37 @@ func TestHandleValidateCatalogChart_RejectsBadURL(t *testing.T) {
 	}
 }
 
+func TestHandleValidateCatalogChart_BlocksSSRF(t *testing.T) {
+	srv := &Server{}
+	// Loopback IP literal — guaranteed offline-safe (no DNS lookup) and a
+	// canonical SSRF target. Expect 200 + ssrf_blocked, matching the
+	// "structured failure" envelope the rest of the taxonomy uses.
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/api/v1/catalog/validate?repo=http://127.0.0.1&chart=cert-manager",
+		nil,
+	)
+	rw := httptest.NewRecorder()
+	srv.handleValidateCatalogChart(rw, req)
+
+	if rw.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rw.Code)
+	}
+	var body catalogValidateResponse
+	if err := json.NewDecoder(rw.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Valid {
+		t.Fatal("Valid=true, want false")
+	}
+	if body.ErrorCode != validateErrSSRFBlocked {
+		t.Errorf("ErrorCode = %q, want %q", body.ErrorCode, validateErrSSRFBlocked)
+	}
+	if !strings.Contains(body.Message, "not allowed") {
+		t.Errorf("Message = %q, want explanatory text", body.Message)
+	}
+}
+
 func TestHandleValidateCatalogChart_CacheHitServesWithoutFetcher(t *testing.T) {
 	resetCatalogVersionsCacheForTest()
 	t.Cleanup(resetCatalogVersionsCacheForTest)
