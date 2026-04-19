@@ -508,6 +508,12 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("POST /api/v1/addons/{name}/values/annotate", srv.handleAnnotateAddonValues)
 	mux.HandleFunc("PUT /api/v1/addons/{name}/values/ai-opt-out", srv.handleSetAddonAIOptOut)
 
+	// v1.21 Bundle 5: legacy `<addon>:` wrap migration. One PR per call,
+	// covering every wrapped global values file in the repo. Pass
+	// `?addon=<name>` to migrate a single file (used by the per-file
+	// "Migrate this file" button on the AddonDetail Values tab).
+	mux.HandleFunc("POST /api/v1/addons/unwrap-globals", srv.handleUnwrapGlobalValues)
+
 	// Addon secrets (definition CRUD)
 	mux.HandleFunc("GET /api/v1/addon-secrets", srv.handleListAddonSecrets)
 	mux.HandleFunc("POST /api/v1/addon-secrets", srv.handleCreateAddonSecret)

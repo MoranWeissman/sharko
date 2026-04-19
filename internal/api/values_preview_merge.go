@@ -171,8 +171,19 @@ func (s *Server) handlePreviewMergeAddonValues(w http.ResponseWriter, r *http.Re
 	// caching avoidance and the future evolution might accept a body
 	// (e.g. "preview merging in this version instead of the catalog pin").
 
+	// v1.21 Bundle 5: surface the current file in unwrapped shape too,
+	// so the UI's before/after diff renders apples-to-apples (both sides
+	// at top-level chart values). The smart-values header is preserved.
+	currentForDiff := current
+	if len(current) > 0 {
+		hdr, body := splitSmartValuesHeader(current)
+		if unwrapped, wasWrapped, _ := orchestrator.UnwrapGlobalValuesFile(body, name, chart); wasWrapped {
+			currentForDiff = []byte(hdr + string(unwrapped))
+		}
+	}
+
 	resp := previewMergeResponse{
-		Current:         string(current),
+		Current:         string(currentForDiff),
 		Merged:          mergedBody,
 		DiffSummary:     summary,
 		UpstreamVersion: version,
@@ -180,28 +191,38 @@ func (s *Server) handlePreviewMergeAddonValues(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// previewMergeBodies takes the user's current global values file (as written
-// by the smart-values pipeline — `<addonName>: { … }` with optional header
-// and per-cluster template) and the chart's upstream values.yaml (already
-// chart-name-unwrapped if applicable). Returns the merged body to commit
-// plus a summary of what changed.
+// previewMergeBodies takes the user's current global values file (top-level
+// chart values, as written by the v1.21 Bundle 5 smart-values pipeline) and
+// the chart's upstream values.yaml (already chart-name-unwrapped if
+// applicable). Returns the merged body to commit plus a summary of what
+// changed.
+//
+// Backwards compat: if the user's file is still in the LEGACY wrapped shape
+// (`<addonName>:` root from pre-Bundle-5 writes), we transparently unwrap it
+// before computing the diff so the comparison is apples-to-apples and the
+// merged output is consistently top-level.
 //
 // Merge rules:
 //   - If a key path exists in user, keep user's value.
 //   - If a key path exists in upstream but not in user, add upstream's
 //     default value at that path.
-//   - Top-level keys outside the `<addonName>:` wrapper (e.g. user-added
-//     `clusterGlobalValues:`) are preserved as-is.
 //
 // The merge round-trips through map[string]interface{} so YAML comments
 // from the user's file are LOST in the output. That's intentional: the
-// merge surface is a preview the user reviews on the PR page, and the
-// PR diff makes the change set obvious. We do preserve the smart-values
-// header by detecting it textually and re-prepending it to the output.
+// merge surface is a preview the user reviews on the PR page, and the PR
+// diff makes the change set obvious. We do preserve the smart-values header
+// by detecting it textually and re-prepending it to the output.
 func previewMergeBodies(addonName string, currentRaw, upstreamRaw []byte) (string, previewMergeSummary, error) {
 	header, currentBody := splitSmartValuesHeader(currentRaw)
 
-	// Decode the user's current values file.
+	// v1.21 Bundle 5: legacy unwrap. If the body is still in
+	// `<addonName>:`-wrapped shape, strip the wrap so the inner chart
+	// values land at the top level. Already-unwrapped files pass through.
+	if unwrapped, wasWrapped, _ := orchestrator.UnwrapGlobalValuesFile(currentBody, addonName, ""); wasWrapped {
+		currentBody = unwrapped
+	}
+
+	// Decode the user's current values file (now top-level chart values).
 	currentRoot := map[string]interface{}{}
 	if len(strings.TrimSpace(string(currentBody))) > 0 {
 		if err := yaml.Unmarshal(currentBody, &currentRoot); err != nil {
@@ -210,18 +231,6 @@ func previewMergeBodies(addonName string, currentRaw, upstreamRaw []byte) (strin
 		if currentRoot == nil {
 			currentRoot = map[string]interface{}{}
 		}
-	}
-
-	// The user's file is wrapped under `<addonName>:`. Pull the inner map
-	// out so the merge operates on the chart's values shape.
-	var currentInner map[string]interface{}
-	if v, ok := currentRoot[addonName]; ok {
-		if m, ok := v.(map[string]interface{}); ok {
-			currentInner = m
-		}
-	}
-	if currentInner == nil {
-		currentInner = map[string]interface{}{}
 	}
 
 	// Decode upstream — already unwrapped of any chart-name root by the
@@ -235,26 +244,17 @@ func previewMergeBodies(addonName string, currentRaw, upstreamRaw []byte) (strin
 		upstreamMap = map[string]interface{}{}
 	}
 
-	// Run the recursive additive merge.
+	// Run the recursive additive merge directly at the top level — no
+	// `<addonName>:` wrap on the result. The file is passed straight to
+	// Helm via `valueFiles:`, so the chart's keys must be at the document
+	// root.
 	var (
-		newKeys      []string
-		preserved    []string
+		newKeys   []string
+		preserved []string
 	)
-	merged := mergeAdditive(currentInner, upstreamMap, "", &newKeys, &preserved)
+	merged := mergeAdditive(currentRoot, upstreamMap, "", &newKeys, &preserved)
 
-	// Re-wrap under the addon name so the file shape on disk stays the
-	// same as the writer convention.
-	wrapped := map[string]interface{}{addonName: merged}
-	// Preserve any user-added top-level keys outside the addon wrapper
-	// (e.g. clusterGlobalValues: from a misconfigured copy/paste).
-	for k, v := range currentRoot {
-		if k == addonName {
-			continue
-		}
-		wrapped[k] = v
-	}
-
-	out, err := yaml.Marshal(wrapped)
+	out, err := yaml.Marshal(merged)
 	if err != nil {
 		return "", previewMergeSummary{}, fmt.Errorf("serializing merged values: %w", err)
 	}

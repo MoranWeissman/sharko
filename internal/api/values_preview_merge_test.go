@@ -12,11 +12,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// TestPreviewMergeBodies_AddsNewKeysOnly verifies the v1.21 Bundle 5
+// behaviour: current file is in the new TOP-LEVEL shape, merged output is
+// in the same top-level shape, no `<addonName>:` wrap anywhere.
 func TestPreviewMergeBodies_AddsNewKeysOnly(t *testing.T) {
-	current := []byte(`cert-manager:
-  replicaCount: 3
-  ingress:
-    host: cert.example.com
+	current := []byte(`replicaCount: 3
+ingress:
+  host: cert.example.com
 `)
 	upstream := []byte(`replicaCount: 1
 ingress:
@@ -30,22 +32,21 @@ prometheus:
 		t.Fatalf("merge: %v", err)
 	}
 
-	// Decode merged body and verify shape.
+	// Decode merged body and verify shape — NO `<addonName>:` wrap.
 	var root map[string]interface{}
 	if err := yaml.Unmarshal([]byte(mergedBody), &root); err != nil {
 		t.Fatalf("merged body did not parse as YAML: %v\nbody=%s", err, mergedBody)
 	}
-	addon, ok := root["cert-manager"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("expected cert-manager root key, got: %#v", root)
+	if _, hasWrap := root["cert-manager"]; hasWrap {
+		t.Fatalf("merged body must NOT have an `<addonName>:` wrap key, got: %#v", root)
 	}
 
 	// User's replicaCount must be preserved (3, not the upstream 1).
-	if v, _ := addon["replicaCount"].(int); v != 3 {
-		t.Errorf("replicaCount should be preserved at 3, got %v", addon["replicaCount"])
+	if v, _ := root["replicaCount"].(int); v != 3 {
+		t.Errorf("replicaCount should be preserved at 3, got %v", root["replicaCount"])
 	}
 	// User's ingress.host must be preserved.
-	ing, _ := addon["ingress"].(map[string]interface{})
+	ing, _ := root["ingress"].(map[string]interface{})
 	if h, _ := ing["host"].(string); h != "cert.example.com" {
 		t.Errorf("ingress.host should be preserved, got %q", h)
 	}
@@ -54,22 +55,22 @@ prometheus:
 		t.Errorf("expected new ingress.enabled to be added, ingress=%#v", ing)
 	}
 	// Brand-new top-level upstream key prometheus must be added.
-	if _, hasProm := addon["prometheus"]; !hasProm {
-		t.Errorf("expected prometheus block to be added, addon=%#v", addon)
+	if _, hasProm := root["prometheus"]; !hasProm {
+		t.Errorf("expected prometheus block to be added, root=%#v", root)
 	}
 
 	// Summary surfaces the new keys.
-	if !strSliceHas(summary.NewKeys,"ingress.enabled") {
+	if !strSliceHas(summary.NewKeys, "ingress.enabled") {
 		t.Errorf("summary.NewKeys should include ingress.enabled, got %v", summary.NewKeys)
 	}
-	if !strSliceHas(summary.NewKeys,"prometheus.enabled") {
+	if !strSliceHas(summary.NewKeys, "prometheus.enabled") {
 		t.Errorf("summary.NewKeys should include prometheus.enabled, got %v", summary.NewKeys)
 	}
 	// Summary surfaces the preserved keys.
-	if !strSliceHas(summary.PreservedUserKeys,"replicaCount") {
+	if !strSliceHas(summary.PreservedUserKeys, "replicaCount") {
 		t.Errorf("summary.PreservedUserKeys should include replicaCount, got %v", summary.PreservedUserKeys)
 	}
-	if !strSliceHas(summary.PreservedUserKeys,"ingress.host") {
+	if !strSliceHas(summary.PreservedUserKeys, "ingress.host") {
 		t.Errorf("summary.PreservedUserKeys should include ingress.host, got %v", summary.PreservedUserKeys)
 	}
 	if summary.NoOp {
@@ -77,12 +78,49 @@ prometheus:
 	}
 }
 
-func TestPreviewMergeBodies_NoOpWhenAllUpstreamKeysSet(t *testing.T) {
+// TestPreviewMergeBodies_LegacyWrappedCurrentIsUnwrapped verifies the
+// transparent-unwrap path: a legacy-wrapped current file is unwrapped
+// before the merge so the diff vs upstream is apples-to-apples and the
+// merged output is consistently top-level.
+func TestPreviewMergeBodies_LegacyWrappedCurrentIsUnwrapped(t *testing.T) {
 	current := []byte(`cert-manager:
   replicaCount: 3
   ingress:
-    enabled: true
     host: cert.example.com
+`)
+	upstream := []byte(`replicaCount: 1
+ingress:
+  enabled: true
+prometheus:
+  enabled: false
+`)
+	mergedBody, summary, err := previewMergeBodies("cert-manager", current, upstream)
+	if err != nil {
+		t.Fatalf("merge: %v", err)
+	}
+	var root map[string]interface{}
+	if err := yaml.Unmarshal([]byte(mergedBody), &root); err != nil {
+		t.Fatalf("merged body did not parse as YAML: %v", err)
+	}
+	if _, hasWrap := root["cert-manager"]; hasWrap {
+		t.Fatalf("legacy-wrapped current must produce UNWRAPPED merged output, got: %#v", root)
+	}
+	if v, _ := root["replicaCount"].(int); v != 3 {
+		t.Errorf("preserved replicaCount=3 lost across unwrap+merge, got %v", root["replicaCount"])
+	}
+	if !strSliceHas(summary.PreservedUserKeys, "replicaCount") {
+		t.Errorf("expected replicaCount in PreservedUserKeys, got %v", summary.PreservedUserKeys)
+	}
+	if !strSliceHas(summary.NewKeys, "prometheus.enabled") {
+		t.Errorf("expected prometheus.enabled in NewKeys, got %v", summary.NewKeys)
+	}
+}
+
+func TestPreviewMergeBodies_NoOpWhenAllUpstreamKeysSet(t *testing.T) {
+	current := []byte(`replicaCount: 3
+ingress:
+  enabled: true
+  host: cert.example.com
 `)
 	upstream := []byte(`replicaCount: 1
 ingress:
@@ -107,8 +145,7 @@ func TestPreviewMergeBodies_PreservesSmartValuesHeader(t *testing.T) {
 # AI annotation: disabled
 # sharko: managed=true
 
-cert-manager:
-  replicaCount: 2
+replicaCount: 2
 `)
 	upstream := []byte(`replicaCount: 1
 metrics:
@@ -124,9 +161,11 @@ metrics:
 	if !strings.Contains(body, "# sharko: managed=true") {
 		t.Errorf("expected managed=true line preserved, got:\n%s", body)
 	}
-	// Body must still wrap under cert-manager.
-	if !strings.Contains(body, "cert-manager:") {
-		t.Errorf("expected cert-manager: wrapper in body, got:\n%s", body)
+	// Body must NOT wrap under `cert-manager:` — top-level keys only.
+	for _, line := range strings.Split(body, "\n") {
+		if line == "cert-manager:" {
+			t.Fatalf("merged body must NOT have a `cert-manager:` wrapper, got:\n%s", body)
+		}
 	}
 }
 
@@ -142,7 +181,7 @@ metrics:
 	if !strings.Contains(body, "replicaCount") {
 		t.Errorf("expected replicaCount in merged body, got:\n%s", body)
 	}
-	if !strSliceHas(summary.NewKeys,"replicaCount") {
+	if !strSliceHas(summary.NewKeys, "replicaCount") {
 		t.Errorf("expected replicaCount in NewKeys, got %v", summary.NewKeys)
 	}
 	if summary.NoOp {

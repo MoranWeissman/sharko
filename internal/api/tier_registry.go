@@ -99,6 +99,10 @@ var HandlerTier = map[string]audit.Tier{
 	"handleAnnotateAddonValues":        audit.Tier2,
 	"handleSetAddonAIOptOut":           audit.Tier2,
 
+	// v1.21 Bundle 5: legacy `<addon>:` wrap migration. Tier 2 because
+	// it rewrites every global values file in the repo and opens a PR.
+	"handleUnwrapGlobalValues":         audit.Tier2,
+
 	// v1.21 QA Bundle 4 (Fix #4): preview-merge is read-only — it returns
 	// a candidate body but does not write Git. Classified TierPersonal so
 	// it doesn't count as a real mutation in audit attribution. The actual

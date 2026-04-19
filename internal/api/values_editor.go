@@ -404,18 +404,31 @@ func (s *Server) handleGetAddonValuesSchema(w http.ResponseWriter, r *http.Reque
 		resp.AIAnnotated = header.AIAnnotated
 		resp.AIOptOut = header.AIOptOut
 
-		if header.Managed {
-			if ac, acErr := s.connSvc.GetActiveArgocdClient(); acErr == nil {
-				if detail, derr := s.addonSvc.GetAddonDetail(r.Context(), name, gp, ac); derr == nil && detail != nil {
-					if catalog, values := orchestrator.VersionMismatch(detail.Addon.Version, header); catalog != "" {
-						resp.ValuesVersionMismatch = &models.ValuesVersionMismatch{
-							CatalogVersion: catalog,
-							ValuesVersion:  values,
-						}
-					}
+		// Catalog lookup (best-effort) — used both for the
+		// version-mismatch banner and the legacy-wrap chart-name match.
+		var chartName, catalogVersion string
+		if ac, acErr := s.connSvc.GetActiveArgocdClient(); acErr == nil {
+			if detail, derr := s.addonSvc.GetAddonDetail(r.Context(), name, gp, ac); derr == nil && detail != nil {
+				chartName = detail.Addon.Chart
+				catalogVersion = detail.Addon.Version
+			}
+		}
+
+		if header.Managed && catalogVersion != "" {
+			if catalog, values := orchestrator.VersionMismatch(catalogVersion, header); catalog != "" {
+				resp.ValuesVersionMismatch = &models.ValuesVersionMismatch{
+					CatalogVersion: catalog,
+					ValuesVersion:  values,
 				}
 			}
 		}
+
+		// v1.21 Bundle 5: legacy `<addon>:` wrap detection. Helm
+		// silently ignores values nested under this root; the UI
+		// surfaces a migration banner when this fires.
+		resp.LegacyWrapDetected = orchestrator.DetectLegacyWrap(
+			[]byte(resp.CurrentValues), name, chartName,
+		)
 	}
 
 	writeJSON(w, http.StatusOK, resp)

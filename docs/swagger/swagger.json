@@ -291,6 +291,56 @@
                 }
             }
         },
+        "/addons/unwrap-globals": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Walks every file under `configuration/addons-global-values/` in the user's repo, detects files that are wrapped under an `\u003caddonName\u003e:` (or matching `\u003cchartName\u003e:`) root key, unwraps them so the chart's keys are at the document root, and opens ONE PR with the migrated files. Idempotent — running again when no files are wrapped returns 200 with `{migrated: 0}` and does not open a PR. Pass `?addon=\u003cname\u003e` to migrate a single file.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "addons"
+                ],
+                "summary": "Migrate legacy `\u003caddon\u003e:` wrapped global values files",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Migrate only this addon's file (defaults to all)",
+                        "name": "addon",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Migration result",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.unwrapGlobalsResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "Git or ArgoCD failure",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/addons/upgrade-batch": {
             "post": {
                 "security": [
@@ -8344,6 +8394,58 @@
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "internal_api.unwrapGlobalsFile": {
+            "type": "object",
+            "properties": {
+                "addon": {
+                    "description": "derived addon name (filename without .yaml)",
+                    "type": "string"
+                },
+                "file": {
+                    "description": "repo-relative path",
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "status": {
+                    "description": "\"migrated\" | \"skipped\"",
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.unwrapGlobalsResponse": {
+            "type": "object",
+            "properties": {
+                "branch": {
+                    "type": "string"
+                },
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api.unwrapGlobalsFile"
+                    }
+                },
+                "merged": {
+                    "type": "boolean"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "migrated": {
+                    "type": "integer"
+                },
+                "pr_id": {
+                    "type": "integer"
+                },
+                "pr_url": {
+                    "type": "string"
+                },
+                "skipped": {
+                    "type": "integer"
                 }
             }
         },

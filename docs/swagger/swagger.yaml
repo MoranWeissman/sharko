@@ -1380,6 +1380,41 @@ definitions:
           type: string
         type: array
     type: object
+  internal_api.unwrapGlobalsFile:
+    properties:
+      addon:
+        description: derived addon name (filename without .yaml)
+        type: string
+      file:
+        description: repo-relative path
+        type: string
+      message:
+        type: string
+      status:
+        description: '"migrated" | "skipped"'
+        type: string
+    type: object
+  internal_api.unwrapGlobalsResponse:
+    properties:
+      branch:
+        type: string
+      files:
+        items:
+          $ref: '#/definitions/internal_api.unwrapGlobalsFile'
+        type: array
+      merged:
+        type: boolean
+      message:
+        type: string
+      migrated:
+        type: integer
+      pr_id:
+        type: integer
+      pr_url:
+        type: string
+      skipped:
+        type: integer
+    type: object
   internal_api.validateErrorCode:
     enum:
     - invalid_input
@@ -2115,6 +2150,43 @@ paths:
       security:
       - BearerAuth: []
       summary: List addons
+      tags:
+      - addons
+  /addons/unwrap-globals:
+    post:
+      consumes:
+      - application/json
+      description: 'Walks every file under `configuration/addons-global-values/` in
+        the user''s repo, detects files that are wrapped under an `<addonName>:` (or
+        matching `<chartName>:`) root key, unwraps them so the chart''s keys are at
+        the document root, and opens ONE PR with the migrated files. Idempotent —
+        running again when no files are wrapped returns 200 with `{migrated: 0}` and
+        does not open a PR. Pass `?addon=<name>` to migrate a single file.'
+      parameters:
+      - description: Migrate only this addon's file (defaults to all)
+        in: query
+        name: addon
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Migration result
+          schema:
+            $ref: '#/definitions/internal_api.unwrapGlobalsResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Git or ArgoCD failure
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Migrate legacy `<addon>:` wrapped global values files
       tags:
       - addons
   /addons/upgrade-batch:

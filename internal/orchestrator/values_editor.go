@@ -98,6 +98,20 @@ func (o *Orchestrator) SetClusterAddonValues(ctx context.Context, clusterName, a
 	return gitResult, nil
 }
 
+// CommitFilesAsPR is a thin orchestrator wrapper around commitChanges for
+// callers that already have a complete file map ready to write. The
+// migration endpoint (v1.21 Bundle 5) uses this to push the unwrapped
+// global-values files in a single PR.
+//
+// The operation string is the human-readable PR title and audit detail —
+// it's run through the same branch-name sanitiser as commitChanges.
+func (o *Orchestrator) CommitFilesAsPR(ctx context.Context, files map[string][]byte, operation string) (*GitResult, error) {
+	if len(files) == 0 {
+		return nil, fmt.Errorf("no files to commit")
+	}
+	return o.commitChanges(ctx, files, nil, operation)
+}
+
 // validateYAML returns nil if s parses as YAML (empty input is allowed).
 func validateYAML(s string) error {
 	if strings.TrimSpace(s) == "" {

@@ -147,6 +147,14 @@ type AddonValuesSchemaResponse struct {
 	// for legacy files without a smart-values header.
 	AIAnnotated bool `json:"ai_annotated"`
 	AIOptOut    bool `json:"ai_opt_out"`
+
+	// v1.21 Bundle 5: true when the current values file is wrapped
+	// under a legacy `<addonName>:` (or `<chartName>:`) root key — Helm
+	// receives this file directly via `valueFiles:` in the
+	// ApplicationSet template and silently ignores everything nested
+	// under that root. The Values tab uses this to render a yellow
+	// migration banner with a "Migrate this file" button.
+	LegacyWrapDetected bool `json:"legacy_wrap_detected,omitempty"`
 }
 
 // ValuesVersionMismatch is set when the catalog version differs from the
