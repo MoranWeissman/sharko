@@ -498,6 +498,10 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("GET /api/v1/addons/{name}/values/recent-prs", srv.handleGetAddonValuesRecentPRs)
 	mux.HandleFunc("GET /api/v1/clusters/{cluster}/addons/{name}/values/recent-prs", srv.handleGetClusterAddonValuesRecentPRs)
 
+	// V121-7 Story 7.4: manual AI annotate + per-addon opt-out toggle.
+	mux.HandleFunc("POST /api/v1/addons/{name}/values/annotate", srv.handleAnnotateAddonValues)
+	mux.HandleFunc("PUT /api/v1/addons/{name}/values/ai-opt-out", srv.handleSetAddonAIOptOut)
+
 	// Addon secrets (definition CRUD)
 	mux.HandleFunc("GET /api/v1/addon-secrets", srv.handleListAddonSecrets)
 	mux.HandleFunc("POST /api/v1/addon-secrets", srv.handleCreateAddonSecret)

@@ -28,7 +28,9 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -162,12 +164,60 @@ func (s *Server) handleSetAddonValues(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadGateway, "fetching upstream values: "+ferr.Error())
 			return
 		}
-		generated := orchestrator.GenerateGlobalValuesFile(name, chart, version, repoURL, []byte(raw), false, false)
+
+		// Per-addon AI opt-out: read the existing file's header to see if
+		// the user previously set `# sharko: ai-annotate=off`. If so, the
+		// refresh skips the AI pass and stamps the directive again so it
+		// survives the regen.
+		aiOptOut := false
+		dir := strings.TrimSuffix(s.repoPaths.GlobalValues, "/")
+		if dir == "" {
+			dir = "configuration/addons-global-values"
+		}
+		valuesFile := dir + "/" + name + ".yaml"
+		if existing, gerr := git.GetFileContent(ctx, valuesFile, s.gitopsCfg.BaseBranch); gerr == nil && len(existing) > 0 {
+			if h := orchestrator.ParseSmartValuesHeader(existing); h.AIOptOut {
+				aiOptOut = true
+			}
+		}
+
+		// V121-7 AI annotate on refresh: same rules as the addon-add seed
+		// flow. AI off / opted out / secret-blocked → heuristic-only.
+		var (
+			extraPaths  []string
+			aiAnnotated bool
+			secretBlock *orchestrator.SecretLeakError
+		)
+		valuesBytes := []byte(raw)
+		if !aiOptOut && s.aiClient != nil && s.aiClient.AnnotateOnSeedEnabled() {
+			annRes, annErr := orchestrator.AnnotateValues(ctx, valuesBytes, chart, version, s.aiClient)
+			if annErr != nil {
+				if errors.As(annErr, &secretBlock) {
+					slog.Warn("values refresh: ai annotate hard-blocked by secret guard; proceeding with heuristic-only",
+						"addon", name, "chart", chart, "version", version,
+						"matches", len(secretBlock.Matches),
+					)
+				}
+			}
+			if annRes.SkipReason == "" {
+				valuesBytes = annRes.AnnotatedYAML
+				extraPaths = annRes.AdditionalClusterPaths
+				aiAnnotated = true
+			}
+		}
+
+		generated := orchestrator.GenerateGlobalValuesFile(name, chart, version, repoURL, valuesBytes, aiAnnotated, aiOptOut, extraPaths...)
 		yamlPayload = string(generated)
 		auditEvent = "values_refreshed_from_upstream"
 		prTitle = fmt.Sprintf("Refresh upstream values for %s@%s", chart, version)
 		prOperation = "values-refresh-upstream"
-		auditDetail = fmt.Sprintf("chart=%s version=%s bytes=%d", chart, version, len(generated))
+		aiState := "off"
+		if aiAnnotated {
+			aiState = "on"
+		} else if secretBlock != nil {
+			aiState = "secret_blocked"
+		}
+		auditDetail = fmt.Sprintf("chart=%s version=%s bytes=%d ai=%s", chart, version, len(generated), aiState)
 	}
 
 	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
@@ -343,6 +393,12 @@ func (s *Server) handleGetAddonValuesSchema(w http.ResponseWriter, r *http.Reque
 	// banner; the values themselves still render.
 	if resp != nil && resp.CurrentValues != "" {
 		header := orchestrator.ParseSmartValuesHeader([]byte(resp.CurrentValues))
+		// V121-7.4: surface the header-stored AI annotation state so the
+		// UI can render the "AI not configured" banner and the per-addon
+		// opt-out toggle without re-parsing the YAML on the client.
+		resp.AIAnnotated = header.AIAnnotated
+		resp.AIOptOut = header.AIOptOut
+
 		if header.Managed {
 			if ac, acErr := s.connSvc.GetActiveArgocdClient(); acErr == nil {
 				if detail, derr := s.addonSvc.GetAddonDetail(r.Context(), name, gp, ac); derr == nil && detail != nil {

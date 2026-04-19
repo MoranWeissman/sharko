@@ -689,6 +689,18 @@ definitions:
         description: '"success", "partial", "failed"'
         type: string
     type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.SecretMatch:
+    properties:
+      field:
+        type: string
+      line:
+        description: |-
+          Line is the 1-indexed line number where the match occurred. Helps
+          the user open the file and find the field. Zero if unknown.
+        type: integer
+      pattern:
+        type: string
+    type: object
   github_com_MoranWeissman_sharko_internal_orchestrator.UnadoptClusterRequest:
     properties:
       dry_run:
@@ -822,8 +834,32 @@ definitions:
           $ref: '#/definitions/internal_api.PRItem'
         type: array
     type: object
+  internal_api.aiAnnotateBlockedResponse:
+    properties:
+      code:
+        type: string
+      matches:
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.SecretMatch'
+        type: array
+      message:
+        type: string
+    type: object
   internal_api.aiConfigResponse:
     properties:
+      annotate_on_seed:
+        description: |-
+          AnnotateOnSeed (v1.21 Story V121-7.3) is the global Settings toggle
+          for "Annotate values on generate". When the AI provider is `none`
+          the field is reported as false regardless of the persisted value —
+          the UI uses this to gate the toggle row visibility.
+
+          Default-true semantics: on a fresh install with a configured AI
+          provider but no explicit AnnotateOnSeed value (older config blobs
+          from before V121-7), the field reports `true`. The Save handler
+          stamps the explicit value on every persist so subsequent reads are
+          authoritative.
+        type: boolean
       available_providers:
         items:
           $ref: '#/definitions/internal_api.aiProviderInfo'
@@ -840,6 +876,25 @@ definitions:
       model:
         type: string
       name:
+        type: string
+    type: object
+  internal_api.annotateAddonValuesResponse:
+    properties:
+      ai_skip_reason:
+        description: |-
+          AISkipReason is set when the LLM was skipped and the heuristic-only
+          output was committed instead. Possible values: "not_configured",
+          "opted_out", "oversize", "timeout", "llm_error", "parse_error".
+        type: string
+      branch:
+        type: string
+      commit_sha:
+        type: string
+      merged:
+        type: boolean
+      pr_id:
+        type: integer
+      pr_url:
         type: string
     type: object
   internal_api.catalogListResponse:
@@ -1075,6 +1130,16 @@ definitions:
     type: object
   internal_api.saveAIConfigRequest:
     properties:
+      annotate_on_seed:
+        description: |-
+          AnnotateOnSeed (V121-7.3) is a tri-state via the *bool sentinel:
+            nil  → caller didn't pass the field; preserve the current value
+                   (or fall through to default-true if no current value exists).
+            *false → explicit OFF.
+            *true  → explicit ON.
+          Once any save sets the field, AnnotateOnSeedSet flips to true and
+          the explicit value is authoritative on subsequent reads.
+        type: boolean
       api_key:
         type: string
       base_url:
@@ -1085,6 +1150,11 @@ definitions:
         type: string
       provider:
         type: string
+    type: object
+  internal_api.setAIOptOutRequest:
+    properties:
+      opt_out:
+        type: boolean
     type: object
   internal_api.setAddonValuesRequest:
     properties:
@@ -1670,6 +1740,104 @@ paths:
       security:
       - BearerAuth: []
       summary: Get addon global values + schema
+      tags:
+      - addons
+  /addons/{name}/values/ai-opt-out:
+    put:
+      consumes:
+      - application/json
+      description: 'Sets or clears the `# sharko: ai-annotate=off` directive in the
+        addon''s global values file header. When opt-out is true, future addon-add
+        and refresh-from-upstream runs skip the AI annotate pass for this addon. The
+        directive is the only persistence (no Sharko-side store). Idempotent.'
+      parameters:
+      - description: Addon name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: opt_out flag
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_api.setAIOptOutRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: PR opened (or merged) with header-only change
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Addon not found
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Git error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Toggle per-addon AI annotation opt-out
+      tags:
+      - addons
+  /addons/{name}/values/annotate:
+    post:
+      description: Fetches the chart's upstream values.yaml at the catalog-pinned
+        version, runs the V121-7 AI annotate pass (one-line `# description` comments
+        + LLM-suggested cluster-specific paths unioned with the heuristic), and opens
+        a Tier 2 PR with the result. Hard-blocked when the secret-leak guard matches;
+        in that case returns 422 with redacted matches and no PR. Skipped when AI
+        is not configured or the addon is opted out.
+      parameters:
+      - description: Addon name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: PR opened (or merged if auto-merge is on)
+          schema:
+            $ref: '#/definitions/internal_api.annotateAddonValuesResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Addon not found
+          schema:
+            additionalProperties: true
+            type: object
+        "422":
+          description: Secret-leak guard blocked the LLM call
+          schema:
+            $ref: '#/definitions/internal_api.aiAnnotateBlockedResponse'
+        "502":
+          description: Git or upstream fetch error
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: AI not configured
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Re-annotate an addon's global values via AI
       tags:
       - addons
   /addons/{name}/values/recent-prs:

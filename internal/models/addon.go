@@ -139,6 +139,14 @@ type AddonValuesSchemaResponse struct {
 	CurrentValues         string                  `json:"current_values"`
 	Schema                map[string]interface{}  `json:"schema,omitempty"`
 	ValuesVersionMismatch *ValuesVersionMismatch  `json:"values_version_mismatch,omitempty"`
+
+	// V121-7.4: header-derived AI annotation state. The UI uses these
+	// to gate the "AI not configured" banner (rendered when
+	// AIAnnotated=false AND Sharko's AI provider is `none`) and the
+	// per-addon opt-out toggle (mirrors AIOptOut). Both default-false
+	// for legacy files without a smart-values header.
+	AIAnnotated bool `json:"ai_annotated"`
+	AIOptOut    bool `json:"ai_opt_out"`
 }
 
 // ValuesVersionMismatch is set when the catalog version differs from the

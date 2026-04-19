@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -86,6 +87,39 @@ func (s *Server) handleAddAddon(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// V121-7 AI annotate: when AI is configured AND the global Settings
+	// toggle is on AND the per-addon opt-out is NOT set, run the LLM
+	// pass to (a) inject inline `# description` comments and (b) augment
+	// the heuristic's cluster-specific path set. Hard secret-leak guard
+	// runs first; on a match the call is blocked and the seed continues
+	// with heuristic-only output (the UI surfaces the block via the
+	// returned `secret_detected_blocked` warning so the user knows their
+	// chart values look secret-bearing).
+	//
+	// Failure modes are graceful — see ai_annotate.go. AI is best-effort
+	// and never fails the addon-add. The only error we surface to the
+	// caller is the SecretLeakError (rendered as a banner, not a toast).
+	var secretBlock *orchestrator.SecretLeakError
+	if len(req.UpstreamValues) > 0 && !req.AIOptOut && s.aiClient != nil && s.aiClient.AnnotateOnSeedEnabled() {
+		annRes, annErr := orchestrator.AnnotateValues(ctx, req.UpstreamValues, req.Chart, req.Version, s.aiClient)
+		if annErr != nil {
+			// Only one error class is non-fatal-yet-surfaced: secret leak.
+			// Everything else is logged inside AnnotateValues and a nil
+			// error is returned.
+			if errors.As(annErr, &secretBlock) {
+				slog.Warn("addon-add: ai annotate hard-blocked by secret guard; proceeding with heuristic-only",
+					"addon", req.Name, "chart", req.Chart, "version", req.Version,
+					"matches", len(secretBlock.Matches),
+				)
+			}
+		}
+		if annRes.SkipReason == "" {
+			req.UpstreamValues = annRes.AnnotatedYAML
+			req.ExtraClusterSpecificPaths = annRes.AdditionalClusterPaths
+			req.AIAnnotated = true
+		}
+	}
+
 	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
 	result, err := orch.AddAddon(ctx, req)
 	if err != nil {
@@ -145,16 +179,48 @@ func (s *Server) handleAddAddon(w http.ResponseWriter, r *http.Request) {
 	if source == "" {
 		source = "manual"
 	}
+	// Audit detail captures the AI annotation outcome so operators can
+	// trace why a given file was/wasn't annotated. `ai=on` when the LLM
+	// successfully annotated, `ai=secret_blocked` when the guard fired,
+	// `ai=off` when AI was not configured / opted out / otherwise skipped.
+	aiState := "off"
+	if req.AIAnnotated {
+		aiState = "on"
+	} else if secretBlock != nil {
+		aiState = "secret_blocked"
+	}
 	audit.Enrich(ctx, audit.Fields{
 		Event:    "addon_added",
 		Resource: fmt.Sprintf("addon:%s", req.Name),
-		Detail:   fmt.Sprintf("chart=%s version=%s source=%s", req.Chart, req.Version, source),
+		Detail:   fmt.Sprintf("chart=%s version=%s source=%s ai=%s", req.Chart, req.Version, source, aiState),
 	})
 
 	// Surface the UX nudge: when Tier 2 had no per-user PAT we fell back to
 	// the service token + co-author trailer. The UI watches for
 	// attribution_warning="no_per_user_pat" to render the banner.
-	writeJSON(w, http.StatusCreated, withAttributionWarning(result, tokRes))
+	//
+	// Secret-leak guard: when the AI annotate pass was hard-blocked by
+	// a secret-like pattern in the chart values, surface the redacted
+	// match list on the response so the UI can render the dedicated
+	// banner. Locked decision (Moran): no override — the addon is still
+	// added with heuristic-only annotation, but the operator sees the
+	// reason explicitly.
+	body := withAttributionWarning(result, tokRes)
+	if secretBlock != nil {
+		// Promote `body` to a map shape if it isn't already so the
+		// secret-leak detail can ride alongside the result + any
+		// attribution warning.
+		bodyMap, ok := body.(map[string]interface{})
+		if !ok {
+			bodyMap = map[string]interface{}{"result": body}
+		}
+		bodyMap["ai_annotate_blocked"] = map[string]interface{}{
+			"code":    secretBlock.Code(),
+			"matches": secretBlock.Matches,
+		}
+		body = bodyMap
+	}
+	writeJSON(w, http.StatusCreated, body)
 }
 
 // handleRemoveAddon godoc

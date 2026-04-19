@@ -917,6 +917,142 @@
                 }
             }
         },
+        "/addons/{name}/values/ai-opt-out": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Sets or clears the `# sharko: ai-annotate=off` directive in the addon's global values file header. When opt-out is true, future addon-add and refresh-from-upstream runs skip the AI annotate pass for this addon. The directive is the only persistence (no Sharko-side store). Idempotent.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "addons"
+                ],
+                "summary": "Toggle per-addon AI annotation opt-out",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Addon name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "opt_out flag",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.setAIOptOutRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "PR opened (or merged) with header-only change",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Addon not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "Git error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/addons/{name}/values/annotate": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Fetches the chart's upstream values.yaml at the catalog-pinned version, runs the V121-7 AI annotate pass (one-line `# description` comments + LLM-suggested cluster-specific paths unioned with the heuristic), and opens a Tier 2 PR with the result. Hard-blocked when the secret-leak guard matches; in that case returns 422 with redacted matches and no PR. Skipped when AI is not configured or the addon is opted out.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "addons"
+                ],
+                "summary": "Re-annotate an addon's global values via AI",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Addon name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "PR opened (or merged if auto-merge is on)",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.annotateAddonValuesResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Addon not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "422": {
+                        "description": "Secret-leak guard blocked the LLM call",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.aiAnnotateBlockedResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "Git or upstream fetch error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "AI not configured",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/addons/{name}/values/recent-prs": {
             "get": {
                 "security": [
@@ -6980,6 +7116,21 @@
                 }
             }
         },
+        "github_com_MoranWeissman_sharko_internal_orchestrator.SecretMatch": {
+            "type": "object",
+            "properties": {
+                "field": {
+                    "type": "string"
+                },
+                "line": {
+                    "description": "Line is the 1-indexed line number where the match occurred. Helps\nthe user open the file and find the field. Zero if unknown.",
+                    "type": "integer"
+                },
+                "pattern": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_MoranWeissman_sharko_internal_orchestrator.UnadoptClusterRequest": {
             "type": "object",
             "properties": {
@@ -7172,9 +7323,30 @@
                 }
             }
         },
+        "internal_api.aiAnnotateBlockedResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "matches": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.SecretMatch"
+                    }
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_api.aiConfigResponse": {
             "type": "object",
             "properties": {
+                "annotate_on_seed": {
+                    "description": "AnnotateOnSeed (v1.21 Story V121-7.3) is the global Settings toggle\nfor \"Annotate values on generate\". When the AI provider is `none`\nthe field is reported as false regardless of the persisted value —\nthe UI uses this to gate the toggle row visibility.\n\nDefault-true semantics: on a fresh install with a configured AI\nprovider but no explicit AnnotateOnSeed value (older config blobs\nfrom before V121-7), the field reports `true`. The Save handler\nstamps the explicit value on every persist so subsequent reads are\nauthoritative.",
+                    "type": "boolean"
+                },
                 "available_providers": {
                     "type": "array",
                     "items": {
@@ -7199,6 +7371,30 @@
                     "type": "string"
                 },
                 "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.annotateAddonValuesResponse": {
+            "type": "object",
+            "properties": {
+                "ai_skip_reason": {
+                    "description": "AISkipReason is set when the LLM was skipped and the heuristic-only\noutput was committed instead. Possible values: \"not_configured\",\n\"opted_out\", \"oversize\", \"timeout\", \"llm_error\", \"parse_error\".",
+                    "type": "string"
+                },
+                "branch": {
+                    "type": "string"
+                },
+                "commit_sha": {
+                    "type": "string"
+                },
+                "merged": {
+                    "type": "boolean"
+                },
+                "pr_id": {
+                    "type": "integer"
+                },
+                "pr_url": {
                     "type": "string"
                 }
             }
@@ -7561,6 +7757,10 @@
         "internal_api.saveAIConfigRequest": {
             "type": "object",
             "properties": {
+                "annotate_on_seed": {
+                    "description": "AnnotateOnSeed (V121-7.3) is a tri-state via the *bool sentinel:\n  nil  → caller didn't pass the field; preserve the current value\n         (or fall through to default-true if no current value exists).\n  *false → explicit OFF.\n  *true  → explicit ON.\nOnce any save sets the field, AnnotateOnSeedSet flips to true and\nthe explicit value is authoritative on subsequent reads.",
+                    "type": "boolean"
+                },
                 "api_key": {
                     "type": "string"
                 },
@@ -7575,6 +7775,14 @@
                 },
                 "provider": {
                     "type": "string"
+                }
+            }
+        },
+        "internal_api.setAIOptOutRequest": {
+            "type": "object",
+            "properties": {
+                "opt_out": {
+                    "type": "boolean"
                 }
             }
         },

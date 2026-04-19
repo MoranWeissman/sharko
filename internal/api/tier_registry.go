@@ -94,6 +94,11 @@ var HandlerTier = map[string]audit.Tier{
 	"handleSetAddonValues":             audit.Tier2,
 	"handleSetClusterAddonValues":      audit.Tier2,
 
+	// V121-7.4: AI annotate + per-addon opt-out — both regenerate the
+	// global values file (header + body), opening a Tier 2 PR.
+	"handleAnnotateAddonValues":        audit.Tier2,
+	"handleSetAddonAIOptOut":           audit.Tier2,
+
 	// ─── Personal: self-service on caller's own profile ─────────────────────
 	"handleUpdatePassword":             audit.TierPersonal,
 

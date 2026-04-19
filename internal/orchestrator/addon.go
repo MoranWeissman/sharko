@@ -104,8 +104,8 @@ func (o *Orchestrator) AddAddon(ctx context.Context, req AddAddonRequest) (*GitR
 		if len(req.UpstreamValues) > 0 {
 			files[globalValuesPath] = GenerateGlobalValuesFile(
 				req.Name, req.Chart, req.Version, req.RepoURL, req.UpstreamValues,
-				false, // AI annotation handled in Epic V121-7
-				false, // per-addon AI opt-out — only set via header edit
+				req.AIAnnotated, req.AIOptOut,
+				req.ExtraClusterSpecificPaths...,
 			)
 		} else {
 			files[globalValuesPath] = generateAddonGlobalValues(req)
