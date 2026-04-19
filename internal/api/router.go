@@ -524,6 +524,7 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	// distinct from /api/v1/addons/catalog which surfaces the USER's deployed
 	// addons for their connected GitOps repo.
 	mux.HandleFunc("GET /api/v1/catalog/addons", srv.handleListCatalogAddons)
+	mux.HandleFunc("GET /api/v1/catalog/addons/{name}/versions", srv.handleListCatalogVersions)
 	mux.HandleFunc("GET /api/v1/catalog/addons/{name}", srv.handleGetCatalogAddon)
 
 	// Addons (read)

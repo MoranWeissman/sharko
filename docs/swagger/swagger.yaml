@@ -734,6 +734,34 @@ definitions:
       total:
         type: integer
     type: object
+  internal_api.catalogVersionEntry:
+    properties:
+      app_version:
+        type: string
+      created:
+        type: string
+      prerelease:
+        type: boolean
+      version:
+        type: string
+    type: object
+  internal_api.catalogVersionsResponse:
+    properties:
+      addon:
+        type: string
+      cached_at:
+        type: string
+      chart:
+        type: string
+      latest_stable:
+        type: string
+      repo:
+        type: string
+      versions:
+        items:
+          $ref: '#/definitions/internal_api.catalogVersionEntry'
+        type: array
+    type: object
   internal_api.discoverEKSRequest:
     properties:
       provider:
@@ -2184,6 +2212,52 @@ paths:
       security:
       - BearerAuth: []
       summary: Get a curated catalog addon by name
+      tags:
+      - catalog
+  /catalog/addons/{name}/versions:
+    get:
+      description: Returns the chart versions reported by the upstream Helm repo `index.yaml`
+        for the curated catalog entry identified by `name`. Versions are sorted newest-first
+        and tagged with `prerelease=true` when the SemVer build/prerelease segment
+        is present. The first non-prerelease version is returned in `latest_stable`.
+        Responses are cached server-side for 15 minutes per repo+chart pair. Read-only;
+        requires authentication.
+      parameters:
+      - description: Curated catalog addon name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Include prerelease versions in the response (default true; the
+          UI filters by the per-entry prerelease flag)
+        in: query
+        name: include_prereleases
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Sorted chart versions for the addon
+          schema:
+            $ref: '#/definitions/internal_api.catalogVersionsResponse'
+        "404":
+          description: Addon not found in curated catalog
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Upstream Helm repo unreachable
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Catalog not loaded
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List chart versions for a curated catalog addon
       tags:
       - catalog
   /cluster/nodes:

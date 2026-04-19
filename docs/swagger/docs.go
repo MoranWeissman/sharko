@@ -1828,6 +1828,67 @@ const docTemplate = `{
                 }
             }
         },
+        "/catalog/addons/{name}/versions": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the chart versions reported by the upstream Helm repo ` + "`" + `index.yaml` + "`" + ` for the curated catalog entry identified by ` + "`" + `name` + "`" + `. Versions are sorted newest-first and tagged with ` + "`" + `prerelease=true` + "`" + ` when the SemVer build/prerelease segment is present. The first non-prerelease version is returned in ` + "`" + `latest_stable` + "`" + `. Responses are cached server-side for 15 minutes per repo+chart pair. Read-only; requires authentication.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "List chart versions for a curated catalog addon",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Curated catalog addon name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Include prerelease versions in the response (default true; the UI filters by the per-entry prerelease flag)",
+                        "name": "include_prereleases",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Sorted chart versions for the addon",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.catalogVersionsResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Addon not found in curated catalog",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "Upstream Helm repo unreachable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "Catalog not loaded",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/cluster/nodes": {
             "get": {
                 "security": [
@@ -6859,6 +6920,49 @@ const docTemplate = `{
                 },
                 "total": {
                     "type": "integer"
+                }
+            }
+        },
+        "internal_api.catalogVersionEntry": {
+            "type": "object",
+            "properties": {
+                "app_version": {
+                    "type": "string"
+                },
+                "created": {
+                    "type": "string"
+                },
+                "prerelease": {
+                    "type": "boolean"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.catalogVersionsResponse": {
+            "type": "object",
+            "properties": {
+                "addon": {
+                    "type": "string"
+                },
+                "cached_at": {
+                    "type": "string"
+                },
+                "chart": {
+                    "type": "string"
+                },
+                "latest_stable": {
+                    "type": "string"
+                },
+                "repo": {
+                    "type": "string"
+                },
+                "versions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api.catalogVersionEntry"
+                    }
                 }
             }
         },
