@@ -429,6 +429,99 @@ export interface CatalogListFilters {
   include_unknown_score?: boolean
 }
 
+// --- ArtifactHub proxy (V121-3 Search tab) ---
+//
+// Mirrors the slimmed shapes the backend returns. We deliberately keep these
+// types narrow — the proxy hands us only the fields the UI renders, so the TS
+// definitions match.
+
+export interface ArtifactHubRepo {
+  repository_id?: string
+  kind: number
+  name: string
+  display_name?: string
+  url?: string
+  organization_name?: string
+  user_alias?: string
+  verified_publisher?: boolean
+  official?: boolean
+}
+
+export interface ArtifactHubSearchResult {
+  package_id: string
+  name: string
+  normalized_name?: string
+  display_name?: string
+  description?: string
+  logo_image_id?: string
+  version?: string
+  app_version?: string
+  stars?: number
+  repository: ArtifactHubRepo
+}
+
+export interface ArtifactHubMaintainer {
+  name?: string
+  email?: string
+}
+
+export interface ArtifactHubLink {
+  name?: string
+  url?: string
+}
+
+export interface ArtifactHubVersionMeta {
+  version: string
+  ts?: number
+  prerelease?: boolean
+}
+
+export interface ArtifactHubPackage {
+  package_id: string
+  name: string
+  normalized_name?: string
+  display_name?: string
+  description?: string
+  home_url?: string
+  readme?: string
+  version?: string
+  app_version?: string
+  license?: string
+  stars?: number
+  maintainers?: ArtifactHubMaintainer[]
+  repository: ArtifactHubRepo
+  available_versions?: ArtifactHubVersionMeta[]
+  links?: ArtifactHubLink[]
+  keywords?: string[]
+}
+
+export interface CatalogSearchResponse {
+  query: string
+  curated: CatalogEntry[]
+  artifacthub: ArtifactHubSearchResult[]
+  /**
+   * Set when the upstream ArtifactHub call failed. Classification: rate_limited
+   * | server_error | timeout | not_found | malformed | invalid_input | unknown.
+   * Curated hits are still populated when this is set.
+   */
+  artifacthub_error?: string
+  /** True when ArtifactHub hits came from the stale window (upstream failed). */
+  stale?: boolean
+  cached_at?: string
+}
+
+export interface CatalogRemotePackageResponse {
+  package: ArtifactHubPackage | null
+  stale?: boolean
+  cached_at?: string
+}
+
+export interface CatalogReprobeResponse {
+  reachable: boolean
+  last_error?: string
+  probed_at: string
+}
+
 export interface ValueDiffEntry {
   path: string
   type: 'added' | 'removed' | 'changed'

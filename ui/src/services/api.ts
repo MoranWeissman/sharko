@@ -656,4 +656,40 @@ export const api = {
     )
   },
 
+  // ─── ArtifactHub proxy (V121-3 Search tab) ─────────────────────────────
+  // Server-side proxy: the browser never calls ArtifactHub directly. The
+  // backend handles caching, rate-limit backoff, and stale-serve.
+
+  /**
+   * Blended search across the Sharko-curated catalog and ArtifactHub. Returns
+   * curated hits and ArtifactHub hits in one envelope; if ArtifactHub is
+   * unreachable, curated hits are still returned and `artifacthub_error` is
+   * populated so the UI can show the unreachable banner.
+   */
+  searchCatalog: (q: string, limit = 20) => {
+    const params = new URLSearchParams({ q, limit: String(limit) })
+    return fetchJSON<import('./models').CatalogSearchResponse>(
+      `/catalog/search?${params.toString()}`,
+    )
+  },
+
+  /**
+   * Per-package detail (proxied from ArtifactHub). Used to pre-fill the
+   * Configure modal for an external chart. Returns the trimmed package shape
+   * (description, maintainers, available versions, links).
+   */
+  getRemoteCatalogPackage: (repo: string, name: string) =>
+    fetchJSON<import('./models').CatalogRemotePackageResponse>(
+      `/catalog/remote/${encodeURIComponent(repo)}/${encodeURIComponent(name)}`,
+    ),
+
+  /**
+   * Force ArtifactHub connectivity re-check. Resets the in-memory backoff and
+   * purges the search/package caches; returns whether ArtifactHub is currently
+   * reachable from the Sharko process. Tier 1 (admin) — used by the "Retry"
+   * button on the unreachable banner.
+   */
+  reprobeArtifactHub: () =>
+    postJSON<import('./models').CatalogReprobeResponse>(`/catalog/reprobe`),
+
 }
