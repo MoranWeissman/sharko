@@ -39,6 +39,8 @@ secrets.env
 _bmad/
 .bmad/
 # CLAUDE.md is intentionally tracked — it contains project conventions for AI sessions
+# .claude/checkpoints/ is auto-generated session state (force-tracked .claude paths shouldn't include it)
+.claude/checkpoints/
 
 # Docker
 aap-server
