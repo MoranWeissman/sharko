@@ -25,6 +25,7 @@ import (
 // @Success 201 {object} map[string]interface{} "Addon created"
 // @Failure 400 {object} map[string]interface{} "Bad request"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
+// @Failure 409 {object} map[string]interface{} "Addon already exists in catalog"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
 // @Router /addons [post]
 // handleAddAddon handles POST /api/v1/addons — add a new addon to the catalog.
@@ -70,6 +71,29 @@ func (s *Server) handleAddAddon(w http.ResponseWriter, r *http.Request) {
 	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
 	result, err := orch.AddAddon(ctx, req)
 	if err != nil {
+		// Surface "already in catalog" as 409 with a structured body so the
+		// Marketplace Configure modal can render a friendly inline error and
+		// link to the existing addon. Locked decision (V121-5.1): the
+		// duplicate path stays inside the existing handler — no separate
+		// pre-flight endpoint.
+		if strings.Contains(err.Error(), "already exists in catalog") {
+			source := req.Source
+			if source == "" {
+				source = "manual"
+			}
+			audit.Enrich(ctx, audit.Fields{
+				Event:    "addon_added",
+				Resource: fmt.Sprintf("addon:%s", req.Name),
+				Detail:   fmt.Sprintf("chart=%s version=%s source=%s result=duplicate", req.Chart, req.Version, source),
+			})
+			writeJSON(w, http.StatusConflict, map[string]interface{}{
+				"error":        fmt.Sprintf("%s is already in your catalog", req.Name),
+				"code":         "addon_already_exists",
+				"addon":        req.Name,
+				"existing_url": fmt.Sprintf("/addons/%s", req.Name),
+			})
+			return
+		}
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
@@ -94,10 +118,19 @@ func (s *Server) handleAddAddon(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	// Audit detail uses key=value to stay grep-friendly. `source` defaults to
+	// "manual" when the request body doesn't include it (raw Add Addon form
+	// or older clients) and is "marketplace" when submitted via the V121-5
+	// Configure modal. Locked decision 2026-04-19 (Moran): no new event name —
+	// the source field on `addon_added` is the discriminator.
+	source := req.Source
+	if source == "" {
+		source = "manual"
+	}
 	audit.Enrich(ctx, audit.Fields{
 		Event:    "addon_added",
 		Resource: fmt.Sprintf("addon:%s", req.Name),
-		Detail:   fmt.Sprintf("chart=%s version=%s", req.Chart, req.Version),
+		Detail:   fmt.Sprintf("chart=%s version=%s source=%s", req.Chart, req.Version, source),
 	})
 
 	// Surface the UX nudge: when Tier 2 had no per-user PAT we fell back to

@@ -207,6 +207,13 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     },
+                    "409": {
+                        "description": "Addon already exists in catalog",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
                     "502": {
                         "description": "Gateway error",
                         "schema": {
@@ -6275,6 +6282,10 @@ const docTemplate = `{
                 },
                 "self_heal": {
                     "type": "boolean"
+                },
+                "source": {
+                    "description": "Source identifies the originating UI flow for audit/observability.\nOptional. Examples: \"marketplace\" (curated catalog Configure modal),\n\"manual\" (raw Add Addon form), \"\" (caller didn't say — handler treats\nas \"manual\" for the audit detail).",
+                    "type": "string"
                 },
                 "sync_options": {
                     "type": "array",

@@ -300,6 +300,13 @@ definitions:
         type: string
       self_heal:
         type: boolean
+      source:
+        description: |-
+          Source identifies the originating UI flow for audit/observability.
+          Optional. Examples: "marketplace" (curated catalog Configure modal),
+          "manual" (raw Add Addon form), "" (caller didn't say — handler treats
+          as "manual" for the audit detail).
+        type: string
       sync_options:
         items:
           type: string
@@ -1107,6 +1114,11 @@ paths:
             type: object
         "401":
           description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: Addon already exists in catalog
           schema:
             additionalProperties: true
             type: object

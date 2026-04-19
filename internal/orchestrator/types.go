@@ -115,6 +115,11 @@ type AddAddonRequest struct {
 	IgnoreDifferences []map[string]interface{} `json:"ignore_differences,omitempty"`
 	ExtraHelmValues   map[string]string        `json:"extra_helm_values,omitempty"`
 	DependsOn         []string                 `json:"depends_on,omitempty"`
+	// Source identifies the originating UI flow for audit/observability.
+	// Optional. Examples: "marketplace" (curated catalog Configure modal),
+	// "manual" (raw Add Addon form), "" (caller didn't say — handler treats
+	// as "manual" for the audit detail).
+	Source string `json:"source,omitempty"`
 }
 
 // ConfigureAddonRequest is the input for updating an addon's catalog configuration.
