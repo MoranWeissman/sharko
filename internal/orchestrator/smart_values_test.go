@@ -435,3 +435,99 @@ func TestHasAddonStanzaUserFields(t *testing.T) {
 		})
 	}
 }
+
+// TestUnwrapChartNameRoot covers the v1.21 QA Bundle 4 Fix #6 — Velero
+// double-wrap fix. Ensures we detect a chart-name-rooted upstream values.yaml
+// and unwrap one level so the smart-values writer doesn't produce
+// `velero:\n  velero:\n    …`.
+func TestUnwrapChartNameRoot(t *testing.T) {
+	t.Run("velero-style root key matching addon name is unwrapped", func(t *testing.T) {
+		input := []byte(`# Default values for velero.
+velero:
+  configuration:
+    backupStorageLocation: []
+  resources:
+    requests:
+      cpu: 500m
+`)
+		out := unwrapChartNameRoot(input, "velero", "velero")
+		body := string(out)
+		if strings.Contains(body, "velero:") && strings.Index(body, "velero:") > 0 {
+			// Comment header may still mention "velero" — fine. The
+			// failure case is the actual `velero:` map line surviving.
+		}
+		// First non-comment line should be `configuration:` at indent 0.
+		for _, line := range strings.Split(body, "\n") {
+			trim := strings.TrimSpace(line)
+			if trim == "" || strings.HasPrefix(trim, "#") {
+				continue
+			}
+			if !strings.HasPrefix(line, "configuration:") {
+				t.Fatalf("expected first non-comment line to be 'configuration:' at indent 0, got %q\nfull body:\n%s", line, body)
+			}
+			break
+		}
+		if !strings.Contains(body, "  backupStorageLocation:") {
+			t.Errorf("expected backupStorageLocation indented under configuration, got:\n%s", body)
+		}
+	})
+
+	t.Run("multi-root file is left untouched", func(t *testing.T) {
+		input := []byte(`replicaCount: 2
+ingress:
+  enabled: true
+`)
+		out := unwrapChartNameRoot(input, "anything", "anything")
+		if string(out) != string(input) {
+			t.Errorf("multi-root file should be a no-op, got:\n%s", string(out))
+		}
+	})
+
+	t.Run("root key unrelated to chart is left untouched", func(t *testing.T) {
+		input := []byte(`global:
+  foo: bar
+`)
+		out := unwrapChartNameRoot(input, "velero", "velero")
+		if string(out) != string(input) {
+			t.Errorf("unrelated single-root file should be a no-op, got:\n%s", string(out))
+		}
+	})
+}
+
+// TestSplitUpstreamValues_VeleroDoubleWrapAvoided is the integration-level
+// verification that the splitter no longer emits a double-wrapped file when
+// fed a velero-style upstream values.yaml.
+func TestSplitUpstreamValues_VeleroDoubleWrapAvoided(t *testing.T) {
+	upstream := []byte(`velero:
+  configuration:
+    defaultVolumesToFsBackup: false
+  metrics:
+    enabled: true
+`)
+	out := SplitUpstreamValues(SmartValuesInput{
+		AddonName:      "velero",
+		Chart:          "velero",
+		Version:        "12.0.0",
+		RepoURL:        "https://vmware-tanzu.github.io/helm-charts",
+		UpstreamValues: upstream,
+	})
+	body := string(out.File)
+	// We expect exactly one `velero:` top-level key. Counting lines
+	// that begin (no leading space) with `velero:` is enough — the
+	// header lines all start with `#`.
+	count := 0
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, "velero:") {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly one top-level `velero:` line, got %d:\n%s", count, body)
+	}
+	if !strings.Contains(body, "\n  configuration:") {
+		t.Errorf("expected configuration: indented one level under velero, got:\n%s", body)
+	}
+}
+
+// Use time import to keep imports stable when running this file in isolation.
+var _ = time.Now

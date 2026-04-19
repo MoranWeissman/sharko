@@ -338,7 +338,17 @@ type SmartValuesOutput struct {
 // The function is pure: no I/O, no AI call. AI annotation is layered
 // orthogonally by the caller (Epic V121-7 plumbs that in via the same
 // header flag); for v1.21 the heuristic-only path ships first.
+//
+// Root-cause fix (v1.21 QA Bundle 4, Fix #6 — Velero double-wrap):
+// some upstream chart values.yaml files (Velero, a few Bitnami-style
+// charts) put all of their settings under a single top-level key that
+// matches the chart name (`velero:`). Sharko's wrapper used to add
+// another `<addon>:` line on top, producing `velero:\n  velero:\n    …`.
+// We now detect that case textually (single non-comment top-level key
+// equal to the addon or chart name) and unwrap one level of indentation
+// before re-wrapping.
 func SplitUpstreamValues(in SmartValuesInput) SmartValuesOutput {
+	in.UpstreamValues = unwrapChartNameRoot(in.UpstreamValues, in.AddonName, in.Chart)
 	clusterPaths := ClassifyClusterSpecificFields(in.UpstreamValues)
 
 	// V121-7.2 union: merge AI-suggested cluster-specific paths into the
@@ -587,6 +597,134 @@ func GenerateGlobalValuesFile(addonName, chart, version, repoURL string, upstrea
 		ExtraClusterSpecificPaths: extraClusterPaths,
 	})
 	return out.File
+}
+
+// UnwrapChartNameRoot is the exported alias of unwrapChartNameRoot so the
+// API layer's preview-merge endpoint can apply the same root-key detection
+// the smart-values writer uses internally. Keeps double-wrap behaviour
+// consistent across the seed flow and the diff-and-merge flow.
+func UnwrapChartNameRoot(values []byte, addonName, chartName string) []byte {
+	return unwrapChartNameRoot(values, addonName, chartName)
+}
+
+// unwrapChartNameRoot detects the case where the upstream values.yaml has
+// a single top-level key matching the chart or addon name, and returns the
+// inner content unwrapped (one indentation level removed).
+//
+// Why this exists: a few popular charts (notably Velero, some Bitnami-style
+// charts) ship a values.yaml that already begins with `<chartName>:` at the
+// top level. Sharko's smart-values writer wraps the upstream file under
+// `<addonName>:` to match the v1.20 convention used by SetGlobalAddonValues
+// — without this unwrap, the result is a double-wrap (`velero:\n  velero:\n
+// …`) which is wrong shape for the Helm chart.
+//
+// The detector is intentionally textual and conservative:
+//   - It walks lines, ignoring blanks and comment-only lines, until it
+//     finds the FIRST non-comment line at indent==0.
+//   - It must be a `key:` line (no inline value).
+//   - The key must match (case-insensitive) the addon or chart name.
+//   - There must be NO OTHER top-level non-comment keys further down.
+//
+// When all three are true, every non-blank, non-comment line beneath that
+// root key is shifted left by the detected child indent (typically 2 spaces).
+// Comment-only lines and blank lines pass through unchanged.
+//
+// When ANY check fails, the input is returned verbatim (no-op).
+func unwrapChartNameRoot(values []byte, addonName, chartName string) []byte {
+	if len(values) == 0 {
+		return values
+	}
+	// Pass 1: find the candidate root and verify uniqueness.
+	lines := strings.Split(string(values), "\n")
+	var (
+		rootIdx     = -1
+		rootKey     string
+		rootKeyLine string
+		// childIndent is the indent of the first child line under the root.
+		childIndent = -1
+	)
+	for i, raw := range lines {
+		trim := strings.TrimSpace(raw)
+		if trim == "" || strings.HasPrefix(trim, "#") {
+			continue
+		}
+		indent := leadingSpaces(raw)
+		colonIdx := strings.Index(trim, ":")
+		if rootIdx == -1 {
+			// First non-blank/non-comment line — must be at indent 0 and
+			// look like a parent map key (key: with no inline value).
+			if indent != 0 || colonIdx == -1 {
+				return values
+			}
+			key := strings.TrimSpace(trim[:colonIdx])
+			value := strings.TrimSpace(trim[colonIdx+1:])
+			if value != "" && value != "{}" && value != "[]" {
+				return values
+			}
+			matches := strings.EqualFold(key, addonName) ||
+				(chartName != "" && strings.EqualFold(key, chartName))
+			if !matches {
+				return values
+			}
+			rootIdx = i
+			rootKey = key
+			rootKeyLine = raw
+			continue
+		}
+		// We found the root already — any other top-level key disqualifies.
+		if indent == 0 {
+			return values
+		}
+		if childIndent == -1 {
+			childIndent = indent
+		}
+	}
+	if rootIdx == -1 || childIndent <= 0 {
+		// No root found, or no children under it — leave as-is.
+		_ = rootKey
+		_ = rootKeyLine
+		return values
+	}
+
+	// Pass 2: rewrite. Drop the root key line; for every other line, strip
+	// up to childIndent spaces of leading indentation. Lines that already
+	// have less leading whitespace (comments at file edges, etc.) are
+	// passed through untouched.
+	var b strings.Builder
+	for i, raw := range lines {
+		if i == rootIdx {
+			continue
+		}
+		if strings.TrimSpace(raw) == "" {
+			b.WriteString(raw)
+			if i < len(lines)-1 {
+				b.WriteString("\n")
+			}
+			continue
+		}
+		// Comment-only lines that sit ABOVE the root key (file header
+		// comments, license blurbs) — keep verbatim. We detect them by
+		// position: anything before rootIdx.
+		if i < rootIdx {
+			b.WriteString(raw)
+			if i < len(lines)-1 {
+				b.WriteString("\n")
+			}
+			continue
+		}
+		// Strip up to childIndent leading spaces.
+		out := raw
+		strip := childIndent
+		for strip > 0 && len(out) > 0 && out[0] == ' ' {
+			out = out[1:]
+			strip--
+		}
+		b.WriteString(out)
+		if i < len(lines)-1 {
+			b.WriteString("\n")
+		}
+	}
+	return []byte(b.String())
 }
 
 // GlobalValuesPath returns the canonical path inside the user's repo
