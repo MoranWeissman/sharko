@@ -187,8 +187,12 @@ function AddonCard({ addon }: { addon: AddonCatalogItem }) {
                 {enabledApps} Active Applications
               </p>
             ) : (
+              // v1.21 QA Bundle 4 Fix #2: unify vocabulary on the Installed
+              // addons page — "Catalog Only" matches the summary card and the
+              // legend strip; cards used to say "Not Deployed" which was the
+              // same idea with different words.
               <p className="mt-1 text-sm font-semibold text-amber-600 dark:text-amber-400">
-                Not Deployed
+                Catalog Only
               </p>
             )}
           </div>
@@ -222,7 +226,7 @@ function AddonCard({ addon }: { addon: AddonCatalogItem }) {
         <div className="mt-2 flex flex-wrap gap-1">
           <StatusChip label="Healthy" count={addon.healthy_applications} color="green" />
           <StatusChip label="Degraded" count={addon.degraded_applications} color="yellow" />
-          <StatusChip label="Not Deployed" count={addon.missing_applications} color="red" />
+          <StatusChip label="Catalog Only" count={addon.missing_applications} color="red" />
         </div>
 
         {/* Version drift indicator */}
@@ -386,7 +390,7 @@ function AddonListTable({ addons }: { addons: AddonCatalogItem[] }) {
             <th className="px-6 py-3">Deployed</th>
             <th className="px-6 py-3">Healthy</th>
             <th className="px-6 py-3">Degraded</th>
-            <th className="px-6 py-3">Not Deployed</th>
+            <th className="px-6 py-3">Catalog Only</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-[#6aade0] dark:divide-gray-700">
@@ -405,7 +409,7 @@ function AddonListTable({ addons }: { addons: AddonCatalogItem[] }) {
               <td className="px-6 py-3 text-[#0a3a5a] dark:text-gray-300">
                 {addon.enabled_clusters === 0 ? (
                   <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
-                    Not Deployed
+                    Catalog Only
                   </span>
                 ) : (
                   <span className="inline-flex items-center rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">
