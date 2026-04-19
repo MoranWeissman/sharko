@@ -527,6 +527,12 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("GET /api/v1/catalog/addons/{name}/versions", srv.handleListCatalogVersions)
 	mux.HandleFunc("GET /api/v1/catalog/addons/{name}", srv.handleGetCatalogAddon)
 
+	// ArtifactHub proxy + reprobe (v1.21 Epic V121-3) — server-side proxy so
+	// the browser doesn't call ArtifactHub directly (CORS + shared cache + rate-limit handling).
+	mux.HandleFunc("GET /api/v1/catalog/search", srv.handleSearchCatalog)
+	mux.HandleFunc("GET /api/v1/catalog/remote/{repo}/{name}", srv.handleGetRemotePackage)
+	mux.HandleFunc("POST /api/v1/catalog/reprobe", srv.handleReprobeArtifactHub)
+
 	// Addons (read)
 	mux.HandleFunc("GET /api/v1/addons/list", srv.handleListAddons)
 	mux.HandleFunc("GET /api/v1/addons/catalog", srv.handleGetAddonCatalog)

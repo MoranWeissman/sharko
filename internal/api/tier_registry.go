@@ -67,6 +67,10 @@ var HandlerTier = map[string]audit.Tier{
 	// Init bootstrap — operational platform setup (writes to repo but as platform action)
 	"handleInit":                       audit.Tier1,
 
+	// ArtifactHub proxy reprobe (v1.21) — operational: clears caches and probes
+	// the upstream. Read-class but admin-tier so audit captures who reset state.
+	"handleReprobeArtifactHub":         audit.Tier1,
+
 	// Test/discover endpoints that POST credentials for validation
 	"handleTestProvider":               audit.Tier1,
 	"handleTestProviderConfig":         audit.Tier1,
