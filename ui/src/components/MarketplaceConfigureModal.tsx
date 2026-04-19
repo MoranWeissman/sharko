@@ -54,6 +54,26 @@ export interface MarketplaceConfigureModalProps {
    * when wired by the parent. When omitted, browsers fall back to the body.
    */
   returnFocusRef?: React.RefObject<HTMLElement>
+  /**
+   * V121-4.1 / V121-5.2: identifies the originating UI flow so the existing
+   * `addon_added` audit event records `source` without inventing a new event
+   * name. Defaults to "marketplace" (Browse tab) — Search tab passes
+   * "artifacthub" and Paste tab passes "paste_url".
+   */
+  source?: 'marketplace' | 'artifacthub' | 'paste_url'
+  /**
+   * V121-4.1: when true, skip the curated `/catalog/addons/{name}/versions`
+   * fetch — the parent (Paste tab) has already validated the chart and seeded
+   * the entry with a default version. Avoids a 404 against the curated
+   * endpoint for charts that aren't in the curated catalog.
+   */
+  skipVersionFetch?: boolean
+  /**
+   * V121-4.1: pre-seeded versions list (from the validate response) so the
+   * version picker shows options without a second round-trip. Used together
+   * with skipVersionFetch.
+   */
+  seededVersions?: CatalogVersionsResponse | null
 }
 
 interface DuplicateInfo {
@@ -66,6 +86,9 @@ export function MarketplaceConfigureModal({
   open,
   onOpenChange,
   returnFocusRef,
+  source = 'marketplace',
+  skipVersionFetch = false,
+  seededVersions = null,
 }: MarketplaceConfigureModalProps) {
   const [name, setName] = useState('')
   const [namespace, setNamespace] = useState('')
@@ -152,8 +175,23 @@ export function MarketplaceConfigureModal({
   }, [open])
 
   // Fetch versions when the modal opens for a given entry.
+  // V121-4.1: when the parent already has a versions response (Paste tab fed
+  // it via the /catalog/validate envelope) we seed the picker directly and
+  // skip the curated round-trip — that endpoint would 404 for non-curated
+  // charts anyway.
   useEffect(() => {
     if (!entry || !open) return
+    if (skipVersionFetch && seededVersions) {
+      setVersionsResp(seededVersions)
+      if (seededVersions.latest_stable) {
+        setVersion(seededVersions.latest_stable)
+      } else if (seededVersions.versions[0]) {
+        setVersion(seededVersions.versions[0].version)
+      }
+      setVersionsLoading(false)
+      setVersionsError(null)
+      return
+    }
     let cancelled = false
     setVersionsLoading(true)
     setVersionsError(null)
@@ -181,7 +219,7 @@ export function MarketplaceConfigureModal({
     return () => {
       cancelled = true
     }
-  }, [entry, open])
+  }, [entry, open, skipVersionFetch, seededVersions])
 
   // Visible version list — top 5 stable by default; full list when prereleases enabled.
   const visibleVersions: CatalogVersionEntry[] = useMemo(() => {
@@ -240,10 +278,12 @@ export function MarketplaceConfigureModal({
         version: version.trim(),
         namespace: namespace.trim(),
         sync_wave: parseInt(syncWave, 10),
-        // V121-5.2 (LOCKED 2026-04-19, Moran): identifies the originating UI
-        // flow so the existing `addon_added` audit event records source
-        // without a new event name.
-        source: 'marketplace',
+        // V121-5.2 / V121-4.1 (LOCKED 2026-04-19, Moran): identifies the
+        // originating UI flow so the existing `addon_added` audit event
+        // records source without a new event name. Default is "marketplace"
+        // (Browse tab); Search tab passes "artifacthub", Paste tab passes
+        // "paste_url".
+        source,
       })
       setSubmitResult(res)
       const label = prID || res.pr_id || res.result?.pr_id ? `PR #${res.pr_id ?? res.result?.pr_id}` : 'PR'

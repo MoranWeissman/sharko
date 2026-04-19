@@ -888,6 +888,31 @@ definitions:
       stale:
         type: boolean
     type: object
+  internal_api.catalogValidateResponse:
+    properties:
+      cached_at:
+        type: string
+      chart:
+        type: string
+      description:
+        type: string
+      error_code:
+        $ref: '#/definitions/internal_api.validateErrorCode'
+      icon_url:
+        type: string
+      latest_stable:
+        type: string
+      message:
+        type: string
+      repo:
+        type: string
+      valid:
+        type: boolean
+      versions:
+        items:
+          $ref: '#/definitions/internal_api.catalogVersionEntry'
+        type: array
+    type: object
   internal_api.catalogVersionEntry:
     properties:
       app_version:
@@ -1133,6 +1158,20 @@ definitions:
           type: string
         type: array
     type: object
+  internal_api.validateErrorCode:
+    enum:
+    - invalid_input
+    - repo_unreachable
+    - index_parse_error
+    - chart_not_found
+    - timeout
+    type: string
+    x-enum-varnames:
+    - validateErrInvalidInput
+    - validateErrRepoUnreachable
+    - validateErrIndexParseError
+    - validateErrChartNotFound
+    - validateErrTimeout
 host: localhost:8080
 info:
   contact: {}
@@ -2531,6 +2570,46 @@ paths:
       security:
       - BearerAuth: []
       summary: Blended catalog search (curated + ArtifactHub)
+      tags:
+      - catalog
+  /catalog/validate:
+    get:
+      description: 'Power-user "Paste Helm URL" validator: fetches `<repo>/index.yaml`,
+        parses it, and confirms the named chart exists. On success returns the available
+        versions, the latest stable version, and a few metadata fields (description,
+        icon) for the Configure modal to pre-fill. On failure returns HTTP 200 with
+        `valid: false` and a structured `error_code` (invalid_input, repo_unreachable,
+        index_parse_error, chart_not_found, timeout) so the UI can render an inline
+        message without HTTP-status branching. Responses are cached server-side for
+        15 minutes per (repo, chart) pair — the same TTL semantics as `/catalog/addons/{name}/versions`.
+        Read-only; requires authentication.'
+      parameters:
+      - description: Helm repository base URL (e.g. https://charts.jetstack.io)
+        in: query
+        name: repo
+        required: true
+        type: string
+      - description: Chart name as listed in the repo's index.yaml entries (e.g. cert-manager)
+        in: query
+        name: chart
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Validation result — `valid` distinguishes success vs structured
+            failure
+          schema:
+            $ref: '#/definitions/internal_api.catalogValidateResponse'
+        "400":
+          description: Missing or malformed repo / chart query parameter
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Validate a Helm chart at an arbitrary repo URL
       tags:
       - catalog
   /cluster/nodes:

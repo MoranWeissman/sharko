@@ -20,6 +20,11 @@ type ChartVersion struct {
 	AppVersion  string   `yaml:"appVersion,omitempty"`
 	Created     string   `yaml:"created,omitempty"`
 	Description string   `yaml:"description,omitempty"`
+	Icon        string   `yaml:"icon,omitempty"`
+	// Deprecated mirrors the per-version `deprecated` field from index.yaml.
+	// Charts mark a version as deprecated when it should not be used (e.g. a
+	// CVE landed). Surfaced in the v1.21 Paste-URL validate response.
+	Deprecated bool `yaml:"deprecated,omitempty"`
 }
 
 // repoIndex represents a Helm repository index.yaml.

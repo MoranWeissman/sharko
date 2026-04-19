@@ -414,6 +414,28 @@ export interface CatalogVersionsResponse {
   cached_at: string
 }
 
+// V121-4 — Paste Helm URL validator. The handler returns 200 in both the happy
+// and the structured-failure path; UI keys off `valid` and `error_code`.
+export type CatalogValidateErrorCode =
+  | 'invalid_input'
+  | 'repo_unreachable'
+  | 'index_parse_error'
+  | 'chart_not_found'
+  | 'timeout'
+
+export interface CatalogValidateResponse {
+  valid: boolean
+  chart: string
+  repo: string
+  description?: string
+  icon_url?: string
+  versions?: CatalogVersionEntry[]
+  latest_stable?: string
+  cached_at?: string
+  error_code?: CatalogValidateErrorCode
+  message?: string
+}
+
 /** Filter shape used by the Marketplace Browse tab. AND semantics across keys. */
 export interface CatalogListFilters {
   q?: string

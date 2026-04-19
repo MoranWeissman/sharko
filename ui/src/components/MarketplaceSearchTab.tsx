@@ -60,6 +60,10 @@ export function MarketplaceSearchTab() {
   // CatalogEntry-shaped object for the existing modal to consume.
   const [configureEntry, setConfigureEntry] = useState<CatalogEntry | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
+  // Track which result bucket opened the modal so the addon_added audit event
+  // records the right `source` (curated → "marketplace", external → "artifacthub").
+  const [configureSource, setConfigureSource] =
+    useState<'marketplace' | 'artifacthub'>('marketplace')
 
   // Auto-focus the search box when the tab mounts.
   useEffect(() => {
@@ -124,6 +128,7 @@ export function MarketplaceSearchTab() {
   // Open Configure for a curated entry (full schema already available).
   const handleOpenCurated = useCallback((entry: CatalogEntry) => {
     setConfigureEntry(entry)
+    setConfigureSource('marketplace')
     setModalOpen(true)
   }, [])
 
@@ -150,6 +155,7 @@ export function MarketplaceSearchTab() {
       homepage: pkg.repository.url,
     }
     setConfigureEntry(synthesised)
+    setConfigureSource('artifacthub')
     setModalOpen(true)
     // Best-effort enrichment via /catalog/remote — license + maintainers fill
     // the modal nicely. Failure is non-fatal.
@@ -371,6 +377,7 @@ export function MarketplaceSearchTab() {
           setModalOpen(v)
           if (!v) setConfigureEntry(null)
         }}
+        source={configureSource}
       />
     </div>
   )

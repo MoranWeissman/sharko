@@ -527,6 +527,10 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("GET /api/v1/catalog/addons/{name}/versions", srv.handleListCatalogVersions)
 	mux.HandleFunc("GET /api/v1/catalog/addons/{name}", srv.handleGetCatalogAddon)
 
+	// V121-4: Paste Helm URL validator — confirms an arbitrary repo+chart is
+	// reachable and parseable, returns versions for the Configure modal.
+	mux.HandleFunc("GET /api/v1/catalog/validate", srv.handleValidateCatalogChart)
+
 	// ArtifactHub proxy + reprobe (v1.21 Epic V121-3) — server-side proxy so
 	// the browser doesn't call ArtifactHub directly (CORS + shared cache + rate-limit handling).
 	mux.HandleFunc("GET /api/v1/catalog/search", srv.handleSearchCatalog)

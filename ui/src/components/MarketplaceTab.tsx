@@ -1,29 +1,41 @@
 import { useCallback, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Compass, Search } from 'lucide-react'
+import { Clipboard, Compass, Search } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { MarketplaceBrowseTab } from '@/components/MarketplaceBrowseTab'
 import { MarketplaceSearchTab } from '@/components/MarketplaceSearchTab'
+import { MarketplacePasteURLTab } from '@/components/MarketplacePasteURLTab'
 
 /**
  * MarketplaceTab — top-level container rendered inside the AddonCatalog page.
- * Hosts two subtabs:
+ * Hosts three subtabs:
  *
- *   Browse  — curated catalog grid with filters (V121-2; was the entire tab
- *             prior to V121-3)
- *   Search  — name search across curated + ArtifactHub (V121-3.6)
+ *   Browse    — curated catalog grid with filters (V121-2)
+ *   Search    — name search across curated + ArtifactHub (V121-3.6)
+ *   Paste URL — power-user repo+chart validator (V121-4.1)
  *
- * Subtab state lives in the URL (?mp_view=browse|search) so deep links share.
- * Default is Browse to preserve the v1.20→v1.21 upgrade UX.
+ * Subtab state lives in the URL (?mp_view=browse|search|paste) so deep links
+ * share. Default is Browse to preserve the v1.20→v1.21 upgrade UX.
  */
 
-type MarketplaceView = 'browse' | 'search'
+type MarketplaceView = 'browse' | 'search' | 'paste'
 
-const VALID_VIEWS: MarketplaceView[] = ['browse', 'search']
+const VALID_VIEWS: MarketplaceView[] = ['browse', 'search', 'paste']
 
 function parseView(params: URLSearchParams): MarketplaceView {
   const v = params.get('mp_view')
   return VALID_VIEWS.includes(v as MarketplaceView) ? (v as MarketplaceView) : 'browse'
+}
+
+function panelLabel(view: MarketplaceView): string {
+  switch (view) {
+    case 'browse':
+      return 'Browse curated catalog'
+    case 'search':
+      return 'Search any chart'
+    case 'paste':
+      return 'Paste a Helm repo URL'
+  }
 }
 
 export function MarketplaceTab() {
@@ -59,10 +71,18 @@ export function MarketplaceTab() {
           icon={<Search className="h-3.5 w-3.5" aria-hidden="true" />}
           label="Search ArtifactHub"
         />
+        <SubTabButton
+          active={view === 'paste'}
+          onClick={() => setView('paste')}
+          icon={<Clipboard className="h-3.5 w-3.5" aria-hidden="true" />}
+          label="Paste Helm URL"
+        />
       </div>
 
-      <div role="tabpanel" aria-label={view === 'browse' ? 'Browse curated catalog' : 'Search any chart'}>
-        {view === 'browse' ? <MarketplaceBrowseTab /> : <MarketplaceSearchTab />}
+      <div role="tabpanel" aria-label={panelLabel(view)}>
+        {view === 'browse' && <MarketplaceBrowseTab />}
+        {view === 'search' && <MarketplaceSearchTab />}
+        {view === 'paste' && <MarketplacePasteURLTab />}
       </div>
     </div>
   )

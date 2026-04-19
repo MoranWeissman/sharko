@@ -261,8 +261,14 @@ export async function addAddon(data: {
   version: string
   namespace?: string
   sync_wave?: number
-  /** V121-5.2: identifies the originating UI flow ("marketplace" or "manual"). */
-  source?: 'marketplace' | 'manual'
+  /**
+   * V121-5.2 / V121-4.1: identifies the originating UI flow.
+   *   "marketplace" — Browse curated card → Configure
+   *   "artifacthub" — Search tab → Configure (external pkg)
+   *   "paste_url"   — Paste Helm URL tab → Configure
+   *   "manual"      — legacy direct "Add Addon" form
+   */
+  source?: 'marketplace' | 'artifacthub' | 'paste_url' | 'manual'
 }): Promise<AddAddonResponse> {
   // Use raw fetch so we can detect the structured 409 body that V121-5.1
   // returns when the addon already exists in the catalog. postJSON throws a
@@ -653,6 +659,18 @@ export const api = {
     const qs = params.toString()
     return fetchJSON<import('./models').CatalogVersionsResponse>(
       `/catalog/addons/${encodeURIComponent(name)}/versions${qs ? `?${qs}` : ''}`,
+    )
+  },
+
+  /**
+   * V121-4: Paste-URL validator. Confirms an arbitrary `<repo>/index.yaml` is
+   * reachable and contains the named chart. Returns 200 in both the happy and
+   * the structured-failure path — branch on `resp.valid` and `resp.error_code`.
+   */
+  validateCatalogChart: (repo: string, chart: string) => {
+    const params = new URLSearchParams({ repo, chart })
+    return fetchJSON<import('./models').CatalogValidateResponse>(
+      `/catalog/validate?${params.toString()}`,
     )
   },
 

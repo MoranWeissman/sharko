@@ -8,7 +8,7 @@ The Marketplace is a **read-only browse experience**. Submitting an addon goes t
 
 1. Open **Addons** in the left rail.
 2. Switch to the **Marketplace** tab at the top of the page.
-3. The Marketplace has two subtabs: **Browse curated** (default) and **Search ArtifactHub**. Browse is the filterable curated grid; Search is name-based discovery across our catalog and ArtifactHub.
+3. The Marketplace has three subtabs: **Browse curated** (default), **Search ArtifactHub**, and **Paste Helm URL**. Browse is the filterable curated grid; Search is name-based discovery across our catalog and ArtifactHub; Paste is the power-user escape hatch for charts that aren't in either.
 
 ### Browse curated
 
@@ -31,6 +31,25 @@ When you click an ArtifactHub result, the Configure modal opens pre-filled with 
 
 Use **Browse** when you know what you want from our vetted set; use **Search** for the long tail.
 
+### Paste Helm URL (power-user)
+
+When the chart isn't in our curated catalog **and** isn't on ArtifactHub — internal repos, vendor charts hosted on a homepage CDN, or anything Sharko hasn't indexed — open the **Paste Helm URL** tab.
+
+You provide the **chart repo URL** (e.g. `https://charts.jetstack.io`) and the **chart name** (e.g. `cert-manager`). Click **Validate** (or press <kbd>Enter</kbd>) and Sharko fetches `<repo>/index.yaml`, parses it, and confirms the chart exists. On success you see a green check with the version count and the latest stable version, plus the chart's description if the repo publishes one. Click **Configure** and the standard Configure modal opens pre-filled.
+
+Validation errors are structured so you get a targeted hint, not a generic stack trace:
+
+| Error | Meaning |
+|-------|---------|
+| **Repository unreachable** | The URL was syntactically valid but `<repo>/index.yaml` returned non-200 or didn't respond. Check the URL and that the repo is reachable from the Sharko server. |
+| **Chart not found in this repo** | `index.yaml` was fetched and parsed, but no chart with that name exists. Names are case-sensitive and must match an entry under `entries:`. |
+| **Repository index is malformed** | `index.yaml` was downloaded but isn't valid YAML. The repo is misconfigured. |
+| **Validation timed out** | The repo took longer than 8 seconds. Retry; if persistent, check upstream. |
+
+Optional **chart version** field auto-fills with the latest stable on validate; you can override it before clicking Configure to pin a specific version.
+
+The Submit & PR flow from the Configure modal is identical to the other tabs — the audit detail just records `source=paste_url` so you can filter by origin in the audit log.
+
 ## Configure & submit
 
 Clicking a card opens the **Configure** modal — a pre-filled form built from the curated entry's defaults:
@@ -47,6 +66,6 @@ When you click **Submit & open PR**, Sharko calls the existing `POST /api/v1/add
 1. **Tier 2 attribution.** The endpoint is registered as a Tier 2 (configuration) mutation, so Sharko prefers your personal GitHub PAT when one is configured (Settings → My Account). Without a PAT, the change is committed by the Sharko service account with a `Co-authored-by:` trailer for you, and an inline **AttributionNudge** banner appears next to Submit explaining the fallback.
 2. **PR opens against `addons-catalog.yaml`.** A branch is created (default prefix `sharko/`), a commit lands with both the catalog entry and a starter `addons-global-values/<name>.yaml`, and a pull request is opened.
 3. **Toast + persistent banner.** As soon as the PR URL comes back, a toast appears in the bottom-right (`PR #N opened →` or `PR #N merged →` if your connection auto-merges) and the modal grows a green banner with a clickable PR link so you can jump straight to GitHub. The toast and banner stay neutral about review state — auto-merge may have already fired server-side.
-4. **Audit trail.** The action is recorded as the existing `addon_added` event with `source=marketplace` in the detail string. Filtering audit by source surfaces Marketplace-driven additions vs. manual ones without inventing a new event name.
+4. **Audit trail.** The action is recorded as the existing `addon_added` event with the originating subtab in the `source` detail field (`marketplace` for Browse, `artifacthub` for Search, `paste_url` for Paste Helm URL, `manual` for the legacy Add Addon form). Filtering audit by source surfaces Marketplace-driven additions vs. manual ones without inventing a new event name.
 
 If the addon **already exists in your catalog**, both the modal's pre-flight check and the server's 409 response render the same friendly inline message — *"<name> is already in the catalog. Open its page to edit or enable it on a cluster."* — with a deep link to the existing addon's detail page. Submit stays disabled until you rename the candidate or close the modal. No no-op PRs are opened.
