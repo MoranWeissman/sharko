@@ -111,6 +111,10 @@ func (s *Server) handleAddAddon(w http.ResponseWriter, r *http.Request) {
 					"addon", req.Name, "chart", req.Chart, "version", req.Version,
 					"matches", len(secretBlock.Matches),
 				)
+				// Story V121-8.5: emit a dedicated `secret_leak_blocked`
+				// audit entry alongside the eventual `addon_added` entry so
+				// security review can grep one stable token across the log.
+				s.emitSecretLeakAuditBlock(ctx, "addon_add", req.Name, req.Chart, req.Version, secretBlock.Matches)
 			}
 		}
 		if annRes.SkipReason == "" {

@@ -197,6 +197,11 @@ func (s *Server) handleSetAddonValues(w http.ResponseWriter, r *http.Request) {
 						"addon", name, "chart", chart, "version", version,
 						"matches", len(secretBlock.Matches),
 					)
+					// Story V121-8.5: emit a dedicated
+					// `secret_leak_blocked` audit entry so security review
+					// can grep across handlers without parsing per-event
+					// detail strings.
+					s.emitSecretLeakAuditBlock(ctx, "values_refresh", name, chart, version, secretBlock.Matches)
 				}
 			}
 			if annRes.SkipReason == "" {

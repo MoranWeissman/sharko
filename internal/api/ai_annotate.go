@@ -152,6 +152,10 @@ func (s *Server) handleAnnotateAddonValues(w http.ResponseWriter, r *http.Reques
 				Resource: fmt.Sprintf("addon:%s", name),
 				Detail:   fmt.Sprintf("chart=%s version=%s matches=%d", chart, version, len(secretBlock.Matches)),
 			})
+			// Story V121-8.5: emit a separate, grep-stable
+			// `secret_leak_blocked` entry on the audit ring so security
+			// review can find every block (across handlers) with one query.
+			s.emitSecretLeakAuditBlock(ctx, "ai_annotate", name, chart, version, secretBlock.Matches)
 			writeJSON(w, http.StatusUnprocessableEntity, aiAnnotateBlockedResponse{
 				Code:    secretBlock.Code(),
 				Message: "Secret-like content detected in upstream values; AI annotation is hard-blocked.",
