@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Search,
   Filter,
@@ -17,6 +17,8 @@ import {
   Loader2,
   RefreshCw,
   X,
+  Boxes,
+  Store,
 } from 'lucide-react'
 import { api, addAddon } from '@/services/api'
 import type { AddonCatalogItem, AddonCatalogResponse } from '@/services/models'
@@ -25,6 +27,7 @@ import { StatusBadge } from '@/components/StatusBadge'
 import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
 import { RoleGuard } from '@/components/RoleGuard'
+import { MarketplaceTab } from '@/components/MarketplaceTab'
 import {
   Dialog,
   DialogContent,
@@ -34,9 +37,68 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 
+type AddonsView = 'installed' | 'marketplace'
+
 type FilterType = 'all' | 'healthy' | 'unhealthy' | 'git-only'
 type SortBy = 'name' | 'applications'
 type PageSize = 15 | 30 | 60
+
+/**
+ * AddonsTabBar — top-of-page tab control switching between the user's
+ * "Installed" addons (the historical AddonCatalog content) and the v1.21
+ * curated "Marketplace" tab. Implemented as a real WAI-ARIA tablist so
+ * keyboard users get arrow-key navigation for free via the browser's default
+ * radio-group behaviour on the underlying buttons.
+ */
+function AddonsTabBar({
+  tab,
+  onChange,
+}: {
+  tab: AddonsView
+  onChange: (next: AddonsView) => void
+}) {
+  const items: { value: AddonsView; label: string; icon: React.ReactNode }[] = [
+    { value: 'installed', label: 'Installed', icon: <Boxes className="h-4 w-4" /> },
+    { value: 'marketplace', label: 'Marketplace', icon: <Store className="h-4 w-4" /> },
+  ]
+  return (
+    <div
+      role="tablist"
+      aria-label="Addons view"
+      className="inline-flex w-fit gap-1 rounded-lg bg-[#d0e8f8] p-1 dark:bg-gray-900"
+    >
+      {items.map((item) => {
+        const active = tab === item.value
+        return (
+          <button
+            key={item.value}
+            type="button"
+            role="tab"
+            id={`addons-tab-${item.value}`}
+            aria-selected={active}
+            aria-controls={`addons-panel-${item.value}`}
+            tabIndex={active ? 0 : -1}
+            onClick={() => onChange(item.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+                e.preventDefault()
+                onChange(tab === 'installed' ? 'marketplace' : 'installed')
+              }
+            }}
+            className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#6aade0] ${
+              active
+                ? 'bg-white text-[#0a2a4a] shadow-sm dark:bg-gray-700 dark:text-white'
+                : 'text-[#2a5a7a] hover:bg-[#e0f0ff] dark:text-gray-400 dark:hover:bg-gray-800'
+            }`}
+          >
+            {item.icon}
+            {item.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
 
 function HealthProgressBar({ healthy, total }: { healthy: number; total: number }) {
   if (total === 0) return null
@@ -374,6 +436,24 @@ function AddonListTable({ addons }: { addons: AddonCatalogItem[] }) {
 }
 
 export function AddonCatalog() {
+  // Tab state — kept in URL so Marketplace deep links survive a refresh.
+  // Default tab is "installed" to preserve the historical behaviour of this
+  // page; Marketplace is opt-in via ?tab=marketplace or the tab control.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const initialTab: AddonsView =
+    searchParams.get('tab') === 'marketplace' ? 'marketplace' : 'installed'
+  const [tab, setTab] = useState<AddonsView>(initialTab)
+  const switchTab = useCallback(
+    (next: AddonsView) => {
+      setTab(next)
+      const params = new URLSearchParams(searchParams.toString())
+      if (next === 'marketplace') params.set('tab', 'marketplace')
+      else params.delete('tab')
+      setSearchParams(params, { replace: true })
+    },
+    [searchParams, setSearchParams],
+  )
+
   const [catalogData, setCatalogData] = useState<AddonCatalogResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -539,10 +619,35 @@ export function AddonCatalog() {
     setFilterType(filterType === filter ? 'all' : filter)
   }
 
+  // The page header + tabs render unconditionally so the Marketplace tab is
+  // reachable even while the installed catalog is loading or errored.
+  const renderPageHeader = () => (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">Addons</h2>
+        <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
+          {tab === 'installed'
+            ? 'All addons defined in your Git catalog. See deployment coverage, health, and version per addon.'
+            : 'Browse Sharko\u2019s curated catalog and configure a new addon for your Git repo.'}
+        </p>
+      </div>
+      <AddonsTabBar tab={tab} onChange={switchTab} />
+    </div>
+  )
+
+  if (tab === 'marketplace') {
+    return (
+      <div className="space-y-6">
+        {renderPageHeader()}
+        <MarketplaceTab />
+      </div>
+    )
+  }
+
   if (loading) {
     return (
-      <div className="space-y-4">
-        <h2 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">Addons Catalog</h2>
+      <div className="space-y-6">
+        {renderPageHeader()}
         <LoadingState message="Loading addon catalog..." />
       </div>
     )
@@ -550,8 +655,8 @@ export function AddonCatalog() {
 
   if (error) {
     return (
-      <div className="space-y-4">
-        <h2 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">Addons Catalog</h2>
+      <div className="space-y-6">
+        {renderPageHeader()}
         <ErrorState message={error} />
       </div>
     )
@@ -559,8 +664,8 @@ export function AddonCatalog() {
 
   if (!catalogData) {
     return (
-      <div className="space-y-4">
-        <h2 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">Addons Catalog</h2>
+      <div className="space-y-6">
+        {renderPageHeader()}
         <p className="text-[#2a5a7a] dark:text-gray-400">No addon catalog data available.</p>
       </div>
     )
@@ -568,6 +673,7 @@ export function AddonCatalog() {
 
   return (
     <div className="space-y-6">
+      {renderPageHeader()}
       {/* Toast notification */}
       {toast && (
         <div className="flex items-start justify-between gap-3 rounded-lg bg-green-50 px-4 py-3 ring-1 ring-green-300 dark:bg-green-950/30 dark:ring-green-700">
@@ -601,33 +707,29 @@ export function AddonCatalog() {
         </div>
       )}
 
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">Addons Catalog</h2>
-          <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
-            All addons defined in your Git catalog. See deployment coverage, health, and version per addon. <span className="font-medium text-amber-600 dark:text-amber-400">Catalog Only</span> means the addon is defined in your catalog but not yet enabled on any cluster.
-          </p>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
+      {/* Action bar — refresh + Add Addon */}
+      <div className="flex items-center justify-end gap-2">
+        <p className="mr-auto text-xs text-[#3a6a8a] dark:text-gray-500">
+          <span className="font-medium text-amber-600 dark:text-amber-400">Catalog Only</span>{' '}
+          means the addon is defined in your catalog but not yet enabled on any cluster.
+        </p>
+        <button
+          onClick={handleRefresh}
+          className="rounded-md p-2 text-[#3a6a8a] hover:bg-[#d6eeff] dark:text-gray-400 dark:hover:bg-gray-700"
+          title="Refresh"
+        >
+          <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+        </button>
+        <RoleGuard adminOnly>
           <button
-            onClick={handleRefresh}
-            className="rounded-md p-2 text-[#3a6a8a] hover:bg-[#d6eeff] dark:text-gray-400 dark:hover:bg-gray-700"
-            title="Refresh"
+            type="button"
+            onClick={openAddAddon}
+            className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-[#0a2a4a] px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-[#0d3558] dark:bg-blue-700 dark:hover:bg-blue-600"
           >
-            <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            <Plus className="h-4 w-4" />
+            Add Addon
           </button>
-          <RoleGuard adminOnly>
-            <button
-              type="button"
-              onClick={openAddAddon}
-              className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-[#0a2a4a] px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-[#0d3558] dark:bg-blue-700 dark:hover:bg-blue-600"
-            >
-              <Plus className="h-4 w-4" />
-              Add Addon
-            </button>
-          </RoleGuard>
-        </div>
+        </RoleGuard>
       </div>
 
       {/* Add Addon Dialog */}

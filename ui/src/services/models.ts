@@ -338,6 +338,97 @@ export interface AvailableVersionsResponse {
   versions: AvailableVersion[]
 }
 
+// --- Curated catalog (v1.21 Marketplace) ---
+//
+// Mirrors `internal/catalog.CatalogEntry` and the v1.21 catalog handlers.
+// `security_score` may be the literal string `"unknown"` when ScoreValue.Known
+// is false on the backend; the UI handles both shapes.
+
+export type CatalogScore = number | 'unknown'
+
+export type CatalogCategory =
+  | 'security'
+  | 'observability'
+  | 'networking'
+  | 'autoscaling'
+  | 'gitops'
+  | 'storage'
+  | 'database'
+  | 'backup'
+  | 'chaos'
+  | 'developer-tools'
+
+export type CatalogCuratedBy =
+  | 'cncf-graduated'
+  | 'cncf-incubating'
+  | 'cncf-sandbox'
+  | 'aws-eks-blueprints'
+  | 'azure-aks-addon'
+  | 'gke-marketplace'
+  | 'artifacthub-verified'
+  | 'artifacthub-official'
+
+export type CatalogSecurityTier = 'Strong' | 'Moderate' | 'Weak' | ''
+
+export interface CatalogEntry {
+  name: string
+  description: string
+  chart: string
+  repo: string
+  default_namespace: string
+  default_sync_wave: number
+  docs_url?: string
+  homepage?: string
+  source_url?: string
+  maintainers: string[]
+  license: string
+  category: CatalogCategory
+  curated_by: CatalogCuratedBy[]
+  security_score?: CatalogScore
+  security_score_updated?: string
+  security_tier?: CatalogSecurityTier
+  github_stars?: number
+  min_kubernetes_version?: string
+  deprecated?: boolean
+  superseded_by?: string
+}
+
+export interface CatalogListResponse {
+  addons: CatalogEntry[]
+  total: number
+}
+
+export interface CatalogVersionEntry {
+  version: string
+  app_version?: string
+  created?: string
+  prerelease: boolean
+}
+
+export interface CatalogVersionsResponse {
+  addon: string
+  chart: string
+  repo: string
+  versions: CatalogVersionEntry[]
+  latest_stable?: string
+  cached_at: string
+}
+
+/** Filter shape used by the Marketplace Browse tab. AND semantics across keys. */
+export interface CatalogListFilters {
+  q?: string
+  category?: CatalogCategory[]
+  curated_by?: CatalogCuratedBy[]
+  license?: string[]
+  /**
+   * Coarse OpenSSF tier the user picked in the sidebar. The backend takes a
+   * numeric `min_score`; the UI maps tier → numeric here.
+   */
+  min_score?: number
+  /** When true, entries with `security_score: "unknown"` stay visible. */
+  include_unknown_score?: boolean
+}
+
 export interface ValueDiffEntry {
   path: string
   type: 'added' | 'removed' | 'changed'

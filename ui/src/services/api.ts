@@ -523,4 +523,58 @@ export const api = {
 
   markAllNotificationsRead: () => postJSON<unknown>('/notifications/read-all'),
 
+  // ─── Curated catalog (v1.21 Marketplace) ────────────────────────────────
+  // Three reads:
+  //   1. listCuratedCatalog       — Browse tab grid (server-side filters)
+  //   2. getCuratedCatalogEntry   — single-entry detail (Configure modal)
+  //   3. listCuratedCatalogVersions — chart versions for the version picker
+  //
+  // All three are GET-only; no audit/tier coverage required.
+
+  listCuratedCatalog: (filters?: import('./models').CatalogListFilters) => {
+    const params = new URLSearchParams()
+    if (filters?.q) params.set('q', filters.q)
+    if (filters?.category && filters.category.length > 0) {
+      // Backend handler only honours a single `category` query param today.
+      // Multi-category is handled client-side in MarketplaceBrowseTab so we
+      // just send the first when there's exactly one — otherwise let the
+      // client filter the full list. Same approach for license below.
+      if (filters.category.length === 1) params.set('category', filters.category[0])
+    }
+    if (filters?.curated_by && filters.curated_by.length > 0) {
+      // The backend takes a comma-separated list and ANDs them; that maps
+      // exactly to multi-select semantics.
+      params.set('curated_by', filters.curated_by.join(','))
+    }
+    if (filters?.license && filters.license.length === 1) {
+      params.set('license', filters.license[0])
+    }
+    if (filters?.min_score && filters.min_score > 0) {
+      params.set('min_score', String(filters.min_score))
+    }
+    const qs = params.toString()
+    return fetchJSON<import('./models').CatalogListResponse>(
+      `/catalog/addons${qs ? `?${qs}` : ''}`,
+    )
+  },
+
+  getCuratedCatalogEntry: (name: string) =>
+    fetchJSON<import('./models').CatalogEntry>(
+      `/catalog/addons/${encodeURIComponent(name)}`,
+    ),
+
+  listCuratedCatalogVersions: (
+    name: string,
+    options?: { includePrereleases?: boolean },
+  ) => {
+    const params = new URLSearchParams()
+    if (options?.includePrereleases === false) {
+      params.set('include_prereleases', 'false')
+    }
+    const qs = params.toString()
+    return fetchJSON<import('./models').CatalogVersionsResponse>(
+      `/catalog/addons/${encodeURIComponent(name)}/versions${qs ? `?${qs}` : ''}`,
+    )
+  },
+
 }
