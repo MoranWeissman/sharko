@@ -215,8 +215,87 @@ export async function updateClusterSettings(name: string, settings: { secret_pat
   return patchJSON<any>(`/clusters/${encodeURIComponent(name)}`, settings)
 }
 
-export async function addAddon(data: { name: string; chart: string; repo_url: string; version: string; namespace?: string; sync_wave?: number }) {
-  return postJSON<any>('/addons', data)
+export interface AddAddonResponse {
+  // Top-level fields when no attribution warning fired (raw orchestrator result).
+  pr_url?: string
+  pr_id?: number
+  branch?: string
+  merged?: boolean
+  attribution_warning?: 'no_per_user_pat'
+  // Legacy alias surfaced by the raw form before v1.20 — kept on the type so
+  // existing callers (AddonCatalog.tsx Add Addon dialog) compile cleanly.
+  pull_request_url?: string
+  // When attribution_warning is set, the orchestrator result is wrapped under `result`.
+  result?: {
+    pr_url?: string
+    pr_id?: number
+    branch?: string
+    merged?: boolean
+  }
+}
+
+/**
+ * Structured 409 body returned when the addon is already in the catalog.
+ * The Marketplace Configure modal renders this inline (with a deep-link to
+ * the existing addon page) instead of a generic toast. Backed by V121-5.1.
+ */
+export interface AddonAlreadyExistsError extends Error {
+  code: 'addon_already_exists'
+  status: 409
+  addon: string
+  existingUrl: string
+}
+
+export function isAddonAlreadyExistsError(e: unknown): e is AddonAlreadyExistsError {
+  return (
+    typeof e === 'object' &&
+    e !== null &&
+    (e as { code?: string }).code === 'addon_already_exists'
+  )
+}
+
+export async function addAddon(data: {
+  name: string
+  chart: string
+  repo_url: string
+  version: string
+  namespace?: string
+  sync_wave?: number
+  /** V121-5.2: identifies the originating UI flow ("marketplace" or "manual"). */
+  source?: 'marketplace' | 'manual'
+}): Promise<AddAddonResponse> {
+  // Use raw fetch so we can detect the structured 409 body that V121-5.1
+  // returns when the addon already exists in the catalog. postJSON throws a
+  // plain Error with just `error` text and we'd lose `addon` / `existing_url`.
+  const res = await fetch(`${BASE_URL}/addons`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(data),
+  })
+  if (res.status === 401) {
+    sessionStorage.removeItem(TOKEN_KEY)
+    window.location.reload()
+    throw new Error('Session expired')
+  }
+  if (res.status === 409) {
+    const body = (await res.json().catch(() => ({}))) as {
+      error?: string
+      code?: string
+      addon?: string
+      existing_url?: string
+    }
+    const err = new Error(body.error || 'Addon already in catalog') as AddonAlreadyExistsError
+    err.code = 'addon_already_exists'
+    err.status = 409
+    err.addon = body.addon || data.name
+    err.existingUrl = body.existing_url || `/addons/${encodeURIComponent(data.name)}`
+    throw err
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error((body as { error?: string }).error || res.statusText)
+  }
+  return (await res.json()) as AddAddonResponse
 }
 
 export async function removeAddon(name: string) {

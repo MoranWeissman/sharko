@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Loader2, Info, ExternalLink, AlertCircle } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import {
+  AlertCircle,
+  CheckCircle2,
+  ExternalLink,
+  GitPullRequest,
+  Info,
+  Loader2,
+} from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -9,7 +17,9 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { ScorecardBadge } from '@/components/ScorecardBadge'
-import { api } from '@/services/api'
+import { AttributionNudge } from '@/components/AttributionNudge'
+import { showToast } from '@/components/ToastNotification'
+import { api, addAddon, isAddonAlreadyExistsError, type AddAddonResponse } from '@/services/api'
 import type {
   CatalogEntry,
   CatalogVersionEntry,
@@ -22,22 +32,40 @@ import type {
  * Pre-fills name/namespace/sync-wave from the curated entry's defaults and
  * fetches available chart versions from /catalog/addons/{name}/versions.
  *
- * Submit lands in V121-5 (the actual orchestrator-backed Add-PR flow). For
- * this epic we wire the click but show a placeholder dialog explaining the
- * deferred work — this lets the rest of the modal (validation, version
- * picker, A11y) be reviewed and shipped without the orchestration tail.
+ * V121-5 wires Submit to POST /api/v1/addons (the existing v1.20 Tier 2 endpoint
+ * that opens a PR against `addons-catalog.yaml`). Three behaviours land here:
+ *   - 5.1 Duplicate-guard: pre-flight check against /addons/catalog so Submit
+ *     is disabled before the user clicks; defence-in-depth via the server's
+ *     409 response (handled inline, not as a generic toast).
+ *   - 5.2 Tier 2 attribution: the body carries `source: "marketplace"` so the
+ *     existing `addon_added` audit event records the originating UI flow
+ *     without inventing a new event name (LOCKED 2026-04-19, Moran).
+ *   - 5.3 Success: PR-link banner inside the modal + toast with the PR url.
+ *     Auto-merge handled — toast says "merged" vs. "opened" based on response.
  */
 
 export interface MarketplaceConfigureModalProps {
   entry: CatalogEntry | null
   open: boolean
   onOpenChange: (open: boolean) => void
+  /**
+   * Optional return-focus target. The modal restores focus here on close so the
+   * V121-5.3 acceptance criteria ("focus returns to Add Addon button") is met
+   * when wired by the parent. When omitted, browsers fall back to the body.
+   */
+  returnFocusRef?: React.RefObject<HTMLElement>
+}
+
+interface DuplicateInfo {
+  addon: string
+  existingUrl: string
 }
 
 export function MarketplaceConfigureModal({
   entry,
   open,
   onOpenChange,
+  returnFocusRef,
 }: MarketplaceConfigureModalProps) {
   const [name, setName] = useState('')
   const [namespace, setNamespace] = useState('')
@@ -50,7 +78,18 @@ export function MarketplaceConfigureModal({
   const [versionsLoading, setVersionsLoading] = useState(false)
   const [versionsError, setVersionsError] = useState<string | null>(null)
 
-  const [submitNotice, setSubmitNotice] = useState<string | null>(null)
+  // Pre-flight duplicate check: pull the user's existing catalog once and check
+  // every keystroke against the lower-cased name set. Cheap (one fetch per
+  // modal open) and immediate feedback before the user submits.
+  const [existingNames, setExistingNames] = useState<Set<string> | null>(null)
+  const [hasPersonalToken, setHasPersonalToken] = useState<boolean | undefined>(undefined)
+
+  const [submitting, setSubmitting] = useState(false)
+  // duplicateInfo populated either by the pre-flight check (5.1) or by the
+  // server's 409 fallback (defence in depth).
+  const [duplicateInfo, setDuplicateInfo] = useState<DuplicateInfo | null>(null)
+  const [submitError, setSubmitError] = useState<string | null>(null)
+  const [submitResult, setSubmitResult] = useState<AddAddonResponse | null>(null)
 
   // Reset state every time a new entry is loaded.
   useEffect(() => {
@@ -63,8 +102,54 @@ export function MarketplaceConfigureModal({
     setShowPrereleases(false)
     setVersionsResp(null)
     setVersionsError(null)
-    setSubmitNotice(null)
+    setSubmitting(false)
+    setDuplicateInfo(null)
+    setSubmitError(null)
+    setSubmitResult(null)
   }, [entry, open])
+
+  // Pre-flight: load the user's existing catalog once per modal open so the
+  // V121-5.1 duplicate inline message can render without a server round-trip
+  // on every keystroke.
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    api
+      .getAddonCatalog()
+      .then((resp) => {
+        if (cancelled) return
+        const names = new Set(
+          resp.addons.map((a) => a.addon_name.trim().toLowerCase()),
+        )
+        setExistingNames(names)
+      })
+      .catch(() => {
+        // Non-fatal — server-side 409 is the safety net. Skip the inline
+        // pre-flight when the catalog can't be fetched.
+        if (!cancelled) setExistingNames(new Set())
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open])
+
+  // Pre-flight: look up whether the user has a personal PAT so the inline
+  // AttributionNudge (V121-5 prompt) can render proactively. Best effort.
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    api
+      .getMe()
+      .then((me) => {
+        if (!cancelled) setHasPersonalToken(me.has_github_token)
+      })
+      .catch(() => {
+        if (!cancelled) setHasPersonalToken(undefined)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open])
 
   // Fetch versions when the modal opens for a given entry.
   useEffect(() => {
@@ -115,30 +200,91 @@ export function MarketplaceConfigureModal({
   const versionInvalid =
     versionTouched && !!version && versionsResp !== null && !versionInList
 
+  // V121-5.1: live duplicate detection. Lower-cased compare to match the
+  // catalog reader (catalog names are stored lowercase by convention).
+  const trimmedName = name.trim()
+  const isDuplicate = useMemo(() => {
+    if (!existingNames || trimmedName.length === 0) return false
+    return existingNames.has(trimmedName.toLowerCase())
+  }, [existingNames, trimmedName])
+
   const formValid =
-    name.trim().length > 0 &&
+    trimmedName.length > 0 &&
     namespace.trim().length > 0 &&
     !Number.isNaN(parseInt(syncWave, 10)) &&
     version.trim().length > 0 &&
-    !versionInvalid
+    !versionInvalid &&
+    !isDuplicate &&
+    !submitting &&
+    submitResult === null
+
+  // Once we've successfully opened a PR, reading the result off either the
+  // top-level fields or the wrapped `result` (when attribution_warning was set
+  // by withAttributionWarning on the server). Same shape as ValuesEditor.
+  const prURL = submitResult?.pr_url || submitResult?.result?.pr_url
+  const prID = submitResult?.pr_id ?? submitResult?.result?.pr_id
+  const merged = submitResult?.merged ?? submitResult?.result?.merged ?? false
 
   if (!entry) return null
 
-  const handleSubmit = () => {
-    if (!formValid) return
-    // V121-5 will replace this with a real call to addAddon() that uses the
-    // curated entry's `chart`/`repo` fields. Emitting a placeholder here so
-    // the wiring is clear and reviewers see the contract.
-    setSubmitNotice(
-      `V121-5 will wire Submit to the Add-PR orchestrator. ` +
-        `Submitted payload preview: name=${name.trim()}, namespace=${namespace.trim()}, ` +
-        `sync_wave=${parseInt(syncWave, 10)}, version=${version.trim()}, ` +
-        `chart=${entry.chart}, repo=${entry.repo}.`,
-    )
+  const handleSubmit = async () => {
+    if (!formValid || !entry) return
+    setSubmitting(true)
+    setSubmitError(null)
+    setDuplicateInfo(null)
+    try {
+      const res = await addAddon({
+        name: trimmedName,
+        chart: entry.chart,
+        repo_url: entry.repo,
+        version: version.trim(),
+        namespace: namespace.trim(),
+        sync_wave: parseInt(syncWave, 10),
+        // V121-5.2 (LOCKED 2026-04-19, Moran): identifies the originating UI
+        // flow so the existing `addon_added` audit event records source
+        // without a new event name.
+        source: 'marketplace',
+      })
+      setSubmitResult(res)
+      const label = prID || res.pr_id || res.result?.pr_id ? `PR #${res.pr_id ?? res.result?.pr_id}` : 'PR'
+      const wasMerged = res.merged ?? res.result?.merged ?? false
+      const url = res.pr_url || res.result?.pr_url
+      if (url) {
+        if (wasMerged) {
+          showToast(`${label} merged →`, 'success')
+        } else {
+          showToast(`${label} opened →`, 'success')
+        }
+      } else {
+        showToast(`${entry.name} added`, 'success')
+      }
+    } catch (e) {
+      if (isAddonAlreadyExistsError(e)) {
+        // Server-side defence-in-depth tripped — render the same inline
+        // duplicate message used for the pre-flight check.
+        setDuplicateInfo({ addon: e.addon, existingUrl: e.existingUrl })
+      } else {
+        const msg = e instanceof Error ? e.message : 'Failed to open PR'
+        setSubmitError(msg)
+        showToast(`Failed to add addon — ${msg}`, 'info')
+      }
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  // V121-5.3: when the modal closes after a successful submit, restore focus
+  // to the Add Addon button (or whatever ref the parent passed).
+  const handleOpenChange = (next: boolean) => {
+    onOpenChange(next)
+    if (!next && returnFocusRef?.current) {
+      // setTimeout to wait for Radix to release focus.
+      setTimeout(() => returnFocusRef.current?.focus(), 0)
+    }
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
         className="max-w-2xl"
         aria-describedby="marketplace-configure-desc"
@@ -294,32 +440,115 @@ export function MarketplaceConfigureModal({
           </Field>
         </div>
 
-        {submitNotice && (
+        {/* V121-5.1 — duplicate inline message. Both pre-flight (set when the
+            user types a name already in the catalog) and server-side 409
+            land in the same banner so the user sees one consistent error. */}
+        {(isDuplicate || duplicateInfo) && !submitResult && (
           <div
-            role="status"
-            className="flex items-start gap-2 rounded-md bg-amber-50 p-3 text-sm text-amber-900 ring-1 ring-amber-200 dark:bg-amber-900/30 dark:text-amber-200 dark:ring-amber-700"
+            role="alert"
+            className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200"
           >
             <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-            <p>{submitNotice}</p>
+            <p>
+              <span className="font-semibold">{duplicateInfo?.addon ?? trimmedName}</span>{' '}
+              is already in the catalog.{' '}
+              <Link
+                to={duplicateInfo?.existingUrl ?? `/addons/${encodeURIComponent(trimmedName)}`}
+                onClick={() => onOpenChange(false)}
+                className="font-medium underline hover:no-underline"
+              >
+                Open its page
+              </Link>{' '}
+              to edit or enable it on a cluster, or change the Display name to
+              register a different copy.
+            </p>
+          </div>
+        )}
+
+        {/* V121-5 — proactive attribution nudge inline near Submit when the
+            user has no personal PAT yet (Tier 2 will fall back to the
+            service token + Co-authored-by trailer). */}
+        {hasPersonalToken === false && !submitResult && (
+          <AttributionNudge inline />
+        )}
+
+        {/* V121-5 — reactive attribution nudge if the server told us it fell
+            back to the service token. */}
+        {submitResult?.attribution_warning === 'no_per_user_pat' && hasPersonalToken !== false && (
+          <AttributionNudge inline />
+        )}
+
+        {/* V121-5.3 — success banner with PR link. Auto-merge handled: the
+            language doesn't claim "opened for review" when the PR is already
+            merged. */}
+        {submitResult && prURL && (
+          <div
+            role="status"
+            className="flex items-start gap-2 rounded-md border border-green-300 bg-green-50 p-3 text-sm text-green-900 dark:border-green-700 dark:bg-green-950/40 dark:text-green-200"
+          >
+            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+            <div className="flex-1">
+              <p className="font-medium">
+                {merged
+                  ? 'PR merged — addon added to your catalog'
+                  : 'PR opened — your addon is on its way'}
+              </p>
+              <a
+                href={prURL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-1 inline-flex items-center gap-1 text-xs font-medium underline hover:no-underline"
+              >
+                <GitPullRequest className="h-3 w-3" aria-hidden="true" />
+                {prID ? `View PR #${prID} on GitHub` : 'View PR on GitHub'}
+                <ExternalLink className="h-3 w-3" aria-hidden="true" />
+              </a>
+            </div>
+          </div>
+        )}
+
+        {submitError && !submitResult && (
+          <div
+            role="alert"
+            className="flex items-start gap-2 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-900 dark:border-red-700 dark:bg-red-950/40 dark:text-red-200"
+          >
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+            <p>{submitError}</p>
           </div>
         )}
 
         <DialogFooter>
           <button
             type="button"
-            onClick={() => onOpenChange(false)}
+            onClick={() => handleOpenChange(false)}
             className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#6aade0] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
           >
-            Cancel
+            {submitResult ? 'Close' : 'Cancel'}
           </button>
-          <button
-            type="button"
-            onClick={handleSubmit}
-            disabled={!formValid}
-            className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
-          >
-            Submit (preview)
-          </button>
+          {!submitResult && (
+            <button
+              type="button"
+              onClick={handleSubmit}
+              disabled={!formValid}
+              title={
+                isDuplicate
+                  ? `${trimmedName} is already in the catalog`
+                  : !formValid
+                    ? 'Fix the highlighted fields first'
+                    : 'Open a PR adding this addon to your catalog'
+              }
+              className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
+            >
+              {submitting ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                  Submitting…
+                </>
+              ) : (
+                'Submit & open PR'
+              )}
+            </button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -55,12 +55,22 @@ const fixtures: CatalogEntry[] = [
 
 const listMock = vi.fn().mockResolvedValue({ addons: fixtures, total: fixtures.length })
 const listVersionsMock = vi.fn()
+// V121-5.1 added a pre-flight catalog fetch + a getMe call inside the modal so
+// it can render the duplicate inline message and the proactive AttributionNudge.
+const getCatalogMock = vi.fn().mockResolvedValue({ addons: [] })
+const getMeMock = vi.fn().mockResolvedValue({ username: 'tester', role: 'admin', has_github_token: true })
+const addAddonMock = vi.fn()
 
 vi.mock('@/services/api', () => ({
   api: {
     listCuratedCatalog: () => listMock(),
     listCuratedCatalogVersions: (...args: unknown[]) => listVersionsMock(...args),
+    getAddonCatalog: () => getCatalogMock(),
+    getMe: () => getMeMock(),
   },
+  addAddon: (...args: unknown[]) => addAddonMock(...args),
+  isAddonAlreadyExistsError: (e: unknown) =>
+    typeof e === 'object' && e !== null && (e as { code?: string }).code === 'addon_already_exists',
 }))
 
 function renderTab(initialEntries: string[] = ['/']) {
@@ -75,6 +85,9 @@ describe('MarketplaceTab', () => {
   beforeEach(() => {
     listMock.mockClear()
     listVersionsMock.mockReset()
+    getCatalogMock.mockClear()
+    getMeMock.mockClear()
+    addAddonMock.mockReset()
   })
 
   it('renders all curated entries on first load', async () => {
