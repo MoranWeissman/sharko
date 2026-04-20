@@ -68,12 +68,26 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Set up QEMU (cross-arch emulation)
+        # buildx needs QEMU registered to cross-compile the alpine
+        # final stage for arm64 on an amd64 runner. Go itself
+        # cross-compiles natively (CGO_ENABLED=0) and doesn't need
+        # emulation, but the alpine RUN apk does — so we register
+        # all standard binfmt handlers up front.
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
       - name: Build and push image
         id: build
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64
+          # Multi-arch: amd64 for traditional cloud nodes, arm64 for
+          # Graviton/Ampere/Apple Silicon. buildx assembles a manifest
+          # list under the same tag; cosign signs the manifest digest
+          # once and the signature covers every per-arch image (V122-2).
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

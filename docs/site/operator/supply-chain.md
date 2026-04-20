@@ -6,7 +6,7 @@ What gets signed:
 
 | Artifact | Format | How to verify |
 |----------|--------|---------------|
-| Container image (`ghcr.io/moranweissman/sharko:vX.Y.Z`) | Cosign signature in OCI registry | `cosign verify` |
+| Container image (`ghcr.io/moranweissman/sharko:vX.Y.Z`, `linux/amd64` + `linux/arm64`) | Cosign signature on the manifest list in OCI registry | `cosign verify` |
 | Helm OCI chart (`oci://ghcr.io/moranweissman/sharko/sharko:X.Y.Z`) | Cosign signature in OCI registry | `cosign verify` |
 | GitHub release archives (`sharko_X.Y.Z_<os>_<arch>.tar.gz`, `checksums.txt`) | Detached `.sig` + `.pem` published with the release | `cosign verify-blob` |
 
@@ -79,6 +79,23 @@ Treat it as a critical signal — do not deploy:
 1. Confirm the tag exists in [the GitHub releases page](https://github.com/MoranWeissman/sharko/releases) and the workflow run shows green.
 2. Re-fetch the artifact from the release page in case of partial download.
 3. If the failure persists, file an issue with the cosign output. Do not work around verification by ignoring the error.
+
+## Multi-architecture images
+
+Starting with v1.22 the published image is a multi-arch manifest list. `docker pull` (and `kubectl` / `containerd`) automatically picks the right per-arch image for the node:
+
+| Platform | Use cases |
+|----------|-----------|
+| `linux/amd64` | Standard x86_64 cloud nodes (most EC2, GCE, AKS) |
+| `linux/arm64` | AWS Graviton, Ampere Altra, Oracle Ampere A1, Apple Silicon dev machines |
+
+Cosign signs the manifest-list digest, not the per-arch images. A single `cosign verify ghcr.io/moranweissman/sharko:vX.Y.Z` therefore validates the signature for every architecture. There is no per-arch verify command.
+
+If you want to inspect which architectures a tag publishes:
+
+```bash
+docker buildx imagetools inspect ghcr.io/moranweissman/sharko:vX.Y.Z
+```
 
 ## Per-PR images are not signed
 
