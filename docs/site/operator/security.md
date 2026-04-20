@@ -93,14 +93,14 @@ rbac:
 
 The ClusterRole grants `get`, `list`, and `watch` on ArgoCD CRDs (Applications, AppProjects, ApplicationSets). It does not grant write access to the Kubernetes API.
 
-Optionally, read access to Kubernetes Nodes can be enabled for fleet dashboards that show node counts:
+Read access to Kubernetes Nodes (`get`, `list` on `v1/nodes`) is granted by default so the Dashboard node-count widget works out of the box. Node metadata is low-sensitivity — no pod, secret, or workload data is exposed. To disable it on clusters where cluster-wide node reads are restricted, set:
 
 ```yaml
 config:
-  nodeAccess: true
+  nodeAccess: false
 ```
 
-This adds a separate ClusterRole rule. Disable it if not needed.
+When disabled, the `/api/v1/cluster/nodes` endpoint returns an empty list with a `"Node info only available when running in-cluster"` style message and the Dashboard widget degrades gracefully.
 
 ## Secret Encryption
 

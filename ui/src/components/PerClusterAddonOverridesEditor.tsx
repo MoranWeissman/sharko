@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { memo, useEffect, useMemo, useState } from 'react'
 import { Info, Loader2 } from 'lucide-react'
 import { ValuesEditor } from '@/components/ValuesEditor'
 import { RecentPRsPanel } from '@/components/RecentPRsPanel'
@@ -19,6 +19,19 @@ import type {
  *  - the same diff/nudge/PR-link UX as the global editor.
  *
  * Pre-fetches /users/me once for the proactive AttributionNudge signal.
+ *
+ * v1.21.8: wrapped in React.memo with a content-based equality check on
+ * `addons`. The parent (ClusterDetail) polls every 30s and produces a
+ * fresh `data.addon_comparisons` array reference on every tick — even
+ * when the content is unchanged. Without memo, each tick re-rendered
+ * this component, which re-ran the `eligible` useMemo (returning a new
+ * array ref) and, combined with the ValuesEditor's `selected`-based key,
+ * caused the editor to remount repeatedly. That remount storm saturated
+ * the event loop after post-migration cache invalidations and made tab
+ * clicks feel dead. Memoising on addon identity (addon_name +
+ * git_configured + argocd_deployed — the three fields the filter and
+ * picker care about) eliminates the storm while still re-rendering when
+ * the user enables/disables or adopts an addon.
  */
 export interface PerClusterAddonOverridesEditorProps {
   clusterName: string
@@ -34,7 +47,7 @@ export interface PerClusterAddonOverridesEditorProps {
   onSaved?: () => void
 }
 
-export function PerClusterAddonOverridesEditor({
+function PerClusterAddonOverridesEditorImpl({
   clusterName,
   addons,
   gitRepoBase,
@@ -57,8 +70,22 @@ export function PerClusterAddonOverridesEditor({
   const [error, setError] = useState<string | null>(null)
   const [me, setMe] = useState<MeResponse | null>(null)
 
+  // Keep `selected` pointed at a valid addon. Two cases to handle:
+  //  (1) initial mount with zero eligible addons, then eligible populates —
+  //      seed `selected` with the first entry.
+  //  (2) the currently selected addon was removed from the cluster — fall
+  //      back to the first eligible entry so the editor doesn't disappear.
+  // Critically, we must NEVER transiently flip `selected` to empty-string
+  // when a valid option still exists, or the `key={clusterName/selected}`
+  // on ValuesEditor would unmount + remount the editor.
   useEffect(() => {
-    if (!selected && eligible.length > 0) {
+    if (eligible.length === 0) return
+    if (!selected) {
+      setSelected(eligible[0].addon_name)
+      return
+    }
+    const stillPresent = eligible.some((a) => a.addon_name === selected)
+    if (!stillPresent) {
       setSelected(eligible[0].addon_name)
     }
   }, [eligible, selected])
@@ -159,3 +186,40 @@ export function PerClusterAddonOverridesEditor({
     </div>
   )
 }
+
+/**
+ * Shallow signature of the addon fields the editor actually uses. If this
+ * signature is identical across renders, the editor safely skips the
+ * re-render — no event-loop churn, no editor remount, no network churn.
+ *
+ * Only `addon_name`, `git_configured`, and `argocd_deployed` influence
+ * eligibility; other fields (status, issues, sync status, versions) are
+ * irrelevant to the picker and are intentionally ignored.
+ */
+function addonsSignature(addons: AddonComparisonStatus[]): string {
+  const parts: string[] = []
+  for (const a of addons) {
+    parts.push(
+      `${a.addon_name}|${a.git_configured ? '1' : '0'}|${a.argocd_deployed ? '1' : '0'}`,
+    )
+  }
+  return parts.join(',')
+}
+
+function propsEqual(
+  prev: PerClusterAddonOverridesEditorProps,
+  next: PerClusterAddonOverridesEditorProps,
+): boolean {
+  if (prev.clusterName !== next.clusterName) return false
+  if (prev.gitRepoBase !== next.gitRepoBase) return false
+  if (prev.gitDefaultBranch !== next.gitDefaultBranch) return false
+  if (prev.onSaved !== next.onSaved) return false
+  if (prev.addons === next.addons) return true
+  if (prev.addons.length !== next.addons.length) return false
+  return addonsSignature(prev.addons) === addonsSignature(next.addons)
+}
+
+export const PerClusterAddonOverridesEditor = memo(
+  PerClusterAddonOverridesEditorImpl,
+  propsEqual,
+)

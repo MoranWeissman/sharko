@@ -17,7 +17,8 @@ rules:
     verbs: ["get", "list"]
     # Cluster-wide read via ClusterRoleBinding; write access in argocd namespace via argocd-secrets Role
   {{- if .Values.config.nodeAccess }}
-  # Node read access (opt-in via config.nodeAccess)
+  # Node read access (default-on; set config.nodeAccess=false to disable).
+  # Used by the Dashboard node-count widget (/api/v1/cluster/nodes).
   - apiGroups: [""]
     resources: ["nodes"]
     verbs: ["get", "list"]

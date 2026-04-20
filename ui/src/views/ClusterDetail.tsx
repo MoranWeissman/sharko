@@ -280,6 +280,13 @@ export function ClusterDetail() {
     void fetchData(true);
   }, [fetchData]);
 
+  // Stable onSaved for the per-cluster overrides editor — passing a fresh
+  // arrow function on every render would defeat the editor's React.memo
+  // prop-equality check and re-trigger its useEffects every parent tick.
+  const handlePerClusterOverridesSaved = useCallback(() => {
+    setConfigFetched(false);
+  }, []);
+
   const handleRemoveCluster = useCallback(async () => {
     if (!name) return;
     setRemoving(true);
@@ -1170,10 +1177,7 @@ export function ClusterDetail() {
                   addons={data.addon_comparisons}
                   gitRepoBase={gitRepoBase}
                   gitDefaultBranch={gitDefaultBranch}
-                  onSaved={() => {
-                    // Refresh the diff panel after a successful PR.
-                    setConfigFetched(false);
-                  }}
+                  onSaved={handlePerClusterOverridesSaved}
                 />
               </RoleGuard>
 

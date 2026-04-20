@@ -33,10 +33,15 @@ config:
   # Connections are managed via the Settings UI and stored in an encrypted K8s Secret.
   # The Secret name can be customized below. On first deploy, open the UI to configure.
   connectionSecretName: "sharko-connections"
-  # Enable read access to Kubernetes Nodes (get/list).
-  # Adds a ClusterRole rule allowing Sharko to fetch node count and status.
-  # Requires cluster-level permissions — opt-in.
-  nodeAccess: false
+  # Enable read access to Kubernetes Nodes (get/list) on the host cluster.
+  # Adds a ClusterRole rule allowing Sharko to fetch node count and status
+  # for the Dashboard node-count widget. Node metadata (capacity, ready
+  # status, instance type, architecture, OS) is low-sensitivity — no pod,
+  # secret, or workload data is exposed. Enabled by default because the
+  # Dashboard polls /api/v1/cluster/nodes every 30s; disabling it causes
+  # the widget to show a degraded empty state.
+  # Set to false for environments where nodes read access is restricted.
+  nodeAccess: true
   # Comma-separated list of environment keywords to extract from cluster names.
   # e.g. "dev,qa,staging,prod" — cluster "nms-core-dev-eks" → env "dev"
   environments: ""
