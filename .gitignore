@@ -54,5 +54,8 @@ coverage/
 *.tar.gz
 .superpowers/
 
+# MkDocs build output
+/site/
+
 # Internal planning docs (not for public repo)
 docs/superpowers/

@@ -55,6 +55,6 @@ Click **Start Managing** on any discovered cluster to bring it under Sharko mana
 ## Next Steps
 
 - [Add addons to the catalog](../user-guide/addons.md)
-- [Configure ingress for production access](installation.md#via-ingress-production)
+- [Configure ingress for production access](installation.md#access-the-ui)
 - [Enable the AI assistant](../operator/configuration.md#ai-provider)
 - [Set up API keys for CI/CD](../user-guide/connections.md#api-keys)

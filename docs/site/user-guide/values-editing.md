@@ -169,6 +169,6 @@ These are intentional v1.20 cuts; pencilled in for later releases:
 - **Quick-edit form** generated from the schema (v1.21 candidate)
 - **History view** of past edits to a values file (v1.x — depends on PR tracker enrichment)
 - **One-click rollback** from a history entry
-- **Per-key permissions / value-level RBAC** (V2.x — see [V2 roadmap](../../design/2026-04-16-attribution-and-permissions-model.md))
+- **Per-key permissions / value-level RBAC** (V2.x — planned in the V2 hardening roadmap)
 
 If you hit a workflow you wish was in here, file an issue.

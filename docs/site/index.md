@@ -1,8 +1,48 @@
 # Sharko
 
-Sharko is an addon management server for Kubernetes clusters, built on ArgoCD. It runs in-cluster and manages the full lifecycle of addons (cert-manager, monitoring, logging, and more) across your entire fleet — from a single dashboard, CLI, or REST API.
+<p align="center">
+  <img src="assets/sharko-mascot.png" alt="Sharko mascot" width="240">
+</p>
 
-Install with one Helm command. A guided wizard walks you through connecting your Git repo, ArgoCD instance, and optional secrets provider. Every change Sharko makes goes through a Git PR, so your fleet state is always auditable and version-controlled.
+<p align="center"><em>Declarative addon management for Kubernetes clusters, built on ArgoCD.</em></p>
+
+Sharko runs in-cluster and manages the full lifecycle of addons (cert-manager, monitoring, logging, and more) across your entire fleet — from a single dashboard, CLI, or REST API. Every change goes through a Git PR, so fleet state is always auditable and version-controlled.
+
+<div class="grid cards" markdown>
+
+-   :material-rocket-launch:{ .lg .middle } **Getting Started**
+
+    ---
+
+    Install Sharko and register your first cluster in 5 minutes.
+
+    [:octicons-arrow-right-24: Quickstart](getting-started/quickstart.md)
+
+-   :material-book-open:{ .lg .middle } **User Guide**
+
+    ---
+
+    Day-to-day operations: clusters, addons, values, upgrades.
+
+    [:octicons-arrow-right-24: Read the guide](user-guide/connections.md)
+
+-   :material-tools:{ .lg .middle } **Operator Manual**
+
+    ---
+
+    Install, configure, secure, and troubleshoot a Sharko deployment.
+
+    [:octicons-arrow-right-24: Operator docs](operator/installation.md)
+
+-   :material-console:{ .lg .middle } **API Reference**
+
+    ---
+
+    Swagger-generated endpoint docs for every tier.
+
+    [:octicons-arrow-right-24: API docs](api/overview.md)
+
+</div>
 
 ## Key Features
 
@@ -14,19 +54,6 @@ Install with one Helm command. A guided wizard walks you through connecting your
 - **Secrets management** — deliver credentials to remote clusters (AWS SM or Kubernetes Secrets, no ESO)
 - **AI assistant** — context-aware troubleshooting with OpenAI, Claude, Gemini, or Ollama
 - **API keys** — long-lived tokens for non-interactive consumers
-
-## Quick Links
-
-<div class="grid cards" markdown>
-
-- :material-rocket-launch: **[Quick Start](getting-started/quickstart.md)** — up and running in 5 minutes
-- :material-wizard-hat: **[First-Run Wizard](getting-started/first-run.md)** — what to expect on first access
-- :material-book-open: **[User Guide](user-guide/connections.md)** — day-to-day operations
-- :material-server: **[Installation](getting-started/installation.md)** — install, configure, secure
-- :material-console: **[CLI Reference](cli/commands.md)** — all commands and flags
-- :material-api: **[API Reference](api/overview.md)** — endpoints, auth, schemas
-
-</div>
 
 ## Try the Demo
 
