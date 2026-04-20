@@ -23,7 +23,6 @@ theme:
         icon: material/brightness-4
         name: Switch to light mode
   features:
-    - navigation.sections
     - navigation.instant
     - navigation.top
     - navigation.tracking
@@ -34,6 +33,9 @@ theme:
     - search.highlight
   icon:
     repo: fontawesome/brands/github
+
+extra_css:
+  - stylesheets/extra.css
 
 nav:
   - Home: index.md
