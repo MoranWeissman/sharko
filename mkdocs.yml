@@ -1,12 +1,14 @@
 site_name: Sharko
 site_description: Addon management for Kubernetes clusters, built on ArgoCD
-site_url: https://moranweissman.github.io/sharko
+site_url: https://sharko.readthedocs.io/
 repo_url: https://github.com/MoranWeissman/sharko
 repo_name: MoranWeissman/sharko
 docs_dir: docs/site
 
 theme:
   name: material
+  logo: assets/sharko-icon-256.png
+  favicon: assets/sharko-icon-32.png
   palette:
     - scheme: default
       primary: blue
@@ -24,8 +26,14 @@ theme:
     - navigation.tabs
     - navigation.sections
     - navigation.expand
-    - search.suggest
+    - navigation.instant
+    - navigation.top
+    - navigation.tracking
+    - toc.follow
+    - content.tabs.link
     - content.code.copy
+    - search.suggest
+    - search.highlight
   icon:
     repo: fontawesome/brands/github
 
@@ -74,6 +82,9 @@ markdown_extensions:
       alternate_style: true
   - pymdownx.highlight:
       anchor_linenums: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
   - attr_list
   - md_in_html
   - toc:
@@ -81,3 +92,11 @@ markdown_extensions:
 
 plugins:
   - search
+  - minify:
+      minify_html: true
+  - git-revision-date-localized:
+      enable_creation_date: false
+      type: date
+      fallback_to_build_date: true
+  - redirects:
+      redirect_maps: {}
