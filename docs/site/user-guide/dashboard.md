@@ -6,6 +6,9 @@ document explains the **state semantics** the dashboard uses — they are the
 same semantics every other Sharko view applies, sourced from a single
 in-browser cache.
 
+![Sharko dashboard — cluster health and addon version matrix across the fleet.](../assets/screenshots/dashboard.png){ loading=lazy }
+<figcaption>Sharko dashboard — cluster health and addon version matrix across the fleet.</figcaption>
+
 ## Unified addon state model
 
 Sharko polls ArgoCD for application health and surfaces it across the UI

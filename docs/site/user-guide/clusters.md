@@ -2,6 +2,9 @@
 
 Clusters are the units of deployment in Sharko. Each registered cluster gets its own values directory in the addons repo, and ArgoCD manages addon deployments for it via the ApplicationSet.
 
+![Cluster detail — deployed addons, per-cluster values overrides, and pending PRs.](../assets/screenshots/cluster-detail.png){ loading=lazy }
+<figcaption>Cluster detail — deployed addons, per-cluster values overrides, and pending PRs.</figcaption>
+
 ## Managed vs Discovered Clusters
 
 Sharko distinguishes between two types of clusters:

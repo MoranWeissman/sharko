@@ -11,6 +11,9 @@ Sharko emits an audit record for every mutating API call (cluster registration, 
 
 Both streams emit **the same fields** — `id`, `timestamp`, `event`, `user`, `action`, `resource`, `source`, `result`, `duration_ms`, `attribution_mode`, `tier`. The stdout records are JSON, one event per line, suitable for ingestion by any standard log shipper.
 
+![Audit Log tab showing the in-memory ring buffer with filter controls.](../assets/screenshots/audit-log.png){ loading=lazy }
+<figcaption>Audit Log tab showing the in-memory ring buffer with filter controls.</figcaption>
+
 ## Why this design
 
 Sharko is **stateless**. Persistent audit storage would mean either bolting on a database (ops burden, schema migrations, backup story) or writing files to a PVC (single-pod limit, lost on PVC reclaim). Neither fits a Kubernetes-native control plane that operators expect to scale, restart, and roll forward without ceremony.
