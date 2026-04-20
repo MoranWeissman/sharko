@@ -1,5 +1,5 @@
 # generated: 2026-04-20
-# last_updated: 2026-04-20 — v1.22 + v1.23 planning artifacts added
+# last_updated: 2026-04-21 — v1.22 complete (PR #265 + #266 merged); v1.23 ready to start
 # project: sharko
 # project_key: NOKEY
 # tracking_system: file-system
@@ -31,15 +31,16 @@
 # ===============
 # - V2 scope (epic-1..7): 32 stories — epics 1-6 done, epic 7 backlog (V2.0.0 release gate)
 # - V1.21 scope (V121-*): catalog & discovery — shipped v1.21.0 (all done)
-# - V1.22 scope (V122-*): marketplace polish — 3 of 4 epics committed; V122-4 in-progress
-# - V1.23 scope (V123-*): catalog extensibility — backlog (planning just completed)
+# - V1.22 scope (V122-*): marketplace polish — ALL 4 EPICS DONE (merged via PR #265 + #266 on main at 1bbedfa; not tagged per pre-release cadence rule)
+# - V1.23 scope (V123-*): catalog extensibility — ready to start (epic-V123-1 first per code-reviewer sequencing)
 # - Epic transitions to 'in-progress' automatically when first story is created
 # - Stories can be worked in parallel if team capacity allows
 # - Agent team per story: implementation agent + test-engineer + devops-agent + docs-writer (mandatory)
-# - Sequencing: V1.22 completion (V122-4) → V1.23 execution → V2 Epic 7 (release gate)
+# - Sequencing: V1.23 Epic 1 (catalog sources) → Epic 2 (per-entry cosign) → Epic 3 (scanning bot) → Epic 4 (docs+release)
+# - Tagging: NO tags cut reflexively — merge PRs to main when green; tag only when user explicitly asks (see feedback_release_cadence.md)
 
 generated: 2026-04-20
-last_updated: 2026-04-20
+last_updated: 2026-04-21
 project: sharko
 project_key: NOKEY
 tracking_system: file-system
@@ -135,15 +136,15 @@ development_status:
   V122-3-2-new-operator-audit-log-md-retention-guide-mkdocs-nav-entry: done
   epic-V122-3-retrospective: optional
 
-  # Epic V122-4: Docs screenshots + stub-page content fill — in-progress (stash@{0})
-  epic-V122-4: in-progress
-  V122-4-1-playwright-screenshot-scaffolding-script-npm-task-demo-fixtures: ready-for-dev
-  V122-4-2-commit-5-generated-screenshots-restore-stash: ready-for-dev
-  V122-4-3-embed-screenshots-into-docs-pages: ready-for-dev
-  V122-4-4-fill-stub-content-for-6-user-guide-pages: ready-for-dev
-  V122-4-5-decide-fate-of-cli-reference-api-reference-architecture-sections: ready-for-dev
-  V122-4-6-run-bmad-code-review-on-the-3-completed-epics-before-shipping: ready-for-dev
-  V122-4-7-single-pr-dev-v1-22-main-tag-v1-22-0: ready-for-dev
+  # Epic V122-4: Docs screenshots + stub-page content fill — DONE (PR #265 merged to main)
+  epic-V122-4: done
+  V122-4-1-playwright-screenshot-scaffolding-script-npm-task-demo-fixtures: done
+  V122-4-2-commit-5-generated-screenshots-restore-stash: done
+  V122-4-3-embed-screenshots-into-docs-pages: done
+  V122-4-4-fill-stub-content-for-6-user-guide-pages: done  # deviation — pages already filled from prior v1.21 docs work; verified clean by tech-lead gate
+  V122-4-5-decide-fate-of-cli-reference-api-reference-architecture-sections: done  # deviation — same (all 6 nav-target pages already had real content)
+  V122-4-6-run-bmad-code-review-on-the-3-completed-epics-before-shipping: done  # artifact at .bmad/output/reviews/v1.22-code-review.md
+  V122-4-7-single-pr-dev-v1-22-main-tag-v1-22-0: done  # PR #265 merged 2026-04-21 at commit b6bc5a7; NO tag cut (pre-release cadence rule)
   epic-V122-4-retrospective: optional
 
   # ============================================================
