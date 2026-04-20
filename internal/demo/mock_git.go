@@ -71,6 +71,17 @@ spec:
     targetRevision: HEAD
     path: bootstrap
 `)
+	// bootstrap/Chart.yaml — the file the /repo/status handler checks to
+	// decide whether the repo is bootstrapped. Without it the demo lands
+	// on the FirstRunWizard at Step 4 forever, which made the docs
+	// screenshot script (V122-4) unable to capture real pages.
+	p.files["bootstrap/Chart.yaml"] = []byte(`apiVersion: v2
+name: sharko-bootstrap
+description: Bootstrap chart that registers the Sharko ApplicationSet
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+`)
 
 	// Per-cluster values
 	p.files["configuration/addons-clusters-values/prod-eu/cert-manager.yaml"] = []byte(`global:
