@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { ClipboardList, RefreshCw, Radio, Loader2, Key, User as UserIcon, Users as UsersIcon } from 'lucide-react';
+import { ClipboardList, RefreshCw, Radio, Loader2, Key, User as UserIcon, Users as UsersIcon, Info } from 'lucide-react';
 import { fetchAuditLog, createAuditStream } from '@/services/api';
 import type { AuditEntry } from '@/services/models';
 
@@ -120,7 +120,7 @@ export function AuditViewer() {
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">Audit Log</h2>
+          <h1 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">Audit Log</h1>
           <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
             Recent API events and operations across all clusters.
           </p>
@@ -148,6 +148,29 @@ export function AuditViewer() {
             Refresh
           </button>
         </div>
+      </div>
+
+      {/* Retention banner — explains the two-stream architecture (V122-3) */}
+      <div
+        role="status"
+        aria-live="polite"
+        className="flex items-start gap-3 rounded-lg ring-2 ring-[#6aade0] bg-[#e0f0ff] px-4 py-3 dark:ring-gray-700 dark:bg-gray-800"
+      >
+        <Info className="mt-0.5 h-4 w-4 flex-shrink-0 text-[#0a3a5a] dark:text-blue-300" aria-hidden="true" />
+        <p className="text-xs text-[#0a3a5a] dark:text-gray-300">
+          Showing the last <strong>1000 in-memory events</strong>. The buffer is wiped on pod restart —
+          see{' '}
+          <a
+            href="https://sharko.readthedocs.io/en/latest/operator/audit-log/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline decoration-dotted underline-offset-2 hover:text-teal-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-500 dark:hover:text-teal-300"
+          >
+            audit log retention
+          </a>{' '}
+          for the long-term retention model via your cluster's log pipeline (Loki, Splunk, ELK,
+          CloudWatch, GCP Logging).
+        </p>
       </div>
 
       {/* Filters */}
