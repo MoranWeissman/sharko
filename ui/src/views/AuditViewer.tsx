@@ -177,8 +177,9 @@ export function AuditViewer() {
       <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#d0e8f8] p-4 dark:ring-gray-700 dark:bg-gray-900">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
           <div>
-            <label className="mb-1 block text-xs font-medium text-[#0a3a5a] dark:text-gray-400">User</label>
+            <label htmlFor="audit-filter-user" className="mb-1 block text-xs font-medium text-[#0a3a5a] dark:text-gray-400">User</label>
             <input
+              id="audit-filter-user"
               type="text"
               value={filterUser}
               onChange={(e) => setFilterUser(e.target.value)}
@@ -187,8 +188,9 @@ export function AuditViewer() {
             />
           </div>
           <div>
-            <label className="mb-1 block text-xs font-medium text-[#0a3a5a] dark:text-gray-400">Action</label>
+            <label htmlFor="audit-filter-action" className="mb-1 block text-xs font-medium text-[#0a3a5a] dark:text-gray-400">Action</label>
             <select
+              id="audit-filter-action"
               value={filterAction}
               onChange={(e) => setFilterAction(e.target.value)}
               className="w-full rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-2 py-1.5 text-xs focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
@@ -199,8 +201,9 @@ export function AuditViewer() {
             </select>
           </div>
           <div>
-            <label className="mb-1 block text-xs font-medium text-[#0a3a5a] dark:text-gray-400">Source</label>
+            <label htmlFor="audit-filter-source" className="mb-1 block text-xs font-medium text-[#0a3a5a] dark:text-gray-400">Source</label>
             <select
+              id="audit-filter-source"
               value={filterSource}
               onChange={(e) => setFilterSource(e.target.value)}
               className="w-full rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-2 py-1.5 text-xs focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
@@ -211,8 +214,9 @@ export function AuditViewer() {
             </select>
           </div>
           <div>
-            <label className="mb-1 block text-xs font-medium text-[#0a3a5a] dark:text-gray-400">Result</label>
+            <label htmlFor="audit-filter-result" className="mb-1 block text-xs font-medium text-[#0a3a5a] dark:text-gray-400">Result</label>
             <select
+              id="audit-filter-result"
               value={filterResult}
               onChange={(e) => setFilterResult(e.target.value)}
               className="w-full rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-2 py-1.5 text-xs focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
@@ -223,8 +227,9 @@ export function AuditViewer() {
             </select>
           </div>
           <div>
-            <label className="mb-1 block text-xs font-medium text-[#0a3a5a] dark:text-gray-400">Cluster</label>
+            <label htmlFor="audit-filter-cluster" className="mb-1 block text-xs font-medium text-[#0a3a5a] dark:text-gray-400">Cluster</label>
             <input
+              id="audit-filter-cluster"
               type="text"
               value={filterCluster}
               onChange={(e) => setFilterCluster(e.target.value)}
@@ -233,8 +238,9 @@ export function AuditViewer() {
             />
           </div>
           <div>
-            <label className="mb-1 block text-xs font-medium text-[#0a3a5a] dark:text-gray-400">Since (RFC3339)</label>
+            <label htmlFor="audit-filter-since" className="mb-1 block text-xs font-medium text-[#0a3a5a] dark:text-gray-400">Since (RFC3339)</label>
             <input
+              id="audit-filter-since"
               type="text"
               value={filterSince}
               onChange={(e) => setFilterSince(e.target.value)}
