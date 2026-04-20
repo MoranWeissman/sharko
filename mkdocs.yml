@@ -1,4 +1,4 @@
-site_name: Sharko
+site_name: Sharko - Addon management for Kubernetes clusters
 site_description: Addon management for Kubernetes clusters, built on ArgoCD
 site_url: https://sharko.readthedocs.io/
 repo_url: https://github.com/MoranWeissman/sharko
