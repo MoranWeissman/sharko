@@ -122,7 +122,7 @@ func LoadCatalogSourcesFromEnv() (*CatalogSourcesConfig, error) {
 	}
 
 	seen := make(map[string]struct{})
-	for _, piece := range strings.Split(raw, ",") {
+	for piece := range strings.SplitSeq(raw, ",") {
 		piece = strings.TrimSpace(piece)
 		if piece == "" {
 			// Tolerate stray commas (e.g. "a,,b" or trailing ",").
