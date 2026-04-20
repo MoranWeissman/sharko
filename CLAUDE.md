@@ -31,22 +31,53 @@ Use these whenever available to save tokens and improve reasoning:
 - **Sequential Thinking MCP** — use for complex reasoning, multi-step decisions, architectural analysis
 - **Context7 MCP** — use whenever working with libraries, frameworks, or tools (React, Vite, Tailwind, shadcn/ui, Helm, Cobra, client-go, etc.). Fetch current docs instead of relying on training data. Include in agent dispatch prompts.
 
-## BMAD Method
+## MANDATORY BMAD FLOW — NO EXCEPTIONS
 
-This project uses BMAD (BMad Method Agile-AI Driven-Development). 67 skills are registered in `.claude/skills/`. **Always prefer BMAD skills** — invoke them automatically when the user's request matches a skill's description. When unsure which skill to use, invoke `bmad-help`.
+**This is a hard rule. Violating it = violating the user's explicit instruction.**
 
-**Auto-invoke rules** — match user intent to BMAD skills:
-- User says "review code" / after finishing a feature → `bmad-code-review`
-- User says "brainstorm" / design question arises → `bmad-brainstorming`
-- User says "plan" / starting new work → `bmad-sprint-planning`
-- User says "build this" / implement a feature → `bmad-quick-dev` or `bmad-dev-story`
-- User says "create PRD" / define requirements → `bmad-create-prd`
-- User says "architecture" / design system → `bmad-create-architecture`
-- User says "test" / expand coverage → `bmad-testarch-automate`
-- User says "what's next" / needs orientation → `bmad-help`
-- Complex decision with trade-offs → `bmad-party-mode` (multi-persona discussion)
+Before ANY of the following, you MUST invoke the matching BMAD skill FIRST — not as an afterthought, not as the second step, FIRST:
 
-**BMAD + Sharko agents:** BMAD drives the workflow. `.claude/team/` agents provide Sharko-specific domain knowledge (K8s/ArgoCD, security, DevOps) that BMAD personas lack. Include relevant `.claude/team/` role files as context when BMAD agents execute code.
+- **Code dispatch** (spawning agents to write code) → `bmad-sprint-planning` or `bmad-create-epics-and-stories` first
+- **Feature work** (starting a new feature/bundle/version) → `bmad-sprint-planning` first
+- **Planning task** (deciding scope, sequencing work) → `bmad-sprint-planning` or `bmad-brainstorming` first
+- **Design question** (architecture, trade-offs) → `bmad-brainstorming` or `bmad-party-mode` first
+- **Post-feature review** (after completing implementation) → `bmad-code-review`
+- **Requirements definition** → `bmad-create-prd`
+- **Test coverage expansion** → `bmad-testarch-automate`
+- **Ambiguous user intent that matches multiple skills** → `bmad-help`
+
+**Excuses that are NOT valid exceptions:**
+- "Scope is clear from the roadmap" — invoke BMAD anyway to formalize
+- "Lean workflow / one agent per bundle" — applies to *execution*, not to skipping BMAD *planning*
+- "Small bundle, not worth the ceremony" — small bundles still get BMAD; BMAD ceremony scales down proportionally
+- "User said 'do it' — that's an execute signal" — kickoff of any feature/bundle is a planning signal regardless of the user's wording
+- "It's obvious what to build" — if it's obvious, BMAD planning takes 2 minutes. Do it.
+- "Already did planning in my head / in a memory file" — not a substitute for producing BMAD artifacts (epics.md, stories, etc.)
+
+If you catch yourself rationalizing around this rule → STOP and ask the user. Do not silently proceed without BMAD.
+
+**Quick operational answers** (one-line questions, status checks, "what's the current state", bug triage questions with no code dispatch) are the only things that are fine without BMAD.
+
+### BMAD skill map
+
+- `bmad-sprint-planning` — start a new feature / bundle / version / any multi-story work
+- `bmad-create-epics-and-stories` — break a design doc into formal epics + stories
+- `bmad-brainstorming` — open-ended design / trade-off exploration
+- `bmad-party-mode` — multi-persona discussion for complex decisions
+- `bmad-create-prd` — formal requirements doc
+- `bmad-create-architecture` — system architecture design
+- `bmad-quick-dev` / `bmad-dev-story` — execute a single story
+- `bmad-code-review` — post-implementation review against plan
+- `bmad-testarch-automate` — test strategy + coverage expansion
+- `bmad-help` — unsure which skill applies
+
+### BMAD + Sharko team agents
+
+BMAD drives the *workflow* (epics, stories, acceptance criteria, review gates). `.claude/team/` agents provide Sharko-specific *domain knowledge* (K8s/ArgoCD/security/DevOps) that generic BMAD personas lack.
+
+**Every** agent dispatch MUST include the relevant `.claude/team/*.md` role file(s) as embedded context in the prompt. This is non-negotiable. An agent dispatch without a role file will produce generic output that misses Sharko-specific constraints (tiered Git attribution, two-operation catalog/deploy model, quality gates, etc.).
+
+If the rule feels like friction, that's the point — the friction prevents the drift that produces flip-flopping recommendations and wasted agent runs.
 
 ## Agent Team
 
