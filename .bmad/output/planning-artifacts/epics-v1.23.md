@@ -73,6 +73,8 @@ This document decomposes the v1.23 design doc (`docs/design/2026-04-20-v1.23-cat
 
 **FR-V123-18** — `.github/workflows/catalog-scan.yml` — cron `0 4 * * *` daily; uses `GITHUB_TOKEN`; caches upstream responses per run; no commit if no changes detected. (§4.3)
 
+**FR-V123-19** — Catalog-level sidecar verification entry point (Subsystem B owned): when Subsystem A fetches a third-party YAML with a companion `.sig` / `.bundle` sidecar, it invokes `SidecarVerifier.Verify(catalog-bytes, sidecar-URL, trust-policy)` → `(verified, issuer-identity)`. Nil verifier = unsigned merge (`verified: false`). Fetcher holds only the interface; implementation lives in `internal/catalog/signing/`. (§2.4, §3.3.1)
+
 ### NonFunctional Requirements
 
 **NFR-V123-1** — Stateless principle preserved: third-party catalog bytes and signature verifications are **in-memory only**; no disk / ConfigMap / DB persistence. A restarted pod re-fetches on startup. (Design §2.7, inherits NFR-V121-1)
@@ -143,6 +145,7 @@ This document decomposes the v1.23 design doc (`docs/design/2026-04-20-v1.23-cat
 | FR-V123-16 | V123-3 Story 3.3 |
 | FR-V123-17 | V123-3 Story 3.4 |
 | FR-V123-18 | V123-3 Story 3.4 |
+| FR-V123-19 | V123-2 Story 2.2 |
 | NFR-V123-1 | V123-1 Story 1.1, 1.2 |
 | NFR-V123-2 | V123-1 Story 1.2 |
 | NFR-V123-3 | V123-1 Story 1.2; V123-2 Story 2.2 |
@@ -172,8 +175,8 @@ No requirement is uncovered.
 **Rationale:** Ship Subsystem A first — it's the largest user-visible surface and V123-2's verified-badge UI plugs into tiles rendered here.
 
 ### Epic V123-2: Per-entry cosign signing
-**Goal:** Schema v1.1 `signature:` field, load-time verification via cosign library, trust policy, UI verified badge, release pipeline signs embedded entries.
-**FRs:** FR-V123-8..13. **NFRs:** NFR-V123-6, 11.
+**Goal:** Schema v1.1 `signature:` field, load-time verification via cosign library, trust policy, UI verified badge, release pipeline signs embedded entries, and the sidecar verifier entry point invoked by Subsystem A.
+**FRs:** FR-V123-8..13, FR-V123-19. **NFRs:** NFR-V123-6, 11.
 **Rationale:** Layered on Epic 1's source attribution. Independent of Epic 3.
 
 ### Epic V123-3: Trusted-source scanning bot
@@ -253,8 +256,13 @@ So that a broken third-party URL never drops the catalog.
 **When** the API is asked for the source's entries
 **Then** the source contributes zero entries (status `failed`); the embedded catalog still serves.
 
+**Given** a configured URL has a companion `.sig` / `.bundle` sidecar
+**When** the fetch succeeds
+**Then** the fetcher invokes Subsystem B's verifier IF a sidecar is present AND Subsystem B's trust policy is configured; otherwise every entry from that snapshot is flagged `verified: false`. The fetcher holds only the `SidecarVerifier` interface and MUST NOT import the `internal/catalog/signing/` package directly.
+
 **Technical notes:**
 - File: `internal/catalog/sources/fetcher.go`. Uses `internal/catalog/loader.go` for schema validation (shared validator).
+- Sidecar verification is delegated — see Story V123-2.2 for the `SidecarVerifier` entry point. Fetcher accepts a nil verifier and degrades gracefully to unsigned merges.
 - In-memory only (NFR-V123-1). No disk cache.
 
 **Role file:** `.claude/team/go-expert.md` + `.claude/team/test-engineer.md`.
@@ -533,9 +541,15 @@ So that third-party catalogs can prove provenance at ingest.
 **Given** the cosign library is the mechanism
 **Then** no shelling out to the `cosign` CLI (NFR-V123-6).
 
+**Given** Subsystem A's fetcher pulls a catalog YAML with a companion sidecar URL
+**When** the fetcher calls `SidecarVerifier.Verify(catalogBytes, sidecarURL, trustPolicy)`
+**Then** this story exposes the `SidecarVerifier` interface in `internal/catalog/signing/` returning `(verified bool, issuer string, err error)`. Subsystem A holds only the interface; Subsystem B owns the implementation. Nil verifier is a legal configuration — fetcher treats entries as unsigned when it's nil.
+
 **Technical notes:**
-- File: `internal/catalog/signing/verify.go`. Uses `github.com/sigstore/cosign/v2/pkg/cosign` (resolve current API via context7 MCP at implementation time).
+- File: `internal/catalog/signing/verify.go` — per-entry verifier + sidecar entry point (`SidecarVerifier` interface).
+- Uses `github.com/sigstore/cosign/v2/pkg/cosign` (resolve current API via context7 MCP at implementation time).
 - Canonical serialization: deterministic YAML marshal of the entry (Go's `yaml.v3` with stable map ordering) is the message signed. Document this in the developer-guide doc.
+- Sidecar entry point spec: see design §3.3.1. Takes `(catalog-bytes, sidecar-URL, trust-policy)` → returns `(verified-bool, issuer-identity)`. Covers FR-V123-19 (new).
 
 **Role file:** `.claude/team/go-expert.md` + `.claude/team/security-auditor.md` (signing is security-sensitive).
 **Effort:** L.
