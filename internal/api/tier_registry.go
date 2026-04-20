@@ -67,6 +67,10 @@ var HandlerTier = map[string]audit.Tier{
 	// Init bootstrap — operational platform setup (writes to repo but as platform action)
 	"handleInit":                       audit.Tier1,
 
+	// ArtifactHub proxy reprobe (v1.21) — operational: clears caches and probes
+	// the upstream. Read-class but admin-tier so audit captures who reset state.
+	"handleReprobeArtifactHub":         audit.Tier1,
+
 	// Test/discover endpoints that POST credentials for validation
 	"handleTestProvider":               audit.Tier1,
 	"handleTestProviderConfig":         audit.Tier1,
@@ -84,11 +88,27 @@ var HandlerTier = map[string]audit.Tier{
 	"handleDeleteAddonSecret":          audit.Tier2,
 
 	// Values editor (v1.20) — Tier 2: changes WHAT gets deployed.
+	// In v1.21 (Story V121-6.4) the same handler also services the
+	// `refresh_from_upstream` flow that used to live on the now-removed
+	// `pull-upstream` endpoint.
 	"handleSetAddonValues":             audit.Tier2,
 	"handleSetClusterAddonValues":      audit.Tier2,
 
-	// Values editor extras (v1.20.1) — Tier 2.
-	"handlePullUpstreamValues":         audit.Tier2,
+	// V121-7.4: AI annotate + per-addon opt-out — both regenerate the
+	// global values file (header + body), opening a Tier 2 PR.
+	"handleAnnotateAddonValues":        audit.Tier2,
+	"handleSetAddonAIOptOut":           audit.Tier2,
+
+	// v1.21 Bundle 5: legacy `<addon>:` wrap migration. Tier 2 because
+	// it rewrites every global values file in the repo and opens a PR.
+	"handleUnwrapGlobalValues":         audit.Tier2,
+
+	// v1.21 QA Bundle 4 (Fix #4): preview-merge is read-only — it returns
+	// a candidate body but does not write Git. Classified TierPersonal so
+	// it doesn't count as a real mutation in audit attribution. The actual
+	// mutation happens through the existing PUT /addons/{name}/values
+	// handler (already Tier 2) when the user clicks "Apply changes".
+	"handlePreviewMergeAddonValues":    audit.TierPersonal,
 
 	// ─── Personal: self-service on caller's own profile ─────────────────────
 	"handleUpdatePassword":             audit.TierPersonal,

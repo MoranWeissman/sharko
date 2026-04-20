@@ -89,7 +89,8 @@ describe('AddonCatalog', () => {
     renderCatalog()
 
     await waitFor(() => {
-      expect(screen.getByText('Addons Catalog')).toBeInTheDocument()
+      // Heading was renamed in v1.21 when the page gained the Marketplace tab.
+      expect(screen.getByRole('heading', { name: 'Addons' })).toBeInTheDocument()
     })
 
     // Summary stat cards — now clickable filters
@@ -119,7 +120,8 @@ describe('AddonCatalog', () => {
     renderCatalog()
 
     await waitFor(() => {
-      expect(screen.getByText('Addons Catalog')).toBeInTheDocument()
+      // Heading was renamed in v1.21 when the page gained the Marketplace tab.
+      expect(screen.getByRole('heading', { name: 'Addons' })).toBeInTheDocument()
     })
 
     expect(
@@ -131,7 +133,8 @@ describe('AddonCatalog', () => {
     renderCatalog()
 
     await waitFor(() => {
-      expect(screen.getByText('Addons Catalog')).toBeInTheDocument()
+      // Heading was renamed in v1.21 when the page gained the Marketplace tab.
+      expect(screen.getByRole('heading', { name: 'Addons' })).toBeInTheDocument()
     })
 
     // Filter options — "All Addons" appears in both stat card and dropdown

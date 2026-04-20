@@ -2,6 +2,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { Dashboard } from '@/views/Dashboard';
+// v1.21 Bundle 3 — Dashboard now consumes addon state via the unified
+// provider. Tests have to mount it inside one or the hook throws.
+import { AddonStatesProvider } from '@/hooks/useAddonStates';
 
 vi.mock('recharts', () => {
   const C = ({ children }: { children?: React.ReactNode }) => <div>{children}</div>;
@@ -17,6 +20,7 @@ vi.mock('recharts', () => {
 
 vi.mock('@/services/api', () => ({
   fetchTrackedPRs: vi.fn().mockResolvedValue({ prs: [] }),
+  fetchMergedPRs: vi.fn().mockResolvedValue({ prs: [], limit: 20 }),
   refreshPR: vi.fn().mockResolvedValue({ status: 'ok' }),
   fetchAuditLog: vi.fn().mockResolvedValue({ entries: [] }),
   api: {
@@ -40,7 +44,9 @@ vi.mock('@/services/api', () => ({
 function renderDashboard() {
   return render(
     <MemoryRouter>
-      <Dashboard />
+      <AddonStatesProvider>
+        <Dashboard />
+      </AddonStatesProvider>
     </MemoryRouter>,
   );
 }

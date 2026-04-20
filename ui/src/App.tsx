@@ -4,6 +4,7 @@ import { Loader2 } from 'lucide-react'
 import { AuthProvider, useAuth } from '@/hooks/useAuth'
 import { ConnectionProvider, useConnections } from '@/hooks/useConnections'
 import { ThemeProvider } from '@/hooks/useTheme'
+import { AddonStatesProvider } from '@/hooks/useAddonStates'
 import { Layout } from '@/components/Layout'
 import { Login } from '@/views/Login'
 import { FirstRunWizard } from '@/components/FirstRunWizard'
@@ -109,7 +110,15 @@ function AppRoutes() {
 
   return (
     <ConnectionProvider>
-      <ConnectedApp />
+      {/*
+        AddonStatesProvider — single poll loop for addon health/sync.
+        Mounted INSIDE ConnectionProvider because it depends on the active
+        connection (via the API base URL / auth header). See
+        ui/src/hooks/useAddonStates.tsx for the design rationale.
+      */}
+      <AddonStatesProvider>
+        <ConnectedApp />
+      </AddonStatesProvider>
     </ConnectionProvider>
   )
 }

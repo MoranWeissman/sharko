@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
+	"sync"
+	"time"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
@@ -240,4 +243,209 @@ func (s *Server) handleDeletePR(w http.ResponseWriter, r *http.Request) {
 		Resource: fmt.Sprintf("pr:%d", id),
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "removed"})
+}
+
+// ─── Merged PRs (v1.21 QA Bundle 3) ──────────────────────────────────────────
+//
+// Maintainer feedback: "in dashboard we have 'Pending PRs' but i want also to
+// be able to switch from there to see merged PRs with the PR description/user
+// and etc and a link to github."
+//
+// The prtracker DELETES merged PRs from its store as soon as it sees them
+// (see tracker.go::PollOnce), so /api/v1/prs returns only OPEN PRs. This
+// endpoint goes back to the Git provider and lists CLOSED PRs (GitHub uses
+// state=closed for both merged and closed-without-merge), filters to those
+// with Status=="merged", and returns the recent N. Tier 1 read; results are
+// cached for 60s to keep ListPullRequests calls bounded under the 5000/hr
+// GitHub PAT rate limit.
+
+// MergedPRItem is one row in the merged-PRs response. Mirrors PRItem but uses
+// the gitprovider PR shape — the Sharko prtracker doesn't retain merged PRs
+// once observed, so cluster/addon/operation are best-effort: we infer them
+// from the title or the source branch when the PR follows Sharko's deterministic
+// naming scheme. Unknown fields are returned as empty strings so the UI can
+// fall back to "—" without special-casing.
+type MergedPRItem struct {
+	PRID        int    `json:"pr_id"`
+	PRURL       string `json:"pr_url"`
+	PRTitle     string `json:"pr_title"`
+	PRBranch    string `json:"pr_branch"`
+	Description string `json:"description,omitempty"`
+	Author      string `json:"author,omitempty"`
+	Cluster     string `json:"cluster,omitempty"`
+	Addon       string `json:"addon,omitempty"`
+	Operation   string `json:"operation,omitempty"`
+	CreatedAt   string `json:"created_at,omitempty"`
+	MergedAt    string `json:"merged_at,omitempty"`
+}
+
+// MergedPRsResponse wraps the list with a cap-aware count so the UI can show
+// "showing the last N" without needing a separate metadata call.
+type MergedPRsResponse struct {
+	PRs   []MergedPRItem `json:"prs"`
+	Limit int            `json:"limit"`
+}
+
+// mergedPRsCacheTTL is the in-memory cache TTL for the merged-PRs list. GitHub's
+// list-PRs endpoint is rate-limited (5000/hr per PAT) and the Dashboard polls
+// frequently; 60s keeps the call cost bounded while still feeling fresh.
+const mergedPRsCacheTTL = 60 * time.Second
+
+type mergedPRsCacheEntry struct {
+	fetchedAt time.Time
+	items     []MergedPRItem
+}
+
+var (
+	mergedPRsCacheMu  sync.RWMutex
+	mergedPRsCacheVal = map[string]mergedPRsCacheEntry{}
+)
+
+// handleListMergedPRs handles GET /api/v1/prs/merged
+//
+// @Summary List recently-merged pull requests
+// @Description Returns merged Sharko-authored PRs from the Git provider. The prtracker drops PRs once merged, so this endpoint queries the provider directly. Cached for 60s. Optional filters narrow by cluster or addon (best-effort: inferred from PR title/branch).
+// @Tags prs
+// @Produce json
+// @Security BearerAuth
+// @Param cluster query string false "Filter by cluster name (best-effort title/branch match)"
+// @Param addon query string false "Filter by addon name (best-effort title/branch match)"
+// @Param limit query int false "Maximum entries (default 20, max 100)"
+// @Success 200 {object} MergedPRsResponse "List of merged PRs"
+// @Failure 503 {object} map[string]interface{} "No active Git connection"
+// @Failure 500 {object} map[string]interface{} "Internal error"
+// @Router /prs/merged [get]
+func (s *Server) handleListMergedPRs(w http.ResponseWriter, r *http.Request) {
+	if !authz.RequireWithResponse(w, r, "pr.list") {
+		return
+	}
+
+	cluster := strings.ToLower(r.URL.Query().Get("cluster"))
+	addon := strings.ToLower(r.URL.Query().Get("addon"))
+	limit := parseLimit(r, 20, 100)
+
+	// Cache key independent of filters/limit — we always fetch the full set
+	// and filter client-side. This keeps the upstream call shared across
+	// callers (e.g. Dashboard + per-cluster page).
+	const cacheKey = "all"
+	mergedPRsCacheMu.RLock()
+	entry, ok := mergedPRsCacheVal[cacheKey]
+	mergedPRsCacheMu.RUnlock()
+
+	var items []MergedPRItem
+	if ok && time.Since(entry.fetchedAt) < mergedPRsCacheTTL {
+		items = entry.items
+	} else {
+		gp, err := s.connSvc.GetActiveGitProvider()
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, err.Error())
+			return
+		}
+
+		// "closed" includes merged PRs on GitHub (state=closed + merged=true).
+		// The provider implementations set pr.Status = "merged" for those.
+		prs, err := gp.ListPullRequests(r.Context(), "closed")
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		items = make([]MergedPRItem, 0, len(prs))
+		for _, pr := range prs {
+			if pr.Status != "merged" {
+				continue
+			}
+			items = append(items, MergedPRItem{
+				PRID:        pr.ID,
+				PRURL:       pr.URL,
+				PRTitle:     pr.Title,
+				PRBranch:    pr.SourceBranch,
+				Description: pr.Description,
+				Author:      pr.Author,
+				Cluster:     inferCluster(pr.Title, pr.SourceBranch),
+				Addon:       inferAddon(pr.Title, pr.SourceBranch),
+				Operation:   inferOperation(pr.Title, pr.SourceBranch),
+				CreatedAt:   pr.CreatedAt,
+				MergedAt:    pr.ClosedAt,
+			})
+		}
+
+		mergedPRsCacheMu.Lock()
+		mergedPRsCacheVal[cacheKey] = mergedPRsCacheEntry{fetchedAt: time.Now(), items: items}
+		mergedPRsCacheMu.Unlock()
+	}
+
+	// Apply optional filters (best-effort substring match on title+branch).
+	filtered := make([]MergedPRItem, 0, len(items))
+	for _, it := range items {
+		if cluster != "" {
+			hay := strings.ToLower(it.PRTitle + " " + it.PRBranch + " " + it.Cluster)
+			if !strings.Contains(hay, cluster) {
+				continue
+			}
+		}
+		if addon != "" {
+			hay := strings.ToLower(it.PRTitle + " " + it.PRBranch + " " + it.Addon)
+			if !strings.Contains(hay, addon) {
+				continue
+			}
+		}
+		filtered = append(filtered, it)
+		if len(filtered) >= limit {
+			break
+		}
+	}
+
+	writeJSON(w, http.StatusOK, MergedPRsResponse{PRs: filtered, Limit: limit})
+}
+
+// inferCluster pulls the cluster name out of a Sharko-generated PR title or
+// branch. Sharko branch convention: "sharko/<op>-<cluster>[-...]" and titles
+// like "Register cluster <name>" or "Update <addon> overrides on cluster <name>".
+// Returns "" when nothing matches — the UI shows "—" then.
+func inferCluster(title, branch string) string {
+	// Try title patterns first ("on cluster <name>").
+	low := strings.ToLower(title)
+	if i := strings.Index(low, "cluster "); i >= 0 {
+		rest := title[i+len("cluster "):]
+		// Take the first whitespace-delimited token.
+		if j := strings.IndexAny(rest, " \t"); j > 0 {
+			return strings.Trim(rest[:j], " ,.;:\"'")
+		}
+		return strings.Trim(rest, " ,.;:\"'")
+	}
+	// Fallback: branch like "sharko/register-prod" — last segment.
+	if strings.HasPrefix(branch, "sharko/") {
+		parts := strings.Split(strings.TrimPrefix(branch, "sharko/"), "-")
+		if len(parts) >= 2 {
+			return parts[len(parts)-1]
+		}
+	}
+	return ""
+}
+
+// inferAddon pulls an addon name out of a Sharko PR title. Sharko op titles
+// include "<op> <addon>" or "Update <addon> overrides", so the second word of
+// the title is a reasonable best guess. Falls back to "" when ambiguous.
+func inferAddon(title, _ string) string {
+	words := strings.Fields(title)
+	if len(words) < 2 {
+		return ""
+	}
+	// Skip leading verbs that don't carry an addon name.
+	skip := map[string]bool{"register": true, "deregister": true, "adopt": true, "unadopt": true, "init": true}
+	if skip[strings.ToLower(words[0])] {
+		return ""
+	}
+	return strings.Trim(words[1], " ,.;:\"'")
+}
+
+// inferOperation returns a coarse op label ("upgrade", "values", "register", …)
+// derived from the title's first word. Used purely for UI display.
+func inferOperation(title, _ string) string {
+	words := strings.Fields(title)
+	if len(words) == 0 {
+		return ""
+	}
+	return strings.ToLower(words[0])
 }

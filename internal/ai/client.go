@@ -35,6 +35,22 @@ type Config struct {
 	AuthPrefix    string   `yaml:"auth_prefix"`     // Custom auth value prefix (default: "Bearer " when using Authorization header)
 	MaxIterations int      `yaml:"max_iterations"`  // Max agent tool-calling iterations (default: 8)
 	GitOpsEnabled bool     `yaml:"gitops_enabled"`  // Enable write tools (enable_addon, disable_addon, etc.)
+
+	// AnnotateOnSeed controls the v1.21 AI annotation pass on addon-add
+	// and refresh-from-upstream. Wire path: Settings → AI → "Annotate
+	// values on generate" toggle in AIConfigSection.tsx → POST /ai/config
+	// → persisted via aiConfigStore (K8s Secret) and applied in-process
+	// via Client.SetConfig.
+	//
+	// Default-true is enforced via the companion AnnotateOnSeedSet
+	// sentinel: if Provider != none and AnnotateOnSeedSet is false (the
+	// user has never explicitly toggled the field — typical state for
+	// legacy configs from before V121-7), the effective value reported
+	// by AnnotateOnSeedEnabled is `true`. Once the user clicks Save the
+	// SaveAIConfig handler stamps both fields and the explicit value
+	// becomes authoritative.
+	AnnotateOnSeed    bool `yaml:"annotate_on_seed" json:"annotate_on_seed"`
+	AnnotateOnSeedSet bool `yaml:"annotate_on_seed_set" json:"annotate_on_seed_set"`
 }
 
 // GetAgentModel returns the model to use for agent conversations.
@@ -87,6 +103,23 @@ func (c *Client) GetProviderName() string {
 // IsEnabled returns true when a valid AI provider is configured.
 func (c *Client) IsEnabled() bool {
 	return c.config.Provider != ProviderNone && c.config.Provider != ""
+}
+
+// AnnotateOnSeedEnabled returns the effective state of the
+// "annotate values on generate" toggle. Default-ON when AI is configured
+// — a fresh install with no explicit flag still gets annotation. The
+// SaveAIConfig handler sets the field explicitly on every persist so
+// the user's intent is captured cleanly going forward; this helper just
+// flips the default for the legacy path before that happens.
+func (c *Client) AnnotateOnSeedEnabled() bool {
+	if !c.IsEnabled() {
+		return false
+	}
+	if !c.config.AnnotateOnSeedSet {
+		// Legacy / fresh-install: default-ON.
+		return true
+	}
+	return c.config.AnnotateOnSeed
 }
 
 // Summarize sends a prompt to the LLM and returns the response text.

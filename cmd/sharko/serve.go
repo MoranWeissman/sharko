@@ -17,9 +17,11 @@ import (
 	"github.com/MoranWeissman/sharko/internal/api"
 	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/audit"
+	"github.com/MoranWeissman/sharko/internal/catalog"
 	"github.com/MoranWeissman/sharko/internal/cmstore"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/demo"
+	"github.com/MoranWeissman/sharko/internal/metrics"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/notifications"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
@@ -201,6 +203,21 @@ var serveCmd = &cobra.Command{
 		srv := api.NewServer(connSvc, clusterSvc, addonSvc, dashboardSvc, observabilitySvc, upgradeSvc, aiClient)
 		srv.SetVersion(version)                 // Propagate ldflags-injected version to health endpoint
 		srv.SetTemplateFS(templates.TemplateFS) // Always available — init doesn't need a provider
+
+		// Load the embedded curated catalog (v1.21). Failure here is fatal —
+		// a malformed catalog indicates a build-time regression, not a
+		// runtime problem operators can work around.
+		cat, err := catalog.Load()
+		if err != nil {
+			return fmt.Errorf("load curated catalog: %w", err)
+		}
+		slog.Info("curated catalog loaded", "entries", cat.Len())
+		srv.SetCatalog(cat)
+
+		// Daily OpenSSF Scorecard refresh (non-fatal failures per design §4.6).
+		scorecardSched := catalog.NewScheduler(cat, metrics.ScorecardMetricsAdapter{})
+		scorecardSched.Start(context.Background())
+		defer scorecardSched.Stop()
 
 		slog.Info("sharko starting", "version", version)
 

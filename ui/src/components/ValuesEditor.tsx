@@ -6,14 +6,14 @@ import {
   CloudDownload,
   ExternalLink,
   GitPullRequest,
+  Layers,
   Loader2,
-  MoreHorizontal,
   RotateCcw,
   Save,
 } from 'lucide-react'
 import { AttributionNudge } from '@/components/AttributionNudge'
 import { showToast } from '@/components/ToastNotification'
-import type { ValuesEditResult } from '@/services/models'
+import type { PreviewMergeResponse, ValuesEditResult } from '@/services/models'
 
 /**
  * ValuesEditor — the v1.20 in-app YAML editor for addon values.
@@ -58,18 +58,22 @@ export interface ValuesEditorProps {
    */
   allowEmpty?: boolean
   /**
-   * Callback for "Pull upstream defaults". When provided, the action renders
-   * in an "Actions" menu (demoted from a top-level button in v1.20.2). Clicking
-   * opens a confirm modal and then calls the pull-upstream API. Omitting this
-   * hides the action — used on per-cluster editors where upstream defaults
-   * don't apply.
+   * v1.21 (Story V121-6.5): version-mismatch banner.
+   *
+   * When the backend reports `values_version_mismatch` on the
+   * GET /addons/{name}/values-schema response, the parent passes the
+   * pair plus a refresh callback. The banner only renders when both
+   * versions are present.
+   *
+   * The refresh handler should call
+   * `api.refreshAddonValuesFromUpstream(addon)` (which is the existing
+   * PUT endpoint with `refresh_from_upstream: true`). The endpoint
+   * regenerates the global file via the smart-values pipeline and opens
+   * a Tier 2 PR — the locked decision is to keep this on the same
+   * handler as manual edits.
    */
-  onPullUpstream?: () => Promise<ValuesEditResult & { chart?: string; chart_version?: string }>
-  /**
-   * Optional summary text ("cert-manager@v1.14.4") shown in the confirm
-   * modal body so the user knows what will be pulled.
-   */
-  pullUpstreamLabel?: string
+  versionMismatch?: { catalogVersion: string; valuesVersion: string } | null
+  onRefreshFromUpstream?: () => Promise<ValuesEditResult>
   /**
    * Children rendered below the editor (before the Reset/Submit button row).
    * Used by parents to slot in a "Recent changes" panel without requiring
@@ -79,6 +83,53 @@ export interface ValuesEditorProps {
    * successful submit — pass it through to children so they re-fetch.
    */
   belowEditor?: React.ReactNode | ((ctx: { refreshKey: number }) => React.ReactNode)
+  /**
+   * V121-7.4: when set, the parent has determined that the values file's
+   * header says `# AI annotation: disabled` AND AI is not configured at
+   * all in Sharko's Settings. Renders the "AI annotation not configured"
+   * banner with a link to Settings → AI. Suppressed when AI is wired,
+   * even if the file isn't annotated yet.
+   */
+  showAINotConfiguredBanner?: boolean
+  /**
+   * V121-7.4: when set, the parent has determined that the values file's
+   * header says `# sharko: ai-annotate=off`. Renders an inline note
+   * explaining why the file has no comments. Different from
+   * showAINotConfiguredBanner — this state is per-addon, not global.
+   */
+  showAIOptedOutNote?: boolean
+  /**
+   * V121-7.4: optional handler for the "AI annotate this values file"
+   * action in the Edit menu. When provided, the editor renders a button
+   * that calls this handler; the parent does the API call and toast. The
+   * editor only owns the trigger.
+   */
+  onAnnotateNow?: () => Promise<void>
+
+  /**
+   * v1.21 QA Bundle 4 Fix #4: "Pull new fields from upstream" — additive
+   * merge that keeps user customizations. When provided, the editor
+   * renders a button that calls `onPreviewMerge` to fetch the candidate
+   * body, shows a diff modal, and on Apply calls the standard
+   * `onSubmit` with the merged body.
+   *
+   * Distinct from onRefreshFromUpstream (Refresh = REPLACE; Pull new
+   * fields = MERGE). Parents wire the two to different API endpoints:
+   *   - Refresh → PUT values?refresh_from_upstream=true
+   *   - Pull new fields → POST values/preview-merge + Apply via PUT values
+   */
+  onPreviewMerge?: () => Promise<PreviewMergeResponse>
+
+  /**
+   * v1.21 Bundle 5: legacy `<addonName>:` wrap migration. When set, the
+   * backend reported that the current values file is wrapped under a
+   * legacy root key — Helm silently ignores those values. Editor renders
+   * a yellow banner with a "Migrate this file" button that calls
+   * `onMigrateLegacyWrap` (which opens a Tier 2 PR via the unwrap-globals
+   * endpoint scoped to this addon).
+   */
+  legacyWrapDetected?: boolean
+  onMigrateLegacyWrap?: () => Promise<void>
 }
 
 export function ValuesEditor({
@@ -90,21 +141,33 @@ export function ValuesEditor({
   title,
   subtitle,
   allowEmpty = false,
-  onPullUpstream,
-  pullUpstreamLabel,
+  versionMismatch,
+  onRefreshFromUpstream,
   belowEditor,
+  showAINotConfiguredBanner = false,
+  showAIOptedOutNote = false,
+  onAnnotateNow,
+  onPreviewMerge,
+  legacyWrapDetected = false,
+  onMigrateLegacyWrap,
 }: ValuesEditorProps) {
   const [draft, setDraft] = useState(initialYAML)
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [lastResult, setLastResult] = useState<ValuesEditResult | null>(null)
-  const [pullConfirmOpen, setPullConfirmOpen] = useState(false)
-  const [pulling, setPulling] = useState(false)
-  const [actionsMenuOpen, setActionsMenuOpen] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+  const [bannerDismissed, setBannerDismissed] = useState(false)
   const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
+  const [annotating, setAnnotating] = useState(false)
+  const [migratingWrap, setMigratingWrap] = useState(false)
+  // v1.21 QA Bundle 4 Fix #4: preview-merge modal state.
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const [previewing, setPreviewing] = useState(false)
+  const [previewError, setPreviewError] = useState<string | null>(null)
+  const [previewResult, setPreviewResult] = useState<PreviewMergeResponse | null>(null)
+  const [applyingMerge, setApplyingMerge] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const actionsMenuRef = useRef<HTMLDivElement>(null)
 
   // Reset when the underlying current values change (e.g. after a successful
   // submit + reload from the parent).
@@ -113,17 +176,12 @@ export function ValuesEditor({
     setSubmitError(null)
   }, [initialYAML])
 
-  // Close the Actions menu on any outside click.
+  // Reset the banner-dismiss flag whenever the mismatch pair changes — a
+  // new chart upgrade should re-surface the banner even if the user
+  // dismissed the previous one.
   useEffect(() => {
-    if (!actionsMenuOpen) return
-    const onDocClick = (e: MouseEvent) => {
-      if (actionsMenuRef.current && !actionsMenuRef.current.contains(e.target as Node)) {
-        setActionsMenuOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', onDocClick)
-    return () => document.removeEventListener('mousedown', onDocClick)
-  }, [actionsMenuOpen])
+    setBannerDismissed(false)
+  }, [versionMismatch?.catalogVersion, versionMismatch?.valuesVersion])
 
   // Live YAML validation — non-blocking; we surface the parser error in a
   // small inline strip above the editor and disable the Submit button when
@@ -186,14 +244,39 @@ export function ValuesEditor({
   const showProactiveNudge = hasPersonalToken === false
   const responsePR = lastResult?.pr_url || lastResult?.result?.pr_url
 
-  // Demotion rule (v1.20.2): show "Pull upstream defaults" as a prominent
-  // button ONLY when the values file is effectively empty (< 5 non-empty
-  // lines). Otherwise bury it in the Actions menu so it isn't the first
-  // thing a user reaches for on a populated file.
-  const emptyishValues = useMemo(() => {
-    if (!onPullUpstream) return false
-    return initialYAML.split('\n').filter((l) => l.trim() !== '').length < 5
-  }, [initialYAML, onPullUpstream])
+  // Story V121-6.5 banner: only render when the backend reported a real
+  // mismatch AND the user has not dismissed the banner for this pair AND
+  // a refresh handler is wired (parents that don't support refresh —
+  // per-cluster overrides editor — will pass undefined).
+  const showMismatchBanner =
+    !!versionMismatch && !!onRefreshFromUpstream && !bannerDismissed
+
+  const handleRefresh = async () => {
+    if (!onRefreshFromUpstream) return
+    setRefreshing(true)
+    setSubmitError(null)
+    try {
+      const res = await onRefreshFromUpstream()
+      setLastResult(res)
+      const prURL = res.pr_url || res.result?.pr_url
+      const prID = res.pr_id ?? res.result?.pr_id
+      const merged = res.merged ?? res.result?.merged ?? false
+      if (prURL) {
+        const label = prID ? `PR #${prID}` : 'PR'
+        showToast(merged ? `${label} merged →` : `${label} opened →`, 'success')
+      } else {
+        showToast('Upstream values applied', 'success')
+      }
+      setBannerDismissed(true)
+      setRefreshKey((k) => k + 1)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Failed to refresh from upstream'
+      setSubmitError(msg)
+      showToast(`Failed to refresh — ${msg}`, 'info')
+    } finally {
+      setRefreshing(false)
+    }
+  }
 
   const renderedBelow =
     typeof belowEditor === 'function' ? belowEditor({ refreshKey }) : belowEditor
@@ -219,42 +302,211 @@ export function ValuesEditor({
               Edit in GitHub
             </a>
           )}
-          {/* Actions menu — holds the demoted "Pull upstream defaults" */}
-          {onPullUpstream && !emptyishValues && (
-            <div className="relative" ref={actionsMenuRef}>
-              <button
-                type="button"
-                onClick={() => setActionsMenuOpen((v) => !v)}
-                aria-haspopup="menu"
-                aria-expanded={actionsMenuOpen}
-                title="More actions"
-                className="inline-flex items-center gap-1 rounded-md border border-[#c0ddf0] bg-white px-2 py-1 text-xs font-medium text-[#1a4a6a] hover:bg-[#e0f0ff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
-              >
-                <MoreHorizontal className="h-3.5 w-3.5" />
-              </button>
-              {actionsMenuOpen && (
-                <div
-                  role="menu"
-                  className="absolute right-0 z-20 mt-1 min-w-[220px] rounded-md border border-[#c0ddf0] bg-white py-1 shadow-lg dark:border-gray-600 dark:bg-gray-800"
-                >
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      setActionsMenuOpen(false)
-                      setPullConfirmOpen(true)
-                    }}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-[#1a4a6a] hover:bg-[#e0f0ff] dark:text-gray-300 dark:hover:bg-gray-700"
-                  >
-                    <CloudDownload className="h-3.5 w-3.5" />
-                    Pull upstream defaults…
-                  </button>
-                </div>
+          {/* v1.21 QA Bundle 4 Fix #4: "Pull new fields from upstream"
+              — additive merge that keeps user customizations. Distinct
+              from refresh-from-upstream (which REPLACES the file via
+              the version-mismatch banner). Tooltip clarifies the
+              difference so the operator picks the right action. */}
+          {onPreviewMerge && (
+            <button
+              type="button"
+              onClick={async () => {
+                if (previewing) return
+                setPreviewing(true)
+                setPreviewError(null)
+                setPreviewResult(null)
+                try {
+                  const res = await onPreviewMerge()
+                  setPreviewResult(res)
+                  setPreviewOpen(true)
+                } catch (e) {
+                  const msg = e instanceof Error ? e.message : 'Failed to preview merge'
+                  setPreviewError(msg)
+                  setPreviewOpen(true)
+                } finally {
+                  setPreviewing(false)
+                }
+              }}
+              disabled={previewing}
+              title="Previews adding NEW upstream keys to your values file while preserving the keys you've customized. Different from 'Refresh from upstream' (which replaces the whole file)."
+              className="inline-flex items-center gap-1 rounded-md border border-teal-300 bg-teal-50 px-3 py-1 text-xs font-medium text-teal-800 hover:bg-teal-100 disabled:opacity-50 dark:border-teal-700 dark:bg-teal-900/30 dark:text-teal-200 dark:hover:bg-teal-800/40"
+            >
+              {previewing ? (
+                <>
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Comparing…
+                </>
+              ) : (
+                <>
+                  <Layers className="h-3 w-3" />
+                  Pull new fields from upstream
+                </>
               )}
-            </div>
+            </button>
           )}
+          {/* V121-7.4: manual annotate trigger. Renders only when the
+              parent supplied a handler (i.e. AI is configured and the
+              addon is not opted out). The button calls the parent and
+              the parent owns the toast + secret-block surfacing. */}
+          {onAnnotateNow && (
+            <button
+              type="button"
+              onClick={async () => {
+                if (annotating) return
+                setAnnotating(true)
+                try {
+                  await onAnnotateNow()
+                } finally {
+                  setAnnotating(false)
+                }
+              }}
+              disabled={annotating}
+              className="inline-flex items-center gap-1 rounded-md border border-purple-300 bg-purple-50 px-3 py-1 text-xs font-medium text-purple-700 hover:bg-purple-100 disabled:opacity-50 dark:border-purple-700 dark:bg-purple-900/30 dark:text-purple-300 dark:hover:bg-purple-800/50"
+              title="Re-annotate this values file via AI (opens a new PR)"
+            >
+              {annotating ? (
+                <>
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Annotating…
+                </>
+              ) : (
+                'AI annotate'
+              )}
+            </button>
+          )}
+          {/*
+            v1.21 (Story V121-6.5): the always-visible "Pull upstream
+            defaults" actions menu was removed. The same functionality
+            now appears as a contextual banner above the editor when the
+            values file's stamped chart version is older than the
+            catalog's pinned version. See `showMismatchBanner` below.
+          */}
         </div>
       </div>
+
+      {/* v1.21 Bundle 5: legacy `<addon>:` wrap migration banner. Renders
+          above the version-mismatch banner so the operator sees the more
+          severe issue (Helm silently ignoring values) first. */}
+      {legacyWrapDetected && onMigrateLegacyWrap && (
+        <div
+          role="alert"
+          className="mb-3 flex items-start gap-2 rounded-md border border-yellow-300 bg-yellow-50 p-3 text-sm text-yellow-900 dark:border-yellow-700 dark:bg-yellow-950/40 dark:text-yellow-200"
+        >
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <div className="flex-1">
+            <p>
+              <span className="font-semibold">This values file uses a legacy wrapper.</span>{' '}
+              The top-level <span className="font-mono">{'<addon>:'}</span> key causes Helm to
+              silently ignore everything nested under it. Migrate now to apply these values
+              correctly.
+            </p>
+            <div className="mt-2 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  if (migratingWrap) return
+                  setMigratingWrap(true)
+                  try {
+                    await onMigrateLegacyWrap()
+                  } finally {
+                    setMigratingWrap(false)
+                  }
+                }}
+                disabled={migratingWrap}
+                className="inline-flex items-center gap-1 rounded-md bg-yellow-600 px-3 py-1 text-xs font-semibold text-white hover:bg-yellow-700 disabled:opacity-50 dark:bg-yellow-500 dark:hover:bg-yellow-400"
+              >
+                {migratingWrap ? (
+                  <>
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Migrating…
+                  </>
+                ) : (
+                  'Migrate this file'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Version-mismatch banner (Story V121-6.5). */}
+      {showMismatchBanner && versionMismatch && (
+        <div
+          role="alert"
+          className="mb-3 flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200"
+        >
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <div className="flex-1">
+            <p>
+              Chart upgraded to{' '}
+              <span className="font-mono font-semibold">{versionMismatch.catalogVersion}</span> —
+              values were generated for{' '}
+              <span className="font-mono">{versionMismatch.valuesVersion}</span>. Refresh values
+              from upstream?
+            </p>
+            <div className="mt-2 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleRefresh}
+                disabled={refreshing}
+                className="inline-flex items-center gap-1 rounded-md bg-amber-600 px-3 py-1 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-50 dark:bg-amber-500 dark:hover:bg-amber-400"
+              >
+                {refreshing ? (
+                  <>
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Refreshing…
+                  </>
+                ) : (
+                  <>
+                    <CloudDownload className="h-3 w-3" />
+                    Refresh now
+                  </>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => setBannerDismissed(true)}
+                disabled={refreshing}
+                className="rounded-md border border-amber-400 bg-white px-3 py-1 text-xs font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-600 dark:bg-gray-800 dark:text-amber-200 dark:hover:bg-amber-900/40"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* V121-7.4: AI annotation status banners. Three mutually exclusive
+          states are interesting:
+            1. AI not configured (global) AND file says "annotation: disabled":
+               nudge the operator toward Settings → AI.
+            2. Per-addon opt-out is set: explain why the file has no comments.
+            3. AI configured: render the "AI annotate this values file" action
+               near the editor controls (handled below in the toolbar). */}
+      {showAINotConfiguredBanner && (
+        <div className="mb-3 flex items-start gap-2 rounded-md border border-blue-300 bg-blue-50 p-3 text-sm text-blue-900 dark:border-blue-700 dark:bg-blue-950/40 dark:text-blue-200">
+          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+          <div className="flex-1">
+            <p>
+              AI annotation not configured — values are not commented.{' '}
+              <a href="/settings#ai" className="font-medium underline hover:no-underline">
+                Configure AI in Settings → AI
+              </a>{' '}
+              to enable.
+            </p>
+          </div>
+        </div>
+      )}
+      {showAIOptedOutNote && (
+        <div className="mb-3 flex items-start gap-2 rounded-md border border-[#c0ddf0] bg-[#f0f7ff] p-3 text-sm text-[#1a4a6a] dark:border-gray-700 dark:bg-gray-700/40 dark:text-gray-300">
+          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+          <div className="flex-1">
+            <p>
+              This addon is opted out of AI annotation. Toggle the opt-out from the addon's Catalog tab to re-enable.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Schema hint */}
       {schemaTopLevelKeys && schemaTopLevelKeys.length > 0 && (
@@ -341,21 +593,6 @@ export function ValuesEditor({
       {renderedBelow && <div className="mt-4">{renderedBelow}</div>}
 
       <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
-        {/* When the file is empty-ish, surface Pull upstream as a first-class
-            CTA (users have nothing to lose). Otherwise it lives in the
-            Actions menu above. */}
-        {onPullUpstream && emptyishValues && (
-          <button
-            type="button"
-            onClick={() => setPullConfirmOpen(true)}
-            disabled={submitting || pulling}
-            title="Replace the current values file with the chart's upstream defaults"
-            className="inline-flex items-center gap-1 rounded-md border border-[#c0ddf0] bg-white px-3 py-1.5 text-xs font-medium text-[#1a4a6a] hover:bg-[#e0f0ff] disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
-          >
-            <CloudDownload className="h-3 w-3" />
-            Pull upstream defaults
-          </button>
-        )}
         <button
           type="button"
           onClick={() => setDiscardConfirmOpen(true)}
@@ -435,82 +672,200 @@ export function ValuesEditor({
         </div>
       )}
 
-      {/* Pull-upstream confirm modal */}
-      {pullConfirmOpen && onPullUpstream && (
+      {/*
+        Note: the v1.20.2 "Pull upstream defaults" confirm modal lived
+        here. It was removed in v1.21 (Story V121-6.5). The contextual
+        version-mismatch banner above replaces it — refresh now happens
+        in-place from the banner, no second confirm step. The locked
+        rationale is that the banner only fires when the values are
+        actually stale, so the "you'll lose your edits" warning the
+        modal carried is no longer the user's first encounter with the
+        action.
+      */}
+
+      {/* v1.21 QA Bundle 4 Fix #4: diff-and-merge preview modal.
+          Shows the candidate merged body and a summary of what changed.
+          "Apply changes" calls the standard onSubmit (same endpoint as
+          manual edits) so the commit path, audit, and attribution are
+          unchanged. "Cancel" closes without touching Git.
+
+          WCAG 2.1 AA:
+            - role=dialog + aria-modal=true
+            - aria-labelledby + aria-describedby
+            - focus-trapped via the backdrop click target (keyboard users
+              get the Cancel button as the first focusable element). */}
+      {previewOpen && (
         <div
           role="dialog"
           aria-modal="true"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          aria-labelledby="values-preview-merge-title"
+          aria-describedby="values-preview-merge-desc"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
         >
-          <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl dark:bg-gray-800">
-            <h4 className="flex items-center gap-2 text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
-              <CloudDownload className="h-4 w-4 text-teal-600 dark:text-teal-400" />
-              Pull upstream defaults
-            </h4>
-            <p className="mt-2 text-sm text-[#1a4a6a] dark:text-gray-300">
-              This will replace the current <span className="font-mono">values.yaml</span>{' '}
-              {pullUpstreamLabel && (
-                <>
-                  with upstream defaults from <span className="font-mono">{pullUpstreamLabel}</span>{' '}
-                </>
+          <div className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl dark:bg-gray-800">
+            <header className="border-b border-[#c0ddf0] px-5 py-3 dark:border-gray-700">
+              <h4
+                id="values-preview-merge-title"
+                className="flex items-center gap-2 text-base font-semibold text-[#0a2a4a] dark:text-gray-100"
+              >
+                <Layers className="h-4 w-4 text-teal-600 dark:text-teal-400" />
+                Pull new fields from upstream
+              </h4>
+              <p
+                id="values-preview-merge-desc"
+                className="mt-1 text-xs text-[#3a6a8a] dark:text-gray-400"
+              >
+                Review the additions Sharko would make. Your existing values are preserved —
+                only keys that aren't in your file yet are added. Apply to open a PR.
+              </p>
+            </header>
+
+            <div
+              className="flex-1 overflow-y-auto px-5 py-4"
+              style={{ scrollbarGutter: 'stable' }}
+            >
+              {previewError && (
+                <p className="rounded-md bg-red-50 p-3 text-sm text-red-700 ring-1 ring-red-200 dark:bg-red-900/30 dark:text-red-300 dark:ring-red-800">
+                  {previewError}
+                </p>
               )}
-              and open a PR. <span className="font-semibold">Your current edits will be lost.</span>{' '}
-              Continue?
-            </p>
-            <div className="mt-4 flex items-center justify-end gap-2">
+
+              {previewResult && previewResult.diff_summary.no_op && (
+                <div className="rounded-md bg-green-50 p-3 text-sm text-green-700 ring-1 ring-green-200 dark:bg-green-900/30 dark:text-green-300 dark:ring-green-800">
+                  <p className="font-medium">Already up to date</p>
+                  <p className="mt-1 text-xs">
+                    Every upstream key is already set in your file. Nothing to merge.
+                  </p>
+                </div>
+              )}
+
+              {previewResult && !previewResult.diff_summary.no_op && (
+                <div className="space-y-4">
+                  <div className="rounded-md bg-[#e8f4ff] p-3 text-xs text-[#1a4a6a] ring-1 ring-[#c0ddf0] dark:bg-gray-900 dark:text-gray-300 dark:ring-gray-700">
+                    <p>
+                      <span className="font-medium">Upstream:</span>{' '}
+                      <span className="font-mono">{previewResult.upstream_version}</span>
+                      {' · '}
+                      <span className="font-medium">Adds</span>{' '}
+                      <span className="font-mono">{previewResult.diff_summary.new_keys.length}</span>{' '}
+                      new key{previewResult.diff_summary.new_keys.length === 1 ? '' : 's'}
+                      {previewResult.diff_summary.preserved_user_keys.length > 0 && (
+                        <>
+                          {' · '}
+                          <span className="font-medium">Preserves</span>{' '}
+                          <span className="font-mono">
+                            {previewResult.diff_summary.preserved_user_keys.length}
+                          </span>{' '}
+                          user value
+                          {previewResult.diff_summary.preserved_user_keys.length === 1 ? '' : 's'}
+                        </>
+                      )}
+                    </p>
+                  </div>
+
+                  {previewResult.diff_summary.new_keys.length > 0 && (
+                    <details className="rounded-md border border-[#c0ddf0] bg-white p-3 dark:border-gray-700 dark:bg-gray-900" open>
+                      <summary className="cursor-pointer text-xs font-semibold text-[#0a2a4a] dark:text-gray-100">
+                        New upstream keys ({previewResult.diff_summary.new_keys.length})
+                      </summary>
+                      <ul className="mt-2 max-h-48 overflow-y-auto font-mono text-xs text-teal-700 dark:text-teal-300" style={{ scrollbarGutter: 'stable' }}>
+                        {previewResult.diff_summary.new_keys.map((k) => (
+                          <li key={k}>+ {k}</li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
+
+                  {previewResult.diff_summary.preserved_user_keys.length > 0 && (
+                    <details className="rounded-md border border-[#c0ddf0] bg-white p-3 dark:border-gray-700 dark:bg-gray-900">
+                      <summary className="cursor-pointer text-xs font-semibold text-[#0a2a4a] dark:text-gray-100">
+                        Keys preserved from your current file ({previewResult.diff_summary.preserved_user_keys.length})
+                      </summary>
+                      <ul className="mt-2 max-h-48 overflow-y-auto font-mono text-xs text-[#1a4a6a] dark:text-gray-300" style={{ scrollbarGutter: 'stable' }}>
+                        {previewResult.diff_summary.preserved_user_keys.map((k) => (
+                          <li key={k}>= {k}</li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
+
+                  <details className="rounded-md border border-[#c0ddf0] bg-white p-3 dark:border-gray-700 dark:bg-gray-900">
+                    <summary className="cursor-pointer text-xs font-semibold text-[#0a2a4a] dark:text-gray-100">
+                      Merged YAML (preview)
+                    </summary>
+                    <pre
+                      className="mt-2 max-h-80 overflow-auto rounded bg-[#f8fbff] p-2 font-mono text-[11px] leading-4 text-[#0a2a4a] dark:bg-gray-900 dark:text-gray-100"
+                      style={{ scrollbarGutter: 'stable' }}
+                    >
+                      {previewResult.merged}
+                    </pre>
+                  </details>
+                </div>
+              )}
+            </div>
+
+            <footer className="flex items-center justify-end gap-2 border-t border-[#c0ddf0] bg-[#f0f7ff] px-5 py-3 dark:border-gray-700 dark:bg-gray-900">
               <button
                 type="button"
-                onClick={() => setPullConfirmOpen(false)}
-                disabled={pulling}
-                className="rounded-md border border-[#c0ddf0] bg-white px-3 py-1.5 text-xs font-medium text-[#1a4a6a] hover:bg-[#e0f0ff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+                onClick={() => {
+                  setPreviewOpen(false)
+                  setPreviewError(null)
+                }}
+                disabled={applyingMerge}
+                className="rounded-md border border-[#c0ddf0] bg-white px-3 py-1.5 text-xs font-medium text-[#1a4a6a] hover:bg-[#e0f0ff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
               >
                 Cancel
               </button>
               <button
                 type="button"
-                disabled={pulling}
+                disabled={
+                  applyingMerge ||
+                  !previewResult ||
+                  previewResult.diff_summary.no_op ||
+                  !!previewError
+                }
                 onClick={async () => {
-                  setPulling(true)
+                  if (!previewResult) return
+                  setApplyingMerge(true)
                   try {
-                    const res = await onPullUpstream()
-                    setLastResult(res)
+                    const res = await onSubmit(previewResult.merged)
                     const prURL = res.pr_url || res.result?.pr_url
                     const prID = res.pr_id ?? res.result?.pr_id
                     const merged = res.merged ?? res.result?.merged ?? false
+                    setLastResult(res)
+                    const label = prID ? `PR #${prID}` : 'PR'
                     if (prURL) {
-                      const label = prID ? `PR #${prID}` : 'PR'
-                      showToast(
-                        merged ? `${label} merged →` : `${label} opened →`,
-                        'success',
-                      )
+                      showToast(merged ? `${label} merged →` : `${label} opened →`, 'success')
                     } else {
-                      showToast('Upstream values applied', 'success')
+                      showToast('Merge applied', 'success')
                     }
+                    setDraft(previewResult.merged)
                     setRefreshKey((k) => k + 1)
-                    setPullConfirmOpen(false)
+                    setPreviewOpen(false)
+                    setPreviewResult(null)
                   } catch (e) {
-                    const msg = e instanceof Error ? e.message : 'Failed to pull upstream values'
-                    setSubmitError(msg)
-                    showToast(`Failed to pull upstream — ${msg}`, 'info')
+                    const msg = e instanceof Error ? e.message : 'Failed to open PR'
+                    setPreviewError(msg)
+                    showToast(`Failed to apply merge — ${msg}`, 'info')
                   } finally {
-                    setPulling(false)
+                    setApplyingMerge(false)
                   }
                 }}
-                className="inline-flex items-center gap-1 rounded-md bg-teal-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-700 disabled:opacity-50 dark:bg-teal-500 dark:hover:bg-teal-400"
+                className="inline-flex items-center gap-1 rounded-md bg-teal-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-500 dark:hover:bg-teal-400"
               >
-                {pulling ? (
+                {applyingMerge ? (
                   <>
                     <Loader2 className="h-3 w-3 animate-spin" />
-                    Pulling…
+                    Opening PR…
                   </>
                 ) : (
                   <>
-                    <CloudDownload className="h-3 w-3" />
-                    Pull and open PR
+                    <GitPullRequest className="h-3 w-3" />
+                    Apply changes
                   </>
                 )}
               </button>
-            </div>
+            </footer>
           </div>
         </div>
       )}

@@ -516,3 +516,76 @@ func TestPickRecommendedReason_SetOnCard(t *testing.T) {
 		t.Errorf("expected Patch card to be recommended, got %q", recCard.Label)
 	}
 }
+
+// TestGetRecommendations_NeverDowngrade pins the v1.21 QA Bundle 4 Fix #7
+// behaviour: when current is the highest stable version in the repo, the
+// service must not surface any "latest stable X" card pointing at an older
+// version. The maintainer hit this with velero@12.0.0 vs an index that still
+// listed 11.4.0 — the old code recommended 11.4.0 as "Latest Stable", which
+// was a downgrade dressed up as an upgrade.
+func TestGetRecommendations_NeverDowngrade(t *testing.T) {
+	const addon = "velero"
+	const chart = "velero"
+	helmSrv := newHelmServer(t, chart, []string{"12.0.0", "11.4.0", "11.3.0", "10.5.0"})
+
+	svc := newTestUpgradeSvc(nil)
+	gp := &fakeGitProvider{
+		files: map[string][]byte{
+			"configuration/addons-catalog.yaml": catalogYAML(addon, chart, helmSrv.URL, "12.0.0"),
+		},
+	}
+
+	rec, err := svc.GetRecommendations(context.Background(), addon, gp)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(rec.Cards) != 0 {
+		t.Errorf("expected zero cards (no upgrade available), got %d: %+v", len(rec.Cards), rec.Cards)
+	}
+	if rec.Recommended != "" {
+		t.Errorf("expected no Recommended version, got %q", rec.Recommended)
+	}
+	if rec.LatestStable != "" {
+		t.Errorf("expected no LatestStable, got %q", rec.LatestStable)
+	}
+	if !rec.OnLatest {
+		t.Error("expected OnLatest=true so the UI can render the reassurance message")
+	}
+}
+
+// TestGetRecommendations_OnLatestFalseWhenUpgradeAvailable is the negative
+// case: when there IS something newer, OnLatest must stay false so the UI
+// renders the upgrade cards normally.
+func TestGetRecommendations_OnLatestFalseWhenUpgradeAvailable(t *testing.T) {
+	const addon = "cert-manager"
+	const chart = "cert-manager"
+	helmSrv := newHelmServer(t, chart, []string{"1.20.2", "1.20.1", "1.19.0"})
+
+	svc := newTestUpgradeSvc(nil)
+	gp := &fakeGitProvider{
+		files: map[string][]byte{
+			"configuration/addons-catalog.yaml": catalogYAML(addon, chart, helmSrv.URL, "1.20.1"),
+		},
+	}
+
+	rec, err := svc.GetRecommendations(context.Background(), addon, gp)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rec.OnLatest {
+		t.Error("expected OnLatest=false when an upgrade is available")
+	}
+	if rec.NextPatch != "1.20.2" {
+		t.Errorf("expected NextPatch=1.20.2 got %q", rec.NextPatch)
+	}
+}
+
+// Also a "downgrade-with-other-candidates" sanity check: even when the next
+// minor and patch are available, an old "latest stable" must not creep in.
+func TestGetRecommendations_BuildCardsRejectsDowngradeLatest(t *testing.T) {
+	cur := semverParts{major: 12, minor: 0, patch: 0}
+	cards, _ := buildCards(cur, "", "", "", "11.4.0", nil)
+	if len(cards) != 0 {
+		t.Errorf("expected no cards from a sole-downgrade latestVer, got %+v", cards)
+	}
+}

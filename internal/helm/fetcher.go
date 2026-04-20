@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -20,6 +21,11 @@ type ChartVersion struct {
 	AppVersion  string   `yaml:"appVersion,omitempty"`
 	Created     string   `yaml:"created,omitempty"`
 	Description string   `yaml:"description,omitempty"`
+	Icon        string   `yaml:"icon,omitempty"`
+	// Deprecated mirrors the per-version `deprecated` field from index.yaml.
+	// Charts mark a version as deprecated when it should not be used (e.g. a
+	// CVE landed). Surfaced in the v1.21 Paste-URL validate response.
+	Deprecated bool `yaml:"deprecated,omitempty"`
 }
 
 // repoIndex represents a Helm repository index.yaml.
@@ -101,6 +107,26 @@ func (f *Fetcher) ListVersions(ctx context.Context, repoURL, chartName string) (
 	}
 
 	return versions, nil
+}
+
+// ListCharts returns the chart names listed under entries: in a Helm repo's
+// index.yaml. v1.21 QA Bundle 1: lets the manual "Add Addon" flow show a
+// chart-name dropdown after the operator validates the repo URL.
+func (f *Fetcher) ListCharts(ctx context.Context, repoURL string) ([]string, error) {
+	idx, err := f.getIndex(ctx, repoURL)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(idx.Entries))
+	for name := range idx.Entries {
+		if name == "" {
+			continue
+		}
+		out = append(out, name)
+	}
+	// Stable order so cache hits and replays are deterministic.
+	sort.Strings(out)
+	return out, nil
 }
 
 // FindNearestVersion finds the closest available version to the target version.

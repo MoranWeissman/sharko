@@ -127,10 +127,42 @@ type AddonValuesResponse struct {
 // from the chart's `values.schema.json`. The schema may be nil when the
 // chart does not publish one (most charts do not); the UI then falls back
 // to plain YAML mode without autocomplete.
+//
+// v1.21 (Story V121-6.5) adds `ValuesVersionMismatch`. When non-nil it
+// signals that the chart version pinned in `addons-catalog.yaml` is ahead
+// of the version stamped in the values file's smart-values header — the
+// UI renders a refresh banner. The field is `omitempty` so legacy files
+// without a `# sharko: managed=true` header keep working without a
+// banner.
 type AddonValuesSchemaResponse struct {
-	AddonName     string                 `json:"addon_name"`
-	CurrentValues string                 `json:"current_values"`
-	Schema        map[string]interface{} `json:"schema,omitempty"`
+	AddonName             string                  `json:"addon_name"`
+	CurrentValues         string                  `json:"current_values"`
+	Schema                map[string]interface{}  `json:"schema,omitempty"`
+	ValuesVersionMismatch *ValuesVersionMismatch  `json:"values_version_mismatch,omitempty"`
+
+	// V121-7.4: header-derived AI annotation state. The UI uses these
+	// to gate the "AI not configured" banner (rendered when
+	// AIAnnotated=false AND Sharko's AI provider is `none`) and the
+	// per-addon opt-out toggle (mirrors AIOptOut). Both default-false
+	// for legacy files without a smart-values header.
+	AIAnnotated bool `json:"ai_annotated"`
+	AIOptOut    bool `json:"ai_opt_out"`
+
+	// v1.21 Bundle 5: true when the current values file is wrapped
+	// under a legacy `<addonName>:` (or `<chartName>:`) root key — Helm
+	// receives this file directly via `valueFiles:` in the
+	// ApplicationSet template and silently ignores everything nested
+	// under that root. The Values tab uses this to render a yellow
+	// migration banner with a "Migrate this file" button.
+	LegacyWrapDetected bool `json:"legacy_wrap_detected,omitempty"`
+}
+
+// ValuesVersionMismatch is set when the catalog version differs from the
+// values-file header version. Both fields are non-empty strings on
+// instantiation; the UI compares them and surfaces the refresh banner.
+type ValuesVersionMismatch struct {
+	CatalogVersion string `json:"catalog_version"`
+	ValuesVersion  string `json:"values_version"`
 }
 
 // ClusterAddonValuesResponse is the API response for the per-cluster

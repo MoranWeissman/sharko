@@ -23,6 +23,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/auth"
+	"github.com/MoranWeissman/sharko/internal/catalog"
 	"github.com/MoranWeissman/sharko/internal/config"
 	_ "github.com/MoranWeissman/sharko/docs/swagger" // swagger docs
 	"github.com/MoranWeissman/sharko/internal/metrics"
@@ -117,6 +118,11 @@ type Server struct {
 
 	// version is set at startup via SetVersion and reflects the ldflags-injected build version.
 	version string
+
+	// catalog holds the curated addon catalog parsed from the embedded YAML
+	// at server startup (see internal/catalog). Optional — handlers that
+	// depend on it return 503 when nil.
+	catalog *catalog.Catalog
 }
 
 // NewServer creates a new API server.
@@ -481,12 +487,32 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("PUT /api/v1/clusters/{cluster}/addons/{name}/values", srv.handleSetClusterAddonValues)
 	mux.HandleFunc("GET /api/v1/clusters/{cluster}/addons/{name}/values", srv.handleGetClusterAddonValues)
 
-	// Values editor extras (v1.20.1):
-	//   • Pull upstream chart defaults (Tier 2)
+	// Values editor extras:
 	//   • Recent merged PRs touching a values file (read)
-	mux.HandleFunc("POST /api/v1/addons/{name}/values/pull-upstream", srv.handlePullUpstreamValues)
+	//
+	// Note: the v1.20.1 `POST /api/v1/addons/{name}/values/pull-upstream`
+	// endpoint was removed in v1.21 (Story V121-6.5). Its functionality
+	// moved to a `refresh_from_upstream: true` flag on the existing
+	// `PUT /api/v1/addons/{name}/values` handler — the locked decision is
+	// to keep the values-edit surface single-handler.
 	mux.HandleFunc("GET /api/v1/addons/{name}/values/recent-prs", srv.handleGetAddonValuesRecentPRs)
 	mux.HandleFunc("GET /api/v1/clusters/{cluster}/addons/{name}/values/recent-prs", srv.handleGetClusterAddonValuesRecentPRs)
+
+	// v1.21 QA Bundle 4 (Fix #4): diff-and-merge preview. Tier 1 read —
+	// returns a candidate body that the user submits via the existing
+	// PUT values endpoint. POST is used for forward-compat (the body
+	// will eventually carry a "preview against version X" parameter).
+	mux.HandleFunc("POST /api/v1/addons/{name}/values/preview-merge", srv.handlePreviewMergeAddonValues)
+
+	// V121-7 Story 7.4: manual AI annotate + per-addon opt-out toggle.
+	mux.HandleFunc("POST /api/v1/addons/{name}/values/annotate", srv.handleAnnotateAddonValues)
+	mux.HandleFunc("PUT /api/v1/addons/{name}/values/ai-opt-out", srv.handleSetAddonAIOptOut)
+
+	// v1.21 Bundle 5: legacy `<addon>:` wrap migration. One PR per call,
+	// covering every wrapped global values file in the repo. Pass
+	// `?addon=<name>` to migrate a single file (used by the per-file
+	// "Migrate this file" button on the AddonDetail Values tab).
+	mux.HandleFunc("POST /api/v1/addons/unwrap-globals", srv.handleUnwrapGlobalValues)
 
 	// Addon secrets (definition CRUD)
 	mux.HandleFunc("GET /api/v1/addon-secrets", srv.handleListAddonSecrets)
@@ -512,6 +538,37 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("POST /api/v1/providers/test", srv.handleTestProvider)
 	mux.HandleFunc("POST /api/v1/providers/test-config", srv.handleTestProviderConfig)
 	mux.HandleFunc("GET /api/v1/config", srv.handleGetConfig)
+
+	// Curated catalog (v1.21) — embedded marketplace metadata, read-only.
+	// Scope: the Sharko-native curated addon list (catalog/addons.yaml)
+	// distinct from /api/v1/addons/catalog which surfaces the USER's deployed
+	// addons for their connected GitOps repo.
+	mux.HandleFunc("GET /api/v1/catalog/addons", srv.handleListCatalogAddons)
+	mux.HandleFunc("GET /api/v1/catalog/addons/{name}/versions", srv.handleListCatalogVersions)
+	// v1.21 QA Bundle 2: README proxy for the in-page Marketplace detail
+	// view. Resolves curated addon → ArtifactHub package, then returns the
+	// README markdown.
+	mux.HandleFunc("GET /api/v1/catalog/addons/{name}/readme", srv.handleGetCatalogReadme)
+	// v1.21 QA Bundle 4 Fix #3b: tool README (distinct from Helm chart README).
+	// Resolved server-side so the browser doesn't need GitHub API access.
+	mux.HandleFunc("GET /api/v1/catalog/addons/{name}/project-readme", srv.handleGetCuratedProjectReadme)
+	mux.HandleFunc("GET /api/v1/catalog/remote/{repo}/{name}/project-readme", srv.handleGetRemoteProjectReadme)
+	mux.HandleFunc("GET /api/v1/catalog/addons/{name}", srv.handleGetCatalogAddon)
+
+	// V121-4: Paste Helm URL validator — confirms an arbitrary repo+chart is
+	// reachable and parseable, returns versions for the Configure modal.
+	mux.HandleFunc("GET /api/v1/catalog/validate", srv.handleValidateCatalogChart)
+
+	// v1.21 QA Bundle 1: lists chart names available in an arbitrary Helm
+	// repository so the manual "Add Addon" form can show a chart-name
+	// dropdown after the operator validates the repo URL.
+	mux.HandleFunc("GET /api/v1/catalog/repo-charts", srv.handleListRepoCharts)
+
+	// ArtifactHub proxy + reprobe (v1.21 Epic V121-3) — server-side proxy so
+	// the browser doesn't call ArtifactHub directly (CORS + shared cache + rate-limit handling).
+	mux.HandleFunc("GET /api/v1/catalog/search", srv.handleSearchCatalog)
+	mux.HandleFunc("GET /api/v1/catalog/remote/{repo}/{name}", srv.handleGetRemotePackage)
+	mux.HandleFunc("POST /api/v1/catalog/reprobe", srv.handleReprobeArtifactHub)
 
 	// Addons (read)
 	mux.HandleFunc("GET /api/v1/addons/list", srv.handleListAddons)
@@ -561,6 +618,9 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 
 	// Pull request tracking
 	mux.HandleFunc("GET /api/v1/prs", srv.handleListPRs)
+	// /prs/merged must be registered BEFORE /prs/{id} so the literal "merged"
+	// path wins over the {id} wildcard.
+	mux.HandleFunc("GET /api/v1/prs/merged", srv.handleListMergedPRs)
 	mux.HandleFunc("GET /api/v1/prs/{id}", srv.handleGetPR)
 	mux.HandleFunc("POST /api/v1/prs/{id}/refresh", srv.handleRefreshPR)
 	mux.HandleFunc("DELETE /api/v1/prs/{id}", srv.handleDeletePR)

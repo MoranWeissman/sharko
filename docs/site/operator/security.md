@@ -197,3 +197,47 @@ The audit log records the resolved attribution mode on every mutating entry:
 When a user performs a Tier 2 action without a personal PAT configured, the response includes `attribution_warning: "no_per_user_pat"` and the UI renders a banner pointing to **Settings → My Account**.
 
 For the full design rationale and the V2.x roadmap that builds on this foundation, see `docs/design/2026-04-16-attribution-and-permissions-model.md`.
+
+## SSRF guard on URL-fetching endpoints
+
+Several endpoints fetch from a user-supplied URL (e.g. `GET /api/v1/catalog/validate` pulls `<repo>/index.yaml` from a Helm repo URL the user pastes into the Marketplace). To prevent an authenticated user from coaxing the server into hitting cluster-internal addresses (the K8s API, ArgoCD, the cloud-provider metadata service), Sharko ships a built-in SSRF guard that runs in front of every such handler.
+
+The guard rejects URLs that resolve to:
+
+| Range | Reason |
+|---|---|
+| `127.0.0.0/8`, `::1` | Loopback |
+| `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` | RFC1918 private |
+| `169.254.0.0/16`, `fe80::/10` | Link-local (cloud metadata services) |
+| `fc00::/7` | IPv6 ULA |
+| Multicast / unspecified | Defense in depth |
+
+A blocked request returns HTTP 200 with `error_code: "ssrf_blocked"` (matches the rest of the catalog-validate failure taxonomy so the UI's switch table doesn't need to branch on HTTP status).
+
+### Optional allowlist
+
+For higher-assurance deployments, set `SHARKO_URL_ALLOWLIST` to restrict outbound fetches to a fixed set of hostnames:
+
+```yaml
+extraEnv:
+  - name: SHARKO_URL_ALLOWLIST
+    value: "charts.jetstack.io,charts.bitnami.com,api.scorecard.dev"
+```
+
+When set, only the listed hostnames pass the guard — every other host is rejected with `ssrf_blocked: not_in_allowlist`. When unset, the guard falls back to the default deny-list above (RFC1918 + loopback + link-local + ULA), which is appropriate for self-hosted Sharko behind a network policy.
+
+The guard runs in addition to (not instead of) any Kubernetes NetworkPolicy fronting the Sharko pod. Treat it as defense-in-depth — operators of production clusters should still apply egress NetworkPolicy that pins Sharko to its required external endpoints.
+
+## Secret-leak guard on AI annotation
+
+When AI annotation is enabled (V121-7), Sharko scans every upstream `values.yaml` for secret-like patterns (AWS keys, GitHub PATs, JWTs, PEM blocks, Slack tokens, Google API keys, generic API key/password assignments, high-entropy base64 blobs). On a match the LLM call is **hard-blocked** — there is no override.
+
+Every block emits a dedicated audit-log entry with the event name `secret_leak_blocked` so security review can grep one stable token across the audit log:
+
+```bash
+curl -H "Authorization: Bearer $SHARKO_TOKEN" \
+  "https://sharko.example.com/api/v1/audit?action=block&limit=200" \
+  | jq '.[] | select(.event == "secret_leak_blocked")'
+```
+
+The audit `Detail` field carries the source handler (`addon_add`, `ai_annotate`, or `values_refresh`), the chart + version, the match count, and the deduplicated list of pattern names that fired. The actual matched bytes are never logged, never stored, and never returned in API responses.

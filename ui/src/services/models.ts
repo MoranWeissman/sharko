@@ -324,6 +324,38 @@ export interface AIProviderInfo {
 export interface AIConfigResponse {
   current_provider: string
   available_providers: AIProviderInfo[]
+  // V121-7.3 — global Settings toggle for "Annotate values on generate".
+  // Reported false when AI is not configured. Default-true on first install
+  // when AI is configured; the Save handler stamps the explicit value going
+  // forward so subsequent reads are authoritative.
+  annotate_on_seed?: boolean
+}
+
+// V121-7.1 / 7.4: secret-leak guard match (redacted, never carries the
+// raw secret value).
+export interface AISecretMatch {
+  pattern: string
+  field: string
+  line: number
+}
+
+// V121-7.4: response from POST /addons/{name}/values/annotate when the
+// secret-leak guard hard-blocks the LLM call. UI matches on `code` to
+// render the dedicated banner.
+export interface AIAnnotateBlockedResponse {
+  code: string // "secret_detected_blocked"
+  message: string
+  matches: AISecretMatch[]
+}
+
+// V121-7.4: success body for the manual annotate endpoint.
+export interface AnnotateAddonValuesResponse {
+  pr_url?: string
+  pr_id?: number
+  branch?: string
+  merged: boolean
+  commit_sha?: string
+  ai_skip_reason?: string
 }
 
 export interface AvailableVersion {
@@ -336,6 +368,246 @@ export interface AvailableVersionsResponse {
   chart: string
   repo_url: string
   versions: AvailableVersion[]
+}
+
+// --- Curated catalog (v1.21 Marketplace) ---
+//
+// Mirrors `internal/catalog.CatalogEntry` and the v1.21 catalog handlers.
+// `security_score` may be the literal string `"unknown"` when ScoreValue.Known
+// is false on the backend; the UI handles both shapes.
+
+export type CatalogScore = number | 'unknown'
+
+export type CatalogCategory =
+  | 'security'
+  | 'observability'
+  | 'networking'
+  | 'autoscaling'
+  | 'gitops'
+  | 'storage'
+  | 'database'
+  | 'backup'
+  | 'chaos'
+  | 'developer-tools'
+
+export type CatalogCuratedBy =
+  | 'cncf-graduated'
+  | 'cncf-incubating'
+  | 'cncf-sandbox'
+  | 'aws-eks-blueprints'
+  | 'azure-aks-addon'
+  | 'gke-marketplace'
+  | 'artifacthub-verified'
+  | 'artifacthub-official'
+
+export type CatalogSecurityTier = 'Strong' | 'Moderate' | 'Weak' | ''
+
+export interface CatalogEntry {
+  name: string
+  description: string
+  chart: string
+  repo: string
+  default_namespace: string
+  default_sync_wave: number
+  docs_url?: string
+  homepage?: string
+  source_url?: string
+  maintainers: string[]
+  license: string
+  category: CatalogCategory
+  curated_by: CatalogCuratedBy[]
+  security_score?: CatalogScore
+  security_score_updated?: string
+  security_tier?: CatalogSecurityTier
+  github_stars?: number
+  min_kubernetes_version?: string
+  deprecated?: boolean
+  superseded_by?: string
+}
+
+export interface CatalogListResponse {
+  addons: CatalogEntry[]
+  total: number
+}
+
+export interface CatalogVersionEntry {
+  version: string
+  app_version?: string
+  created?: string
+  prerelease: boolean
+}
+
+export interface CatalogVersionsResponse {
+  addon: string
+  chart: string
+  repo: string
+  versions: CatalogVersionEntry[]
+  latest_stable?: string
+  cached_at: string
+}
+
+// V121-4 — Paste Helm URL validator. The handler returns 200 in both the happy
+// and the structured-failure path; UI keys off `valid` and `error_code`.
+export type CatalogValidateErrorCode =
+  | 'invalid_input'
+  | 'repo_unreachable'
+  | 'index_parse_error'
+  | 'chart_not_found'
+  | 'timeout'
+  | 'ssrf_blocked'
+
+export interface CatalogValidateResponse {
+  valid: boolean
+  chart: string
+  repo: string
+  description?: string
+  icon_url?: string
+  versions?: CatalogVersionEntry[]
+  latest_stable?: string
+  cached_at?: string
+  error_code?: CatalogValidateErrorCode
+  message?: string
+}
+
+/**
+ * v1.21 QA Bundle 1 — listing of all chart names in a Helm repo's index.yaml.
+ * Returned by `GET /api/v1/catalog/repo-charts`. Used by the manual "Add
+ * Addon" form to populate a chart-name dropdown after the operator
+ * validates a repo URL. Same `valid` + `error_code` envelope as
+ * /catalog/validate so the UI can reuse its existing switch table.
+ */
+export interface CatalogRepoChartsResponse {
+  valid: boolean
+  repo: string
+  charts?: string[]
+  cached_at?: string
+  error_code?: CatalogValidateErrorCode
+  message?: string
+}
+
+/** Filter shape used by the Marketplace Browse tab. AND semantics across keys. */
+export interface CatalogListFilters {
+  q?: string
+  category?: CatalogCategory[]
+  curated_by?: CatalogCuratedBy[]
+  license?: string[]
+  /**
+   * Coarse OpenSSF tier the user picked in the sidebar. The backend takes a
+   * numeric `min_score`; the UI maps tier → numeric here.
+   */
+  min_score?: number
+  /** When true, entries with `security_score: "unknown"` stay visible. */
+  include_unknown_score?: boolean
+}
+
+// --- ArtifactHub proxy (V121-3 Search tab) ---
+//
+// Mirrors the slimmed shapes the backend returns. We deliberately keep these
+// types narrow — the proxy hands us only the fields the UI renders, so the TS
+// definitions match.
+
+export interface ArtifactHubRepo {
+  repository_id?: string
+  kind: number
+  name: string
+  display_name?: string
+  url?: string
+  organization_name?: string
+  user_alias?: string
+  verified_publisher?: boolean
+  official?: boolean
+}
+
+export interface ArtifactHubSearchResult {
+  package_id: string
+  name: string
+  normalized_name?: string
+  display_name?: string
+  description?: string
+  logo_image_id?: string
+  version?: string
+  app_version?: string
+  stars?: number
+  repository: ArtifactHubRepo
+}
+
+export interface ArtifactHubMaintainer {
+  name?: string
+  email?: string
+}
+
+export interface ArtifactHubLink {
+  name?: string
+  url?: string
+}
+
+export interface ArtifactHubVersionMeta {
+  version: string
+  ts?: number
+  prerelease?: boolean
+}
+
+export interface ArtifactHubPackage {
+  package_id: string
+  name: string
+  normalized_name?: string
+  display_name?: string
+  description?: string
+  home_url?: string
+  readme?: string
+  version?: string
+  app_version?: string
+  license?: string
+  stars?: number
+  maintainers?: ArtifactHubMaintainer[]
+  repository: ArtifactHubRepo
+  available_versions?: ArtifactHubVersionMeta[]
+  links?: ArtifactHubLink[]
+  keywords?: string[]
+}
+
+export interface CatalogSearchResponse {
+  query: string
+  curated: CatalogEntry[]
+  artifacthub: ArtifactHubSearchResult[]
+  /**
+   * Set when the upstream ArtifactHub call failed. Classification: rate_limited
+   * | server_error | timeout | not_found | malformed | invalid_input | unknown.
+   * Curated hits are still populated when this is set.
+   */
+  artifacthub_error?: string
+  /** True when ArtifactHub hits came from the stale window (upstream failed). */
+  stale?: boolean
+  cached_at?: string
+}
+
+export interface CatalogRemotePackageResponse {
+  package: ArtifactHubPackage | null
+  stale?: boolean
+  cached_at?: string
+}
+
+/**
+ * v1.21 QA Bundle 2: README payload for a curated catalog addon. The backend
+ * resolves the curated entry to an ArtifactHub package and returns the
+ * README markdown. `readme: ""` means the chart was located but doesn't
+ * ship a README — the UI renders an empty state, not an error.
+ */
+export interface CatalogReadmeResponse {
+  readme: string
+  /** Source of the README — "artifacthub" today; "fallback" reserved for
+   *  v1.22's direct chart-tarball extractor. */
+  source: string
+  ah_repo?: string
+  ah_chart?: string
+  stale?: boolean
+  cached_at?: string
+}
+
+export interface CatalogReprobeResponse {
+  reachable: boolean
+  last_error?: string
+  probed_at: string
 }
 
 export interface ValueDiffEntry {
@@ -403,6 +675,30 @@ export interface AddonValuesSchemaResponse {
   addon_name: string
   current_values: string
   schema?: Record<string, unknown> | null
+  /**
+   * v1.21 (Story V121-6.5): present when the chart version pinned in
+   * `addons-catalog.yaml` is ahead of the version stamped in the values
+   * file's smart-values header. The Values tab renders a yellow refresh
+   * banner. Absent on legacy files (no `# sharko: managed=true` header).
+   */
+  values_version_mismatch?: { catalog_version: string; values_version: string } | null
+  /**
+   * V121-7.4: header-derived AI annotation state. Both default-false on
+   * legacy files. The Values tab uses these (with the global AI config
+   * state) to render the "AI not configured" banner and the per-addon
+   * opt-out toggle.
+   */
+  ai_annotated?: boolean
+  ai_opt_out?: boolean
+  /**
+   * v1.21 Bundle 5: true when the current values file is wrapped under a
+   * legacy `<addonName>:` (or `<chartName>:`) root key. Helm receives
+   * this file directly via `valueFiles:` in the ApplicationSet template
+   * and silently ignores everything nested under that root. The Values
+   * tab renders a yellow migration banner with a "Migrate this file"
+   * button when this is set.
+   */
+  legacy_wrap_detected?: boolean
 }
 
 /** Response for GET /clusters/{cluster}/addons/{name}/values. */
@@ -452,6 +748,25 @@ export interface RecentPRsEntry {
   url: string
   author: string
   merged_at: string
+}
+
+/**
+ * Response for POST /addons/{name}/values/preview-merge — v1.21 QA Bundle 4
+ * Fix #4. Returns a candidate values body that adds NEW upstream keys to
+ * the user's current file without touching keys the user already set.
+ * Submitting goes through the existing PUT /addons/{name}/values endpoint.
+ */
+export interface PreviewMergeResponse {
+  current: string
+  merged: string
+  diff_summary: PreviewMergeSummary
+  upstream_version: string
+}
+
+export interface PreviewMergeSummary {
+  new_keys: string[]
+  preserved_user_keys: string[]
+  no_op: boolean
 }
 
 export interface PermCheck {

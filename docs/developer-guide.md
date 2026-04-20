@@ -101,6 +101,8 @@ sharko/
       secrets.go        Addon secret delivery to remote clusters (AddonSecretDefinition)
       git_helpers.go    Git operations (always via PR; auto-merge when configured)
       values_generator.go Cluster values file generation
+      smart_values.go   v1.21 smart-values writer + chart-name unwrap
+      unwrap_globals.go v1.21 Bundle 5 — legacy `<addon>:` wrap detector + unwrapper
 
     providers/          Secrets provider interface + implementations
       provider.go       ClusterCredentialsProvider interface
@@ -229,6 +231,19 @@ func New(
 ```
 
 The `gitMu` mutex is created once on the `Server` struct (`internal/api/router.go`) and passed to every orchestrator instance. In tests where concurrency is not under test, pass `nil`.
+
+### Values file shape: when to wrap, when not to (v1.21 Bundle 5)
+
+Sharko writes two kinds of values files. The wrap pattern differs between them:
+
+| File | Path template | Shape | Rationale |
+|------|---------------|-------|-----------|
+| Global values | `configuration/addons-global-values/<addon>.yaml` | **Top-level chart values** (no `<addon>:` wrap) | Passed straight to Helm via `valueFiles:` in the ApplicationSet template. Must be the chart's own keys at document root. |
+| Per-cluster overrides | `configuration/addons-clusters-values/<cluster>.yaml` | Wrapped under `<addon>:` (one file per cluster, many addons) | The ApplicationSet template extracts the matching `<addon>:` section per addon at runtime via `{{ $addonKey | toYaml }}`. |
+
+**If you write to a global values file, do NOT add an `<addon>:` wrap.** The smart-values writer (`internal/orchestrator/smart_values.go`) and the migration helper (`internal/orchestrator/unwrap_globals.go`) both enforce this. Pre-Bundle-5 versions of Sharko got this wrong and the bug caused Helm to silently ignore every global value — see the migration endpoint `POST /api/v1/addons/unwrap-globals` for the fix path applied to user repos.
+
+The per-cluster template block at the BOTTOM of a smart-values-generated global file IS still wrapped under `<addon>:` — that block is meant to be copy-pasted into the per-cluster file (which IS namespaced).
 
 ### orchestrator/upgrade.go
 
@@ -794,6 +809,18 @@ go test -coverprofile=coverage.out ./...
 go tool cover -html=coverage.out
 ```
 
+### UI accessibility (v1.21+)
+
+New UI surfaces shipped from v1.21 onward target **WCAG 2.1 AA**: keyboard navigation, focus rings on every interactive element, semantic landmarks (`role="navigation"` / `role="main"`), and contrast ratios that pass `axe-core` with zero violations. Existing pages predate the target and are tracked for a v1.22 retrofit (per the v1.21 design's out-of-scope list).
+
+When adding a new page or component:
+
+1. Run the existing axe suite: `cd ui && npm test -- a11y`.
+2. Add a fresh `describe(...)` block in `ui/src/__tests__/a11y.test.tsx` that mounts your page and asserts zero violations. The Marketplace block is the reference template.
+3. Manual keyboard pass: tab through every interactive element; verify focus is visible; verify Esc closes any modal you opened.
+
+The CI gate enforces zero a11y violations on the pages currently tested — extending the suite is part of the story for any new UI page.
+
 ---
 
 ## PR Workflow
@@ -819,3 +846,80 @@ go tool cover -html=coverage.out
 Never push directly to `main`. All changes go through feature branches and pull request review.
 
 Every PR push triggers a Docker build that publishes `ghcr.io/moranweissman/sharko:pr-<NUM>` (and a sha-suffixed variant for traceability) and comments the exact `helm upgrade` command on the PR — use it to test the change against a real cluster before merging. Tags are deleted when the PR is closed.
+
+---
+
+## Curated Catalog (v1.21)
+
+The Sharko binary ships an embedded curated addon catalog used by the Marketplace UI's Browse tab.
+
+### Files
+
+- `catalog/addons.yaml` — single YAML file with the curated entry list (one stanza per addon under `addons:`).
+- `catalog/schema.json` — JSON Schema reference for the entry shape (also used by the `catalog-validate` CI workflow once it lands in v1.21 Epic 8).
+- `catalog/embed.go` — top-level `catalog` Go package that holds the `//go:embed` directives. Exposes `catalog.AddonsYAML()` and `catalog.SchemaJSON()` helpers that return copies of the embedded bytes.
+- `internal/catalog/loader.go` — parses + validates the YAML at startup. Strict on required fields and on the closed enums for `category` / `curated_by`; tolerant of unknown fields so older binaries can parse newer catalogs (forward compatibility per design §4.2).
+- `internal/catalog/search.go` — in-memory filter predicate: free-text on name/description/maintainers, plus filters for `category`, `curated_by` (AND match), `license`, `min_score`, `min_k8s_version`, `include_deprecated`.
+- `internal/catalog/scorecard.go` — daily background goroutine that calls `https://api.scorecard.dev/projects/github.com/<owner>/<repo>` for every entry whose `source_url` is on GitHub and updates the in-memory `security_score`. Failures are non-fatal; entries keep their last-known score.
+
+### REST API
+
+All endpoints have full swaggo annotations (regenerate with `swag init -g cmd/sharko/serve.go -o docs/swagger --parseDependency --parseInternal`):
+
+Read-only (require authentication):
+
+- `GET /api/v1/catalog/addons` — list with optional filters: `category`, `curated_by` (comma-separated AND), `license`, `q`, `min_score`, `min_k8s_version`, `include_deprecated`.
+- `GET /api/v1/catalog/addons/{name}` — single entry with derived `security_tier` label (Strong / Moderate / Weak) and `security_score_updated` date.
+- `GET /api/v1/catalog/addons/{name}/versions` — chart versions for the curated entry (15 min cached, capped at 200 entries).
+- `GET /api/v1/catalog/search?q=<term>&limit=20` — blended search across the curated catalog and ArtifactHub. Returns `{curated, artifacthub, artifacthub_error?, stale?}`. Curated hits are returned even when ArtifactHub is unreachable.
+- `GET /api/v1/catalog/remote/{repo}/{name}` — proxies one ArtifactHub package detail (used to pre-fill the Configure modal for external charts). 1 h cached, capped at 500 entries.
+
+Tier 1 (admin, audit-tracked):
+
+- `POST /api/v1/catalog/reprobe` — clears the search and package caches, resets the ArtifactHub backoff, and probes `/`. Returns `{reachable, last_error?, probed_at}`.
+
+### ArtifactHub proxy + cache (V121-3)
+
+Sharko proxies ArtifactHub server-side so the browser never calls a third party from the user's network. The plumbing lives in `internal/catalog/`:
+
+- `internal/catalog/cache.go` — `TTLCache` (LRU + TTL with separate fresh/stale windows) and `Backoff` (per-host exponential backoff, 1 s → 60 s with ±25 % jitter).
+- `internal/catalog/artifacthub.go` — minimal HTTP client for `/packages/search`, `/packages/helm/{repo}/{name}`, and a tiny `/` probe. Returns typed `ArtifactHubError{Class}` so handlers can switch on `not_found` / `rate_limited` / `server_error` / `timeout` / `malformed`.
+- `internal/api/catalog_proxy_state.go` — process-global `searchCache`, `packageCache`, `ahBackoff`, `ahClient` shared by the search/remote/reprobe handlers.
+
+Cache TTLs (per design §4.5):
+
+| Tier | Fresh TTL | Stale TTL | Capacity |
+|---|---|---|---|
+| Search results | 10 min | 24 h | 200 entries (LRU) |
+| Package detail | 1 h | 24 h | 500 entries (LRU) |
+| Versions (curated) | 15 min | (no stale) | 200 entries (LRU) |
+
+On upstream failure handlers serve from the stale window with `X-Cache-Stale: true` and `stale: true` in the JSON body. On 429 / 5xx the per-host backoff extends so a flapping ArtifactHub doesn't get hammered. The Marketplace UI's "Retry connectivity" button calls `POST /catalog/reprobe`, which resets backoff + caches and immediately probes ArtifactHub.
+
+No API token is required — ArtifactHub's read endpoints are public. We never proxy chart tarballs (ArgoCD pulls those at deploy time from the upstream repo).
+
+### Adding an entry
+
+1. Edit `catalog/addons.yaml` and append a stanza under `addons:` matching the schema in `catalog/schema.json`. Required fields: `name`, `description`, `chart`, `repo`, `default_namespace`, `maintainers`, `license`, `category`, `curated_by`. The closed enums for `category` and `curated_by` are listed in the schema.
+2. Run `go test ./internal/catalog/...` — `TestLoad_Embedded` will catch any structural error and name the offending entry.
+3. Run `go test ./...` to confirm full backend health.
+4. Open a PR. CODEOWNERS gates `catalog/**` to the maintainer.
+
+The catalog is metadata-only — Sharko does not host or proxy Helm charts. ArgoCD pulls charts from the upstream `repo` URL at deploy time. Air-gap is the operator's infrastructure problem (typically solved by running an internal Helm mirror and pointing the user's `addons-catalog.yaml` at it).
+
+### Security primitives
+
+Cross-cutting hardening helpers live under `internal/security/`:
+
+- `internal/security/url_guard.go` — `ValidateExternalURL(rawURL string) error` runs an SSRF check on user-supplied URLs (RFC1918, loopback, link-local, IPv6 ULA blocked by default; optional `SHARKO_URL_ALLOWLIST` env var pins to a fixed hostname set). Wired into every handler that fetches from a user-supplied URL — currently `GET /api/v1/catalog/validate`. Returns a typed `*SSRFError` so handlers can render a structured `ssrf_blocked` response without ambiguity.
+
+The orchestrator-side secret-leak guard (`internal/orchestrator/ai_guard.go`) is the AI-pipeline analogue — pure scanner of `values.yaml` payloads with `ScanForSecrets`, returning redacted `SecretMatch` records. Handler call sites (`addons_write.go`, `ai_annotate.go`, `values_editor.go`) emit a dedicated `secret_leak_blocked` audit-log entry via the `(*Server).emitSecretLeakAuditBlock` helper in `internal/api/secret_leak_audit.go` so security review can grep one stable token across the audit log without parsing per-event detail strings.
+
+### Release supply-chain (Story V121-8.1)
+
+Every release artifact is cosign-signed via GitHub Actions OIDC (keyless). Verification commands are in `docs/site/operator/supply-chain.md`. The signing happens in:
+
+- `.github/workflows/release.yml` — image (after `docker build-push`) and Helm OCI chart (after `helm push`). Both use `sigstore/cosign-installer` and `cosign sign --yes <ref>@<digest>` so each tag pointing at the same digest shares one Rekor entry.
+- `.goreleaser.yaml` — per-archive `.sig` and `.pem` companions for every CLI binary tarball plus `checksums.txt`, generated via the goreleaser `signs:` block calling `cosign sign-blob`.
+
+The per-PR Docker workflow (`pr-docker.yml`) does NOT sign — PR images are short-lived test artifacts and the cost of OIDC-signing every PR push is not justified. Production-bound deployments must use `vX.Y.Z` tags only.

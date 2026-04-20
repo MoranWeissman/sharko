@@ -52,61 +52,6 @@ func (o *Orchestrator) SetGlobalAddonValues(ctx context.Context, addonName, valu
 	return gitResult, nil
 }
 
-// PullUpstreamAddonValues replaces the addon's global values file with the
-// chart's upstream `values.yaml` (comments preserved) wrapped under the
-// `<addonName>:` key that the rest of the catalog pattern uses. Opens a PR
-// exactly like SetGlobalAddonValues.
-//
-// upstreamValuesYAML is the raw bytes of the chart's values.yaml (from
-// helm.Fetcher.FetchValues). The caller is responsible for fetching — keeping
-// HTTP out of orchestrator keeps this package cheap to unit-test.
-func (o *Orchestrator) PullUpstreamAddonValues(ctx context.Context, addonName, upstreamValuesYAML string) (*GitResult, error) {
-	if addonName == "" {
-		return nil, fmt.Errorf("addon name is required")
-	}
-	wrapped := wrapValuesUnderAddonKey(addonName, upstreamValuesYAML)
-
-	dir := strings.TrimSuffix(o.paths.GlobalValues, "/")
-	if dir == "" {
-		dir = "configuration/addons-global-values"
-	}
-	filePath := path.Join(dir, addonName+".yaml")
-
-	files := map[string][]byte{filePath: []byte(wrapped)}
-	op := fmt.Sprintf("pull upstream defaults for %s", addonName)
-
-	gitResult, err := o.commitChanges(ctx, files, nil, op)
-	if err != nil {
-		return nil, fmt.Errorf("committing upstream values for addon %q: %w", addonName, err)
-	}
-	gitResult.ValuesFile = filePath
-	return gitResult, nil
-}
-
-// wrapValuesUnderAddonKey indents every non-empty line of the upstream
-// values.yaml by two spaces and prepends a `<addonName>:` header so the
-// result conforms to Sharko's global-values convention (one top-level key
-// per addon). Comments and blank lines are preserved verbatim — the function
-// deliberately does NOT round-trip through yaml.Unmarshal which would strip
-// comments. Lines are indented textually; valid YAML is preserved because
-// the original values.yaml already has consistent internal indentation.
-func wrapValuesUnderAddonKey(addonName, rawValues string) string {
-	var b strings.Builder
-	b.WriteString(fmt.Sprintf("# Global values for %s addon (seeded from upstream values.yaml)\n", addonName))
-	b.WriteString(addonName)
-	b.WriteString(":\n")
-	for _, line := range strings.Split(rawValues, "\n") {
-		if line == "" {
-			b.WriteString("\n")
-			continue
-		}
-		b.WriteString("  ")
-		b.WriteString(line)
-		b.WriteString("\n")
-	}
-	return b.String()
-}
-
 // SetClusterAddonValues replaces the per-cluster overrides for one addon on
 // one cluster. The cluster's overrides file is the canonical YAML map
 // `<addonName>: { ... }` plus an optional `clusterGlobalValues:` block; this
@@ -151,6 +96,20 @@ func (o *Orchestrator) SetClusterAddonValues(ctx context.Context, clusterName, a
 	}
 	gitResult.ValuesFile = filePath
 	return gitResult, nil
+}
+
+// CommitFilesAsPR is a thin orchestrator wrapper around commitChanges for
+// callers that already have a complete file map ready to write. The
+// migration endpoint (v1.21 Bundle 5) uses this to push the unwrapped
+// global-values files in a single PR.
+//
+// The operation string is the human-readable PR title and audit detail —
+// it's run through the same branch-name sanitiser as commitChanges.
+func (o *Orchestrator) CommitFilesAsPR(ctx context.Context, files map[string][]byte, operation string) (*GitResult, error) {
+	if len(files) == 0 {
+		return nil, fmt.Errorf("no files to commit")
+	}
+	return o.commitChanges(ctx, files, nil, operation)
 }
 
 // validateYAML returns nil if s parses as YAML (empty input is allowed).

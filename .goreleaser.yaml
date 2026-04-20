@@ -25,6 +25,26 @@ archives:
 checksum:
   name_template: 'checksums.txt'
 
+# Story V121-8.1: cosign keyless signing of every release artifact
+# (per-OS archives + checksums.txt). Each artifact gains a `.sig` and
+# `.pem` companion in the GitHub release so consumers can verify with
+#   cosign verify-blob --certificate <name>.pem --signature <name>.sig <name>
+# Identity is bound to this repo's release workflow OIDC identity —
+# verification regex documented in docs/site/operator/supply-chain.md.
+signs:
+  - cmd: cosign
+    artifacts: all
+    signature: ${artifact}.sig
+    certificate: ${artifact}.pem
+    args:
+      - sign-blob
+      - --yes
+      - --output-signature
+      - ${signature}
+      - --output-certificate
+      - ${certificate}
+      - ${artifact}
+
 changelog:
   sort: asc
   filters:

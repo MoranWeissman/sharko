@@ -215,8 +215,93 @@ export async function updateClusterSettings(name: string, settings: { secret_pat
   return patchJSON<any>(`/clusters/${encodeURIComponent(name)}`, settings)
 }
 
-export async function addAddon(data: { name: string; chart: string; repo_url: string; version: string; namespace?: string; sync_wave?: number }) {
-  return postJSON<any>('/addons', data)
+export interface AddAddonResponse {
+  // Top-level fields when no attribution warning fired (raw orchestrator result).
+  pr_url?: string
+  pr_id?: number
+  branch?: string
+  merged?: boolean
+  attribution_warning?: 'no_per_user_pat'
+  // Legacy alias surfaced by the raw form before v1.20 — kept on the type so
+  // existing callers (AddonCatalog.tsx Add Addon dialog) compile cleanly.
+  pull_request_url?: string
+  // When attribution_warning is set, the orchestrator result is wrapped under `result`.
+  result?: {
+    pr_url?: string
+    pr_id?: number
+    branch?: string
+    merged?: boolean
+  }
+}
+
+/**
+ * Structured 409 body returned when the addon is already in the catalog.
+ * The Marketplace Configure modal renders this inline (with a deep-link to
+ * the existing addon page) instead of a generic toast. Backed by V121-5.1.
+ */
+export interface AddonAlreadyExistsError extends Error {
+  code: 'addon_already_exists'
+  status: 409
+  addon: string
+  existingUrl: string
+}
+
+export function isAddonAlreadyExistsError(e: unknown): e is AddonAlreadyExistsError {
+  return (
+    typeof e === 'object' &&
+    e !== null &&
+    (e as { code?: string }).code === 'addon_already_exists'
+  )
+}
+
+export async function addAddon(data: {
+  name: string
+  chart: string
+  repo_url: string
+  version: string
+  namespace?: string
+  sync_wave?: number
+  /**
+   * V121-5.2 / V121-4.1: identifies the originating UI flow.
+   *   "marketplace" — Browse curated card → Configure
+   *   "artifacthub" — Search tab → Configure (external pkg)
+   *   "paste_url"   — Paste Helm URL tab → Configure
+   *   "manual"      — legacy direct "Add Addon" form
+   */
+  source?: 'marketplace' | 'artifacthub' | 'paste_url' | 'manual'
+}): Promise<AddAddonResponse> {
+  // Use raw fetch so we can detect the structured 409 body that V121-5.1
+  // returns when the addon already exists in the catalog. postJSON throws a
+  // plain Error with just `error` text and we'd lose `addon` / `existing_url`.
+  const res = await fetch(`${BASE_URL}/addons`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(data),
+  })
+  if (res.status === 401) {
+    sessionStorage.removeItem(TOKEN_KEY)
+    window.location.reload()
+    throw new Error('Session expired')
+  }
+  if (res.status === 409) {
+    const body = (await res.json().catch(() => ({}))) as {
+      error?: string
+      code?: string
+      addon?: string
+      existing_url?: string
+    }
+    const err = new Error(body.error || 'Addon already in catalog') as AddonAlreadyExistsError
+    err.code = 'addon_already_exists'
+    err.status = 409
+    err.addon = body.addon || data.name
+    err.existingUrl = body.existing_url || `/addons/${encodeURIComponent(data.name)}`
+    throw err
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error((body as { error?: string }).error || res.statusText)
+  }
+  return (await res.json()) as AddAddonResponse
 }
 
 export async function removeAddon(name: string) {
@@ -347,6 +432,39 @@ export async function refreshPR(id: number) {
   return postJSON<{ status: string }>(`/prs/${id}/refresh`)
 }
 
+// ─── Merged PRs (v1.21 QA Bundle 3) ────────────────────────────────────────
+//
+// /api/v1/prs only returns OPEN PRs (the prtracker drops PRs once they merge).
+// /api/v1/prs/merged goes back to the Git provider directly and lists merged
+// PRs. Cached server-side for 60s. Used by the Dashboard Pending/Merged toggle.
+export interface MergedPRItem {
+  pr_id: number
+  pr_url: string
+  pr_title: string
+  pr_branch: string
+  description?: string
+  author?: string
+  cluster?: string
+  addon?: string
+  operation?: string
+  created_at?: string
+  merged_at?: string
+}
+
+export interface MergedPRsResponse {
+  prs: MergedPRItem[]
+  limit: number
+}
+
+export async function fetchMergedPRs(filters?: { cluster?: string; addon?: string; limit?: number }) {
+  const params = new URLSearchParams()
+  if (filters?.cluster) params.set('cluster', filters.cluster)
+  if (filters?.addon) params.set('addon', filters.addon)
+  if (filters?.limit) params.set('limit', String(filters.limit))
+  const qs = params.toString()
+  return fetchJSON<MergedPRsResponse>(`/prs/merged${qs ? `?${qs}` : ''}`)
+}
+
 export const api = {
   // Health
   health: () => fetchJSON<{ status: string }>('/health'),
@@ -404,7 +522,7 @@ export const api = {
   getAIStatus: () => fetchJSON<{ enabled: boolean }>('/upgrade/ai-status'),
   getAISummary: (addonName: string, targetVersion: string) => postJSON<{ summary: string }>('/upgrade/ai-summary', { addon_name: addonName, target_version: targetVersion }),
   getAIConfig: () => fetchJSON<AIConfigResponse>('/ai/config'),
-  saveAIConfig: (data: { provider: string; api_key?: string; model?: string; base_url?: string; ollama_url?: string }) => postJSON<{ status: string }>('/ai/config', data),
+  saveAIConfig: (data: { provider: string; api_key?: string; model?: string; base_url?: string; ollama_url?: string; annotate_on_seed?: boolean }) => postJSON<{ status: string }>('/ai/config', data),
   setAIProvider: (provider: string) => postJSON<{ status: string; provider: string }>('/ai/provider', { provider }),
   testAI: () => postJSON<{ status: string; response: string }>('/ai/test', {}),
   testAIConfig: (data: { provider: string; api_key?: string; model?: string; base_url?: string; ollama_url?: string }) => postJSON<{ status: string; message?: string; response?: string }>('/ai/test-config', data),
@@ -429,6 +547,24 @@ export const api = {
       `/addons/${encodeURIComponent(addonName)}/values`,
       { values: valuesYAML },
     ),
+  // V121-6.4: refresh-from-upstream uses the SAME endpoint as
+  // setAddonValues. Backend ignores `values` when `refresh_from_upstream`
+  // is true, fetches the chart's upstream values.yaml, runs the
+  // smart-values pipeline, and overwrites the global file.
+  refreshAddonValuesFromUpstream: (addonName: string) =>
+    putJSON<import('./models').ValuesEditResult>(
+      `/addons/${encodeURIComponent(addonName)}/values`,
+      { values: '', refresh_from_upstream: true },
+    ),
+  // v1.21 QA Bundle 4 Fix #4: preview an additive merge of upstream values
+  // into the user's current file. Returns a candidate body the UI can
+  // show in a diff modal; applying calls setAddonValues with that body
+  // (no dedicated "apply merge" endpoint — same PR flow as a manual edit).
+  previewMergeAddonValues: (addonName: string) =>
+    postJSON<import('./models').PreviewMergeResponse>(
+      `/addons/${encodeURIComponent(addonName)}/values/preview-merge`,
+      {},
+    ),
   getClusterAddonValues: (clusterName: string, addonName: string) =>
     fetchJSON<import('./models').ClusterAddonValuesResponse>(
       `/clusters/${encodeURIComponent(clusterName)}/addons/${encodeURIComponent(addonName)}/values`,
@@ -439,15 +575,62 @@ export const api = {
       { values: valuesYAML },
     ),
 
-  // Values editor extras (v1.20.1)
-  pullUpstreamValues: (
-    addonName: string,
-    body?: { version?: string; merge_strategy?: 'replace' | 'merge_keep_overrides' },
-  ) =>
-    postJSON<import('./models').ValuesEditResult & { chart?: string; chart_version?: string }>(
-      `/addons/${encodeURIComponent(addonName)}/values/pull-upstream`,
-      body ?? {},
+  // V121-7.4: manual AI annotate. Returns 200 with an AnnotateAddonValuesResponse,
+  // 422 with an AIAnnotateBlockedResponse when the secret guard fires, or
+  // 503 when AI is not configured. We use a dedicated wrapper (not the
+  // shared postJSON) so the caller can inspect the typed 422 body via
+  // `(err as { body }).body` — the shared wrapper drops the body to a
+  // plain message string which would lose the secret-leak match list.
+  annotateAddonValues: async (addonName: string) => {
+    const res = await fetch(`${BASE_URL}/addons/${encodeURIComponent(addonName)}/values/annotate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: '{}',
+    })
+    if (res.status === 401) {
+      sessionStorage.removeItem(TOKEN_KEY)
+      window.location.reload()
+      throw new Error('Session expired')
+    }
+    const body = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      const err = new Error((body as { error?: string; message?: string }).error || (body as { message?: string }).message || res.statusText) as Error & { body?: unknown; status?: number }
+      err.body = body
+      err.status = res.status
+      throw err
+    }
+    return body as import('./models').AnnotateAddonValuesResponse
+  },
+  // V121-7.3: per-addon AI opt-out toggle. Idempotent — flipping to the
+  // current state returns 200 with `status: "noop"`.
+  setAddonAIOptOut: (addonName: string, optOut: boolean) =>
+    putJSON<{ status: string; opt_out: boolean; addon: string; pr_url?: string; pr_id?: number; merged?: boolean }>(
+      `/addons/${encodeURIComponent(addonName)}/values/ai-opt-out`,
+      { opt_out: optOut },
     ),
+
+  // v1.21 Bundle 5: legacy `<addon>:` wrap migration. Pass `addon` to
+  // migrate a single file (used by the per-addon "Migrate this file"
+  // banner button). Omit it to migrate every wrapped file in the repo.
+  unwrapGlobalValues: (addonName?: string) => {
+    const qs = addonName ? `?addon=${encodeURIComponent(addonName)}` : ''
+    return postJSON<{
+      migrated: number
+      skipped: number
+      files: Array<{ file: string; addon: string; status: string; message?: string }>
+      message?: string
+      pr_url?: string
+      pr_id?: number
+      branch?: string
+      merged?: boolean
+      attribution_warning?: string
+    }>(`/addons/unwrap-globals${qs}`, {})
+  },
+
+  // Values editor extras (v1.20.1) — note: pullUpstreamValues was
+  // removed in v1.21 (Story V121-6.5) and replaced by
+  // refreshAddonValuesFromUpstream above, which calls the existing
+  // PUT /api/v1/addons/{name}/values handler with refresh_from_upstream=true.
   getAddonValuesRecentPRs: (addonName: string, limit = 5) =>
     fetchJSON<import('./models').RecentPRsResponse>(
       `/addons/${encodeURIComponent(addonName)}/values/recent-prs?limit=${limit}`,
@@ -522,5 +705,132 @@ export const api = {
   }>('/notifications'),
 
   markAllNotificationsRead: () => postJSON<unknown>('/notifications/read-all'),
+
+  // ─── Curated catalog (v1.21 Marketplace) ────────────────────────────────
+  // Three reads:
+  //   1. listCuratedCatalog       — Browse tab grid (server-side filters)
+  //   2. getCuratedCatalogEntry   — single-entry detail (Configure modal)
+  //   3. listCuratedCatalogVersions — chart versions for the version picker
+  //
+  // All three are GET-only; no audit/tier coverage required.
+
+  listCuratedCatalog: (filters?: import('./models').CatalogListFilters) => {
+    const params = new URLSearchParams()
+    if (filters?.q) params.set('q', filters.q)
+    if (filters?.category && filters.category.length > 0) {
+      // Backend handler only honours a single `category` query param today.
+      // Multi-category is handled client-side in MarketplaceBrowseTab so we
+      // just send the first when there's exactly one — otherwise let the
+      // client filter the full list. Same approach for license below.
+      if (filters.category.length === 1) params.set('category', filters.category[0])
+    }
+    if (filters?.curated_by && filters.curated_by.length > 0) {
+      // The backend takes a comma-separated list and ANDs them; that maps
+      // exactly to multi-select semantics.
+      params.set('curated_by', filters.curated_by.join(','))
+    }
+    if (filters?.license && filters.license.length === 1) {
+      params.set('license', filters.license[0])
+    }
+    if (filters?.min_score && filters.min_score > 0) {
+      params.set('min_score', String(filters.min_score))
+    }
+    const qs = params.toString()
+    return fetchJSON<import('./models').CatalogListResponse>(
+      `/catalog/addons${qs ? `?${qs}` : ''}`,
+    )
+  },
+
+  getCuratedCatalogEntry: (name: string) =>
+    fetchJSON<import('./models').CatalogEntry>(
+      `/catalog/addons/${encodeURIComponent(name)}`,
+    ),
+
+  listCuratedCatalogVersions: (
+    name: string,
+    options?: { includePrereleases?: boolean },
+  ) => {
+    const params = new URLSearchParams()
+    if (options?.includePrereleases === false) {
+      params.set('include_prereleases', 'false')
+    }
+    const qs = params.toString()
+    return fetchJSON<import('./models').CatalogVersionsResponse>(
+      `/catalog/addons/${encodeURIComponent(name)}/versions${qs ? `?${qs}` : ''}`,
+    )
+  },
+
+  /**
+   * V121-4: Paste-URL validator. Confirms an arbitrary `<repo>/index.yaml` is
+   * reachable and contains the named chart. Returns 200 in both the happy and
+   * the structured-failure path — branch on `resp.valid` and `resp.error_code`.
+   */
+  validateCatalogChart: (repo: string, chart: string) => {
+    const params = new URLSearchParams({ repo, chart })
+    return fetchJSON<import('./models').CatalogValidateResponse>(
+      `/catalog/validate?${params.toString()}`,
+    )
+  },
+
+  /**
+   * v1.21 QA Bundle 1: list every chart name in a Helm repo's index.yaml.
+   * Powers the chart-name dropdown in the manual "Add Addon" form. Same
+   * `valid` + `error_code` envelope as validateCatalogChart so the UI can
+   * reuse its existing error switch table.
+   */
+  listRepoCharts: (repo: string) => {
+    const params = new URLSearchParams({ repo })
+    return fetchJSON<import('./models').CatalogRepoChartsResponse>(
+      `/catalog/repo-charts?${params.toString()}`,
+    )
+  },
+
+  // ─── ArtifactHub proxy (V121-3 Search tab) ─────────────────────────────
+  // Server-side proxy: the browser never calls ArtifactHub directly. The
+  // backend handles caching, rate-limit backoff, and stale-serve.
+
+  /**
+   * Blended search across the Sharko-curated catalog and ArtifactHub. Returns
+   * curated hits and ArtifactHub hits in one envelope; if ArtifactHub is
+   * unreachable, curated hits are still returned and `artifacthub_error` is
+   * populated so the UI can show the unreachable banner.
+   */
+  searchCatalog: (q: string, limit = 20) => {
+    const params = new URLSearchParams({ q, limit: String(limit) })
+    return fetchJSON<import('./models').CatalogSearchResponse>(
+      `/catalog/search?${params.toString()}`,
+    )
+  },
+
+  /**
+   * Per-package detail (proxied from ArtifactHub). Used to pre-fill the
+   * Configure modal for an external chart. Returns the trimmed package shape
+   * (description, maintainers, available versions, links).
+   */
+  getRemoteCatalogPackage: (repo: string, name: string) =>
+    fetchJSON<import('./models').CatalogRemotePackageResponse>(
+      `/catalog/remote/${encodeURIComponent(repo)}/${encodeURIComponent(name)}`,
+    ),
+
+  /**
+   * v1.21 QA Bundle 2: README markdown for a curated catalog addon.
+   * The backend resolves the curated chart → ArtifactHub package
+   * (best-match heuristic), fetches the package detail, and returns
+   * just the README. Empty `readme` means the chart was found but
+   * doesn't ship a README — render an empty state, not an error.
+   */
+  getCuratedCatalogReadme: (name: string) =>
+    fetchJSON<import('./models').CatalogReadmeResponse>(
+      `/catalog/addons/${encodeURIComponent(name)}/readme`,
+    ),
+
+  /**
+   * Force ArtifactHub connectivity re-check. Resets the in-memory backoff and
+   * purges the search/package caches; returns whether ArtifactHub is currently
+   * reachable from the Sharko process. Tier 1 (admin) — used by the "Retry"
+   * button on the unreachable banner.
+   */
+  reprobeArtifactHub: () =>
+    postJSON<import('./models').CatalogReprobeResponse>(`/catalog/reprobe`),
 
 }

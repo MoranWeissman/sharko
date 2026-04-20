@@ -201,6 +201,13 @@
                             "additionalProperties": true
                         }
                     },
+                    "409": {
+                        "description": "Addon already exists in catalog",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
                     "502": {
                         "description": "Gateway error",
                         "schema": {
@@ -276,6 +283,56 @@
                     },
                     "503": {
                         "description": "Service unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/addons/unwrap-globals": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Walks every file under `configuration/addons-global-values/` in the user's repo, detects files that are wrapped under an `\u003caddonName\u003e:` (or matching `\u003cchartName\u003e:`) root key, unwraps them so the chart's keys are at the document root, and opens ONE PR with the migrated files. Idempotent — running again when no files are wrapped returns 200 with `{migrated: 0}` and does not open a PR. Pass `?addon=\u003cname\u003e` to migrate a single file.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "addons"
+                ],
+                "summary": "Migrate legacy `\u003caddon\u003e:` wrapped global values files",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Migrate only this addon's file (defaults to all)",
+                        "name": "addon",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Migration result",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.unwrapGlobalsResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "Git or ArgoCD failure",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -910,14 +967,14 @@
                 }
             }
         },
-        "/addons/{name}/values/pull-upstream": {
-            "post": {
+        "/addons/{name}/values/ai-opt-out": {
+            "put": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
-                "description": "Replaces the addon's global Helm values file with the chart's upstream `values.yaml` (comments preserved) wrapped under the `\u003caddonName\u003e:` key. Opens a PR. Tier 2 (configuration) — uses the caller's personal GitHub PAT when configured, otherwise the service token with a `Co-authored-by:` trailer.",
+                "description": "Sets or clears the `# sharko: ai-annotate=off` directive in the addon's global values file header. When opt-out is true, future addon-add and refresh-from-upstream runs skip the AI annotate pass for this addon. The directive is the only persistence (no Sharko-side store). Idempotent.",
                 "consumes": [
                     "application/json"
                 ],
@@ -927,7 +984,7 @@
                 "tags": [
                     "addons"
                 ],
-                "summary": "Pull upstream chart values.yaml",
+                "summary": "Toggle per-addon AI annotation opt-out",
                 "parameters": [
                     {
                         "type": "string",
@@ -937,25 +994,18 @@
                         "required": true
                     },
                     {
-                        "description": "Pull upstream request",
+                        "description": "opt_out flag",
                         "name": "body",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/internal_api.pullUpstreamRequest"
+                            "$ref": "#/definitions/internal_api.setAIOptOutRequest"
                         }
                     }
                 ],
                 "responses": {
                     "200": {
-                        "description": "PR created",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
-                        }
-                    },
-                    "400": {
-                        "description": "Bad request",
+                        "description": "PR opened (or merged) with header-only change",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -976,7 +1026,133 @@
                         }
                     },
                     "502": {
-                        "description": "Helm or Git failure",
+                        "description": "Git error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/addons/{name}/values/annotate": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Fetches the chart's upstream values.yaml at the catalog-pinned version, runs the V121-7 AI annotate pass (one-line `# description` comments + LLM-suggested cluster-specific paths unioned with the heuristic), and opens a Tier 2 PR with the result. Hard-blocked when the secret-leak guard matches; in that case returns 422 with redacted matches and no PR. Skipped when AI is not configured or the addon is opted out.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "addons"
+                ],
+                "summary": "Re-annotate an addon's global values via AI",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Addon name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "PR opened (or merged if auto-merge is on)",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.annotateAddonValuesResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Addon not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "422": {
+                        "description": "Secret-leak guard blocked the LLM call",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.aiAnnotateBlockedResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "Git or upstream fetch error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "AI not configured",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/addons/{name}/values/preview-merge": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns a candidate values YAML that adds NEW upstream keys (and their default values) on top of the user's current file, preserving every key the user has already set. The endpoint is Tier 1 read-only — it does NOT open a PR. Submit the returned `merged` body through PUT /api/v1/addons/{name}/values to commit.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "addons"
+                ],
+                "summary": "Preview a safe merge of upstream values into an addon's values file",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Addon name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.previewMergeResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Addon not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "Git or Helm-repo failure",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -1690,6 +1866,572 @@
                     },
                     "401": {
                         "description": "Current password incorrect",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/catalog/addons": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the Sharko-native curated catalog of addons that ships embedded in the binary. The list is filterable by category, curated_by tag, license, minimum OpenSSF Scorecard score, and by free-text over name/description/maintainers. Read-only; requires authentication.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "List curated catalog addons",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Primary category (e.g. security, observability)",
+                        "name": "category",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated curation tags; entry must carry ALL tags",
+                        "name": "curated_by",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "SPDX license identifier (exact match, case-insensitive)",
+                        "name": "license",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Free-text substring match on name/description/maintainers",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "number",
+                        "description": "Minimum OpenSSF Scorecard aggregate score (0-10); entries with unknown score are excluded when \u003e 0",
+                        "name": "min_score",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Caller's Kubernetes version; entries requiring a newer cluster are excluded",
+                        "name": "min_k8s_version",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Include deprecated entries (default false)",
+                        "name": "include_deprecated",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Filtered curated catalog",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.catalogListResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Catalog not loaded",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/catalog/addons/{name}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the full curated catalog entry for a single addon, including its OpenSSF Scorecard security score + derived tier label (Strong / Moderate / Weak) and last-refresh date. Read-only; requires authentication.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "Get a curated catalog addon by name",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Addon name (case-sensitive, matches catalog.name)",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Curated catalog entry",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.CatalogEntry"
+                        }
+                    },
+                    "404": {
+                        "description": "Addon not found in curated catalog",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "Catalog not loaded",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/catalog/addons/{name}/project-readme": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Fetches the project's own README from GitHub (distinct from the Helm chart README). Resolves via the curated entry's `source_url` or `homepage`; returns an empty body + reason when the entry doesn't point at a GitHub repo. Cached server-side so the upstream GitHub API is not hit on every page view.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "Get the upstream project README for a curated catalog addon",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Curated addon name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.projectReadmeResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Addon not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/catalog/addons/{name}/readme": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Resolves a curated catalog entry to its ArtifactHub package and returns the README markdown for the in-page Marketplace detail view (v1.21 QA Bundle 2). The lookup uses the chart name (case-insensitive) against ArtifactHub's `/packages/search`, prefers verified-publisher hits, and tie-breaks by stars. Returns 200 with `readme: \"\"` when the chart was found but didn't ship a README. Returns 404 only when no ArtifactHub package matches the curated chart name. Read-only; requires authentication.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "Get the README markdown for a curated catalog addon",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Curated addon name (case-sensitive, matches catalog.name)",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "README content + ArtifactHub coordinates",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.catalogReadmeResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Missing addon name",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Addon not in curated catalog or no ArtifactHub match",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "ArtifactHub unreachable and no cached value available",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "Catalog not loaded",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/catalog/addons/{name}/versions": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the chart versions reported by the upstream Helm repo `index.yaml` for the curated catalog entry identified by `name`. Versions are sorted newest-first and tagged with `prerelease=true` when the SemVer build/prerelease segment is present. The first non-prerelease version is returned in `latest_stable`. Responses are cached server-side for 15 minutes per repo+chart pair. Read-only; requires authentication.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "List chart versions for a curated catalog addon",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Curated catalog addon name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Include prerelease versions in the response (default true; the UI filters by the per-entry prerelease flag)",
+                        "name": "include_prereleases",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Sorted chart versions for the addon",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.catalogVersionsResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Addon not found in curated catalog",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "Upstream Helm repo unreachable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "Catalog not loaded",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/catalog/remote/{repo}/{name}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Proxies the ArtifactHub package detail endpoint for one Helm chart so the browser does not call ArtifactHub directly (avoids CORS issues and lets Sharko apply rate-limit handling). Returns the trimmed package shape (description, maintainers, available_versions, links, license, repo metadata). Responses are cached server-side for 1 hour; on upstream failure the last cached value is served (stale up to 24 h) with `stale: true`. The `{repo}` path segment is the ArtifactHub repository name, `{name}` is the chart name.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "ArtifactHub package detail proxy",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ArtifactHub repository name (e.g. jetstack)",
+                        "name": "repo",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Chart name (e.g. cert-manager)",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Package detail",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.catalogRemotePackageResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Missing repo or name",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Package not found on ArtifactHub",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "ArtifactHub unreachable and no cached value available",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/catalog/remote/{repo}/{name}/project-readme": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Same as the curated variant but resolves the GitHub repo from the ArtifactHub package's `home_url`. Used for Marketplace entries that came from ArtifactHub search rather than Sharko's curated list.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "Get the upstream project README for an ArtifactHub-discovered addon",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ArtifactHub repo name",
+                        "name": "repo",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "ArtifactHub package name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.projectReadmeResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/catalog/repo-charts": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "v1.21 QA Bundle 1 — given a Helm repo URL, fetches `\u003crepo\u003e/index.yaml` and returns the chart names listed under `entries:`. Powers the chart-name dropdown in the manual \"Add Addon\" form so operators can pick from real chart names instead of typing blind. On failure returns HTTP 200 with `valid: false` and a structured `error_code` (invalid_input, repo_unreachable, index_parse_error, ssrf_blocked, timeout) so the UI's existing switch table can be reused. Responses are cached server-side for 15 minutes per repo URL. Read-only; requires authentication.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "List chart names available in an arbitrary Helm repository",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Helm repository base URL (e.g. https://charts.jetstack.io)",
+                        "name": "repo",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Chart list — `valid` distinguishes success vs structured failure",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.repoChartsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Missing or malformed repo query parameter",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/catalog/reprobe": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Resets the in-memory backoff/circuit-breaker for ArtifactHub, purges the search and package-detail caches, and issues a probe against the ArtifactHub API root. Returns whether ArtifactHub is currently reachable from this Sharko process. Used by the UI's \"Retry\" button on the search-unreachable banner. Tier 1 (operational); audit-logged.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "Force ArtifactHub connectivity re-check",
+                "responses": {
+                    "200": {
+                        "description": "Probe result",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.catalogReprobeResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthenticated",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/catalog/search": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns curated catalog matches and ArtifactHub Helm chart matches for the same query in one envelope. Curated hits are returned as full catalog entries; ArtifactHub hits are slimmed to the fields the marketplace UI renders. When the upstream ArtifactHub call fails, curated hits are still returned and `artifacthub_error` is set with a classification (rate_limited / server_error / timeout / not_found / malformed). Search results are cached server-side for 10 minutes; on upstream failure the last cached value is served (stale up to 24 h) with `stale: true`.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "Blended catalog search (curated + ArtifactHub)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Search term (case-insensitive substring on curated; full-text on ArtifactHub)",
+                        "name": "q",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Maximum ArtifactHub hits to return (default 20, max 60)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Blended search response",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.catalogSearchResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Empty query",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "Catalog not loaded",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/catalog/validate": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Power-user \"Paste Helm URL\" validator: fetches `\u003crepo\u003e/index.yaml`, parses it, and confirms the named chart exists. On success returns the available versions, the latest stable version, and a few metadata fields (description, icon) for the Configure modal to pre-fill. On failure returns HTTP 200 with `valid: false` and a structured `error_code` (invalid_input, repo_unreachable, index_parse_error, chart_not_found, timeout) so the UI can render an inline message without HTTP-status branching. Responses are cached server-side for 15 minutes per (repo, chart) pair — the same TTL semantics as `/catalog/addons/{name}/versions`. Read-only; requires authentication.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "Validate a Helm chart at an arbitrary repo URL",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Helm repository base URL (e.g. https://charts.jetstack.io)",
+                        "name": "repo",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Chart name as listed in the repo's index.yaml entries (e.g. cert-manager)",
+                        "name": "chart",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Validation result — `valid` distinguishes success vs structured failure",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.catalogValidateResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Missing or malformed repo / chart query parameter",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -4457,6 +5199,65 @@
                 }
             }
         },
+        "/prs/merged": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns merged Sharko-authored PRs from the Git provider. The prtracker drops PRs once merged, so this endpoint queries the provider directly. Cached for 60s. Optional filters narrow by cluster or addon (best-effort: inferred from PR title/branch).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "prs"
+                ],
+                "summary": "List recently-merged pull requests",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Filter by cluster name (best-effort title/branch match)",
+                        "name": "cluster",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by addon name (best-effort title/branch match)",
+                        "name": "addon",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Maximum entries (default 20, max 100)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "List of merged PRs",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.MergedPRsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "No active Git connection",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/prs/{id}": {
             "get": {
                 "security": [
@@ -5651,6 +6452,259 @@
         }
     },
     "definitions": {
+        "github_com_MoranWeissman_sharko_internal_catalog.AHLink": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_catalog.AHMaintainer": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_catalog.AHPackage": {
+            "type": "object",
+            "properties": {
+                "app_version": {
+                    "type": "string"
+                },
+                "available_versions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.AHVersionMeta"
+                    }
+                },
+                "description": {
+                    "type": "string"
+                },
+                "display_name": {
+                    "type": "string"
+                },
+                "home_url": {
+                    "type": "string"
+                },
+                "keywords": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "license": {
+                    "type": "string"
+                },
+                "links": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.AHLink"
+                    }
+                },
+                "maintainers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.AHMaintainer"
+                    }
+                },
+                "name": {
+                    "type": "string"
+                },
+                "normalized_name": {
+                    "type": "string"
+                },
+                "package_id": {
+                    "type": "string"
+                },
+                "readme": {
+                    "type": "string"
+                },
+                "repository": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.AHRepo"
+                },
+                "stars": {
+                    "type": "integer"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_catalog.AHRepo": {
+            "type": "object",
+            "properties": {
+                "display_name": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "official": {
+                    "type": "boolean"
+                },
+                "organization_name": {
+                    "type": "string"
+                },
+                "repository_id": {
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string"
+                },
+                "user_alias": {
+                    "type": "string"
+                },
+                "verified_publisher": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_catalog.AHSearchPackage": {
+            "type": "object",
+            "properties": {
+                "app_version": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "display_name": {
+                    "type": "string"
+                },
+                "logo_image_id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "normalized_name": {
+                    "type": "string"
+                },
+                "package_id": {
+                    "type": "string"
+                },
+                "repository": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.AHRepo"
+                },
+                "stars": {
+                    "type": "integer"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_catalog.AHVersionMeta": {
+            "type": "object",
+            "properties": {
+                "prerelease": {
+                    "type": "boolean"
+                },
+                "ts": {
+                    "type": "integer"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_catalog.CatalogEntry": {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "string"
+                },
+                "chart": {
+                    "type": "string"
+                },
+                "curated_by": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "default_namespace": {
+                    "type": "string"
+                },
+                "default_sync_wave": {
+                    "type": "integer"
+                },
+                "deprecated": {
+                    "type": "boolean"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "docs_url": {
+                    "type": "string"
+                },
+                "github_stars": {
+                    "type": "integer"
+                },
+                "homepage": {
+                    "type": "string"
+                },
+                "license": {
+                    "type": "string"
+                },
+                "maintainers": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "min_kubernetes_version": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "repo": {
+                    "type": "string"
+                },
+                "security_score": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.ScoreValue"
+                },
+                "security_score_updated": {
+                    "type": "string"
+                },
+                "security_tier": {
+                    "description": "SecurityTier is derived from SecurityScore by the API layer (Strong /\nModerate / Weak / unknown) and is never read from YAML.",
+                    "type": "string"
+                },
+                "source_url": {
+                    "type": "string"
+                },
+                "superseded_by": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_catalog.ScoreValue": {
+            "type": "object",
+            "properties": {
+                "known": {
+                    "type": "boolean"
+                },
+                "value": {
+                    "description": "0 when Known is false",
+                    "type": "number",
+                    "format": "float64"
+                }
+            }
+        },
         "github_com_MoranWeissman_sharko_internal_diagnose.DiagnosticReport": {
             "type": "object",
             "properties": {
@@ -5951,6 +7005,10 @@
                     "description": "Legacy fields — kept for backwards compatibility with existing UI consumers.",
                     "type": "string"
                 },
+                "on_latest": {
+                    "description": "OnLatest is true when the addon's current version is greater than or\nequal to every stable version available in the chart repo. The UI uses\nthis to render a \"✓ You're on the latest stable\" message instead of\nhiding the panel (which would look broken).\n\nv1.21 QA Bundle 4 (Fix #7): the previous logic could surface a\n\"Latest stable X.Y.Z\" card with X.Y.Z \u003c current, which was a\ndowngrade dressed up as a recommendation. Recommendations are now\nfiltered to \"strictly newer than current\"; OnLatest captures the\ncase where the filter empties the list because there is nothing\nnewer.",
+                    "type": "boolean"
+                },
                 "recommended": {
                     "description": "Recommended is the version string of the card that Sharko considers the best upgrade path.",
                     "type": "string"
@@ -5999,6 +7057,10 @@
                 },
                 "self_heal": {
                     "type": "boolean"
+                },
+                "source": {
+                    "description": "Source identifies the originating UI flow for audit/observability.\nOptional. Examples: \"marketplace\" (curated catalog Configure modal),\n\"manual\" (raw Add Addon form), \"\" (caller didn't say — handler treats\nas \"manual\" for the audit detail).",
+                    "type": "string"
                 },
                 "sync_options": {
                     "type": "array",
@@ -6410,6 +7472,21 @@
                 }
             }
         },
+        "github_com_MoranWeissman_sharko_internal_orchestrator.SecretMatch": {
+            "type": "object",
+            "properties": {
+                "field": {
+                    "type": "string"
+                },
+                "line": {
+                    "description": "Line is the 1-indexed line number where the match occurred. Helps\nthe user open the file and find the field. Zero if unknown.",
+                    "type": "integer"
+                },
+                "pattern": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_MoranWeissman_sharko_internal_orchestrator.UnadoptClusterRequest": {
             "type": "object",
             "properties": {
@@ -6547,6 +7624,58 @@
                 }
             }
         },
+        "internal_api.MergedPRItem": {
+            "type": "object",
+            "properties": {
+                "addon": {
+                    "type": "string"
+                },
+                "author": {
+                    "type": "string"
+                },
+                "cluster": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "merged_at": {
+                    "type": "string"
+                },
+                "operation": {
+                    "type": "string"
+                },
+                "pr_branch": {
+                    "type": "string"
+                },
+                "pr_id": {
+                    "type": "integer"
+                },
+                "pr_title": {
+                    "type": "string"
+                },
+                "pr_url": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.MergedPRsResponse": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer"
+                },
+                "prs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api.MergedPRItem"
+                    }
+                }
+            }
+        },
         "internal_api.PRItem": {
             "type": "object",
             "properties": {
@@ -6602,9 +7731,30 @@
                 }
             }
         },
+        "internal_api.aiAnnotateBlockedResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "matches": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.SecretMatch"
+                    }
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_api.aiConfigResponse": {
             "type": "object",
             "properties": {
+                "annotate_on_seed": {
+                    "description": "AnnotateOnSeed (v1.21 Story V121-7.3) is the global Settings toggle\nfor \"Annotate values on generate\". When the AI provider is `none`\nthe field is reported as false regardless of the persisted value —\nthe UI uses this to gate the toggle row visibility.\n\nDefault-true semantics: on a fresh install with a configured AI\nprovider but no explicit AnnotateOnSeed value (older config blobs\nfrom before V121-7), the field reports `true`. The Save handler\nstamps the explicit value on every persist so subsequent reads are\nauthoritative.",
+                    "type": "boolean"
+                },
                 "available_providers": {
                     "type": "array",
                     "items": {
@@ -6630,6 +7780,205 @@
                 },
                 "name": {
                     "type": "string"
+                }
+            }
+        },
+        "internal_api.annotateAddonValuesResponse": {
+            "type": "object",
+            "properties": {
+                "ai_skip_reason": {
+                    "description": "AISkipReason is set when the LLM was skipped and the heuristic-only\noutput was committed instead. Possible values: \"not_configured\",\n\"opted_out\", \"oversize\", \"timeout\", \"llm_error\", \"parse_error\".",
+                    "type": "string"
+                },
+                "branch": {
+                    "type": "string"
+                },
+                "commit_sha": {
+                    "type": "string"
+                },
+                "merged": {
+                    "type": "boolean"
+                },
+                "pr_id": {
+                    "type": "integer"
+                },
+                "pr_url": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.catalogListResponse": {
+            "type": "object",
+            "properties": {
+                "addons": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.CatalogEntry"
+                    }
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_api.catalogReadmeResponse": {
+            "type": "object",
+            "properties": {
+                "ah_chart": {
+                    "type": "string"
+                },
+                "ah_repo": {
+                    "type": "string"
+                },
+                "cached_at": {
+                    "type": "string"
+                },
+                "readme": {
+                    "type": "string"
+                },
+                "source": {
+                    "type": "string"
+                },
+                "stale": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "internal_api.catalogRemotePackageResponse": {
+            "type": "object",
+            "properties": {
+                "cached_at": {
+                    "type": "string"
+                },
+                "package": {
+                    "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.AHPackage"
+                },
+                "stale": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "internal_api.catalogReprobeResponse": {
+            "type": "object",
+            "properties": {
+                "last_error": {
+                    "type": "string"
+                },
+                "probed_at": {
+                    "type": "string"
+                },
+                "reachable": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "internal_api.catalogSearchResponse": {
+            "type": "object",
+            "properties": {
+                "artifacthub": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.AHSearchPackage"
+                    }
+                },
+                "artifacthub_error": {
+                    "type": "string"
+                },
+                "cached_at": {
+                    "type": "string"
+                },
+                "curated": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.CatalogEntry"
+                    }
+                },
+                "query": {
+                    "type": "string"
+                },
+                "stale": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "internal_api.catalogValidateResponse": {
+            "type": "object",
+            "properties": {
+                "cached_at": {
+                    "type": "string"
+                },
+                "chart": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "error_code": {
+                    "$ref": "#/definitions/internal_api.validateErrorCode"
+                },
+                "icon_url": {
+                    "type": "string"
+                },
+                "latest_stable": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "repo": {
+                    "type": "string"
+                },
+                "valid": {
+                    "type": "boolean"
+                },
+                "versions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api.catalogVersionEntry"
+                    }
+                }
+            }
+        },
+        "internal_api.catalogVersionEntry": {
+            "type": "object",
+            "properties": {
+                "app_version": {
+                    "type": "string"
+                },
+                "created": {
+                    "type": "string"
+                },
+                "prerelease": {
+                    "type": "boolean"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.catalogVersionsResponse": {
+            "type": "object",
+            "properties": {
+                "addon": {
+                    "type": "string"
+                },
+                "cached_at": {
+                    "type": "string"
+                },
+                "chart": {
+                    "type": "string"
+                },
+                "latest_stable": {
+                    "type": "string"
+                },
+                "repo": {
+                    "type": "string"
+                },
+                "versions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api.catalogVersionEntry"
+                    }
                 }
             }
         },
@@ -6799,15 +8148,71 @@
                 }
             }
         },
-        "internal_api.pullUpstreamRequest": {
+        "internal_api.previewMergeResponse": {
             "type": "object",
             "properties": {
-                "merge_strategy": {
-                    "description": "MergeStrategy controls how upstream values are merged into the current\nvalues file. \"replace\" (the only supported strategy for v1.20.1)\noverwrites the file entirely with upstream defaults. A future\n\"merge_keep_overrides\" strategy is tracked as a TODO in the handler.",
+                "current": {
+                    "description": "Current is the existing global values file body, exactly as returned\nby the GET values-schema endpoint. Returned so the UI can render a\nbefore/after diff without a second request.",
                     "type": "string"
                 },
-                "version": {
-                    "description": "Version is the chart version to pull (e.g. \"v1.14.4\"). When empty, the\nhandler resolves the addon's currently-configured version from the\ncatalog — the expected default for the \"I want to refresh to whatever\nwe're pointing at\" workflow.",
+                "diff_summary": {
+                    "description": "DiffSummary is an at-a-glance view of what changed. Used by the modal\nheader so the user can decide whether to open the diff or skip.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/internal_api.previewMergeSummary"
+                        }
+                    ]
+                },
+                "merged": {
+                    "description": "Merged is the candidate body the user can submit through the existing\nPUT /api/v1/addons/{name}/values endpoint. Same shape as Current\n(full YAML with smart-values header) plus any new upstream keys the\nuser did not previously set.",
+                    "type": "string"
+                },
+                "upstream_version": {
+                    "description": "UpstreamVersion is the chart version Sharko fetched the upstream\nvalues.yaml for. Echo of the catalog pin — surfaced so the UI can\nshow \"Merging in defaults from cert-manager@1.20.2\".",
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.previewMergeSummary": {
+            "type": "object",
+            "properties": {
+                "new_keys": {
+                    "description": "NewKeys are dotted paths present in upstream but NOT in the user's\ncurrent file. These are the only paths that the merge actually adds.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "no_op": {
+                    "description": "NoOp is true when the merge produced the same body as Current — the\nuser already has every upstream key. The UI uses this to render a\n\"Already up to date\" empty state instead of an empty diff.",
+                    "type": "boolean"
+                },
+                "preserved_user_keys": {
+                    "description": "PreservedUserKeys are dotted paths the user has set that already\nexist in upstream — the merge keeps the user's value and the user's\ninline comments are honored on the PR side. Surfaced so the modal\ncan reassure the user nothing of theirs is being overwritten.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "internal_api.projectReadmeResponse": {
+            "type": "object",
+            "properties": {
+                "available": {
+                    "description": "Available is true when we successfully resolved a GitHub repo AND\nfetched a non-empty README. False means either (a) the chart's\nhomepage wasn't a GitHub URL, or (b) the GitHub README API returned\n404 / the repo has no README.md.",
+                    "type": "boolean"
+                },
+                "readme": {
+                    "description": "Readme is the decoded markdown body. Empty when the lookup failed\nor the repo doesn't publish a README — the UI shows an explicit\nempty state rather than a spinning loader.",
+                    "type": "string"
+                },
+                "reason": {
+                    "description": "Reason carries a short explanation when Available is false so the\nUI can render a concrete message instead of \"something went wrong\".",
+                    "type": "string"
+                },
+                "source_url": {
+                    "description": "SourceURL is the resolved GitHub URL of the README (e.g.\nhttps://github.com/cert-manager/cert-manager/blob/master/README.md).\nSurfaced so the UI can render a \"View on GitHub\" link.",
                     "type": "string"
                 }
             }
@@ -6849,9 +8254,39 @@
                 }
             }
         },
+        "internal_api.repoChartsResponse": {
+            "type": "object",
+            "properties": {
+                "cached_at": {
+                    "type": "string"
+                },
+                "charts": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "error_code": {
+                    "$ref": "#/definitions/internal_api.validateErrorCode"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "repo": {
+                    "type": "string"
+                },
+                "valid": {
+                    "type": "boolean"
+                }
+            }
+        },
         "internal_api.saveAIConfigRequest": {
             "type": "object",
             "properties": {
+                "annotate_on_seed": {
+                    "description": "AnnotateOnSeed (V121-7.3) is a tri-state via the *bool sentinel:\n  nil  → caller didn't pass the field; preserve the current value\n         (or fall through to default-true if no current value exists).\n  *false → explicit OFF.\n  *true  → explicit ON.\nOnce any save sets the field, AnnotateOnSeedSet flips to true and\nthe explicit value is authoritative on subsequent reads.",
+                    "type": "boolean"
+                },
                 "api_key": {
                     "type": "string"
                 },
@@ -6869,11 +8304,23 @@
                 }
             }
         },
+        "internal_api.setAIOptOutRequest": {
+            "type": "object",
+            "properties": {
+                "opt_out": {
+                    "type": "boolean"
+                }
+            }
+        },
         "internal_api.setAddonValuesRequest": {
             "type": "object",
             "properties": {
+                "refresh_from_upstream": {
+                    "description": "RefreshFromUpstream, when true, regenerates the global values file\nfrom the chart's upstream values.yaml at the catalog-pinned version.\nThe audit event for this path is `values_refreshed_from_upstream`\n(overriding the default `values_set`) so audit consumers can\ndistinguish manual edits from upstream refreshes.",
+                    "type": "boolean"
+                },
                 "values": {
-                    "description": "Values is the full YAML file content. Sharko commits this verbatim\nas the new global default values for the addon.",
+                    "description": "Values is the full YAML file content. Sharko commits this verbatim\nas the new global default values for the addon. Ignored when\nRefreshFromUpstream is true.",
                     "type": "string"
                 }
             }
@@ -6949,6 +8396,77 @@
                     }
                 }
             }
+        },
+        "internal_api.unwrapGlobalsFile": {
+            "type": "object",
+            "properties": {
+                "addon": {
+                    "description": "derived addon name (filename without .yaml)",
+                    "type": "string"
+                },
+                "file": {
+                    "description": "repo-relative path",
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "status": {
+                    "description": "\"migrated\" | \"skipped\"",
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.unwrapGlobalsResponse": {
+            "type": "object",
+            "properties": {
+                "branch": {
+                    "type": "string"
+                },
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api.unwrapGlobalsFile"
+                    }
+                },
+                "merged": {
+                    "type": "boolean"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "migrated": {
+                    "type": "integer"
+                },
+                "pr_id": {
+                    "type": "integer"
+                },
+                "pr_url": {
+                    "type": "string"
+                },
+                "skipped": {
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_api.validateErrorCode": {
+            "type": "string",
+            "enum": [
+                "invalid_input",
+                "repo_unreachable",
+                "index_parse_error",
+                "chart_not_found",
+                "timeout",
+                "ssrf_blocked"
+            ],
+            "x-enum-varnames": [
+                "validateErrInvalidInput",
+                "validateErrRepoUnreachable",
+                "validateErrIndexParseError",
+                "validateErrChartNotFound",
+                "validateErrTimeout",
+                "validateErrSSRFBlocked"
+            ]
         }
     },
     "securityDefinitions": {

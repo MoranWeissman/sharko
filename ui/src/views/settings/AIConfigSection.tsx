@@ -59,6 +59,30 @@ export function AIConfigSection() {
   const isEnabled = aiConfig?.current_provider && aiConfig.current_provider !== 'none' && aiConfig.current_provider !== ''
   const activeProvider = aiConfig?.available_providers.find((p: AIProviderInfo) => p.id === aiConfig.current_provider)
 
+  // V121-7.3: "Annotate values on generate" toggle. Default-true when AI
+  // is configured but the persisted blob has no explicit value (legacy
+  // configs from before V121-7); the backend reports the effective state.
+  const annotateOnSeed = aiConfig?.annotate_on_seed ?? true
+  const [annotateBusy, setAnnotateBusy] = useState(false)
+  const handleToggleAnnotate = async (next: boolean) => {
+    setAnnotateBusy(true)
+    try {
+      // Preserve the active provider — the saveAIConfig handler treats
+      // the request as a full replace except for the explicit
+      // annotate_on_seed sentinel. We only send the toggle field; the
+      // backend keeps the existing API key + model.
+      await api.saveAIConfig({
+        provider: aiConfig?.current_provider || 'none',
+        annotate_on_seed: next,
+      })
+      fetchConfig()
+    } catch {
+      // Silent failure surfaces in the disabled state — user can retry.
+    } finally {
+      setAnnotateBusy(false)
+    }
+  }
+
   const handleTest = async () => {
     setTesting(true)
     setTestResult(null)
@@ -188,6 +212,41 @@ export function AIConfigSection() {
         }`}>
           {testResult.includes('correctly') ? <CheckCircle className="h-3.5 w-3.5" /> : <XCircle className="h-3.5 w-3.5" />}
           {testResult}
+        </div>
+      )}
+
+      {/* V121-7.3: Annotate-on-generate toggle. Visible only when AI is
+          configured. Default-on when first enabled — flipping off skips
+          the LLM call on addon-add and refresh-from-upstream and emits
+          `# AI annotation: disabled` in the file header. */}
+      {isEnabled && (
+        <div className="mt-4 flex items-start justify-between gap-3 rounded-lg border border-purple-200 bg-purple-50/30 px-3 py-3 dark:border-purple-800 dark:bg-purple-950/20">
+          <div className="flex-1">
+            <p className="text-sm font-medium text-[#0a2a4a] dark:text-gray-100">
+              Annotate values on generate
+            </p>
+            <p className="mt-0.5 text-xs text-[#3a6a8a] dark:text-gray-400">
+              When ON, Sharko sends each chart's <code className="rounded bg-white px-1 dark:bg-gray-700">values.yaml</code> to your AI provider on addon-add and
+              refresh-from-upstream to inject inline <code className="rounded bg-white px-1 dark:bg-gray-700">#</code> descriptions and improve cluster-specific detection. A hard
+              secret-leak guard runs first; charts with secret-like patterns are never sent.
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={annotateOnSeed}
+            onClick={() => handleToggleAnnotate(!annotateOnSeed)}
+            disabled={annotateBusy}
+            className={`mt-1 inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${
+              annotateOnSeed ? 'bg-purple-600' : 'bg-gray-300 dark:bg-gray-600'
+            }`}
+          >
+            <span
+              className={`inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition-transform ${
+                annotateOnSeed ? 'translate-x-5' : 'translate-x-0'
+              }`}
+            />
+          </button>
         </div>
       )}
 

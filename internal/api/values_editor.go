@@ -28,13 +28,17 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
+	"github.com/MoranWeissman/sharko/internal/helm"
+	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/prtracker"
 
@@ -42,10 +46,26 @@ import (
 )
 
 // setAddonValuesRequest is the body of PUT /api/v1/addons/{name}/values.
+//
+// v1.21 (V121-6.4) extension: when `RefreshFromUpstream` is true, the
+// handler ignores any client-supplied `Values`, fetches the chart's
+// upstream `values.yaml` for the version pinned in `addons-catalog.yaml`,
+// runs the smart-values pipeline, and overwrites the global values file
+// with the regenerated content. This replaces the dedicated
+// `POST /api/v1/addons/{name}/values/pull-upstream` endpoint that v1.20.1
+// shipped — see the locked decision in `epics-v1.21.md` Story V121-6.4.
 type setAddonValuesRequest struct {
 	// Values is the full YAML file content. Sharko commits this verbatim
-	// as the new global default values for the addon.
+	// as the new global default values for the addon. Ignored when
+	// RefreshFromUpstream is true.
 	Values string `json:"values"`
+
+	// RefreshFromUpstream, when true, regenerates the global values file
+	// from the chart's upstream values.yaml at the catalog-pinned version.
+	// The audit event for this path is `values_refreshed_from_upstream`
+	// (overriding the default `values_set`) so audit consumers can
+	// distinguish manual edits from upstream refreshes.
+	RefreshFromUpstream bool `json:"refresh_from_upstream,omitempty"`
 }
 
 // setClusterAddonValuesRequest is the body of
@@ -88,11 +108,14 @@ func (s *Server) handleSetAddonValues(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
-	// We intentionally accept an empty values payload — that resets the
-	// addon to "use chart defaults". Validation is YAML well-formedness.
-	if err := yaml.Unmarshal([]byte(req.Values), new(interface{})); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid YAML: "+err.Error())
-		return
+	// Validate YAML only on the manual-edit path. The refresh path
+	// generates its own content from the smart-values pipeline so any
+	// user-supplied `values` field is ignored.
+	if !req.RefreshFromUpstream {
+		if err := yaml.Unmarshal([]byte(req.Values), new(interface{})); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid YAML: "+err.Error())
+			return
+		}
 	}
 
 	ac, err := s.connSvc.GetActiveArgocdClient()
@@ -119,8 +142,91 @@ func (s *Server) handleSetAddonValues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Refresh path (V121-6.4): regenerate from the upstream chart's
+	// values.yaml at the catalog-pinned version, then commit. This
+	// replaces the dedicated pull-upstream endpoint deleted in V121-6.5.
+	yamlPayload := req.Values
+	auditEvent := "addon_values_edited"
+	prTitle := "Update global values for " + name
+	prOperation := "values-edit"
+	auditDetail := fmt.Sprintf("file=configuration/addons-global-values/%s.yaml bytes=%d", name, len(req.Values))
+
+	if req.RefreshFromUpstream {
+		chart := addon.Addon.Chart
+		repoURL := addon.Addon.RepoURL
+		version := addon.Addon.Version
+		if chart == "" || repoURL == "" || version == "" {
+			writeError(w, http.StatusBadRequest, "addon catalog entry is missing chart/repo/version metadata required to refresh from upstream")
+			return
+		}
+		raw, ferr := helm.NewFetcher().FetchValues(ctx, repoURL, chart, version)
+		if ferr != nil {
+			writeError(w, http.StatusBadGateway, "fetching upstream values: "+ferr.Error())
+			return
+		}
+
+		// Per-addon AI opt-out: read the existing file's header to see if
+		// the user previously set `# sharko: ai-annotate=off`. If so, the
+		// refresh skips the AI pass and stamps the directive again so it
+		// survives the regen.
+		aiOptOut := false
+		dir := strings.TrimSuffix(s.repoPaths.GlobalValues, "/")
+		if dir == "" {
+			dir = "configuration/addons-global-values"
+		}
+		valuesFile := dir + "/" + name + ".yaml"
+		if existing, gerr := git.GetFileContent(ctx, valuesFile, s.gitopsCfg.BaseBranch); gerr == nil && len(existing) > 0 {
+			if h := orchestrator.ParseSmartValuesHeader(existing); h.AIOptOut {
+				aiOptOut = true
+			}
+		}
+
+		// V121-7 AI annotate on refresh: same rules as the addon-add seed
+		// flow. AI off / opted out / secret-blocked → heuristic-only.
+		var (
+			extraPaths  []string
+			aiAnnotated bool
+			secretBlock *orchestrator.SecretLeakError
+		)
+		valuesBytes := []byte(raw)
+		if !aiOptOut && s.aiClient != nil && s.aiClient.AnnotateOnSeedEnabled() {
+			annRes, annErr := orchestrator.AnnotateValues(ctx, valuesBytes, chart, version, s.aiClient)
+			if annErr != nil {
+				if errors.As(annErr, &secretBlock) {
+					slog.Warn("values refresh: ai annotate hard-blocked by secret guard; proceeding with heuristic-only",
+						"addon", name, "chart", chart, "version", version,
+						"matches", len(secretBlock.Matches),
+					)
+					// Story V121-8.5: emit a dedicated
+					// `secret_leak_blocked` audit entry so security review
+					// can grep across handlers without parsing per-event
+					// detail strings.
+					s.emitSecretLeakAuditBlock(ctx, "values_refresh", name, chart, version, secretBlock.Matches)
+				}
+			}
+			if annRes.SkipReason == "" {
+				valuesBytes = annRes.AnnotatedYAML
+				extraPaths = annRes.AdditionalClusterPaths
+				aiAnnotated = true
+			}
+		}
+
+		generated := orchestrator.GenerateGlobalValuesFile(name, chart, version, repoURL, valuesBytes, aiAnnotated, aiOptOut, extraPaths...)
+		yamlPayload = string(generated)
+		auditEvent = "values_refreshed_from_upstream"
+		prTitle = fmt.Sprintf("Refresh upstream values for %s@%s", chart, version)
+		prOperation = "values-refresh-upstream"
+		aiState := "off"
+		if aiAnnotated {
+			aiState = "on"
+		} else if secretBlock != nil {
+			aiState = "secret_blocked"
+		}
+		auditDetail = fmt.Sprintf("chart=%s version=%s bytes=%d ai=%s", chart, version, len(generated), aiState)
+	}
+
 	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
-	result, err := orch.SetGlobalAddonValues(ctx, name, req.Values)
+	result, err := orch.SetGlobalAddonValues(ctx, name, yamlPayload)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
@@ -135,10 +241,10 @@ func (s *Server) handleSetAddonValues(w http.ResponseWriter, r *http.Request) {
 			PRID:       result.PRID,
 			PRUrl:      result.PRUrl,
 			PRBranch:   result.Branch,
-			PRTitle:    "Update global values for " + name,
+			PRTitle:    prTitle,
 			PRBase:     "main",
 			Addon:      name,
-			Operation:  "values-edit",
+			Operation:  prOperation,
 			User:       user,
 			Source:     "api",
 			CreatedAt:  time.Now(),
@@ -147,9 +253,9 @@ func (s *Server) handleSetAddonValues(w http.ResponseWriter, r *http.Request) {
 	}
 
 	audit.Enrich(ctx, audit.Fields{
-		Event:    "addon_values_edited",
+		Event:    auditEvent,
 		Resource: fmt.Sprintf("addon:%s", name),
-		Detail:   fmt.Sprintf("file=%s bytes=%d", result.ValuesFile, len(req.Values)),
+		Detail:   auditDetail,
 	})
 
 	writeJSON(w, http.StatusOK, withAttributionWarning(result, tokRes))
@@ -281,6 +387,48 @@ func (s *Server) handleGetAddonValuesSchema(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
+	}
+
+	// V121-6.5: version-mismatch detection. If the values file has a
+	// smart-values header with `sharko: managed=true` and the chart
+	// version it was generated against doesn't match the catalog's
+	// current pin, we surface the mismatch so the UI can render the
+	// refresh banner. This is best-effort — any failure to look up the
+	// catalog (no ArgoCD, transient Git error) just suppresses the
+	// banner; the values themselves still render.
+	if resp != nil && resp.CurrentValues != "" {
+		header := orchestrator.ParseSmartValuesHeader([]byte(resp.CurrentValues))
+		// V121-7.4: surface the header-stored AI annotation state so the
+		// UI can render the "AI not configured" banner and the per-addon
+		// opt-out toggle without re-parsing the YAML on the client.
+		resp.AIAnnotated = header.AIAnnotated
+		resp.AIOptOut = header.AIOptOut
+
+		// Catalog lookup (best-effort) — used both for the
+		// version-mismatch banner and the legacy-wrap chart-name match.
+		var chartName, catalogVersion string
+		if ac, acErr := s.connSvc.GetActiveArgocdClient(); acErr == nil {
+			if detail, derr := s.addonSvc.GetAddonDetail(r.Context(), name, gp, ac); derr == nil && detail != nil {
+				chartName = detail.Addon.Chart
+				catalogVersion = detail.Addon.Version
+			}
+		}
+
+		if header.Managed && catalogVersion != "" {
+			if catalog, values := orchestrator.VersionMismatch(catalogVersion, header); catalog != "" {
+				resp.ValuesVersionMismatch = &models.ValuesVersionMismatch{
+					CatalogVersion: catalog,
+					ValuesVersion:  values,
+				}
+			}
+		}
+
+		// v1.21 Bundle 5: legacy `<addon>:` wrap detection. Helm
+		// silently ignores values nested under this root; the UI
+		// surfaces a migration banner when this fires.
+		resp.LegacyWrapDetected = orchestrator.DetectLegacyWrap(
+			[]byte(resp.CurrentValues), name, chartName,
+		)
 	}
 
 	writeJSON(w, http.StatusOK, resp)

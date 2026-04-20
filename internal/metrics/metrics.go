@@ -132,6 +132,56 @@ var (
 	})
 )
 
+// Catalog / OpenSSF Scorecard metrics (v1.21).
+var (
+	ScorecardRefreshTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "sharko_scorecard_refresh_total",
+		Help: "OpenSSF Scorecard refresh operations by outcome",
+	}, []string{"status"})
+
+	ScorecardLastRefresh = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "sharko_scorecard_last_refresh_timestamp",
+		Help: "Unix timestamp of last Scorecard refresh cycle",
+	})
+)
+
+// AI annotate metrics (v1.21 Epic V121-7). Outcome label is one of:
+//   "ok", "not_configured", "empty_input", "oversize", "secret_blocked",
+//   "timeout", "llm_error", "parse_error", "opted_out", "disabled".
+//
+// Operators use these to spot LLM cost runaway (high call rate),
+// LLM-provider degradation (rising "timeout" / "llm_error" rate), or
+// consistent secret-leak hits (rising "secret_blocked" — usually a sign
+// the maintainer has secrets baked into a chart and should fix that).
+var (
+	AIAnnotateTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "sharko_ai_annotate_total",
+		Help: "AI annotate calls by outcome (ok, not_configured, oversize, secret_blocked, timeout, llm_error, parse_error, opted_out, disabled)",
+	}, []string{"outcome"})
+
+	AIAnnotateLatencySeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "sharko_ai_annotate_latency_seconds",
+		Help:    "Latency of AI annotate calls, including secret-guard scan and LLM round-trip, partitioned by outcome",
+		Buckets: []float64{0.1, 0.5, 1, 2, 5, 10, 20, 30, 60},
+	}, []string{"outcome"})
+)
+
+// ScorecardMetricsAdapter implements internal/catalog.ScorecardMetrics against
+// the Prometheus counters declared above. Use this when wiring the Scheduler
+// from serve.go.
+type ScorecardMetricsAdapter struct{}
+
+func (ScorecardMetricsAdapter) IncRefreshTotal(status string, delta int) {
+	if delta <= 0 {
+		return
+	}
+	ScorecardRefreshTotal.WithLabelValues(status).Add(float64(delta))
+}
+
+func (ScorecardMetricsAdapter) SetLastRefreshTimestamp(ts time.Time) {
+	ScorecardLastRefresh.Set(float64(ts.Unix()))
+}
+
 // RecordHTTPRequest is a convenience function to record an HTTP request in
 // both the request counter and the duration histogram.
 func RecordHTTPRequest(method, path string, status int, duration time.Duration) {

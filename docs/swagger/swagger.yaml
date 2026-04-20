@@ -1,5 +1,174 @@
 basePath: /api/v1
 definitions:
+  github_com_MoranWeissman_sharko_internal_catalog.AHLink:
+    properties:
+      name:
+        type: string
+      url:
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_catalog.AHMaintainer:
+    properties:
+      email:
+        type: string
+      name:
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_catalog.AHPackage:
+    properties:
+      app_version:
+        type: string
+      available_versions:
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_catalog.AHVersionMeta'
+        type: array
+      description:
+        type: string
+      display_name:
+        type: string
+      home_url:
+        type: string
+      keywords:
+        items:
+          type: string
+        type: array
+      license:
+        type: string
+      links:
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_catalog.AHLink'
+        type: array
+      maintainers:
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_catalog.AHMaintainer'
+        type: array
+      name:
+        type: string
+      normalized_name:
+        type: string
+      package_id:
+        type: string
+      readme:
+        type: string
+      repository:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_catalog.AHRepo'
+      stars:
+        type: integer
+      version:
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_catalog.AHRepo:
+    properties:
+      display_name:
+        type: string
+      kind:
+        type: integer
+      name:
+        type: string
+      official:
+        type: boolean
+      organization_name:
+        type: string
+      repository_id:
+        type: string
+      url:
+        type: string
+      user_alias:
+        type: string
+      verified_publisher:
+        type: boolean
+    type: object
+  github_com_MoranWeissman_sharko_internal_catalog.AHSearchPackage:
+    properties:
+      app_version:
+        type: string
+      description:
+        type: string
+      display_name:
+        type: string
+      logo_image_id:
+        type: string
+      name:
+        type: string
+      normalized_name:
+        type: string
+      package_id:
+        type: string
+      repository:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_catalog.AHRepo'
+      stars:
+        type: integer
+      version:
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_catalog.AHVersionMeta:
+    properties:
+      prerelease:
+        type: boolean
+      ts:
+        type: integer
+      version:
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_catalog.CatalogEntry:
+    properties:
+      category:
+        type: string
+      chart:
+        type: string
+      curated_by:
+        items:
+          type: string
+        type: array
+      default_namespace:
+        type: string
+      default_sync_wave:
+        type: integer
+      deprecated:
+        type: boolean
+      description:
+        type: string
+      docs_url:
+        type: string
+      github_stars:
+        type: integer
+      homepage:
+        type: string
+      license:
+        type: string
+      maintainers:
+        items:
+          type: string
+        type: array
+      min_kubernetes_version:
+        type: string
+      name:
+        type: string
+      repo:
+        type: string
+      security_score:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_catalog.ScoreValue'
+      security_score_updated:
+        type: string
+      security_tier:
+        description: |-
+          SecurityTier is derived from SecurityScore by the API layer (Strong /
+          Moderate / Weak / unknown) and is never read from YAML.
+        type: string
+      source_url:
+        type: string
+      superseded_by:
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_catalog.ScoreValue:
+    properties:
+      known:
+        type: boolean
+      value:
+        description: 0 when Known is false
+        format: float64
+        type: number
+    type: object
   github_com_MoranWeissman_sharko_internal_diagnose.DiagnosticReport:
     properties:
       identity:
@@ -207,6 +376,20 @@ definitions:
         description: Legacy fields — kept for backwards compatibility with existing
           UI consumers.
         type: string
+      on_latest:
+        description: |-
+          OnLatest is true when the addon's current version is greater than or
+          equal to every stable version available in the chart repo. The UI uses
+          this to render a "✓ You're on the latest stable" message instead of
+          hiding the panel (which would look broken).
+
+          v1.21 QA Bundle 4 (Fix #7): the previous logic could surface a
+          "Latest stable X.Y.Z" card with X.Y.Z < current, which was a
+          downgrade dressed up as a recommendation. Recommendations are now
+          filtered to "strictly newer than current"; OnLatest captures the
+          case where the filter empties the list because there is nothing
+          newer.
+        type: boolean
       recommended:
         description: Recommended is the version string of the card that Sharko considers
           the best upgrade path.
@@ -241,6 +424,13 @@ definitions:
         type: string
       self_heal:
         type: boolean
+      source:
+        description: |-
+          Source identifies the originating UI flow for audit/observability.
+          Optional. Examples: "marketplace" (curated catalog Configure modal),
+          "manual" (raw Add Addon form), "" (caller didn't say — handler treats
+          as "manual" for the audit detail).
+        type: string
       sync_options:
         items:
           type: string
@@ -513,6 +703,18 @@ definitions:
         description: '"success", "partial", "failed"'
         type: string
     type: object
+  github_com_MoranWeissman_sharko_internal_orchestrator.SecretMatch:
+    properties:
+      field:
+        type: string
+      line:
+        description: |-
+          Line is the 1-indexed line number where the match occurred. Helps
+          the user open the file and find the field. Zero if unknown.
+        type: integer
+      pattern:
+        type: string
+    type: object
   github_com_MoranWeissman_sharko_internal_orchestrator.UnadoptClusterRequest:
     properties:
       dry_run:
@@ -610,6 +812,40 @@ definitions:
         description: '"pass", "fail", "skipped"'
         type: string
     type: object
+  internal_api.MergedPRItem:
+    properties:
+      addon:
+        type: string
+      author:
+        type: string
+      cluster:
+        type: string
+      created_at:
+        type: string
+      description:
+        type: string
+      merged_at:
+        type: string
+      operation:
+        type: string
+      pr_branch:
+        type: string
+      pr_id:
+        type: integer
+      pr_title:
+        type: string
+      pr_url:
+        type: string
+    type: object
+  internal_api.MergedPRsResponse:
+    properties:
+      limit:
+        type: integer
+      prs:
+        items:
+          $ref: '#/definitions/internal_api.MergedPRItem'
+        type: array
+    type: object
   internal_api.PRItem:
     properties:
       addon:
@@ -646,8 +882,32 @@ definitions:
           $ref: '#/definitions/internal_api.PRItem'
         type: array
     type: object
+  internal_api.aiAnnotateBlockedResponse:
+    properties:
+      code:
+        type: string
+      matches:
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.SecretMatch'
+        type: array
+      message:
+        type: string
+    type: object
   internal_api.aiConfigResponse:
     properties:
+      annotate_on_seed:
+        description: |-
+          AnnotateOnSeed (v1.21 Story V121-7.3) is the global Settings toggle
+          for "Annotate values on generate". When the AI provider is `none`
+          the field is reported as false regardless of the persisted value —
+          the UI uses this to gate the toggle row visibility.
+
+          Default-true semantics: on a fresh install with a configured AI
+          provider but no explicit AnnotateOnSeed value (older config blobs
+          from before V121-7), the field reports `true`. The Save handler
+          stamps the explicit value on every persist so subsequent reads are
+          authoritative.
+        type: boolean
       available_providers:
         items:
           $ref: '#/definitions/internal_api.aiProviderInfo'
@@ -665,6 +925,139 @@ definitions:
         type: string
       name:
         type: string
+    type: object
+  internal_api.annotateAddonValuesResponse:
+    properties:
+      ai_skip_reason:
+        description: |-
+          AISkipReason is set when the LLM was skipped and the heuristic-only
+          output was committed instead. Possible values: "not_configured",
+          "opted_out", "oversize", "timeout", "llm_error", "parse_error".
+        type: string
+      branch:
+        type: string
+      commit_sha:
+        type: string
+      merged:
+        type: boolean
+      pr_id:
+        type: integer
+      pr_url:
+        type: string
+    type: object
+  internal_api.catalogListResponse:
+    properties:
+      addons:
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_catalog.CatalogEntry'
+        type: array
+      total:
+        type: integer
+    type: object
+  internal_api.catalogReadmeResponse:
+    properties:
+      ah_chart:
+        type: string
+      ah_repo:
+        type: string
+      cached_at:
+        type: string
+      readme:
+        type: string
+      source:
+        type: string
+      stale:
+        type: boolean
+    type: object
+  internal_api.catalogRemotePackageResponse:
+    properties:
+      cached_at:
+        type: string
+      package:
+        $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_catalog.AHPackage'
+      stale:
+        type: boolean
+    type: object
+  internal_api.catalogReprobeResponse:
+    properties:
+      last_error:
+        type: string
+      probed_at:
+        type: string
+      reachable:
+        type: boolean
+    type: object
+  internal_api.catalogSearchResponse:
+    properties:
+      artifacthub:
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_catalog.AHSearchPackage'
+        type: array
+      artifacthub_error:
+        type: string
+      cached_at:
+        type: string
+      curated:
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_catalog.CatalogEntry'
+        type: array
+      query:
+        type: string
+      stale:
+        type: boolean
+    type: object
+  internal_api.catalogValidateResponse:
+    properties:
+      cached_at:
+        type: string
+      chart:
+        type: string
+      description:
+        type: string
+      error_code:
+        $ref: '#/definitions/internal_api.validateErrorCode'
+      icon_url:
+        type: string
+      latest_stable:
+        type: string
+      message:
+        type: string
+      repo:
+        type: string
+      valid:
+        type: boolean
+      versions:
+        items:
+          $ref: '#/definitions/internal_api.catalogVersionEntry'
+        type: array
+    type: object
+  internal_api.catalogVersionEntry:
+    properties:
+      app_version:
+        type: string
+      created:
+        type: string
+      prerelease:
+        type: boolean
+      version:
+        type: string
+    type: object
+  internal_api.catalogVersionsResponse:
+    properties:
+      addon:
+        type: string
+      cached_at:
+        type: string
+      chart:
+        type: string
+      latest_stable:
+        type: string
+      repo:
+        type: string
+      versions:
+        items:
+          $ref: '#/definitions/internal_api.catalogVersionEntry'
+        type: array
     type: object
   internal_api.discoverEKSRequest:
     properties:
@@ -774,21 +1167,84 @@ definitions:
       username:
         type: string
     type: object
-  internal_api.pullUpstreamRequest:
+  internal_api.previewMergeResponse:
     properties:
-      merge_strategy:
+      current:
         description: |-
-          MergeStrategy controls how upstream values are merged into the current
-          values file. "replace" (the only supported strategy for v1.20.1)
-          overwrites the file entirely with upstream defaults. A future
-          "merge_keep_overrides" strategy is tracked as a TODO in the handler.
+          Current is the existing global values file body, exactly as returned
+          by the GET values-schema endpoint. Returned so the UI can render a
+          before/after diff without a second request.
         type: string
-      version:
+      diff_summary:
+        allOf:
+        - $ref: '#/definitions/internal_api.previewMergeSummary'
         description: |-
-          Version is the chart version to pull (e.g. "v1.14.4"). When empty, the
-          handler resolves the addon's currently-configured version from the
-          catalog — the expected default for the "I want to refresh to whatever
-          we're pointing at" workflow.
+          DiffSummary is an at-a-glance view of what changed. Used by the modal
+          header so the user can decide whether to open the diff or skip.
+      merged:
+        description: |-
+          Merged is the candidate body the user can submit through the existing
+          PUT /api/v1/addons/{name}/values endpoint. Same shape as Current
+          (full YAML with smart-values header) plus any new upstream keys the
+          user did not previously set.
+        type: string
+      upstream_version:
+        description: |-
+          UpstreamVersion is the chart version Sharko fetched the upstream
+          values.yaml for. Echo of the catalog pin — surfaced so the UI can
+          show "Merging in defaults from cert-manager@1.20.2".
+        type: string
+    type: object
+  internal_api.previewMergeSummary:
+    properties:
+      new_keys:
+        description: |-
+          NewKeys are dotted paths present in upstream but NOT in the user's
+          current file. These are the only paths that the merge actually adds.
+        items:
+          type: string
+        type: array
+      no_op:
+        description: |-
+          NoOp is true when the merge produced the same body as Current — the
+          user already has every upstream key. The UI uses this to render a
+          "Already up to date" empty state instead of an empty diff.
+        type: boolean
+      preserved_user_keys:
+        description: |-
+          PreservedUserKeys are dotted paths the user has set that already
+          exist in upstream — the merge keeps the user's value and the user's
+          inline comments are honored on the PR side. Surfaced so the modal
+          can reassure the user nothing of theirs is being overwritten.
+        items:
+          type: string
+        type: array
+    type: object
+  internal_api.projectReadmeResponse:
+    properties:
+      available:
+        description: |-
+          Available is true when we successfully resolved a GitHub repo AND
+          fetched a non-empty README. False means either (a) the chart's
+          homepage wasn't a GitHub URL, or (b) the GitHub README API returned
+          404 / the repo has no README.md.
+        type: boolean
+      readme:
+        description: |-
+          Readme is the decoded markdown body. Empty when the lookup failed
+          or the repo doesn't publish a README — the UI shows an explicit
+          empty state rather than a spinning loader.
+        type: string
+      reason:
+        description: |-
+          Reason carries a short explanation when Available is false so the
+          UI can render a concrete message instead of "something went wrong".
+        type: string
+      source_url:
+        description: |-
+          SourceURL is the resolved GitHub URL of the README (e.g.
+          https://github.com/cert-manager/cert-manager/blob/master/README.md).
+          Surfaced so the UI can render a "View on GitHub" link.
         type: string
     type: object
   internal_api.recentPRsEntry:
@@ -815,8 +1271,35 @@ definitions:
       view_all_url:
         type: string
     type: object
+  internal_api.repoChartsResponse:
+    properties:
+      cached_at:
+        type: string
+      charts:
+        items:
+          type: string
+        type: array
+      error_code:
+        $ref: '#/definitions/internal_api.validateErrorCode'
+      message:
+        type: string
+      repo:
+        type: string
+      valid:
+        type: boolean
+    type: object
   internal_api.saveAIConfigRequest:
     properties:
+      annotate_on_seed:
+        description: |-
+          AnnotateOnSeed (V121-7.3) is a tri-state via the *bool sentinel:
+            nil  → caller didn't pass the field; preserve the current value
+                   (or fall through to default-true if no current value exists).
+            *false → explicit OFF.
+            *true  → explicit ON.
+          Once any save sets the field, AnnotateOnSeedSet flips to true and
+          the explicit value is authoritative on subsequent reads.
+        type: boolean
       api_key:
         type: string
       base_url:
@@ -828,12 +1311,26 @@ definitions:
       provider:
         type: string
     type: object
+  internal_api.setAIOptOutRequest:
+    properties:
+      opt_out:
+        type: boolean
+    type: object
   internal_api.setAddonValuesRequest:
     properties:
+      refresh_from_upstream:
+        description: |-
+          RefreshFromUpstream, when true, regenerates the global values file
+          from the chart's upstream values.yaml at the catalog-pinned version.
+          The audit event for this path is `values_refreshed_from_upstream`
+          (overriding the default `values_set`) so audit consumers can
+          distinguish manual edits from upstream refreshes.
+        type: boolean
       values:
         description: |-
           Values is the full YAML file content. Sharko commits this verbatim
-          as the new global default values for the addon.
+          as the new global default values for the addon. Ignored when
+          RefreshFromUpstream is true.
         type: string
     type: object
   internal_api.setClusterAddonValuesRequest:
@@ -883,6 +1380,57 @@ definitions:
           type: string
         type: array
     type: object
+  internal_api.unwrapGlobalsFile:
+    properties:
+      addon:
+        description: derived addon name (filename without .yaml)
+        type: string
+      file:
+        description: repo-relative path
+        type: string
+      message:
+        type: string
+      status:
+        description: '"migrated" | "skipped"'
+        type: string
+    type: object
+  internal_api.unwrapGlobalsResponse:
+    properties:
+      branch:
+        type: string
+      files:
+        items:
+          $ref: '#/definitions/internal_api.unwrapGlobalsFile'
+        type: array
+      merged:
+        type: boolean
+      message:
+        type: string
+      migrated:
+        type: integer
+      pr_id:
+        type: integer
+      pr_url:
+        type: string
+      skipped:
+        type: integer
+    type: object
+  internal_api.validateErrorCode:
+    enum:
+    - invalid_input
+    - repo_unreachable
+    - index_parse_error
+    - chart_not_found
+    - timeout
+    - ssrf_blocked
+    type: string
+    x-enum-varnames:
+    - validateErrInvalidInput
+    - validateErrRepoUnreachable
+    - validateErrIndexParseError
+    - validateErrChartNotFound
+    - validateErrTimeout
+    - validateErrSSRFBlocked
 host: localhost:8080
 info:
   contact: {}
@@ -1011,6 +1559,11 @@ paths:
             type: object
         "401":
           description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: Addon already exists in catalog
           schema:
             additionalProperties: true
             type: object
@@ -1386,36 +1939,31 @@ paths:
       summary: Get addon global values + schema
       tags:
       - addons
-  /addons/{name}/values/pull-upstream:
-    post:
+  /addons/{name}/values/ai-opt-out:
+    put:
       consumes:
       - application/json
-      description: Replaces the addon's global Helm values file with the chart's upstream
-        `values.yaml` (comments preserved) wrapped under the `<addonName>:` key. Opens
-        a PR. Tier 2 (configuration) — uses the caller's personal GitHub PAT when
-        configured, otherwise the service token with a `Co-authored-by:` trailer.
+      description: 'Sets or clears the `# sharko: ai-annotate=off` directive in the
+        addon''s global values file header. When opt-out is true, future addon-add
+        and refresh-from-upstream runs skip the AI annotate pass for this addon. The
+        directive is the only persistence (no Sharko-side store). Idempotent.'
       parameters:
       - description: Addon name
         in: path
         name: name
         required: true
         type: string
-      - description: Pull upstream request
+      - description: opt_out flag
         in: body
         name: body
         required: true
         schema:
-          $ref: '#/definitions/internal_api.pullUpstreamRequest'
+          $ref: '#/definitions/internal_api.setAIOptOutRequest'
       produces:
       - application/json
       responses:
         "200":
-          description: PR created
-          schema:
-            additionalProperties: true
-            type: object
-        "400":
-          description: Bad request
+          description: PR opened (or merged) with header-only change
           schema:
             additionalProperties: true
             type: object
@@ -1430,13 +1978,105 @@ paths:
             additionalProperties: true
             type: object
         "502":
-          description: Helm or Git failure
+          description: Git error
           schema:
             additionalProperties: true
             type: object
       security:
       - BearerAuth: []
-      summary: Pull upstream chart values.yaml
+      summary: Toggle per-addon AI annotation opt-out
+      tags:
+      - addons
+  /addons/{name}/values/annotate:
+    post:
+      description: Fetches the chart's upstream values.yaml at the catalog-pinned
+        version, runs the V121-7 AI annotate pass (one-line `# description` comments
+        + LLM-suggested cluster-specific paths unioned with the heuristic), and opens
+        a Tier 2 PR with the result. Hard-blocked when the secret-leak guard matches;
+        in that case returns 422 with redacted matches and no PR. Skipped when AI
+        is not configured or the addon is opted out.
+      parameters:
+      - description: Addon name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: PR opened (or merged if auto-merge is on)
+          schema:
+            $ref: '#/definitions/internal_api.annotateAddonValuesResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Addon not found
+          schema:
+            additionalProperties: true
+            type: object
+        "422":
+          description: Secret-leak guard blocked the LLM call
+          schema:
+            $ref: '#/definitions/internal_api.aiAnnotateBlockedResponse'
+        "502":
+          description: Git or upstream fetch error
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: AI not configured
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Re-annotate an addon's global values via AI
+      tags:
+      - addons
+  /addons/{name}/values/preview-merge:
+    post:
+      consumes:
+      - application/json
+      description: Returns a candidate values YAML that adds NEW upstream keys (and
+        their default values) on top of the user's current file, preserving every
+        key the user has already set. The endpoint is Tier 1 read-only — it does NOT
+        open a PR. Submit the returned `merged` body through PUT /api/v1/addons/{name}/values
+        to commit.
+      parameters:
+      - description: Addon name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_api.previewMergeResponse'
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Addon not found
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Git or Helm-repo failure
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Preview a safe merge of upstream values into an addon's values file
       tags:
       - addons
   /addons/{name}/values/recent-prs:
@@ -1510,6 +2150,43 @@ paths:
       security:
       - BearerAuth: []
       summary: List addons
+      tags:
+      - addons
+  /addons/unwrap-globals:
+    post:
+      consumes:
+      - application/json
+      description: 'Walks every file under `configuration/addons-global-values/` in
+        the user''s repo, detects files that are wrapped under an `<addonName>:` (or
+        matching `<chartName>:`) root key, unwraps them so the chart''s keys are at
+        the document root, and opens ONE PR with the migrated files. Idempotent —
+        running again when no files are wrapped returns 200 with `{migrated: 0}` and
+        does not open a PR. Pass `?addon=<name>` to migrate a single file.'
+      parameters:
+      - description: Migrate only this addon's file (defaults to all)
+        in: query
+        name: addon
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Migration result
+          schema:
+            $ref: '#/definitions/internal_api.unwrapGlobalsResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Git or ArgoCD failure
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Migrate legacy `<addon>:` wrapped global values files
       tags:
       - addons
   /addons/upgrade-batch:
@@ -2031,6 +2708,429 @@ paths:
       summary: Update password
       tags:
       - auth
+  /catalog/addons:
+    get:
+      description: Returns the Sharko-native curated catalog of addons that ships
+        embedded in the binary. The list is filterable by category, curated_by tag,
+        license, minimum OpenSSF Scorecard score, and by free-text over name/description/maintainers.
+        Read-only; requires authentication.
+      parameters:
+      - description: Primary category (e.g. security, observability)
+        in: query
+        name: category
+        type: string
+      - description: Comma-separated curation tags; entry must carry ALL tags
+        in: query
+        name: curated_by
+        type: string
+      - description: SPDX license identifier (exact match, case-insensitive)
+        in: query
+        name: license
+        type: string
+      - description: Free-text substring match on name/description/maintainers
+        in: query
+        name: q
+        type: string
+      - description: Minimum OpenSSF Scorecard aggregate score (0-10); entries with
+          unknown score are excluded when > 0
+        in: query
+        name: min_score
+        type: number
+      - description: Caller's Kubernetes version; entries requiring a newer cluster
+          are excluded
+        in: query
+        name: min_k8s_version
+        type: string
+      - description: Include deprecated entries (default false)
+        in: query
+        name: include_deprecated
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Filtered curated catalog
+          schema:
+            $ref: '#/definitions/internal_api.catalogListResponse'
+        "503":
+          description: Catalog not loaded
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List curated catalog addons
+      tags:
+      - catalog
+  /catalog/addons/{name}:
+    get:
+      description: Returns the full curated catalog entry for a single addon, including
+        its OpenSSF Scorecard security score + derived tier label (Strong / Moderate
+        / Weak) and last-refresh date. Read-only; requires authentication.
+      parameters:
+      - description: Addon name (case-sensitive, matches catalog.name)
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Curated catalog entry
+          schema:
+            $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_catalog.CatalogEntry'
+        "404":
+          description: Addon not found in curated catalog
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Catalog not loaded
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get a curated catalog addon by name
+      tags:
+      - catalog
+  /catalog/addons/{name}/project-readme:
+    get:
+      description: Fetches the project's own README from GitHub (distinct from the
+        Helm chart README). Resolves via the curated entry's `source_url` or `homepage`;
+        returns an empty body + reason when the entry doesn't point at a GitHub repo.
+        Cached server-side so the upstream GitHub API is not hit on every page view.
+      parameters:
+      - description: Curated addon name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_api.projectReadmeResponse'
+        "404":
+          description: Addon not found
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get the upstream project README for a curated catalog addon
+      tags:
+      - catalog
+  /catalog/addons/{name}/readme:
+    get:
+      description: 'Resolves a curated catalog entry to its ArtifactHub package and
+        returns the README markdown for the in-page Marketplace detail view (v1.21
+        QA Bundle 2). The lookup uses the chart name (case-insensitive) against ArtifactHub''s
+        `/packages/search`, prefers verified-publisher hits, and tie-breaks by stars.
+        Returns 200 with `readme: ""` when the chart was found but didn''t ship a
+        README. Returns 404 only when no ArtifactHub package matches the curated chart
+        name. Read-only; requires authentication.'
+      parameters:
+      - description: Curated addon name (case-sensitive, matches catalog.name)
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: README content + ArtifactHub coordinates
+          schema:
+            $ref: '#/definitions/internal_api.catalogReadmeResponse'
+        "400":
+          description: Missing addon name
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Addon not in curated catalog or no ArtifactHub match
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: ArtifactHub unreachable and no cached value available
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Catalog not loaded
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get the README markdown for a curated catalog addon
+      tags:
+      - catalog
+  /catalog/addons/{name}/versions:
+    get:
+      description: Returns the chart versions reported by the upstream Helm repo `index.yaml`
+        for the curated catalog entry identified by `name`. Versions are sorted newest-first
+        and tagged with `prerelease=true` when the SemVer build/prerelease segment
+        is present. The first non-prerelease version is returned in `latest_stable`.
+        Responses are cached server-side for 15 minutes per repo+chart pair. Read-only;
+        requires authentication.
+      parameters:
+      - description: Curated catalog addon name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Include prerelease versions in the response (default true; the
+          UI filters by the per-entry prerelease flag)
+        in: query
+        name: include_prereleases
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Sorted chart versions for the addon
+          schema:
+            $ref: '#/definitions/internal_api.catalogVersionsResponse'
+        "404":
+          description: Addon not found in curated catalog
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Upstream Helm repo unreachable
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Catalog not loaded
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List chart versions for a curated catalog addon
+      tags:
+      - catalog
+  /catalog/remote/{repo}/{name}:
+    get:
+      description: 'Proxies the ArtifactHub package detail endpoint for one Helm chart
+        so the browser does not call ArtifactHub directly (avoids CORS issues and
+        lets Sharko apply rate-limit handling). Returns the trimmed package shape
+        (description, maintainers, available_versions, links, license, repo metadata).
+        Responses are cached server-side for 1 hour; on upstream failure the last
+        cached value is served (stale up to 24 h) with `stale: true`. The `{repo}`
+        path segment is the ArtifactHub repository name, `{name}` is the chart name.'
+      parameters:
+      - description: ArtifactHub repository name (e.g. jetstack)
+        in: path
+        name: repo
+        required: true
+        type: string
+      - description: Chart name (e.g. cert-manager)
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Package detail
+          schema:
+            $ref: '#/definitions/internal_api.catalogRemotePackageResponse'
+        "400":
+          description: Missing repo or name
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Package not found on ArtifactHub
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: ArtifactHub unreachable and no cached value available
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: ArtifactHub package detail proxy
+      tags:
+      - catalog
+  /catalog/remote/{repo}/{name}/project-readme:
+    get:
+      description: Same as the curated variant but resolves the GitHub repo from the
+        ArtifactHub package's `home_url`. Used for Marketplace entries that came from
+        ArtifactHub search rather than Sharko's curated list.
+      parameters:
+      - description: ArtifactHub repo name
+        in: path
+        name: repo
+        required: true
+        type: string
+      - description: ArtifactHub package name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_api.projectReadmeResponse'
+      security:
+      - BearerAuth: []
+      summary: Get the upstream project README for an ArtifactHub-discovered addon
+      tags:
+      - catalog
+  /catalog/repo-charts:
+    get:
+      description: 'v1.21 QA Bundle 1 — given a Helm repo URL, fetches `<repo>/index.yaml`
+        and returns the chart names listed under `entries:`. Powers the chart-name
+        dropdown in the manual "Add Addon" form so operators can pick from real chart
+        names instead of typing blind. On failure returns HTTP 200 with `valid: false`
+        and a structured `error_code` (invalid_input, repo_unreachable, index_parse_error,
+        ssrf_blocked, timeout) so the UI''s existing switch table can be reused. Responses
+        are cached server-side for 15 minutes per repo URL. Read-only; requires authentication.'
+      parameters:
+      - description: Helm repository base URL (e.g. https://charts.jetstack.io)
+        in: query
+        name: repo
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Chart list — `valid` distinguishes success vs structured failure
+          schema:
+            $ref: '#/definitions/internal_api.repoChartsResponse'
+        "400":
+          description: Missing or malformed repo query parameter
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List chart names available in an arbitrary Helm repository
+      tags:
+      - catalog
+  /catalog/reprobe:
+    post:
+      description: Resets the in-memory backoff/circuit-breaker for ArtifactHub, purges
+        the search and package-detail caches, and issues a probe against the ArtifactHub
+        API root. Returns whether ArtifactHub is currently reachable from this Sharko
+        process. Used by the UI's "Retry" button on the search-unreachable banner.
+        Tier 1 (operational); audit-logged.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Probe result
+          schema:
+            $ref: '#/definitions/internal_api.catalogReprobeResponse'
+        "401":
+          description: Unauthenticated
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Force ArtifactHub connectivity re-check
+      tags:
+      - catalog
+  /catalog/search:
+    get:
+      description: 'Returns curated catalog matches and ArtifactHub Helm chart matches
+        for the same query in one envelope. Curated hits are returned as full catalog
+        entries; ArtifactHub hits are slimmed to the fields the marketplace UI renders.
+        When the upstream ArtifactHub call fails, curated hits are still returned
+        and `artifacthub_error` is set with a classification (rate_limited / server_error
+        / timeout / not_found / malformed). Search results are cached server-side
+        for 10 minutes; on upstream failure the last cached value is served (stale
+        up to 24 h) with `stale: true`.'
+      parameters:
+      - description: Search term (case-insensitive substring on curated; full-text
+          on ArtifactHub)
+        in: query
+        name: q
+        required: true
+        type: string
+      - description: Maximum ArtifactHub hits to return (default 20, max 60)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Blended search response
+          schema:
+            $ref: '#/definitions/internal_api.catalogSearchResponse'
+        "400":
+          description: Empty query
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Catalog not loaded
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Blended catalog search (curated + ArtifactHub)
+      tags:
+      - catalog
+  /catalog/validate:
+    get:
+      description: 'Power-user "Paste Helm URL" validator: fetches `<repo>/index.yaml`,
+        parses it, and confirms the named chart exists. On success returns the available
+        versions, the latest stable version, and a few metadata fields (description,
+        icon) for the Configure modal to pre-fill. On failure returns HTTP 200 with
+        `valid: false` and a structured `error_code` (invalid_input, repo_unreachable,
+        index_parse_error, chart_not_found, timeout) so the UI can render an inline
+        message without HTTP-status branching. Responses are cached server-side for
+        15 minutes per (repo, chart) pair — the same TTL semantics as `/catalog/addons/{name}/versions`.
+        Read-only; requires authentication.'
+      parameters:
+      - description: Helm repository base URL (e.g. https://charts.jetstack.io)
+        in: query
+        name: repo
+        required: true
+        type: string
+      - description: Chart name as listed in the repo's index.yaml entries (e.g. cert-manager)
+        in: query
+        name: chart
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Validation result — `valid` distinguishes success vs structured
+            failure
+          schema:
+            $ref: '#/definitions/internal_api.catalogValidateResponse'
+        "400":
+          description: Missing or malformed repo / chart query parameter
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Validate a Helm chart at an arbitrary repo URL
+      tags:
+      - catalog
   /cluster/nodes:
     get:
       description: Returns Kubernetes node capacity, allocatable resources, and readiness
@@ -3998,6 +5098,47 @@ paths:
       security:
       - BearerAuth: []
       summary: Force refresh a tracked PR
+      tags:
+      - prs
+  /prs/merged:
+    get:
+      description: 'Returns merged Sharko-authored PRs from the Git provider. The
+        prtracker drops PRs once merged, so this endpoint queries the provider directly.
+        Cached for 60s. Optional filters narrow by cluster or addon (best-effort:
+        inferred from PR title/branch).'
+      parameters:
+      - description: Filter by cluster name (best-effort title/branch match)
+        in: query
+        name: cluster
+        type: string
+      - description: Filter by addon name (best-effort title/branch match)
+        in: query
+        name: addon
+        type: string
+      - description: Maximum entries (default 20, max 100)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: List of merged PRs
+          schema:
+            $ref: '#/definitions/internal_api.MergedPRsResponse'
+        "500":
+          description: Internal error
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: No active Git connection
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List recently-merged pull requests
       tags:
       - prs
   /repo/status:

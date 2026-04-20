@@ -115,6 +115,41 @@ type AddAddonRequest struct {
 	IgnoreDifferences []map[string]interface{} `json:"ignore_differences,omitempty"`
 	ExtraHelmValues   map[string]string        `json:"extra_helm_values,omitempty"`
 	DependsOn         []string                 `json:"depends_on,omitempty"`
+	// Source identifies the originating UI flow for audit/observability.
+	// Optional. Examples: "marketplace" (curated catalog Configure modal),
+	// "manual" (raw Add Addon form), "" (caller didn't say — handler treats
+	// as "manual" for the audit detail).
+	Source string `json:"source,omitempty"`
+
+	// UpstreamValues is the raw chart `values.yaml` bytes that the API
+	// handler pre-fetched. When non-empty, AddAddon runs the smart-values
+	// pipeline (V121-6) and writes an annotated global values file with a
+	// per-cluster template block. When empty, AddAddon falls back to the
+	// pre-v1.21 minimal stub (`<name>:\n  enabled: false`). Not part of
+	// the wire schema — handlers populate it after `helm.FetchValues` and
+	// the smart-parser layer.
+	UpstreamValues []byte `json:"-"`
+
+	// AIAnnotated is set by the API handler after the AI annotate pass
+	// (V121-7 Story 7.3) succeeds. The orchestrator stamps the
+	// `# AI annotation: enabled` line in the file header based on this
+	// flag — see WriteSmartValuesHeader. False means heuristic-only
+	// (or AI was skipped: not configured, secret blocked, timeout, opt-out).
+	AIAnnotated bool `json:"-"`
+
+	// AIOptOut is set by the API handler when the user has explicitly
+	// opted this addon out of AI annotation via the per-addon toggle
+	// (V121-7 Story 7.3). The orchestrator stamps the
+	// `# sharko: ai-annotate=off` line in the file header so that the
+	// later refresh-from-upstream path (V121-6.4) preserves the opt-out.
+	AIOptOut bool `json:"-"`
+
+	// ExtraClusterSpecificPaths is the union-additive set of cluster-
+	// specific dotted paths from the AI annotate pass (V121-7 Story 7.2).
+	// The smart-values splitter treats this as additive — it never
+	// subtracts from the heuristic's classification. Empty when AI was
+	// skipped.
+	ExtraClusterSpecificPaths []string `json:"-"`
 }
 
 // ConfigureAddonRequest is the input for updating an addon's catalog configuration.

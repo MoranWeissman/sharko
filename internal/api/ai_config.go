@@ -20,6 +20,18 @@ type aiProviderInfo struct {
 type aiConfigResponse struct {
 	CurrentProvider    string           `json:"current_provider"`
 	AvailableProviders []aiProviderInfo `json:"available_providers"`
+
+	// AnnotateOnSeed (v1.21 Story V121-7.3) is the global Settings toggle
+	// for "Annotate values on generate". When the AI provider is `none`
+	// the field is reported as false regardless of the persisted value —
+	// the UI uses this to gate the toggle row visibility.
+	//
+	// Default-true semantics: on a fresh install with a configured AI
+	// provider but no explicit AnnotateOnSeed value (older config blobs
+	// from before V121-7), the field reports `true`. The Save handler
+	// stamps the explicit value on every persist so subsequent reads are
+	// authoritative.
+	AnnotateOnSeed bool `json:"annotate_on_seed"`
 }
 
 // handleGetAIConfig godoc
@@ -73,9 +85,16 @@ func (s *Server) handleGetAIConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// AnnotateOnSeed default-true: when AI is configured but the
+	// persisted blob doesn't have an explicit value (legacy config from
+	// before V121-7), report `true`. Defer to ai.Client.AnnotateOnSeedEnabled
+	// so the same default rule lives in one place.
+	annotate := s.aiClient.AnnotateOnSeedEnabled()
+
 	resp := aiConfigResponse{
 		CurrentProvider:    string(cfg.Provider),
 		AvailableProviders: providers,
+		AnnotateOnSeed:     annotate,
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -94,6 +113,15 @@ type saveAIConfigRequest struct {
 	Model     string `json:"model,omitempty"`
 	BaseURL   string `json:"base_url,omitempty"`
 	OllamaURL string `json:"ollama_url,omitempty"`
+
+	// AnnotateOnSeed (V121-7.3) is a tri-state via the *bool sentinel:
+	//   nil  → caller didn't pass the field; preserve the current value
+	//          (or fall through to default-true if no current value exists).
+	//   *false → explicit OFF.
+	//   *true  → explicit ON.
+	// Once any save sets the field, AnnotateOnSeedSet flips to true and
+	// the explicit value is authoritative on subsequent reads.
+	AnnotateOnSeed *bool `json:"annotate_on_seed,omitempty"`
 }
 
 // handleSaveAIConfig godoc
@@ -140,6 +168,21 @@ func (s *Server) handleSaveAIConfig(w http.ResponseWriter, r *http.Request) {
 		MaxIterations: current.MaxIterations,
 		GitOpsEnabled: current.GitOpsEnabled,
 		AgentModel:    current.AgentModel,
+		// Preserve the existing annotate flag unless the request
+		// explicitly overrides it. First save without an explicit flag
+		// stamps the default-true so the persisted blob is authoritative
+		// going forward.
+		AnnotateOnSeed:    current.AnnotateOnSeed,
+		AnnotateOnSeedSet: current.AnnotateOnSeedSet,
+	}
+	if req.AnnotateOnSeed != nil {
+		newCfg.AnnotateOnSeed = *req.AnnotateOnSeed
+		newCfg.AnnotateOnSeedSet = true
+	} else if !newCfg.AnnotateOnSeedSet && provider != ai.ProviderNone {
+		// First save with an enabled provider and no explicit flag —
+		// stamp the default so subsequent reads are authoritative.
+		newCfg.AnnotateOnSeed = true
+		newCfg.AnnotateOnSeedSet = true
 	}
 	if provider == ai.ProviderOllama {
 		if newCfg.OllamaURL == "" {

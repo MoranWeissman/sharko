@@ -87,7 +87,12 @@ func TestGetClusterAddonValues_NoConnection(t *testing.T) {
 // deployed (the design doc tier model). The general TestTierCoverage test
 // only checks presence, not the right tier — this fixes the value.
 func TestValuesEditor_TierClassification(t *testing.T) {
-	cases := []string{"handleSetAddonValues", "handleSetClusterAddonValues"}
+	cases := []string{
+		"handleSetAddonValues",
+		"handleSetClusterAddonValues",
+		// v1.21 Bundle 5: legacy `<addon>:` wrap migration handler.
+		"handleUnwrapGlobalValues",
+	}
 	for _, h := range cases {
 		got, ok := HandlerTier[h]
 		if !ok {
@@ -97,6 +102,24 @@ func TestValuesEditor_TierClassification(t *testing.T) {
 		if string(got) != "tier2" {
 			t.Errorf("%s should be tier2 (configuration), got %s", h, got)
 		}
+	}
+}
+
+// TestUnwrapGlobalValues_NoConnection — without an active connection the
+// migration endpoint returns 502 (no active ArgoCD connection). Pins the
+// contract so a future router rewire can't accidentally bypass the auth
+// path.
+func TestUnwrapGlobalValues_NoConnection(t *testing.T) {
+	srv := newTestServer()
+	router := NewRouter(srv, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/addons/unwrap-globals", bytes.NewReader([]byte(`{}`)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502 (no connection), got %d. body=%s", w.Code, w.Body.String())
 	}
 }
 

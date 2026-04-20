@@ -1,9 +1,6 @@
-// Package api — v1.20.1 value-editor supporting endpoints.
+// Package api — v1.20.1 / v1.21 value-editor supporting endpoints.
 //
-// Three endpoints added alongside the existing values editor:
-//
-//   POST /api/v1/addons/{name}/values/pull-upstream   — Tier 2: replace global
-//         values with the chart's upstream values.yaml (comments preserved).
+// Two read endpoints live here:
 //
 //   GET  /api/v1/addons/{name}/values/recent-prs      — Tier 1 read: list the
 //         5 most recently merged PRs that touched the addon's values file.
@@ -12,9 +9,17 @@
 //                                                     — same, scoped to a
 //         cluster overrides file.
 //
+// History:
+//   - v1.20.1 added a `POST /api/v1/addons/{name}/values/pull-upstream`
+//     endpoint that replaced the global values file with the chart's
+//     upstream values.yaml.
+//   - v1.21 (Story V121-6.4 + V121-6.5) deletes that endpoint. The same
+//     functionality moved into a `refresh_from_upstream: true` flag on
+//     the existing `PUT /api/v1/addons/{name}/values` handler — see
+//     `values_editor.go::handleSetAddonValues`. Locked decision (Moran):
+//     no new endpoint, no fragmented audit/tier surface for "edit values".
+//
 // Implementation notes:
-//   - Upstream fetch reuses helm.Fetcher.FetchValues which already unpacks
-//     the chart tarball and returns the raw YAML (comments preserved).
 //   - Recent-PRs goes to the GitProvider's ListPullRequests (state=closed)
 //     and filters by Status=="merged" plus a title/branch heuristic, with a
 //     5-minute memory cache keyed by the repo-file path. We stop short of
@@ -27,169 +32,15 @@
 package api
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
-	"github.com/MoranWeissman/sharko/internal/helm"
 	"github.com/MoranWeissman/sharko/internal/models"
-	"github.com/MoranWeissman/sharko/internal/orchestrator"
-	"github.com/MoranWeissman/sharko/internal/prtracker"
 )
-
-// pullUpstreamRequest is the body of POST /api/v1/addons/{name}/values/pull-upstream.
-type pullUpstreamRequest struct {
-	// Version is the chart version to pull (e.g. "v1.14.4"). When empty, the
-	// handler resolves the addon's currently-configured version from the
-	// catalog — the expected default for the "I want to refresh to whatever
-	// we're pointing at" workflow.
-	Version string `json:"version"`
-
-	// MergeStrategy controls how upstream values are merged into the current
-	// values file. "replace" (the only supported strategy for v1.20.1)
-	// overwrites the file entirely with upstream defaults. A future
-	// "merge_keep_overrides" strategy is tracked as a TODO in the handler.
-	MergeStrategy string `json:"merge_strategy,omitempty"`
-}
-
-// handlePullUpstreamValues godoc
-//
-// @Summary Pull upstream chart values.yaml
-// @Description Replaces the addon's global Helm values file with the chart's upstream `values.yaml` (comments preserved) wrapped under the `<addonName>:` key. Opens a PR. Tier 2 (configuration) — uses the caller's personal GitHub PAT when configured, otherwise the service token with a `Co-authored-by:` trailer.
-// @Tags addons
-// @Accept json
-// @Produce json
-// @Security BearerAuth
-// @Param name path string true "Addon name"
-// @Param body body api.pullUpstreamRequest true "Pull upstream request"
-// @Success 200 {object} map[string]interface{} "PR created"
-// @Failure 400 {object} map[string]interface{} "Bad request"
-// @Failure 401 {object} map[string]interface{} "Unauthorized"
-// @Failure 404 {object} map[string]interface{} "Addon not found"
-// @Failure 502 {object} map[string]interface{} "Helm or Git failure"
-// @Router /addons/{name}/values/pull-upstream [post]
-func (s *Server) handlePullUpstreamValues(w http.ResponseWriter, r *http.Request) {
-	if !authz.RequireWithResponse(w, r, "addon.update-catalog") {
-		return
-	}
-
-	name := r.PathValue("name")
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "addon name is required")
-		return
-	}
-
-	var req pullUpstreamRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
-		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
-		return
-	}
-	strategy := req.MergeStrategy
-	if strategy == "" {
-		strategy = "replace"
-	}
-	if strategy != "replace" {
-		// TODO(v1.21): implement "merge_keep_overrides" — deep-merge upstream
-		// defaults over a structured parse of the current file, preserving
-		// user edits and only adding NEW upstream keys.
-		writeError(w, http.StatusBadRequest, "merge_strategy=\"merge_keep_overrides\" is not yet supported; use \"replace\"")
-		return
-	}
-
-	ac, err := s.connSvc.GetActiveArgocdClient()
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
-		return
-	}
-
-	ctx, git, tokRes, err := s.GitProviderForTier(r.Context(), r, audit.Tier2)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
-		return
-	}
-
-	// Look up the addon entry to learn its repo + chart + configured version.
-	detail, gerr := s.addonSvc.GetAddonDetail(ctx, name, git, ac)
-	if gerr != nil {
-		writeError(w, http.StatusBadGateway, "looking up addon: "+gerr.Error())
-		return
-	}
-	if detail == nil {
-		writeError(w, http.StatusNotFound, "addon not found in catalog: "+name)
-		return
-	}
-	chart := detail.Addon.Chart
-	repoURL := detail.Addon.RepoURL
-	version := strings.TrimSpace(req.Version)
-	if version == "" {
-		version = detail.Addon.Version
-	}
-	if version == "" {
-		writeError(w, http.StatusBadRequest, "addon has no configured version; specify version in the request body")
-		return
-	}
-	if repoURL == "" || chart == "" {
-		writeError(w, http.StatusBadRequest, "addon is missing chart/repo metadata required to fetch upstream values")
-		return
-	}
-
-	fetcher := helm.NewFetcher()
-	rawValues, err := fetcher.FetchValues(ctx, repoURL, chart, version)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "fetching upstream values: "+err.Error())
-		return
-	}
-
-	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
-	result, err := orch.PullUpstreamAddonValues(ctx, name, rawValues)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
-		return
-	}
-
-	if s.prTracker != nil && result != nil && result.PRID > 0 {
-		user := r.Header.Get("X-Sharko-User")
-		if user == "" {
-			user = "system"
-		}
-		_ = s.prTracker.TrackPR(ctx, prtracker.PRInfo{
-			PRID:       result.PRID,
-			PRUrl:      result.PRUrl,
-			PRBranch:   result.Branch,
-			PRTitle:    fmt.Sprintf("Pull upstream defaults for %s@%s", chart, version),
-			PRBase:     "main",
-			Addon:      name,
-			Operation:  "values-pull-upstream",
-			User:       user,
-			Source:     "api",
-			CreatedAt:  time.Now(),
-			LastStatus: "open",
-		})
-	}
-
-	audit.Enrich(ctx, audit.Fields{
-		Event:    "addon_values_pulled_upstream",
-		Resource: fmt.Sprintf("addon:%s", name),
-		Detail:   fmt.Sprintf("chart=%s version=%s strategy=%s bytes=%d", chart, version, strategy, len(rawValues)),
-	})
-
-	writeJSON(w, http.StatusOK, withAttributionWarning(map[string]interface{}{
-		"pr_url":         result.PRUrl,
-		"pr_id":          result.PRID,
-		"branch":         result.Branch,
-		"merged":         result.Merged,
-		"values_file":    result.ValuesFile,
-		"chart":          chart,
-		"chart_version":  version,
-		"strategy":       strategy,
-		"upstream_bytes": len(rawValues),
-	}, tokRes))
-}
 
 // ─── recent-PRs panel ────────────────────────────────────────────────────
 

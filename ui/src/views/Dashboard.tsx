@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   Server, AppWindow, Package, Rocket, AlertTriangle, CheckCircle2,
-  ArrowUpCircle, Activity, Clock, ChevronRight, ShieldAlert, RefreshCw
+  ArrowUpCircle, Activity, Clock, ChevronRight, ShieldAlert, RefreshCw,
+  Hourglass
 } from 'lucide-react';
 import { api } from '@/services/api';
 import type { DashboardStats, SyncActivityEntry, ClustersResponse } from '@/services/models';
@@ -12,10 +13,14 @@ import { WaveDecoration } from '@/components/WaveDecoration';
 import { LoadingState } from '@/components/LoadingState';
 import { ErrorState } from '@/components/ErrorState';
 import { ArgoCDStatusBanner } from '@/components/ArgoCDStatusBanner';
-import { PendingPRsPanel } from '@/components/PendingPRsPanel';
+import { PullRequestsPanel } from '@/components/PullRequestsPanel';
 import { DriftAlertsPanel } from '@/components/DriftAlertsPanel';
 import { showToast } from '@/components/ToastNotification';
 import type { TrackedPR } from '@/services/models';
+import {
+  useAddonStates,
+  deepLinkToAddonOnCluster,
+} from '@/hooks/useAddonStates';
 
 // --- Health Bar with totals ---
 
@@ -142,8 +147,13 @@ export function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [attentionItems, setAttentionItems] = useState<{ app_name: string; addon_name: string; cluster: string; health: string; sync: string; error?: string; error_type?: string }[]>([]);
+  // v1.21 Bundle 3: addon health/sync state is now sourced from the unified
+  // AddonStatesProvider so the Dashboard's "Issues" and "Progressing"
+  // sections agree with AddonDetail / ClusterDetail. We no longer fetch
+  // /dashboard/attention here — the provider does it once for the whole app.
+  const { byApp: addonStateMap, refresh: refreshAddonStates } = useAddonStates();
   const [showAttention, setShowAttention] = useState(false);
+  const [showProgressing, setShowProgressing] = useState(false);
   const [clusters, setClusters] = useState<{ name: string; connectionStatus: string; addons: { name: string; health: string }[]; healthy: number; total: number }[]>([]);
   const [argoCDUnreachable, setArgoCDUnreachable] = useState(false);
 
@@ -155,15 +165,16 @@ export function Dashboard() {
         setLoading(true);
       }
       setError(null);
-      const [statsData, obsData, matrixData, attention, clustersData] = await Promise.all([
+      const [statsData, obsData, matrixData, clustersData] = await Promise.all([
         api.getDashboardStats(),
         api.getObservability().catch(() => null),
         api.getVersionMatrix().catch(() => null),
-        api.getAttentionItems().catch(() => []),
         api.getClusters().catch(() => null),
       ]);
       setStats(statsData);
-      setAttentionItems(attention || []);
+      // Trigger an extra refresh of the unified state so Dashboard reflects
+      // any attention items that arrived between the provider's polls.
+      refreshAddonStates();
 
       // Recent syncs (last 5)
       if (obsData?.recent_syncs) {
@@ -262,6 +273,17 @@ export function Dashboard() {
   const appTotal = stats.applications.total;
   const healthyCount = stats.applications.by_health_status.healthy;
 
+  // v1.21 Bundle 3 — split attention items into "real issues" vs
+  // "progressing-advisory" using the unified state model. Pure-Progressing
+  // apps no longer appear in the red "Apps with issues" widget; they get
+  // their own subtle Progressing widget with the maintainer-requested
+  // "usually temporary" advisory.
+  const allAddonStates = Array.from(addonStateMap.values());
+  const issuesItems = allAddonStates.filter(
+    (s) => s.displayState === 'degraded' || s.displayState === 'missing' || s.displayState === 'unknown',
+  );
+  const progressingItems = allAddonStates.filter((s) => s.displayState === 'progressing-advisory');
+
   return (
     <div className="mx-auto max-w-screen-xl space-y-6">
       {/* Hero Section */}
@@ -303,7 +325,7 @@ export function Dashboard() {
       )}
 
       {/* Needs Attention */}
-      {hasIssues || attentionItems.length > 0 ? (
+      {hasIssues || issuesItems.length > 0 ? (
         <div className="rounded-xl border-2 border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-900/20">
           <div className="flex items-center justify-between p-5 pb-3">
             <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400">
@@ -311,11 +333,12 @@ export function Dashboard() {
               <h3 className="text-sm font-semibold">Needs Attention</h3>
             </div>
             <div className="flex flex-wrap gap-2">
-              {attentionItems.length > 0 && (
+              {issuesItems.length > 0 && (
                 <button onClick={() => setShowAttention(!showAttention)}
+                  aria-expanded={showAttention}
                   className="flex items-center gap-2 rounded-lg border border-red-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-800 dark:text-red-400">
                   <div className="h-2 w-2 rounded-full bg-red-500" />
-                  {attentionItems.length} app{attentionItems.length !== 1 ? 's' : ''} with issues
+                  {issuesItems.length} app{issuesItems.length !== 1 ? 's' : ''} with issues
                   <ChevronRight className={`h-3 w-3 transition-transform ${showAttention ? 'rotate-90' : ''}`} />
                 </button>
               )}
@@ -335,29 +358,39 @@ export function Dashboard() {
               )}
             </div>
           </div>
-          {/* Expandable detail panel */}
-          {showAttention && attentionItems.length > 0 && (
+          {/* Expandable detail panel — v1.21 Bundle 3: addon names are
+              clickable and route to /clusters/<cluster>?section=addons&addon=<name>
+              for quick debug + AI-assisted investigation. */}
+          {showAttention && issuesItems.length > 0 && (
             <div className="border-t border-amber-200 p-4 dark:border-amber-700">
               <div className="max-h-64 overflow-y-auto space-y-1.5">
-                {attentionItems.map((item, i) => (
-                  <div key={i} className="flex items-start gap-3 rounded-lg bg-[#f0f7ff] px-3 py-2 text-xs dark:bg-gray-800">
+                {issuesItems.map((item, i) => (
+                  <div key={`${item.addonName}@${item.cluster}-${i}`} className="flex items-start gap-3 rounded-lg bg-[#f0f7ff] px-3 py-2 text-xs dark:bg-gray-800">
                     <div className={`mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full ${
-                      item.health === 'Error' ? 'bg-red-500' : item.health === 'Degraded' ? 'bg-red-400' : 'bg-amber-500'
+                      item.displayState === 'degraded' ? 'bg-red-500'
+                        : item.displayState === 'missing' ? 'bg-red-400'
+                          : 'bg-amber-500'
                     }`} />
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium text-[#0a2a4a] dark:text-gray-100">{item.app_name}</span>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Link
+                          to={item.cluster ? deepLinkToAddonOnCluster(item.addonName, item.cluster) : `/addons/${encodeURIComponent(item.addonName)}`}
+                          className="font-medium text-[#0a2a4a] hover:text-teal-600 hover:underline dark:text-gray-100 dark:hover:text-teal-400"
+                          title="Open addon-on-cluster page for investigation"
+                        >
+                          {item.appName || item.addonName}
+                        </Link>
                         <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
-                          item.health === 'Error' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
-                            : item.health === 'Degraded' ? 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'
+                          item.displayState === 'degraded' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+                            : item.displayState === 'missing' ? 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'
                               : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
-                        }`}>{item.health}</span>
+                        }`}>{item.healthStatus}</span>
                         {item.cluster && <span className="text-[#3a6a8a]">on {item.cluster}</span>}
                       </div>
-                      {item.error && (
-                        <p className="mt-1 truncate text-[#2a5a7a] dark:text-gray-400" title={item.error}>
-                          {item.error_type && <span className="font-medium text-red-600 dark:text-red-400">{item.error_type}: </span>}
-                          {item.error.length > 120 ? item.error.slice(0, 120) + '...' : item.error}
+                      {item.advisoryMessage && (
+                        <p className="mt-1 truncate text-[#2a5a7a] dark:text-gray-400" title={item.advisoryMessage}>
+                          {item.errorType && <span className="font-medium text-red-600 dark:text-red-400">{item.errorType}: </span>}
+                          {item.advisoryMessage.length > 120 ? item.advisoryMessage.slice(0, 120) + '...' : item.advisoryMessage}
                         </p>
                       )}
                     </div>
@@ -371,6 +404,59 @@ export function Dashboard() {
         <div className="flex items-center gap-2 rounded-xl border border-green-200 bg-green-50 px-5 py-4 dark:border-green-800 dark:bg-green-900/20">
           <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400" />
           <span className="text-sm font-medium text-green-700 dark:text-green-400">All systems operational</span>
+        </div>
+      )}
+
+      {/*
+        Progressing — separate widget per maintainer feedback (Bundle 3 §1):
+        "a progressing state can be temporary and from various reasons. App
+         can still be healthy but with a msg about it, with advisement to
+         check it." Subtle blue styling so it doesn't read as a hard error.
+        Click an addon name to land on the cluster's addon row for debugging.
+      */}
+      {progressingItems.length > 0 && (
+        <div className="rounded-xl border border-blue-200 bg-blue-50/60 dark:border-blue-800 dark:bg-blue-900/10">
+          <div className="flex items-center justify-between p-4 pb-2">
+            <div className="flex items-center gap-2 text-blue-700 dark:text-blue-300">
+              <Hourglass className="h-4 w-4" />
+              <h3 className="text-sm font-semibold">Progressing — usually temporary</h3>
+            </div>
+            <button
+              onClick={() => setShowProgressing(!showProgressing)}
+              aria-expanded={showProgressing}
+              className="flex items-center gap-2 rounded-lg border border-blue-200 bg-white/70 px-3 py-1.5 text-xs text-blue-700 hover:bg-white dark:border-blue-700 dark:bg-gray-800 dark:text-blue-300"
+            >
+              <div className="h-2 w-2 rounded-full bg-blue-500" />
+              {progressingItems.length} app{progressingItems.length !== 1 ? 's' : ''} progressing
+              <ChevronRight className={`h-3 w-3 transition-transform ${showProgressing ? 'rotate-90' : ''}`} />
+            </button>
+          </div>
+          {showProgressing && (
+            <div className="border-t border-blue-200/70 p-3 dark:border-blue-800/60">
+              <p className="mb-2 text-[11px] text-blue-700/80 dark:text-blue-300/80">
+                Apps in this state are still considered healthy. ArgoCD is rolling out a change or waiting on a workload.
+                Click an addon to investigate on its cluster page.
+              </p>
+              <div className="max-h-64 overflow-y-auto space-y-1.5">
+                {progressingItems.map((item, i) => (
+                  <div key={`prog-${item.addonName}@${item.cluster}-${i}`} className="flex items-center gap-3 rounded-lg bg-white/70 px-3 py-2 text-xs dark:bg-gray-800">
+                    <div className="h-2.5 w-2.5 shrink-0 rounded-full bg-blue-500" />
+                    <Link
+                      to={item.cluster ? deepLinkToAddonOnCluster(item.addonName, item.cluster) : `/addons/${encodeURIComponent(item.addonName)}`}
+                      className="flex-1 truncate font-medium text-[#0a2a4a] hover:text-teal-600 hover:underline dark:text-gray-100 dark:hover:text-teal-400"
+                      title="Investigate on cluster page"
+                    >
+                      {item.appName || item.addonName}
+                      {item.cluster && <span className="ml-1 text-[#3a6a8a] font-normal">on {item.cluster}</span>}
+                    </Link>
+                    <span className="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
+                      Progressing
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -429,8 +515,8 @@ export function Dashboard() {
           ]} />
       </div>
 
-      {/* Pending PRs */}
-      <PendingPRsPanel onMergeDetected={handlePRMerged} />
+      {/* Pull Requests — v1.21 Bundle 3: Pending/Merged toggle. */}
+      <PullRequestsPanel onMergeDetected={handlePRMerged} />
 
       {/* Drift Alerts */}
       <DriftAlertsPanel />

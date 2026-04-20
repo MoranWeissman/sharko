@@ -24,6 +24,11 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # id-token: write enables OIDC for cosign keyless signing — Fulcio
+      # mints a short-lived cert from the GitHub Actions OIDC token, then
+      # the signature is logged to the public Rekor transparency log. No
+      # long-lived signing key to rotate. Story V121-8.1.
+      id-token: write
 
     steps:
       - uses: actions/checkout@v4
@@ -64,6 +69,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build and push image
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -77,6 +83,32 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # Story V121-8.1: cosign keyless signing of the published image.
+      # Pins the OIDC issuer + repo-scoped certificate identity so a
+      # future `cosign verify` run can confirm the signature came from
+      # *this* repo's release workflow (not some other GHA workflow).
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: 'v2.4.1'
+
+      - name: Sign published image (keyless)
+        env:
+          # COSIGN_EXPERIMENTAL=1 is no longer required as of cosign 2.0,
+          # but setting it explicitly documents the keyless flow for any
+          # future maintainer reading this file.
+          COSIGN_YES: "true"
+          DIGEST: ${{ steps.build.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          # Sign by digest so each tag pointing at the same digest shares
+          # one signature in Rekor. Iterate the tags only to provide
+          # operator-friendly verify commands in the run log.
+          for tag in $TAGS; do
+            echo "Signing $tag@${DIGEST}"
+            cosign sign --yes "${tag}@${DIGEST}"
+          done
+
   helm-package:
     name: Package & Push Helm Chart
     runs-on: ubuntu-latest
@@ -84,6 +116,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # OIDC token for cosign keyless signing of the OCI Helm chart.
+      id-token: write
 
     steps:
       - uses: actions/checkout@v4
@@ -116,9 +150,38 @@ jobs:
         run: helm package ${{ env.HELM_CHART_PATH }} --version ${{ steps.version.outputs.VERSION }} --app-version ${{ steps.version.outputs.TAG }}
 
       - name: Push Helm chart to GHCR
+        id: helm_push
         run: |
           CHART_FILE=$(ls sharko-*.tgz)
-          helm push "$CHART_FILE" oci://${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # `helm push` writes a `.digest` companion in the working dir; we
+          # capture the digest from stdout for the cosign sign step below.
+          OUTPUT=$(helm push "$CHART_FILE" oci://${{ env.REGISTRY }}/${{ env.IMAGE_NAME }} 2>&1)
+          echo "$OUTPUT"
+          DIGEST=$(echo "$OUTPUT" | awk '/^Digest:/ {print $2}')
+          if [ -z "$DIGEST" ]; then
+            echo "::error::could not extract chart digest from helm push output"
+            exit 1
+          fi
+          echo "DIGEST=$DIGEST" >> "$GITHUB_OUTPUT"
+
+      # Story V121-8.1: cosign-sign the OCI Helm chart so consumers can
+      # `cosign verify oci://ghcr.io/moranweissman/sharko:vX.Y.Z` before
+      # `helm install`. Same identity policy as the image signing step.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: 'v2.4.1'
+
+      - name: Sign published Helm chart (keyless)
+        env:
+          COSIGN_YES: "true"
+          DIGEST: ${{ steps.helm_push.outputs.DIGEST }}
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/sharko:${VERSION}"
+          # Sign by digest, same rationale as the image signing step.
+          echo "Signing chart ${REF}@${DIGEST}"
+          cosign sign --yes "${REF}@${DIGEST}"
 
   goreleaser:
     name: Release CLI Binaries
@@ -126,6 +189,9 @@ jobs:
     needs: [build-and-push, helm-package]
     permissions:
       contents: write
+      # OIDC token for cosign keyless signing of every release archive
+      # via the goreleaser `signs:` block. Story V121-8.1.
+      id-token: write
 
     steps:
       - uses: actions/checkout@v4
@@ -141,6 +207,11 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: 'v2.4.1'
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
@@ -149,3 +220,5 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # COSIGN_YES suppresses the interactive prompt in non-TTY mode.
+          COSIGN_YES: "true"
