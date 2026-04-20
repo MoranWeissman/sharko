@@ -8,6 +8,10 @@
 
 Sharko runs in-cluster and manages the full lifecycle of addons (cert-manager, monitoring, logging, and more) across your entire fleet — from a single dashboard, CLI, or REST API. Every change goes through a Git PR, so fleet state is always auditable and version-controlled.
 
+**See Sharko in action:**
+
+![Sharko dashboard — fleet health, addon version matrix, and live PR stream.](assets/screenshots/dashboard.png){ loading=lazy }
+
 <div class="grid cards" markdown>
 
 -   :material-rocket-launch:{ .lg .middle } **Getting Started**

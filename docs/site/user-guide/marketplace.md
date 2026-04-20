@@ -18,7 +18,10 @@ All three paths land in the same place: a PR against your `addons-catalog.yaml`,
 
 > The Paste-Helm-URL tab that early v1.21 builds shipped was retired in QA so the Marketplace stays focused on discovery — manual Add Addon now auto-validates the repo URL and lists the available chart names, replacing what Paste URL did.
 
-## Browsing
+## Browsing the catalog
+
+![Marketplace Browse tab with OpenSSF tier, curator, and license filters.](../assets/screenshots/marketplace-browse.png){ loading=lazy }
+<figcaption>Marketplace Browse tab with OpenSSF tier, curator, and license filters.</figcaption>
 
 1. Open **Addons** in the left rail.
 2. Switch to the **Marketplace** tab at the top of the page.
@@ -45,7 +48,10 @@ Sharko proxies ArtifactHub server-side — your browser never calls them directl
 
 When you click an ArtifactHub result, the same in-page detail view opens (just like a curated card) — pre-filled with the chart name, repo URL, license, maintainers, and the upstream README — all fetched from ArtifactHub's package detail. The Submit & PR flow is identical to a curated entry.
 
-## Adding from the Marketplace
+## Adding an addon
+
+![Marketplace addon detail — README, version picker, and Add-to-catalog panel.](../assets/screenshots/marketplace-detail.png){ loading=lazy }
+<figcaption>Marketplace addon detail — README, version picker, and Add-to-catalog panel.</figcaption>
 
 Clicking a Marketplace card swaps the Marketplace grid for an **in-page addon detail view**. The detail view has four sections, top to bottom:
 

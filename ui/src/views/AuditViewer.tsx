@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { ClipboardList, RefreshCw, Radio, Loader2, Key, User as UserIcon, Users as UsersIcon } from 'lucide-react';
+import { ClipboardList, RefreshCw, Radio, Loader2, Key, User as UserIcon, Users as UsersIcon, Info } from 'lucide-react';
 import { fetchAuditLog, createAuditStream } from '@/services/api';
 import type { AuditEntry } from '@/services/models';
 
@@ -120,7 +120,7 @@ export function AuditViewer() {
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">Audit Log</h2>
+          <h1 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">Audit Log</h1>
           <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
             Recent API events and operations across all clusters.
           </p>
@@ -150,12 +150,36 @@ export function AuditViewer() {
         </div>
       </div>
 
+      {/* Retention banner — explains the two-stream architecture (V122-3) */}
+      <div
+        role="status"
+        aria-live="polite"
+        className="flex items-start gap-3 rounded-lg ring-2 ring-[#6aade0] bg-[#e0f0ff] px-4 py-3 dark:ring-gray-700 dark:bg-gray-800"
+      >
+        <Info className="mt-0.5 h-4 w-4 flex-shrink-0 text-[#0a3a5a] dark:text-blue-300" aria-hidden="true" />
+        <p className="text-xs text-[#0a3a5a] dark:text-gray-300">
+          Showing the last <strong>1000 in-memory events</strong>. The buffer is wiped on pod restart —
+          see{' '}
+          <a
+            href="https://sharko.readthedocs.io/en/latest/operator/audit-log/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline decoration-dotted underline-offset-2 hover:text-teal-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-500 dark:hover:text-teal-300"
+          >
+            audit log retention
+          </a>{' '}
+          for the long-term retention model via your cluster's log pipeline (Loki, Splunk, ELK,
+          CloudWatch, GCP Logging).
+        </p>
+      </div>
+
       {/* Filters */}
       <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#d0e8f8] p-4 dark:ring-gray-700 dark:bg-gray-900">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
           <div>
-            <label className="mb-1 block text-xs font-medium text-[#0a3a5a] dark:text-gray-400">User</label>
+            <label htmlFor="audit-filter-user" className="mb-1 block text-xs font-medium text-[#0a3a5a] dark:text-gray-400">User</label>
             <input
+              id="audit-filter-user"
               type="text"
               value={filterUser}
               onChange={(e) => setFilterUser(e.target.value)}
@@ -164,8 +188,9 @@ export function AuditViewer() {
             />
           </div>
           <div>
-            <label className="mb-1 block text-xs font-medium text-[#0a3a5a] dark:text-gray-400">Action</label>
+            <label htmlFor="audit-filter-action" className="mb-1 block text-xs font-medium text-[#0a3a5a] dark:text-gray-400">Action</label>
             <select
+              id="audit-filter-action"
               value={filterAction}
               onChange={(e) => setFilterAction(e.target.value)}
               className="w-full rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-2 py-1.5 text-xs focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
@@ -176,8 +201,9 @@ export function AuditViewer() {
             </select>
           </div>
           <div>
-            <label className="mb-1 block text-xs font-medium text-[#0a3a5a] dark:text-gray-400">Source</label>
+            <label htmlFor="audit-filter-source" className="mb-1 block text-xs font-medium text-[#0a3a5a] dark:text-gray-400">Source</label>
             <select
+              id="audit-filter-source"
               value={filterSource}
               onChange={(e) => setFilterSource(e.target.value)}
               className="w-full rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-2 py-1.5 text-xs focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
@@ -188,8 +214,9 @@ export function AuditViewer() {
             </select>
           </div>
           <div>
-            <label className="mb-1 block text-xs font-medium text-[#0a3a5a] dark:text-gray-400">Result</label>
+            <label htmlFor="audit-filter-result" className="mb-1 block text-xs font-medium text-[#0a3a5a] dark:text-gray-400">Result</label>
             <select
+              id="audit-filter-result"
               value={filterResult}
               onChange={(e) => setFilterResult(e.target.value)}
               className="w-full rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-2 py-1.5 text-xs focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
@@ -200,8 +227,9 @@ export function AuditViewer() {
             </select>
           </div>
           <div>
-            <label className="mb-1 block text-xs font-medium text-[#0a3a5a] dark:text-gray-400">Cluster</label>
+            <label htmlFor="audit-filter-cluster" className="mb-1 block text-xs font-medium text-[#0a3a5a] dark:text-gray-400">Cluster</label>
             <input
+              id="audit-filter-cluster"
               type="text"
               value={filterCluster}
               onChange={(e) => setFilterCluster(e.target.value)}
@@ -210,8 +238,9 @@ export function AuditViewer() {
             />
           </div>
           <div>
-            <label className="mb-1 block text-xs font-medium text-[#0a3a5a] dark:text-gray-400">Since (RFC3339)</label>
+            <label htmlFor="audit-filter-since" className="mb-1 block text-xs font-medium text-[#0a3a5a] dark:text-gray-400">Since (RFC3339)</label>
             <input
+              id="audit-filter-since"
               type="text"
               value={filterSince}
               onChange={(e) => setFilterSince(e.target.value)}

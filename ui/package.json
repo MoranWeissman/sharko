@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "a11y": "vitest run src/__tests__/a11y.test.tsx"
+    "a11y": "vitest run src/__tests__/a11y.test.tsx",
+    "docs:screenshots": "node ../scripts/docs-screenshots.mjs"
   },
   "dependencies": {
     "@tailwindcss/typography": "^0.5.19",
