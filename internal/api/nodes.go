@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -50,6 +51,19 @@ func (s *Server) handleGetNodeInfo(w http.ResponseWriter, r *http.Request) {
 
 	nodes, err := clientset.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{})
 	if err != nil {
+		// Gracefully degrade when the ServiceAccount lacks cluster-wide
+		// list-nodes permission (config.nodeAccess=false in the Helm
+		// chart). The Dashboard polls this endpoint every 30s; returning
+		// 500 would spam the UI with errors. Instead, return 200 with an
+		// empty list and a clear message so the widget shows a degraded
+		// state rather than an error state.
+		if apierrors.IsForbidden(err) {
+			writeJSON(w, http.StatusOK, map[string]interface{}{
+				"nodes":   []nodeInfo{},
+				"message": "Node info disabled — set config.nodeAccess=true in Helm values to enable.",
+			})
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "failed to list nodes: "+err.Error())
 		return
 	}
