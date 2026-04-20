@@ -62,6 +62,7 @@ nav:
     - AI Configuration: operator/ai-config.md
     - Security: operator/security.md
     - Supply Chain: operator/supply-chain.md
+    - Catalog Sources: operator/catalog-sources.md
     - Audit Log: operator/audit-log.md
     - Troubleshooting: operator/troubleshooting.md
   - CLI Reference:
