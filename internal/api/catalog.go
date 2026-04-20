@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/MoranWeissman/sharko/internal/catalog"
+	"github.com/MoranWeissman/sharko/internal/config"
 )
 
 // SetCatalog wires the curated catalog into the Server. Handlers that call
@@ -18,6 +19,21 @@ func (s *Server) SetCatalog(c *catalog.Catalog) {
 // Catalog returns the curated catalog (may be nil if not set).
 func (s *Server) Catalog() *catalog.Catalog {
 	return s.catalog
+}
+
+// SetCatalogSources stashes the parsed third-party catalog source config
+// (v1.23 / Story V123-1.1). The V123-1.2 fetcher is the primary consumer;
+// for now this is write-only from startup.
+func (s *Server) SetCatalogSources(cfg *config.CatalogSourcesConfig) {
+	s.catalogSources = cfg
+}
+
+// CatalogSources returns the parsed third-party catalog source config.
+// Returns nil when SHARKO_CATALOG_URLS was unset AND the startup wiring
+// never called SetCatalogSources; returns a non-nil config with an empty
+// Sources slice when the env was parsed cleanly but no URLs were provided.
+func (s *Server) CatalogSources() *config.CatalogSourcesConfig {
+	return s.catalogSources
 }
 
 // catalogListResponse is the envelope the UI consumes. Keeping it typed
