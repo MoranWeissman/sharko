@@ -214,6 +214,34 @@ var serveCmd = &cobra.Command{
 		slog.Info("curated catalog loaded", "entries", cat.Len())
 		srv.SetCatalog(cat)
 
+		// Third-party catalog sources (v1.23 Subsystem A / Story V123-1.1).
+		// Parses SHARKO_CATALOG_URLS + SHARKO_CATALOG_REFRESH_INTERVAL; a
+		// misconfiguration is fatal so the operator notices at startup
+		// instead of shipping a broken fetch loop. Empty env = embedded-only
+		// mode — no error, no fetcher.
+		//
+		// URLs are deliberately NOT logged — a third-party catalog URL may
+		// encode an auth token in the path. Count is enough to confirm the
+		// config landed; the /api/v1/catalog/sources endpoint (V123-1.2)
+		// will surface the authoritative list to authenticated operators.
+		catSources, err := config.LoadCatalogSourcesFromEnv()
+		if err != nil {
+			return fmt.Errorf("load catalog sources: %w", err)
+		}
+		srv.SetCatalogSources(catSources)
+		if len(catSources.Sources) == 0 {
+			slog.Info("no third-party catalogs configured, using embedded only")
+		} else {
+			slog.Info("third-party catalog sources configured",
+				"count", len(catSources.Sources),
+				"refresh_interval", catSources.RefreshInterval,
+				"allow_private", catSources.AllowPrivate,
+			)
+			if catSources.AllowPrivate {
+				slog.Warn("SHARKO_CATALOG_URLS_ALLOW_PRIVATE is enabled — SSRF guard disabled; only safe on trusted networks")
+			}
+		}
+
 		// Daily OpenSSF Scorecard refresh (non-fatal failures per design §4.6).
 		scorecardSched := catalog.NewScheduler(cat, metrics.ScorecardMetricsAdapter{})
 		scorecardSched.Start(context.Background())

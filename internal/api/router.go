@@ -123,6 +123,11 @@ type Server struct {
 	// at server startup (see internal/catalog). Optional — handlers that
 	// depend on it return 503 when nil.
 	catalog *catalog.Catalog
+
+	// catalogSources holds the parsed SHARKO_CATALOG_URLS config (v1.23 /
+	// Story V123-1.1). Empty Sources → embedded-only mode. The V123-1.2
+	// fetcher will read this via CatalogSources().
+	catalogSources *config.CatalogSourcesConfig
 }
 
 // NewServer creates a new API server.
