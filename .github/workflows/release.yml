@@ -140,6 +140,16 @@ jobs:
         with:
           version: latest
 
+      # Docker login writes creds to ~/.docker/config.json — cosign reads
+      # from there. helm registry login alone writes only to the helm
+      # config dir, leaving cosign unauthenticated against GHCR.
+      - name: Log in to GHCR (Docker — for cosign)
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Log in to GHCR (Helm OCI)
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ${{ env.REGISTRY }} \
