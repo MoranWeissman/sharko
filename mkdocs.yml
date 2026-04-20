@@ -8,7 +8,7 @@ docs_dir: docs/site
 theme:
   name: material
   logo: assets/sharko-icon-256.png
-  favicon: assets/sharko-icon-32.png
+  favicon: assets/sharko-mascot.png
   palette:
     - scheme: default
       primary: blue
@@ -23,9 +23,7 @@ theme:
         icon: material/brightness-4
         name: Switch to light mode
   features:
-    - navigation.tabs
     - navigation.sections
-    - navigation.expand
     - navigation.instant
     - navigation.top
     - navigation.tracking
