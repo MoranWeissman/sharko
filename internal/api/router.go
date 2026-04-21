@@ -560,6 +560,9 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	// URLs from SHARKO_CATALOG_URLS) with per-source fetch status.
 	// Read-only; no tier check, no audit.
 	mux.HandleFunc("GET /api/v1/catalog/sources", srv.handleListCatalogSources)
+	// V123-1.6 — force-refresh every configured third-party catalog
+	// source synchronously. Tier 2 (admin). Audit-logged.
+	mux.HandleFunc("POST /api/v1/catalog/sources/refresh", srv.handleRefreshCatalogSources)
 	mux.HandleFunc("GET /api/v1/catalog/addons/{name}/versions", srv.handleListCatalogVersions)
 	// v1.21 QA Bundle 2: README proxy for the in-page Marketplace detail
 	// view. Resolves curated addon → ArtifactHub package, then returns the

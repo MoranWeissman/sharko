@@ -3166,6 +3166,34 @@ paths:
       summary: List catalog sources with fetch status
       tags:
       - catalog
+  /catalog/sources/refresh:
+    post:
+      description: Synchronously re-fetches every configured third-party catalog source
+        without waiting for the next cadence tick. Returns the refreshed list in the
+        same shape as GET /catalog/sources. The embedded catalog is always included
+        as a pseudo-source. Requires authentication — classified Tier 2 (admin) and
+        audit-logged; the audit Detail carries the list of attempted URLs and their
+        per-URL status. The endpoint is a no-op in embedded-only mode (no fetcher
+        wired) and returns just the embedded record.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Refreshed catalog sources with per-source fetch status
+          schema:
+            items:
+              $ref: '#/definitions/internal_api.catalogSourceRecord'
+            type: array
+        "503":
+          description: Catalog not loaded
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Force-refresh all catalog sources (Tier 2)
+      tags:
+      - catalog
   /catalog/validate:
     get:
       description: 'Power-user "Paste Helm URL" validator: fetches `<repo>/index.yaml`,

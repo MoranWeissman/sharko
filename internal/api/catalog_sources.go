@@ -62,8 +62,20 @@ func (s *Server) handleListCatalogSources(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Embedded pseudo-source is always first and always "ok" — the
-	// binary trusts its own bundled catalog. Not a cosign statement.
+	writeJSON(w, http.StatusOK, s.buildCatalogSourcesResponse())
+}
+
+// buildCatalogSourcesResponse assembles the []catalogSourceRecord used by
+// both GET /catalog/sources (V123-1.5) and POST /catalog/sources/refresh
+// (V123-1.6). The embedded pseudo-source is always first and always "ok"
+// — the binary trusts its own bundled catalog. Third-party rows appear
+// only when a fetcher is wired in; in embedded-only deployments
+// s.sourcesFetcher is nil and the result is a single-element slice.
+//
+// Callers must have already verified s.catalog != nil — the helper does
+// not 503 on its own because the two call sites differ on exactly which
+// prerequisites constitute a 503 vs a 200 empty response.
+func (s *Server) buildCatalogSourcesResponse() []catalogSourceRecord {
 	records := []catalogSourceRecord{
 		{
 			URL:         "embedded",
@@ -73,11 +85,6 @@ func (s *Server) handleListCatalogSources(w http.ResponseWriter, r *http.Request
 			Verified:    true,
 		},
 	}
-
-	// Third-party rows appear only when a fetcher is wired in. In
-	// embedded-only deployments s.sourcesFetcher is nil and we return
-	// just the embedded row — NOT a 503 (the fetcher being absent is
-	// the normal default).
 	if s.sourcesFetcher != nil {
 		snaps := s.sourcesFetcher.Snapshots()
 		third := make([]catalogSourceRecord, 0, len(snaps))
@@ -89,8 +96,7 @@ func (s *Server) handleListCatalogSources(w http.ResponseWriter, r *http.Request
 		sort.Slice(third, func(i, j int) bool { return third[i].URL < third[j].URL })
 		records = append(records, third...)
 	}
-
-	writeJSON(w, http.StatusOK, records)
+	return records
 }
 
 // recordFromSnapshot projects a fetcher SourceSnapshot onto the wire
