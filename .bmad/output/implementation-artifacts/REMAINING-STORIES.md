@@ -1,0 +1,162 @@
+---
+generated: 2026-04-21
+scope: v1.23 catalog extensibility
+source_epic_file: .bmad/output/planning-artifacts/epics-v1.23.md
+source_sprint_status: .bmad/output/implementation-artifacts/sprint-status.yaml
+---
+
+# Remaining stories — v1.23 Catalog Extensibility
+
+Authoritative backlog lives in `epics-v1.23.md` + `sprint-status.yaml`.
+This file is a fast punch-list for dispatch order.
+
+**Sequencing rule** (per v1.22+v1.23 code-review report):
+Epic V123-1 → V123-2 → V123-3 → V123-4.
+
+**Story cadence:** one story → one branch off `main` → one PR → merge (no tag).
+Each story ships with a retrospective record at
+`.bmad/output/implementation-artifacts/V123-N-M-<slug>.md`.
+
+---
+
+## Done ✅
+
+- **V123-1.1** env parser + SSRF guard — PR #267 → `bf6186a`
+- **V123-1.2** fetch loop + snapshots + SidecarVerifier interface — PR #268 → `324ec8b`
+
+---
+
+## Epic V123-1 — Third-party private catalogs (7 remaining)
+
+### V123-1.3 — Merge under embedded catalog + conflict rule
+- Consume `Snapshots()` from the fetcher.
+- Merge with embedded catalog entries at load/refresh time.
+- Rule: **embedded wins** on `name` collision.
+- Emit a WARN log + metric on conflict so operators see shadowed entries.
+- **Depends on:** V123-1.2 snapshots API.
+
+### V123-1.4 — Source attribution on in-memory entries
+- Every in-memory catalog entry carries `source_url` (or `embedded` sentinel) + `source_fp`.
+- Add `SourceURL` / `SourceFingerprint` to the catalog-entry struct used by API handlers.
+- **Never** persist source_url in any on-disk artifact (stateless NFR-V1.21).
+- **Depends on:** V123-1.3.
+
+### V123-1.5 — `GET /api/v1/catalog/sources` endpoint + swagger
+- Returns: `[{url_fingerprint, status, last_success_at, entry_count, verified, issuer}]`.
+- **Never** returns full URLs (auth tokens).
+- Surface `allow_private` config flag as "unsafe mode" indicator.
+- Run `swag init -g cmd/sharko/serve.go -o docs/swagger --parseDependency --parseInternal` and commit.
+- **Depends on:** V123-1.4 for the entry shape.
+
+### V123-1.6 — `POST /api/v1/catalog/sources/refresh` (Tier-2 force-refresh)
+- Requires Tier-2 admin role.
+- Calls `fetcher.ForceRefresh(ctx, urls...)`.
+- Audit-log entry with `actor`, `url_fingerprint(s)`.
+- **Depends on:** V123-1.5 (shares URL-addressing scheme).
+
+### V123-1.7 — UI source badge on browse tiles + detail page
+- Small badge: `embedded` (neutral) / `third-party` (amber).
+- Tooltip shows `source_fp` + `last_success_at`.
+- Detail page: badge + "verified" pill if `verified: true`.
+- **Depends on:** V123-1.5 (reads API).
+
+### V123-1.8 — Settings → Catalog Sources view (read-only if env-only)
+- Lists configured sources from `GET /api/v1/catalog/sources`.
+- Read-only when `SHARKO_CATALOG_URLS` env is set (the authoritative source).
+- Force-refresh button → V123-1.6.
+- **Depends on:** V123-1.5, V123-1.6.
+
+### V123-1.9 — Tests (unit + integration) for fetch + merge + source attribution
+- Integration: real HTTP server → fetcher → merge → API response.
+- Cover: embedded-wins collision, source attribution round-trip, force-refresh audit.
+- **Depends on:** V123-1.3 through V123-1.8 (covers their composition).
+
+---
+
+## Epic V123-2 — Per-entry cosign signing (6 stories, all backlog)
+
+### V123-2.1 — Schema v1.1: add optional `signature:` field
+- Backward-compatible YAML schema bump: `signature: {bundle_url, sig_url}` optional.
+- Update `docs/design/examples/addons.yaml.draft`.
+- Validate in existing schema tests; unsigned entries stay valid.
+
+### V123-2.2 — Load-time verification via cosign library ⚠ resolves open question §7.2
+- Implement the `SidecarVerifier` interface from V123-1.2 using `sigstore/cosign` Go library.
+- Keyless verification: Fulcio cert + Rekor entry + identity policy.
+- **Open question §7.2 resolution:** whether to verify at load or at runtime — recommend load-time caching with periodic re-verify on refresh.
+
+### V123-2.3 — Trust policy via `SHARKO_CATALOG_TRUSTED_IDENTITIES`
+- Env var: comma-separated cert-identity regexes (e.g., `^https://github\.com/MoranWeissman/.*$`).
+- Empty → no third-party trust (reject all signed).
+- Feed into `TrustPolicy{Identities}` from V123-1.2.
+- Doc at `docs/site/operator/catalog-trust-policy.md`.
+
+### V123-2.4 — UI verified badge + signed pseudo-filter
+- Green "verified" pill next to entry name when `verified: true`.
+- Browse filter chip: `Signed only`.
+- **Depends on:** V123-2.2 (`verified` flag populated).
+
+### V123-2.5 — Release pipeline: sign embedded catalog entries
+- Extend `.github/workflows/release.yml` to sign `embedded-addons-catalog.yaml` with cosign keyless.
+- Publish `.bundle` sidecar to release artifacts.
+- Embedded catalog ships `verified: true` out-of-the-box.
+
+### V123-2.6 — Tests: verification happy / mismatch / unsigned / untrusted
+- Fake-sigstore test harness (or use `cosign`'s test fixtures).
+- Coverage: valid sig + trusted identity (pass), valid sig + untrusted (reject), invalid sig (reject), no sig + signing required (reject), no sig + signing optional (pass).
+
+---
+
+## Epic V123-3 — Trusted-source scanning bot (5 stories, all backlog)
+
+### V123-3.1 — `scripts/catalog-scan.mjs` skeleton + plugin interface
+- Node.js script; pluggable sources.
+- Interface: `{name, discover() → [{name, repo, chart, version, trust_score}], annotate(entry)}`.
+
+### V123-3.2 — CNCF Landscape scanner plugin
+- Pull `landscape.yml`, filter for Kubernetes Helm addons, map to schema.
+
+### V123-3.3 — AWS EKS Blueprints scanner plugin
+- Parse `addons/` directory from `aws-ia/terraform-aws-eks-blueprints-addons`.
+
+### V123-3.4 — PR-opening logic + GitHub workflow ⚠ resolves open question §7.3
+- Nightly cron `.github/workflows/catalog-scan.yml`.
+- Diff scanned entries vs. embedded catalog; open PR with additions/updates.
+- **Open question §7.3:** auto-merge policy — recommend label `catalog-bot` + human review required.
+
+### V123-3.5 — Runbook docs for reviewers
+- `docs/site/developer-guide/catalog-scan-runbook.md`: how to review a bot PR, trust score rubric, reject criteria.
+
+---
+
+## Epic V123-4 — Documentation + release cut (5 stories, all backlog)
+
+### V123-4.1 — User-guide docs
+- `docs/site/user-guide/catalog-sources.md`
+- `docs/site/user-guide/verified-signatures.md`
+- Update `mkdocs.yml` nav.
+
+### V123-4.2 — Operator docs
+- `docs/site/operator/catalog-trust-policy.md` (already seeded in V123-2.3).
+- Update `docs/site/operator/supply-chain.md` with catalog-signing section.
+
+### V123-4.3 — Developer docs
+- `docs/site/developer-guide/catalog-scan-plugins.md`
+- Update `CONTRIBUTING-catalog.md` (how to contribute a new embedded entry).
+
+### V123-4.4 — `bmad-code-review` + `security-auditor` sweep
+- Full review of v1.23 landed code against design doc.
+- Artifact: `.bmad/output/reviews/v1.23-code-review.md`.
+
+### V123-4.5 — Changelog + merge `design/v1.23-extensibility` → main + tag v1.23.0
+- Only cut tag when user explicitly asks (per `feedback_release_cadence.md`).
+- CHANGELOG entry covers all 4 epics.
+
+---
+
+## Beyond v1.23
+
+- **V2 hardening epic** (task #82): SSO/OIDC, scoped RBAC, external vault, HA
+  multi-replica, encryption key rotation, written threat model, governance files,
+  API stability commitments, E2E scale tests. See
+  `~/.claude/projects/.../memory/project_sharko_roadmap.md` + `project_attribution_design.md`.
