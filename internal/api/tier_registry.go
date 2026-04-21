@@ -103,6 +103,12 @@ var HandlerTier = map[string]audit.Tier{
 	// it rewrites every global values file in the repo and opens a PR.
 	"handleUnwrapGlobalValues":         audit.Tier2,
 
+	// V123-1.6 — force-refresh third-party catalog sources. Tier 2
+	// because this is a configuration-time admin action (verifying a
+	// newly added SHARKO_CATALOG_URLS entry) rather than a cluster
+	// operation.
+	"handleRefreshCatalogSources":      audit.Tier2,
+
 	// v1.21 QA Bundle 4 (Fix #4): preview-merge is read-only — it returns
 	// a candidate body but does not write Git. Classified TierPersonal so
 	// it doesn't count as a real mutation in audit attribution. The actual
