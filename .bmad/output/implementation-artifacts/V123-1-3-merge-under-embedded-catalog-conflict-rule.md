@@ -1,10 +1,10 @@
 ---
 story_key: V123-1-3-merge-under-embedded-catalog-conflict-rule
 epic: V123-1 (Third-party private catalogs)
-status: review
+status: done
 effort: M
 dispatched: 2026-04-21
-merged: TBD
+merged: 2026-04-21 (PR #270 → main @ 836b26c)
 ---
 
 # Story V123-1.3 — Merge under embedded catalog + conflict rule

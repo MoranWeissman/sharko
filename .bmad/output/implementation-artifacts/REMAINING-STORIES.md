@@ -23,17 +23,11 @@ Each story ships with a retrospective record at
 
 - **V123-1.1** env parser + SSRF guard — PR #267 → `bf6186a`
 - **V123-1.2** fetch loop + snapshots + SidecarVerifier interface — PR #268 → `324ec8b`
+- **V123-1.3** merger + embedded-wins conflict rule — PR #270 → `836b26c`
 
 ---
 
-## Epic V123-1 — Third-party private catalogs (7 remaining)
-
-### V123-1.3 — Merge under embedded catalog + conflict rule
-- Consume `Snapshots()` from the fetcher.
-- Merge with embedded catalog entries at load/refresh time.
-- Rule: **embedded wins** on `name` collision.
-- Emit a WARN log + metric on conflict so operators see shadowed entries.
-- **Depends on:** V123-1.2 snapshots API.
+## Epic V123-1 — Third-party private catalogs (6 remaining)
 
 ### V123-1.4 — Source attribution on in-memory entries
 - Every in-memory catalog entry carries `source_url` (or `embedded` sentinel) + `source_fp`.
