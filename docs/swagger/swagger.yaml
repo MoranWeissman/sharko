@@ -155,6 +155,15 @@ definitions:
           SecurityTier is derived from SecurityScore by the API layer (Strong /
           Moderate / Weak / unknown) and is never read from YAML.
         type: string
+      source:
+        description: |-
+          Source is the origin of the entry — "embedded" for the binary-shipped
+          catalog, or the full third-party catalog URL (from SHARKO_CATALOG_URLS).
+          Computed at load/merge time — NOT persisted in YAML. The `yaml:"-"` tag
+          is mandatory: without it, a malicious third-party YAML could set
+          `source: embedded` and masquerade as curated. Stateless per NFR §2.7 —
+          never written to disk.
+        type: string
       source_url:
         type: string
       superseded_by:
