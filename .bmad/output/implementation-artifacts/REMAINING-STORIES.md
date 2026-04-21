@@ -25,17 +25,11 @@ Each story ships with a retrospective record at
 - **V123-1.2** fetch loop + snapshots + SidecarVerifier interface — PR #268 → `324ec8b`
 - **V123-1.3** merger + embedded-wins conflict rule — PR #270 → `836b26c`
 - **V123-1.4** Source attribution on API entries + ListFrom helper — PR #272 → `8887674`
+- **V123-1.5** GET /api/v1/catalog/sources endpoint + swagger — PR #274 → `b4f1d76`
 
 ---
 
-## Epic V123-1 — Third-party private catalogs (5 remaining)
-
-### V123-1.5 — `GET /api/v1/catalog/sources` endpoint + swagger
-- Returns: `[{url_fingerprint, status, last_success_at, entry_count, verified, issuer}]`.
-- **Never** returns full URLs (auth tokens).
-- Surface `allow_private` config flag as "unsafe mode" indicator.
-- Run `swag init -g cmd/sharko/serve.go -o docs/swagger --parseDependency --parseInternal` and commit.
-- **Depends on:** V123-1.4 for the entry shape.
+## Epic V123-1 — Third-party private catalogs (4 remaining)
 
 ### V123-1.6 — `POST /api/v1/catalog/sources/refresh` (Tier-2 force-refresh)
 - Requires Tier-2 admin role.

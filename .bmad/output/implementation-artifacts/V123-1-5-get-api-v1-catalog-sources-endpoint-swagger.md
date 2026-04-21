@@ -1,10 +1,10 @@
 ---
 story_key: V123-1-5-get-api-v1-catalog-sources-endpoint-swagger
 epic: V123-1 (Third-party private catalogs)
-status: review
+status: done
 effort: S
 dispatched: 2026-04-22
-merged: TBD
+merged: 2026-04-22 (PR #274 → main @ b4f1d76)
 ---
 
 # Story V123-1.5 — `GET /api/v1/catalog/sources` endpoint + swagger
