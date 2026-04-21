@@ -18,6 +18,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/catalog"
+	"github.com/MoranWeissman/sharko/internal/catalog/sources"
 	"github.com/MoranWeissman/sharko/internal/cmstore"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/demo"
@@ -240,6 +241,18 @@ var serveCmd = &cobra.Command{
 			if catSources.AllowPrivate {
 				slog.Warn("SHARKO_CATALOG_URLS_ALLOW_PRIVATE is enabled — SSRF guard disabled; only safe on trusted networks")
 			}
+
+			// Start the third-party catalog fetch loop (v1.23 Story V123-1.2).
+			// Nil verifier — Subsystem B wires a real one in V123-2.2, until
+			// then every entry inherits verified=false. Nil clock — use the
+			// production wall clock. Fetcher.Start is non-blocking; it
+			// spawns a supervisor goroutine that fans out one fetch per URL
+			// per tick. On shutdown, Fetcher.Stop drains in-flight fetches.
+			sourcesFetcher := sources.NewFetcher(catSources, nil /* verifier */, nil /* clock */)
+			srv.SetSourcesFetcher(sourcesFetcher)
+			sourcesFetcher.Start(context.Background())
+			defer sourcesFetcher.Stop()
+			slog.Info("catalog sources fetcher started", "count", len(catSources.Sources))
 		}
 
 		// Daily OpenSSF Scorecard refresh (non-fatal failures per design §4.6).

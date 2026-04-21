@@ -24,6 +24,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/auth"
 	"github.com/MoranWeissman/sharko/internal/catalog"
+	"github.com/MoranWeissman/sharko/internal/catalog/sources"
 	"github.com/MoranWeissman/sharko/internal/config"
 	_ "github.com/MoranWeissman/sharko/docs/swagger" // swagger docs
 	"github.com/MoranWeissman/sharko/internal/metrics"
@@ -126,8 +127,14 @@ type Server struct {
 
 	// catalogSources holds the parsed SHARKO_CATALOG_URLS config (v1.23 /
 	// Story V123-1.1). Empty Sources → embedded-only mode. The V123-1.2
-	// fetcher will read this via CatalogSources().
+	// fetcher reads this via CatalogSources().
 	catalogSources *config.CatalogSourcesConfig
+
+	// sourcesFetcher periodically pulls third-party catalog URLs (v1.23 /
+	// Story V123-1.2). Nil when no catalog sources are configured
+	// (embedded-only mode). The V123-1.3 merge story reads snapshots
+	// from this via SourcesFetcher().
+	sourcesFetcher *sources.Fetcher
 }
 
 // NewServer creates a new API server.

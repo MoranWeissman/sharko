@@ -62,6 +62,25 @@ var (
 	})
 )
 
+// Catalog sources metrics (v1.23 Subsystem A — third-party catalog fetch loop).
+// The fetcher (internal/catalog/sources) emits these per configured URL.
+var (
+	CatalogSourceFetchTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "sharko_catalog_source_fetch_total",
+		Help: "Third-party catalog fetch attempts by source URL and outcome (ok|stale|failed)",
+	}, []string{"url", "status"})
+
+	CatalogSourceLastSuccess = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "sharko_catalog_source_last_success_timestamp",
+		Help: "Unix timestamp of last successful fetch per third-party catalog source URL",
+	}, []string{"url"})
+
+	CatalogSourceEntries = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "sharko_catalog_source_entries",
+		Help: "Number of entries in the current snapshot of a third-party catalog source URL",
+	}, []string{"url"})
+)
+
 // Reconciler metrics
 var (
 	ReconcilerRuns = promauto.NewCounterVec(prometheus.CounterOpts{

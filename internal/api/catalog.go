@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/MoranWeissman/sharko/internal/catalog"
+	"github.com/MoranWeissman/sharko/internal/catalog/sources"
 	"github.com/MoranWeissman/sharko/internal/config"
 )
 
@@ -34,6 +35,21 @@ func (s *Server) SetCatalogSources(cfg *config.CatalogSourcesConfig) {
 // Sources slice when the env was parsed cleanly but no URLs were provided.
 func (s *Server) CatalogSources() *config.CatalogSourcesConfig {
 	return s.catalogSources
+}
+
+// SetSourcesFetcher wires the V123-1.2 third-party catalog fetcher onto
+// the Server. The fetcher is the authoritative source for merged
+// snapshots consumed by V123-1.3 (merge under embedded catalog),
+// V123-1.5 (GET /api/v1/catalog/sources), and V123-1.6 (force-refresh).
+// Nil is accepted — embedded-only mode keeps this unset.
+func (s *Server) SetSourcesFetcher(f *sources.Fetcher) {
+	s.sourcesFetcher = f
+}
+
+// SourcesFetcher returns the wired third-party catalog fetcher, or nil
+// when embedded-only mode is active. Consumers must tolerate nil.
+func (s *Server) SourcesFetcher() *sources.Fetcher {
+	return s.sourcesFetcher
 }
 
 // catalogListResponse is the envelope the UI consumes. Keeping it typed
