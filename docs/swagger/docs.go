@@ -6690,6 +6690,10 @@ const docTemplate = `{
                     "description": "SecurityTier is derived from SecurityScore by the API layer (Strong /\nModerate / Weak / unknown) and is never read from YAML.",
                     "type": "string"
                 },
+                "source": {
+                    "description": "Source is the origin of the entry — \"embedded\" for the binary-shipped\ncatalog, or the full third-party catalog URL (from SHARKO_CATALOG_URLS).\nComputed at load/merge time — NOT persisted in YAML. The ` + "`" + `yaml:\"-\"` + "`" + ` tag\nis mandatory: without it, a malicious third-party YAML could set\n` + "`" + `source: embedded` + "`" + ` and masquerade as curated. Stateless per NFR §2.7 —\nnever written to disk.",
+                    "type": "string"
+                },
                 "source_url": {
                     "type": "string"
                 },
