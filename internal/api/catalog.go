@@ -113,7 +113,11 @@ func (s *Server) handleListCatalogAddons(w http.ResponseWriter, r *http.Request)
 		q.IncludeDeprecated = v
 	}
 
-	entries := s.catalog.List(q)
+	// V123-1.4: filter the merged embedded + third-party view (not the raw
+	// s.catalog). In embedded-only deployments this is identical to
+	// s.catalog.List(q); when SHARKO_CATALOG_URLS is configured, third-party
+	// entries are included and every entry carries a `source` field.
+	entries := catalog.ListFrom(s.mergedCatalogEntries(), q)
 	writeJSON(w, http.StatusOK, catalogListResponse{
 		Addons: entries,
 		Total:  len(entries),
@@ -142,7 +146,21 @@ func (s *Server) handleGetCatalogAddon(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "addon name is required")
 		return
 	}
-	entry, ok := s.catalog.Get(name)
+	// V123-1.4: look up against the merged embedded + third-party view so
+	// third-party entries are surfaceable under their `name`. Linear scan
+	// is fine — the embedded catalog is ~60 entries and third-party feeds
+	// are expected to stay small. If profiling ever shows this matters, a
+	// per-request map build is trivial; preserving the existing behaviour
+	// (404 on unknown, 503 when the embedded catalog never loaded) is the
+	// contract we care about.
+	var entry catalog.CatalogEntry
+	var ok bool
+	for _, e := range s.mergedCatalogEntries() {
+		if e.Name == name {
+			entry, ok = e, true
+			break
+		}
+	}
 	if !ok {
 		writeError(w, http.StatusNotFound, "not found")
 		return

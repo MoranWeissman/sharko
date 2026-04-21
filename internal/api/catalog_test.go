@@ -206,3 +206,62 @@ func TestHandleGetCatalogAddon_ServiceUnavailable(t *testing.T) {
 		t.Fatalf("expected 503 when catalog not loaded, got %d", rw.Code)
 	}
 }
+
+// TestHandleListCatalogAddons_SourceField (V123-1.4) — every entry in the
+// list response JSON must carry a non-empty `source` field. Structural
+// assertion, not order-coupled.
+func TestHandleListCatalogAddons_SourceField(t *testing.T) {
+	srv := serverWithCatalog(t, testCatalog(t))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog/addons", nil)
+	rw := httptest.NewRecorder()
+	srv.handleListCatalogAddons(rw, req)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("status = %d", rw.Code)
+	}
+	// Decode as a generic shape so we catch "source is missing from JSON"
+	// vs. "source present but empty" distinctly.
+	var body struct {
+		Addons []map[string]interface{} `json:"addons"`
+		Total  int                      `json:"total"`
+	}
+	if err := json.Unmarshal(rw.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Total == 0 {
+		t.Fatalf("expected non-empty catalog")
+	}
+	for i, a := range body.Addons {
+		src, ok := a["source"]
+		if !ok {
+			t.Errorf("addon #%d (%v): missing 'source' key in JSON response", i, a["name"])
+			continue
+		}
+		if s, _ := src.(string); s != "embedded" {
+			t.Errorf("addon #%d (%v): source = %v, want %q", i, a["name"], src, "embedded")
+		}
+	}
+}
+
+// TestHandleGetCatalogAddon_SourceFieldEmbedded (V123-1.4) — the detail
+// response for a known embedded entry must include source="embedded".
+func TestHandleGetCatalogAddon_SourceFieldEmbedded(t *testing.T) {
+	srv := serverWithCatalog(t, testCatalog(t))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/catalog/addons/cert-manager", nil)
+	req.SetPathValue("name", "cert-manager")
+	rw := httptest.NewRecorder()
+	srv.handleGetCatalogAddon(rw, req)
+	if rw.Code != http.StatusOK {
+		t.Fatalf("status = %d", rw.Code)
+	}
+	var entry map[string]interface{}
+	if err := json.Unmarshal(rw.Body.Bytes(), &entry); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	src, ok := entry["source"]
+	if !ok {
+		t.Fatalf("detail response missing 'source' key; body=%s", rw.Body.String())
+	}
+	if s, _ := src.(string); s != "embedded" {
+		t.Errorf("source = %v, want %q", src, "embedded")
+	}
+}
