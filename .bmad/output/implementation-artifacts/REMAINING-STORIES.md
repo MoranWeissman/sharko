@@ -24,16 +24,11 @@ Each story ships with a retrospective record at
 - **V123-1.1** env parser + SSRF guard — PR #267 → `bf6186a`
 - **V123-1.2** fetch loop + snapshots + SidecarVerifier interface — PR #268 → `324ec8b`
 - **V123-1.3** merger + embedded-wins conflict rule — PR #270 → `836b26c`
+- **V123-1.4** Source attribution on API entries + ListFrom helper — PR #272 → `8887674`
 
 ---
 
-## Epic V123-1 — Third-party private catalogs (6 remaining)
-
-### V123-1.4 — Source attribution on in-memory entries
-- Every in-memory catalog entry carries `source_url` (or `embedded` sentinel) + `source_fp`.
-- Add `SourceURL` / `SourceFingerprint` to the catalog-entry struct used by API handlers.
-- **Never** persist source_url in any on-disk artifact (stateless NFR-V1.21).
-- **Depends on:** V123-1.3.
+## Epic V123-1 — Third-party private catalogs (5 remaining)
 
 ### V123-1.5 — `GET /api/v1/catalog/sources` endpoint + swagger
 - Returns: `[{url_fingerprint, status, last_success_at, entry_count, verified, issuer}]`.

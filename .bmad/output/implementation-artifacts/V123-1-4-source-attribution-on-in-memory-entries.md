@@ -1,10 +1,10 @@
 ---
 story_key: V123-1-4-source-attribution-on-in-memory-entries
 epic: V123-1 (Third-party private catalogs)
-status: review
+status: done
 effort: S
 dispatched: 2026-04-21
-merged: TBD
+merged: 2026-04-21 (PR #272 → main @ 8887674)
 ---
 
 # Story V123-1.4 — Source attribution on in-memory entries
