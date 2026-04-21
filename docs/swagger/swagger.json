@@ -2392,6 +2392,41 @@
                 }
             }
         },
+        "/catalog/sources": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns one record per catalog source — the embedded binary catalog (url=\"embedded\", always first) plus each configured third-party URL from SHARKO_CATALOG_URLS. Per-source fields: url, status (ok|stale|failed), last_fetched (RFC3339 or null), entry_count, verified (cosign-verified, currently always true for embedded and false for third-party until V123-2.2 lands), and optional issuer when verified. Read-only; requires authentication.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "catalog"
+                ],
+                "summary": "List catalog sources with fetch status",
+                "responses": {
+                    "200": {
+                        "description": "Catalog sources with per-source fetch status",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/internal_api.catalogSourceRecord"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Catalog not loaded",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/catalog/validate": {
             "get": {
                 "security": [
@@ -7901,6 +7936,35 @@
                     "type": "string"
                 },
                 "stale": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "internal_api.catalogSourceRecord": {
+            "type": "object",
+            "properties": {
+                "entry_count": {
+                    "description": "EntryCount is the number of catalog entries contributed by this\nsource — s.catalog.Len() for embedded, len(snap.Entries) for\nthird-party. A failed third-party source with no prior success\nreports 0.",
+                    "type": "integer"
+                },
+                "issuer": {
+                    "description": "Issuer is the human-readable OIDC subject of the signer, present\nonly when Verified is true. Omitted from the JSON when empty.",
+                    "type": "string"
+                },
+                "last_fetched": {
+                    "description": "LastFetched is the RFC3339 timestamp of the most recent successful\nfetch, or null when the source has never succeeded since process\nstart. Always null for the embedded row (never fetched).",
+                    "type": "string"
+                },
+                "status": {
+                    "description": "Status is \"ok\", \"stale\", or \"failed\" — mirrors\nsources.SourceStatus. For the embedded row it is always \"ok\".",
+                    "type": "string"
+                },
+                "url": {
+                    "description": "URL is either the literal string \"embedded\" (for the binary-shipped\ncurated catalog) or the full third-party URL from SHARKO_CATALOG_URLS.",
+                    "type": "string"
+                },
+                "verified": {
+                    "description": "Verified reports whether the sidecar signature was validated\nagainst the trust policy. True for the embedded row (\"the binary\ntrusts its own bundled catalog\") — this is not a cosign statement\n(V123-2.5 owns signing of the embedded catalog). False for\nthird-party until V123-2.2 wires the verifier.",
                     "type": "boolean"
                 }
             }
