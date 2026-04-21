@@ -39,9 +39,29 @@ func (c *Catalog) List(q Query) []CatalogEntry {
 	if c == nil {
 		return nil
 	}
+	return ListFrom(c.entries, q)
+}
+
+// ListFrom is the pure version of (*Catalog).List — it applies q's filters
+// to an arbitrary []CatalogEntry slice and returns a freshly-allocated,
+// name-sorted result.
+//
+// Introduced for V123-1.4: the API layer needs to filter the merged
+// (embedded + third-party) catalog view, which is not owned by any single
+// *Catalog. Keeping the filter body behind a pure function means the
+// merged-view handler can reuse the same predicate logic the in-memory
+// embedded catalog uses — so filter semantics cannot drift between the
+// embedded-only and third-party-enabled deployments.
+//
+// Nil or empty input returns a nil slice (not an empty non-nil slice) so
+// callers that check `if out == nil` keep working.
+func ListFrom(entries []CatalogEntry, q Query) []CatalogEntry {
+	if len(entries) == 0 {
+		return nil
+	}
 	needle := strings.ToLower(strings.TrimSpace(q.Q))
-	out := make([]CatalogEntry, 0, len(c.entries))
-	for _, e := range c.entries {
+	out := make([]CatalogEntry, 0, len(entries))
+	for _, e := range entries {
 		if !q.IncludeDeprecated && e.Deprecated {
 			continue
 		}

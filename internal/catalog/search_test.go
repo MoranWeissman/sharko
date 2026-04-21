@@ -182,6 +182,93 @@ func TestList_CombinedFilters(t *testing.T) {
 	}
 }
 
+// TestListFrom_PureFilter covers the V123-1.4 extraction: ListFrom must
+// apply the same predicates as Catalog.List when given a synthetic slice.
+// We exercise a mix of filters against a hand-built []CatalogEntry that
+// doesn't live inside a *Catalog — this mirrors how the api layer uses
+// ListFrom on the merged embedded+third-party view.
+func TestListFrom_PureFilter(t *testing.T) {
+	entries := []CatalogEntry{
+		{
+			Name:             "cert-manager",
+			Description:      "TLS.",
+			Chart:            "cert-manager",
+			Repo:             "https://charts.jetstack.io",
+			DefaultNamespace: "cert-manager",
+			Maintainers:      []string{"jetstack"},
+			License:          "Apache-2.0",
+			Category:         "security",
+			CuratedBy:        []string{"cncf-graduated"},
+			SecurityScore:    ScoreValue{Known: true, Value: 8.3},
+			Source:           SourceEmbedded,
+		},
+		{
+			Name:             "internal-foo",
+			Description:      "Proprietary internal addon.",
+			Chart:            "foo",
+			Repo:             "https://internal.example.com/charts",
+			DefaultNamespace: "foo",
+			Maintainers:      []string{"platform"},
+			License:          "Apache-2.0",
+			Category:         "networking",
+			CuratedBy:        []string{"artifacthub-verified"},
+			Source:           "https://internal.example.com/catalog.yaml",
+		},
+		{
+			Name:             "deprecated-thing",
+			Description:      "old.",
+			Chart:            "x",
+			Repo:             "https://x",
+			DefaultNamespace: "x",
+			Maintainers:      []string{"m"},
+			License:          "Apache-2.0",
+			Category:         "security",
+			CuratedBy:        []string{"cncf-sandbox"},
+			Deprecated:       true,
+			Source:           SourceEmbedded,
+		},
+	}
+
+	// No filters → 2 entries (deprecated hidden), sorted by Name.
+	got := ListFrom(entries, Query{})
+	if len(got) != 2 {
+		t.Fatalf("expected 2 non-deprecated entries, got %d", len(got))
+	}
+	if got[0].Name != "cert-manager" || got[1].Name != "internal-foo" {
+		t.Errorf("expected sorted [cert-manager, internal-foo], got [%s, %s]", got[0].Name, got[1].Name)
+	}
+	// Source must round-trip through the filter — ListFrom mustn't mutate.
+	if got[0].Source != SourceEmbedded {
+		t.Errorf("embedded entry lost Source: %q", got[0].Source)
+	}
+	if got[1].Source != "https://internal.example.com/catalog.yaml" {
+		t.Errorf("third-party entry lost Source: %q", got[1].Source)
+	}
+
+	// Category filter narrows to cert-manager only.
+	got = ListFrom(entries, Query{Category: "security"})
+	if len(got) != 1 || got[0].Name != "cert-manager" {
+		t.Fatalf("category filter: got %+v", got)
+	}
+
+	// Text search is case-insensitive on description.
+	got = ListFrom(entries, Query{Q: "INTERNAL"})
+	if len(got) != 1 || got[0].Name != "internal-foo" {
+		t.Fatalf("text search: got %+v", got)
+	}
+
+	// Nil input returns nil.
+	if got := ListFrom(nil, Query{}); got != nil {
+		t.Errorf("ListFrom(nil) = %+v, want nil", got)
+	}
+
+	// IncludeDeprecated=true brings deprecated back in.
+	got = ListFrom(entries, Query{IncludeDeprecated: true})
+	if len(got) != 3 {
+		t.Fatalf("IncludeDeprecated=true: got %d, want 3", len(got))
+	}
+}
+
 func TestCompareK8sVersion(t *testing.T) {
 	cases := []struct {
 		a, b string

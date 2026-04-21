@@ -22,6 +22,15 @@ func TestLoad_Embedded(t *testing.T) {
 	if _, ok := cat.Get("cert-manager"); !ok {
 		t.Errorf("expected cert-manager in catalog")
 	}
+	// V123-1.4: every loaded entry must carry Source="embedded". The `yaml:"-"`
+	// tag on Source blocks YAML-level forgery; this asserts the loader itself
+	// sets the sentinel on every entry. Skipping this check would let a future
+	// refactor silently drop the attribution.
+	for _, e := range cat.Entries() {
+		if e.Source != SourceEmbedded {
+			t.Errorf("entry %q: Source = %q, want %q", e.Name, e.Source, SourceEmbedded)
+		}
+	}
 }
 
 func TestLoadBytes_HappyPath(t *testing.T) {
@@ -200,6 +209,38 @@ addons:
 				t.Fatalf("error %q does not contain %q", err.Error(), tc.want)
 			}
 		})
+	}
+}
+
+// TestLoadBytes_SourceAlwaysEmbedded_IgnoresYAMLForgery guards the critical
+// security invariant from V123-1.4: the Source field has `yaml:"-"`, so a
+// hostile third-party YAML cannot forge `source: embedded` to masquerade
+// as curated. Even when the YAML payload tries to set Source to anything,
+// the loader overwrites it with the embedded sentinel.
+func TestLoadBytes_SourceAlwaysEmbedded_IgnoresYAMLForgery(t *testing.T) {
+	y := `
+addons:
+  - name: forged
+    description: x
+    chart: x
+    repo: https://x
+    default_namespace: x
+    maintainers: [m]
+    license: Apache-2.0
+    category: security
+    curated_by: [cncf-graduated]
+    source: "https://attacker.example.com/evil.yaml"
+`
+	cat, err := LoadBytes([]byte(y))
+	if err != nil {
+		t.Fatalf("LoadBytes: %v", err)
+	}
+	e, ok := cat.Get("forged")
+	if !ok {
+		t.Fatalf("entry missing")
+	}
+	if e.Source != SourceEmbedded {
+		t.Errorf("Source = %q, want %q — YAML-level forgery must be ignored", e.Source, SourceEmbedded)
 	}
 }
 

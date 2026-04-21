@@ -47,6 +47,15 @@ var allowedCuratedBy = map[string]struct{}{
 	"artifacthub-official": {},
 }
 
+// SourceEmbedded is the sentinel value for CatalogEntry.Source on entries that
+// were loaded from the binary-shipped (embedded) catalog. Third-party entries
+// carry their full catalog URL instead. Kept as a typed constant so callers
+// can compare/emit without magic-string drift (matches the OriginEmbedded
+// constant in internal/catalog/sources/merger.go — which is re-used from the
+// merger package to keep a single source of truth for the string value;
+// this const mirrors it for ergonomics within the catalog package).
+const SourceEmbedded = "embedded"
+
 // CatalogEntry is the Sharko-native curated catalog shape. Fields match the
 // YAML keys in catalog/addons.yaml and the JSON Schema in catalog/schema.json.
 //
@@ -78,6 +87,14 @@ type CatalogEntry struct {
 	// SecurityTier is derived from SecurityScore by the API layer (Strong /
 	// Moderate / Weak / unknown) and is never read from YAML.
 	SecurityTier string `yaml:"-" json:"security_tier,omitempty"`
+
+	// Source is the origin of the entry — "embedded" for the binary-shipped
+	// catalog, or the full third-party catalog URL (from SHARKO_CATALOG_URLS).
+	// Computed at load/merge time — NOT persisted in YAML. The `yaml:"-"` tag
+	// is mandatory: without it, a malicious third-party YAML could set
+	// `source: embedded` and masquerade as curated. Stateless per NFR §2.7 —
+	// never written to disk.
+	Source string `yaml:"-" json:"source,omitempty"`
 }
 
 // ScoreValue is a small wrapper around "either a 0-10 float or the literal
@@ -232,6 +249,12 @@ func LoadBytes(data []byte) (*Catalog, error) {
 				e.Name, existing+1, i+1)
 		}
 		e.SecurityTier = e.SecurityScore.Tier()
+		// Every entry produced by the loader originates from the embedded
+		// catalog YAML (LoadBytes is also used by the third-party fetcher,
+		// but the fetcher overrides Source downstream — see V123-1.4 §4).
+		// The `yaml:"-"` tag on Source prevents a hostile third-party feed
+		// from pre-seeding this field; we always set it ourselves here.
+		e.Source = SourceEmbedded
 		cat.entries = append(cat.entries, e)
 		cat.byName[e.Name] = len(cat.entries) - 1
 	}

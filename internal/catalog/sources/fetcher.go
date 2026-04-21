@@ -310,6 +310,24 @@ func (f *Fetcher) SetTrustPolicyForTest(tp TrustPolicy) {
 	f.trustPolicy = tp
 }
 
+// SetSnapshotsForTest replaces the in-memory snapshot map. Test-only
+// helper so callers (V123-1.4 merged-catalog handler tests, etc.) can
+// construct a Fetcher with pre-populated snapshots without running a
+// full HTTP fetch loop. Production code has no reason to call this — the
+// supervisor + fetchOne path is the only writer in real deployments.
+//
+// The provided map is stored by reference; callers should not mutate it
+// after passing it in. Safe to call before or instead of Start.
+func (f *Fetcher) SetSnapshotsForTest(snaps map[string]*SourceSnapshot) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if snaps == nil {
+		f.snapshots = make(map[string]*SourceSnapshot)
+		return
+	}
+	f.snapshots = snaps
+}
+
 // loadTrustPolicyFromEnv reads SHARKO_CATALOG_TRUSTED_IDENTITIES. The
 // env var is comma-separated regex list per design §3.4. Empty list
 // means "no identities trusted" — the verifier should treat every
