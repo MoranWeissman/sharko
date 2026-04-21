@@ -556,6 +556,10 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	// distinct from /api/v1/addons/catalog which surfaces the USER's deployed
 	// addons for their connected GitOps repo.
 	mux.HandleFunc("GET /api/v1/catalog/addons", srv.handleListCatalogAddons)
+	// V123-1.5 — list configured catalog sources (embedded + third-party
+	// URLs from SHARKO_CATALOG_URLS) with per-source fetch status.
+	// Read-only; no tier check, no audit.
+	mux.HandleFunc("GET /api/v1/catalog/sources", srv.handleListCatalogSources)
 	mux.HandleFunc("GET /api/v1/catalog/addons/{name}/versions", srv.handleListCatalogVersions)
 	// v1.21 QA Bundle 2: README proxy for the in-page Marketplace detail
 	// view. Resolves curated addon → ArtifactHub package, then returns the
