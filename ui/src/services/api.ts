@@ -746,6 +746,14 @@ export const api = {
       `/catalog/addons/${encodeURIComponent(name)}`,
     ),
 
+  /**
+   * V123-1.7: list configured catalog sources (embedded + third-party).
+   * Powers the source-badge tooltip (last-fetched / status) on Browse
+   * tiles and the "Source" section on the addon detail page.
+   */
+  listCatalogSources: () =>
+    fetchJSON<import('./models').CatalogSourceRecord[]>('/catalog/sources'),
+
   listCuratedCatalogVersions: (
     name: string,
     options?: { includePrereleases?: boolean },
