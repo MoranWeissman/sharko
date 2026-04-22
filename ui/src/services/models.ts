@@ -423,6 +423,26 @@ export interface CatalogEntry {
   min_kubernetes_version?: string
   deprecated?: boolean
   superseded_by?: string
+  /**
+   * V123-1.4: origin of this entry — "embedded" for the binary-shipped
+   * catalog, or the full third-party catalog URL. Absent on older API
+   * responses — treat missing as embedded for backwards compat.
+   */
+  source?: string
+}
+
+/**
+ * Response shape of GET /api/v1/catalog/sources + POST
+ * /api/v1/catalog/sources/refresh. Mirrors internal/api.catalogSourceRecord
+ * from the Go side (V123-1.5 / V123-1.6).
+ */
+export interface CatalogSourceRecord {
+  url: string // "embedded" sentinel OR full third-party URL
+  status: 'ok' | 'stale' | 'failed'
+  last_fetched: string | null // RFC3339 or null
+  entry_count: number
+  verified: boolean
+  issuer?: string
 }
 
 export interface CatalogListResponse {
