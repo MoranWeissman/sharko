@@ -23,11 +23,13 @@ import {
 import type {
   CatalogEntry,
   CatalogReadmeResponse,
+  CatalogSourceRecord,
   CatalogVersionsResponse,
 } from '@/services/models'
 import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
 import { ScorecardBadge } from '@/components/ScorecardBadge'
+import { SourceBadge } from '@/components/SourceBadge'
 import { AttributionNudge } from '@/components/AttributionNudge'
 import { MarkdownRenderer } from '@/components/MarkdownRenderer'
 import { VersionPicker } from '@/components/VersionPicker'
@@ -150,6 +152,11 @@ export function MarketplaceAddonDetail({
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [submitResult, setSubmitResult] = useState<AddAddonResponse | null>(null)
 
+  // V123-1.7: configured catalog sources. Curated detail view uses this to
+  // render the "Source" section + SourceBadge tooltip (last_fetched/status).
+  // ArtifactHub (source === 'ah') entries skip this fetch.
+  const [catalogSources, setCatalogSources] = useState<CatalogSourceRecord[]>([])
+
   const backLinkRef = useRef<HTMLButtonElement>(null)
 
   // v1.21 QA Bundle 4 Fix #3b: README tabs — Helm Chart (existing) vs
@@ -166,6 +173,32 @@ export function MarketplaceAddonDetail({
   useEffect(() => {
     backLinkRef.current?.focus()
   }, [])
+
+  // V123-1.7: pull configured catalog sources once for the curated detail
+  // view so we can render the "Source" section + SourceBadge tooltip.
+  // Defensive — older test fixtures may not mock listCatalogSources.
+  useEffect(() => {
+    if (source !== 'curated') return
+    if (typeof api.listCatalogSources !== 'function') return
+    let cancelled = false
+    api
+      .listCatalogSources()
+      .then((resp) => {
+        if (!cancelled) setCatalogSources(resp ?? [])
+      })
+      .catch(() => {
+        if (!cancelled) setCatalogSources([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [source])
+
+  const matchedSourceRecord = useMemo<CatalogSourceRecord | undefined>(() => {
+    if (!entry) return undefined
+    const key = entry.source ?? 'embedded'
+    return catalogSources.find((s) => s.url === key)
+  }, [catalogSources, entry])
 
   // Lazy-load the project README the first time the user clicks its tab.
   useEffect(() => {
@@ -595,6 +628,13 @@ export function MarketplaceAddonDetail({
               // daily refresh job has populated a real score.
               hideWhenUnknown
             />
+            {/* V123-1.7 — source attribution badge */}
+            {source === 'curated' && (
+              <SourceBadge
+                source={entry.source}
+                sourceRecord={matchedSourceRecord}
+              />
+            )}
             {entry.github_stars !== undefined && entry.github_stars > 0 && (
               <span
                 className="inline-flex items-center gap-1 font-medium"
@@ -608,6 +648,31 @@ export function MarketplaceAddonDetail({
           </div>
         </div>
       </section>
+
+      {/* V123-1.7 — third-party catalog source section. URL is text only
+          (never a clickable link — paths may carry auth tokens, see
+          .bmad/output/implementation-artifacts/V123-1-7...md §Gotchas). */}
+      {source === 'curated' && entry.source && entry.source !== 'embedded' ? (
+        <section
+          aria-label="Third-party catalog source"
+          className="rounded-md bg-[#eaf4fc] p-3 ring-1 ring-[#c0ddf0] dark:bg-[#123044] dark:ring-[#2a5a7a]"
+        >
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-[#2a5a7a] dark:text-[#b4dcf5]">
+            Source
+          </h3>
+          <div className="mt-1 break-all text-sm text-[#0a3a5a] dark:text-[#d6eeff]">
+            {entry.source}
+          </div>
+          {matchedSourceRecord ? (
+            <div className="mt-1 text-xs text-[#2a5a7a] dark:text-[#b4dcf5]">
+              Status: {matchedSourceRecord.status}
+              {matchedSourceRecord.last_fetched
+                ? ` \u00b7 Last fetched ${matchedSourceRecord.last_fetched}`
+                : ''}
+            </div>
+          ) : null}
+        </section>
+      ) : null}
 
       {/* ─── 3. Action panel — Add to catalog ─── */}
       <section

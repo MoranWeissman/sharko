@@ -6,6 +6,7 @@ import type {
   CatalogCategory,
   CatalogCuratedBy,
   CatalogEntry,
+  CatalogSourceRecord,
 } from '@/services/models'
 import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
@@ -122,6 +123,12 @@ export function MarketplaceBrowseTab() {
   // back to the default "Configure" behaviour.
   const [installedNames, setInstalledNames] = useState<Set<string>>(new Set())
 
+  // V123-1.7: per-source metadata (last_fetched / status) for the SourceBadge
+  // tooltip. One fetch at the tab level — cards look up their record by URL.
+  // Non-fatal on failure; tiles still render their badge, just without a
+  // last-fetched line.
+  const [sources, setSources] = useState<CatalogSourceRecord[]>([])
+
   const filters = useMemo(() => parseFilters(searchParams), [searchParams])
   const setFilters = useCallback(
     (next: MarketplaceFiltersValue) => {
@@ -174,6 +181,30 @@ export function MarketplaceBrowseTab() {
       cancelled = true
     }
   }, [])
+
+  // V123-1.7: pull the configured catalog sources once so every tile can
+  // look up its matching record by URL. Non-fatal — tiles still render.
+  // Defensive — older test fixtures may not mock listCatalogSources.
+  useEffect(() => {
+    if (typeof api.listCatalogSources !== 'function') return
+    let cancelled = false
+    api
+      .listCatalogSources()
+      .then((resp) => {
+        if (!cancelled) setSources(resp ?? [])
+      })
+      .catch(() => {
+        if (!cancelled) setSources([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const sourceByURL = useMemo(
+    () => Object.fromEntries(sources.map((s) => [s.url, s])),
+    [sources],
+  )
 
   const allEntries = entries ?? []
   const availableLicenses = useMemo(() => {
@@ -264,6 +295,7 @@ export function MarketplaceBrowseTab() {
                 <MarketplaceCard
                   entry={entry}
                   inCatalog={installedNames.has(entry.name.trim().toLowerCase())}
+                  sourceRecord={sourceByURL[entry.source ?? 'embedded']}
                 />
               </li>
             ))}

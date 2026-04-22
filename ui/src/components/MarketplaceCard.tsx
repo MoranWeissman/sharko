@@ -8,8 +8,9 @@ import {
   Tag,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { CatalogEntry } from '@/services/models'
+import type { CatalogEntry, CatalogSourceRecord } from '@/services/models'
 import { ScorecardBadge } from '@/components/ScorecardBadge'
+import { SourceBadge } from '@/components/SourceBadge'
 
 /**
  * MarketplaceCard — single tile rendered in the Marketplace Browse grid.
@@ -44,6 +45,11 @@ export interface MarketplaceCardProps {
    *  addons-catalog.yaml. The card flips to a "View in catalog" affordance
    *  with a green check badge and tinted styling. */
   inCatalog?: boolean
+  /** V123-1.7: optional `CatalogSourceRecord` matching `entry.source`.
+   *  Powers the SourceBadge tooltip's last-fetched + status lines. Cards
+   *  without a parent-provided record still render a badge — the tooltip
+   *  just lacks the last-fetched date. */
+  sourceRecord?: CatalogSourceRecord
 }
 
 const CATEGORY_PALETTE: Record<string, { bg: string; text: string }> = {
@@ -73,6 +79,7 @@ export function MarketplaceCard({
   entry,
   onOpen,
   inCatalog = false,
+  sourceRecord,
 }: MarketplaceCardProps) {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -207,6 +214,12 @@ export function MarketplaceCard({
             {c}
           </span>
         ))}
+        {/* V123-1.7 — source attribution */}
+        <SourceBadge
+          source={entry.source}
+          sourceRecord={sourceRecord}
+          compact
+        />
       </div>
 
       {/* Footer row — license, score, stars */}

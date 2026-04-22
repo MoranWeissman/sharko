@@ -29,12 +29,13 @@ import {
   Star,
 } from 'lucide-react'
 import { api, removeAddon, upgradeAddon, configureAddon, getAddonPRs } from '@/services/api'
-import type { AddonCatalogItem, ConnectionsListResponse, UpgradeCheckResponse, UpgradeRecommendations, RecommendationCard, ValueDiffEntry, ConflictCheckEntry, TrackedPR, AddonValuesSchemaResponse, MeResponse } from '@/services/models'
+import type { AddonCatalogItem, CatalogEntry, CatalogSourceRecord, ConnectionsListResponse, UpgradeCheckResponse, UpgradeRecommendations, RecommendationCard, ValueDiffEntry, ConflictCheckEntry, TrackedPR, AddonValuesSchemaResponse, MeResponse } from '@/services/models'
 import { ValuesEditor } from '@/components/ValuesEditor'
 import { RecentPRsPanel } from '@/components/RecentPRsPanel'
 import { showToast } from '@/components/ToastNotification'
 import { AttributionNudge } from '@/components/AttributionNudge'
 import { MarkdownRenderer } from '@/components/MarkdownRenderer'
+import { SourceBadge } from '@/components/SourceBadge'
 import { StatCard } from '@/components/StatCard'
 import { StatusBadge } from '@/components/StatusBadge'
 import { LoadingState } from '@/components/LoadingState'
@@ -1081,6 +1082,14 @@ export function AddonDetail() {
   const [gitRepoBase, setGitRepoBase] = useState<string>('')
   const [gitDefaultBranch, setGitDefaultBranch] = useState<string>('main')
 
+  // V123-1.7: catalog-entry lookup so we can render a Source badge/section
+  // in the Overview. AddonCatalogItem (deployed) has no source field; we
+  // fetch the matching CatalogEntry (curated catalog) by name. Missing
+  // entry (e.g. addon added via Paste URL before the catalog was loaded)
+  // is non-fatal — we just render nothing.
+  const [catalogEntry, setCatalogEntry] = useState<CatalogEntry | null>(null)
+  const [catalogSources, setCatalogSources] = useState<CatalogSourceRecord[]>([])
+
   // V121-7.4: AI configuration. Pulled once for the Values + Catalog tabs
   // to render the "AI not configured" banner and the per-addon opt-out
   // toggle. We don't refresh — Settings changes are infrequent and the
@@ -1093,6 +1102,46 @@ export function AddonDetail() {
       .then((cfg) => setAIEnabled(!!cfg.current_provider && cfg.current_provider !== 'none' && cfg.current_provider !== ''))
       .catch(() => setAIEnabled(false))
   }, [])
+
+  // V123-1.7: look up the matching catalog entry so we can show source
+  // attribution in the Overview. Failure is non-fatal — older test
+  // fixtures may not mock getCuratedCatalogEntry / listCatalogSources.
+  useEffect(() => {
+    if (!name) return
+    if (typeof api.getCuratedCatalogEntry !== 'function') return
+    let cancelled = false
+    api.getCuratedCatalogEntry(name)
+      .then((e) => {
+        if (!cancelled) setCatalogEntry(e)
+      })
+      .catch(() => {
+        if (!cancelled) setCatalogEntry(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [name])
+
+  useEffect(() => {
+    if (typeof api.listCatalogSources !== 'function') return
+    let cancelled = false
+    api.listCatalogSources()
+      .then((resp) => {
+        if (!cancelled) setCatalogSources(resp ?? [])
+      })
+      .catch(() => {
+        if (!cancelled) setCatalogSources([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const catalogSourceRecord = useMemo<CatalogSourceRecord | undefined>(() => {
+    if (!catalogEntry) return undefined
+    const key = catalogEntry.source ?? 'embedded'
+    return catalogSources.find((s) => s.url === key)
+  }, [catalogSources, catalogEntry])
 
   // Filter state
   const [search, setSearch] = useState('')
@@ -1683,6 +1732,37 @@ export function AddonDetail() {
                         {addon.repo_url.length > 40 ? addon.repo_url.slice(0, 40) + '…' : addon.repo_url}
                         <ExternalLink className="h-3 w-3 shrink-0" />
                       </a>
+                    </div>
+                  )}
+                  {/* V123-1.7 — catalog source attribution. Only shown when
+                      we were able to look up a matching curated catalog
+                      entry. Source URL is rendered as TEXT (never a
+                      clickable link — paths may carry auth tokens). */}
+                  {catalogEntry && (
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">Source</p>
+                      {catalogEntry.source && catalogEntry.source !== 'embedded' ? (
+                        <div className="mt-0.5 text-sm">
+                          <div className="break-all text-[#0a3a5a] dark:text-[#d6eeff]">
+                            {catalogEntry.source}
+                          </div>
+                          {catalogSourceRecord ? (
+                            <div className="mt-0.5 text-xs text-[#2a5a7a] dark:text-[#b4dcf5]">
+                              Status: {catalogSourceRecord.status}
+                              {catalogSourceRecord.last_fetched
+                                ? ` \u00b7 Last fetched ${catalogSourceRecord.last_fetched}`
+                                : ''}
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <div className="mt-0.5">
+                          <SourceBadge
+                            source={catalogEntry.source}
+                            sourceRecord={catalogSourceRecord}
+                          />
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
