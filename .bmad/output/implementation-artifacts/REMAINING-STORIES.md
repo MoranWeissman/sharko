@@ -27,16 +27,11 @@ Each story ships with a retrospective record at
 - **V123-1.4** Source attribution on API entries + ListFrom helper — PR #272 → `8887674`
 - **V123-1.5** GET /api/v1/catalog/sources endpoint + swagger — PR #274 → `b4f1d76`
 - **V123-1.6** POST /api/v1/catalog/sources/refresh Tier-2 force-refresh — PR #276 → `eea0abb`
+- **V123-1.7** UI source badge on Browse tiles + AddonDetail — PR #278 → `f3c4cdf`
 
 ---
 
-## Epic V123-1 — Third-party private catalogs (3 remaining)
-
-### V123-1.7 — UI source badge on browse tiles + detail page
-- Small badge: `embedded` (neutral) / `third-party` (amber).
-- Tooltip shows `source_fp` + `last_success_at`.
-- Detail page: badge + "verified" pill if `verified: true`.
-- **Depends on:** V123-1.5 (reads API).
+## Epic V123-1 — Third-party private catalogs (2 remaining)
 
 ### V123-1.8 — Settings → Catalog Sources view (read-only if env-only)
 - Lists configured sources from `GET /api/v1/catalog/sources`.
