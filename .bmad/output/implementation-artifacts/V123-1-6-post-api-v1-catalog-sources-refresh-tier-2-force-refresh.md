@@ -1,10 +1,10 @@
 ---
 story_key: V123-1-6-post-api-v1-catalog-sources-refresh-tier-2-force-refresh
 epic: V123-1 (Third-party private catalogs)
-status: review
+status: done
 effort: M
 dispatched: 2026-04-22
-merged: TBD
+merged: 2026-04-22 (PR #276 → main @ eea0abb)
 ---
 
 # Story V123-1.6 — `POST /api/v1/catalog/sources/refresh` — Tier-2 force refresh
