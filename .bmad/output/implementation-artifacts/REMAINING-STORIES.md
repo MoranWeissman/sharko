@@ -26,16 +26,11 @@ Each story ships with a retrospective record at
 - **V123-1.3** merger + embedded-wins conflict rule — PR #270 → `836b26c`
 - **V123-1.4** Source attribution on API entries + ListFrom helper — PR #272 → `8887674`
 - **V123-1.5** GET /api/v1/catalog/sources endpoint + swagger — PR #274 → `b4f1d76`
+- **V123-1.6** POST /api/v1/catalog/sources/refresh Tier-2 force-refresh — PR #276 → `eea0abb`
 
 ---
 
-## Epic V123-1 — Third-party private catalogs (4 remaining)
-
-### V123-1.6 — `POST /api/v1/catalog/sources/refresh` (Tier-2 force-refresh)
-- Requires Tier-2 admin role.
-- Calls `fetcher.ForceRefresh(ctx, urls...)`.
-- Audit-log entry with `actor`, `url_fingerprint(s)`.
-- **Depends on:** V123-1.5 (shares URL-addressing scheme).
+## Epic V123-1 — Third-party private catalogs (3 remaining)
 
 ### V123-1.7 — UI source badge on browse tiles + detail page
 - Small badge: `embedded` (neutral) / `third-party` (amber).
