@@ -754,6 +754,14 @@ export const api = {
   listCatalogSources: () =>
     fetchJSON<import('./models').CatalogSourceRecord[]>('/catalog/sources'),
 
+  /**
+   * V123-1.8: force-refresh all configured catalog sources. Tier-2 (admin);
+   * backend side emits an audit entry. Returns the fresh record list.
+   * Powers the "Refresh now" button in the Settings → Catalog Sources view.
+   */
+  refreshCatalogSources: () =>
+    postJSON<import('./models').CatalogSourceRecord[]>('/catalog/sources/refresh', {}),
+
   listCuratedCatalogVersions: (
     name: string,
     options?: { includePrereleases?: boolean },

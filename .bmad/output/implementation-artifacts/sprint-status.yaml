@@ -1,5 +1,5 @@
 # generated: 2026-04-20
-# last_updated: 2026-04-22 — v1.23 Epic V123-1 stories 1-7 done (PR #267, #268, #270, #272, #274, #276, #278 merged); 1.8 (Settings view) next
+# last_updated: 2026-04-23 — v1.23 Epic V123-1 story 1.8 (UI Settings → Catalog Sources) in review
 # project: sharko
 # project_key: NOKEY
 # tracking_system: file-system
@@ -40,7 +40,7 @@
 # - Tagging: NO tags cut reflexively — merge PRs to main when green; tag only when user explicitly asks (see feedback_release_cadence.md)
 
 generated: 2026-04-20
-last_updated: 2026-04-22
+last_updated: 2026-04-23
 project: sharko
 project_key: NOKEY
 tracking_system: file-system
@@ -160,7 +160,7 @@ development_status:
   V123-1-5-get-api-v1-catalog-sources-endpoint-swagger: done  # PR #274 merged 2026-04-22 at b4f1d76
   V123-1-6-post-api-v1-catalog-sources-refresh-tier-2-force-refresh: done  # PR #276 merged 2026-04-22 at eea0abb
   V123-1-7-ui-source-badge-on-browse-tiles-detail-page: done  # PR #278 merged 2026-04-22 at f3c4cdf
-  V123-1-8-ui-optional-settings-catalog-sources-view-read-only-if-env-only: backlog
+  V123-1-8-ui-optional-settings-catalog-sources-view-read-only-if-env-only: review
   V123-1-9-tests-unit-integration-for-fetch-merge-source-attribution: backlog
   epic-V123-1-retrospective: optional
 
