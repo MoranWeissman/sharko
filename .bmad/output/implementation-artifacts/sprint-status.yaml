@@ -1,5 +1,5 @@
 # generated: 2026-04-20
-# last_updated: 2026-04-23 — v1.23 Epic V123-1 stories 1-8 done (PR #267, #268, #270, #272, #274, #276, #278, #280 merged); 1.9 (integration tests) closes the epic
+# last_updated: 2026-04-23 — v1.23 Epic V123-1 8/9 done (PR #267, #268, #270, #272, #274, #276, #278, #280 merged); 1.9 (integration tests) in REVIEW and closes the epic
 # project: sharko
 # project_key: NOKEY
 # tracking_system: file-system
@@ -161,7 +161,7 @@ development_status:
   V123-1-6-post-api-v1-catalog-sources-refresh-tier-2-force-refresh: done  # PR #276 merged 2026-04-22 at eea0abb
   V123-1-7-ui-source-badge-on-browse-tiles-detail-page: done  # PR #278 merged 2026-04-22 at f3c4cdf
   V123-1-8-ui-optional-settings-catalog-sources-view-read-only-if-env-only: done  # PR #280 merged 2026-04-23 at c54ab95
-  V123-1-9-tests-unit-integration-for-fetch-merge-source-attribution: backlog
+  V123-1-9-tests-unit-integration-for-fetch-merge-source-attribution: review
   epic-V123-1-retrospective: optional
 
   # Epic V123-2: Per-entry cosign signing
