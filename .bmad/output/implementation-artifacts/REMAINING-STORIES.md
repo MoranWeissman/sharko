@@ -28,16 +28,11 @@ Each story ships with a retrospective record at
 - **V123-1.5** GET /api/v1/catalog/sources endpoint + swagger — PR #274 → `b4f1d76`
 - **V123-1.6** POST /api/v1/catalog/sources/refresh Tier-2 force-refresh — PR #276 → `eea0abb`
 - **V123-1.7** UI source badge on Browse tiles + AddonDetail — PR #278 → `f3c4cdf`
+- **V123-1.8** Settings → Catalog Sources admin section (read-only env-only) — PR #280 → `c54ab95`
 
 ---
 
-## Epic V123-1 — Third-party private catalogs (2 remaining)
-
-### V123-1.8 — Settings → Catalog Sources view (read-only if env-only)
-- Lists configured sources from `GET /api/v1/catalog/sources`.
-- Read-only when `SHARKO_CATALOG_URLS` env is set (the authoritative source).
-- Force-refresh button → V123-1.6.
-- **Depends on:** V123-1.5, V123-1.6.
+## Epic V123-1 — Third-party private catalogs (1 remaining)
 
 ### V123-1.9 — Tests (unit + integration) for fetch + merge + source attribution
 - Integration: real HTTP server → fetcher → merge → API response.
