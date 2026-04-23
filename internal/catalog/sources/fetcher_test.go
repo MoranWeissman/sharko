@@ -655,3 +655,119 @@ func keysOf(m map[string]*SourceSnapshot) []string {
 	}
 	return out
 }
+
+// --- V123-1.9 gap cases ---------------------------------------------
+
+// clientWithTimeout copies the test server's *http.Client (which already
+// trusts the server's self-signed TLS cert) and overrides the wall-clock
+// Timeout. Using srv.Client() as the base is what keeps the TLS handshake
+// working against httptest's ephemeral CA — a plain http.Client{Timeout:…}
+// would fail the TLS verification before the Timeout even came into play.
+func clientWithTimeout(srv *httptest.Server, timeout time.Duration) *http.Client {
+	base := srv.Client()
+	c := *base
+	c.Timeout = timeout
+	return &c
+}
+
+// TestFetcher_ClientTimeoutMarksFailed — V123-1.9 gap fill.
+//
+// An http.Client.Timeout shorter than the server's response delay must
+// end the request with a deadline-exceeded error. The snapshot should
+// land in StatusFailed (no prior success → no stale fallback) and the
+// LastErr should mention "deadline" or "timeout". Distinct from the
+// existing TestFetcher_5xxRetainsSnapshot (HTTP 5xx) and
+// TestFetcher_SchemaViolationRetainsSnapshot (parseable but invalid)
+// cases — this specifically exercises the transport-layer timeout path.
+func TestFetcher_ClientTimeoutMarksFailed(t *testing.T) {
+	ff := &flippable{status: http.StatusOK, body: validCatalogYAML, delay: 500 * time.Millisecond}
+	srv := httptest.NewTLSServer(ff.handler())
+	t.Cleanup(srv.Close)
+
+	f := newTestFetcher(t, []*httptest.Server{srv}, nil)
+	// Override with a tight-timeout client. newTestFetcher already set an
+	// srv.Client() on the fetcher; we overwrite with a copy that has a
+	// 100ms Timeout — still trusts the test TLS CA.
+	f.SetHTTPClientForTest(clientWithTimeout(srv, 100*time.Millisecond))
+
+	// Generous ctx so the failure path is the client Timeout firing, not
+	// the caller's context ending.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	f.ForceRefresh(ctx)
+
+	url := srv.URL + "/catalog.yaml"
+	snap := f.Snapshots()[url]
+	if snap == nil {
+		t.Fatalf("expected snapshot for %s", url)
+	}
+	if snap.Status != StatusFailed {
+		t.Fatalf("expected StatusFailed after timeout, got %q (err=%v)", snap.Status, snap.LastErr)
+	}
+	if snap.LastErr == nil {
+		t.Fatal("expected LastErr to record the timeout")
+	}
+	// Tolerant match — Go's net/http wraps transport timeouts variously
+	// ("context deadline exceeded", "Client.Timeout exceeded while
+	// awaiting headers", "deadline exceeded (Client.Timeout exceeded
+	// while ...)"). Accept any of the canonical tokens.
+	msg := strings.ToLower(snap.LastErr.Error())
+	if !strings.Contains(msg, "deadline") && !strings.Contains(msg, "timeout") {
+		t.Fatalf("expected timeout/deadline-flavoured error, got %v", snap.LastErr)
+	}
+	// LastSuccessAt must remain zero — there is no prior success to fall
+	// back on, which is why Status is Failed rather than Stale.
+	if !snap.LastSuccessAt.IsZero() {
+		t.Fatalf("LastSuccessAt should be zero on fresh-start timeout, got %v", snap.LastSuccessAt)
+	}
+}
+
+// TestFetcher_InvalidYAMLMarksFailed — V123-1.9 gap fill.
+//
+// The server returns bytes that fail at the YAML *parse* stage (not the
+// schema-validation stage). The snapshot must land in StatusFailed with
+// a non-empty LastErr. Distinct from TestFetcher_SchemaViolationRetainsSnapshot,
+// which tests well-formed YAML that fails schema checks — here the bytes
+// cannot even be parsed as YAML. Tolerant match on the error message
+// because the fetcher wraps the loader error as "schema validation: %w"
+// even when the underlying cause is a parse error, so we assert on
+// either "yaml" / "parse" / "unmarshal" / "schema" to cover the wrapper.
+func TestFetcher_InvalidYAMLMarksFailed(t *testing.T) {
+	// Unterminated flow-style sequence → yaml.Unmarshal parse error.
+	const unparseableYAML = "addons:\n  - name: broken\nfoo: [\n"
+
+	ff := &flippable{status: http.StatusOK, body: unparseableYAML}
+	srv := httptest.NewTLSServer(ff.handler())
+	t.Cleanup(srv.Close)
+
+	f := newTestFetcher(t, []*httptest.Server{srv}, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	f.ForceRefresh(ctx)
+
+	url := srv.URL + "/catalog.yaml"
+	snap := f.Snapshots()[url]
+	if snap == nil {
+		t.Fatalf("expected snapshot for %s", url)
+	}
+	if snap.Status != StatusFailed {
+		t.Fatalf("expected StatusFailed after invalid YAML, got %q (err=%v)", snap.Status, snap.LastErr)
+	}
+	if snap.LastErr == nil {
+		t.Fatal("expected LastErr to record the parse failure")
+	}
+	// Tolerant match — the fetcher wraps loader errors as
+	// "schema validation: %w" regardless of the underlying cause.
+	// Accept the canonical parse-flavoured tokens or the wrapper prefix.
+	msg := strings.ToLower(snap.LastErr.Error())
+	if !strings.Contains(msg, "yaml") &&
+		!strings.Contains(msg, "parse") &&
+		!strings.Contains(msg, "unmarshal") &&
+		!strings.Contains(msg, "schema") {
+		t.Fatalf("expected yaml/parse/unmarshal/schema-flavoured error, got %v", snap.LastErr)
+	}
+	// Fresh start — no prior successful Entries to retain.
+	if len(snap.Entries) != 0 {
+		t.Fatalf("expected no entries on fresh-start parse failure, got %d", len(snap.Entries))
+	}
+}

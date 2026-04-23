@@ -312,6 +312,87 @@ func TestMerge_StaleOrFailedSnapshotsSkipped(t *testing.T) {
 	}
 }
 
+// TestMerge_EveryEntryCarriesOrigin — V123-1.9 gap fill.
+//
+// Explicit "every MergedEntry has a non-empty Origin" assertion. Earlier
+// cases (EmbeddedOnly, ThirdPartyOnly, EmbeddedVsThirdPartyCollision)
+// check Origin implicitly; this case makes the invariant the primary
+// assertion with a non-overlapping mix of embedded + third-party entries
+// across two source URLs, so the test fails loudly if the merger ever
+// drops Origin on a subset of entries.
+//
+// Setup (no name collisions anywhere):
+//   - embedded: cert-manager, embedded-only
+//   - URL1 snapshot: alpha, beta
+//   - URL2 snapshot: gamma
+//
+// Expected merged output: 5 entries, 0 conflicts, every entry carries
+// the correct Origin.
+func TestMerge_EveryEntryCarriesOrigin(t *testing.T) {
+	embedded := []catalog.CatalogEntry{
+		mkEntry("cert-manager"),
+		mkEntry("embedded-only"),
+	}
+	url1 := "https://one.example.com/catalog.yaml"
+	url2 := "https://two.example.com/catalog.yaml"
+	snapshots := []*SourceSnapshot{
+		mkSnapshot(url1, StatusOK, mkEntry("alpha"), mkEntry("beta")),
+		mkSnapshot(url2, StatusOK, mkEntry("gamma")),
+	}
+
+	got := Merge(embedded, snapshots)
+
+	if len(got.Entries) != 5 {
+		t.Fatalf("expected 5 entries, got %d (names=%v)", len(got.Entries), entryNames(got.Entries))
+	}
+	if len(got.Conflicts) != 0 {
+		t.Fatalf("expected 0 conflicts with disjoint names, got %d", len(got.Conflicts))
+	}
+
+	// Every entry must carry a non-empty Origin.
+	for _, e := range got.Entries {
+		if e.Origin == "" {
+			t.Errorf("entry %q: Origin is empty", e.Name)
+		}
+	}
+
+	// Embedded entries must carry the OriginEmbedded sentinel.
+	for _, name := range []string{"cert-manager", "embedded-only"} {
+		e, ok := findEntry(got.Entries, name)
+		if !ok {
+			t.Errorf("expected embedded entry %q in merged output", name)
+			continue
+		}
+		if e.Origin != OriginEmbedded {
+			t.Errorf("entry %q: want Origin=%q, got %q", name, OriginEmbedded, e.Origin)
+		}
+	}
+
+	// Third-party entries must carry their snapshot URL exactly.
+	wantThirdParty := map[string]string{
+		"alpha": url1,
+		"beta":  url1,
+		"gamma": url2,
+	}
+	for name, wantURL := range wantThirdParty {
+		e, ok := findEntry(got.Entries, name)
+		if !ok {
+			t.Errorf("expected third-party entry %q in merged output", name)
+			continue
+		}
+		if e.Origin != wantURL {
+			t.Errorf("entry %q: want Origin=%q, got %q", name, wantURL, e.Origin)
+		}
+	}
+
+	// No entries should be marked Overridden — there were no collisions.
+	for _, e := range got.Entries {
+		if e.Overridden {
+			t.Errorf("entry %q: Overridden=true with no collisions", e.Name)
+		}
+	}
+}
+
 // TestMerge_DeterministicOrdering — Case 8: two calls with input order
 // permuted must produce byte-identical output. Catches accidental
 // reliance on map iteration order.
