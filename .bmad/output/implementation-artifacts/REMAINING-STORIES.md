@@ -29,19 +29,13 @@ Each story ships with a retrospective record at
 - **V123-1.6** POST /api/v1/catalog/sources/refresh Tier-2 force-refresh — PR #276 → `eea0abb`
 - **V123-1.7** UI source badge on Browse tiles + AddonDetail — PR #278 → `f3c4cdf`
 - **V123-1.8** Settings → Catalog Sources admin section (read-only env-only) — PR #280 → `c54ab95`
+- **V123-1.9** fetcher gaps + merger coverage + full-loop integration test — PR #282 → `4e87d6e`
+
+**Epic V123-1 (Third-party private catalogs) — CLOSED (9/9 done).**
 
 ---
 
-## Epic V123-1 — Third-party private catalogs (1 remaining)
-
-### V123-1.9 — Tests (unit + integration) for fetch + merge + source attribution
-- Integration: real HTTP server → fetcher → merge → API response.
-- Cover: embedded-wins collision, source attribution round-trip, force-refresh audit.
-- **Depends on:** V123-1.3 through V123-1.8 (covers their composition).
-
----
-
-## Epic V123-2 — Per-entry cosign signing (6 stories, all backlog)
+## Epic V123-2 — Per-entry cosign signing (6 stories, all backlog) — UP NEXT
 
 ### V123-2.1 — Schema v1.1: add optional `signature:` field
 - Backward-compatible YAML schema bump: `signature: {bundle_url, sig_url}` optional.
