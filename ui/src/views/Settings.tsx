@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Plug, Users, Key, Bot, Shield, GitMerge, UserCog } from 'lucide-react'
+import { Plug, Users, Key, Bot, Shield, GitMerge, UserCog, Library } from 'lucide-react'
 import { DetailNavPanel } from '@/components/DetailNavPanel'
 import { ConnectionSection } from '@/views/settings/ConnectionSection'
 import { SecretsProviderSection } from '@/views/settings/SecretsProviderSection'
@@ -9,6 +9,7 @@ import { MyAccountSection } from '@/views/settings/MyAccountSection'
 import { UserManagement } from '@/views/UserManagement'
 import { ApiKeys } from '@/views/ApiKeys'
 import { AIConfigSection } from '@/views/settings/AIConfigSection'
+import { CatalogSourcesSection } from '@/views/settings/CatalogSourcesSection'
 import { useAuth } from '@/hooks/useAuth'
 
 const ALLOWED_NON_ADMIN = new Set([
@@ -53,6 +54,12 @@ export function Settings() {
               { key: 'api-keys', label: 'API Keys', icon: Key },
             ],
           },
+          {
+            label: 'Catalog',
+            items: [
+              { key: 'catalog-sources', label: 'Catalog Sources', icon: Library },
+            ],
+          },
         ]
       : []),
     {
@@ -83,6 +90,7 @@ export function Settings() {
           {section === 'my-account' && <MyAccountSection />}
           {section === 'users' && isAdmin && <UserManagement embedded />}
           {section === 'api-keys' && isAdmin && <ApiKeys embedded />}
+          {section === 'catalog-sources' && isAdmin && <CatalogSourcesSection />}
           {section === 'ai' && <AIConfigSection />}
         </div>
       </div>
