@@ -1,10 +1,10 @@
 ---
 story_key: V123-1-8-ui-optional-settings-catalog-sources-view-read-only-if-env-only
 epic: V123-1 (Third-party private catalogs)
-status: review
+status: done
 effort: M
 dispatched: 2026-04-23
-merged: TBD
+merged: 2026-04-23 (PR #280 → main @ c54ab95)
 ---
 
 # Story V123-1.8 — Settings → Catalog Sources view (read-only, env-only mode)
