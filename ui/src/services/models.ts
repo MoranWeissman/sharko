@@ -402,6 +402,14 @@ export type CatalogCuratedBy =
 
 export type CatalogSecurityTier = 'Strong' | 'Moderate' | 'Weak' | ''
 
+/**
+ * Optional cosign-keyless signature pointer on a CatalogEntry
+ * (schema v1.1+; V123-2.1). Verified at load time by V123-2.2.
+ */
+export interface CatalogEntrySignature {
+  bundle: string  // https URL to a Sigstore bundle file
+}
+
 export interface CatalogEntry {
   name: string
   description: string
@@ -429,6 +437,11 @@ export interface CatalogEntry {
    * responses — treat missing as embedded for backwards compat.
    */
   source?: string
+  /**
+   * Optional cosign-keyless attestation (schema v1.1+; V123-2.1).
+   * Present only when the entry was signed; absent on older catalogs.
+   */
+  signature?: CatalogEntrySignature
 }
 
 /**

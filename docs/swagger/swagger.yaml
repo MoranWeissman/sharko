@@ -155,6 +155,12 @@ definitions:
           SecurityTier is derived from SecurityScore by the API layer (Strong /
           Moderate / Weak / unknown) and is never read from YAML.
         type: string
+      signature:
+        allOf:
+        - $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_catalog.Signature'
+        description: |-
+          Signature is the optional cosign-keyless attestation pointer
+          (schema v1.1+; V123-2.1). nil when the entry is unsigned.
       source:
         description: |-
           Source is the origin of the entry — "embedded" for the binary-shipped
@@ -177,6 +183,11 @@ definitions:
         description: 0 when Known is false
         format: float64
         type: number
+    type: object
+  github_com_MoranWeissman_sharko_internal_catalog.Signature:
+    properties:
+      bundle:
+        type: string
     type: object
   github_com_MoranWeissman_sharko_internal_diagnose.DiagnosticReport:
     properties:

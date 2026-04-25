@@ -298,6 +298,198 @@ addons:
 	}
 }
 
+// --- V123-2.1 schema v1.1 / signature field cases -------------------------
+
+// TestLoadBytes_AcceptsSignatureField proves the new optional signature block
+// round-trips through the loader (schema v1.1+; V123-2.1).
+func TestLoadBytes_AcceptsSignatureField(t *testing.T) {
+	y := `
+addons:
+  - name: cert-manager
+    description: TLS lifecycle.
+    chart: cert-manager
+    repo: https://charts.jetstack.io
+    default_namespace: cert-manager
+    maintainers: [jetstack]
+    license: Apache-2.0
+    category: security
+    curated_by: [cncf-graduated]
+    signature:
+      bundle: "https://example.com/cert-manager.bundle"
+`
+	cat, err := LoadBytes([]byte(y))
+	if err != nil {
+		t.Fatalf("LoadBytes: %v", err)
+	}
+	e, ok := cat.Get("cert-manager")
+	if !ok {
+		t.Fatalf("entry missing")
+	}
+	if e.Signature == nil {
+		t.Fatalf("Signature = nil, want non-nil")
+	}
+	if got, want := e.Signature.Bundle, "https://example.com/cert-manager.bundle"; got != want {
+		t.Errorf("Signature.Bundle = %q, want %q", got, want)
+	}
+}
+
+// TestLoadBytes_AcceptsAbsentSignature proves the field is optional — entries
+// without `signature:` deserialize cleanly with a nil pointer.
+func TestLoadBytes_AcceptsAbsentSignature(t *testing.T) {
+	y := `
+addons:
+  - name: foo
+    description: x
+    chart: x
+    repo: https://x
+    default_namespace: x
+    maintainers: [m]
+    license: Apache-2.0
+    category: security
+    curated_by: [cncf-graduated]
+`
+	cat, err := LoadBytes([]byte(y))
+	if err != nil {
+		t.Fatalf("LoadBytes: %v", err)
+	}
+	e, ok := cat.Get("foo")
+	if !ok {
+		t.Fatalf("entry missing")
+	}
+	if e.Signature != nil {
+		t.Errorf("Signature = %+v, want nil for absent field", e.Signature)
+	}
+}
+
+// TestValidateEntry_RejectsSignatureWithoutBundle proves a present-but-empty
+// signature block (`signature: {}`) is rejected with a clear error naming the
+// offending field.
+func TestValidateEntry_RejectsSignatureWithoutBundle(t *testing.T) {
+	y := `
+addons:
+  - name: foo
+    description: x
+    chart: x
+    repo: https://x
+    default_namespace: x
+    maintainers: [m]
+    license: Apache-2.0
+    category: security
+    curated_by: [cncf-graduated]
+    signature: {}
+`
+	_, err := LoadBytes([]byte(y))
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "signature.bundle") {
+		t.Errorf("error %q does not mention 'signature.bundle'", err.Error())
+	}
+}
+
+// TestValidateEntry_RejectsSignatureWithMalformedURL proves a non-https value
+// is rejected. Note: url.Parse("not-a-url") actually succeeds in Go (it parses
+// as a relative reference), so the failure here comes from the https:// prefix
+// check — assert the error message mentions `https://`.
+func TestValidateEntry_RejectsSignatureWithMalformedURL(t *testing.T) {
+	y := `
+addons:
+  - name: foo
+    description: x
+    chart: x
+    repo: https://x
+    default_namespace: x
+    maintainers: [m]
+    license: Apache-2.0
+    category: security
+    curated_by: [cncf-graduated]
+    signature:
+      bundle: "not-a-url"
+`
+	_, err := LoadBytes([]byte(y))
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "https://") {
+		t.Errorf("error %q does not mention 'https://'", err.Error())
+	}
+}
+
+// TestValidateEntry_RejectsSignatureWithHTTPScheme proves the HTTPS-only
+// posture: an http:// bundle is rejected even though the URL itself is
+// well-formed. Matches the V123-1.1 SSRF guard's security stance.
+func TestValidateEntry_RejectsSignatureWithHTTPScheme(t *testing.T) {
+	y := `
+addons:
+  - name: foo
+    description: x
+    chart: x
+    repo: https://x
+    default_namespace: x
+    maintainers: [m]
+    license: Apache-2.0
+    category: security
+    curated_by: [cncf-graduated]
+    signature:
+      bundle: "http://insecure.example.com/x.bundle"
+`
+	_, err := LoadBytes([]byte(y))
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "https://") {
+		t.Errorf("error %q does not mention 'https://'", err.Error())
+	}
+}
+
+// TestLoadBytes_BackwardCompat_v1_0_Catalog proves a multi-entry pre-v1.1
+// catalog (no signature anywhere) loads cleanly with all Signature fields
+// nil. Backward-compat smoke test for the schema bump.
+func TestLoadBytes_BackwardCompat_v1_0_Catalog(t *testing.T) {
+	y := `
+addons:
+  - name: alpha
+    description: x
+    chart: alpha
+    repo: https://example.com/charts
+    default_namespace: alpha
+    maintainers: [team-alpha]
+    license: Apache-2.0
+    category: security
+    curated_by: [cncf-graduated]
+  - name: beta
+    description: x
+    chart: beta
+    repo: https://example.com/charts
+    default_namespace: beta
+    maintainers: [team-beta]
+    license: MIT
+    category: observability
+    curated_by: [cncf-incubating]
+  - name: gamma
+    description: x
+    chart: gamma
+    repo: https://example.com/charts
+    default_namespace: gamma
+    maintainers: [team-gamma]
+    license: BSD-3-Clause
+    category: networking
+    curated_by: [artifacthub-verified]
+`
+	cat, err := LoadBytes([]byte(y))
+	if err != nil {
+		t.Fatalf("LoadBytes: %v", err)
+	}
+	if cat.Len() != 3 {
+		t.Fatalf("expected 3 entries, got %d", cat.Len())
+	}
+	for _, e := range cat.Entries() {
+		if e.Signature != nil {
+			t.Errorf("entry %q: Signature = %+v, want nil for v1.0 catalog", e.Name, e.Signature)
+		}
+	}
+}
+
 func TestUpdateScore(t *testing.T) {
 	y := `
 addons:
