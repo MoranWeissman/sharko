@@ -33,14 +33,11 @@ Each story ships with a retrospective record at
 
 **Epic V123-1 (Third-party private catalogs) — CLOSED (9/9 done).**
 
+- **V123-2.1** schema v1.1 — optional per-entry signature field — PR #284 → `b06eee1`
+
 ---
 
-## Epic V123-2 — Per-entry cosign signing (6 stories, all backlog) — UP NEXT
-
-### V123-2.1 — Schema v1.1: add optional `signature:` field
-- Backward-compatible YAML schema bump: `signature: {bundle_url, sig_url}` optional.
-- Update `docs/design/examples/addons.yaml.draft`.
-- Validate in existing schema tests; unsigned entries stay valid.
+## Epic V123-2 — Per-entry cosign signing (5 remaining)
 
 ### V123-2.2 — Load-time verification via cosign library ⚠ resolves open question §7.2
 - Implement the `SidecarVerifier` interface from V123-1.2 using `sigstore/cosign` Go library.
