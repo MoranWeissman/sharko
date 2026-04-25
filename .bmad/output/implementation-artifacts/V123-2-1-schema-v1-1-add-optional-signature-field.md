@@ -1,10 +1,10 @@
 ---
 story_key: V123-2-1-schema-v1-1-add-optional-signature-field
 epic: V123-2 (Per-entry cosign signing)
-status: review
+status: done
 effort: S
 dispatched: 2026-04-26
-merged: TBD
+merged: 2026-04-26 (PR #284 → main @ b06eee1)
 ---
 
 # Story V123-2.1 — Schema v1.1: add optional `signature:` field
