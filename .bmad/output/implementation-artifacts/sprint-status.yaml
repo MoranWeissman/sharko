@@ -1,5 +1,5 @@
 # generated: 2026-04-20
-# last_updated: 2026-04-23 — v1.23 Epic V123-1 CLOSED (9/9 done — PRs #267, #268, #270, #272, #274, #276, #278, #280, #282). Next: Epic V123-2 (cosign signing)
+# last_updated: 2026-04-26 — Epic V123-1 CLOSED (9/9 done — PRs #267-#282). Epic V123-2 STARTED: V123-2.1 (schema v1.1 / optional signature field) in review on dev/v1.23-signature-schema.
 # project: sharko
 # project_key: NOKEY
 # tracking_system: file-system
@@ -40,7 +40,7 @@
 # - Tagging: NO tags cut reflexively — merge PRs to main when green; tag only when user explicitly asks (see feedback_release_cadence.md)
 
 generated: 2026-04-20
-last_updated: 2026-04-23
+last_updated: 2026-04-26
 project: sharko
 project_key: NOKEY
 tracking_system: file-system
@@ -165,8 +165,8 @@ development_status:
   epic-V123-1-retrospective: optional
 
   # Epic V123-2: Per-entry cosign signing
-  epic-V123-2: backlog
-  V123-2-1-schema-v1-1-add-optional-signature-field: backlog
+  epic-V123-2: in-progress
+  V123-2-1-schema-v1-1-add-optional-signature-field: review
   V123-2-2-load-time-verification-via-cosign-library-open-question-7-2: backlog
   V123-2-3-trust-policy-via-sharko-catalog-trusted-identities: backlog
   V123-2-4-ui-verified-badge-signed-pseudo-filter: backlog
