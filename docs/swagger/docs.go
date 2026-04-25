@@ -6760,6 +6760,14 @@ const docTemplate = `{
                     "description": "SecurityTier is derived from SecurityScore by the API layer (Strong /\nModerate / Weak / unknown) and is never read from YAML.",
                     "type": "string"
                 },
+                "signature": {
+                    "description": "Signature is the optional cosign-keyless attestation pointer\n(schema v1.1+; V123-2.1). nil when the entry is unsigned.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.Signature"
+                        }
+                    ]
+                },
                 "source": {
                     "description": "Source is the origin of the entry — \"embedded\" for the binary-shipped\ncatalog, or the full third-party catalog URL (from SHARKO_CATALOG_URLS).\nComputed at load/merge time — NOT persisted in YAML. The ` + "`" + `yaml:\"-\"` + "`" + ` tag\nis mandatory: without it, a malicious third-party YAML could set\n` + "`" + `source: embedded` + "`" + ` and masquerade as curated. Stateless per NFR §2.7 —\nnever written to disk.",
                     "type": "string"
@@ -6782,6 +6790,14 @@ const docTemplate = `{
                     "description": "0 when Known is false",
                     "type": "number",
                     "format": "float64"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_catalog.Signature": {
+            "type": "object",
+            "properties": {
+                "bundle": {
+                    "type": "string"
                 }
             }
         },
