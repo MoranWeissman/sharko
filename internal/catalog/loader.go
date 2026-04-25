@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -56,6 +57,17 @@ var allowedCuratedBy = map[string]struct{}{
 // this const mirrors it for ergonomics within the catalog package).
 const SourceEmbedded = "embedded"
 
+// Signature is the optional per-entry cosign-keyless attestation pointer
+// (schema v1.1+; V123-2.1). When present, V123-2.2's load-time verifier
+// checks the bundle against the configured trust policy.
+//
+// `bundle` is a URL to a Sigstore bundle file (cert + sig + Rekor entry).
+// Convention matches the V123-1.2 fetcher's `.bundle` sidecar probe but is
+// per-entry, not per-catalog-file.
+type Signature struct {
+	Bundle string `yaml:"bundle" json:"bundle"`
+}
+
 // CatalogEntry is the Sharko-native curated catalog shape. Fields match the
 // YAML keys in catalog/addons.yaml and the JSON Schema in catalog/schema.json.
 //
@@ -63,6 +75,11 @@ const SourceEmbedded = "embedded"
 // are silently dropped during unmarshal because this struct does not have a
 // catch-all map. That matches the design decision "Unknown fields are
 // tolerated" — we do not fail startup on unknown keys.
+//
+// Schema v1.1 (V123-2.1) added the optional `signature` block — a per-entry
+// cosign-keyless attestation pointer. Older catalogs without it deserialize
+// cleanly (the pointer stays nil); older Sharko binaries that don't yet know
+// the field tolerate it as unknown per design §4.2.
 type CatalogEntry struct {
 	Name                 string        `yaml:"name" json:"name"`
 	Description          string        `yaml:"description" json:"description"`
@@ -83,6 +100,10 @@ type CatalogEntry struct {
 	MinKubernetesVersion string        `yaml:"min_kubernetes_version,omitempty" json:"min_kubernetes_version,omitempty"`
 	Deprecated           bool          `yaml:"deprecated,omitempty" json:"deprecated,omitempty"`
 	SupersededBy         string        `yaml:"superseded_by,omitempty" json:"superseded_by,omitempty"`
+
+	// Signature is the optional cosign-keyless attestation pointer
+	// (schema v1.1+; V123-2.1). nil when the entry is unsigned.
+	Signature *Signature `yaml:"signature,omitempty" json:"signature,omitempty"`
 
 	// SecurityTier is derived from SecurityScore by the API layer (Strong /
 	// Moderate / Weak / unknown) and is never read from YAML.
@@ -321,6 +342,17 @@ func validateEntry(e *CatalogEntry) error {
 			return fmt.Errorf("curated_by has duplicate tag %q", c)
 		}
 		seen[c] = struct{}{}
+	}
+	if e.Signature != nil {
+		if strings.TrimSpace(e.Signature.Bundle) == "" {
+			return fmt.Errorf("signature.bundle is required when signature is present")
+		}
+		if !strings.HasPrefix(e.Signature.Bundle, "https://") {
+			return fmt.Errorf("signature.bundle must be an https:// URL: %q", e.Signature.Bundle)
+		}
+		if _, err := url.Parse(e.Signature.Bundle); err != nil {
+			return fmt.Errorf("signature.bundle is not a valid URL: %w", err)
+		}
 	}
 	return nil
 }
