@@ -34,15 +34,11 @@ Each story ships with a retrospective record at
 **Epic V123-1 (Third-party private catalogs) — CLOSED (9/9 done).**
 
 - **V123-2.1** schema v1.1 — optional per-entry signature field — PR #284 → `b06eee1`
+- **V123-2.2** cosign keyless verifier (sigstore-go) + OQ §7.2 resolution — PR #286 → `8bb8074`
 
 ---
 
-## Epic V123-2 — Per-entry cosign signing (5 remaining)
-
-### V123-2.2 — Load-time verification via cosign library ⚠ resolves open question §7.2
-- Implement the `SidecarVerifier` interface from V123-1.2 using `sigstore/cosign` Go library.
-- Keyless verification: Fulcio cert + Rekor entry + identity policy.
-- **Open question §7.2 resolution:** whether to verify at load or at runtime — recommend load-time caching with periodic re-verify on refresh.
+## Epic V123-2 — Per-entry cosign signing (4 remaining)
 
 ### V123-2.3 — Trust policy via `SHARKO_CATALOG_TRUSTED_IDENTITIES`
 - Env var: comma-separated cert-identity regexes (e.g., `^https://github\.com/MoranWeissman/.*$`).

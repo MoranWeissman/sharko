@@ -1,5 +1,5 @@
 # generated: 2026-04-20
-# last_updated: 2026-04-26 — Epic V123-1 CLOSED (9/9). Epic V123-2: 1/6 done + 1/6 in review. V123-2.1 merged (PR #284). V123-2.2 (cosign verifier on sigstore-go v1.1.4) in review on dev/v1.23-cosign-verifier.
+# last_updated: 2026-04-26 — Epic V123-1 CLOSED (9/9). Epic V123-2: 2/6 done (PR #284, #286 merged); V123-2.3 (trust policy env var) next.
 # project: sharko
 # project_key: NOKEY
 # tracking_system: file-system
@@ -167,7 +167,7 @@ development_status:
   # Epic V123-2: Per-entry cosign signing
   epic-V123-2: in-progress
   V123-2-1-schema-v1-1-add-optional-signature-field: done  # PR #284 merged 2026-04-26 at b06eee1
-  V123-2-2-load-time-verification-via-cosign-library-open-question-7-2: review
+  V123-2-2-load-time-verification-via-cosign-library-open-question-7-2: done  # PR #286 merged 2026-04-26 at 8bb8074
   V123-2-3-trust-policy-via-sharko-catalog-trusted-identities: backlog
   V123-2-4-ui-verified-badge-signed-pseudo-filter: backlog
   V123-2-5-release-pipeline-sign-embedded-catalog-entries: backlog
