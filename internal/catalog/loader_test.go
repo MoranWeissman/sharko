@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -487,6 +488,189 @@ addons:
 		if e.Signature != nil {
 			t.Errorf("entry %q: Signature = %+v, want nil for v1.0 catalog", e.Name, e.Signature)
 		}
+	}
+}
+
+// --- V123-2.2 LoadBytesWithVerifier cases ---------------------------------
+
+// stubVerifier is a tiny VerifyEntryFunc-shaped callback test helper. It
+// records every call and returns whatever the test wired up. We do NOT
+// pull in the signing package here — that would couple loader tests to
+// the cosign dependency tree. The loader contract is "call verifyFn for
+// signed entries; surface its (verified, issuer, err) on the entry";
+// proving that contract holds is what these tests exist for.
+type stubVerifier struct {
+	verified bool
+	issuer   string
+	err      error
+	calls    []string // bundle URLs we were called with, in order
+}
+
+func (s *stubVerifier) Fn() VerifyEntryFunc {
+	return func(_ context.Context, _ []byte, bundleURL string) (bool, string, error) {
+		s.calls = append(s.calls, bundleURL)
+		return s.verified, s.issuer, s.err
+	}
+}
+
+// TestLoadBytesWithVerifier_PerEntryHappyPath: a YAML with one signed
+// entry + a stub verifier that returns (true, issuer, nil) → entry
+// surfaces Verified=true and SignatureIdentity=<issuer>.
+func TestLoadBytesWithVerifier_PerEntryHappyPath(t *testing.T) {
+	y := `
+addons:
+  - name: cert-manager
+    description: TLS lifecycle.
+    chart: cert-manager
+    repo: https://charts.jetstack.io
+    default_namespace: cert-manager
+    maintainers: [jetstack]
+    license: Apache-2.0
+    category: security
+    curated_by: [cncf-graduated]
+    signature:
+      bundle: https://signer.example.com/cert-manager.bundle
+`
+	stub := &stubVerifier{verified: true, issuer: "ci@example.com"}
+	cat, err := LoadBytesWithVerifier(context.Background(), []byte(y), stub.Fn())
+	if err != nil {
+		t.Fatalf("LoadBytesWithVerifier: %v", err)
+	}
+	e, ok := cat.Get("cert-manager")
+	if !ok {
+		t.Fatalf("expected cert-manager entry")
+	}
+	if !e.Verified {
+		t.Errorf("expected Verified=true; got false")
+	}
+	if e.SignatureIdentity != "ci@example.com" {
+		t.Errorf("expected SignatureIdentity 'ci@example.com'; got %q", e.SignatureIdentity)
+	}
+	if len(stub.calls) != 1 {
+		t.Fatalf("expected 1 verifier call; got %d", len(stub.calls))
+	}
+	if stub.calls[0] != "https://signer.example.com/cert-manager.bundle" {
+		t.Errorf("expected verifier called with bundle URL; got %q", stub.calls[0])
+	}
+}
+
+// TestLoadBytesWithVerifier_PerEntryUnsigned: an unsigned entry +
+// verifier wired in → entry surfaces Verified=false; the verifier is
+// NOT called. The whole point of the unsigned-but-accepted path.
+func TestLoadBytesWithVerifier_PerEntryUnsigned(t *testing.T) {
+	y := `
+addons:
+  - name: grafana
+    description: Visualisation.
+    chart: grafana
+    repo: https://grafana.github.io/helm-charts
+    default_namespace: monitoring
+    maintainers: [grafana]
+    license: AGPL-3.0
+    category: observability
+    curated_by: [cncf-incubating]
+`
+	stub := &stubVerifier{verified: true, issuer: "should-not-be-set"}
+	cat, err := LoadBytesWithVerifier(context.Background(), []byte(y), stub.Fn())
+	if err != nil {
+		t.Fatalf("LoadBytesWithVerifier: %v", err)
+	}
+	e, ok := cat.Get("grafana")
+	if !ok {
+		t.Fatalf("expected grafana entry")
+	}
+	if e.Verified {
+		t.Errorf("expected Verified=false on unsigned entry")
+	}
+	if e.SignatureIdentity != "" {
+		t.Errorf("expected empty SignatureIdentity; got %q", e.SignatureIdentity)
+	}
+	if len(stub.calls) != 0 {
+		t.Errorf("expected 0 verifier calls on unsigned entry; got %d", len(stub.calls))
+	}
+}
+
+// TestLoadBytesWithVerifier_PerEntryMismatch: a signed entry whose
+// verifier returns (false, "", nil) (sig mismatch / untrusted identity)
+// → entry surfaces Verified=false but is STILL LOADED (no error). The
+// design treats unverifiable signatures the same as missing signatures.
+func TestLoadBytesWithVerifier_PerEntryMismatch(t *testing.T) {
+	y := `
+addons:
+  - name: argo-cd
+    description: GitOps continuous delivery.
+    chart: argo-cd
+    repo: https://argoproj.github.io/argo-helm
+    default_namespace: argocd
+    maintainers: [argoproj]
+    license: Apache-2.0
+    category: gitops
+    curated_by: [cncf-graduated]
+    signature:
+      bundle: https://signer.example.com/argo-cd.bundle
+`
+	stub := &stubVerifier{verified: false, issuer: ""}
+	cat, err := LoadBytesWithVerifier(context.Background(), []byte(y), stub.Fn())
+	if err != nil {
+		t.Fatalf("LoadBytesWithVerifier: %v", err)
+	}
+	e, ok := cat.Get("argo-cd")
+	if !ok {
+		t.Fatalf("expected argo-cd entry to still load on verification failure")
+	}
+	if e.Verified {
+		t.Errorf("expected Verified=false on signature mismatch")
+	}
+	if e.SignatureIdentity != "" {
+		t.Errorf("expected empty SignatureIdentity on mismatch; got %q", e.SignatureIdentity)
+	}
+	// And the signature pointer itself stays attached to the entry —
+	// downstream code that wants to know "was this entry attempted-signed"
+	// can check Signature != nil even when Verified == false.
+	if e.Signature == nil {
+		t.Errorf("expected Signature pointer to be retained on mismatch")
+	}
+	if len(stub.calls) != 1 {
+		t.Errorf("expected 1 verifier call; got %d", len(stub.calls))
+	}
+}
+
+// TestLoadBytesWithVerifier_NilFn: nil VerifyEntryFunc → loader behaves
+// exactly like LoadBytes, no verification attempted, even for signed
+// entries. Provides backward-compatibility for callers that haven't
+// wired a verifier yet (V123-2.3 will).
+func TestLoadBytesWithVerifier_NilFn(t *testing.T) {
+	y := `
+addons:
+  - name: cert-manager
+    description: TLS lifecycle.
+    chart: cert-manager
+    repo: https://charts.jetstack.io
+    default_namespace: cert-manager
+    maintainers: [jetstack]
+    license: Apache-2.0
+    category: security
+    curated_by: [cncf-graduated]
+    signature:
+      bundle: https://signer.example.com/cert-manager.bundle
+`
+	cat, err := LoadBytesWithVerifier(context.Background(), []byte(y), nil)
+	if err != nil {
+		t.Fatalf("LoadBytesWithVerifier: %v", err)
+	}
+	e, ok := cat.Get("cert-manager")
+	if !ok {
+		t.Fatalf("expected cert-manager entry")
+	}
+	if e.Verified {
+		t.Errorf("expected Verified=false when no verifier wired")
+	}
+	if e.SignatureIdentity != "" {
+		t.Errorf("expected empty SignatureIdentity; got %q", e.SignatureIdentity)
+	}
+	// The signature is preserved in the YAML pass-through.
+	if e.Signature == nil || e.Signature.Bundle == "" {
+		t.Errorf("expected Signature to be preserved on the entry; got %+v", e.Signature)
 	}
 }
 
