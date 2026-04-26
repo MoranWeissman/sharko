@@ -1,9 +1,14 @@
 package signing
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/sigstore/sigstore-go/pkg/testing/ca"
+
+	"github.com/MoranWeissman/sharko/internal/catalog/sources"
 )
 
 // TestLoadTrustPolicy_UnsetUsesDefaults — env var truly unset → defaults
@@ -195,5 +200,71 @@ func TestLoadTrustPolicy_InvalidRegexErrors(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), EnvTrustedIdentities) {
 		t.Errorf("error %q does not mention env var name %q", err.Error(), EnvTrustedIdentities)
+	}
+}
+
+// TestLoadTrustPolicy_NoMatchRejects — V123-2.6 explicit "no match"
+// leg of the trust-policy table-driven AC. The other trust_test.go
+// cases cover the parser's expansion / validation behaviour; this one
+// exercises the runtime rejection of a signature whose subject doesn't
+// match any policy regex.
+//
+// Setup: build a TrustPolicy whose only pattern matches the
+// reserved-by-RFC-6761 `example.invalid` TLD (a regex that genuinely
+// cannot match a real Sigstore SAN). Sign a payload via VirtualSigstore
+// with a normal SAN, run the verifier, and assert:
+//
+//   - public return is (false, "", nil)
+//   - log reason contains "not in trust policy" (proves the
+//     untrusted-identity branch was taken, not the sig-mismatch branch)
+//
+// This is the third leg of the AC's table-driven trust-policy
+// requirement: default-regex hits, custom-regex hits, no-match-rejects.
+// The first two are implicit in the existing parser tests + the
+// happy-path verifier test; the third was missing as a standalone case
+// at the regex-match layer.
+func TestLoadTrustPolicy_NoMatchRejects(t *testing.T) {
+	vs, err := ca.NewVirtualSigstore()
+	if err != nil {
+		t.Fatalf("NewVirtualSigstore: %v", err)
+	}
+
+	// SAN that any reasonable Sigstore signer would produce. The
+	// trust policy below cannot match it.
+	const realSubject = "https://github.com/MoranWeissman/sharko/.github/workflows/release.yml@refs/tags/v1.23.0"
+	payload := []byte("payload signed by a legitimate identity")
+	entity, err := vs.Sign(realSubject, "https://oidc.example.com", payload)
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+
+	// Trust policy that intentionally does not match the SAN above.
+	// example.invalid is RFC-6761-reserved and will never appear in a
+	// real Sigstore subject — choosing it removes any chance of
+	// accidental overlap if a future test fixture changes.
+	policy := sources.TrustPolicy{
+		Identities: []string{`^https://example\.invalid/.*$`},
+	}
+
+	v, rec := withRecordedLogger(t, vs)
+	verified, issuer, verr := v.verifyEntity(
+		context.Background(),
+		entity,
+		payload,
+		policy,
+		"https://example.invalid/x.bundle",
+	)
+	if verr != nil {
+		t.Fatalf("verifyEntity: unexpected err: %v (no-match must NOT be err)", verr)
+	}
+	if verified {
+		t.Errorf("expected verified=false on no-match policy")
+	}
+	if issuer != "" {
+		t.Errorf("expected empty issuer on no-match, got %q", issuer)
+	}
+	if got := rec.LastReason(); !strings.Contains(got, "not in trust policy") {
+		t.Errorf("expected log reason to contain %q (untrusted-identity branch); got %q",
+			"not in trust policy", got)
 	}
 }

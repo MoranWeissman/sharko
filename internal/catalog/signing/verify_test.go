@@ -2,16 +2,107 @@ package signing
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/sigstore/sigstore-go/pkg/testing/ca"
+	"github.com/sigstore/sigstore-go/pkg/verify"
 
 	"github.com/MoranWeissman/sharko/internal/catalog"
 	"github.com/MoranWeissman/sharko/internal/catalog/sources"
 )
+
+// --- Log-recorder helper (V123-2.6) ------------------------------------------
+//
+// recordedLogger is a slog.Handler that captures every Record handed to it.
+// It exists so the four verification outcomes — happy_path,
+// signature_mismatch, untrusted_identity, empty_trust_policy — are
+// distinguishably observable in tests. Without it, the three failure
+// outcomes all collapse to the same (false, "", nil) public return; the
+// only thing that separates them is the `reason` attribute on the WARN
+// log emitted by verifyEntity.logFailure (or the absence of one, in the
+// happy path).
+//
+// WithAttrs returns the receiver itself so chained `.With(...)` calls
+// (e.g. the verifier's `slog.Default().With("component", ...)`)
+// continue to land records in one place. WithGroup behaves the same.
+// Both pre-attached attributes are dropped on the floor — the tests
+// only assert on the per-call `reason` attribute, so preserving the
+// component attr would be churn for no test value.
+
+type recordedLogger struct {
+	mu      sync.Mutex
+	records []slog.Record
+}
+
+func (r *recordedLogger) Enabled(_ context.Context, _ slog.Level) bool { return true }
+
+func (r *recordedLogger) Handle(_ context.Context, rec slog.Record) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.records = append(r.records, rec)
+	return nil
+}
+
+func (r *recordedLogger) WithAttrs(_ []slog.Attr) slog.Handler { return r }
+func (r *recordedLogger) WithGroup(_ string) slog.Handler      { return r }
+
+// Records returns a snapshot copy of the captured records. Safe to
+// call from a different goroutine than the one that produced them
+// (the verifier doesn't, but -race may schedule things creatively).
+func (r *recordedLogger) Records() []slog.Record {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]slog.Record, len(r.records))
+	copy(out, r.records)
+	return out
+}
+
+// LastReason scans the most recent record for a `reason` attribute and
+// returns its string value. Empty string when no records exist or when
+// the most recent record has no reason attr (e.g. the success log,
+// which uses `identity` instead). Tests assert with strings.Contains
+// on the result so future log-message wording tweaks don't break them.
+func (r *recordedLogger) LastReason() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.records) == 0 {
+		return ""
+	}
+	last := r.records[len(r.records)-1]
+	var reason string
+	last.Attrs(func(a slog.Attr) bool {
+		if a.Key == "reason" {
+			reason = a.Value.String()
+			return false
+		}
+		return true
+	})
+	return reason
+}
+
+// Reset drops every captured record. Useful inside table-driven
+// sub-tests that share a recorder across cases.
+func (r *recordedLogger) Reset() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.records = nil
+}
+
+// withRecordedLogger returns a Verifier wired to a fresh recordedLogger.
+// The returned recorder receives every record the verifier emits during
+// the test (success INFO + failure WARN). Trust material comes from the
+// supplied VirtualSigstore.
+func withRecordedLogger(t *testing.T, vs *ca.VirtualSigstore) (*Verifier, *recordedLogger) {
+	t.Helper()
+	rec := &recordedLogger{}
+	v := NewVerifier(nil, WithTrustedMaterial(vs), WithLogger(slog.New(rec)))
+	return v, rec
+}
 
 // --- Test fixture strategy ----------------------------------------------------
 //
@@ -72,6 +163,10 @@ func TestVerify_HappyPath(t *testing.T) {
 
 // 2. Signature-mismatch — valid bundle but payload differs.
 //    Per the SidecarVerifier contract this is (false, "", nil), NOT an error.
+//
+//    V123-2.6 addition: assert the WARN log's `reason` substring so the
+//    test proves the mismatch branch was actually taken (vs. the
+//    untrusted-identity branch, which surfaces the same public return).
 func TestVerify_SignatureMismatch(t *testing.T) {
 	vs, err := ca.NewVirtualSigstore()
 	if err != nil {
@@ -84,7 +179,7 @@ func TestVerify_SignatureMismatch(t *testing.T) {
 		t.Fatalf("Sign: %v", err)
 	}
 
-	v := newTestVerifier(t, vs)
+	v, rec := withRecordedLogger(t, vs)
 	verified, issuer, err := v.verifyEntity(context.Background(), entity, tamperedPayload, trustTestIdentity(), "https://example.invalid/x.bundle")
 	if err != nil {
 		t.Fatalf("verifyEntity: unexpected err: %v (sig mismatch must NOT be err)", err)
@@ -95,10 +190,18 @@ func TestVerify_SignatureMismatch(t *testing.T) {
 	if issuer != "" {
 		t.Errorf("expected empty issuer on failure, got %q", issuer)
 	}
+	if got := rec.LastReason(); !strings.Contains(got, "bundle verification failed") {
+		t.Errorf("expected log reason to contain %q (mismatch branch); got %q",
+			"bundle verification failed", got)
+	}
 }
 
 // 3. Untrusted-identity — valid bundle, signer SAN doesn't match any
 //    TrustPolicy regex. (false, "", nil).
+//
+//    V123-2.6 addition: assert the WARN log's `reason` substring so the
+//    test proves the untrusted-identity branch was actually taken (the
+//    public return is identical to the sig-mismatch branch).
 func TestVerify_UntrustedIdentity(t *testing.T) {
 	vs, err := ca.NewVirtualSigstore()
 	if err != nil {
@@ -113,7 +216,7 @@ func TestVerify_UntrustedIdentity(t *testing.T) {
 	policy := sources.TrustPolicy{
 		Identities: []string{`^trusted@example\.com$`}, // doesn't match attacker
 	}
-	v := newTestVerifier(t, vs)
+	v, rec := withRecordedLogger(t, vs)
 	verified, issuer, err := v.verifyEntity(context.Background(), entity, payload, policy, "https://example.invalid/x.bundle")
 	if err != nil {
 		t.Fatalf("verifyEntity: unexpected err: %v (untrusted identity must NOT be err)", err)
@@ -124,10 +227,18 @@ func TestVerify_UntrustedIdentity(t *testing.T) {
 	if issuer != "" {
 		t.Errorf("expected empty issuer on untrusted identity, got %q", issuer)
 	}
+	if got := rec.LastReason(); !strings.Contains(got, "signature verified but identity not in trust policy") {
+		t.Errorf("expected log reason to contain %q (untrusted-identity branch); got %q",
+			"signature verified but identity not in trust policy", got)
+	}
 }
 
 // 4. Empty trust policy — valid bundle but Identities is empty.
 //    Fail-closed: (false, "", nil) without ever even verifying the bundle.
+//
+//    V123-2.6 addition: assert the WARN log's `reason` substring so the
+//    test proves the fail-closed branch ran (vs. accidentally falling
+//    through to the verification branch and rejecting later).
 func TestVerify_EmptyTrustPolicy(t *testing.T) {
 	vs, err := ca.NewVirtualSigstore()
 	if err != nil {
@@ -140,7 +251,7 @@ func TestVerify_EmptyTrustPolicy(t *testing.T) {
 	}
 
 	emptyPolicy := sources.TrustPolicy{} // nil/empty Identities
-	v := newTestVerifier(t, vs)
+	v, rec := withRecordedLogger(t, vs)
 	verified, issuer, err := v.verifyEntity(context.Background(), entity, payload, emptyPolicy, "https://example.invalid/x.bundle")
 	if err != nil {
 		t.Fatalf("verifyEntity: unexpected err: %v (fail-closed must NOT be err)", err)
@@ -150,6 +261,10 @@ func TestVerify_EmptyTrustPolicy(t *testing.T) {
 	}
 	if issuer != "" {
 		t.Errorf("expected empty issuer on fail-closed, got %q", issuer)
+	}
+	if got := rec.LastReason(); !strings.Contains(got, "no trusted identities configured") {
+		t.Errorf("expected log reason to contain %q (fail-closed branch); got %q",
+			"no trusted identities configured", got)
 	}
 }
 
@@ -403,6 +518,207 @@ func TestCanonicalEntryBytes_Deterministic(t *testing.T) {
 }
 
 // --- Bonus: VerifyEntryFunc closure adapter (catalog.VerifyEntryFunc) -------
+
+// --- Outcome matrix (V123-2.6) -----------------------------------------------
+//
+// TestVerify_OutcomeMatrix is the single source of truth for the
+// four-outcome contract: (verified, issuer) AND log-reason substring.
+// Each case routes verifyEntity through a distinct internal branch and
+// asserts the side-effect that distinguishes it from the others.
+//
+// The four outcomes that operators can observe:
+//   - happy_path           — sig verifies, identity trusted
+//   - signature_mismatch   — sig fails crypto verification
+//   - untrusted_identity   — sig verifies but SAN doesn't match policy
+//   - empty_trust_policy   — fail-closed before any verification
+//
+// All four cases share the same VirtualSigstore so the trust material
+// is constant across the matrix. The recorder is reset per case so
+// LastReason() reads only the case under test.
+func TestVerify_OutcomeMatrix(t *testing.T) {
+	vs, err := ca.NewVirtualSigstore()
+	if err != nil {
+		t.Fatalf("NewVirtualSigstore: %v", err)
+	}
+
+	const trustedSAN = "trusted@example.com"
+	const untrustedSAN = "attacker@evil.example.com"
+	signedPayload := []byte("the canonical bytes that were signed")
+	tamperedPayload := []byte("the canonical bytes after tampering")
+
+	trustedEntity, err := vs.Sign(trustedSAN, testIssuer, signedPayload)
+	if err != nil {
+		t.Fatalf("Sign(trusted): %v", err)
+	}
+	untrustedEntity, err := vs.Sign(untrustedSAN, testIssuer, signedPayload)
+	if err != nil {
+		t.Fatalf("Sign(untrusted): %v", err)
+	}
+
+	trustTrustedSAN := sources.TrustPolicy{
+		Identities: []string{`^trusted@example\.com$`},
+	}
+
+	type matrixCase struct {
+		name          string
+		entity        verify.SignedEntity // *ca.TestEntity satisfies this
+		payload       []byte
+		policy        sources.TrustPolicy
+		wantVerified  bool
+		wantIssuer    string
+		wantLogReason string // substring; "" means no reason attr expected (success path)
+	}
+
+	cases := []matrixCase{
+		{
+			name:          "happy_path",
+			entity:        trustedEntity,
+			payload:       signedPayload,
+			policy:        trustTrustedSAN,
+			wantVerified:  true,
+			wantIssuer:    trustedSAN,
+			wantLogReason: "", // success path: no WARN, only INFO without `reason`
+		},
+		{
+			name:          "signature_mismatch",
+			entity:        trustedEntity,
+			payload:       tamperedPayload, // bytes don't match the signed bytes
+			policy:        trustTrustedSAN,
+			wantVerified:  false,
+			wantIssuer:    "",
+			wantLogReason: "bundle verification failed",
+		},
+		{
+			name:          "untrusted_identity",
+			entity:        untrustedEntity, // signed by attacker SAN
+			payload:       signedPayload,
+			policy:        trustTrustedSAN, // doesn't match attacker
+			wantVerified:  false,
+			wantIssuer:    "",
+			wantLogReason: "signature verified but identity not in trust policy",
+		},
+		{
+			name:          "empty_trust_policy",
+			entity:        trustedEntity,
+			payload:       signedPayload,
+			policy:        sources.TrustPolicy{}, // fail-closed
+			wantVerified:  false,
+			wantIssuer:    "",
+			wantLogReason: "no trusted identities configured",
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			v, rec := withRecordedLogger(t, vs)
+
+			verified, issuer, verr := v.verifyEntity(
+				context.Background(),
+				tc.entity,
+				tc.payload,
+				tc.policy,
+				"https://example.invalid/matrix.bundle",
+			)
+			if verr != nil {
+				t.Fatalf("verifyEntity: unexpected err: %v", verr)
+			}
+			if verified != tc.wantVerified {
+				t.Errorf("verified = %v, want %v", verified, tc.wantVerified)
+			}
+			if issuer != tc.wantIssuer {
+				t.Errorf("issuer = %q, want %q", issuer, tc.wantIssuer)
+			}
+			gotReason := rec.LastReason()
+			if tc.wantLogReason == "" {
+				if gotReason != "" {
+					t.Errorf("expected no `reason` attr on success path, got %q", gotReason)
+				}
+				return
+			}
+			if !strings.Contains(gotReason, tc.wantLogReason) {
+				t.Errorf("log reason = %q, want substring %q", gotReason, tc.wantLogReason)
+			}
+		})
+	}
+}
+
+// --- Coverage-floor backfill (V123-2.6) -------------------------------------
+//
+// Three small targeted tests added to push package coverage above the
+// 80% floor documented in the brief retrospective. Each one exercises
+// a previously-uncovered defensive branch so the coverage gain reflects
+// real behavioural assertions, not noise.
+
+// TestWithHTTPClient_Override — the HTTP client option must replace the
+// default 30s-timeout client when the operator supplies one. Asserts
+// the verifier ends up using the supplied client by routing a fetch
+// through a server whose handler we control.
+func TestWithHTTPClient_Override(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	customClient := srv.Client()
+	v := NewVerifier(nil, WithHTTPClient(customClient))
+	if v.httpClient != customClient {
+		t.Errorf("WithHTTPClient did not replace the default client")
+	}
+
+	// nil should be a no-op (preserves the default).
+	v2 := NewVerifier(customClient, WithHTTPClient(nil))
+	if v2.httpClient != customClient {
+		t.Errorf("WithHTTPClient(nil) must NOT clobber the existing client")
+	}
+}
+
+// TestFetchBundle_BodyTooLarge — bodies above maxBundleBytes (1 MiB)
+// are rejected. This is a defensive cap against a hostile bundle host
+// trying to OOM the verifier on a multi-GB download disguised as JSON.
+func TestFetchBundle_BodyTooLarge(t *testing.T) {
+	// Server returns 2 MiB of zero bytes — well above the 1 MiB cap.
+	huge := make([]byte, 2<<20)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(huge)
+	}))
+	defer srv.Close()
+
+	vs, err := ca.NewVirtualSigstore()
+	if err != nil {
+		t.Fatalf("NewVirtualSigstore: %v", err)
+	}
+	v := NewVerifier(srv.Client(), WithTrustedMaterial(vs))
+
+	verified, _, verr := v.Verify(context.Background(),
+		[]byte("payload"),
+		srv.URL+"/huge.bundle",
+		trustTestIdentity())
+	if verr == nil {
+		t.Fatal("expected error on oversized bundle, got nil")
+	}
+	if !strings.Contains(verr.Error(), "exceeds") {
+		t.Errorf("expected 'exceeds' in error, got: %v", verr)
+	}
+	if verified {
+		t.Error("expected verified=false on oversized bundle")
+	}
+}
+
+// TestUrlFingerprint_Empty — the empty-URL branch returns an empty
+// fingerprint (avoids logging a hash of "" which would always be the
+// same value). Tiny coverage gain but the contract IS load-bearing —
+// the loader uses urlFingerprint("") to skip logging when no URL is
+// available.
+func TestUrlFingerprint_Empty(t *testing.T) {
+	if got := urlFingerprint(""); got != "" {
+		t.Errorf("urlFingerprint(\"\") = %q, want empty", got)
+	}
+	if got := urlFingerprint("https://example.com/x.bundle"); len(got) != 10 {
+		t.Errorf("urlFingerprint produced %d chars, want 10", len(got))
+	}
+}
 
 // TestVerifyEntryFunc_ClosesOverPolicy proves the catalog-loader
 // adapter (VerifyEntryFunc method) bakes the trust policy into the

@@ -81,6 +81,26 @@ func WithTrustedMaterial(tm root.TrustedMaterial) VerifierOption {
 	}
 }
 
+// WithLogger overrides the slog.Logger the verifier uses for success
+// (INFO) and failure (WARN) records. Production callers leave this
+// alone — the default `slog.Default().With("component",
+// "catalog-signing")` is the right answer in every real deployment.
+//
+// The seam exists so V123-2.6 tests can swap in a recording handler
+// and assert on the exact `reason` attribute attached to a failure
+// log, which is the only observable that distinguishes a
+// signature-mismatch outcome from an untrusted-identity outcome
+// (both collapse to (false, "", nil) on the wire). nil is ignored to
+// keep the option tolerant of "build the slice up dynamically"
+// callers.
+func WithLogger(log *slog.Logger) VerifierOption {
+	return func(v *Verifier) {
+		if log != nil {
+			v.log = log
+		}
+	}
+}
+
 // staticTrust adapts a fixed root.TrustedMaterial to the
 // trustedMaterialProvider interface.
 type staticTrust struct{ tm root.TrustedMaterial }
