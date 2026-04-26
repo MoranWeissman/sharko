@@ -1,10 +1,10 @@
 ---
 story_key: V123-2-2-load-time-verification-via-cosign-library-open-question-7-2
 epic: V123-2 (Per-entry cosign signing)
-status: review
+status: done
 effort: L
 dispatched: 2026-04-26
-merged: TBD
+merged: 2026-04-26 (PR #286 → main @ 8bb8074)
 ---
 
 # Story V123-2.2 — Load-time verification via cosign library + resolves OQ §7.2
