@@ -57,3 +57,10 @@ release:
   github:
     owner: MoranWeissman
     name: sharko
+  # Story V123-2.5: attach per-entry cosign bundles produced by the
+  # sign-catalog-entries job to the GitHub release. The signed catalog YAML
+  # baked into the binary points `signature.bundle` URLs at these files via
+  # the deterministic `<release-base>/<name>.bundle` convention. Without
+  # them, runtime verification would 404.
+  extra_files:
+    - glob: ./_dist/catalog/*.bundle
