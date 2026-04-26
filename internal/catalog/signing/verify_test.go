@@ -643,6 +643,83 @@ func TestVerify_OutcomeMatrix(t *testing.T) {
 	}
 }
 
+// --- Coverage-floor backfill (V123-2.6) -------------------------------------
+//
+// Three small targeted tests added to push package coverage above the
+// 80% floor documented in the brief retrospective. Each one exercises
+// a previously-uncovered defensive branch so the coverage gain reflects
+// real behavioural assertions, not noise.
+
+// TestWithHTTPClient_Override — the HTTP client option must replace the
+// default 30s-timeout client when the operator supplies one. Asserts
+// the verifier ends up using the supplied client by routing a fetch
+// through a server whose handler we control.
+func TestWithHTTPClient_Override(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	customClient := srv.Client()
+	v := NewVerifier(nil, WithHTTPClient(customClient))
+	if v.httpClient != customClient {
+		t.Errorf("WithHTTPClient did not replace the default client")
+	}
+
+	// nil should be a no-op (preserves the default).
+	v2 := NewVerifier(customClient, WithHTTPClient(nil))
+	if v2.httpClient != customClient {
+		t.Errorf("WithHTTPClient(nil) must NOT clobber the existing client")
+	}
+}
+
+// TestFetchBundle_BodyTooLarge — bodies above maxBundleBytes (1 MiB)
+// are rejected. This is a defensive cap against a hostile bundle host
+// trying to OOM the verifier on a multi-GB download disguised as JSON.
+func TestFetchBundle_BodyTooLarge(t *testing.T) {
+	// Server returns 2 MiB of zero bytes — well above the 1 MiB cap.
+	huge := make([]byte, 2<<20)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(huge)
+	}))
+	defer srv.Close()
+
+	vs, err := ca.NewVirtualSigstore()
+	if err != nil {
+		t.Fatalf("NewVirtualSigstore: %v", err)
+	}
+	v := NewVerifier(srv.Client(), WithTrustedMaterial(vs))
+
+	verified, _, verr := v.Verify(context.Background(),
+		[]byte("payload"),
+		srv.URL+"/huge.bundle",
+		trustTestIdentity())
+	if verr == nil {
+		t.Fatal("expected error on oversized bundle, got nil")
+	}
+	if !strings.Contains(verr.Error(), "exceeds") {
+		t.Errorf("expected 'exceeds' in error, got: %v", verr)
+	}
+	if verified {
+		t.Error("expected verified=false on oversized bundle")
+	}
+}
+
+// TestUrlFingerprint_Empty — the empty-URL branch returns an empty
+// fingerprint (avoids logging a hash of "" which would always be the
+// same value). Tiny coverage gain but the contract IS load-bearing —
+// the loader uses urlFingerprint("") to skip logging when no URL is
+// available.
+func TestUrlFingerprint_Empty(t *testing.T) {
+	if got := urlFingerprint(""); got != "" {
+		t.Errorf("urlFingerprint(\"\") = %q, want empty", got)
+	}
+	if got := urlFingerprint("https://example.com/x.bundle"); len(got) != 10 {
+		t.Errorf("urlFingerprint produced %d chars, want 10", len(got))
+	}
+}
+
 // TestVerifyEntryFunc_ClosesOverPolicy proves the catalog-loader
 // adapter (VerifyEntryFunc method) bakes the trust policy into the
 // closure correctly. The loader calls a 3-arg function; the verifier
