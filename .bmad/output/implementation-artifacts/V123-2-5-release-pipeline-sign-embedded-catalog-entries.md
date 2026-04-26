@@ -1,10 +1,10 @@
 ---
 story_key: V123-2-5-release-pipeline-sign-embedded-catalog-entries
 epic: V123-2 (Per-entry cosign signing)
-status: review
+status: done
 effort: L
 dispatched: 2026-04-26
-merged: TBD
+merged: 2026-04-26 (PR #292 → main @ 8408478)
 ---
 
 # Story V123-2.5 — Release pipeline signs embedded catalog entries
