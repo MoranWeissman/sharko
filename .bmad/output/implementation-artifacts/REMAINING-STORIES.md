@@ -37,15 +37,11 @@ Each story ships with a retrospective record at
 - **V123-2.2** cosign keyless verifier (sigstore-go) + OQ §7.2 resolution — PR #286 → `8bb8074`
 - **V123-2.3** SHARKO_CATALOG_TRUSTED_IDENTITIES env parser + operator docs — PR #288 → `ccdd27a`
 - **V123-2.4** UI verified badge + Signed-only filter (binary chip; warning variants → V123-2.6) — PR #290 → `8b1481a`
+- **V123-2.5** release pipeline signs embedded catalog entries (cmd/catalog-sign + workflow restructure) — PR #292 → `8408478`
 
 ---
 
-## Epic V123-2 — Per-entry cosign signing (2 remaining)
-
-### V123-2.5 — Release pipeline: sign embedded catalog entries
-- Extend `.github/workflows/release.yml` to sign `embedded-addons-catalog.yaml` with cosign keyless.
-- Publish `.bundle` sidecar to release artifacts.
-- Embedded catalog ships `verified: true` out-of-the-box.
+## Epic V123-2 — Per-entry cosign signing (1 remaining)
 
 ### V123-2.6 — Tests: verification happy / mismatch / unsigned / untrusted
 - Fake-sigstore test harness (or use `cosign`'s test fixtures).
