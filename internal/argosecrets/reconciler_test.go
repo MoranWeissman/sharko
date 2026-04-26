@@ -3,6 +3,7 @@ package argosecrets
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,20 +20,37 @@ import (
 // --------------------------------------------------------------------------
 
 // mockGitReader implements GitReader for tests.
+//
+// The mutex guards concurrent access to the files map. Tests that exercise
+// the background reconcile loop (rec.Start) mutate the map while the loop's
+// goroutine is reading from it; without the lock the race detector fires.
 type mockGitReader struct {
+	mu    sync.RWMutex
 	files map[string][]byte
 	err   error
 }
 
 func (m *mockGitReader) GetFileContent(_ context.Context, path, _ string) ([]byte, error) {
+	// m.err is set once at construction and never mutated, so reading it
+	// outside the locked region is safe and keeps the critical section tight.
 	if m.err != nil {
 		return nil, m.err
 	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	data, ok := m.files[path]
 	if !ok {
 		return nil, fmt.Errorf("file not found: %s", path)
 	}
 	return data, nil
+}
+
+// setFile is a thread-safe setter for the files map. Tests use it to mutate
+// fixture content mid-flight while the reconciler goroutine may be reading.
+func (m *mockGitReader) setFile(path string, data []byte) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.files[path] = data
 }
 
 // mockCredProvider implements ClusterCredentialsProvider for tests.
@@ -225,7 +243,7 @@ func TestReconcileOnce_OrphanCleanup(t *testing.T) {
 
 	// Second pass: orphan was in previousOrphans — now safe to delete.
 	// Update content so the hash check does not short-circuit (use twoClusterYAMLAlt).
-	reader.files[clusterAddonsPath] = []byte(twoClusterYAMLAlt)
+	reader.setFile(clusterAddonsPath, []byte(twoClusterYAMLAlt))
 	rec.ReconcileOnce(context.Background())
 
 	// Orphan must be gone after the second pass.
@@ -439,7 +457,7 @@ func TestReconcileOnce_Trigger(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Change the file content so the triggered run does not short-circuit.
-	reader.files[clusterAddonsPath] = []byte(twoClusterYAMLAlt)
+	reader.setFile(clusterAddonsPath, []byte(twoClusterYAMLAlt))
 
 	// Trigger an immediate reconcile.
 	rec.Trigger()
