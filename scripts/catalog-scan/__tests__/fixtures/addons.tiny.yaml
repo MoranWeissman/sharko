@@ -1,0 +1,28 @@
+# Tiny test fixture for catalog-scan unit tests. Two entries with only
+# the required fields per internal/catalog/loader.go validateEntry().
+# Kept minimal so future schema tightening on optional fields doesn't
+# break the fixture; if a previously-optional field becomes required,
+# add it here.
+
+addons:
+  - name: cert-manager
+    description: Automated TLS certificate lifecycle management for Kubernetes.
+    chart: cert-manager
+    repo: https://charts.jetstack.io
+    default_namespace: cert-manager
+    license: Apache-2.0
+    maintainers: [jetstack]
+    category: security
+    curated_by: [cncf-graduated]
+    version: "1.20.2"
+
+  - name: external-dns
+    description: Configure external DNS records from Kubernetes ingresses.
+    chart: external-dns
+    repo: https://kubernetes-sigs.github.io/external-dns/
+    default_namespace: external-dns
+    license: Apache-2.0
+    maintainers: [kubernetes-sigs]
+    category: security
+    curated_by: [cncf-incubating]
+    version: "1.15.0"

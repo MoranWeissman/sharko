@@ -6,7 +6,7 @@
     "node": ">=18.0.0"
   },
   "scripts": {
-    "test": "node --test catalog-scan/ catalog-scan.test.mjs"
+    "test": "node --test 'catalog-scan/**/*.test.mjs' 'catalog-scan.test.mjs'"
   },
   "dependencies": {
     "yaml": "^2.8.2"
