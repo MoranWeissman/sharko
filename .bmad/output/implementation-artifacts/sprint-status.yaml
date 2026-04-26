@@ -1,5 +1,5 @@
 # generated: 2026-04-20
-# last_updated: 2026-04-26 — Epic V123-1 CLOSED (9/9). Epic V123-2: 2/6 done (PR #284, #286 merged); V123-2.3 (trust policy env var) next.
+# last_updated: 2026-04-26 — Epic V123-1 CLOSED (9/9). Epic V123-2: 2/6 done + 1/6 in review (V123-2.3 trust policy env var dispatched on dev/v1.23-trust-policy).
 # project: sharko
 # project_key: NOKEY
 # tracking_system: file-system
@@ -168,7 +168,7 @@ development_status:
   epic-V123-2: in-progress
   V123-2-1-schema-v1-1-add-optional-signature-field: done  # PR #284 merged 2026-04-26 at b06eee1
   V123-2-2-load-time-verification-via-cosign-library-open-question-7-2: done  # PR #286 merged 2026-04-26 at 8bb8074
-  V123-2-3-trust-policy-via-sharko-catalog-trusted-identities: backlog
+  V123-2-3-trust-policy-via-sharko-catalog-trusted-identities: review
   V123-2-4-ui-verified-badge-signed-pseudo-filter: backlog
   V123-2-5-release-pipeline-sign-embedded-catalog-entries: backlog
   V123-2-6-tests-verification-happy-mismatch-unsigned-untrusted-paths: backlog
