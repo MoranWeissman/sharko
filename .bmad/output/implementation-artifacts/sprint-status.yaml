@@ -1,5 +1,5 @@
 # generated: 2026-04-20
-# last_updated: 2026-04-26 — Epic V123-1 CLOSED (9/9). Epic V123-2: 4/6 done (PRs #284, #286, #288, #290); V123-2.5 (release pipeline signs embedded catalog) next.
+# last_updated: 2026-04-26 — Epic V123-1 CLOSED (9/9). Epic V123-2: 4/6 done + V123-2.5 in review (release pipeline signs embedded catalog entries via cosign keyless); V123-2.6 (verification path tests) next.
 # project: sharko
 # project_key: NOKEY
 # tracking_system: file-system
@@ -40,7 +40,7 @@
 # - Tagging: NO tags cut reflexively — merge PRs to main when green; tag only when user explicitly asks (see feedback_release_cadence.md)
 
 generated: 2026-04-20
-last_updated: 2026-04-26
+last_updated: 2026-04-26 (V123-2.5 in review)
 project: sharko
 project_key: NOKEY
 tracking_system: file-system
@@ -170,7 +170,7 @@ development_status:
   V123-2-2-load-time-verification-via-cosign-library-open-question-7-2: done  # PR #286 merged 2026-04-26 at 8bb8074
   V123-2-3-trust-policy-via-sharko-catalog-trusted-identities: done  # PR #288 merged 2026-04-26 at ccdd27a
   V123-2-4-ui-verified-badge-signed-pseudo-filter: done  # PR #290 merged 2026-04-26 at 8b1481a
-  V123-2-5-release-pipeline-sign-embedded-catalog-entries: backlog
+  V123-2-5-release-pipeline-sign-embedded-catalog-entries: review
   V123-2-6-tests-verification-happy-mismatch-unsigned-untrusted-paths: backlog
   epic-V123-2-retrospective: optional
 
