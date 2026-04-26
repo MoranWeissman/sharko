@@ -63,6 +63,7 @@ nav:
     - Security: operator/security.md
     - Supply Chain: operator/supply-chain.md
     - Catalog Sources: operator/catalog-sources.md
+    - Catalog Trust Policy: operator/catalog-trust-policy.md
     - Audit Log: operator/audit-log.md
     - Troubleshooting: operator/troubleshooting.md
   - CLI Reference:

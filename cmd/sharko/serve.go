@@ -216,22 +216,31 @@ var serveCmd = &cobra.Command{
 		//   2. The embedded-catalog loader — uses VerifyEntryFunc to
 		//      verify per-entry signatures at load time.
 		//
-		// V123-2.3 will land the SHARKO_CATALOG_TRUSTED_IDENTITIES env
-		// var parser; until then we pass an empty TrustPolicy, which is
-		// the canonical fail-closed default — every signed entry
-		// surfaces Verified=false because no identities are trusted yet.
-		// Operators see "Unverified" pills on the UI, which is the
-		// honest state for an unconfigured trust policy.
+		// V123-2.3 has landed the SHARKO_CATALOG_TRUSTED_IDENTITIES env
+		// var parser. Unset / empty falls back to a conservative default
+		// list (CNCF org workflows + Sharko's own release workflow).
+		// Operators extend the defaults via the literal "<defaults>"
+		// magic token, override entirely with their own regexes, or set
+		// "^$" for the explicit "trust nothing" escape hatch. Full doc:
+		// docs/site/operator/catalog-trust-policy.md.
+		//
+		// Failure to parse (e.g., a malformed regex) is fatal — the
+		// operator notices at startup instead of shipping a broken trust
+		// policy that silently rejects every signature.
 		//
 		// nil http.Client means the verifier uses a sane 30s default.
-		// V123-2.3 may extend this with a configurable trust-root
+		// V123-2.4 may extend this with a configurable trust-root
 		// provider (TUF). For now the verifier is unconfigured-trust-root
-		// and will return errors on any verification attempt — which is
-		// fine because empty TrustPolicy short-circuits before the trust
-		// root is even resolved. Once V123-2.3 + V123-2.4 land we'll
-		// wire WithTrustedMaterial here too.
+		// and will return errors on any verification attempt against an
+		// entry whose identity DOES match the policy; empty/missing
+		// identities short-circuit before the trust root is resolved.
 		catalogVerifier := signing.NewVerifier(nil /* http client */)
-		catalogTrustPolicy := sources.TrustPolicy{} // empty → fail-closed
+		catalogTrustPolicy, err := signing.LoadTrustPolicyFromEnv()
+		if err != nil {
+			return fmt.Errorf("load catalog trust policy: %w", err)
+		}
+		slog.Info("catalog trust policy loaded",
+			"identity_count", len(catalogTrustPolicy.Identities))
 
 		// Load the embedded curated catalog (v1.21). Failure here is fatal —
 		// a malformed catalog indicates a build-time regression, not a
