@@ -9,6 +9,7 @@ vendor/
 # Node
 ui/node_modules/
 ui/dist/
+scripts/node_modules/
 
 # IDE
 .idea/

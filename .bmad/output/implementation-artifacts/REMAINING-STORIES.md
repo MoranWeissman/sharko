@@ -44,11 +44,13 @@ Each story ships with a retrospective record at
 
 ---
 
-## Epic V123-3 — Trusted-source scanning bot (5 stories, all backlog)
+## Epic V123-3 — Trusted-source scanning bot (5 stories, 1 in review)
 
-### V123-3.1 — `scripts/catalog-scan.mjs` skeleton + plugin interface
-- Node.js script; pluggable sources.
-- Interface: `{name, discover() → [{name, repo, chart, version, trust_score}], annotate(entry)}`.
+### In review
+
+- **V123-3.1** — `scripts/catalog-scan.mjs` skeleton + plugin interface — PR pending merge on `dev/v1.23-scanner-skeleton`
+
+### Backlog
 
 ### V123-3.2 — CNCF Landscape scanner plugin
 - Pull `landscape.yml`, filter for Kubernetes Helm addons, map to schema.
