@@ -1,5 +1,5 @@
 # generated: 2026-04-20
-# last_updated: 2026-04-26 — Epic V123-1 CLOSED (9/9). Epic V123-2 CLOSED (6/6). Epic V123-3 1/5 in review — V123-3.1 (scanner skeleton).
+# last_updated: 2026-04-26 — Epic V123-1 CLOSED (9/9). Epic V123-2 CLOSED (6/6). Epic V123-3: 1/5 done — V123-3.1 PR #296 merged at 3eb97d0; next V123-3.2 (CNCF Landscape plugin).
 # project: sharko
 # project_key: NOKEY
 # tracking_system: file-system
@@ -40,7 +40,7 @@
 # - Tagging: NO tags cut reflexively — merge PRs to main when green; tag only when user explicitly asks (see feedback_release_cadence.md)
 
 generated: 2026-04-20
-last_updated: 2026-04-26 (V123-3.1 in review — opens Epic V123-3)
+last_updated: 2026-04-26 (V123-3.1 done — Epic V123-3 1/5)
 project: sharko
 project_key: NOKEY
 tracking_system: file-system
@@ -176,7 +176,7 @@ development_status:
 
   # Epic V123-3: Trusted-source scanning bot
   epic-V123-3: in-progress
-  V123-3-1-scripts-catalog-scan-mjs-skeleton-plugin-interface: review
+  V123-3-1-scripts-catalog-scan-mjs-skeleton-plugin-interface: done  # PR #296 merged 2026-04-26 at 3eb97d0 — opens Epic V123-3
   V123-3-2-cncf-landscape-scanner-plugin: backlog
   V123-3-3-aws-eks-blueprints-scanner-plugin: backlog
   V123-3-4-pr-opening-logic-github-workflow-open-question-7-3: backlog
