@@ -35,16 +35,11 @@ Each story ships with a retrospective record at
 
 - **V123-2.1** schema v1.1 — optional per-entry signature field — PR #284 → `b06eee1`
 - **V123-2.2** cosign keyless verifier (sigstore-go) + OQ §7.2 resolution — PR #286 → `8bb8074`
+- **V123-2.3** SHARKO_CATALOG_TRUSTED_IDENTITIES env parser + operator docs — PR #288 → `ccdd27a`
 
 ---
 
-## Epic V123-2 — Per-entry cosign signing (4 remaining)
-
-### V123-2.3 — Trust policy via `SHARKO_CATALOG_TRUSTED_IDENTITIES`
-- Env var: comma-separated cert-identity regexes (e.g., `^https://github\.com/MoranWeissman/.*$`).
-- Empty → no third-party trust (reject all signed).
-- Feed into `TrustPolicy{Identities}` from V123-1.2.
-- Doc at `docs/site/operator/catalog-trust-policy.md`.
+## Epic V123-2 — Per-entry cosign signing (3 remaining)
 
 ### V123-2.4 — UI verified badge + signed pseudo-filter
 - Green "verified" pill next to entry name when `verified: true`.
