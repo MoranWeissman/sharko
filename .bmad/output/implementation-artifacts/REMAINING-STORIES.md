@@ -36,15 +36,11 @@ Each story ships with a retrospective record at
 - **V123-2.1** schema v1.1 — optional per-entry signature field — PR #284 → `b06eee1`
 - **V123-2.2** cosign keyless verifier (sigstore-go) + OQ §7.2 resolution — PR #286 → `8bb8074`
 - **V123-2.3** SHARKO_CATALOG_TRUSTED_IDENTITIES env parser + operator docs — PR #288 → `ccdd27a`
+- **V123-2.4** UI verified badge + Signed-only filter (binary chip; warning variants → V123-2.6) — PR #290 → `8b1481a`
 
 ---
 
-## Epic V123-2 — Per-entry cosign signing (3 remaining)
-
-### V123-2.4 — UI verified badge + signed pseudo-filter
-- Green "verified" pill next to entry name when `verified: true`.
-- Browse filter chip: `Signed only`.
-- **Depends on:** V123-2.2 (`verified` flag populated).
+## Epic V123-2 — Per-entry cosign signing (2 remaining)
 
 ### V123-2.5 — Release pipeline: sign embedded catalog entries
 - Extend `.github/workflows/release.yml` to sign `embedded-addons-catalog.yaml` with cosign keyless.
