@@ -12,12 +12,14 @@ import (
 	"strings"
 	"time"
 
+	catalogembed "github.com/MoranWeissman/sharko/catalog"
 	"github.com/MoranWeissman/sharko/internal/advisories"
 	"github.com/MoranWeissman/sharko/internal/ai"
 	"github.com/MoranWeissman/sharko/internal/api"
 	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/catalog"
+	"github.com/MoranWeissman/sharko/internal/catalog/signing"
 	"github.com/MoranWeissman/sharko/internal/catalog/sources"
 	"github.com/MoranWeissman/sharko/internal/cmstore"
 	"github.com/MoranWeissman/sharko/internal/config"
@@ -205,10 +207,46 @@ var serveCmd = &cobra.Command{
 		srv.SetVersion(version)                 // Propagate ldflags-injected version to health endpoint
 		srv.SetTemplateFS(templates.TemplateFS) // Always available — init doesn't need a provider
 
+		// Construct the cosign-keyless verifier (V123-2.2 / Subsystem B).
+		// The verifier is shared between two callers:
+		//
+		//   1. The third-party catalog fetcher — uses it as a
+		//      sources.SidecarVerifier when a `.bundle` sidecar is
+		//      discovered next to a fetched YAML.
+		//   2. The embedded-catalog loader — uses VerifyEntryFunc to
+		//      verify per-entry signatures at load time.
+		//
+		// V123-2.3 will land the SHARKO_CATALOG_TRUSTED_IDENTITIES env
+		// var parser; until then we pass an empty TrustPolicy, which is
+		// the canonical fail-closed default — every signed entry
+		// surfaces Verified=false because no identities are trusted yet.
+		// Operators see "Unverified" pills on the UI, which is the
+		// honest state for an unconfigured trust policy.
+		//
+		// nil http.Client means the verifier uses a sane 30s default.
+		// V123-2.3 may extend this with a configurable trust-root
+		// provider (TUF). For now the verifier is unconfigured-trust-root
+		// and will return errors on any verification attempt — which is
+		// fine because empty TrustPolicy short-circuits before the trust
+		// root is even resolved. Once V123-2.3 + V123-2.4 land we'll
+		// wire WithTrustedMaterial here too.
+		catalogVerifier := signing.NewVerifier(nil /* http client */)
+		catalogTrustPolicy := sources.TrustPolicy{} // empty → fail-closed
+
 		// Load the embedded curated catalog (v1.21). Failure here is fatal —
 		// a malformed catalog indicates a build-time regression, not a
 		// runtime problem operators can work around.
-		cat, err := catalog.Load()
+		//
+		// V123-2.2: the embedded catalog is loaded through
+		// LoadBytesWithVerifier so that any future signing of embedded
+		// entries (V123-2.5 release pipeline) lights up the verified
+		// path automatically. Today's embedded entries are unsigned, so
+		// every entry surfaces Verified=false — which is correct.
+		cat, err := catalog.LoadBytesWithVerifier(
+			context.Background(),
+			catalogembed.AddonsYAML(),
+			catalogVerifier.VerifyEntryFunc(catalogTrustPolicy),
+		)
 		if err != nil {
 			return fmt.Errorf("load curated catalog: %w", err)
 		}
@@ -243,12 +281,17 @@ var serveCmd = &cobra.Command{
 			}
 
 			// Start the third-party catalog fetch loop (v1.23 Story V123-1.2).
-			// Nil verifier — Subsystem B wires a real one in V123-2.2, until
-			// then every entry inherits verified=false. Nil clock — use the
-			// production wall clock. Fetcher.Start is non-blocking; it
-			// spawns a supervisor goroutine that fans out one fetch per URL
-			// per tick. On shutdown, Fetcher.Stop drains in-flight fetches.
-			sourcesFetcher := sources.NewFetcher(catSources, nil /* verifier */, nil /* clock */)
+			// V123-2.2 wires the cosign verifier into the fetcher so that
+			// when a `.bundle` sidecar is discovered next to a fetched
+			// catalog YAML, the snapshot's Verified + Issuer fields are
+			// populated by signing.Verifier.Verify. The trust policy is
+			// the same fail-closed-empty default as the per-entry path
+			// above — V123-2.3 lands the env var that supplies real
+			// identities. Nil clock — use the production wall clock.
+			// Fetcher.Start is non-blocking; supervisor goroutine fans
+			// out one fetch per URL per tick. Fetcher.Stop drains
+			// in-flight fetches at shutdown.
+			sourcesFetcher := sources.NewFetcher(catSources, catalogVerifier, nil /* clock */)
 			srv.SetSourcesFetcher(sourcesFetcher)
 			sourcesFetcher.Start(context.Background())
 			defer sourcesFetcher.Stop()
