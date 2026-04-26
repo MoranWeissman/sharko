@@ -1,6 +1,6 @@
 # Sharko — Makefile
 
-.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e
+.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e catalog-scan
 
 PORT ?= 8080
 
@@ -74,6 +74,10 @@ lint: ## Go vet + UI build check
 
 clean: ## Remove build artifacts
 	rm -rf bin/ ui/dist/
+
+catalog-scan: ## Run the catalog-scan bot in --dry-run mode (V123-3.1 skeleton)
+	@npm install --prefix scripts --silent
+	@node scripts/catalog-scan.mjs --dry-run
 
 e2e: ## Run E2E tests against a Kind cluster (requires docker + kind)
 	bash tests/e2e/setup.sh
