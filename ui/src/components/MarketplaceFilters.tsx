@@ -62,6 +62,13 @@ export interface MarketplaceFiltersValue {
   curatedBy: CatalogCuratedBy[]
   licenses: string[]
   scoreTier: ScoreTierFilter
+  /**
+   * V123-2.4: when true, narrow the visible entries to those with
+   * `verified === true` (cosign-keyless signature accepted by the
+   * configured trust policy). Pseudo-filter — not persisted on the
+   * server, applied client-side in MarketplaceBrowseTab.
+   */
+  signedOnly: boolean
 }
 
 export interface MarketplaceFiltersProps {
@@ -120,7 +127,8 @@ export function MarketplaceFilters({
     value.categories.length > 0 ||
     value.curatedBy.length > 0 ||
     value.licenses.length > 0 ||
-    value.scoreTier !== 'any'
+    value.scoreTier !== 'any' ||
+    value.signedOnly
 
   const clear = () =>
     onChange({
@@ -129,7 +137,16 @@ export function MarketplaceFilters({
       curatedBy: [],
       licenses: [],
       scoreTier: 'any',
+      signedOnly: false,
     })
+
+  // V123-2.4: count of cosign-verified entries — surfaced next to the
+  // "Signed only" checkbox to mirror the per-group count pattern used
+  // by the other filter groups.
+  const signedCount = useMemo(
+    () => catalogEntries.filter((e) => e.verified === true).length,
+    [catalogEntries],
+  )
 
   return (
     <aside
@@ -200,6 +217,20 @@ export function MarketplaceFilters({
             />
           )
         })}
+      </FilterGroup>
+
+      {/* V123-2.4 — Signature: pseudo-filter for cosign-verified entries.
+          Single checkbox; count shows how many entries currently verify. */}
+      <FilterGroup label="Signature">
+        <FilterCheckbox
+          id="f-signed-only"
+          label="Signed only"
+          count={signedCount}
+          checked={value.signedOnly}
+          onChange={() =>
+            onChange({ ...value, signedOnly: !value.signedOnly })
+          }
+        />
       </FilterGroup>
 
       {/* License */}

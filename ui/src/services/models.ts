@@ -442,6 +442,21 @@ export interface CatalogEntry {
    * Present only when the entry was signed; absent on older catalogs.
    */
   signature?: CatalogEntrySignature
+  /**
+   * V123-2.2: post-load cosign-verification outcome. True only when the
+   * entry had a valid `signature.bundle` whose Sigstore bundle verified
+   * against the configured trust policy AND whose OIDC subject matched
+   * a TrustPolicy.Identities regex. False for unsigned entries, fail-
+   * closed defaults, mismatches, untrusted identities, and infra failures.
+   * Computed on the backend; UI treats missing as `false` for forwards-compat.
+   */
+  verified?: boolean
+  /**
+   * V123-2.2: OIDC subject (cert SAN) of the verified signer when
+   * `verified` is true. Empty/absent otherwise. Used by VerifiedBadge
+   * (V123-2.4) for the "Verified — signed by <identity>" tooltip.
+   */
+  signature_identity?: string
 }
 
 /**

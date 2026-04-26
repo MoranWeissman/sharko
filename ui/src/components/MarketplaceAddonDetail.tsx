@@ -30,6 +30,7 @@ import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
 import { ScorecardBadge } from '@/components/ScorecardBadge'
 import { SourceBadge } from '@/components/SourceBadge'
+import { VerifiedBadge } from '@/components/VerifiedBadge'
 import { AttributionNudge } from '@/components/AttributionNudge'
 import { MarkdownRenderer } from '@/components/MarkdownRenderer'
 import { VersionPicker } from '@/components/VersionPicker'
@@ -633,6 +634,15 @@ export function MarketplaceAddonDetail({
               <SourceBadge
                 source={entry.source}
                 sourceRecord={matchedSourceRecord}
+              />
+            )}
+            {/* V123-2.4 — cosign signature attribution. Only for curated
+                entries; ArtifactHub responses don't carry a Sharko-side
+                verified flag. */}
+            {source === 'curated' && (
+              <VerifiedBadge
+                verified={entry.verified}
+                signatureIdentity={entry.signature_identity}
               />
             )}
             {entry.github_stars !== undefined && entry.github_stars > 0 && (

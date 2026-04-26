@@ -32,6 +32,7 @@ import {
  *   ?mp_curated=a,b         curated_by multi-select
  *   ?mp_lic=a,b             license multi-select
  *   ?mp_tier=any|strong|moderate|weak|unknown   OpenSSF tier
+ *   ?mp_signed=1            V123-2.4 — show only cosign-verified entries
  */
 
 const VALID_TIERS: ScoreTierFilter[] = [
@@ -66,6 +67,7 @@ function parseFilters(params: URLSearchParams): MarketplaceFiltersValue {
     curatedBy: parseList(params.get('mp_curated')) as CatalogCuratedBy[],
     licenses: parseList(params.get('mp_lic')),
     scoreTier: VALID_TIERS.includes(tier) ? tier : 'any',
+    signedOnly: params.get('mp_signed') === '1',
   }
 }
 
@@ -84,6 +86,8 @@ function writeFilters(
   else out.delete('mp_lic')
   if (next.scoreTier !== 'any') out.set('mp_tier', next.scoreTier)
   else out.delete('mp_tier')
+  if (next.signedOnly) out.set('mp_signed', '1')
+  else out.delete('mp_signed')
   return out
 }
 
@@ -230,6 +234,11 @@ export function MarketplaceBrowseTab() {
         return false
       }
       if (!matchesScoreTier(e, filters.scoreTier)) return false
+      // V123-2.4 — "Signed only" pseudo-filter: keep only entries the
+      // backend has marked verified=true (cosign-keyless signature
+      // accepted by the configured trust policy). Older API responses
+      // that omit `verified` are treated as unsigned.
+      if (filters.signedOnly && e.verified !== true) return false
       if (q) {
         const hay = [
           e.name,
