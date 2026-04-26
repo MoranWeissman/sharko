@@ -1,10 +1,10 @@
 ---
 story_key: V123-2-3-trust-policy-via-sharko-catalog-trusted-identities
 epic: V123-2 (Per-entry cosign signing)
-status: review
+status: done
 effort: S
 dispatched: 2026-04-26
-merged: TBD
+merged: 2026-04-26 (PR #288 → main @ ccdd27a)
 ---
 
 # Story V123-2.3 — Trust policy via `SHARKO_CATALOG_TRUSTED_IDENTITIES`
