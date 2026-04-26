@@ -1,10 +1,10 @@
 ---
 story_key: V123-2-4-ui-verified-badge-signed-pseudo-filter
 epic: V123-2 (Per-entry cosign signing)
-status: review
+status: done
 effort: M
 dispatched: 2026-04-26
-merged: TBD
+merged: 2026-04-26 (PR #290 → main @ 8b1481a)
 ---
 
 # Story V123-2.4 — UI verified badge + "Signed only" pseudo-filter
