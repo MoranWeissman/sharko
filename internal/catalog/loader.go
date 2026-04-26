@@ -9,8 +9,10 @@ package catalog
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/url"
 	"sort"
 	"strconv"
@@ -80,6 +82,13 @@ type Signature struct {
 // cosign-keyless attestation pointer. Older catalogs without it deserialize
 // cleanly (the pointer stays nil); older Sharko binaries that don't yet know
 // the field tolerate it as unknown per design §4.2.
+//
+// V123-2.2 introduced two computed-at-load fields — `Verified` and
+// `SignatureIdentity` — that surface the cosign verification outcome on
+// the API. Both are tagged `yaml:"-"` for the same forgery-resistance
+// reason as `Source` (V123-1.4): without the dash, a hostile third-party
+// YAML could set `verified: true` and masquerade as cosign-attested
+// without ever producing a valid signature.
 type CatalogEntry struct {
 	Name                 string        `yaml:"name" json:"name"`
 	Description          string        `yaml:"description" json:"description"`
@@ -116,6 +125,22 @@ type CatalogEntry struct {
 	// `source: embedded` and masquerade as curated. Stateless per NFR §2.7 —
 	// never written to disk.
 	Source string `yaml:"-" json:"source,omitempty"`
+
+	// Verified is the post-load cosign-verification outcome (V123-2.2).
+	// True only when the entry had a valid `signature.bundle` URL whose
+	// fetched Sigstore bundle verified against the configured trust
+	// policy AND whose OIDC subject matched a TrustPolicy.Identities
+	// regex. False for unsigned entries, fail-closed defaults, sig
+	// mismatches, untrusted identities, and infrastructure failures
+	// fetching the bundle. Computed at load via LoadBytesWithVerifier;
+	// never persisted to YAML (`yaml:"-"` matches the Source pattern).
+	Verified bool `yaml:"-" json:"verified"`
+
+	// SignatureIdentity is the OIDC subject (cert SAN) of the verified
+	// signer when Verified is true. Empty otherwise. Powers the UI's
+	// "Verified by <issuer>" pill (V123-2.4). Same forgery-resistant
+	// `yaml:"-"` posture as Source/Verified.
+	SignatureIdentity string `yaml:"-" json:"signature_identity,omitempty"`
 }
 
 // ScoreValue is a small wrapper around "either a 0-10 float or the literal
@@ -243,6 +268,40 @@ func Load() (*Catalog, error) {
 	return LoadBytes(catalogembed.AddonsYAML())
 }
 
+// VerifyEntryFunc is the per-entry verification callback shape the
+// loader invokes when an entry has a non-nil Signature.Bundle URL and a
+// caller has opted into the verification path via LoadBytesWithVerifier.
+//
+// The function MUST honor the SidecarVerifier return contract verbatim
+// (see internal/catalog/sources/verifier.go):
+//
+//   - (true, "<subject>", nil) — signature verifies, identity trusted.
+//   - (false, "", nil)         — sig mismatch, untrusted identity, or
+//     fail-closed empty trust policy. NOT an error.
+//   - (false, "", err)         — infrastructure failure (network fetch,
+//     malformed bundle bytes, bad cert chain).
+//
+// canonicalEntryBytes is the deterministic YAML serialization of the
+// entry MINUS its Signature + computed-only fields (the message a
+// per-entry signature attests to). The loader computes the canonical
+// bytes inline via CatalogEntry.canonicalBytes — keeping that knowledge
+// in this package preserves the import-direction invariant
+// (signing → catalog → sources, never reversed; signing → catalog
+// stays clean by exposing a public CanonicalBytes accessor).
+//
+// Note: the trust policy is NOT a parameter on this callback. The
+// loader has no business knowing the trust policy structure — it lives
+// in the sources package, which the loader cannot import (would create
+// a cycle). Callers in cmd/sharko/serve.go close over the trust policy
+// when they construct the VerifyEntryFunc, baking it into the verifier.
+// signing.Verifier.VerifyEntryWithPolicy returns a closure of this
+// shape.
+type VerifyEntryFunc func(
+	ctx context.Context,
+	canonicalEntryBytes []byte,
+	bundleURL string,
+) (verified bool, issuer string, err error)
+
 // LoadBytes parses the given YAML payload. Exposed for tests; production code
 // uses Load() which reads the embedded bytes.
 func LoadBytes(data []byte) (*Catalog, error) {
@@ -288,6 +347,130 @@ func LoadBytes(data []byte) (*Catalog, error) {
 		cat.byName[e.Name] = i
 	}
 	return cat, nil
+}
+
+// LoadBytesWithVerifier is the verification-aware variant of LoadBytes.
+// When verifyFn is non-nil AND an entry has a non-nil Signature.Bundle,
+// the entry's Verified + SignatureIdentity fields are populated from
+// the verifier's outcome. Failures (sig mismatch, untrusted identity,
+// missing trust policy) land as Verified=false — they are NOT load
+// errors, because the design accepts unsigned-but-valid entries
+// alongside signed-and-verified ones.
+//
+// Infrastructure errors from the verifier (network fetch, malformed
+// bundle bytes) are also tolerated: the entry is loaded with
+// Verified=false and a WARN log line is emitted with the URL
+// fingerprint. The reasoning: a transient bundle-host outage should
+// not blackhole the catalog. Operators can tighten this stance later
+// via a "strict mode" knob, but the v1.23 ship is best-effort.
+//
+// Existing Load() / LoadBytes() callers see no change — they remain
+// the no-verification fast path used by tests and the embedded-catalog
+// boot path that hasn't been wired through serve.go yet.
+//
+// The trust policy is closed over by verifyFn at construction time
+// (see signing.Verifier.VerifyEntryFunc). An empty trust policy
+// triggers the verifier's fail-closed branch — every signed entry
+// surfaces Verified=false. This is the canonical default for a v1.23
+// install with no SHARKO_CATALOG_TRUSTED_IDENTITIES set yet (V123-2.3
+// lands the env var parser).
+func LoadBytesWithVerifier(
+	ctx context.Context,
+	data []byte,
+	verifyFn VerifyEntryFunc,
+) (*Catalog, error) {
+	if len(data) == 0 {
+		return nil, fmt.Errorf("catalog: empty payload")
+	}
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	var root yamlRoot
+	if err := dec.Decode(&root); err != nil && err != io.EOF {
+		return nil, fmt.Errorf("catalog: parse yaml: %w", err)
+	}
+	if len(root.Addons) == 0 {
+		return nil, fmt.Errorf("catalog: no entries found under 'addons:'")
+	}
+	cat := &Catalog{
+		entries: make([]CatalogEntry, 0, len(root.Addons)),
+		byName:  make(map[string]int, len(root.Addons)),
+	}
+	log := slog.Default().With("component", "catalog-loader")
+	for i, e := range root.Addons {
+		if err := validateEntry(&e); err != nil {
+			return nil, fmt.Errorf("catalog: entry #%d (name=%q): %w", i+1, e.Name, err)
+		}
+		if existing, dup := cat.byName[e.Name]; dup {
+			return nil, fmt.Errorf("catalog: duplicate entry name %q (entries #%d and #%d)",
+				e.Name, existing+1, i+1)
+		}
+		e.SecurityTier = e.SecurityScore.Tier()
+		e.Source = SourceEmbedded
+
+		// Per-entry verification — only when caller wired a verifier
+		// AND the entry actually carries a Signature.Bundle URL.
+		// Unsigned entries silently surface Verified=false (the zero
+		// value); they are accepted as legitimate "operator hasn't
+		// signed this yet" entries.
+		if verifyFn != nil && e.Signature != nil && e.Signature.Bundle != "" {
+			payload, cerr := e.canonicalBytes()
+			if cerr != nil {
+				// Defensive — yaml.Marshal of a struct copy shouldn't
+				// fail in practice. Treat as infra error: log + leave
+				// Verified=false; don't fail the load.
+				log.Warn("catalog entry canonical serialization failed",
+					"entry", e.Name, "err", cerr.Error())
+			} else {
+				ok, issuer, verr := verifyFn(ctx, payload, e.Signature.Bundle)
+				if verr != nil {
+					// Infra error — log with URL fingerprint (not the
+					// raw URL — bundle URLs may encode auth tokens).
+					log.Warn("catalog entry signature verification errored",
+						"entry", e.Name,
+						"err", verr.Error())
+				}
+				e.Verified = ok
+				e.SignatureIdentity = issuer
+			}
+		}
+
+		cat.entries = append(cat.entries, e)
+		cat.byName[e.Name] = len(cat.entries) - 1
+	}
+	// Deterministic order — same as LoadBytes; the merger downstream
+	// relies on byte-stable iteration.
+	sort.SliceStable(cat.entries, func(i, j int) bool { return cat.entries[i].Name < cat.entries[j].Name })
+	cat.byName = make(map[string]int, len(cat.entries))
+	for i, e := range cat.entries {
+		cat.byName[e.Name] = i
+	}
+	return cat, nil
+}
+
+// canonicalBytes returns the deterministic YAML serialization of this
+// entry minus its Signature + computed-only fields. This is the message
+// a per-entry cosign signature attests to, and it must be byte-identical
+// to whatever the signing tool produced when it signed the entry.
+//
+// yaml.v3 marshals struct fields in declaration order, so the output is
+// deterministic across Sharko binaries as long as CatalogEntry's field
+// order is stable. The signing package's CanonicalEntryBytes delegates
+// to this method to ensure both paths (loader-side verification + any
+// future signer tooling) produce the same bytes from the same struct.
+func (e CatalogEntry) canonicalBytes() ([]byte, error) {
+	e.Signature = nil
+	e.Verified = false
+	e.SignatureIdentity = ""
+	e.Source = ""
+	e.SecurityTier = ""
+	return yaml.Marshal(&e)
+}
+
+// CanonicalBytes is the public accessor for canonicalBytes — exported
+// so the signing package (which can't call the unexported method
+// directly across packages) can produce the same canonical form. Same
+// semantics: copy + zero out runtime fields + Marshal.
+func (e CatalogEntry) CanonicalBytes() ([]byte, error) {
+	return e.canonicalBytes()
 }
 
 // validateEntry enforces the schema constraints the loader is responsible for
