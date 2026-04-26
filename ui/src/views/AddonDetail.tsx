@@ -36,6 +36,7 @@ import { showToast } from '@/components/ToastNotification'
 import { AttributionNudge } from '@/components/AttributionNudge'
 import { MarkdownRenderer } from '@/components/MarkdownRenderer'
 import { SourceBadge } from '@/components/SourceBadge'
+import { VerifiedBadge } from '@/components/VerifiedBadge'
 import { StatCard } from '@/components/StatCard'
 import { StatusBadge } from '@/components/StatusBadge'
 import { LoadingState } from '@/components/LoadingState'
@@ -1763,6 +1764,20 @@ export function AddonDetail() {
                           />
                         </div>
                       )}
+                    </div>
+                  )}
+                  {/* V123-2.4 — cosign signature attribution row. Mirrors
+                      the Source row layout. The badge handles defensive
+                      defaults (missing verified === Unsigned). */}
+                  {catalogEntry && (
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">Verified</p>
+                      <div className="mt-0.5">
+                        <VerifiedBadge
+                          verified={catalogEntry.verified}
+                          signatureIdentity={catalogEntry.signature_identity}
+                        />
+                      </div>
                     </div>
                   )}
                 </div>
