@@ -161,6 +161,13 @@ definitions:
         description: |-
           Signature is the optional cosign-keyless attestation pointer
           (schema v1.1+; V123-2.1). nil when the entry is unsigned.
+      signature_identity:
+        description: |-
+          SignatureIdentity is the OIDC subject (cert SAN) of the verified
+          signer when Verified is true. Empty otherwise. Powers the UI's
+          "Verified by <issuer>" pill (V123-2.4). Same forgery-resistant
+          `yaml:"-"` posture as Source/Verified.
+        type: string
       source:
         description: |-
           Source is the origin of the entry — "embedded" for the binary-shipped
@@ -174,6 +181,17 @@ definitions:
         type: string
       superseded_by:
         type: string
+      verified:
+        description: |-
+          Verified is the post-load cosign-verification outcome (V123-2.2).
+          True only when the entry had a valid `signature.bundle` URL whose
+          fetched Sigstore bundle verified against the configured trust
+          policy AND whose OIDC subject matched a TrustPolicy.Identities
+          regex. False for unsigned entries, fail-closed defaults, sig
+          mismatches, untrusted identities, and infrastructure failures
+          fetching the bundle. Computed at load via LoadBytesWithVerifier;
+          never persisted to YAML (`yaml:"-"` matches the Source pattern).
+        type: boolean
     type: object
   github_com_MoranWeissman_sharko_internal_catalog.ScoreValue:
     properties:

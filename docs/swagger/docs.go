@@ -6768,6 +6768,10 @@ const docTemplate = `{
                         }
                     ]
                 },
+                "signature_identity": {
+                    "description": "SignatureIdentity is the OIDC subject (cert SAN) of the verified\nsigner when Verified is true. Empty otherwise. Powers the UI's\n\"Verified by \u003cissuer\u003e\" pill (V123-2.4). Same forgery-resistant\n` + "`" + `yaml:\"-\"` + "`" + ` posture as Source/Verified.",
+                    "type": "string"
+                },
                 "source": {
                     "description": "Source is the origin of the entry — \"embedded\" for the binary-shipped\ncatalog, or the full third-party catalog URL (from SHARKO_CATALOG_URLS).\nComputed at load/merge time — NOT persisted in YAML. The ` + "`" + `yaml:\"-\"` + "`" + ` tag\nis mandatory: without it, a malicious third-party YAML could set\n` + "`" + `source: embedded` + "`" + ` and masquerade as curated. Stateless per NFR §2.7 —\nnever written to disk.",
                     "type": "string"
@@ -6777,6 +6781,10 @@ const docTemplate = `{
                 },
                 "superseded_by": {
                     "type": "string"
+                },
+                "verified": {
+                    "description": "Verified is the post-load cosign-verification outcome (V123-2.2).\nTrue only when the entry had a valid ` + "`" + `signature.bundle` + "`" + ` URL whose\nfetched Sigstore bundle verified against the configured trust\npolicy AND whose OIDC subject matched a TrustPolicy.Identities\nregex. False for unsigned entries, fail-closed defaults, sig\nmismatches, untrusted identities, and infrastructure failures\nfetching the bundle. Computed at load via LoadBytesWithVerifier;\nnever persisted to YAML (` + "`" + `yaml:\"-\"` + "`" + ` matches the Source pattern).",
+                    "type": "boolean"
                 }
             }
         },
