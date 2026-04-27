@@ -110,9 +110,35 @@ remaining plugins. The failing plugin appears in `scanner_runs` with an
 `error` field; downstream tooling (V123-3.4's PR opener) decides
 whether to surface the partial result or skip it.
 
+## Real plugin example: `cncf-landscape.mjs`
+
+Shipped in V123-3.2. Pulls the canonical CNCF landscape YAML
+(`https://raw.githubusercontent.com/cncf/landscape/master/landscape.yml`)
+and proposes catalog adds/updates for **graduated + incubating**
+projects that surface a Helm chart reference (`extra.helm_chart_url`,
+`extra.chart_url`, `extra.helm_url`, or `extra.artifacthub_url`).
+Subcategories that don't map to a Sharko `category` schema enum (e.g.
+`Container Runtime`, `Scheduling & Orchestration`) are skipped.
+
+URL override for tests + local development:
+
+```bash
+SHARKO_CNCF_LANDSCAPE_URL=file:///path/to/fixture.yaml \
+  node scripts/catalog-scan.mjs --dry-run --catalog catalog/addons.yaml
+```
+
+The plugin emits `<TODO: ...>` markers for fields it cannot derive
+reliably (description, maintainers) and `"unknown"` for license —
+schema-valid but obviously synthetic so reviewers correct in the bot
+PR. Diff comparison only covers `chart`, `version`, `category`, `repo`
+(see `lib/diff.mjs`), so synthetic fields never churn updates.
+
+Acceptance criteria + design notes live in
+`.bmad/output/implementation-artifacts/V123-3-2-cncf-landscape-scanner-plugin.md`.
+
 ## Out of scope for this directory
 
-- Real upstream scanners — V123-3.2 / V123-3.3.
+- Additional upstream scanners — V123-3.3 (AWS EKS Blueprints).
 - Schema validation — the Go loader at `internal/catalog/loader.go` is
   authoritative; the scanner emits a *proposal*, not a validated entry.
 - Trust-score computation — plugins own that heuristic.

@@ -1,0 +1,126 @@
+# Minimal CNCF landscape.yml fixture for cncf-landscape plugin tests
+# (V123-3.2). Mirrors the upstream shape (top-level `landscape:` is an
+# array of {category, name, subcategories: [{subcategory, name, items}]}
+# with the dual-key `- category:` / `name:` idiom).
+#
+# Eight items exercise every branch:
+#   1. argo-cd-fixture     — graduated + helm + maps to gitops → ADD
+#   2. fixture-monitor-x   — incubating + helm + maps to observability → ADD
+#   3. cert-manager        — graduated + helm + EXISTING in addons.tiny.yaml
+#                            but proposes version 9.9.9 (catalog has 1.20.2)
+#                            → UPDATE (chart version diff)
+#   4. external-dns        — graduated + helm + EXISTING in addons.tiny.yaml
+#                            but proposes category=networking (catalog has
+#                            category=security) → UPDATE (category diff)
+#   5. sandbox-skipped     — sandbox + helm → SKIPPED (maturity filter)
+#   6. graduated-nohelm    — graduated + NO helm reference → SKIPPED
+#                            (helm filter)
+#   7. runtime-skipped     — graduated + helm + Container Runtime
+#                            (maps to null) → SKIPPED (category filter)
+#   8. unmapped-category   — graduated + helm + unknown subcategory
+#                            (no map entry) → SKIPPED (category filter)
+#
+# Expected: 2 adds + 2 updates = 4 proposals total.
+
+landscape:
+  - category:
+    name: App Definition and Development
+    subcategories:
+      - subcategory:
+        name: Continuous Integration & Delivery
+        items:
+          - item:
+            name: argo-cd-fixture
+            homepage_url: https://argo-cd.fixture.invalid/
+            project: graduated
+            repo_url: https://github.com/fixture/argo-cd
+            extra:
+              helm_chart_url: https://artifacthub.io/packages/helm/argo/argo-cd/7.6.10
+
+      - subcategory:
+        name: Database
+        items:
+          - item:
+            name: graduated-nohelm
+            homepage_url: https://nohelm.fixture.invalid/
+            project: graduated
+            repo_url: https://github.com/fixture/nohelm
+            # No extra block — no helm reference at all.
+
+  - category:
+    name: Observability and Analysis
+    subcategories:
+      - subcategory:
+        name: Monitoring
+        items:
+          - item:
+            name: fixture-monitor-x
+            homepage_url: https://monitor-x.fixture.invalid/
+            project: incubating
+            repo_url: https://github.com/fixture/monitor-x
+            extra:
+              helm_chart_url: https://artifacthub.io/packages/helm/fixture/monitor-x
+
+  - category:
+    name: Provisioning
+    subcategories:
+      - subcategory:
+        name: Security & Compliance
+        items:
+          - item:
+            name: cert-manager
+            homepage_url: https://cert-manager.io/
+            project: graduated
+            repo_url: https://github.com/cert-manager/cert-manager
+            extra:
+              helm_chart_url: https://artifacthub.io/packages/helm/cert-manager/cert-manager/9.9.9
+
+          - item:
+            name: sandbox-skipped
+            homepage_url: https://sandbox.fixture.invalid/
+            project: sandbox
+            repo_url: https://github.com/fixture/sandbox
+            extra:
+              helm_chart_url: https://artifacthub.io/packages/helm/fixture/sandbox/0.1.0
+
+  - category:
+    name: Orchestration & Management
+    subcategories:
+      - subcategory:
+        name: Coordination & Service Discovery
+        items:
+          - item:
+            name: external-dns
+            homepage_url: https://external-dns.fixture.invalid/
+            project: graduated
+            repo_url: https://github.com/kubernetes-sigs/external-dns
+            extra:
+              helm_chart_url: https://artifacthub.io/packages/helm/external-dns/external-dns
+
+  - category:
+    name: Runtime
+    subcategories:
+      - subcategory:
+        name: Container Runtime
+        items:
+          - item:
+            name: runtime-skipped
+            homepage_url: https://runtime.fixture.invalid/
+            project: graduated
+            repo_url: https://github.com/fixture/runtime
+            extra:
+              helm_chart_url: https://artifacthub.io/packages/helm/fixture/runtime/1.0.0
+
+  - category:
+    name: Special
+    subcategories:
+      - subcategory:
+        name: This Subcategory Is Not In The Map
+        items:
+          - item:
+            name: unmapped-category
+            homepage_url: https://unmapped.fixture.invalid/
+            project: graduated
+            repo_url: https://github.com/fixture/unmapped
+            extra:
+              helm_chart_url: https://artifacthub.io/packages/helm/fixture/unmapped/2.0.0
