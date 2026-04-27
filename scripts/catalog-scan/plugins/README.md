@@ -136,11 +136,63 @@ PR. Diff comparison only covers `chart`, `version`, `category`, `repo`
 Acceptance criteria + design notes live in
 `.bmad/output/implementation-artifacts/V123-3-2-cncf-landscape-scanner-plugin.md`.
 
+## Real plugin example: `aws-eks-blueprints.mjs`
+
+Shipped in V123-3.3. Walks the GitHub Contents API tree under
+`lib/addons/` in
+[`aws-quickstart/cdk-eks-blueprints`](https://github.com/aws-quickstart/cdk-eks-blueprints)
+and proposes catalog adds for any addon that surfaces a Helm chart
+reference and isn't already curated. Adds-only per V123-3.3 AC (the
+diff helper still records incidental updates on already-curated names
+when chart/version/repo drift, but the plugin doesn't engineer
+update-detection logic).
+
+Endpoints used per scan (~130 calls for the current 65-addon set):
+
+  1. `GET <BASE>/lib/addons` — top-level dir listing.
+  2. `GET <BASE>/lib/addons/<addon>` — per-addon dir listing.
+  3. `GET <download_url>` — raw `.ts` file content.
+
+**`GITHUB_TOKEN` is required for production scans.** Unauthenticated
+GitHub API allows only 60 req/hr; with token the budget rises to
+5000 req/hr. The plugin reads `X-RateLimit-Remaining` from each
+Contents API response — `info` log when ≥ 10, `warn` log when < 10
+(operator should configure `GITHUB_TOKEN`). HTTP 403 from rate-limit
+exhaustion propagates as a plugin error in `scanner_runs[].error`,
+not silently truncated.
+
+URL override for tests + local development:
+
+```bash
+SHARKO_EKS_BLUEPRINTS_API_BASE=http://127.0.0.1:8080/contents \
+  GITHUB_TOKEN=$(gh auth token) \
+  node scripts/catalog-scan.mjs --dry-run --catalog catalog/addons.yaml
+```
+
+Same TODO-marker policy as `cncf-landscape.mjs`:
+
+  - `description` → `"<TODO: human description>"`
+  - `default_namespace` → extracted namespace OR `"<slug>-system"`
+  - `license` → `"unknown"` (CI flags for human review)
+  - `maintainers` → `["<TODO: derive from chart repo>"]`
+
+These are schema-valid but obviously synthetic so reviewers correct
+in the bot PR. The diff helper only compares `chart, version,
+category, repo` so synthetic placeholders never trigger spurious
+updates against curated catalog data.
+
+Acceptance criteria + design notes live in
+`.bmad/output/implementation-artifacts/V123-3-3-aws-eks-blueprints-scanner-plugin.md`.
+
 ## Out of scope for this directory
 
-- Additional upstream scanners — V123-3.3 (AWS EKS Blueprints).
-- Schema validation — the Go loader at `internal/catalog/loader.go` is
-  authoritative; the scanner emits a *proposal*, not a validated entry.
-- Trust-score computation — plugins own that heuristic.
-- Cosign verification — V123-2 ships per-entry signatures at the
+- **Additional upstream scanners** — Terraform-flavored
+  `aws-ia/terraform-aws-eks-blueprints-addons` (could be a future
+  plugin; no story exists today). ArtifactHub plugin (no story).
+- **Schema validation** — the Go loader at
+  `internal/catalog/loader.go` is authoritative; the scanner emits a
+  *proposal*, not a validated entry.
+- **Trust-score computation** — plugins own that heuristic; V123-3.4
+  applies a baseline.
+- **Cosign verification** — V123-2 ships per-entry signatures at the
   embedded-catalog level; the scanner is one hop earlier.
