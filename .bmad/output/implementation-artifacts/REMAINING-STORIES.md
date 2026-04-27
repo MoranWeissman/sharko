@@ -44,20 +44,21 @@ Each story ships with a retrospective record at
 
 ---
 
-## Epic V123-3 — Trusted-source scanning bot (5 stories, 1 done, 1 in review)
+## Epic V123-3 — Trusted-source scanning bot (5 stories, 2 done, 1 in review)
 
 ### Done ✅
 
 - **V123-3.1** — `scripts/catalog-scan.mjs` skeleton + plugin interface — PR #296 → `3eb97d0`
+- **V123-3.2** — CNCF Landscape scanner plugin — PR #299 → `99341ef`
 
 ### In review
 
-- **V123-3.2** — CNCF Landscape scanner plugin — PR pending merge on `dev/v1.23-cncf-landscape-plugin`
+- **V123-3.3** — AWS EKS Blueprints scanner plugin — PR pending merge on `dev/v1.23-eks-blueprints-plugin`
+  - Walks GitHub Contents API under `lib/addons/` in `aws-quickstart/cdk-eks-blueprints` (CDK repo, not the Terraform sibling).
+  - Smoke run with `gh auth token`: 30 fetched, 19 adds + 11 updates against the 45-entry catalog.
+  - Pass-1 unauth confirmed the WARN-on-low-rate-limit code path (remaining=0 → warn → 403 → isolated as plugin error).
 
 ### Backlog
-
-### V123-3.3 — AWS EKS Blueprints scanner plugin
-- Parse `addons/` directory from `aws-ia/terraform-aws-eks-blueprints-addons`.
 
 ### V123-3.4 — PR-opening logic + GitHub workflow ⚠ resolves open question §7.3
 - Nightly cron `.github/workflows/catalog-scan.yml`.
