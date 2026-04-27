@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MoranWeissman/sharko/internal/catalog"
 	"github.com/MoranWeissman/sharko/internal/config"
 )
 
@@ -769,5 +770,132 @@ func TestFetcher_InvalidYAMLMarksFailed(t *testing.T) {
 	// Fresh start — no prior successful Entries to retain.
 	if len(snap.Entries) != 0 {
 		t.Fatalf("expected no entries on fresh-start parse failure, got %d", len(snap.Entries))
+	}
+}
+
+// --- V123-2.4 / B3 BLOCKER fix: per-entry verification ----------------
+//
+// The fetcher's pre-fix behaviour called `catalog.LoadBytes(body)` and
+// silently retained any `signature.bundle` URL on third-party entries
+// without verifying it — letting a compromised third-party curator flip
+// an entry's bundle URL and have Sharko serve it as if signed. The fix
+// wires an explicit `catalog.VerifyEntryFunc` callback through
+// SetEntryVerifyFunc; the fetcher dispatches to LoadBytesWithVerifier
+// when the callback is set. The two cases below exercise both outcomes:
+// trusted (Verified=true, identity recorded) and untrusted (Verified=false).
+
+// signedEntryYAML is the smallest valid third-party catalog payload that
+// carries an entry with a `signature.bundle` URL — enough to flip the
+// per-entry verifier path on inside LoadBytesWithVerifier.
+const signedEntryYAML = `addons:
+  - name: signed-one
+    description: Signed addon for per-entry verifier tests.
+    chart: signed-one
+    repo: https://charts.example.com
+    default_namespace: signed-one
+    default_sync_wave: 10
+    license: Apache-2.0
+    category: observability
+    curated_by: [cncf-sandbox]
+    maintainers: [test@example.com]
+    signature:
+      bundle: https://example.com/signed-one.bundle
+`
+
+// TestFetcher_PerEntryVerify_Trusted (AC-3 happy path) — when an entry
+// has a `signature.bundle` URL AND the wired entryVerifyFn returns
+// (true, "issuer@example", nil), the resulting snapshot's entry must
+// surface Verified=true with SignatureIdentity set.
+func TestFetcher_PerEntryVerify_Trusted(t *testing.T) {
+	ff := &flippable{status: http.StatusOK, body: signedEntryYAML}
+	srv := httptest.NewTLSServer(ff.handler())
+	t.Cleanup(srv.Close)
+
+	var calls atomic.Int32
+	verifyFn := func(_ context.Context, _ []byte, bundleURL string) (bool, string, error) {
+		calls.Add(1)
+		if bundleURL != "https://example.com/signed-one.bundle" {
+			t.Errorf("verifyFn got bundleURL %q, want stub URL", bundleURL)
+		}
+		return true, "issuer@example", nil
+	}
+
+	f := newTestFetcher(t, []*httptest.Server{srv}, nil)
+	f.SetEntryVerifyFunc(verifyFn)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	f.ForceRefresh(ctx)
+
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("entry verifyFn calls = %d, want exactly 1", got)
+	}
+	snap := f.Snapshots()[srv.URL+"/catalog.yaml"]
+	if snap == nil {
+		t.Fatal("expected snapshot to exist")
+	}
+	if snap.Status != StatusOK {
+		t.Fatalf("status = %q, want %q (err=%v)", snap.Status, StatusOK, snap.LastErr)
+	}
+	if len(snap.Entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(snap.Entries))
+	}
+	e := snap.Entries[0]
+	if !e.Verified {
+		t.Errorf("entry Verified = false, want true (verifyFn returned (true, ...))")
+	}
+	if e.SignatureIdentity != "issuer@example" {
+		t.Errorf("entry SignatureIdentity = %q, want %q", e.SignatureIdentity, "issuer@example")
+	}
+	// Sanity: the type assertion that loader populated this entry is
+	// the catalog.CatalogEntry shape, not a fetcher-local copy.
+	var _ catalog.CatalogEntry = e
+}
+
+// TestFetcher_PerEntryVerify_Untrusted (AC-3 negative path) — same
+// payload, but the verifier returns (false, "", nil) (sig-mismatch /
+// untrusted-identity outcome). The entry must be retained with
+// Verified=false; the load itself MUST NOT fail. This is the gap the B3
+// fix closes: pre-fix every signed third-party entry surfaced as
+// Verified=false because the loader never even called a verifier; the
+// new test makes "verifier returned untrusted" the explicit reason and
+// rules out a regression where untrusted=true leaks through.
+func TestFetcher_PerEntryVerify_Untrusted(t *testing.T) {
+	ff := &flippable{status: http.StatusOK, body: signedEntryYAML}
+	srv := httptest.NewTLSServer(ff.handler())
+	t.Cleanup(srv.Close)
+
+	var calls atomic.Int32
+	verifyFn := func(_ context.Context, _ []byte, _ string) (bool, string, error) {
+		calls.Add(1)
+		return false, "", nil
+	}
+
+	f := newTestFetcher(t, []*httptest.Server{srv}, nil)
+	f.SetEntryVerifyFunc(verifyFn)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	f.ForceRefresh(ctx)
+
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("entry verifyFn calls = %d, want exactly 1", got)
+	}
+	snap := f.Snapshots()[srv.URL+"/catalog.yaml"]
+	if snap == nil {
+		t.Fatal("expected snapshot to exist")
+	}
+	if snap.Status != StatusOK {
+		t.Fatalf("status = %q, want %q (err=%v)", snap.Status, StatusOK, snap.LastErr)
+	}
+	if len(snap.Entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(snap.Entries))
+	}
+	e := snap.Entries[0]
+	if e.Verified {
+		t.Errorf("entry Verified = true, want false (verifyFn returned (false, ...))")
+	}
+	if e.SignatureIdentity != "" {
+		t.Errorf("entry SignatureIdentity = %q, want \"\"", e.SignatureIdentity)
 	}
 }

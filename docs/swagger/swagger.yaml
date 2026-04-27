@@ -3200,9 +3200,9 @@ paths:
       description: Synchronously re-fetches every configured third-party catalog source
         without waiting for the next cadence tick. Returns the refreshed list in the
         same shape as GET /catalog/sources. The embedded catalog is always included
-        as a pseudo-source. Requires authentication — classified Tier 2 (admin) and
-        audit-logged; the audit Detail carries the list of attempted URLs and their
-        per-URL status. The endpoint is a no-op in embedded-only mode (no fetcher
+        as a pseudo-source. Requires authentication AND admin role — classified Tier
+        2 and audit-logged; the audit Detail carries the list of attempted URLs and
+        their per-URL status. The endpoint is a no-op in embedded-only mode (no fetcher
         wired) and returns just the embedded record.
       produces:
       - application/json
@@ -3213,6 +3213,11 @@ paths:
             items:
               $ref: '#/definitions/internal_api.catalogSourceRecord'
             type: array
+        "403":
+          description: Caller role lacks the catalog.sources.refresh action
+          schema:
+            additionalProperties: true
+            type: object
         "503":
           description: Catalog not loaded
           schema:
@@ -3220,7 +3225,7 @@ paths:
             type: object
       security:
       - BearerAuth: []
-      summary: Force-refresh all catalog sources (Tier 2)
+      summary: Force-refresh all catalog sources (Tier 2, admin-only)
       tags:
       - catalog
   /catalog/validate:
