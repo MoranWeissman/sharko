@@ -15,6 +15,8 @@ What's in there:
 - **Curated Catalog (v1.21)** — embedded YAML, loader, search, scorecard refresh, REST surface, ArtifactHub proxy/cache, security primitives.
 - **Release supply-chain** — cosign keyless signing wiring in `release.yml` and `.goreleaser.yaml`.
 
+For operational guidance on reviewing the `catalog-scan` bot's PRs, see the [Catalog Scan Runbook](./developer-guide/catalog-scan-runbook.md).
+
 > The developer guide is intentionally kept outside the MkDocs `docs/site/` tree so PRs that touch a Go package can update the matching guide section in the same diff. The MkDocs site links out to GitHub for the canonical render.
 
 ## UI accessibility target
