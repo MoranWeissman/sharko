@@ -44,26 +44,23 @@ Each story ships with a retrospective record at
 
 ---
 
-## Epic V123-3 — Trusted-source scanning bot (5 stories, 2 done, 1 in review)
+## Epic V123-3 — Trusted-source scanning bot (5 stories, 3 done, 1 in review)
 
 ### Done ✅
 
 - **V123-3.1** — `scripts/catalog-scan.mjs` skeleton + plugin interface — PR #296 → `3eb97d0`
 - **V123-3.2** — CNCF Landscape scanner plugin — PR #299 → `99341ef`
+- **V123-3.3** — AWS EKS Blueprints scanner plugin — PR #301 → `1572406`
 
 ### In review
 
-- **V123-3.3** — AWS EKS Blueprints scanner plugin — PR pending merge on `dev/v1.23-eks-blueprints-plugin`
-  - Walks GitHub Contents API under `lib/addons/` in `aws-quickstart/cdk-eks-blueprints` (CDK repo, not the Terraform sibling).
-  - Smoke run with `gh auth token`: 30 fetched, 19 adds + 11 updates against the 45-entry catalog.
-  - Pass-1 unauth confirmed the WARN-on-low-rate-limit code path (remaining=0 → warn → 403 → isolated as plugin error).
+- **V123-3.4** — PR-opening logic + GitHub workflow ⚠ resolves open question §7.3 — PR pending merge on `dev/v1.23-pr-opener`
+  - `scripts/catalog-scan/pr-open.mjs` consumes the changeset, pre-computes Scorecard / chart-resolves / license signals, edits `catalog/addons.yaml` via `lib/yaml-edit.mjs` (AST mode preserves comments + per-entry style), opens a draft PR with labels `catalog-scan` + `needs-review` against `--base main`.
+  - `.github/workflows/catalog-scan.yml`: daily 04:00 UTC + workflow_dispatch. Permissions exactly `contents: write` + `pull-requests: write` per NFR-V123-7.
+  - **OQ §7.3 resolved:** draft-to-main + label gating + NEVER auto-merge.
+  - Smoke run dry-run on real changeset (19 adds + 11 updates from EKS Blueprints): markdown body renders 5 columns correctly; concurrency guards exercised in unit tests.
 
 ### Backlog
-
-### V123-3.4 — PR-opening logic + GitHub workflow ⚠ resolves open question §7.3
-- Nightly cron `.github/workflows/catalog-scan.yml`.
-- Diff scanned entries vs. embedded catalog; open PR with additions/updates.
-- **Open question §7.3:** auto-merge policy — recommend label `catalog-bot` + human review required.
 
 ### V123-3.5 — Runbook docs for reviewers
 - `docs/site/developer-guide/catalog-scan-runbook.md`: how to review a bot PR, trust score rubric, reject criteria.

@@ -1,6 +1,6 @@
 # Sharko — Makefile
 
-.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e catalog-scan
+.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e catalog-scan catalog-scan-pr
 
 PORT ?= 8080
 
@@ -78,6 +78,10 @@ clean: ## Remove build artifacts
 catalog-scan: ## Run the catalog-scan bot in --dry-run mode (V123-3.1 skeleton)
 	@npm install --prefix scripts --silent
 	@node scripts/catalog-scan.mjs --dry-run
+
+catalog-scan-pr: ## Preview the catalog-scan PR body (V123-3.4) — runs scanner then pr-open --dry-run. Requires _dist/catalog-scan/changeset.json on disk; produce it with `GITHUB_TOKEN=$$(gh auth token) node scripts/catalog-scan.mjs --catalog catalog/addons.yaml`.
+	@npm install --prefix scripts --silent
+	@node scripts/catalog-scan/pr-open.mjs --dry-run
 
 e2e: ## Run E2E tests against a Kind cluster (requires docker + kind)
 	bash tests/e2e/setup.sh
