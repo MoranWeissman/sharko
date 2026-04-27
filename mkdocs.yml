@@ -75,7 +75,9 @@ nav:
   - Architecture:
     - Overview: architecture/overview.md
     - Repository Structure: architecture/repo-structure.md
-  - Developer Guide: developer-guide.md
+  - Developer Guide:
+    - Overview: developer-guide.md
+    - Catalog Scan Runbook: developer-guide/catalog-scan-runbook.md
 
 markdown_extensions:
   - admonition
