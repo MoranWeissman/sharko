@@ -44,26 +44,17 @@ Each story ships with a retrospective record at
 
 ---
 
-## Epic V123-3 — Trusted-source scanning bot (5 stories, 3 done, 1 in review)
+## Epic V123-3 — Trusted-source scanning bot — CLOSED (5/5 done)
 
 ### Done ✅
 
 - **V123-3.1** — `scripts/catalog-scan.mjs` skeleton + plugin interface — PR #296 → `3eb97d0`
 - **V123-3.2** — CNCF Landscape scanner plugin — PR #299 → `99341ef`
 - **V123-3.3** — AWS EKS Blueprints scanner plugin — PR #301 → `1572406`
+- **V123-3.4** — PR-opening logic + GitHub workflow + OQ §7.3 resolution — PR #303 → `e924ed1`. Workflow run #24996135521 opened the bot's first real PR (#305), closed as the close-without-merge smoke test.
+- **V123-3.5** — Reviewer runbook (`docs/site/developer-guide/catalog-scan-runbook.md` + mkdocs nav) — PR pending merge on `dev/v1.23-runbook`.
 
-### In review
-
-- **V123-3.4** — PR-opening logic + GitHub workflow ⚠ resolves open question §7.3 — PR pending merge on `dev/v1.23-pr-opener`
-  - `scripts/catalog-scan/pr-open.mjs` consumes the changeset, pre-computes Scorecard / chart-resolves / license signals, edits `catalog/addons.yaml` via `lib/yaml-edit.mjs` (AST mode preserves comments + per-entry style), opens a draft PR with labels `catalog-scan` + `needs-review` against `--base main`.
-  - `.github/workflows/catalog-scan.yml`: daily 04:00 UTC + workflow_dispatch. Permissions exactly `contents: write` + `pull-requests: write` per NFR-V123-7.
-  - **OQ §7.3 resolved:** draft-to-main + label gating + NEVER auto-merge.
-  - Smoke run dry-run on real changeset (19 adds + 11 updates from EKS Blueprints): markdown body renders 5 columns correctly; concurrency guards exercised in unit tests.
-
-### Backlog
-
-### V123-3.5 — Runbook docs for reviewers
-- `docs/site/developer-guide/catalog-scan-runbook.md`: how to review a bot PR, trust score rubric, reject criteria.
+**Epic V123-3 (Trusted-source scanning bot) — CLOSED on V123-3.5 merge (5/5 done).** End-to-end pipeline: skeleton (3.1) + 2 scanners (3.2, 3.3) + PR-opener + workflow (3.4) + reviewer runbook (3.5).
 
 ---
 
