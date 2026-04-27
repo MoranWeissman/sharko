@@ -11,12 +11,35 @@ package signing
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"regexp"
 	"strings"
 
 	"github.com/MoranWeissman/sharko/internal/catalog/sources"
 )
+
+// trustLogger is overridable for tests. Production uses
+// slog.Default().With("component", "catalog-trust-policy") on every call;
+// tests swap in a recording handler via SetTrustLoggerForTest to assert
+// on emitted warnings.
+var trustLogger = func() *slog.Logger {
+	return slog.Default().With("component", "catalog-trust-policy")
+}
+
+// SetTrustLoggerForTest overrides the package-level trustLogger function
+// so a test can install a recording handler. Returns a cleanup function
+// that restores the production logger; tests should defer the cleanup.
+//
+// Test-only — production callers never invoke this. The override is the
+// minimal seam needed to assert on slog.Warn output without wiring the
+// logger through the LoadTrustPolicyFromEnv signature (which would be a
+// gratuitous public API change for a defense-in-depth diagnostic).
+func SetTrustLoggerForTest(l *slog.Logger) func() {
+	prev := trustLogger
+	trustLogger = func() *slog.Logger { return l }
+	return func() { trustLogger = prev }
+}
 
 // EnvTrustedIdentities is the env var operators set to override or extend
 // the default trusted-identity regex list.
@@ -93,5 +116,39 @@ func LoadTrustPolicyFromEnv() (sources.TrustPolicy, error) {
 				"%s: invalid regex %q: %w", EnvTrustedIdentities, p, err)
 		}
 	}
+
+	// V123-PR-B (H6): defense-in-depth warning. cosign-style identity
+	// matching is regexp.MatchString, which is *substring* by default —
+	// `github.com/myorg/` is a perfectly valid pattern that trusts ANY
+	// SAN containing that substring (e.g. an attacker's
+	// `https://attacker.example.com/?fake=github.com/myorg/`). That may
+	// be intentional (operator wants org-wide trust) or it may be a
+	// mistake. We do NOT auto-anchor — that would silently change the
+	// operator's trust posture; we just emit a startup warning so the
+	// behaviour is explicit. Defaults are already anchored
+	// (`^...$`) so they never trigger the warning, regardless of how
+	// many times an operator includes <defaults>.
+	defaults := make(map[string]struct{}, len(DefaultTrustedIdentities))
+	for _, d := range DefaultTrustedIdentities {
+		defaults[d] = struct{}{}
+	}
+	logger := trustLogger()
+	for _, p := range patterns {
+		if _, isDefault := defaults[p]; isDefault {
+			continue
+		}
+		if !strings.HasPrefix(p, "^") || !strings.HasSuffix(p, "$") {
+			logger.Warn(
+				fmt.Sprintf(
+					"trust policy pattern is not fully anchored — '%s'. "+
+						"cosign-style identity matching is regexp.MatchString (substring); "+
+						"add ^ and $ unless substring matching is intentional",
+					p,
+				),
+				"pattern", p,
+			)
+		}
+	}
+
 	return sources.TrustPolicy{Identities: patterns}, nil
 }
