@@ -1,0 +1,90 @@
+# Catalog Scan — V123-3.4 Trusted-source scanning bot.
+#
+# Runs the catalog-scan plugins daily at 04:00 UTC, edits
+# `catalog/addons.yaml`, and opens ONE draft PR per scan run with
+# the labels `catalog-scan` + `needs-review`. Resolves OQ §7.3
+# (draft-to-main + label gating + NEVER auto-merge per NFR-V123-7).
+#
+# ## Required one-time setup before the first run
+#
+# The repo MUST have these labels (otherwise `gh pr create --label`
+# in the pr-open script fails):
+#
+#   gh label create catalog-scan --color BFD4F2 --description "Automated catalog-scan bot proposal"
+#   gh label create needs-review --color FBCA04 --description "Human review required"
+#
+# ## First-run validation
+#
+# This workflow can NOT be validated end-to-end without a real cron
+# firing. After merge, trigger once via `gh workflow run 'Catalog Scan'`
+# to confirm the full path; or wait for the daily 04:00 UTC fire.
+#
+# ## Permissions
+#
+# `contents: write` — push the scanner branch + edit catalog/addons.yaml.
+# `pull-requests: write` — open the draft PR.
+#
+# DO NOT add `actions: write`, automerge permissions, or merge-queue
+# config. NFR-V123-7 forbids auto-merge.
+
+name: Catalog Scan
+
+on:
+  schedule:
+    - cron: '0 4 * * *'   # daily 04:00 UTC
+  workflow_dispatch:       # manual trigger for first-run + ad-hoc tests
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: catalog-scan
+  cancel-in-progress: false   # let in-flight runs finish
+
+jobs:
+  scan-and-open-pr:
+    name: scan + open PR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # fetch-depth: 0 so `git ls-remote` sees remote branches and
+          # the new branch can be pushed cleanly. Shallow clones miss
+          # the `catalog-scan/<date>` collision check.
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: 'scripts/package-lock.json'
+
+      - name: Install scanner deps
+        run: npm ci --prefix scripts
+
+      - name: Configure git author
+        # Matches the project's CLAUDE.md convention — every commit is
+        # authored by Moran Weissman. The PR itself is still opened by
+        # github-actions[bot] (gh CLI default), but the catalog edit
+        # commit carries the human author.
+        run: |
+          git config user.name 'Moran Weissman'
+          git config user.email 'moran.weissman@gmail.com'
+
+      - name: Run catalog scan
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/catalog-scan.mjs --catalog catalog/addons.yaml
+
+      - name: Open PR (if changeset non-empty)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -s _dist/catalog-scan/changeset.json ]; then
+            node scripts/catalog-scan/pr-open.mjs
+          else
+            echo "no proposals — skipping PR open"
+          fi

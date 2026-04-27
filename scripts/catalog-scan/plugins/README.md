@@ -184,6 +184,38 @@ updates against curated catalog data.
 Acceptance criteria + design notes live in
 `.bmad/output/implementation-artifacts/V123-3-3-aws-eks-blueprints-scanner-plugin.md`.
 
+## Workflow integration
+
+The plugins are invoked daily by
+[`.github/workflows/catalog-scan.yml`](../../../.github/workflows/catalog-scan.yml)
+(V123-3.4). The workflow:
+
+1. Checks out the repo with `fetch-depth: 0`.
+2. Runs `node scripts/catalog-scan.mjs --catalog catalog/addons.yaml`,
+   which produces `_dist/catalog-scan/changeset.json` (or no file
+   when zero proposals).
+3. If the changeset is non-empty, runs
+   `node scripts/catalog-scan/pr-open.mjs`, which:
+   - Checks `gh pr list --label catalog-scan --state open` and skips
+     when an open bot PR already exists.
+   - Pre-computes Scorecard + chart-resolves + license signals per
+     proposal (failures degrade to `unknown`, never abort).
+   - Edits `catalog/addons.yaml` via `lib/yaml-edit.mjs` (AST mode
+     preserves comments + per-entry style).
+   - Commits + pushes to `catalog-scan/<UTC YYYY-MM-DD>` and opens a
+     **draft** PR with labels `catalog-scan` + `needs-review`.
+
+The workflow's permissions are exactly `contents: write` +
+`pull-requests: write`. **Auto-merge is forbidden by NFR-V123-7** —
+the bot opens a draft PR and human reviewers merge or close it.
+
+Local preview:
+
+```bash
+GITHUB_TOKEN=$(gh auth token) node scripts/catalog-scan.mjs --catalog catalog/addons.yaml
+make catalog-scan-pr   # prints the PR body markdown to stdout
+```
+
 ## Out of scope for this directory
 
 - **Additional upstream scanners** — Terraform-flavored
