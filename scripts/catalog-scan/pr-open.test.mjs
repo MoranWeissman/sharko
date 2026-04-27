@@ -310,6 +310,44 @@ test('pr-open: full flow — gh pr create called with --draft, both labels, --ba
   assert.match(catalogWrite[1], /- name: beta/);
 });
 
+test('pr-open: openPrExists rethrows on gh pr list failure (V123-PR-B / H5)', async () => {
+  // Pre-fix the helper logged a warning and returned false, which let a
+  // transient `gh` outage on the daily cron run pass the concurrency
+  // guard and open a duplicate PR. Rethrowing turns that into a loud
+  // failed run — one missed cron is recoverable, a duplicate PR is not.
+  const logger = makeRecordedLogger();
+  const ghErr = new Error('gh: not authenticated');
+  const { exec, calls } = buildExecStub({
+    'gh pr list': async () => { throw ghErr; },
+  });
+  const cs = makeChangeset({ adds: [makeAdd('beta')], updates: [] });
+  const { deps } = buildDeps({ changeset: cs, exec, logger });
+
+  const opts = { changeset: '_dist/catalog-scan/changeset.json', catalog: 'catalog/addons.yaml', dryRun: false, branch: 'catalog-scan/test' };
+
+  await assert.rejects(
+    () => run(opts, deps),
+    (err) => {
+      assert.match(err.message, /openPrExists: gh pr list failed/);
+      assert.match(err.message, /not authenticated/);
+      return true;
+    },
+  );
+
+  // Defensive: no git/gh-create work happened — failure must short-circuit.
+  const ghCreateCalls = calls.filter((c) => c.file === 'gh' && c.args[1] === 'create');
+  assert.equal(ghCreateCalls.length, 0, 'gh pr create must NOT run after the throw');
+  const gitMutateCalls = calls.filter((c) =>
+    c.file === 'git' && (c.args[0] === 'checkout' || c.args[0] === 'commit' || c.args[0] === 'push'),
+  );
+  assert.equal(gitMutateCalls.length, 0, 'no git mutating calls after the throw');
+
+  // The error log was emitted before the throw so a maintainer reading
+  // workflow logs sees the underlying gh error message.
+  const errLog = logger.records.find((r) => r.level === 'error' && r.msg.includes('open-PR check failed'));
+  assert.ok(errLog, 'expected open-PR-check error log');
+});
+
 test('pr-open: missing changeset file → exit 0 with "nothing to do" log (workflow safety)', async () => {
   const logger = makeRecordedLogger();
   const { exec } = buildExecStub();
