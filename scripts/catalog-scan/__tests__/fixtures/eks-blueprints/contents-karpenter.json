@@ -1,0 +1,9 @@
+[
+  {
+    "name": "index.ts",
+    "path": "lib/addons/karpenter/index.ts",
+    "type": "file",
+    "download_url": "${BASE_URL}/raw/karpenter.ts",
+    "html_url": "${BASE_URL}/blob/main/lib/addons/karpenter/index.ts"
+  }
+]

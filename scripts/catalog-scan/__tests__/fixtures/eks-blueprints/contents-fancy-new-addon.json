@@ -1,0 +1,16 @@
+[
+  {
+    "name": "fancy-new-addon.test.ts",
+    "path": "lib/addons/fancy-new-addon/fancy-new-addon.test.ts",
+    "type": "file",
+    "download_url": "${BASE_URL}/raw/fancy-new-addon.test.ts",
+    "html_url": "${BASE_URL}/blob/main/lib/addons/fancy-new-addon/fancy-new-addon.test.ts"
+  },
+  {
+    "name": "index.ts",
+    "path": "lib/addons/fancy-new-addon/index.ts",
+    "type": "file",
+    "download_url": "${BASE_URL}/raw/fancy-new-addon.ts",
+    "html_url": "${BASE_URL}/blob/main/lib/addons/fancy-new-addon/index.ts"
+  }
+]

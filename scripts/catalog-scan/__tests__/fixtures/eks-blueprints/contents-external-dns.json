@@ -1,0 +1,9 @@
+[
+  {
+    "name": "index.ts",
+    "path": "lib/addons/external-dns/index.ts",
+    "type": "file",
+    "download_url": "${BASE_URL}/raw/external-dns.ts",
+    "html_url": "${BASE_URL}/blob/main/lib/addons/external-dns/index.ts"
+  }
+]
