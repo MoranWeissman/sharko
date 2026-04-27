@@ -162,6 +162,108 @@ func TestMergedCatalogEntries_OverlappingNameEmbeddedWins(t *testing.T) {
 	}
 }
 
+// --- mergedCatalogGet (V123-PR-B / H1) -------------------------------
+//
+// The handlers GET /catalog/addons/{name}/readme, /versions, and
+// /project-readme used s.catalog.Get(name) prior to PR-B — which only sees
+// embedded entries and 404s on every third-party-only entry. The fix routes
+// them through s.mergedCatalogGet(name); these cases lock in the contract.
+
+// TestMergedCatalogGet_NilCatalog: s.catalog == nil → (zero, false). Same
+// short-circuit semantics as mergedCatalogEntries — callers should already
+// be 503'ing with a "catalog not loaded" guard before they reach the lookup.
+func TestMergedCatalogGet_NilCatalog(t *testing.T) {
+	s := &Server{}
+	got, ok := s.mergedCatalogGet("anything")
+	if ok {
+		t.Errorf("expected ok=false for nil catalog, got entry=%+v", got)
+	}
+	if got.Name != "" {
+		t.Errorf("expected zero CatalogEntry, got Name=%q", got.Name)
+	}
+}
+
+// TestMergedCatalogGet_EmbeddedHit_NoFetcher: with no fetcher wired, the
+// helper falls back to the embedded-only fast path. Embedded names hit;
+// names that don't exist anywhere miss.
+func TestMergedCatalogGet_EmbeddedHit_NoFetcher(t *testing.T) {
+	s := serverWithCatalog(t, testCatalog(t))
+
+	entry, ok := s.mergedCatalogGet("cert-manager")
+	if !ok {
+		t.Fatalf("expected cert-manager to resolve via embedded fast path")
+	}
+	if entry.Name != "cert-manager" {
+		t.Errorf("got Name=%q, want cert-manager", entry.Name)
+	}
+	if entry.Source != catalog.SourceEmbedded {
+		t.Errorf("expected Source=%q, got %q", catalog.SourceEmbedded, entry.Source)
+	}
+
+	if _, ok := s.mergedCatalogGet("does-not-exist"); ok {
+		t.Errorf("expected ok=false for nonexistent name")
+	}
+}
+
+// TestMergedCatalogGet_ThirdPartyOnly: the load-bearing case for PR-B/H1.
+// A name that exists only in a third-party snapshot must resolve through
+// mergedCatalogGet — pre-fix this returned (zero, false) and the readme/
+// versions/project-readme handlers 404'd.
+func TestMergedCatalogGet_ThirdPartyOnly(t *testing.T) {
+	s := serverWithCatalog(t, testCatalog(t))
+
+	tpURL := "https://internal.example.com/catalog.yaml"
+	tpEntry := catalog.CatalogEntry{
+		Name:             "third-party-only",
+		Description:      "Third-party-only addon for the H1 lookup test.",
+		Chart:            "tpo",
+		Repo:             "https://internal.example.com/charts",
+		DefaultNamespace: "tpo",
+		Maintainers:      []string{"platform"},
+		License:          "Apache-2.0",
+		Category:         "networking",
+		CuratedBy:        []string{"artifacthub-verified"},
+	}
+	snaps := map[string]*sources.SourceSnapshot{
+		tpURL: {
+			URL:           tpURL,
+			Status:        sources.StatusOK,
+			LastSuccessAt: time.Now(),
+			LastAttemptAt: time.Now(),
+			Entries:       []catalog.CatalogEntry{tpEntry},
+		},
+	}
+	s.SetSourcesFetcher(makeFetcherWithSnapshots(t, snaps))
+
+	got, ok := s.mergedCatalogGet("third-party-only")
+	if !ok {
+		t.Fatalf("expected third-party-only to resolve through mergedCatalogGet (H1 regression: pre-fix readme/versions/project-readme 404'd)")
+	}
+	if got.Name != "third-party-only" {
+		t.Errorf("got Name=%q, want third-party-only", got.Name)
+	}
+	if got.Source != tpURL {
+		t.Errorf("expected Source=%q (third-party URL), got %q", tpURL, got.Source)
+	}
+	if got.Chart != "tpo" {
+		t.Errorf("expected the merger to surface the snapshot's Chart=%q, got %q", "tpo", got.Chart)
+	}
+
+	// Embedded names continue to resolve (and embedded wins source).
+	em, ok := s.mergedCatalogGet("cert-manager")
+	if !ok {
+		t.Fatalf("expected embedded cert-manager to still resolve through merged lookup")
+	}
+	if em.Source != catalog.SourceEmbedded {
+		t.Errorf("expected embedded Source for cert-manager, got %q", em.Source)
+	}
+
+	// Unknown names still miss.
+	if _, ok := s.mergedCatalogGet("nope"); ok {
+		t.Errorf("expected ok=false for unknown name")
+	}
+}
+
 // TestMergedCatalogEntries_StaleSnapshotIgnored covers the defensive skip:
 // a snapshot whose Status is not StatusOK must not contribute entries to
 // the merged view even if Entries happens to carry last-good data. The

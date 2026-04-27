@@ -79,7 +79,10 @@ func (s *Server) handleGetCuratedProjectReadme(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusBadRequest, "addon name is required")
 		return
 	}
-	entry, ok := s.catalog.Get(name)
+	// V123-PR-B (H1): merged-catalog lookup so third-party snapshot entries
+	// resolve here too. 404 wording unchanged so existing clients/tests
+	// keep working.
+	entry, ok := s.mergedCatalogGet(name)
 	if !ok {
 		writeError(w, http.StatusNotFound, "not found in curated catalog")
 		return
