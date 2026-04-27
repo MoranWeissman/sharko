@@ -64,6 +64,7 @@ var ActionRequirements = map[string]Role{
 	"addon-secret.create":           RoleAdmin,
 	"addon-secret.delete":           RoleAdmin,
 	"pr.delete":                     RoleAdmin,
+	"catalog.sources.refresh":       RoleAdmin,
 
 	// Operator+ actions
 	"addon.enable":                  RoleOperator,

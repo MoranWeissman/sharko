@@ -211,6 +211,27 @@ type Fetcher struct {
 	// passed through to every verifier.Verify call.
 	trustPolicy TrustPolicy
 
+	// entryVerifyFn is the per-entry verification callback the fetcher
+	// hands to catalog.LoadBytesWithVerifier so that a third-party
+	// catalog YAML carrying `signature.bundle` URLs on individual
+	// entries gets each entry verified at load time. Nil means "no
+	// per-entry verification" — the fetcher falls back to catalog.LoadBytes
+	// (back-compat for tests + builds that haven't wired the verifier).
+	//
+	// V123-2.4 / B3 BLOCKER fix: pre-fix the fetcher only verified the
+	// whole-file sidecar (`.bundle` next to the catalog YAML) and never
+	// looked at per-entry signature URLs, letting a compromised
+	// third-party curator flip an entry's bundle URL to a hostile target
+	// and have Sharko serve it as if signed. The closure baked here
+	// closes over the same trust policy the embedded catalog uses, so
+	// the trust surface is unified across the two ingestion paths.
+	//
+	// IMPORTANT: this field is a `catalog.VerifyEntryFunc` (defined in
+	// internal/catalog), NOT anything from internal/catalog/signing —
+	// preserves the design §3.3.1 invariant that sources never imports
+	// signing.
+	entryVerifyFn catalog.VerifyEntryFunc
+
 	// stopCh is closed by Stop to unblock the supervisor loop.
 	stopCh chan struct{}
 	// stopOnce guards stopCh close + WaitGroup wait.
@@ -308,6 +329,26 @@ func (f *Fetcher) SetHTTPClientForTest(c *http.Client) {
 // SetTrustPolicyForTest overrides the trust policy. Test-only.
 func (f *Fetcher) SetTrustPolicyForTest(tp TrustPolicy) {
 	f.trustPolicy = tp
+}
+
+// SetEntryVerifyFunc installs the per-entry verification callback used
+// by fetchOne when a third-party catalog's individual entries carry
+// `signature.bundle` URLs (V123-2.4 / B3 BLOCKER fix). Production callers
+// in cmd/sharko/serve.go pass `catalogVerifier.VerifyEntryFunc(trustPolicy)`
+// — the same closure that gates the embedded catalog so both paths
+// share one trust surface.
+//
+// Nil is acceptable and resets the fetcher to the no-verification fast
+// path (catalog.LoadBytes). Tests that never wire a verifier rely on
+// this back-compat — see the existing fetcher tests.
+//
+// Mirrors the SetTrustPolicyForTest lock convention so a concurrent
+// caller cannot trip a data-race against an in-flight fetch reading
+// the field. Safe to call before or after Start.
+func (f *Fetcher) SetEntryVerifyFunc(fn catalog.VerifyEntryFunc) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.entryVerifyFn = fn
 }
 
 // SetSnapshotsForTest replaces the in-memory snapshot map. Test-only
@@ -552,7 +593,25 @@ func (f *Fetcher) fetchOne(ctx context.Context, rawURL string) {
 	// Schema validation — reuse the existing loader. On failure the
 	// prior snapshot's entries are retained (AC #3) but status flips
 	// to StatusFailed and the error is stored.
-	cat, err := catalog.LoadBytes(body)
+	//
+	// V123-2.4 / B3 BLOCKER fix: when an entry-level verify function
+	// is wired (the production path) we use LoadBytesWithVerifier so
+	// per-entry `signature.bundle` URLs get verified inline at load
+	// time. The nil-fn fallback to LoadBytes preserves behaviour for
+	// tests that construct a Fetcher without a signing-package wrapper
+	// — those tests never wire SetEntryVerifyFunc and continue to see
+	// Verified=false on every entry, matching the pre-fix behaviour
+	// they were calibrated against.
+	f.mu.RLock()
+	entryFn := f.entryVerifyFn
+	f.mu.RUnlock()
+
+	var cat *catalog.Catalog
+	if entryFn != nil {
+		cat, err = catalog.LoadBytesWithVerifier(ctx, body, entryFn)
+	} else {
+		cat, err = catalog.LoadBytes(body)
+	}
 	if err != nil {
 		validationErr := fmt.Errorf("schema validation: %w", err)
 		f.log.Warn("catalog source schema validation failed",

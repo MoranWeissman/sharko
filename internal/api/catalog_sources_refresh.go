@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
+	"github.com/MoranWeissman/sharko/internal/authz"
 )
 
 // refreshCtxTimeout bounds the handler's refresh window. ForceRefresh
@@ -32,15 +33,25 @@ const refreshCtxTimeout = 60 * time.Second
 
 // handleRefreshCatalogSources godoc
 //
-// @Summary Force-refresh all catalog sources (Tier 2)
-// @Description Synchronously re-fetches every configured third-party catalog source without waiting for the next cadence tick. Returns the refreshed list in the same shape as GET /catalog/sources. The embedded catalog is always included as a pseudo-source. Requires authentication — classified Tier 2 (admin) and audit-logged; the audit Detail carries the list of attempted URLs and their per-URL status. The endpoint is a no-op in embedded-only mode (no fetcher wired) and returns just the embedded record.
+// @Summary Force-refresh all catalog sources (Tier 2, admin-only)
+// @Description Synchronously re-fetches every configured third-party catalog source without waiting for the next cadence tick. Returns the refreshed list in the same shape as GET /catalog/sources. The embedded catalog is always included as a pseudo-source. Requires authentication AND admin role — classified Tier 2 and audit-logged; the audit Detail carries the list of attempted URLs and their per-URL status. The endpoint is a no-op in embedded-only mode (no fetcher wired) and returns just the embedded record.
 // @Tags catalog
 // @Produce json
 // @Security BearerAuth
 // @Success 200 {array} catalogSourceRecord "Refreshed catalog sources with per-source fetch status"
+// @Failure 403 {object} map[string]interface{} "Caller role lacks the catalog.sources.refresh action"
 // @Failure 503 {object} map[string]interface{} "Catalog not loaded"
 // @Router /catalog/sources/refresh [post]
 func (s *Server) handleRefreshCatalogSources(w http.ResponseWriter, r *http.Request) {
+	// V123-2.4 / B2 BLOCKER fix: catalog source refresh is Tier-2
+	// (admin-only, audit-logged). The handler historically lacked the
+	// authz gate, letting any authenticated operator/viewer drive a
+	// force-refresh — out of line with the documented tier classification.
+	// Gate first, before the catalog-loaded check, so callers without
+	// the role get a clean 403 regardless of catalog state.
+	if !authz.RequireWithResponse(w, r, "catalog.sources.refresh") {
+		return
+	}
 	if s.catalog == nil {
 		writeError(w, http.StatusServiceUnavailable, "catalog not loaded")
 		return

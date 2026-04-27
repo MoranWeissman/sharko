@@ -2440,14 +2440,14 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Synchronously re-fetches every configured third-party catalog source without waiting for the next cadence tick. Returns the refreshed list in the same shape as GET /catalog/sources. The embedded catalog is always included as a pseudo-source. Requires authentication — classified Tier 2 (admin) and audit-logged; the audit Detail carries the list of attempted URLs and their per-URL status. The endpoint is a no-op in embedded-only mode (no fetcher wired) and returns just the embedded record.",
+                "description": "Synchronously re-fetches every configured third-party catalog source without waiting for the next cadence tick. Returns the refreshed list in the same shape as GET /catalog/sources. The embedded catalog is always included as a pseudo-source. Requires authentication AND admin role — classified Tier 2 and audit-logged; the audit Detail carries the list of attempted URLs and their per-URL status. The endpoint is a no-op in embedded-only mode (no fetcher wired) and returns just the embedded record.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "catalog"
                 ],
-                "summary": "Force-refresh all catalog sources (Tier 2)",
+                "summary": "Force-refresh all catalog sources (Tier 2, admin-only)",
                 "responses": {
                     "200": {
                         "description": "Refreshed catalog sources with per-source fetch status",
@@ -2456,6 +2456,13 @@ const docTemplate = `{
                             "items": {
                                 "$ref": "#/definitions/internal_api.catalogSourceRecord"
                             }
+                        }
+                    },
+                    "403": {
+                        "description": "Caller role lacks the catalog.sources.refresh action",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
                         }
                     },
                     "503": {

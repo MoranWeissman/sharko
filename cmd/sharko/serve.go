@@ -228,13 +228,32 @@ var serveCmd = &cobra.Command{
 		// operator notices at startup instead of shipping a broken trust
 		// policy that silently rejects every signature.
 		//
-		// nil http.Client means the verifier uses a sane 30s default.
-		// V123-2.4 may extend this with a configurable trust-root
-		// provider (TUF). For now the verifier is unconfigured-trust-root
-		// and will return errors on any verification attempt against an
-		// entry whose identity DOES match the policy; empty/missing
-		// identities short-circuit before the trust root is resolved.
-		catalogVerifier := signing.NewVerifier(nil /* http client */)
+		// V123-2.4 / B1 BLOCKER fix: load the Sigstore public-good trust
+		// root via TUF (`signing.LoadProductionTrustedRoot`) and wire it
+		// into the verifier with WithTrustedMaterial. Pre-V123-2.4 the
+		// verifier was constructed without a trust root, which made the
+		// fail-closed staticTrust{} default reject every signature at
+		// runtime — the entire signed-entry feature was DOA.
+		//
+		// TUF fetch failures are non-fatal: an air-gapped Sharko
+		// deployment cannot reach `tuf-repo-cdn.sigstore.dev` and must
+		// still boot. We log a WARN and continue with the unconfigured
+		// verifier (every signed entry surfaces Verified=false, which is
+		// the correct conservative outcome offline). Operators see the
+		// degraded state in logs without losing the catalog.
+		//
+		// nil http.Client means the verifier uses a sane 30s default for
+		// bundle fetches.
+		var verifierOpts []signing.VerifierOption
+		trustRoot, trustRootErr := signing.LoadProductionTrustedRoot(context.Background())
+		if trustRootErr != nil {
+			slog.Warn("sigstore trust root unavailable; signed entries will surface as unverified",
+				"err", trustRootErr.Error())
+		} else {
+			verifierOpts = append(verifierOpts, signing.WithTrustedMaterial(trustRoot))
+			slog.Info("sigstore trust root loaded")
+		}
+		catalogVerifier := signing.NewVerifier(nil /* http client */, verifierOpts...)
 		catalogTrustPolicy, err := signing.LoadTrustPolicyFromEnv()
 		if err != nil {
 			return fmt.Errorf("load catalog trust policy: %w", err)
@@ -301,6 +320,16 @@ var serveCmd = &cobra.Command{
 			// out one fetch per URL per tick. Fetcher.Stop drains
 			// in-flight fetches at shutdown.
 			sourcesFetcher := sources.NewFetcher(catSources, catalogVerifier, nil /* clock */)
+			// V123-2.4 / B3 BLOCKER fix: per-entry verification on
+			// third-party feeds. Pre-fix the fetcher called
+			// catalog.LoadBytes which silently retained any
+			// `signature.bundle` URL on entries without verifying it,
+			// letting a compromised third-party curator flip an entry
+			// and have Sharko serve it as if signed. Wiring an explicit
+			// VerifyEntryFunc closes the gap: each entry with a
+			// signature.bundle is run through the same trust policy
+			// that gates the embedded catalog.
+			sourcesFetcher.SetEntryVerifyFunc(catalogVerifier.VerifyEntryFunc(catalogTrustPolicy))
 			srv.SetSourcesFetcher(sourcesFetcher)
 			sourcesFetcher.Start(context.Background())
 			defer sourcesFetcher.Stop()

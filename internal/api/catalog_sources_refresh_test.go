@@ -58,6 +58,89 @@ func auditDetail(t *testing.T, fields *audit.Fields) (urls []string, statusByURL
 	return payload.URLs, payload.Status
 }
 
+// --- V123-2.4 / B2 BLOCKER fix: admin-only authz gate ---
+//
+// The refresh endpoint is classified Tier-2 (admin-only, audit-logged).
+// The new authz call lives at the top of the handler (before the
+// catalog-loaded check) so that operators / viewers see a clean 403
+// regardless of catalog state. The pre-existing tests above intentionally
+// do NOT send role headers — `authz.Require` treats "no X-Sharko-User
+// AND no X-Sharko-Role" as no-auth mode and lets the request through, so
+// those tests keep exercising the success path. The cases below cover
+// the new gate.
+
+// TestRefreshCatalogSources_AuthzDeniesViewer — a viewer-role caller
+// must be rejected with HTTP 403 + JSON error body before any catalog
+// work happens. This is the load-bearing assertion for B2: pre-fix,
+// non-admins could drive force-refreshes; post-fix, only admins can.
+func TestRefreshCatalogSources_AuthzDeniesViewer(t *testing.T) {
+	s := serverWithCatalog(t, testCatalog(t))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/catalog/sources/refresh", nil)
+	req.Header.Set("X-Sharko-User", "viewer-user")
+	req.Header.Set("X-Sharko-Role", "viewer")
+	rw := httptest.NewRecorder()
+	s.handleRefreshCatalogSources(rw, req)
+
+	if rw.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body = %s", rw.Code, rw.Body.String())
+	}
+	if ct := rw.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+	var errBody map[string]interface{}
+	if err := json.Unmarshal(rw.Body.Bytes(), &errBody); err != nil {
+		t.Fatalf("decode 403 body: %v; body = %s", err, rw.Body.String())
+	}
+	if errBody["error"] == nil {
+		t.Errorf("403 body missing \"error\" key; got %+v", errBody)
+	}
+}
+
+// TestRefreshCatalogSources_AuthzDeniesOperator — an operator-role
+// caller is also denied. Operators have write-but-not-admin scope; the
+// refresh endpoint is admin-only because it generates significant
+// outbound traffic + audit-log noise.
+func TestRefreshCatalogSources_AuthzDeniesOperator(t *testing.T) {
+	s := serverWithCatalog(t, testCatalog(t))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/catalog/sources/refresh", nil)
+	req.Header.Set("X-Sharko-User", "operator-user")
+	req.Header.Set("X-Sharko-Role", "operator")
+	rw := httptest.NewRecorder()
+	s.handleRefreshCatalogSources(rw, req)
+
+	if rw.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body = %s", rw.Code, rw.Body.String())
+	}
+}
+
+// TestRefreshCatalogSources_AuthzAllowsAdmin — admin role passes the
+// gate and reaches the embedded-only success path (no fetcher → 200 with
+// the embedded pseudo-source). Mirrors
+// TestRefreshCatalogSources_NoFetcher_ReturnsEmbeddedOnly but with the
+// authz headers explicit so future readers see the contract.
+func TestRefreshCatalogSources_AuthzAllowsAdmin(t *testing.T) {
+	c := testCatalog(t)
+	s := serverWithCatalog(t, c)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/catalog/sources/refresh", nil)
+	req.Header.Set("X-Sharko-User", "admin-user")
+	req.Header.Set("X-Sharko-Role", "admin")
+	ctx, _ := audit.WithEnrichment(req.Context())
+	req = req.WithContext(ctx)
+	rw := httptest.NewRecorder()
+	s.handleRefreshCatalogSources(rw, req)
+
+	if rw.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", rw.Code, rw.Body.String())
+	}
+	var body []catalogSourceRecord
+	if err := json.Unmarshal(rw.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v; body = %s", err, rw.Body.String())
+	}
+	if len(body) != 1 || body[0].URL != "embedded" {
+		t.Errorf("admin success body = %+v, want embedded-only single-row", body)
+	}
+}
+
 // TestRefreshCatalogSources_503OnNilCatalog — when the embedded catalog
 // never loaded (misconfiguration), the force-refresh endpoint surfaces 503
 // with an error JSON body. Matches the V123-1.5 GET contract for the same
