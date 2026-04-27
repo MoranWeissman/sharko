@@ -247,6 +247,24 @@ type Fetcher struct {
 	mu        sync.RWMutex
 	snapshots map[string]*SourceSnapshot
 
+	// refreshMu serializes the fetchAll (ticker) and fetchMany
+	// (ForceRefresh) fanouts. V123-PR-B (H2): pre-fix a tick that fired
+	// while ForceRefresh was in flight (or vice versa) ran two
+	// simultaneous fanouts that both tried to overwrite the same per-URL
+	// snapshot — racy, and -race flagged the writes during stress runs.
+	// This is a coarser lock than mu (which protects the snapshot map);
+	// it wraps the *entire* fanout so a slow fetch can serialize with a
+	// concurrent ticker tick.
+	//
+	// Tradeoff: a tick that fires while a long ForceRefresh is in flight
+	// will sit on this lock for up to one fetch cycle (httpTimeout = 30s
+	// in production); likewise a POST /refresh arriving mid-tick has to
+	// wait. That's a deliberate accept — small catalog source counts
+	// (single digits in practice) make the simpler stdlib mutex
+	// preferable to per-URL singleflight for the v1.23 ship. See
+	// V123-pretag-highs §H2 design notes.
+	refreshMu sync.Mutex
+
 	// started is flipped the first time Start runs so a double-Start
 	// is a no-op rather than a double-goroutine leak.
 	started bool
@@ -526,26 +544,44 @@ func (f *Fetcher) resolveTargets(urls []string) []string {
 }
 
 // fetchAll is the internal helper for the supervisor's per-tick fanout
-// over every configured source. Unlike ForceRefresh, it does NOT block
-// the caller's goroutine — it spawns worker goroutines and returns.
-// The supervisor doesn't need to wait; the next tick will just launch
-// a fresh batch. In-flight fetches are still tracked via fetchWG so
-// Stop can drain them.
+// over every configured source. It blocks for the duration of the
+// fanout (changed in V123-PR-B/H2): the supervisor calls fetchAll
+// serially, so we hold f.refreshMu for the whole tick to keep
+// ticker-driven and ForceRefresh-driven fanouts from racing on the same
+// snapshot map. In-flight per-URL fetches are still tracked via fetchWG
+// so Stop can drain them.
+//
+// Pre-H2 the function was non-blocking — it spawned goroutines and
+// returned. The supervisor still ran serially (one tick at a time) so
+// nothing observable changed for ticker callers; the difference matters
+// only when ForceRefresh races against a tick.
 func (f *Fetcher) fetchAll(ctx context.Context) {
+	f.refreshMu.Lock()
+	defer f.refreshMu.Unlock()
+
+	var wg sync.WaitGroup
 	for _, src := range f.cfg.Sources {
 		src := src
+		wg.Add(1)
 		f.fetchWG.Add(1)
 		go func() {
+			defer wg.Done()
 			defer f.fetchWG.Done()
 			f.fetchOne(ctx, src.URL)
 		}()
 	}
+	wg.Wait()
 }
 
 // fetchMany is the blocking equivalent of fetchAll used by
 // ForceRefresh. It spins up one goroutine per URL, waits for all to
-// finish, and returns.
+// finish, and returns. V123-PR-B (H2) added the f.refreshMu lock so a
+// ForceRefresh queues behind any in-flight ticker fanout (and vice
+// versa).
 func (f *Fetcher) fetchMany(ctx context.Context, urls []string) {
+	f.refreshMu.Lock()
+	defer f.refreshMu.Unlock()
+
 	var wg sync.WaitGroup
 	for _, u := range urls {
 		u := u
