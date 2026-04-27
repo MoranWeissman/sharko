@@ -1,5 +1,5 @@
 # generated: 2026-04-20
-# last_updated: 2026-04-27 — Epic V123-1 CLOSED (9/9). Epic V123-2 CLOSED (6/6). Epic V123-3: 2/5 done, V123-3.3 (EKS Blueprints plugin) IN REVIEW (smoke run: 19 adds + 11 updates against 45-entry catalog).
+# last_updated: 2026-04-27 — Epic V123-1 CLOSED (9/9). Epic V123-2 CLOSED (6/6). Epic V123-3: 3/5 done — V123-3.3 PR #301 merged at 1572406 (smoke: 19 adds + 11 updates); next V123-3.4 (PR-opening logic + GH workflow).
 # project: sharko
 # project_key: NOKEY
 # tracking_system: file-system
@@ -40,7 +40,7 @@
 # - Tagging: NO tags cut reflexively — merge PRs to main when green; tag only when user explicitly asks (see feedback_release_cadence.md)
 
 generated: 2026-04-20
-last_updated: 2026-04-27 (V123-3.3 in review — Epic V123-3 3/5)
+last_updated: 2026-04-27 (V123-3.3 done — Epic V123-3 3/5)
 project: sharko
 project_key: NOKEY
 tracking_system: file-system
@@ -178,7 +178,7 @@ development_status:
   epic-V123-3: in-progress
   V123-3-1-scripts-catalog-scan-mjs-skeleton-plugin-interface: done  # PR #296 merged 2026-04-26 at 3eb97d0 — opens Epic V123-3
   V123-3-2-cncf-landscape-scanner-plugin: done  # PR #299 merged 2026-04-27 at 99341ef — live landscape.yml smoke: 0 adds/0 updates (sparse upstream Helm metadata; future plugins will carry the load)
-  V123-3-3-aws-eks-blueprints-scanner-plugin: review
+  V123-3-3-aws-eks-blueprints-scanner-plugin: done  # PR #301 merged 2026-04-27 at 1572406 — live smoke: 19 adds + 11 updates against 45-entry catalog (first real proposal volume from the scanner pipeline)
   V123-3-4-pr-opening-logic-github-workflow-open-question-7-3: backlog
   V123-3-5-runbook-docs-for-reviewers: backlog
   epic-V123-3-retrospective: optional
