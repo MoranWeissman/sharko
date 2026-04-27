@@ -44,16 +44,17 @@ Each story ships with a retrospective record at
 
 ---
 
-## Epic V123-3 — Trusted-source scanning bot (5 stories, 1 in review)
+## Epic V123-3 — Trusted-source scanning bot (5 stories, 1 done, 1 in review)
+
+### Done ✅
+
+- **V123-3.1** — `scripts/catalog-scan.mjs` skeleton + plugin interface — PR #296 → `3eb97d0`
 
 ### In review
 
-- **V123-3.1** — `scripts/catalog-scan.mjs` skeleton + plugin interface — PR pending merge on `dev/v1.23-scanner-skeleton`
+- **V123-3.2** — CNCF Landscape scanner plugin — PR pending merge on `dev/v1.23-cncf-landscape-plugin`
 
 ### Backlog
-
-### V123-3.2 — CNCF Landscape scanner plugin
-- Pull `landscape.yml`, filter for Kubernetes Helm addons, map to schema.
 
 ### V123-3.3 — AWS EKS Blueprints scanner plugin
 - Parse `addons/` directory from `aws-ia/terraform-aws-eks-blueprints-addons`.
