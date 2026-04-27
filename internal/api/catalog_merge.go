@@ -51,3 +51,40 @@ func (s *Server) mergedCatalogEntries() []catalog.CatalogEntry {
 	}
 	return out
 }
+
+// mergedCatalogGet is the single-name lookup analogue of mergedCatalogEntries.
+// Handlers that previously called s.catalog.Get(name) — which only sees
+// embedded entries — now use this helper to also resolve third-party snapshot
+// entries served via sources.Fetcher.
+//
+// Behaviour:
+//   - s.catalog == nil → returns (zero, false). Callers should already be
+//     short-circuiting with 503 in that case; the contract here matches.
+//   - s.sourcesFetcher == nil → falls back to s.catalog.Get(name) (the
+//     embedded-only fast path) so handlers behave identically to the
+//     pre-merge world when no third-party sources are configured.
+//   - both wired → linear scan over mergedCatalogEntries(), embedded-wins
+//     guarantee inherited from the underlying merger (sources.Merge).
+//
+// Linear scan is intentional: catalog sizes are tens-to-low-hundreds of
+// entries, so building a map index per call would be premature optimization
+// and a refresh-vs-read invalidation hazard. If catalogs grow into the
+// thousands we revisit; today the simple loop is the right call.
+//
+// The returned CatalogEntry value is a copy (CatalogEntry is a value type),
+// so callers may freely read or copy it — no aliasing back to the snapshot.
+func (s *Server) mergedCatalogGet(name string) (catalog.CatalogEntry, bool) {
+	if s.catalog == nil {
+		return catalog.CatalogEntry{}, false
+	}
+	// Fast path: no third-party fetcher → embedded lookup is exact.
+	if s.sourcesFetcher == nil {
+		return s.catalog.Get(name)
+	}
+	for _, e := range s.mergedCatalogEntries() {
+		if e.Name == name {
+			return e, true
+		}
+	}
+	return catalog.CatalogEntry{}, false
+}

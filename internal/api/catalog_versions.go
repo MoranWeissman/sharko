@@ -91,7 +91,10 @@ func (s *Server) handleListCatalogVersions(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "addon name is required")
 		return
 	}
-	entry, ok := s.catalog.Get(name)
+	// V123-PR-B (H1): merged-catalog lookup so third-party snapshot entries
+	// resolve here too. Same wording on the 404 — clients comparing the
+	// error string keep working.
+	entry, ok := s.mergedCatalogGet(name)
 	if !ok {
 		writeError(w, http.StatusNotFound, "not found")
 		return

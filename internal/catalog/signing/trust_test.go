@@ -2,14 +2,78 @@ package signing
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/sigstore/sigstore-go/pkg/testing/ca"
 
 	"github.com/MoranWeissman/sharko/internal/catalog/sources"
 )
+
+// recordingTrustHandler captures every slog.Record handed to it so the
+// V123-PR-B (H6) anchor-warning tests can assert on warning count +
+// content. Mirrors the recordedLogger pattern in verify_test.go but lives
+// here so trust_test.go is self-contained.
+type recordingTrustHandler struct {
+	mu      sync.Mutex
+	records []slog.Record
+}
+
+func (h *recordingTrustHandler) Enabled(_ context.Context, _ slog.Level) bool { return true }
+
+func (h *recordingTrustHandler) Handle(_ context.Context, rec slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.records = append(h.records, rec)
+	return nil
+}
+
+func (h *recordingTrustHandler) WithAttrs(_ []slog.Attr) slog.Handler { return h }
+func (h *recordingTrustHandler) WithGroup(_ string) slog.Handler      { return h }
+
+// warnings returns just the WARN-level records. The anchor diagnostic is
+// emitted at WARN so we filter for it explicitly — drop INFO/DEBUG/ERROR
+// noise the package may emit later.
+func (h *recordingTrustHandler) warnings() []slog.Record {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var out []slog.Record
+	for _, r := range h.records {
+		if r.Level == slog.LevelWarn {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// patternAttr extracts the `pattern` structured attr off a record. Used
+// by the table-driven tests to assert WHICH pattern triggered the warning,
+// not just that a warning of some shape was emitted.
+func patternAttr(rec slog.Record) string {
+	var got string
+	rec.Attrs(func(a slog.Attr) bool {
+		if a.Key == "pattern" {
+			got = a.Value.String()
+			return false
+		}
+		return true
+	})
+	return got
+}
+
+// installRecordingTrustLogger wires the package's trustLogger to a fresh
+// recording handler and returns the handler + a cleanup. Caller defers
+// cleanup() so the swap is contained to its test.
+func installRecordingTrustLogger(t *testing.T) *recordingTrustHandler {
+	t.Helper()
+	h := &recordingTrustHandler{}
+	cleanup := SetTrustLoggerForTest(slog.New(h))
+	t.Cleanup(cleanup)
+	return h
+}
 
 // TestLoadTrustPolicy_UnsetUsesDefaults — env var truly unset → defaults
 // only. We explicitly Unsetenv first because t.Setenv("X", "") sets the
@@ -266,5 +330,160 @@ func TestLoadTrustPolicy_NoMatchRejects(t *testing.T) {
 	if got := rec.LastReason(); !strings.Contains(got, "not in trust policy") {
 		t.Errorf("expected log reason to contain %q (untrusted-identity branch); got %q",
 			"not in trust policy", got)
+	}
+}
+
+// --- V123-PR-B / H6: unanchored-pattern warning ---------------------------
+//
+// LoadTrustPolicyFromEnv emits a slog.Warn for every operator-supplied
+// pattern that lacks both `^` and `$` anchors. Defaults never warn (they
+// are already anchored and explicitly skipped). The behaviour is
+// defense-in-depth: cosign-style identity matching is substring-based by
+// default, and an unanchored regex like `github.com/myorg/` trusts any
+// SAN that *contains* that substring — including hostile attacker URLs
+// that embed the trusted prefix as a query parameter. We don't auto-wrap
+// (that would silently change operator intent); we surface the trade-off.
+
+// TestLoadTrustPolicy_UnanchoredCustomEmitsWarning — a single unanchored
+// operator pattern triggers exactly one warning, naming the offending
+// pattern in both the message and the structured `pattern` attr.
+func TestLoadTrustPolicy_UnanchoredCustomEmitsWarning(t *testing.T) {
+	h := installRecordingTrustLogger(t)
+
+	const unanchored = `github\.com/myorg/`
+	t.Setenv(EnvTrustedIdentities, unanchored)
+	pol, err := LoadTrustPolicyFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if len(pol.Identities) != 1 || pol.Identities[0] != unanchored {
+		t.Fatalf("policy did not preserve operator pattern: %+v", pol.Identities)
+	}
+
+	warns := h.warnings()
+	if len(warns) != 1 {
+		t.Fatalf("expected exactly 1 anchor warning, got %d", len(warns))
+	}
+	rec := warns[0]
+	if got := rec.Message; !strings.Contains(got, "not fully anchored") {
+		t.Errorf("warning message lacks 'not fully anchored' marker: %q", got)
+	}
+	if got := rec.Message; !strings.Contains(got, "regexp.MatchString") {
+		t.Errorf("warning message lacks regexp.MatchString explanation: %q", got)
+	}
+	if got := rec.Message; !strings.Contains(got, unanchored) {
+		t.Errorf("warning message does not mention offending pattern %q: %q", unanchored, got)
+	}
+	if got := patternAttr(rec); got != unanchored {
+		t.Errorf("structured pattern attr = %q, want %q", got, unanchored)
+	}
+}
+
+// TestLoadTrustPolicy_AnchoredCustomNoWarning — a fully-anchored operator
+// pattern (^...$) does NOT warn. This is the "operator did the right
+// thing" path; we must not nag them.
+func TestLoadTrustPolicy_AnchoredCustomNoWarning(t *testing.T) {
+	h := installRecordingTrustLogger(t)
+
+	const anchored = `^https://github\.com/acme/.*$`
+	t.Setenv(EnvTrustedIdentities, anchored)
+	if _, err := LoadTrustPolicyFromEnv(); err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if got := len(h.warnings()); got != 0 {
+		t.Errorf("expected no warnings for anchored pattern, got %d: %+v", got, h.warnings())
+	}
+}
+
+// TestLoadTrustPolicy_DefaultsExpansionNoWarning — neither <defaults>
+// expansion nor the unset/empty fallback should warn. The default
+// patterns are already anchored AND explicitly skipped in the warning
+// loop (so a future un-anchored default would NOT regress the diagnostic
+// — but every current default IS anchored, so this is double belt-and-
+// braces).
+func TestLoadTrustPolicy_DefaultsExpansionNoWarning(t *testing.T) {
+	t.Run("unset", func(t *testing.T) {
+		h := installRecordingTrustLogger(t)
+		if v, ok := os.LookupEnv(EnvTrustedIdentities); ok {
+			if err := os.Unsetenv(EnvTrustedIdentities); err != nil {
+				t.Fatalf("unsetenv: %v", err)
+			}
+			t.Cleanup(func() { _ = os.Setenv(EnvTrustedIdentities, v) })
+		}
+		if _, err := LoadTrustPolicyFromEnv(); err != nil {
+			t.Fatalf("unexpected err: %v", err)
+		}
+		if got := len(h.warnings()); got != 0 {
+			t.Errorf("expected no warnings for unset env, got %d: %+v", got, h.warnings())
+		}
+	})
+
+	t.Run("defaults_token", func(t *testing.T) {
+		h := installRecordingTrustLogger(t)
+		t.Setenv(EnvTrustedIdentities, DefaultsToken)
+		if _, err := LoadTrustPolicyFromEnv(); err != nil {
+			t.Fatalf("unexpected err: %v", err)
+		}
+		if got := len(h.warnings()); got != 0 {
+			t.Errorf("expected no warnings for <defaults> token, got %d: %+v", got, h.warnings())
+		}
+	})
+}
+
+// TestLoadTrustPolicy_MixedAnchoredUnanchored — `<defaults>,unanchored,
+// ^anchored$` produces exactly one warning (for `unanchored`), in
+// declaration order. Defaults stay quiet; the anchored custom pattern
+// stays quiet; only the unanchored custom pattern triggers.
+func TestLoadTrustPolicy_MixedAnchoredUnanchored(t *testing.T) {
+	h := installRecordingTrustLogger(t)
+
+	const unanchored = `github\.com/loose-org/`
+	const anchored = `^https://github\.com/strict-org/.*$`
+	t.Setenv(EnvTrustedIdentities, DefaultsToken+","+unanchored+","+anchored)
+	pol, err := LoadTrustPolicyFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if got, want := len(pol.Identities), len(DefaultTrustedIdentities)+2; got != want {
+		t.Fatalf("got %d identities, want %d", got, want)
+	}
+
+	warns := h.warnings()
+	if len(warns) != 1 {
+		t.Fatalf("expected exactly 1 warning (unanchored only), got %d: %+v", len(warns), warns)
+	}
+	if got := patternAttr(warns[0]); got != unanchored {
+		t.Errorf("warning's pattern attr = %q, want %q", got, unanchored)
+	}
+}
+
+// TestLoadTrustPolicy_PartiallyAnchored — patterns missing ONE anchor
+// (only `^` or only `$`) still warn. "Fully anchored" requires both;
+// `^foo` matches anything starting with foo, `bar$` matches anything
+// ending with bar — both can be exploited the same way an unanchored
+// substring can be.
+func TestLoadTrustPolicy_PartiallyAnchored(t *testing.T) {
+	cases := []struct {
+		name    string
+		pattern string
+	}{
+		{"start_only", `^github\.com/myorg/`},
+		{"end_only", `github\.com/myorg/.*$`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := installRecordingTrustLogger(t)
+			t.Setenv(EnvTrustedIdentities, tc.pattern)
+			if _, err := LoadTrustPolicyFromEnv(); err != nil {
+				t.Fatalf("unexpected err: %v", err)
+			}
+			warns := h.warnings()
+			if len(warns) != 1 {
+				t.Fatalf("expected 1 warning for partially-anchored pattern, got %d", len(warns))
+			}
+			if got := patternAttr(warns[0]); got != tc.pattern {
+				t.Errorf("warning pattern attr = %q, want %q", got, tc.pattern)
+			}
+		})
 	}
 }

@@ -445,6 +445,76 @@ func TestFetcher_ConcurrentFetchesInParallel(t *testing.T) {
 	}
 }
 
+// TestFetcher_ConcurrentForceRefreshSerialized covers V123-PR-B (H2):
+// two ForceRefresh calls that race against each other must execute
+// sequentially — the second call's first hit on the upstream must
+// happen after the first call's last hit completes. Pre-fix, the two
+// fanouts ran concurrently and could double-overwrite the snapshot
+// during a single fetch window.
+//
+// Strategy: serve a 200ms-delayed handler so each fetch takes roughly
+// that long; track per-request start timestamps; assert that no request
+// from the second fanout starts before any request from the first
+// fanout finishes. We use one server (one source) so the comparison
+// is direct: with one in-flight request per fanout, the lock either
+// holds (fanouts serialize) or it doesn't (timestamps interleave).
+func TestFetcher_ConcurrentForceRefreshSerialized(t *testing.T) {
+	const perDelay = 200 * time.Millisecond
+
+	type span struct{ start, end time.Time }
+	var (
+		spansMu sync.Mutex
+		spans   []span
+	)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// HEAD probes (sidecar lookups) get a non-200 fast — we don't
+		// want to pollute the timing data with sidecar calls.
+		if r.Method == http.MethodHead {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		s := span{start: time.Now()}
+		time.Sleep(perDelay)
+		s.end = time.Now()
+		spansMu.Lock()
+		spans = append(spans, s)
+		spansMu.Unlock()
+		w.Header().Set("Content-Type", "application/yaml")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(validCatalogYAML))
+	})
+	srv := httptest.NewTLSServer(handler)
+	t.Cleanup(srv.Close)
+
+	f := newTestFetcher(t, []*httptest.Server{srv}, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Fire two ForceRefresh calls concurrently. Without H2 they would
+	// run in parallel (both ~200ms). With H2 they serialize and total
+	// wall-clock time is ~2*perDelay.
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); f.ForceRefresh(ctx) }()
+	go func() { defer wg.Done(); f.ForceRefresh(ctx) }()
+	wg.Wait()
+
+	spansMu.Lock()
+	defer spansMu.Unlock()
+	if len(spans) != 2 {
+		t.Fatalf("expected exactly 2 main GETs, got %d", len(spans))
+	}
+	// Sort by start time so we compare first→second deterministically.
+	first, second := spans[0], spans[1]
+	if second.start.Before(first.start) {
+		first, second = second, first
+	}
+	if !second.start.After(first.end) || second.start.Equal(first.end) {
+		t.Fatalf("ForceRefresh calls overlapped — H2 lock not serializing: first=[%v..%v] second=[%v..%v]",
+			first.start, first.end, second.start, second.end)
+	}
+}
+
 // --- SSRF ------------------------------------------------------------
 
 // TestFetcher_RuntimeSSRFGuardBlocksPrivateIP covers the runtime SSRF

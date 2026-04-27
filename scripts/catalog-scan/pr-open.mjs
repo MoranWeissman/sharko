@@ -150,18 +150,28 @@ async function runProcess(file, args, options) {
 /* Concurrency guards                                                   */
 /* ------------------------------------------------------------------ */
 
-/** Returns true when an open PR with the catalog-scan label exists. */
+/** Returns true when an open PR with the catalog-scan label exists.
+ *
+ * V123-PR-B (H5): pre-fix this swallowed `gh pr list` failures and returned
+ * false, so a transient gh outage on a daily cron run let the bot push a
+ * duplicate PR (the real concurrency guard relies on this probe). The
+ * asymmetric badness — one missed cron run vs. a duplicate PR humans must
+ * close — makes "fail loud" the right call. See pr-open.test.mjs for the
+ * matching unit test.
+ */
 async function openPrExists(exec, logger) {
   try {
     const { stdout } = await exec('gh', ['pr', 'list', '--label', 'catalog-scan', '--state', 'open', '--json', 'number']);
     const arr = JSON.parse(stdout || '[]');
     return Array.isArray(arr) && arr.length > 0;
   } catch (err) {
-    // gh not authenticated, repo not detected, etc — treat as "no PR
-    // exists" and let downstream gh push/create surface the real
-    // failure. Logging here surfaces it for debugging without aborting.
-    logger.warn('open-PR check failed (treating as none open)', { error: err.message ?? String(err) });
-    return false;
+    // Log + rethrow. The caller (run()) treats any throw from this fn as a
+    // fatal run failure — that's exactly the behaviour we want on a daily
+    // cron because a quiet "skip" can hide a duplicate-PR-producing bug
+    // for days.
+    const msg = err?.message ?? String(err);
+    logger.error('open-PR check failed', { error: msg });
+    throw new Error(`openPrExists: gh pr list failed: ${msg}`);
   }
 }
 

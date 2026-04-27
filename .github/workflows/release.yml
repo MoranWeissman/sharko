@@ -108,7 +108,18 @@ jobs:
           path: _dist/catalog/
 
       - name: Use signed catalog for build
-        run: cp _dist/catalog/addons.yaml.signed catalog/addons.yaml
+        # Guard: a silently-empty signed catalog would still cp without
+        # error, baking an empty //go:embed into the released image. The
+        # explicit -s check fails the job loud at swap time so a bad
+        # cosign-job artifact never ships in a release. The download
+        # step's `if-no-files-found: error` covers the missing-file case;
+        # this guard catches the truncated/empty-file case.
+        run: |
+          if [ ! -s _dist/catalog/addons.yaml.signed ]; then
+            echo "::error::signed catalog is empty or missing"
+            exit 1
+          fi
+          cp _dist/catalog/addons.yaml.signed catalog/addons.yaml
 
       - name: Extract version from tag
         id: version
@@ -309,7 +320,16 @@ jobs:
           path: _dist/catalog/
 
       - name: Use signed catalog for build
-        run: cp _dist/catalog/addons.yaml.signed catalog/addons.yaml
+        # Same guard as the build-and-push job above — fail loud if the
+        # signed catalog artifact is empty/truncated so the goreleaser
+        # CLI archives never ship an empty //go:embed catalog. See the
+        # build-and-push step's comment for the full rationale.
+        run: |
+          if [ ! -s _dist/catalog/addons.yaml.signed ]; then
+            echo "::error::signed catalog is empty or missing"
+            exit 1
+          fi
+          cp _dist/catalog/addons.yaml.signed catalog/addons.yaml
 
       - name: Set up Go
         uses: actions/setup-go@v5
