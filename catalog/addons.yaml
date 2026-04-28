@@ -25,22 +25,119 @@ addons:
 
   # -------------------- Security --------------------
 
+  - name: apache-airflow
+    description: "<TODO: human description>"
+    chart: apache-airflow
+    repo: https://airflow.apache.org
+    version: 1.18.0
+    default_namespace: namespace
+    maintainers:
+      - "<TODO: derive from chart repo>"
+    license: unknown
+    category: developer-tools
+    curated_by:
+      - aws-eks-blueprints
+  - name: appmesh
+    description: "<TODO: human description>"
+    chart: appmesh-controller
+    repo: https://aws.github.io/eks-charts
+    version: 1.13.3
+    default_namespace: appmesh-system
+    maintainers:
+      - "<TODO: derive from chart repo>"
+    license: unknown
+    category: networking
+    curated_by:
+      - aws-eks-blueprints
+  - name: aws-for-fluent-bit
+    description: "<TODO: human description>"
+    chart: aws-for-fluent-bit
+    repo: https://aws.github.io/eks-charts
+    version: 0.2.0
+    default_namespace: kube-system
+    maintainers:
+      - "<TODO: derive from chart repo>"
+    license: unknown
+    category: observability
+    curated_by:
+      - aws-eks-blueprints
+  - name: aws-node-termination-handler
+    description: "<TODO: human description>"
+    chart: aws-node-termination-handler
+    repo: https://aws.github.io/eks-charts
+    version: 0.27.2
+    default_namespace: kube-system
+    maintainers:
+      - "<TODO: derive from chart repo>"
+    license: unknown
+    category: developer-tools
+    curated_by:
+      - aws-eks-blueprints
+  - name: aws-privateca-issuer
+    description: "<TODO: human description>"
+    chart: aws-privateca-issuer
+    repo: https://cert-manager.github.io/aws-privateca-issuer
+    version: v1.8.0
+    default_namespace: aws-pca-issuer
+    maintainers:
+      - "<TODO: derive from chart repo>"
+    license: unknown
+    category: developer-tools
+    curated_by:
+      - aws-eks-blueprints
+  - name: calico
+    description: "<TODO: human description>"
+    chart: aws-calico
+    repo: https://aws.github.io/eks-charts
+    version: 0.3.10
+    default_namespace: kube-system
+    maintainers:
+      - "<TODO: derive from chart repo>"
+    license: unknown
+    category: developer-tools
+    curated_by:
+      - aws-eks-blueprints
+  - name: calico-operator
+    description: "<TODO: human description>"
+    chart: tigera-operator
+    repo: https://docs.tigera.io/calico/charts
+    version: v3.31.4
+    default_namespace: calico-operator
+    maintainers:
+      - "<TODO: derive from chart repo>"
+    license: unknown
+    category: developer-tools
+    curated_by:
+      - aws-eks-blueprints
   - name: cert-manager
     description: Automated TLS certificate lifecycle management for Kubernetes.
     chart: cert-manager
-    repo: https://charts.jetstack.io                  # verified: cert-manager@v1.20.2 present
+    repo: https://charts.jetstack.io # verified: cert-manager@v1.20.2 present
     default_namespace: cert-manager
     default_sync_wave: -1
     docs_url: https://cert-manager.io/docs
     homepage: https://cert-manager.io
     source_url: https://github.com/cert-manager/cert-manager
-    maintainers: [jetstack]
+    maintainers: [ jetstack ]
     license: Apache-2.0
     category: security
-    curated_by: [cncf-graduated, aws-eks-blueprints, artifacthub-verified]
+    curated_by: [ cncf-graduated, aws-eks-blueprints, artifacthub-verified ]
     security_score: unknown
     github_stars: 12500
     min_kubernetes_version: "1.23"
+    version: v1.19.4
+  - name: container-insights
+    description: "<TODO: human description>"
+    chart: adot-exporter-for-eks-on-ec2
+    repo: https://aws-observability.github.io/aws-otel-helm-charts
+    version: 0.22.0
+    default_namespace: container-insights-system
+    maintainers:
+      - "<TODO: derive from chart repo>"
+    license: unknown
+    category: developer-tools
+    curated_by:
+      - aws-eks-blueprints
 
   - name: external-dns
     description: Configure external DNS records from Kubernetes ingresses and services.
@@ -51,16 +148,18 @@ addons:
     docs_url: https://kubernetes-sigs.github.io/external-dns/
     homepage: https://github.com/kubernetes-sigs/external-dns
     source_url: https://github.com/kubernetes-sigs/external-dns
-    maintainers: [kubernetes-sigs]
+    maintainers: [ kubernetes-sigs ]
     license: Apache-2.0
-    category: security
-    curated_by: [cncf-incubating, aws-eks-blueprints, artifacthub-verified]
+    category: networking
+    curated_by: [ cncf-incubating, aws-eks-blueprints, artifacthub-verified ]
     security_score: unknown
     github_stars: 7800
     min_kubernetes_version: "1.23"
+    version: 1.20.0
 
   - name: external-secrets
-    description: Sync secrets from external managers (AWS SM, Vault, GCP SM, Azure KV, …) into Kubernetes.
+    description: Sync secrets from external managers (AWS SM, Vault, GCP SM, Azure
+      KV, …) into Kubernetes.
     chart: external-secrets
     repo: https://charts.external-secrets.io
     default_namespace: external-secrets
@@ -68,13 +167,132 @@ addons:
     docs_url: https://external-secrets.io/
     homepage: https://external-secrets.io/
     source_url: https://github.com/external-secrets/external-secrets
-    maintainers: [external-secrets-io]
+    maintainers: [ external-secrets-io ]
     license: Apache-2.0
     category: security
-    curated_by: [cncf-graduated, aws-eks-blueprints, artifacthub-verified]
+    curated_by: [ cncf-graduated, aws-eks-blueprints, artifacthub-verified ]
     security_score: unknown
     github_stars: 5000
     min_kubernetes_version: "1.23"
+    version: 2.0.1
+  - name: gpu-operator
+    description: "<TODO: human description>"
+    chart: gpu-operator
+    repo: https://nvidia.github.io/gpu-operator
+    version: v25.10.1
+    default_namespace: gpu-operator
+    maintainers:
+      - "<TODO: derive from chart repo>"
+    license: unknown
+    category: developer-tools
+    curated_by:
+      - aws-eks-blueprints
+  - name: grafana-operator
+    description: "<TODO: human description>"
+    chart: oci://ghcr.io/grafana/helm-charts/grafana-operator
+    repo: "https://example.invalid/<TODO: chart repo>"
+    version: v5.19.0
+    default_namespace: grafana-operator
+    maintainers:
+      - "<TODO: derive from chart repo>"
+    license: unknown
+    category: observability
+    curated_by:
+      - aws-eks-blueprints
+  - name: istio-addons
+    description: "<TODO: human description>"
+    chart: base
+    repo: https://istio-release.storage.googleapis.com/charts
+    default_namespace: istio-system
+    maintainers:
+      - "<TODO: derive from chart repo>"
+    license: unknown
+    category: developer-tools
+    curated_by:
+      - aws-eks-blueprints
+  - name: jupyterhub
+    description: "<TODO: human description>"
+    chart: jupyterhub
+    repo: https://hub.jupyter.org/helm-chart/
+    version: 2.0.0
+    default_namespace: jupyterhub-system
+    maintainers:
+      - "<TODO: derive from chart repo>"
+    license: unknown
+    category: developer-tools
+    curated_by:
+      - aws-eks-blueprints
+  - name: kro
+    description: "<TODO: human description>"
+    chart: kro
+    repo: oci://registry.k8s.io/kro/charts/kro
+    default_namespace: kro
+    maintainers:
+      - "<TODO: derive from chart repo>"
+    license: unknown
+    category: developer-tools
+    curated_by:
+      - aws-eks-blueprints
+  - name: kuberay
+    description: "<TODO: human description>"
+    chart: kuberay-operator
+    repo: https://ray-project.github.io/kuberay-helm
+    version: 1.5.1
+    default_namespace: default
+    maintainers:
+      - "<TODO: derive from chart repo>"
+    license: unknown
+    category: developer-tools
+    curated_by:
+      - aws-eks-blueprints
+  - name: kubevious
+    description: "<TODO: human description>"
+    chart: kubevious
+    repo: https://helm.kubevious.io
+    version: 1.2.2
+    default_namespace: kubevious
+    maintainers:
+      - "<TODO: derive from chart repo>"
+    license: unknown
+    category: developer-tools
+    curated_by:
+      - aws-eks-blueprints
+  - name: nginx
+    description: "<TODO: human description>"
+    chart: nginx-ingress
+    repo: https://helm.nginx.com/stable
+    version: 2.4.4
+    default_namespace: kube-system
+    maintainers:
+      - "<TODO: derive from chart repo>"
+    license: unknown
+    category: developer-tools
+    curated_by:
+      - aws-eks-blueprints
+  - name: opa-gatekeeper
+    description: "<TODO: human description>"
+    chart: gatekeeper
+    repo: https://open-policy-agent.github.io/gatekeeper/charts
+    version: 3.21.1
+    default_namespace: gatekeeper-system
+    maintainers:
+      - "<TODO: derive from chart repo>"
+    license: unknown
+    category: security
+    curated_by:
+      - aws-eks-blueprints
+  - name: prometheus-node-exporter
+    description: "<TODO: human description>"
+    chart: prometheus-node-exporter
+    repo: https://prometheus-community.github.io/helm-charts
+    version: 4.52.0
+    default_namespace: prometheus-node-exporter
+    maintainers:
+      - "<TODO: derive from chart repo>"
+    license: unknown
+    category: observability
+    curated_by:
+      - aws-eks-blueprints
 
   - name: sealed-secrets
     description: Encrypt Kubernetes Secrets so they can be stored safely in Git.
@@ -85,33 +303,35 @@ addons:
     docs_url: https://github.com/bitnami-labs/sealed-secrets
     homepage: https://sealed-secrets.netlify.app/
     source_url: https://github.com/bitnami-labs/sealed-secrets
-    maintainers: [bitnami-labs]
+    maintainers: [ bitnami-labs ]
     license: Apache-2.0
     category: security
-    curated_by: [cncf-sandbox, artifacthub-verified]
+    curated_by: [ cncf-sandbox, artifacthub-verified ]
     security_score: unknown
     github_stars: 7500
     min_kubernetes_version: "1.22"
 
   - name: kyverno
-    description: Kubernetes-native policy management — validation, mutation, generation, and image verification.
+    description: Kubernetes-native policy management — validation, mutation,
+      generation, and image verification.
     chart: kyverno
-    repo: https://kyverno.github.io/kyverno/           # verified: kyverno@3.x present
+    repo: https://kyverno.github.io/kyverno/ # verified: kyverno@3.x present
     default_namespace: kyverno
     default_sync_wave: -1
     docs_url: https://kyverno.io/docs/
     homepage: https://kyverno.io
     source_url: https://github.com/kyverno/kyverno
-    maintainers: [kyverno]
+    maintainers: [ kyverno ]
     license: Apache-2.0
     category: security
-    curated_by: [cncf-incubating, aws-eks-blueprints, artifacthub-verified]
+    curated_by: [ cncf-incubating, aws-eks-blueprints, artifacthub-verified ]
     security_score: unknown
     github_stars: 5800
     min_kubernetes_version: "1.25"
 
   - name: gatekeeper
-    description: Policy controller for Kubernetes built on OPA, constraint templates + constraints.
+    description: Policy controller for Kubernetes built on OPA, constraint templates
+      + constraints.
     chart: gatekeeper
     repo: https://open-policy-agent.github.io/gatekeeper/charts
     default_namespace: gatekeeper-system
@@ -119,16 +339,17 @@ addons:
     docs_url: https://open-policy-agent.github.io/gatekeeper/website/docs/
     homepage: https://open-policy-agent.github.io/gatekeeper/
     source_url: https://github.com/open-policy-agent/gatekeeper
-    maintainers: [open-policy-agent]
+    maintainers: [ open-policy-agent ]
     license: Apache-2.0
     category: security
-    curated_by: [cncf-graduated, aws-eks-blueprints]
+    curated_by: [ cncf-graduated, aws-eks-blueprints ]
     security_score: unknown
     github_stars: 3800
     min_kubernetes_version: "1.24"
 
   - name: trivy-operator
-    description: Scans cluster workloads for vulnerabilities, misconfigurations, and exposed secrets.
+    description: Scans cluster workloads for vulnerabilities, misconfigurations, and
+      exposed secrets.
     chart: trivy-operator
     repo: https://aquasecurity.github.io/helm-charts/
     default_namespace: trivy-system
@@ -136,10 +357,10 @@ addons:
     docs_url: https://aquasecurity.github.io/trivy-operator/
     homepage: https://github.com/aquasecurity/trivy-operator
     source_url: https://github.com/aquasecurity/trivy-operator
-    maintainers: [aquasecurity]
+    maintainers: [ aquasecurity ]
     license: Apache-2.0
     category: security
-    curated_by: [artifacthub-verified]
+    curated_by: [ artifacthub-verified ]
     security_score: unknown
     github_stars: 1400
     min_kubernetes_version: "1.23"
@@ -153,16 +374,30 @@ addons:
     docs_url: https://falco.org/docs/
     homepage: https://falco.org
     source_url: https://github.com/falcosecurity/falco
-    maintainers: [falcosecurity]
+    maintainers: [ falcosecurity ]
     license: Apache-2.0
     category: security
-    curated_by: [cncf-graduated, artifacthub-verified]
+    curated_by: [ cncf-graduated, artifacthub-verified ]
     security_score: unknown
     github_stars: 7300
     min_kubernetes_version: "1.23"
+    version: 2.0.15
+  - name: upbound-universal-crossplane
+    description: "<TODO: human description>"
+    chart: universal-crossplane
+    repo: https://charts.upbound.io/stable
+    version: 1.14.5-up.1
+    default_namespace: upbound-system
+    maintainers:
+      - "<TODO: derive from chart repo>"
+    license: unknown
+    category: developer-tools
+    curated_by:
+      - aws-eks-blueprints
 
   - name: vault
-    description: HashiCorp Vault — secret management, encryption-as-a-service, identity-based access.
+    description: HashiCorp Vault — secret management, encryption-as-a-service,
+      identity-based access.
     chart: vault
     repo: https://helm.releases.hashicorp.com
     default_namespace: vault
@@ -170,10 +405,10 @@ addons:
     docs_url: https://developer.hashicorp.com/vault/docs
     homepage: https://www.vaultproject.io/
     source_url: https://github.com/hashicorp/vault
-    maintainers: [hashicorp]
-    license: BUSL-1.1                                  # flag for license review (non-OSI)
+    maintainers: [ hashicorp ]
+    license: BUSL-1.1 # flag for license review (non-OSI)
     category: security
-    curated_by: [artifacthub-verified]
+    curated_by: [ artifacthub-verified ]
     security_score: unknown
     github_stars: 31000
     min_kubernetes_version: "1.23"
@@ -183,16 +418,16 @@ addons:
   - name: kube-prometheus-stack
     description: Full Prometheus + Alertmanager + Grafana + node/kube-state metrics stack.
     chart: kube-prometheus-stack
-    repo: https://prometheus-community.github.io/helm-charts   # verified: repo + alertmanager present
+    repo: https://prometheus-community.github.io/helm-charts # verified: repo + alertmanager present
     default_namespace: monitoring
     default_sync_wave: 0
     docs_url: https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack
     homepage: https://prometheus.io/
     source_url: https://github.com/prometheus-community/helm-charts
-    maintainers: [prometheus-community]
+    maintainers: [ prometheus-community ]
     license: Apache-2.0
     category: observability
-    curated_by: [cncf-graduated, aws-eks-blueprints, artifacthub-verified]
+    curated_by: [ cncf-graduated, aws-eks-blueprints, artifacthub-verified ]
     security_score: unknown
     github_stars: 5400
     min_kubernetes_version: "1.24"
@@ -200,22 +435,23 @@ addons:
   - name: grafana
     description: Grafana visualization platform for metrics, logs, and traces.
     chart: grafana
-    repo: https://grafana.github.io/helm-charts         # verified: repo lists many charts
+    repo: https://grafana.github.io/helm-charts # verified: repo lists many charts
     default_namespace: monitoring
     default_sync_wave: 1
     docs_url: https://grafana.com/docs/grafana/latest/
     homepage: https://grafana.com/
     source_url: https://github.com/grafana/grafana
-    maintainers: [grafana]
-    license: AGPL-3.0                                   # flag for license review
+    maintainers: [ grafana ]
+    license: AGPL-3.0 # flag for license review
     category: observability
-    curated_by: [cncf-incubating, aws-eks-blueprints, artifacthub-verified]
+    curated_by: [ cncf-incubating, aws-eks-blueprints, artifacthub-verified ]
     security_score: unknown
     github_stars: 65000
     min_kubernetes_version: "1.24"
 
   - name: loki
-    description: Prometheus-inspired log aggregation system; cheap, index-light, label-based.
+    description: Prometheus-inspired log aggregation system; cheap, index-light,
+      label-based.
     chart: loki
     repo: https://grafana.github.io/helm-charts
     default_namespace: monitoring
@@ -223,10 +459,10 @@ addons:
     docs_url: https://grafana.com/docs/loki/latest/
     homepage: https://grafana.com/oss/loki/
     source_url: https://github.com/grafana/loki
-    maintainers: [grafana]
+    maintainers: [ grafana ]
     license: AGPL-3.0
     category: observability
-    curated_by: [cncf-incubating, artifacthub-verified]
+    curated_by: [ cncf-incubating, artifacthub-verified ]
     security_score: unknown
     github_stars: 24000
     min_kubernetes_version: "1.24"
@@ -240,16 +476,17 @@ addons:
     docs_url: https://grafana.com/docs/tempo/latest/
     homepage: https://grafana.com/oss/tempo/
     source_url: https://github.com/grafana/tempo
-    maintainers: [grafana]
+    maintainers: [ grafana ]
     license: AGPL-3.0
     category: observability
-    curated_by: [cncf-incubating, artifacthub-verified]
+    curated_by: [ cncf-incubating, artifacthub-verified ]
     security_score: unknown
     github_stars: 4400
     min_kubernetes_version: "1.24"
 
   - name: opentelemetry-operator
-    description: Manages OpenTelemetry Collector deployments + auto-instrumentation in Kubernetes.
+    description: Manages OpenTelemetry Collector deployments + auto-instrumentation
+      in Kubernetes.
     chart: opentelemetry-operator
     repo: https://open-telemetry.github.io/opentelemetry-helm-charts
     default_namespace: opentelemetry-operator-system
@@ -257,10 +494,10 @@ addons:
     docs_url: https://opentelemetry.io/docs/kubernetes/operator/
     homepage: https://opentelemetry.io/
     source_url: https://github.com/open-telemetry/opentelemetry-operator
-    maintainers: [open-telemetry]
+    maintainers: [ open-telemetry ]
     license: Apache-2.0
     category: observability
-    curated_by: [cncf-graduated, artifacthub-verified]
+    curated_by: [ cncf-graduated, artifacthub-verified ]
     security_score: unknown
     github_stars: 1400
     min_kubernetes_version: "1.23"
@@ -274,16 +511,17 @@ addons:
     docs_url: https://www.jaegertracing.io/docs/
     homepage: https://www.jaegertracing.io/
     source_url: https://github.com/jaegertracing/jaeger
-    maintainers: [jaegertracing]
+    maintainers: [ jaegertracing ]
     license: Apache-2.0
     category: observability
-    curated_by: [cncf-graduated, artifacthub-verified]
+    curated_by: [ cncf-graduated, artifacthub-verified ]
     security_score: unknown
     github_stars: 20000
     min_kubernetes_version: "1.23"
 
   - name: fluent-bit
-    description: Lightweight log processor and forwarder — ships logs to Loki / Elasticsearch / S3 / etc.
+    description: Lightweight log processor and forwarder — ships logs to Loki /
+      Elasticsearch / S3 / etc.
     chart: fluent-bit
     repo: https://fluent.github.io/helm-charts
     default_namespace: logging
@@ -291,16 +529,17 @@ addons:
     docs_url: https://docs.fluentbit.io/
     homepage: https://fluentbit.io
     source_url: https://github.com/fluent/fluent-bit
-    maintainers: [fluent]
+    maintainers: [ fluent ]
     license: Apache-2.0
     category: observability
-    curated_by: [cncf-graduated, aws-eks-blueprints, artifacthub-verified]
+    curated_by: [ cncf-graduated, aws-eks-blueprints, artifacthub-verified ]
     security_score: unknown
     github_stars: 5800
     min_kubernetes_version: "1.22"
 
   - name: kube-state-metrics
-    description: Exposes metrics about the state of Kubernetes objects (deployments, pods, nodes, …).
+    description: Exposes metrics about the state of Kubernetes objects (deployments,
+      pods, nodes, …).
     chart: kube-state-metrics
     repo: https://prometheus-community.github.io/helm-charts
     default_namespace: monitoring
@@ -308,30 +547,32 @@ addons:
     docs_url: https://github.com/kubernetes/kube-state-metrics
     homepage: https://github.com/kubernetes/kube-state-metrics
     source_url: https://github.com/kubernetes/kube-state-metrics
-    maintainers: [kubernetes]
+    maintainers: [ kubernetes ]
     license: Apache-2.0
     category: observability
-    curated_by: [cncf-graduated, artifacthub-verified]
+    curated_by: [ cncf-graduated, artifacthub-verified ]
     security_score: unknown
     github_stars: 5300
     min_kubernetes_version: "1.23"
+    version: 7.2.0
 
   - name: metrics-server
     description: Aggregates resource metrics (CPU/memory) for kubectl top + HPA.
     chart: metrics-server
-    repo: https://kubernetes-sigs.github.io/metrics-server/
+    repo: https://kubernetes-sigs.github.io/metrics-server
     default_namespace: kube-system
     default_sync_wave: -1
     docs_url: https://kubernetes-sigs.github.io/metrics-server/
     homepage: https://github.com/kubernetes-sigs/metrics-server
     source_url: https://github.com/kubernetes-sigs/metrics-server
-    maintainers: [kubernetes-sigs]
+    maintainers: [ kubernetes-sigs ]
     license: Apache-2.0
     category: observability
-    curated_by: [cncf-graduated, aws-eks-blueprints, artifacthub-verified]
+    curated_by: [ cncf-graduated, aws-eks-blueprints, artifacthub-verified ]
     security_score: unknown
     github_stars: 5900
     min_kubernetes_version: "1.23"
+    version: 3.13.0
 
   # -------------------- Networking --------------------
 
@@ -344,16 +585,18 @@ addons:
     docs_url: https://kubernetes.github.io/ingress-nginx/
     homepage: https://kubernetes.github.io/ingress-nginx/
     source_url: https://github.com/kubernetes/ingress-nginx
-    maintainers: [kubernetes]
+    maintainers: [ kubernetes ]
     license: Apache-2.0
     category: networking
-    curated_by: [cncf-graduated, aws-eks-blueprints, artifacthub-verified]
+    curated_by: [ cncf-graduated, aws-eks-blueprints, artifacthub-verified ]
     security_score: unknown
     github_stars: 17500
     min_kubernetes_version: "1.25"
+    version: 4.14.3
 
   - name: traefik
-    description: Cloud-native reverse proxy and ingress controller with automatic service discovery.
+    description: Cloud-native reverse proxy and ingress controller with automatic
+      service discovery.
     chart: traefik
     repo: https://traefik.github.io/charts
     default_namespace: traefik
@@ -361,16 +604,17 @@ addons:
     docs_url: https://doc.traefik.io/traefik/
     homepage: https://traefik.io/traefik/
     source_url: https://github.com/traefik/traefik
-    maintainers: [traefik]
+    maintainers: [ traefik ]
     license: MIT
     category: networking
-    curated_by: [cncf-incubating, artifacthub-verified]
+    curated_by: [ cncf-incubating, artifacthub-verified ]
     security_score: unknown
     github_stars: 52000
     min_kubernetes_version: "1.24"
 
   - name: cilium
-    description: eBPF-based networking, observability, and security (CNI, L4/L7 policy, service mesh).
+    description: eBPF-based networking, observability, and security (CNI, L4/L7
+      policy, service mesh).
     chart: cilium
     repo: https://helm.cilium.io/
     default_namespace: kube-system
@@ -378,10 +622,10 @@ addons:
     docs_url: https://docs.cilium.io/
     homepage: https://cilium.io/
     source_url: https://github.com/cilium/cilium
-    maintainers: [cilium]
+    maintainers: [ cilium ]
     license: Apache-2.0
     category: networking
-    curated_by: [cncf-graduated, artifacthub-verified]
+    curated_by: [ cncf-graduated, artifacthub-verified ]
     security_score: unknown
     github_stars: 21000
     min_kubernetes_version: "1.23"
@@ -395,10 +639,10 @@ addons:
     docs_url: https://istio.io/latest/docs/
     homepage: https://istio.io
     source_url: https://github.com/istio/istio
-    maintainers: [istio]
+    maintainers: [ istio ]
     license: Apache-2.0
     category: networking
-    curated_by: [cncf-graduated, azure-aks-addon, artifacthub-verified]
+    curated_by: [ cncf-graduated, azure-aks-addon, artifacthub-verified ]
     security_score: unknown
     github_stars: 36000
     min_kubernetes_version: "1.26"
@@ -412,10 +656,10 @@ addons:
     docs_url: https://linkerd.io/2/overview/
     homepage: https://linkerd.io
     source_url: https://github.com/linkerd/linkerd2
-    maintainers: [linkerd]
+    maintainers: [ linkerd ]
     license: Apache-2.0
     category: networking
-    curated_by: [cncf-graduated, artifacthub-verified]
+    curated_by: [ cncf-graduated, artifacthub-verified ]
     security_score: unknown
     github_stars: 10700
     min_kubernetes_version: "1.23"
@@ -429,10 +673,10 @@ addons:
     docs_url: https://metallb.universe.tf/
     homepage: https://metallb.universe.tf/
     source_url: https://github.com/metallb/metallb
-    maintainers: [metallb]
+    maintainers: [ metallb ]
     license: Apache-2.0
     category: networking
-    curated_by: [artifacthub-verified]
+    curated_by: [ artifacthub-verified ]
     security_score: unknown
     github_stars: 7100
     min_kubernetes_version: "1.22"
@@ -446,10 +690,10 @@ addons:
     docs_url: https://haproxy-ingress.github.io/docs/
     homepage: https://haproxy-ingress.github.io/
     source_url: https://github.com/jcmoraisjr/haproxy-ingress
-    maintainers: [haproxy-ingress]
+    maintainers: [ haproxy-ingress ]
     license: Apache-2.0
     category: networking
-    curated_by: [artifacthub-verified]
+    curated_by: [ artifacthub-verified ]
     security_score: unknown
     github_stars: 1100
     min_kubernetes_version: "1.22"
@@ -457,7 +701,8 @@ addons:
   # -------------------- Autoscaling / Scheduling --------------------
 
   - name: karpenter
-    description: Just-in-time node provisioning; fast and workload-aware autoscaling (AWS / Azure providers).
+    description: Just-in-time node provisioning; fast and workload-aware autoscaling
+      (AWS / Azure providers).
     chart: karpenter
     repo: oci://public.ecr.aws/karpenter
     default_namespace: karpenter
@@ -465,16 +710,17 @@ addons:
     docs_url: https://karpenter.sh/docs/
     homepage: https://karpenter.sh
     source_url: https://github.com/aws/karpenter-provider-aws
-    maintainers: [aws]
+    maintainers: [ aws ]
     license: Apache-2.0
     category: autoscaling
-    curated_by: [aws-eks-blueprints, artifacthub-verified]
+    curated_by: [ aws-eks-blueprints, artifacthub-verified ]
     security_score: unknown
     github_stars: 6900
     min_kubernetes_version: "1.25"
 
   - name: cluster-autoscaler
-    description: Scales Kubernetes nodes up/down based on pending pods (cloud-provider-aware).
+    description: Scales Kubernetes nodes up/down based on pending pods
+      (cloud-provider-aware).
     chart: cluster-autoscaler
     repo: https://kubernetes.github.io/autoscaler
     default_namespace: kube-system
@@ -482,16 +728,18 @@ addons:
     docs_url: https://github.com/kubernetes/autoscaler/tree/master/cluster-autoscaler
     homepage: https://github.com/kubernetes/autoscaler
     source_url: https://github.com/kubernetes/autoscaler
-    maintainers: [kubernetes]
+    maintainers: [ kubernetes ]
     license: Apache-2.0
     category: autoscaling
-    curated_by: [cncf-graduated, aws-eks-blueprints, artifacthub-verified]
+    curated_by: [ cncf-graduated, aws-eks-blueprints, artifacthub-verified ]
     security_score: unknown
     github_stars: 8200
     min_kubernetes_version: "1.23"
+    version: auto
 
   - name: keda
-    description: Kubernetes Event-Driven Autoscaling — scale workloads based on events from any source.
+    description: Kubernetes Event-Driven Autoscaling — scale workloads based on
+      events from any source.
     chart: keda
     repo: https://kedacore.github.io/charts
     default_namespace: keda
@@ -499,16 +747,18 @@ addons:
     docs_url: https://keda.sh/docs/
     homepage: https://keda.sh/
     source_url: https://github.com/kedacore/keda
-    maintainers: [kedacore]
+    maintainers: [ kedacore ]
     license: Apache-2.0
     category: autoscaling
-    curated_by: [cncf-graduated, azure-aks-addon, aws-eks-blueprints, artifacthub-verified]
+    curated_by: [ cncf-graduated, azure-aks-addon, aws-eks-blueprints, artifacthub-verified ]
     security_score: unknown
     github_stars: 8700
     min_kubernetes_version: "1.27"
+    version: 2.19.0
 
   - name: vertical-pod-autoscaler
-    description: Recommends and applies CPU / memory requests/limits based on observed usage.
+    description: Recommends and applies CPU / memory requests/limits based on
+      observed usage.
     chart: vertical-pod-autoscaler
     repo: https://cowboysysop.github.io/charts/
     default_namespace: vpa-system
@@ -516,10 +766,10 @@ addons:
     docs_url: https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler
     homepage: https://github.com/kubernetes/autoscaler
     source_url: https://github.com/kubernetes/autoscaler
-    maintainers: [cowboysysop]
+    maintainers: [ cowboysysop ]
     license: Apache-2.0
     category: autoscaling
-    curated_by: [aws-eks-blueprints, artifacthub-verified]
+    curated_by: [ aws-eks-blueprints, artifacthub-verified ]
     security_score: unknown
     github_stars: 8200
     min_kubernetes_version: "1.24"
@@ -533,10 +783,10 @@ addons:
     docs_url: https://github.com/kubernetes-sigs/descheduler
     homepage: https://github.com/kubernetes-sigs/descheduler
     source_url: https://github.com/kubernetes-sigs/descheduler
-    maintainers: [kubernetes-sigs]
+    maintainers: [ kubernetes-sigs ]
     license: Apache-2.0
     category: autoscaling
-    curated_by: [artifacthub-verified]
+    curated_by: [ artifacthub-verified ]
     security_score: unknown
     github_stars: 4200
     min_kubernetes_version: "1.25"
@@ -552,10 +802,10 @@ addons:
     docs_url: https://argo-cd.readthedocs.io/
     homepage: https://argo-cd.readthedocs.io/
     source_url: https://github.com/argoproj/argo-cd
-    maintainers: [argoproj]
+    maintainers: [ argoproj ]
     license: Apache-2.0
     category: gitops
-    curated_by: [cncf-graduated, aws-eks-blueprints, artifacthub-verified]
+    curated_by: [ cncf-graduated, aws-eks-blueprints, artifacthub-verified ]
     security_score: unknown
     github_stars: 19000
     min_kubernetes_version: "1.25"
@@ -569,10 +819,10 @@ addons:
     docs_url: https://argo-workflows.readthedocs.io/
     homepage: https://argoproj.github.io/workflows/
     source_url: https://github.com/argoproj/argo-workflows
-    maintainers: [argoproj]
+    maintainers: [ argoproj ]
     license: Apache-2.0
     category: gitops
-    curated_by: [cncf-graduated, aws-eks-blueprints, artifacthub-verified]
+    curated_by: [ cncf-graduated, aws-eks-blueprints, artifacthub-verified ]
     security_score: unknown
     github_stars: 15000
     min_kubernetes_version: "1.25"
@@ -586,10 +836,10 @@ addons:
     docs_url: https://argo-rollouts.readthedocs.io/
     homepage: https://argoproj.github.io/argo-rollouts/
     source_url: https://github.com/argoproj/argo-rollouts
-    maintainers: [argoproj]
+    maintainers: [ argoproj ]
     license: Apache-2.0
     category: gitops
-    curated_by: [cncf-graduated, aws-eks-blueprints, artifacthub-verified]
+    curated_by: [ cncf-graduated, aws-eks-blueprints, artifacthub-verified ]
     security_score: unknown
     github_stars: 2800
     min_kubernetes_version: "1.25"
@@ -603,16 +853,17 @@ addons:
     docs_url: https://tekton.dev/docs/pipelines/
     homepage: https://tekton.dev/
     source_url: https://github.com/tektoncd/pipeline
-    maintainers: [tektoncd, cdfoundation]
+    maintainers: [ tektoncd, cdfoundation ]
     license: Apache-2.0
     category: gitops
-    curated_by: [cncf-graduated, artifacthub-verified]
+    curated_by: [ cncf-graduated, artifacthub-verified ]
     security_score: unknown
     github_stars: 8700
     min_kubernetes_version: "1.24"
 
   - name: flux
-    description: GitOps operator — reconciles cluster state from Git (sister project to ArgoCD).
+    description: GitOps operator — reconciles cluster state from Git (sister project
+      to ArgoCD).
     chart: flux2
     repo: https://fluxcd-community.github.io/helm-charts
     default_namespace: flux-system
@@ -620,10 +871,10 @@ addons:
     docs_url: https://fluxcd.io/flux/
     homepage: https://fluxcd.io/
     source_url: https://github.com/fluxcd/flux2
-    maintainers: [fluxcd-community]
+    maintainers: [ fluxcd-community ]
     license: Apache-2.0
     category: gitops
-    curated_by: [cncf-graduated, artifacthub-verified]
+    curated_by: [ cncf-graduated, artifacthub-verified ]
     security_score: unknown
     github_stars: 6600
     min_kubernetes_version: "1.25"
@@ -639,10 +890,10 @@ addons:
     docs_url: https://longhorn.io/docs/
     homepage: https://longhorn.io/
     source_url: https://github.com/longhorn/longhorn
-    maintainers: [longhorn]
+    maintainers: [ longhorn ]
     license: Apache-2.0
     category: storage
-    curated_by: [cncf-incubating, artifacthub-verified]
+    curated_by: [ cncf-incubating, artifacthub-verified ]
     security_score: unknown
     github_stars: 6400
     min_kubernetes_version: "1.25"
@@ -656,10 +907,10 @@ addons:
     docs_url: https://rook.io/docs/rook/latest/
     homepage: https://rook.io/
     source_url: https://github.com/rook/rook
-    maintainers: [rook]
+    maintainers: [ rook ]
     license: Apache-2.0
     category: storage
-    curated_by: [cncf-graduated, artifacthub-verified]
+    curated_by: [ cncf-graduated, artifacthub-verified ]
     security_score: unknown
     github_stars: 12400
     min_kubernetes_version: "1.26"
@@ -673,10 +924,10 @@ addons:
     docs_url: https://openebs.io/docs
     homepage: https://openebs.io/
     source_url: https://github.com/openebs/openebs
-    maintainers: [openebs]
+    maintainers: [ openebs ]
     license: Apache-2.0
     category: storage
-    curated_by: [cncf-sandbox, artifacthub-verified]
+    curated_by: [ cncf-sandbox, artifacthub-verified ]
     security_score: unknown
     github_stars: 9100
     min_kubernetes_version: "1.23"
@@ -692,16 +943,17 @@ addons:
     docs_url: https://cloudnative-pg.io/documentation/
     homepage: https://cloudnative-pg.io/
     source_url: https://github.com/cloudnative-pg/cloudnative-pg
-    maintainers: [cloudnative-pg]
+    maintainers: [ cloudnative-pg ]
     license: Apache-2.0
     category: database
-    curated_by: [cncf-incubating, artifacthub-verified]
+    curated_by: [ cncf-incubating, artifacthub-verified ]
     security_score: unknown
     github_stars: 5200
     min_kubernetes_version: "1.25"
 
   - name: strimzi-kafka-operator
-    description: Apache Kafka operator — Kafka, ZooKeeper, Connect, MirrorMaker on Kubernetes.
+    description: Apache Kafka operator — Kafka, ZooKeeper, Connect, MirrorMaker on
+      Kubernetes.
     chart: strimzi-kafka-operator
     repo: https://strimzi.io/charts/
     default_namespace: kafka
@@ -709,10 +961,10 @@ addons:
     docs_url: https://strimzi.io/documentation/
     homepage: https://strimzi.io/
     source_url: https://github.com/strimzi/strimzi-kafka-operator
-    maintainers: [strimzi]
+    maintainers: [ strimzi ]
     license: Apache-2.0
     category: database
-    curated_by: [cncf-incubating, artifacthub-verified]
+    curated_by: [ cncf-incubating, artifacthub-verified ]
     security_score: unknown
     github_stars: 5100
     min_kubernetes_version: "1.25"
@@ -722,19 +974,20 @@ addons:
   - name: velero
     description: Cluster backup, restore, and migration.
     chart: velero
-    repo: https://vmware-tanzu.github.io/helm-charts
+    repo: https://vmware-tanzu.github.io/helm-charts/
     default_namespace: velero
     default_sync_wave: 0
     docs_url: https://velero.io/docs/
     homepage: https://velero.io/
     source_url: https://github.com/vmware-tanzu/velero
-    maintainers: [vmware-tanzu]
+    maintainers: [ vmware-tanzu ]
     license: Apache-2.0
     category: backup
-    curated_by: [aws-eks-blueprints, artifacthub-verified]
+    curated_by: [ aws-eks-blueprints, artifacthub-verified ]
     security_score: unknown
     github_stars: 8900
     min_kubernetes_version: "1.23"
+    version: 3.2.0
 
   # -------------------- Chaos / testing --------------------
 
@@ -747,10 +1000,10 @@ addons:
     docs_url: https://chaos-mesh.org/docs/
     homepage: https://chaos-mesh.org/
     source_url: https://github.com/chaos-mesh/chaos-mesh
-    maintainers: [chaos-mesh]
+    maintainers: [ chaos-mesh ]
     license: Apache-2.0
     category: chaos
-    curated_by: [cncf-incubating, artifacthub-verified]
+    curated_by: [ cncf-incubating, artifacthub-verified ]
     security_score: unknown
     github_stars: 6600
     min_kubernetes_version: "1.24"
@@ -764,10 +1017,10 @@ addons:
     docs_url: https://docs.litmuschaos.io/
     homepage: https://litmuschaos.io/
     source_url: https://github.com/litmuschaos/litmus
-    maintainers: [litmuschaos]
+    maintainers: [ litmuschaos ]
     license: Apache-2.0
     category: chaos
-    curated_by: [cncf-incubating, artifacthub-verified]
+    curated_by: [ cncf-incubating, artifacthub-verified ]
     security_score: unknown
     github_stars: 4400
     min_kubernetes_version: "1.23"
@@ -783,13 +1036,14 @@ addons:
     docs_url: https://backstage.io/docs/
     homepage: https://backstage.io/
     source_url: https://github.com/backstage/backstage
-    maintainers: [backstage]
+    maintainers: [ backstage ]
     license: Apache-2.0
     category: developer-tools
-    curated_by: [cncf-incubating, artifacthub-verified]
+    curated_by: [ cncf-incubating, artifacthub-verified ]
     security_score: unknown
     github_stars: 28000
     min_kubernetes_version: "1.25"
+    version: 0.17.0
 
   - name: keptn
     description: Cloud-native lifecycle observability + SRE automation.
@@ -800,10 +1054,10 @@ addons:
     docs_url: https://keptn.sh/stable/docs/
     homepage: https://keptn.sh/
     source_url: https://github.com/keptn/lifecycle-toolkit
-    maintainers: [keptn]
+    maintainers: [ keptn ]
     license: Apache-2.0
     category: developer-tools
-    curated_by: [cncf-incubating, artifacthub-verified]
+    curated_by: [ cncf-incubating, artifacthub-verified ]
     security_score: unknown
     github_stars: 1500
     min_kubernetes_version: "1.26"
