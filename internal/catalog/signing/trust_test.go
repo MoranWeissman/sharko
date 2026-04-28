@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -454,6 +455,74 @@ func TestLoadTrustPolicy_MixedAnchoredUnanchored(t *testing.T) {
 	}
 	if got := patternAttr(warns[0]); got != unanchored {
 		t.Errorf("warning's pattern attr = %q, want %q", got, unanchored)
+	}
+}
+
+// --- V123-PR-E: workflow_run cert SAN regression pin --------------------
+//
+// rc.2 cut clean and signatures cryptographically verified, but every entry
+// was rejected with `signature verified but identity not in trust policy`
+// because the default Sharko regex anchored to `refs/tags/v.*` while the
+// actual cosign cert SAN is
+// `release.yml@refs/heads/main` (Fulcio encodes `job_workflow_ref`, the
+// workflow file's ref, not the triggering tag's ref). Tag-context is
+// enforced by the `if: startsWith(workflow_run.head_branch, 'v')` guard in
+// release.yml. These two tests pin the corrected regex so a future "fix"
+// back to `refs/tags/v.*` fails immediately.
+
+// TestDefaultTrustedIdentities_MatchesWorkflowRunSAN — the Sharko default
+// must match the actual cert SAN that Fulcio mints for our workflow_run-
+// triggered release.yml. Asserts exactly one default pattern matches the
+// canonical SAN string (the Sharko default; the CNCF default cannot match
+// a sharko URL).
+func TestDefaultTrustedIdentities_MatchesWorkflowRunSAN(t *testing.T) {
+	if v, ok := os.LookupEnv(EnvTrustedIdentities); ok {
+		if err := os.Unsetenv(EnvTrustedIdentities); err != nil {
+			t.Fatalf("unsetenv: %v", err)
+		}
+		t.Cleanup(func() { _ = os.Setenv(EnvTrustedIdentities, v) })
+	}
+	pol, err := LoadTrustPolicyFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	const realSAN = "https://github.com/MoranWeissman/sharko/.github/workflows/release.yml@refs/heads/main"
+	matches := 0
+	for _, p := range pol.Identities {
+		re := regexp.MustCompile(p)
+		if re.MatchString(realSAN) {
+			matches++
+		}
+	}
+	if matches != 1 {
+		t.Fatalf("expected exactly 1 default pattern to match SAN %q, got %d (defaults=%v)",
+			realSAN, matches, pol.Identities)
+	}
+}
+
+// TestDefaultTrustedIdentities_RejectsNonMainBranch — the corrected default
+// must remain anchored to `main`, NOT `refs/heads/.*`. A SAN whose ref is
+// any other branch (e.g. a feature branch CI run) must NOT match any
+// Sharko default. (The CNCF default cannot match a sharko URL anyway, so
+// this effectively asserts the Sharko regex anchors to `main$`.)
+func TestDefaultTrustedIdentities_RejectsNonMainBranch(t *testing.T) {
+	if v, ok := os.LookupEnv(EnvTrustedIdentities); ok {
+		if err := os.Unsetenv(EnvTrustedIdentities); err != nil {
+			t.Fatalf("unsetenv: %v", err)
+		}
+		t.Cleanup(func() { _ = os.Setenv(EnvTrustedIdentities, v) })
+	}
+	pol, err := LoadTrustPolicyFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	const featureBranchSAN = "https://github.com/MoranWeissman/sharko/.github/workflows/release.yml@refs/heads/feature-branch"
+	for _, p := range pol.Identities {
+		re := regexp.MustCompile(p)
+		if re.MatchString(featureBranchSAN) {
+			t.Errorf("default pattern %q unexpectedly matched non-main SAN %q",
+				p, featureBranchSAN)
+		}
 	}
 }
 
