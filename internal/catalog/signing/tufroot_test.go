@@ -31,3 +31,41 @@ func TestLoadProductionTrustedRoot_Smoke(t *testing.T) {
 		t.Fatal("LoadProductionTrustedRoot returned nil TrustedMaterial with no error")
 	}
 }
+
+// TestResolveTUFCachePath_Default — with the env var unset, the helper
+// must return the container-safe default. Pin the contract: every Linux
+// container distro must be able to write to this path on first boot.
+func TestResolveTUFCachePath_Default(t *testing.T) {
+	t.Setenv(tufCacheEnvVar, "")
+
+	got := resolveTUFCachePath()
+	if got != defaultTUFCachePath {
+		t.Fatalf("resolveTUFCachePath() = %q, want %q", got, defaultTUFCachePath)
+	}
+}
+
+// TestResolveTUFCachePath_EnvOverride — operators who want persistence
+// across container restarts set SHARKO_SIGSTORE_TUF_CACHE to a mounted
+// volume path. The helper must honor that value verbatim.
+func TestResolveTUFCachePath_EnvOverride(t *testing.T) {
+	const want = "/var/lib/sharko/sigstore-tuf"
+	t.Setenv(tufCacheEnvVar, want)
+
+	got := resolveTUFCachePath()
+	if got != want {
+		t.Fatalf("resolveTUFCachePath() = %q, want %q", got, want)
+	}
+}
+
+// TestResolveTUFCachePath_EnvWhitespaceFallsBackToDefault — a
+// whitespace-only env value is operator error (likely a stray quote in
+// a Helm values file). Treat it as "unset" rather than trying to mkdir
+// a literal whitespace directory.
+func TestResolveTUFCachePath_EnvWhitespaceFallsBackToDefault(t *testing.T) {
+	t.Setenv(tufCacheEnvVar, "   \t  ")
+
+	got := resolveTUFCachePath()
+	if got != defaultTUFCachePath {
+		t.Fatalf("resolveTUFCachePath() = %q, want default %q", got, defaultTUFCachePath)
+	}
+}
