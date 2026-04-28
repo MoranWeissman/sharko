@@ -346,7 +346,15 @@ jobs:
         with:
           distribution: goreleaser
           version: "~> v2"
-          args: release --clean
+          # V123-2.5 swaps catalog/addons.yaml with the signed copy from the
+          # Sign Catalog Entries job (see "Use signed catalog for build" step
+          # above) and downloads the signed bundle into _dist/. Both mutate
+          # the workspace before GoReleaser runs, so its default dirty-tree
+          # check would refuse to release. --skip=validate tells GoReleaser
+          # the dirty workspace is intentional. We keep --clean so the dist/
+          # output dir is still wiped between runs.
+          # Ref: https://goreleaser.com/errors/dirty
+          args: release --clean --skip=validate
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # COSIGN_YES suppresses the interactive prompt in non-TTY mode.
