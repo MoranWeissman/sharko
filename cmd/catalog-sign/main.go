@@ -59,14 +59,32 @@ type signer interface {
 // any downstream consumer that prefers the split-file format.
 type cosignCLI struct{}
 
-func (cosignCLI) SignBlob(payloadPath string, out signOutputs) error {
-	cmd := exec.Command("cosign", "sign-blob",
+// signBlobArgs builds the argv passed to the `cosign` binary for a single
+// entry. Extracted from SignBlob so the regression-prone flag set is
+// independently testable without shelling out to a real cosign.
+//
+// `--new-bundle-format` is the load-bearing flag for V123-2 runtime
+// verification: cosign 2.4.x writes the modern Sigstore Bundle format
+// (mediaType / verificationMaterial / messageSignature) when it is set,
+// versus the legacy `{base64Signature, cert}` shape that sigstore-go's
+// bundle parser refuses. Without it the runtime verifier surfaces every
+// signed entry as Verified=false even with a valid trust root loaded.
+// The TestSignBlobArgs_IncludesNewBundleFormat test pins the regression.
+func (cosignCLI) signBlobArgs(payloadPath string, out signOutputs) []string {
+	return []string{
+		"sign-blob",
 		"--yes",
+		"--new-bundle-format",
 		"--bundle", out.BundlePath,
 		"--output-signature", out.SigPath,
 		"--output-certificate", out.CertPath,
 		payloadPath,
-	)
+	}
+}
+
+func (c cosignCLI) SignBlob(payloadPath string, out signOutputs) error {
+	args := c.signBlobArgs(payloadPath, out)
+	cmd := exec.Command("cosign", args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()

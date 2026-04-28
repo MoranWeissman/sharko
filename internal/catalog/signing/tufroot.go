@@ -30,20 +30,55 @@ package signing
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
 
 	"github.com/sigstore/sigstore-go/pkg/root"
 	"github.com/sigstore/sigstore-go/pkg/tuf"
 )
 
+// tufCacheEnvVar is the operator-facing override for the on-disk TUF
+// cache path. Empty (or unset) keeps the container-safe default.
+const tufCacheEnvVar = "SHARKO_SIGSTORE_TUF_CACHE"
+
+// defaultTUFCachePath is the container-safe fallback for the on-disk
+// TUF cache. Sigstore-go's stock default (`$HOME/.sigstore/tuf`) is the
+// classic shape that fails inside Sharko's Docker image — the runtime
+// user has no `$HOME`, so the path resolves to `/.sigstore` and the
+// kernel rejects the mkdir. `/tmp` is writable on every Linux container
+// distro (including distroless and read-only-root setups where `/tmp`
+// is the canonical writable mount). Operators who want persistence can
+// point SHARKO_SIGSTORE_TUF_CACHE at a mounted volume.
+const defaultTUFCachePath = "/tmp/sigstore-tuf"
+
+// resolveTUFCachePath picks the on-disk TUF cache directory.
+//
+// Order:
+//  1. SHARKO_SIGSTORE_TUF_CACHE if set to a non-whitespace value.
+//  2. defaultTUFCachePath (`/tmp/sigstore-tuf`) otherwise.
+//
+// Whitespace-only env values are treated as "unset" so an operator who
+// sets `SHARKO_SIGSTORE_TUF_CACHE=" "` doesn't end up trying to write
+// to a literal whitespace directory.
+func resolveTUFCachePath() string {
+	if v := strings.TrimSpace(os.Getenv(tufCacheEnvVar)); v != "" {
+		return v
+	}
+	return defaultTUFCachePath
+}
+
 // LoadProductionTrustedRoot fetches the Sigstore public-good
 // `trusted_root.json` via TUF and parses it into a root.TrustedMaterial
 // suitable for signing.WithTrustedMaterial.
 //
-// Cache path is the sigstore-go default (`$HOME/.sigstore/root`). The
-// repository base URL is the public good mirror. The first call from a
-// fresh machine reaches out to https://tuf-repo-cdn.sigstore.dev to
-// pull the root metadata + the trusted_root.json target; subsequent
-// calls re-use the on-disk cache subject to the TUF metadata expiry.
+// Cache path defaults to `/tmp/sigstore-tuf` — a writable location in
+// every Linux container including distroless and read-only-root setups.
+// Operators who want persistence across container restarts can point
+// `SHARKO_SIGSTORE_TUF_CACHE` at a mounted volume. The repository base
+// URL is the public good mirror. The first call from a fresh cache
+// reaches out to https://tuf-repo-cdn.sigstore.dev to pull the root
+// metadata + the trusted_root.json target; subsequent calls re-use the
+// on-disk cache subject to the TUF metadata expiry.
 //
 // The ctx parameter is accepted for API symmetry with the rest of the
 // signing package's loaders. The underlying tuf.New + GetTarget calls
@@ -56,6 +91,7 @@ func LoadProductionTrustedRoot(ctx context.Context) (root.TrustedMaterial, error
 	_ = ctx // reserved for future use; see godoc above
 
 	opts := tuf.DefaultOptions()
+	opts.CachePath = resolveTUFCachePath()
 	client, err := tuf.New(opts)
 	if err != nil {
 		return nil, fmt.Errorf("tuf.New: %w", err)
