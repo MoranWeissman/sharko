@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -245,5 +246,36 @@ func TestCatalogSign_RejectsMissingReleaseBaseURL(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "release-base-url") {
 		t.Errorf("error %q does not mention release-base-url", err.Error())
+	}
+}
+
+// TestSignBlobArgs_IncludesNewBundleFormat pins the rc.1 regression. The
+// runtime verifier (sigstore-go bundle parser) only accepts the modern
+// Sigstore Bundle format (mediaType / verificationMaterial /
+// messageSignature). cosign 2.4.x emits that shape only when
+// --new-bundle-format is on the argv; without the flag it falls back to
+// the legacy `{base64Signature, cert}` shape and every signed catalog
+// entry surfaces Verified=false. If anyone removes the flag this test
+// must fail loudly so we never re-ship a broken bundle format.
+func TestSignBlobArgs_IncludesNewBundleFormat(t *testing.T) {
+	out := signOutputs{
+		BundlePath: "/tmp/example.bundle",
+		SigPath:    "/tmp/example.sig",
+		CertPath:   "/tmp/example.pem",
+	}
+	args := cosignCLI{}.signBlobArgs("/tmp/example.payload", out)
+
+	if !slices.Contains(args, "--new-bundle-format") {
+		t.Fatalf("signBlobArgs missing --new-bundle-format flag; got %v", args)
+	}
+	// Sanity: the first arg is still the cosign subcommand and the
+	// payload path is still the trailing positional. A future refactor
+	// that reorders the args must update this test deliberately rather
+	// than slipping a regression through.
+	if len(args) == 0 || args[0] != "sign-blob" {
+		t.Fatalf("expected first arg to be \"sign-blob\", got %v", args)
+	}
+	if args[len(args)-1] != "/tmp/example.payload" {
+		t.Fatalf("expected last arg to be the payload path, got %v", args)
 	}
 }
