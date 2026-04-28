@@ -2,6 +2,7 @@
 /sharko
 bin/
 *.exe
+_dist/
 
 # Go
 vendor/
