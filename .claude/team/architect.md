@@ -48,6 +48,17 @@ internal/advisories/ Chart security & release advisory data (ArtifactHub primary
 - **Partial success**: batch operations return 207 with per-item results
 - **Audit middleware + Enrich**: `auditMiddleware` in `internal/api/audit_middleware.go` auto-emits one audit entry per mutating request; handlers call `audit.Enrich(ctx, audit.Fields{Event, Resource, Detail})` to attach semantic data before the middleware fires
 
+## Catalog signing/sources boundary (v1.23)
+
+The v1.23 catalog-extensibility surface introduced two adjacent packages with a strict dependency direction:
+
+- `internal/catalog/sources/` — third-party catalog fetcher, snapshot store, merger (embedded-wins). Knows about HTTP, SSRF guards, and `SidecarVerifier` as an **interface**.
+- `internal/catalog/signing/` — cosign-keyless verifier, trust policy parser, canonical entry serialization. Owns the `sigstore-go` dependency.
+
+**Hard rule (§3.3.1 of the v1.23 design doc): `internal/catalog/sources` MUST NOT import `internal/catalog/signing`.** `sources` consumes signing capability through the `SidecarVerifier` interface defined in `sources`; the concrete implementation is wired in at `cmd/sharko/serve.go`. This keeps the fetch path testable without dragging in `sigstore-go` and prevents the trust-policy code from leaking into the source-aggregation layer.
+
+The canonical trust-policy loader pattern is **one source of truth, threaded once at startup**: `signing.LoadTrustPolicyFromEnv()` reads `SHARKO_CATALOG_TRUSTED_IDENTITIES` (with the `<defaults>` expansion token), and `cmd/sharko/serve.go` threads the result into the catalog stack via `SetTrustPolicy()` and `SetEntryVerifyFunc()`. Do NOT re-load the policy from any other entry point and do NOT cache it in package-level globals — both create the kind of ambient state that produces "I edited the env, why did the badge not change?" bug reports. If a future change needs runtime policy reload, design it as an explicit re-thread through the same setters, not as a sneak-path read.
+
 ## Reference Documents
 - `docs/design/IMPLEMENTATION-PLAN-V1.md` — v1.0.0 phases
 - `docs/architecture.md` — project architecture

@@ -40,6 +40,10 @@ grep -rn "scrdairy\|merck\|msd\.com\|mahi-techlabs\|merck-ahtl" \
 | 10 | Templates cleanup + embed | Done |
 | 11 | Docs + README + init endpoint | Done |
 
+## Current Phase — v1.23 shipped, V2 hardening backlog
+
+`v1.23.0-pre.0` cut on 2026-04-29 closes the catalog-extensibility milestone (Epics V123-1 third-party catalogs, V123-2 per-entry cosign signing, V123-3 trusted-source scanner bot, V123-4 docs + release polish). Documentation refresh PR (this file) is the post-ship cleanup. Next phase is **V2 hardening** (still backlog — no active sprint): scoped RBAC roadmap, audit-log architecture stabilization, CNCF maturity gap closure (~40% to incubation post-v1.20), and the items in `project_v3_backlog.md`. The v1.0.0 phase table below is **historical** — kept for reference.
+
 ## v1.0.0 Build Phases — IN PROGRESS
 Source: `docs/design/IMPLEMENTATION-PLAN-V1.md`
 

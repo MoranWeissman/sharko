@@ -26,7 +26,10 @@ Sharko is a server that runs in your Kubernetes cluster, next to ArgoCD, and man
 
 - **Wizard-based setup** — first run opens a step-by-step wizard: Git connection, ArgoCD connection, secrets provider, and repo initialization
 - **Fleet dashboard** — cluster health cards with sync status, addon counts, and connection indicators; managed and discovered clusters in separate sections
-- **Curated marketplace (v1.21)** — 45 vetted Helm addons with OpenSSF Scorecard signals, server-side ArtifactHub search, and smart values seeding (heuristic + optional LLM annotation) — every Add still goes through a Git PR
+- **Curated marketplace** — 45 vetted Helm addons with OpenSSF Scorecard signals, server-side ArtifactHub search, and smart values seeding (heuristic + optional LLM annotation) — every Add still goes through a Git PR
+- **Third-party catalogs (v1.23)** — operators set `SHARKO_CATALOG_URLS=...` to extend the embedded catalog with internal/partner addons; embedded entries win on conflicts
+- **Signed catalog entries (v1.23)** — every embedded entry is cosign-keyless-signed against Sigstore's public-good root; the UI shows a **Verified** badge for entries whose signing identity matches the operator's trust policy
+- **Trusted-source scanning bot (v1.23)** — daily GitHub Action scans CNCF Landscape + AWS EKS Blueprints and opens draft PRs proposing additions/updates to the embedded catalog
 - **Addon catalog** — version matrix across every cluster, drift detection, and contextual help on all advanced config fields
 - **GitOps-native** — every write operation creates a PR (auto-merge optional); branches cleaned up after merge
 - **Managed vs discovered clusters** — Sharko surfaces all ArgoCD clusters; adopt discovered clusters into full management in one click
