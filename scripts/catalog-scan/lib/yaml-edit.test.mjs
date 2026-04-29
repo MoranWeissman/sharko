@@ -14,7 +14,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { applyChangeset } from './yaml-edit.mjs';
+import { applyChangeset, assertValidName, VALID_NAME_RE } from './yaml-edit.mjs';
 
 const SAMPLE_YAML = `# top-level comment kept
 addons:
@@ -158,4 +158,117 @@ test('yaml-edit: scanner-internal underscore fields are stripped on add', () => 
   // Underscore fields NOT in output.
   assert.ok(!out.includes('_eks_blueprints_path'));
   assert.ok(!out.includes('_scanner_meta'));
+});
+
+/* ------------------------------------------------------------------ */
+/* M3 — duplicate adds no longer throw (V123-PR-F3)                     */
+/* ------------------------------------------------------------------ */
+
+test('yaml-edit: duplicate add for an existing entry name is silently no-op (M3)', () => {
+  // Pre-fix this threw "add for 'alpha' but entry already exists" and
+  // aborted the entire scan run. Post-fix: the duplicate is dropped
+  // (the upstream `dedupAdds()` in changeset.mjs is the visibility
+  // path; this is the belt-and-braces fallback). The first occurrence
+  // — the curated `alpha` already in the YAML — survives unchanged.
+  const cs = { adds: [makeAdd('alpha')], updates: [] };
+  const out = applyChangeset(SAMPLE_YAML, cs);
+  // No throw → reach this line. Output equals input modulo formatting.
+  // alpha entry is still present (one occurrence; not duplicated).
+  const occurrences = (out.match(/^\s*-\s*name:\s*alpha\s*$/gm) || []).length;
+  assert.equal(occurrences, 1, 'alpha must appear exactly once after duplicate-add no-op');
+  // No spurious "version: 0.1.0" leak from the fake add (the curated
+  // alpha didn't have a version field, and the no-op must not have
+  // injected one).
+  assert.doesNotMatch(out, /version: 0\.1\.0/);
+});
+
+/* ------------------------------------------------------------------ */
+/* L2 — name regex validation (V123-PR-F3)                              */
+/* ------------------------------------------------------------------ */
+
+test('yaml-edit: assertValidName accepts curated catalog names', () => {
+  // Sample of names from `catalog/addons.yaml` — verified against
+  // `^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$` at story-prep time.
+  const ok = [
+    'cert-manager', 'external-dns', 'argo-workflows', 'kube-prometheus-stack',
+    'cloudnative-pg', 'metrics-server', 'aws-load-balancer-controller',
+    'k8sgpt', 'opentelemetry-operator',
+  ];
+  for (const n of ok) {
+    assert.doesNotThrow(() => assertValidName(n), `name '${n}' should pass`);
+  }
+});
+
+test('yaml-edit: assertValidName rejects uppercase letters', () => {
+  assert.throws(
+    () => assertValidName('Foo-Bar'),
+    /invalid entry name 'Foo-Bar'/,
+  );
+});
+
+test('yaml-edit: assertValidName rejects spaces', () => {
+  assert.throws(
+    () => assertValidName('foo bar'),
+    /invalid entry name 'foo bar'/,
+  );
+});
+
+test('yaml-edit: assertValidName rejects leading dot', () => {
+  assert.throws(
+    () => assertValidName('.foo'),
+    /invalid entry name '\.foo'/,
+  );
+});
+
+test('yaml-edit: assertValidName rejects trailing dash', () => {
+  assert.throws(
+    () => assertValidName('foo-'),
+    /invalid entry name 'foo-'/,
+  );
+});
+
+test('yaml-edit: assertValidName rejects empty / non-string', () => {
+  assert.throws(() => assertValidName(''), /invalid entry name/);
+  assert.throws(() => assertValidName(null), /invalid entry name/);
+  assert.throws(() => assertValidName(undefined), /invalid entry name/);
+  assert.throws(() => assertValidName(42), /invalid entry name/);
+});
+
+test('yaml-edit: assertValidName accepts single character', () => {
+  // The relaxed shape `^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$` is required so
+  // a hypothetical 1-char addon name would not break the regex. None
+  // currently exist in the catalog, but the relaxation is defensive.
+  assert.doesNotThrow(() => assertValidName('x'));
+  assert.doesNotThrow(() => assertValidName('1'));
+});
+
+test('yaml-edit: applyChangeset rejects invalid name on add (L2)', () => {
+  const cs = { adds: [makeAdd('Bad-Name')], updates: [] };
+  assert.throws(
+    () => applyChangeset(SAMPLE_YAML, cs),
+    /invalid entry name 'Bad-Name'/,
+  );
+});
+
+test('yaml-edit: applyChangeset rejects invalid name on update (L2)', () => {
+  const cs = {
+    adds: [],
+    updates: [
+      {
+        plugin: 'test-plugin',
+        entry: { name: 'has spaces' },
+        diff: { version: { to: '1.0.0' } },
+      },
+    ],
+  };
+  assert.throws(
+    () => applyChangeset(SAMPLE_YAML, cs),
+    /invalid entry name 'has spaces'/,
+  );
+});
+
+test('yaml-edit: VALID_NAME_RE constant is exported', () => {
+  assert.ok(VALID_NAME_RE instanceof RegExp);
+  assert.ok(VALID_NAME_RE.test('cert-manager'));
+  assert.ok(!VALID_NAME_RE.test('Cert-Manager'));
 });

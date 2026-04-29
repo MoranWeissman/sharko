@@ -28,6 +28,13 @@
  * prefixed metadata (e.g. `_eks_blueprints_path`) is stripped — those
  * fields are scanner internals, not catalog schema.
  *
+ * V123-PR-F3 / L2: every add (and update) is gated by a name-regex
+ * check before any AST mutation. Catalog `name` is required by the
+ * Go loader but had no shape constraint there — adding the regex on
+ * the Node side lets the bot fail fast with a clear error instead of
+ * proposing entries that the loader will later reject for being
+ * non-DNS-shaped (uppercase, spaces, leading dot, etc.).
+ *
  * ## Update semantics
  *
  * Per `scripts/catalog-scan/lib/diff.mjs`, only COMPARABLE_FIELDS
@@ -43,12 +50,23 @@
  * a soft error in the changeset (V123-3.4 brief Tier 3 #6 explicitly
  * documents this choice).
  *
+ * ## Duplicate-add semantics (V123-PR-F3 / M3)
+ *
+ * Pre-fix, an add for a name already in the catalog threw. Post-fix,
+ * we silently no-op: the first occurrence (real curated entry OR an
+ * earlier add that already landed) wins, and subsequent same-name
+ * adds are dropped. The `dedupAdds()` helper in `changeset.mjs` is
+ * the upstream guardrail — it routes cross-plugin slug collisions
+ * into the changeset's `duplicates` array so reviewers see them in
+ * the PR body. yaml-edit's no-op is the belt-and-braces fallback in
+ * case dedup hasn't been called.
+ *
  * ## Empty changeset
  *
  * `adds.length + updates.length === 0` → return the input text
  * unchanged (idempotent, no formatting churn).
  *
- * @see scripts/catalog-scan/lib/yaml-edit.test.mjs for the 6-case suite.
+ * @see scripts/catalog-scan/lib/yaml-edit.test.mjs for the test suite.
  */
 
 import yamlPkg from 'yaml';
@@ -56,6 +74,37 @@ const { parseDocument, isMap, isSeq } = yamlPkg;
 
 /** Fields that scanner plugins emit but are not part of the catalog schema. */
 const SCANNER_INTERNAL_FIELD_PREFIX = '_';
+
+/**
+ * Sensible name shape — DNS-ish: lowercase alphanumeric with `.`/`-`
+ * separators, no leading/trailing punctuation, length ≥ 1. The
+ * single-char trailing form (`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`) is
+ * required because the regex must accept names like `x` if any
+ * upstream catalog ever shipped one. Verified against today's
+ * `catalog/addons.yaml` (45 entries, all ≥ 4 chars) — the relaxed
+ * single-char form is defensive future-proofing, not a current need.
+ */
+export const VALID_NAME_RE = /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/;
+
+/**
+ * Validate a candidate entry name. Throws with a clear message if it
+ * fails the regex. Defense-in-depth: the Go-side `validateEntry` in
+ * `internal/catalog/loader.go` enforces presence-of-name but has no
+ * shape constraint, so a scanner-side check stops bad proposals from
+ * reaching reviewers in the first place.
+ *
+ * V123-PR-F3 / L2.
+ */
+export function assertValidName(name) {
+  if (typeof name !== 'string' || name.length === 0) {
+    throw new Error("yaml-edit: invalid entry name (empty / non-string)");
+  }
+  if (!VALID_NAME_RE.test(name)) {
+    throw new Error(
+      `yaml-edit: invalid entry name '${name}' (must match /${VALID_NAME_RE.source}/)`,
+    );
+  }
+}
 
 /**
  * Canonical key order for new entries — matches the curated style in
@@ -111,6 +160,8 @@ export function applyChangeset(yamlText, changeset) {
     if (!entry || typeof entry.name !== 'string') {
       throw new Error('yaml-edit: update payload missing entry.name');
     }
+    // L2: validate shape before any AST mutation.
+    assertValidName(entry.name);
     const existingIdx = findEntryIndex(addonsNode, entry.name);
     if (existingIdx < 0) {
       throw new Error(`yaml-edit: update for '${entry.name}' but no such entry in catalog`);
@@ -122,10 +173,17 @@ export function applyChangeset(yamlText, changeset) {
     if (!entry || typeof entry.name !== 'string') {
       throw new Error('yaml-edit: add payload missing entry.name');
     }
+    // L2: validate shape before any AST mutation.
+    assertValidName(entry.name);
     if (findEntryIndex(addonsNode, entry.name) >= 0) {
-      // Defensive — diff helper shouldn't propose an "add" for a name
-      // already in the catalog, but if it ever does, surface loudly.
-      throw new Error(`yaml-edit: add for '${entry.name}' but entry already exists`);
+      // M3: silently no-op duplicate adds. Pre-fix this threw; post-fix
+      // we drop the duplicate and continue. Cross-plugin slug collisions
+      // are caught upstream by `dedupAdds()` in `changeset.mjs`, which
+      // routes them into `changeset.duplicates` for PR-body rendering.
+      // The check here is the belt-and-braces fallback: if dedup wasn't
+      // called (or the catalog has been edited since the diff ran), we
+      // still don't crash an entire scan over one collision.
+      continue;
     }
     insertAlphabetically(doc, addonsNode, entry);
   }
