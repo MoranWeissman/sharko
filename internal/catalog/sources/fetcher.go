@@ -166,6 +166,20 @@ var defaultClock Clock = realClock{}
 // stubbable in tests. Mirrors the pattern in internal/config.
 var lookupHostFn = net.LookupHost
 
+// pinnedBaseDialFn is the test seam for the pinned dialer's *post-pin*
+// connect step. Once httpGetPinned has confirmed the resolved IP is in
+// the pre-validated pin set, it hands the (network, addr) to this fn to
+// open the actual TCP connection. Production wiring is a vanilla
+// net.Dialer; tests that want to route a fake-public IP back to a
+// loopback httptest listener override this. The seam intentionally sits
+// AFTER the pin check so a test override can never weaken the security
+// invariant — the pin gate has already gated the pin-set lookup before
+// pinnedBaseDialFn ever runs.
+var pinnedBaseDialFn = (&net.Dialer{
+	Timeout:   30 * time.Second,
+	KeepAlive: 30 * time.Second,
+}).DialContext
+
 // Tunables for HTTP + sidecar probing. Kept as package vars (not
 // per-Fetcher fields) so tests can shrink them for fast iteration
 // without growing the constructor signature.
@@ -318,6 +332,16 @@ func NewFetcher(cfg *config.CatalogSourcesConfig, verifier SidecarVerifier, cloc
 			DisableCompression:    false,
 		},
 	}
+
+	// V123-PR-F2 / L1: re-validate the redirect target against the runtime
+	// SSRF guard. Stdlib's default CheckRedirect follows up to 10 redirects
+	// with NO additional inspection; a public catalog URL could otherwise
+	// 302 → http://10.0.0.5/secrets and Sharko would dutifully fetch the
+	// internal address. Returning a non-nil error from CheckRedirect aborts
+	// the redirect chain BEFORE the next dial happens, so no connection
+	// attempt to the private target is made. Stdlib still enforces its
+	// 10-redirect cap automatically when CheckRedirect returns nil.
+	f.httpClient.CheckRedirect = f.checkRedirectSSRF
 
 	// Seed snapshots with a failed placeholder per configured URL so
 	// callers that read Snapshots() before the first fetch completes
@@ -604,6 +628,16 @@ func (f *Fetcher) fetchMany(ctx context.Context, urls []string) {
 // fetchOne does a single source pull: runtime SSRF check, HTTP GET,
 // schema validation, optional sidecar verification, snapshot update.
 // Always returns normally — errors are recorded on the snapshot.
+//
+// V123-PR-F2 / M6: when the SSRF guard is active (AllowPrivate=false),
+// fetchOne captures the IPs validated by runtimeSSRFCheckResolvedIPs and
+// pins the GET dialer to that exact set. This closes the TOCTOU window
+// between the SSRF resolve and the http.Transport's own resolve — DNS
+// rebinding cannot redirect the actual TCP connect to a private address
+// after the SSRF check has already cleared it, because the dialer refuses
+// to dial any IP outside the pre-validated set. When AllowPrivate=true the
+// pinning is skipped (matches the SSRF skip): an operator who has opted
+// into private catalogs is past the SSRF threat model.
 func (f *Fetcher) fetchOne(ctx context.Context, rawURL string) {
 	startAt := f.clock.Now()
 	fingerprint := urlFingerprint(rawURL)
@@ -613,17 +647,31 @@ func (f *Fetcher) fetchOne(ctx context.Context, rawURL string) {
 	// internal IP via DNS rebinding or ops-level mistake between
 	// startup and now. Skip when cfg.AllowPrivate is set (matches the
 	// startup escape hatch).
+	var pinnedIPs []netip.Addr
 	if !f.cfg.AllowPrivate {
-		if err := runtimeSSRFCheck(rawURL); err != nil {
+		ips, err := runtimeSSRFCheckResolvedIPs(rawURL)
+		if err != nil {
 			f.log.Warn("catalog source blocked by runtime SSRF guard",
 				"source_fp", fingerprint, "err", err.Error())
 			f.recordFailure(rawURL, startAt, err)
 			return
 		}
+		pinnedIPs = ips
 	}
 
-	// Main GET.
-	body, err := f.httpGet(ctx, rawURL)
+	// Main GET. With pinnedIPs set, route through the per-request
+	// pinning client so the actual TCP connect cannot deviate from the
+	// SSRF-validated IP set (M6). Without pinning (AllowPrivate=true),
+	// fall through to the shared httpClient.
+	var (
+		body []byte
+		err  error
+	)
+	if len(pinnedIPs) > 0 {
+		body, err = f.httpGetPinned(ctx, rawURL, pinnedIPs)
+	} else {
+		body, err = f.httpGet(ctx, rawURL)
+	}
 	if err != nil {
 		f.log.Warn("catalog source fetch failed",
 			"source_fp", fingerprint, "err", err.Error())
@@ -689,6 +737,13 @@ func (f *Fetcher) fetchOne(ctx context.Context, rawURL string) {
 }
 
 // httpGet performs the main GET with body-size clamp.
+//
+// httpGet is the unpinned baseline: it routes through f.httpClient and
+// thus inherits whatever Transport.DialContext that client carries (the
+// stdlib default in production, or a test override). The pinning path
+// for catalog sources (M6) goes through httpGetPinned instead. httpGet
+// is retained for the AllowPrivate=true case in fetchOne and for any
+// non-fetcher caller that wants the shared client's behaviour.
 func (f *Fetcher) httpGet(ctx context.Context, rawURL string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
@@ -717,6 +772,158 @@ func (f *Fetcher) httpGet(ctx context.Context, rawURL string) ([]byte, error) {
 		return nil, fmt.Errorf("response exceeds %d bytes", maxCatalogBytes)
 	}
 	return body, nil
+}
+
+// httpGetPinned performs the main GET via a one-off http.Client whose
+// Transport.DialContext refuses to connect to any IP outside pinnedIPs.
+// This closes the post-resolve TOCTOU window described on fetchOne (M6):
+// the SSRF guard validated a set of public IPs at check time, and the
+// dialer here ensures the actual TCP connect cannot deviate from that
+// set even if a hostile or rebinding resolver would otherwise hand back
+// an internal address on the next lookup.
+//
+// The shared f.httpClient is left untouched so other callers (sidecar
+// HEAD probes, future signing-side bundle GETs) keep their existing
+// behaviour. Per-request construction is acceptable here because the
+// catalog fetch frequency is low (single-digit sources, default 5 min
+// interval) and the alternative — a Transport pool keyed by pinned-IP
+// set — is far more complex for no measurable win.
+//
+// The returned client inherits the same Timeout, Proxy hook, and
+// CheckRedirect (L1) as f.httpClient so the redirect-time SSRF re-check
+// also fires for pinned fetches.
+func (f *Fetcher) httpGetPinned(ctx context.Context, rawURL string, pinnedIPs []netip.Addr) ([]byte, error) {
+	pinned := make(map[netip.Addr]struct{}, len(pinnedIPs))
+	for _, ip := range pinnedIPs {
+		if ip.Is4In6() {
+			ip = ip.Unmap()
+		}
+		pinned[ip] = struct{}{}
+	}
+
+	dialFn := func(dctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, splitErr := net.SplitHostPort(addr)
+		if splitErr != nil {
+			return nil, fmt.Errorf("dial: parse addr: %w", splitErr)
+		}
+		// Literal IP host → check directly.
+		if parsed, perr := netip.ParseAddr(host); perr == nil {
+			if parsed.Is4In6() {
+				parsed = parsed.Unmap()
+			}
+			if _, ok := pinned[parsed]; !ok {
+				return nil, fmt.Errorf("dial: peer IP %s not in pre-validated set", parsed)
+			}
+			return pinnedBaseDialFn(dctx, network, addr)
+		}
+		// Hostname → resolve via the same seam runtimeSSRFCheck uses,
+		// so a test (or real DNS) that flips between resolves is observed
+		// here too. The first IP that is in pinned wins; everything else
+		// is rejected.
+		ips, err := lookupHostFn(host)
+		if err != nil {
+			return nil, fmt.Errorf("dial: lookup %s: %w", host, err)
+		}
+		for _, ipStr := range ips {
+			cand, perr := netip.ParseAddr(ipStr)
+			if perr != nil {
+				continue
+			}
+			if cand.Is4In6() {
+				cand = cand.Unmap()
+			}
+			if _, ok := pinned[cand]; ok {
+				return pinnedBaseDialFn(dctx, network, net.JoinHostPort(cand.String(), port))
+			}
+		}
+		return nil, fmt.Errorf("dial: host %s resolved to IPs not in pre-validated set", host)
+	}
+
+	// Clone the existing transport (preserves Proxy hook + timeouts) and
+	// override DialContext with the pinning dialer. If the existing
+	// transport is not *http.Transport (e.g. a test override), fall back
+	// to a fresh transport with the standard fetcher knobs so the pinning
+	// path always works.
+	var transport *http.Transport
+	if existing, ok := f.httpClient.Transport.(*http.Transport); ok {
+		transport = existing.Clone()
+	} else {
+		transport = &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			MaxIdleConns:          10,
+			IdleConnTimeout:       90 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: 20 * time.Second,
+		}
+	}
+	transport.DialContext = dialFn
+	// Idle conns from a shared pool would defeat the per-request pin —
+	// disable so each pinned request uses a fresh connection.
+	transport.DisableKeepAlives = true
+
+	pinClient := &http.Client{
+		Timeout:       f.httpClient.Timeout,
+		Transport:     transport,
+		CheckRedirect: f.httpClient.CheckRedirect,
+	}
+	defer transport.CloseIdleConnections()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Accept", "application/yaml, text/yaml, */*;q=0.5")
+	req.Header.Set("User-Agent", "sharko-catalog-fetcher/1.0")
+
+	resp, err := pinClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("http: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		_, _ = io.CopyN(io.Discard, resp.Body, 1024)
+		return nil, fmt.Errorf("http %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxCatalogBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read body: %w", err)
+	}
+	if int64(len(body)) > maxCatalogBytes {
+		return nil, fmt.Errorf("response exceeds %d bytes", maxCatalogBytes)
+	}
+	return body, nil
+}
+
+// checkRedirectSSRF (L1) is the http.Client.CheckRedirect callback wired
+// onto f.httpClient (and inherited by the pinned per-request clients
+// constructed in httpGetPinned). It re-runs the runtime SSRF guard
+// against the redirect target so a public catalog URL that 302-redirects
+// to http://10.0.0.5/secrets is rejected before any TCP connect to the
+// internal address happens.
+//
+// Skipped when AllowPrivate is set: an operator who has opted into
+// private catalogs has accepted the SSRF threat model on configured
+// URLs, and forcing redirect chains within their private network to fail
+// would be a regression.
+//
+// stdlib's default 10-redirect cap is preserved — when this returns nil
+// (public target), http.Client falls back to its default cap behaviour.
+// Note: the redirect target is itself NOT pinned for the next dial; this
+// is documented as a known limitation in the V123-PR-F2 brief (a hostile
+// rebinding redirect target could still race the dialer for the next
+// hop). Closing that window would require routing every redirect through
+// a fresh fetchOne-style pinned client, which is deferred past v1.23.
+func (f *Fetcher) checkRedirectSSRF(req *http.Request, _ []*http.Request) error {
+	if f.cfg != nil && f.cfg.AllowPrivate {
+		return nil
+	}
+	if err := runtimeSSRFCheck(req.URL.String()); err != nil {
+		return fmt.Errorf("redirect to private address rejected: %w", err)
+	}
+	return nil
 }
 
 // findSidecar HEAD-probes the candidate sidecar suffixes. Returns the
@@ -821,22 +1028,57 @@ func (f *Fetcher) recordSchemaFailure(rawURL string, at time.Time, err error) {
 // guard by configuring a public hostname that later resolves to a
 // private IP (DNS rebinding). Literal IPs are re-checked too for
 // defense in depth.
+//
+// V123-PR-F2 / M6: this is now a thin wrapper around
+// runtimeSSRFCheckResolvedIPs that discards the returned IP slice.
+// Callers that need to PIN the dialer to the same set the SSRF guard
+// just validated (the catalog-source GET path in fetchOne) should use
+// runtimeSSRFCheckResolvedIPs directly. The wrapper is retained because
+// runtimeSSRFCheck is still the right entry point for code paths that
+// only need a yes/no answer — checkRedirectSSRF, in particular, has no
+// useful IP to pin yet at redirect time.
 func runtimeSSRFCheck(rawURL string) error {
+	_, err := runtimeSSRFCheckResolvedIPs(rawURL)
+	return err
+}
+
+// runtimeSSRFCheckResolvedIPs is the IP-returning sibling of
+// runtimeSSRFCheck. On success it returns every public IP the host
+// resolved to (or the parsed literal IP for an IP-literal URL); the
+// catalog-source dialer pins to this set so a subsequent re-resolve via
+// the http.Transport cannot redirect the actual TCP connect to a
+// private address (the M6 TOCTOU fix).
+//
+// On a DNS failure the function returns (nil, nil) — same as the legacy
+// boolean check, "let the HTTP layer surface the lookup failure" — but
+// fetchOne only calls into the pinned path when the slice is non-empty,
+// so an empty-but-no-error return falls back to the unpinned httpGet.
+// In practice DNS failures here surface as transient pin-bypass; the
+// follow-on http.Client.Do will hit the same DNS failure and the fetch
+// records a normal failure. This is intentional: pinning never gets in
+// the way of legitimate transient DNS hiccups.
+//
+// On a private-IP rejection the function returns (nil, error) — the
+// caller in fetchOne short-circuits to recordFailure exactly as before.
+func runtimeSSRFCheckResolvedIPs(rawURL string) ([]netip.Addr, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return fmt.Errorf("parse url: %w", err)
+		return nil, fmt.Errorf("parse url: %w", err)
 	}
 	host := u.Hostname()
 	if host == "" {
-		return errors.New("missing host")
+		return nil, errors.New("missing host")
 	}
 
 	// Literal IP case.
 	if addr, perr := netip.ParseAddr(host); perr == nil {
-		if isPrivateAddr(addr) {
-			return fmt.Errorf("resolves to private address %s", addr)
+		if addr.Is4In6() {
+			addr = addr.Unmap()
 		}
-		return nil
+		if isPrivateAddr(addr) {
+			return nil, fmt.Errorf("resolves to private address %s", addr)
+		}
+		return []netip.Addr{addr}, nil
 	}
 
 	// Hostname case.
@@ -846,18 +1088,23 @@ func runtimeSSRFCheck(rawURL string) error {
 		// surface the lookup failure via its own error path. Refusing
 		// to fetch because DNS briefly failed would turn transient
 		// resolver hiccups into a catalog blackout.
-		return nil
+		return nil, nil
 	}
+	out := make([]netip.Addr, 0, len(ips))
 	for _, ip := range ips {
 		addr, perr := netip.ParseAddr(ip)
 		if perr != nil {
 			continue
 		}
-		if isPrivateAddr(addr) {
-			return fmt.Errorf("host %s resolves to private address %s", host, addr)
+		if addr.Is4In6() {
+			addr = addr.Unmap()
 		}
+		if isPrivateAddr(addr) {
+			return nil, fmt.Errorf("host %s resolves to private address %s", host, addr)
+		}
+		out = append(out, addr)
 	}
-	return nil
+	return out, nil
 }
 
 // isPrivateAddr mirrors internal/config.isPrivateAddr — kept local so

@@ -4,8 +4,12 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
+	"net/url"
 	"reflect"
 	"runtime"
 	"strings"
@@ -948,6 +952,331 @@ func TestNewFetcher_DoesNotAutoLoadTrustPolicy(t *testing.T) {
 	f.SetTrustPolicy(TrustPolicy{Identities: []string{"https://github.com/explicit/.*"}})
 	if got := len(f.trustPolicy.Identities); got != 1 {
 		t.Fatalf("after SetTrustPolicy: trustPolicy.Identities len = %d, want 1", got)
+	}
+}
+
+// --- V123-PR-F2 / M6: DialContext pinning -----------------------------
+
+// TestFetcher_DialerPinning_RejectsPostResolveRebinding (M6) covers the
+// TOCTOU window between runtimeSSRFCheckResolvedIPs and the actual TCP
+// connect. We stub lookupHostFn to return a public IP first (which the
+// SSRF guard validates and the fetcher pins) and a private IP on the
+// second resolve (the dialer's own lookup). The pinned dialer must
+// reject the private IP — closing the DNS rebinding window — and the
+// fetch must record a failure whose error blames the pre-validated IP
+// set, NOT a generic "connection refused" or a successful connect to
+// the private address.
+func TestFetcher_DialerPinning_RejectsPostResolveRebinding(t *testing.T) {
+	const host = "rebinding.example.com"
+	const sourceURL = "http://" + host + "/catalog.yaml"
+
+	// Sequence the resolver so call #1 returns the validated public IP
+	// (203.0.113.50 = TEST-NET-3, classified as public by isPrivateAddr)
+	// and call #2+ returns a private IP (10.0.0.5). The SSRF guard runs
+	// the first call; the pinned dialer's hostname resolve runs the
+	// second; any subsequent resolve also gets the private IP, so even
+	// a retry stays rejected.
+	var calls atomic.Int32
+	origLookup := lookupHostFn
+	t.Cleanup(func() { lookupHostFn = origLookup })
+	lookupHostFn = func(h string) ([]string, error) {
+		if h != host {
+			return origLookup(h)
+		}
+		n := calls.Add(1)
+		if n == 1 {
+			return []string{"203.0.113.50"}, nil
+		}
+		return []string{"10.0.0.5"}, nil
+	}
+
+	cfg := &config.CatalogSourcesConfig{
+		Sources:         []config.CatalogSource{{URL: sourceURL}},
+		RefreshInterval: config.MinRefreshInterval,
+		AllowPrivate:    false, // SSRF guard ON → pinning ON
+	}
+	f := NewFetcher(cfg, nil, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	f.ForceRefresh(ctx)
+
+	snap := f.Snapshots()[sourceURL]
+	if snap == nil {
+		t.Fatalf("expected snapshot for %s", sourceURL)
+	}
+	if snap.Status != StatusFailed {
+		t.Fatalf("expected StatusFailed after pinned-dialer rejection, got %q (err=%v)", snap.Status, snap.LastErr)
+	}
+	if snap.LastErr == nil {
+		t.Fatal("expected LastErr to record the pinning rejection")
+	}
+	msg := snap.LastErr.Error()
+	if !strings.Contains(msg, "pre-validated") {
+		t.Fatalf("expected pinning-flavoured error mentioning pre-validated set, got %v", snap.LastErr)
+	}
+	// The private rebinding IP must NOT appear in any "successful connect"
+	// trace — the only legitimate use of "10.0.0.5" in the error is when
+	// it surfaces as the rejected IP itself, which is fine. Confirm at
+	// minimum that no successful HTTP code (any 2xx) leaked through.
+	if snap.Status == StatusOK {
+		t.Fatal("fetch unexpectedly succeeded — TOCTOU window not closed")
+	}
+	// Sanity: lookupHostFn was called at least twice (once for SSRF check,
+	// once for the dialer). Less than 2 means the pinned path didn't
+	// actually re-resolve, which would be a regression on the test seam.
+	if got := calls.Load(); got < 2 {
+		t.Fatalf("expected lookupHostFn to be called at least twice (SSRF + dialer), got %d", got)
+	}
+}
+
+// TestFetcher_DialerPinning_LiteralPublicIPSucceeds (M6 sanity) — when
+// the source URL is a literal public IP (no DNS), runtimeSSRFCheckResolvedIPs
+// returns the parsed IP and the pinned dialer must accept it on the
+// dial path. We use httptest.NewServer (loopback) but route through the
+// pinning code path with AllowPrivate=true so the loopback isn't
+// rejected by the SSRF guard. Without AllowPrivate the pinning path is
+// bypassed entirely (httpGet, not httpGetPinned), so this test
+// specifically exercises the literal-IP arm of httpGetPinned via a
+// helper that exposes it directly.
+func TestFetcher_DialerPinning_LiteralPublicIPSucceeds(t *testing.T) {
+	ff := &flippable{status: http.StatusOK, body: validCatalogYAML}
+	srv := httptest.NewServer(ff.handler())
+	t.Cleanup(srv.Close)
+
+	cfg := &config.CatalogSourcesConfig{
+		Sources:         []config.CatalogSource{{URL: srv.URL + "/catalog.yaml"}},
+		RefreshInterval: config.MinRefreshInterval,
+		AllowPrivate:    true, // skip SSRF rejection on 127.0.0.1
+	}
+	f := NewFetcher(cfg, nil, nil)
+	f.SetHTTPClientForTest(srv.Client())
+
+	// Resolve the literal IP from srv.URL and call httpGetPinned directly
+	// with that IP pinned. This exercises the literal-IP arm without
+	// fighting the AllowPrivate=false SSRF rejection on a loopback test
+	// server.
+	parsed, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatalf("parse srv URL: %v", err)
+	}
+	ip, perr := netip.ParseAddr(parsed.Hostname())
+	if perr != nil {
+		t.Fatalf("parse srv host as IP: %v", perr)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	body, err := f.httpGetPinned(ctx, srv.URL+"/catalog.yaml", []netip.Addr{ip})
+	if err != nil {
+		t.Fatalf("httpGetPinned with matching pinned literal IP failed: %v", err)
+	}
+	if !strings.Contains(string(body), "addons:") {
+		t.Fatalf("expected catalog body, got %q", string(body))
+	}
+}
+
+// TestFetcher_DialerPinning_LiteralRejectsUnpinnedIP (M6 negative) —
+// httpGetPinned with a pinned set that does NOT include the URL's
+// literal IP must reject the dial. Direct invocation exercises the
+// literal-IP arm of the pinning DialContext without fighting AllowPrivate.
+func TestFetcher_DialerPinning_LiteralRejectsUnpinnedIP(t *testing.T) {
+	ff := &flippable{status: http.StatusOK, body: validCatalogYAML}
+	srv := httptest.NewServer(ff.handler())
+	t.Cleanup(srv.Close)
+
+	cfg := &config.CatalogSourcesConfig{
+		Sources:         []config.CatalogSource{{URL: srv.URL + "/catalog.yaml"}},
+		RefreshInterval: config.MinRefreshInterval,
+		AllowPrivate:    true,
+	}
+	f := NewFetcher(cfg, nil, nil)
+	f.SetHTTPClientForTest(srv.Client())
+
+	otherIP := netip.MustParseAddr("203.0.113.99")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := f.httpGetPinned(ctx, srv.URL+"/catalog.yaml", []netip.Addr{otherIP})
+	if err == nil {
+		t.Fatal("expected httpGetPinned to reject unpinned literal IP")
+	}
+	if !strings.Contains(err.Error(), "pre-validated") {
+		t.Fatalf("expected pinning-flavoured error, got %v", err)
+	}
+}
+
+// --- V123-PR-F2 / L1: CheckRedirect SSRF re-check ---------------------
+
+// TestFetcher_CheckRedirect_RejectsPrivateRedirectTarget (L1) covers
+// the redirect-time SSRF re-check. An httptest server returns 302 with
+// a Location pointing at http://10.0.0.5/secret. The fetcher's
+// CheckRedirect callback must re-run the SSRF guard on the redirect
+// target and abort the chain BEFORE any TCP connect to 10.0.0.5
+// happens. The fetch records the abort as a failure with an error
+// mentioning the redirect rejection.
+//
+// Test wiring: to drive the production code path (httpGetPinned, which
+// is what fetchOne uses under AllowPrivate=false), we stub lookupHostFn
+// so a fake-public hostname resolves to a TEST-NET-3 IP (passes SSRF
+// check, ends up in the pin set), AND we override pinnedBaseDialFn so
+// the post-pin dial reroutes back to the real httptest listener. The
+// override is intentionally AFTER the pin check, so a misuse of this
+// seam cannot weaken the security invariant. ANY attempted dial to
+// 10.0.0.5 increments privateHits — that's the regression detector.
+func TestFetcher_CheckRedirect_RejectsPrivateRedirectTarget(t *testing.T) {
+	mux := http.NewServeMux()
+	var redirectHits atomic.Int32
+	var privateHits atomic.Int32
+	mux.HandleFunc("/catalog.yaml", func(w http.ResponseWriter, r *http.Request) {
+		redirectHits.Add(1)
+		w.Header().Set("Location", "http://10.0.0.5/secret")
+		w.WriteHeader(http.StatusFound)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	const fakeHost = "public-redirect.example.invalid"
+	srvURL, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatalf("parse srv URL: %v", err)
+	}
+	srvHost := srvURL.Hostname()
+	srvPort := srvURL.Port()
+
+	const fakePublicIP = "203.0.113.77"
+	origLookup := lookupHostFn
+	t.Cleanup(func() { lookupHostFn = origLookup })
+	lookupHostFn = func(h string) ([]string, error) {
+		if h == fakeHost {
+			return []string{fakePublicIP}, nil
+		}
+		return origLookup(h)
+	}
+
+	origDial := pinnedBaseDialFn
+	t.Cleanup(func() { pinnedBaseDialFn = origDial })
+	pinnedBaseDialFn = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, _, _ := net.SplitHostPort(addr)
+		if host == "10.0.0.5" {
+			privateHits.Add(1)
+			return nil, errors.New("test dialer: refused to connect to private redirect target")
+		}
+		// Reroute the fake-public IP to the real httptest listener.
+		return (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, network, net.JoinHostPort(srvHost, srvPort))
+	}
+
+	cfg := &config.CatalogSourcesConfig{
+		Sources:         []config.CatalogSource{{URL: "http://" + fakeHost + ":" + srvPort + "/catalog.yaml"}},
+		RefreshInterval: config.MinRefreshInterval,
+		AllowPrivate:    false, // CheckRedirect guard ON
+	}
+	f := NewFetcher(cfg, nil, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	f.ForceRefresh(ctx)
+
+	if redirectHits.Load() < 1 {
+		t.Fatal("expected the httptest server to receive at least one request")
+	}
+	if got := privateHits.Load(); got != 0 {
+		t.Fatalf("CheckRedirect failed to abort: dialer was asked to connect to 10.0.0.5 %d time(s)", got)
+	}
+
+	snap := f.Snapshots()["http://"+fakeHost+":"+srvPort+"/catalog.yaml"]
+	if snap == nil {
+		t.Fatal("expected snapshot to exist after redirect rejection")
+	}
+	if snap.Status != StatusFailed {
+		t.Fatalf("expected StatusFailed after redirect rejection, got %q (err=%v)", snap.Status, snap.LastErr)
+	}
+	if snap.LastErr == nil {
+		t.Fatal("expected LastErr to record the redirect rejection")
+	}
+	msg := snap.LastErr.Error()
+	if !strings.Contains(msg, "redirect to private address") &&
+		!strings.Contains(msg, "10.0.0.5") {
+		t.Fatalf("expected redirect-rejection-flavoured error, got %v", snap.LastErr)
+	}
+}
+
+// TestFetcher_CheckRedirect_PublicChainAllowed (L1 sanity) — a chain of
+// public-target redirects must still succeed. We set up two httptest
+// servers; A 302's to B (both fronted by a fake-public hostname so the
+// SSRF check passes), and B serves a valid catalog. The fetch must end
+// in StatusOK with parsed entries.
+func TestFetcher_CheckRedirect_PublicChainAllowed(t *testing.T) {
+	const fakeHostA = "alpha.example.invalid"
+	const fakeHostB = "bravo.example.invalid"
+
+	muxB := http.NewServeMux()
+	muxB.HandleFunc("/catalog.yaml", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/yaml")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(validCatalogYAML))
+	})
+	srvB := httptest.NewServer(muxB)
+	t.Cleanup(srvB.Close)
+	srvBURL, _ := url.Parse(srvB.URL)
+	srvBHost := srvBURL.Hostname()
+	srvBPort := srvBURL.Port()
+
+	muxA := http.NewServeMux()
+	muxA.HandleFunc("/catalog.yaml", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", "http://"+fakeHostB+":"+srvBPort+"/catalog.yaml")
+		w.WriteHeader(http.StatusFound)
+	})
+	srvA := httptest.NewServer(muxA)
+	t.Cleanup(srvA.Close)
+	srvAURL, _ := url.Parse(srvA.URL)
+	srvAHost := srvAURL.Hostname()
+	srvAPort := srvAURL.Port()
+
+	const fakePublicIP = "203.0.113.88"
+	origLookup := lookupHostFn
+	t.Cleanup(func() { lookupHostFn = origLookup })
+	lookupHostFn = func(h string) ([]string, error) {
+		switch h {
+		case fakeHostA, fakeHostB:
+			return []string{fakePublicIP}, nil
+		}
+		return origLookup(h)
+	}
+
+	origDial := pinnedBaseDialFn
+	t.Cleanup(func() { pinnedBaseDialFn = origDial })
+	pinnedBaseDialFn = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		_, port, _ := net.SplitHostPort(addr)
+		switch port {
+		case srvAPort:
+			return (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, network, net.JoinHostPort(srvAHost, srvAPort))
+		case srvBPort:
+			return (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, network, net.JoinHostPort(srvBHost, srvBPort))
+		}
+		return nil, errors.New("unexpected dial in public-chain test")
+	}
+
+	cfg := &config.CatalogSourcesConfig{
+		Sources:         []config.CatalogSource{{URL: "http://" + fakeHostA + ":" + srvAPort + "/catalog.yaml"}},
+		RefreshInterval: config.MinRefreshInterval,
+		AllowPrivate:    false,
+	}
+	f := NewFetcher(cfg, nil, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	f.ForceRefresh(ctx)
+
+	snap := f.Snapshots()["http://"+fakeHostA+":"+srvAPort+"/catalog.yaml"]
+	if snap == nil {
+		t.Fatal("expected snapshot to exist after redirect chain")
+	}
+	if snap.Status != StatusOK {
+		t.Fatalf("expected StatusOK after public→public redirect, got %q (err=%v)", snap.Status, snap.LastErr)
+	}
+	if len(snap.Entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(snap.Entries))
 	}
 }
 
