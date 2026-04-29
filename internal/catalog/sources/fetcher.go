@@ -48,8 +48,6 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
-	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -290,13 +288,18 @@ func NewFetcher(cfg *config.CatalogSourcesConfig, verifier SidecarVerifier, cloc
 	}
 
 	f := &Fetcher{
-		cfg:         cfg,
-		verifier:    verifier,
-		clock:       clock,
-		log:         slog.Default().With("component", "catalog-sources"),
-		trustPolicy: loadTrustPolicyFromEnv(),
-		stopCh:      make(chan struct{}),
-		snapshots:   make(map[string]*SourceSnapshot, len(cfg.Sources)),
+		cfg:       cfg,
+		verifier:  verifier,
+		clock:     clock,
+		log:       slog.Default().With("component", "catalog-sources"),
+		stopCh:    make(chan struct{}),
+		snapshots: make(map[string]*SourceSnapshot, len(cfg.Sources)),
+		// trustPolicy intentionally left as the zero value — V123-PR-F1 / M5
+		// removed the auto-load from SHARKO_CATALOG_TRUSTED_IDENTITIES so
+		// that the canonical loader in cmd/sharko/serve.go (via
+		// signing.LoadTrustPolicyFromEnv) is the single source of truth.
+		// Callers wire the policy explicitly via SetTrustPolicy after
+		// construction; tests can use SetTrustPolicyForTest.
 	}
 
 	// Build a conservative HTTP client. Proxy support via
@@ -344,8 +347,30 @@ func (f *Fetcher) SetHTTPClientForTest(c *http.Client) {
 	f.httpClient = c
 }
 
-// SetTrustPolicyForTest overrides the trust policy. Test-only.
+// SetTrustPolicyForTest overrides the trust policy without acquiring
+// the fetcher's mutex. Test-only sibling of SetTrustPolicy — kept for
+// hermetic unit tests that want to override the policy on a fetcher
+// they constructed in-process and never start. Production wiring goes
+// through SetTrustPolicy (V123-PR-F1 / M5), which serializes against
+// in-flight fetches via the same lock pattern as SetEntryVerifyFunc.
 func (f *Fetcher) SetTrustPolicyForTest(tp TrustPolicy) {
+	f.trustPolicy = tp
+}
+
+// SetTrustPolicy installs the catalog trust policy on the fetcher.
+// Production callers in cmd/sharko/serve.go pass the policy loaded by
+// signing.LoadTrustPolicyFromEnv so the third-party fetcher and the
+// embedded catalog share a single trust surface
+// (V123-PR-F1 / M5: pre-fix the fetcher loaded the policy itself
+// from SHARKO_CATALOG_TRUSTED_IDENTITIES with no <defaults> expansion,
+// diverging from signing.LoadTrustPolicyFromEnv on the same env var).
+//
+// Mirrors the SetEntryVerifyFunc lock convention so a concurrent
+// caller cannot trip a data-race against an in-flight fetch reading
+// the field. Safe to call before or after Start.
+func (f *Fetcher) SetTrustPolicy(tp TrustPolicy) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.trustPolicy = tp
 }
 
@@ -385,26 +410,6 @@ func (f *Fetcher) SetSnapshotsForTest(snaps map[string]*SourceSnapshot) {
 		return
 	}
 	f.snapshots = snaps
-}
-
-// loadTrustPolicyFromEnv reads SHARKO_CATALOG_TRUSTED_IDENTITIES. The
-// env var is comma-separated regex list per design §3.4. Empty list
-// means "no identities trusted" — the verifier should treat every
-// signature as untrusted. The fetcher does not apply defaults; defaults
-// are a Subsystem B concern.
-func loadTrustPolicyFromEnv() TrustPolicy {
-	raw := strings.TrimSpace(os.Getenv("SHARKO_CATALOG_TRUSTED_IDENTITIES"))
-	if raw == "" {
-		return TrustPolicy{}
-	}
-	var out []string
-	for _, p := range strings.Split(raw, ",") {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			out = append(out, p)
-		}
-	}
-	return TrustPolicy{Identities: out}
 }
 
 // Start fires an initial fetch of every configured URL and then spawns
@@ -644,9 +649,9 @@ func (f *Fetcher) fetchOne(ctx context.Context, rawURL string) {
 
 	var cat *catalog.Catalog
 	if entryFn != nil {
-		cat, err = catalog.LoadBytesWithVerifier(ctx, body, entryFn)
+		cat, err = catalog.LoadBytesWithVerifierAndSource(ctx, body, entryFn, rawURL)
 	} else {
-		cat, err = catalog.LoadBytes(body)
+		cat, err = catalog.LoadBytesWithSource(body, rawURL)
 	}
 	if err != nil {
 		validationErr := fmt.Errorf("schema validation: %w", err)
