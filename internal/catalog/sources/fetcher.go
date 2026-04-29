@@ -333,6 +333,16 @@ func NewFetcher(cfg *config.CatalogSourcesConfig, verifier SidecarVerifier, cloc
 		},
 	}
 
+	// V123-PR-F2 / L1: re-validate the redirect target against the runtime
+	// SSRF guard. Stdlib's default CheckRedirect follows up to 10 redirects
+	// with NO additional inspection; a public catalog URL could otherwise
+	// 302 → http://10.0.0.5/secrets and Sharko would dutifully fetch the
+	// internal address. Returning a non-nil error from CheckRedirect aborts
+	// the redirect chain BEFORE the next dial happens, so no connection
+	// attempt to the private target is made. Stdlib still enforces its
+	// 10-redirect cap automatically when CheckRedirect returns nil.
+	f.httpClient.CheckRedirect = f.checkRedirectSSRF
+
 	// Seed snapshots with a failed placeholder per configured URL so
 	// callers that read Snapshots() before the first fetch completes
 	// get a stable, non-nil map value per URL.
@@ -779,8 +789,9 @@ func (f *Fetcher) httpGet(ctx context.Context, rawURL string) ([]byte, error) {
 // interval) and the alternative — a Transport pool keyed by pinned-IP
 // set — is far more complex for no measurable win.
 //
-// The returned client inherits the same Timeout and Proxy hook as
-// f.httpClient.
+// The returned client inherits the same Timeout, Proxy hook, and
+// CheckRedirect (L1) as f.httpClient so the redirect-time SSRF re-check
+// also fires for pinned fetches.
 func (f *Fetcher) httpGetPinned(ctx context.Context, rawURL string, pinnedIPs []netip.Addr) ([]byte, error) {
 	pinned := make(map[netip.Addr]struct{}, len(pinnedIPs))
 	for _, ip := range pinnedIPs {
@@ -852,8 +863,9 @@ func (f *Fetcher) httpGetPinned(ctx context.Context, rawURL string, pinnedIPs []
 	transport.DisableKeepAlives = true
 
 	pinClient := &http.Client{
-		Timeout:   f.httpClient.Timeout,
-		Transport: transport,
+		Timeout:       f.httpClient.Timeout,
+		Transport:     transport,
+		CheckRedirect: f.httpClient.CheckRedirect,
 	}
 	defer transport.CloseIdleConnections()
 
@@ -883,6 +895,35 @@ func (f *Fetcher) httpGetPinned(ctx context.Context, rawURL string, pinnedIPs []
 		return nil, fmt.Errorf("response exceeds %d bytes", maxCatalogBytes)
 	}
 	return body, nil
+}
+
+// checkRedirectSSRF (L1) is the http.Client.CheckRedirect callback wired
+// onto f.httpClient (and inherited by the pinned per-request clients
+// constructed in httpGetPinned). It re-runs the runtime SSRF guard
+// against the redirect target so a public catalog URL that 302-redirects
+// to http://10.0.0.5/secrets is rejected before any TCP connect to the
+// internal address happens.
+//
+// Skipped when AllowPrivate is set: an operator who has opted into
+// private catalogs has accepted the SSRF threat model on configured
+// URLs, and forcing redirect chains within their private network to fail
+// would be a regression.
+//
+// stdlib's default 10-redirect cap is preserved — when this returns nil
+// (public target), http.Client falls back to its default cap behaviour.
+// Note: the redirect target is itself NOT pinned for the next dial; this
+// is documented as a known limitation in the V123-PR-F2 brief (a hostile
+// rebinding redirect target could still race the dialer for the next
+// hop). Closing that window would require routing every redirect through
+// a fresh fetchOne-style pinned client, which is deferred past v1.23.
+func (f *Fetcher) checkRedirectSSRF(req *http.Request, _ []*http.Request) error {
+	if f.cfg != nil && f.cfg.AllowPrivate {
+		return nil
+	}
+	if err := runtimeSSRFCheck(req.URL.String()); err != nil {
+		return fmt.Errorf("redirect to private address rejected: %w", err)
+	}
+	return nil
 }
 
 // findSidecar HEAD-probes the candidate sidecar suffixes. Returns the
