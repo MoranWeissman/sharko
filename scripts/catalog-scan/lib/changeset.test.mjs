@@ -16,6 +16,7 @@ import {
   recordRun,
   finalizeChangeset,
   stringifyDeterministic,
+  dedupAdds,
   CHANGESET_SCHEMA_VERSION,
 } from './changeset.mjs';
 
@@ -44,6 +45,62 @@ test('changeset: 2-plugin run with mixed results → correct shape', () => {
   assert.equal(cs.updates.length, 1);
 });
 
+/* ------------------------------------------------------------------ */
+/* dedupAdds — V123-PR-F3 / M3                                          */
+/* ------------------------------------------------------------------ */
+
+test('dedupAdds: cross-plugin slug collisions move to duplicates (M3)', () => {
+  const cs = newChangeset();
+  cs.adds = [
+    { plugin: 'cncf-landscape', entry: { name: 'newaddon', version: '1.0.0' } },
+    { plugin: 'aws-eks-blueprints', entry: { name: 'newaddon', version: '1.0.1' } },
+    { plugin: 'aws-eks-blueprints', entry: { name: 'unique-addon', version: '0.1.0' } },
+  ];
+
+  dedupAdds(cs);
+
+  // First occurrence wins the slot in `adds`; duplicate plugin moves to
+  // the visibility path.
+  assert.equal(cs.adds.length, 2, 'two unique slots remain in adds');
+  assert.equal(cs.adds[0].plugin, 'cncf-landscape');
+  assert.equal(cs.adds[0].entry.name, 'newaddon');
+  assert.equal(cs.adds[1].plugin, 'aws-eks-blueprints');
+  assert.equal(cs.adds[1].entry.name, 'unique-addon');
+
+  // Duplicates carry the marker + winner pointer.
+  assert.equal(cs.duplicates.length, 1);
+  const d = cs.duplicates[0];
+  assert.equal(d._duplicate_proposal, true, 'marker is set');
+  assert.equal(d.plugin, 'aws-eks-blueprints', 'losing plugin recorded');
+  assert.equal(d.first_plugin, 'cncf-landscape', 'winner plugin recorded');
+  assert.equal(d.entry.name, 'newaddon');
+});
+
+test('dedupAdds: idempotent (second call is a no-op)', () => {
+  const cs = newChangeset();
+  cs.adds = [
+    { plugin: 'p1', entry: { name: 'foo' } },
+    { plugin: 'p2', entry: { name: 'foo' } },
+  ];
+  dedupAdds(cs);
+  const addsAfter1 = cs.adds.length;
+  const dupesAfter1 = cs.duplicates.length;
+  dedupAdds(cs);
+  assert.equal(cs.adds.length, addsAfter1, 'no further movement after first dedup');
+  assert.equal(cs.duplicates.length, dupesAfter1, 'no double-counting of duplicates');
+});
+
+test('dedupAdds: no collisions → no-op (returns same shape)', () => {
+  const cs = newChangeset();
+  cs.adds = [
+    { plugin: 'p1', entry: { name: 'foo' } },
+    { plugin: 'p2', entry: { name: 'bar' } },
+  ];
+  dedupAdds(cs);
+  assert.equal(cs.adds.length, 2);
+  assert.equal(cs.duplicates.length, 0);
+});
+
 test('changeset: deterministic JSON has sorted top-level keys', () => {
   // Build a changeset with intentionally out-of-alphabetical insertion
   // order; the stringifyDeterministic should still emit sorted keys.
@@ -57,7 +114,9 @@ test('changeset: deterministic JSON has sorted top-level keys', () => {
 
   const json = stringifyDeterministic(cs);
   // Top-level keys appear in alphabetical order.
-  const expectedTop = ['adds', 'generated_at', 'scanner_runs', 'schema_version', 'updates'];
+  // (V123-PR-F3 / M3 added the `duplicates` field — keeps the same
+  // alphabetical-emission contract.)
+  const expectedTop = ['adds', 'duplicates', 'generated_at', 'scanner_runs', 'schema_version', 'updates'];
   for (let i = 0; i < expectedTop.length - 1; i++) {
     const a = json.indexOf(`"${expectedTop[i]}"`);
     const b = json.indexOf(`"${expectedTop[i + 1]}"`);

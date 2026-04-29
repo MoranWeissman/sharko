@@ -402,6 +402,75 @@ test('escTableCell: handles null/undefined/numbers without throwing', () => {
   assert.equal(escTableCell(0), '0');
 });
 
+/* ------------------------------------------------------------------ */
+/* M3 — duplicate proposals render in PR body (V123-PR-F3)              */
+/* ------------------------------------------------------------------ */
+
+test('pr-open: duplicates section renders when changeset.duplicates is non-empty (M3)', async (t) => {
+  const logger = makeRecordedLogger();
+  const { exec } = buildExecStub();
+  const cs = makeChangeset({ adds: [makeAdd('beta')], updates: [] });
+  // Inject a duplicate-proposal record (simulating dedupAdds upstream).
+  cs.duplicates = [{
+    plugin: 'aws-eks-blueprints',
+    entry: { name: 'beta', version: '0.2.0', chart: 'beta', repo: 'https://other.test' },
+    _duplicate_proposal: true,
+    first_plugin: 'cncf-landscape',
+  }];
+  const { deps } = buildDeps({ changeset: cs, exec, logger });
+
+  // Capture stdout (dry-run prints body).
+  const origWrite = process.stdout.write.bind(process.stdout);
+  let captured = '';
+  process.stdout.write = (chunk, ...rest) => {
+    captured += String(chunk);
+    return origWrite(chunk, ...rest);
+  };
+  t.after(() => { process.stdout.write = origWrite; });
+
+  const opts = {
+    changeset: '_dist/catalog-scan/changeset.json',
+    catalog: 'catalog/addons.yaml',
+    dryRun: true,
+    branch: 'catalog-scan/test',
+  };
+  const result = await run(opts, deps);
+  assert.equal(result.exitCode, 0);
+
+  // Section heading visible.
+  assert.match(captured, /## Duplicate proposals — review needed/);
+  // Three-column table header.
+  assert.match(captured, /\| Name \| Duplicate plugin \| First-winner plugin \|/);
+  // The losing-plugin record + winner pointer both rendered.
+  assert.match(captured, /\| `beta` \| aws-eks-blueprints \| cncf-landscape \|/);
+});
+
+test('pr-open: duplicates section is omitted when changeset.duplicates is empty', async (t) => {
+  const logger = makeRecordedLogger();
+  const { exec } = buildExecStub();
+  const cs = makeChangeset({ adds: [makeAdd('beta')], updates: [] });
+  // duplicates left at default empty array.
+  const { deps } = buildDeps({ changeset: cs, exec, logger });
+
+  const origWrite = process.stdout.write.bind(process.stdout);
+  let captured = '';
+  process.stdout.write = (chunk, ...rest) => {
+    captured += String(chunk);
+    return origWrite(chunk, ...rest);
+  };
+  t.after(() => { process.stdout.write = origWrite; });
+
+  const opts = {
+    changeset: '_dist/catalog-scan/changeset.json',
+    catalog: 'catalog/addons.yaml',
+    dryRun: true,
+    branch: 'catalog-scan/test',
+  };
+  await run(opts, deps);
+
+  assert.doesNotMatch(captured, /Duplicate proposals/);
+});
+
 test('pr-open: missing changeset file → exit 0 with "nothing to do" log (workflow safety)', async () => {
   const logger = makeRecordedLogger();
   const { exec } = buildExecStub();

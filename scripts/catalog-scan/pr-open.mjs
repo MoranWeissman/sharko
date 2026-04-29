@@ -325,6 +325,27 @@ function renderBody({ changeset, rows }) {
   }
   lines.push('');
 
+  // V123-PR-F3 / M3: duplicate proposals — cross-plugin slug
+  // collisions. The first occurrence already landed in `adds`; this
+  // section surfaces every later occurrence so reviewers can pick the
+  // right plugin or close the duplicate intentionally.
+  const duplicates = Array.isArray(changeset.duplicates) ? changeset.duplicates : [];
+  if (duplicates.length > 0) {
+    lines.push('## Duplicate proposals — review needed');
+    lines.push('');
+    lines.push('Two or more plugins proposed the same NEW addon name. The first plugin to propose it won the slot in `addons.yaml`; the entries below are the conflicting later proposals. Either close them as duplicates, or pick a different `name` for one of them.');
+    lines.push('');
+    lines.push('| Name | Duplicate plugin | First-winner plugin |');
+    lines.push('|---|---|---|');
+    for (const d of duplicates) {
+      const dn = escTableCell(d.entry?.name ?? '');
+      const dp = escTableCell(d.plugin ?? '');
+      const fp = escTableCell(d.first_plugin ?? '');
+      lines.push(`| \`${dn}\` | ${dp} | ${fp} |`);
+    }
+    lines.push('');
+  }
+
   // Per-update diff details — reviewers want to see what fields drifted.
   if (updates.length > 0) {
     lines.push('## Update diffs');
