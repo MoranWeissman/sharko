@@ -18,7 +18,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { run, parseArgs } from './pr-open.mjs';
+import { run, parseArgs, escTableCell } from './pr-open.mjs';
 
 /* ------------------------------------------------------------------ */
 /* Recorded logger                                                       */
@@ -346,6 +346,60 @@ test('pr-open: openPrExists rethrows on gh pr list failure (V123-PR-B / H5)', as
   // workflow logs sees the underlying gh error message.
   const errLog = logger.records.find((r) => r.level === 'error' && r.msg.includes('open-PR check failed'));
   assert.ok(errLog, 'expected open-PR-check error log');
+});
+
+/* ------------------------------------------------------------------ */
+/* M4 — escTableCell: pipe + backtick + backslash + newline (V123-PR-F3) */
+/* ------------------------------------------------------------------ */
+
+test('escTableCell: escapes pipe (existing behavior preserved)', () => {
+  assert.equal(escTableCell('foo|bar'), 'foo\\|bar');
+});
+
+test('escTableCell: escapes backtick (M4)', () => {
+  // Pre-fix, an entry name containing `code-spans` rendered as code
+  // inside the table cell, breaking the visual column layout for the
+  // following cells.
+  assert.equal(escTableCell('foo`bar'), 'foo\\`bar');
+});
+
+test('escTableCell: escapes backslash FIRST so subsequent escapes are not double-escaped (M4)', () => {
+  // Order matters: if `|` is escaped before `\\`, the `\\|` inserted by
+  // pipe-escape would itself be double-escaped to `\\\\|` and render
+  // visibly. The implementation runs `\\` -> `\\\\` first.
+  assert.equal(escTableCell('a\\b'), 'a\\\\b');
+  // Combined: backslash + pipe in the same cell.
+  assert.equal(escTableCell('a\\b|c'), 'a\\\\b\\|c');
+});
+
+test('escTableCell: collapses newlines into a single space (M4)', () => {
+  // Embedded newlines either break the table row or render as <br>
+  // depending on the markdown flavor — collapsing to a space is the
+  // conservative, deterministic choice.
+  assert.equal(escTableCell('foo\nbar'), 'foo bar');
+  assert.equal(escTableCell('foo\r\nbar'), 'foo bar');
+  assert.equal(escTableCell('foo\n\n\nbar'), 'foo bar');
+});
+
+test('escTableCell: handles all four special characters together (M4)', () => {
+  // A pathological cell value: backslash, backtick, pipe, newline.
+  // Escape order ensures none of them double-escape.
+  assert.equal(
+    escTableCell('a\\b`c|d\ne'),
+    'a\\\\b\\`c\\|d e',
+  );
+});
+
+test('escTableCell: passes plain text through unchanged', () => {
+  assert.equal(escTableCell('cert-manager'), 'cert-manager');
+  assert.equal(escTableCell('1.18.0'), '1.18.0');
+});
+
+test('escTableCell: handles null/undefined/numbers without throwing', () => {
+  assert.equal(escTableCell(null), '');
+  assert.equal(escTableCell(undefined), '');
+  assert.equal(escTableCell(42), '42');
+  assert.equal(escTableCell(0), '0');
 });
 
 test('pr-open: missing changeset file → exit 0 with "nothing to do" log (workflow safety)', async () => {

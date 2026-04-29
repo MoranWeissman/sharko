@@ -244,11 +244,31 @@ async function computeSignalsFor(entry, ctx) {
 /* Markdown body builder                                                */
 /* ------------------------------------------------------------------ */
 
-/** Escape pipe characters so they don't break GFM tables. */
+/**
+ * Escape characters that would break a GFM table cell:
+ *   - `|` — column boundary
+ *   - `` ` `` — code-span open/close
+ *   - `\` — backslash itself (must escape FIRST so we don't double-
+ *     escape the backslashes the other replacements introduce)
+ *   - `\n` / `\r` — newlines collapse into a literal space, since
+ *     embedded newlines either break the row or render as `<br>` in
+ *     some flavors. A space is the conservative choice.
+ *
+ * V123-PR-F3 / M4: pre-fix only `|` was escaped. Backticks, backslashes,
+ * and newlines in entry names/descriptions broke column boundaries
+ * visually for reviewers reading the PR table.
+ */
 function escTableCell(value) {
   if (value == null) return '';
-  return String(value).replace(/\|/g, '\\|');
+  return String(value)
+    .replace(/\\/g, '\\\\')
+    .replace(/`/g, '\\`')
+    .replace(/\|/g, '\\|')
+    .replace(/[\r\n]+/g, ' ');
 }
+
+/** Exported for tests — see pr-open.test.mjs / V123-PR-F3 / M4. */
+export { escTableCell };
 
 /**
  * Render the PR body markdown.
