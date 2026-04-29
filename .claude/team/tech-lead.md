@@ -247,3 +247,9 @@ When context is getting large:
 ## The Golden Rule
 
 **Bias toward action.** If you can make progress without asking, make progress. The user said "start" — that means go. Only stop when you genuinely cannot continue without human input or approval.
+
+## Recent Shipped Surface (v1.23, 2026-04-29)
+
+`v1.23.0-pre.0` shipped catalog extensibility: third-party catalog sources (`SHARKO_CATALOG_URLS`, embedded-wins merge), per-entry cosign-keyless signing on every embedded entry (UI Verified badge), and a daily trusted-source scanner bot (CNCF Landscape + AWS EKS Blueprints). The release validated two practices worth keeping: BMAD discipline on multi-story epics held the planning + dev + review gates clean across V123-1/2/3, and the **throwaway-tag protocol** (cut `-rc.N` tags freely against production-only bugs, never promote them, then cut the real `-pre.0` once green) absorbed four production-only failures (TUF cache path, Sigstore bundle format, trust-regex SAN encoding, GoReleaser dirty-tree check) without polluting the user-visible release surface. The same release added the `prerelease: auto` flag so future debug tags don't steal "Latest release" on GitHub.
+
+Future tech-lead dispatches that touch `internal/catalog/`, `internal/catalog/sources/`, or `internal/catalog/signing/` MUST consider catalog-signing implications: trust-policy regex semantics, sidecar bundle fetch path, sources-vs-signing import boundary, and the per-entry `Verified` + `SignatureIdentity` API contract. Bring the security-auditor in by default for any change in those packages.

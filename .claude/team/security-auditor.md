@@ -103,6 +103,18 @@ Every handler for POST/DELETE/PATCH must call `s.requireAdmin(w, r)` as the firs
 - Mutex held ONLY during Git operations — non-Git ops (provider, ArgoCD, remote secrets) run freely
 - No deadlock risk: single mutex, no nesting, no cross-lock dependencies
 
+## Catalog signing surface (V123-2)
+
+The v1.23 catalog-signing surface introduced a set of cosign/Sigstore concerns that every audit touching `internal/catalog/` MUST cover:
+
+- **Cosign-keyless trust root TUF wiring.** The Sigstore verifier resolves the public-good Fulcio + Rekor root via TUF. The TUF cache must land on a writable path under read-only-rootfs pods — confirm the cache dir is overridable (env or constructor option) and is NOT pointed at a read-only mount. Regression that bit `v1.23.0-rc.0` in production.
+- **Per-entry signature verification.** Every `CatalogEntry` with a `signature` sidecar URL must round-trip through `signing.LoadBytesWithVerifier` on load. Verify on fetch only, NOT on every API request — re-verifying per request is a perf footgun and was settled in OQ §7.2.
+- **Trust-policy regex semantics.** Operator-supplied patterns in `SHARKO_CATALOG_TRUSTED_IDENTITIES` MUST be **anchored** (`^...$`) — an unanchored pattern matches substrings and silently widens trust. The `<defaults>` expansion token is the canonical way to keep CNCF + Sharko-release-workflow defaults; reject any audit finding that suggests dropping the defaults wholesale.
+- **`workflow_run` cert SAN encoding.** GitHub Actions Sigstore certs encode the **`job_workflow_ref`** (e.g. `https://github.com/owner/repo/.github/workflows/release.yml@refs/tags/v1.23.0`) as the SAN, NOT the triggering tag string. The default trust regex must match `job_workflow_ref` form. Regression that bit `v1.23.0-rc.2` in production.
+- **Modern Sigstore Bundle format.** The verifier consumes the **modern Sigstore Bundle** (`sigstore-go` Bundle type), NOT the legacy v1 format. Any code path that accepts/produces signature material must round-trip the modern Bundle. Regression that bit `v1.23.0-rc.1` in production.
+
+Outcome surfaces: `verified` (bool) and `signature_identity` (string) on the `CatalogEntry` API model and JSON responses. Both fields are user-visible (Marketplace **Verified** badge + AddonDetail signature panel) — never silently flip them based on trust-policy edits without a re-fetch.
+
 ## Report Format
 - **PASS**: no issues found (with brief summary of what was checked)
 - **ISSUES**: list each with severity (critical/important/minor), file, line, description

@@ -55,6 +55,7 @@ nav:
     - Upgrades: user-guide/upgrades.md
     - Dashboard: user-guide/dashboard.md
     - Notifications: user-guide/notifications.md
+    - Verified Signatures: user-guide/verified-signatures.md
     - Git Attribution: user-guide/attribution.md
   - Operator Manual:
     - Installation: operator/installation.md
