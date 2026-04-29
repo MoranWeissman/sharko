@@ -57,6 +57,12 @@ release:
   github:
     owner: MoranWeissman
     name: sharko
+  # Story V123-pretag-release-polish: auto-detect semver pre-release suffix
+  # (`-pre.N`, `-rc.N`, etc.) and mark the GitHub release accordingly. Pre-2.0.0
+  # cuts use suffixes; v2.0.0 GA omits the suffix and becomes the first
+  # "Latest release". Using `auto` (not `true`) lets the same workflow handle
+  # both pre-release and GA cuts without a manual flip.
+  prerelease: auto
   # Story V123-2.5: attach per-entry cosign bundles produced by the
   # sign-catalog-entries job to the GitHub release. The signed catalog YAML
   # baked into the binary points `signature.bundle` URLs at these files via
