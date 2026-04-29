@@ -922,6 +922,35 @@ func TestFetcher_PerEntryVerify_Trusted(t *testing.T) {
 	var _ catalog.CatalogEntry = e
 }
 
+// TestNewFetcher_DoesNotAutoLoadTrustPolicy (V123-PR-F1 / M5) pins the
+// regression: NewFetcher MUST NOT read SHARKO_CATALOG_TRUSTED_IDENTITIES
+// itself. The canonical loader is signing.LoadTrustPolicyFromEnv, called
+// once at startup in cmd/sharko/serve.go and pushed into the fetcher via
+// SetTrustPolicy. Pre-fix the fetcher had its own divergent loader that
+// applied no <defaults> expansion, producing a different policy from the
+// embedded catalog's verifier on the same env var.
+func TestNewFetcher_DoesNotAutoLoadTrustPolicy(t *testing.T) {
+	// Set the env var that the OLD divergent loader would have read.
+	// If the regression returns, the new fetcher would pick it up here
+	// and the assertion below would fail.
+	t.Setenv("SHARKO_CATALOG_TRUSTED_IDENTITIES", "https://github.com/foo/.*,https://github.com/bar/.*")
+
+	cfg := &config.CatalogSourcesConfig{RefreshInterval: config.MinRefreshInterval}
+	f := NewFetcher(cfg, nil, nil)
+
+	if got := len(f.trustPolicy.Identities); got != 0 {
+		t.Fatalf("trustPolicy.Identities len = %d, want 0 — NewFetcher must not auto-load from SHARKO_CATALOG_TRUSTED_IDENTITIES",
+			got)
+	}
+
+	// Sanity: the explicit setter still works after construction so
+	// production wiring (serve.go) can hand the canonical policy in.
+	f.SetTrustPolicy(TrustPolicy{Identities: []string{"https://github.com/explicit/.*"}})
+	if got := len(f.trustPolicy.Identities); got != 1 {
+		t.Fatalf("after SetTrustPolicy: trustPolicy.Identities len = %d, want 1", got)
+	}
+}
+
 // TestFetcher_PerEntryVerify_Untrusted (AC-3 negative path) — same
 // payload, but the verifier returns (false, "", nil) (sig-mismatch /
 // untrusted-identity outcome). The entry must be retained with

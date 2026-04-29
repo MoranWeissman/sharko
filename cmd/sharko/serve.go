@@ -330,6 +330,14 @@ var serveCmd = &cobra.Command{
 			// signature.bundle is run through the same trust policy
 			// that gates the embedded catalog.
 			sourcesFetcher.SetEntryVerifyFunc(catalogVerifier.VerifyEntryFunc(catalogTrustPolicy))
+			// V123-PR-F1 / M5: install the canonical trust policy on
+			// the fetcher so its sidecar verifier (which receives the
+			// policy via Verify(... TrustPolicy)) shares the same
+			// trusted-identity list as the embedded catalog. Pre-fix
+			// the fetcher loaded the policy itself from
+			// SHARKO_CATALOG_TRUSTED_IDENTITIES with no <defaults>
+			// expansion — diverging from signing.LoadTrustPolicyFromEnv.
+			sourcesFetcher.SetTrustPolicy(catalogTrustPolicy)
 			srv.SetSourcesFetcher(sourcesFetcher)
 			sourcesFetcher.Start(context.Background())
 			defer sourcesFetcher.Stop()

@@ -302,9 +302,28 @@ type VerifyEntryFunc func(
 	bundleURL string,
 ) (verified bool, issuer string, err error)
 
-// LoadBytes parses the given YAML payload. Exposed for tests; production code
-// uses Load() which reads the embedded bytes.
+// LoadBytes parses the given YAML payload, stamping every entry with
+// Source=SourceEmbedded. Embedded-only convenience wrapper preserved for
+// backward compatibility — new code should call LoadBytesWithSource
+// directly so the caller controls the Source value (e.g., a third-party
+// catalog URL). The third-party fetcher historically went through
+// LoadBytes and let the merger re-stamp Source downstream; LoadBytesWithSource
+// (V123-PR-F1 / M1) lets the loader stamp the right Source up front.
 func LoadBytes(data []byte) (*Catalog, error) {
+	return LoadBytesWithSource(data, SourceEmbedded)
+}
+
+// LoadBytesWithSource parses the given YAML payload and stamps every
+// entry with the supplied source string (e.g., SourceEmbedded for the
+// binary-shipped catalog, or a third-party catalog URL for the fetcher).
+// The `yaml:"-"` tag on CatalogEntry.Source means a hostile YAML cannot
+// pre-seed this field; the loader always overwrites it with the value
+// the caller passes in here.
+//
+// Exposed for tests + the third-party fetcher; production embedded code
+// goes through Load() which reads the embedded bytes and uses
+// SourceEmbedded.
+func LoadBytesWithSource(data []byte, source string) (*Catalog, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("catalog: empty payload")
 	}
@@ -329,12 +348,11 @@ func LoadBytes(data []byte) (*Catalog, error) {
 				e.Name, existing+1, i+1)
 		}
 		e.SecurityTier = e.SecurityScore.Tier()
-		// Every entry produced by the loader originates from the embedded
-		// catalog YAML (LoadBytes is also used by the third-party fetcher,
-		// but the fetcher overrides Source downstream — see V123-1.4 §4).
-		// The `yaml:"-"` tag on Source prevents a hostile third-party feed
-		// from pre-seeding this field; we always set it ourselves here.
-		e.Source = SourceEmbedded
+		// Source is supplied by the caller (V123-PR-F1 / M1). The
+		// `yaml:"-"` tag on Source still prevents a hostile YAML from
+		// pre-seeding this field; the loader always overwrites it here
+		// with whatever the caller asked for.
+		e.Source = source
 		cat.entries = append(cat.entries, e)
 		cat.byName[e.Name] = len(cat.entries) - 1
 	}
@@ -379,6 +397,22 @@ func LoadBytesWithVerifier(
 	data []byte,
 	verifyFn VerifyEntryFunc,
 ) (*Catalog, error) {
+	return LoadBytesWithVerifierAndSource(ctx, data, verifyFn, SourceEmbedded)
+}
+
+// LoadBytesWithVerifierAndSource is the source-explicit variant of
+// LoadBytesWithVerifier. Same verification semantics — the caller-supplied
+// source string is stamped on every loaded entry instead of the embedded
+// sentinel. Used by the third-party fetcher so the loader-level Source
+// is correct before any downstream merger touches the entries (V123-PR-F1
+// / M1). Embedded-catalog callers should keep using LoadBytesWithVerifier
+// for unchanged behaviour.
+func LoadBytesWithVerifierAndSource(
+	ctx context.Context,
+	data []byte,
+	verifyFn VerifyEntryFunc,
+	source string,
+) (*Catalog, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("catalog: empty payload")
 	}
@@ -404,7 +438,7 @@ func LoadBytesWithVerifier(
 				e.Name, existing+1, i+1)
 		}
 		e.SecurityTier = e.SecurityScore.Tier()
-		e.Source = SourceEmbedded
+		e.Source = source
 
 		// Per-entry verification — only when caller wired a verifier
 		// AND the entry actually carries a Signature.Bundle URL.
