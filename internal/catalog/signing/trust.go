@@ -61,13 +61,26 @@ const DefaultsToken = "<defaults>"
 //     embedded catalog as Unverified once the release pipeline starts
 //     signing entries.
 //
+// Important — why the Sharko default ends in `@refs/heads/main` rather
+// than the triggering tag's ref: Sigstore Fulcio mints certs whose SAN
+// reflects the GitHub Actions OIDC `job_workflow_ref` claim, which is
+// the ref where the workflow YAML *file* lives at job start. release.yml
+// runs as a `workflow_run`-triggered job, so its `job_workflow_ref` is
+// always `refs/heads/main` — the actual triggering tag is encoded in
+// other OIDC claims (`ref`, `event_name`), not in the SAN. Tag-only
+// invocation is enforced by the
+// `if: startsWith(github.event.workflow_run.head_branch, 'v')` guard in
+// release.yml, NOT by the cert SAN. Anchoring this default to `main`
+// (rather than e.g. `refs/heads/.*`) keeps it tight: only signatures
+// produced by the workflow file as it lives on `main` are trusted.
+//
 // Operators include the literal token "<defaults>" in
 // SHARKO_CATALOG_TRUSTED_IDENTITIES to keep these while adding their own.
 // To opt out entirely, set the env var to a regex that matches nothing
 // (`^$`) — see LoadTrustPolicyFromEnv.
 var DefaultTrustedIdentities = []string{
 	`^https://github\.com/cncf/.*/\.github/workflows/.*$`,
-	`^https://github\.com/MoranWeissman/sharko/\.github/workflows/release\.yml@refs/tags/v.*$`,
+	`^https://github\.com/MoranWeissman/sharko/\.github/workflows/release\.yml@refs/heads/main$`,
 }
 
 // LoadTrustPolicyFromEnv reads SHARKO_CATALOG_TRUSTED_IDENTITIES, expands
