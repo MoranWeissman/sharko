@@ -245,6 +245,141 @@ addons:
 	}
 }
 
+// TestLoadBytesWithSource_StampsProvidedSource (V123-PR-F1 / M1) proves
+// the explicit-source loader stamps the caller-supplied string on every
+// entry instead of the embedded sentinel. Existing LoadBytes callers
+// keep getting "embedded" via the wrapper; new callers (the third-party
+// fetcher) get the right Source up front, before any merger touches the
+// entries. The `yaml:"-"` tag still prevents YAML-level forgery — the
+// loader always overwrites Source with the caller-supplied value.
+func TestLoadBytesWithSource_StampsProvidedSource(t *testing.T) {
+	const sourceURL = "https://catalogs.example.com/private/addons.yaml"
+	y := `
+addons:
+  - name: thirdparty-one
+    description: x
+    chart: x
+    repo: https://x
+    default_namespace: x
+    maintainers: [m]
+    license: Apache-2.0
+    category: security
+    curated_by: [cncf-graduated]
+    source: "https://attacker.example.com/forged"
+  - name: thirdparty-two
+    description: x
+    chart: x
+    repo: https://x
+    default_namespace: x
+    maintainers: [m]
+    license: MIT
+    category: observability
+    curated_by: [cncf-incubating]
+`
+	cat, err := LoadBytesWithSource([]byte(y), sourceURL)
+	if err != nil {
+		t.Fatalf("LoadBytesWithSource: %v", err)
+	}
+	if cat.Len() != 2 {
+		t.Fatalf("expected 2 entries, got %d", cat.Len())
+	}
+	for _, e := range cat.Entries() {
+		if e.Source != sourceURL {
+			t.Errorf("entry %q: Source = %q, want %q", e.Name, e.Source, sourceURL)
+		}
+		if e.Source == SourceEmbedded {
+			t.Errorf("entry %q: Source must not be %q when caller supplied %q",
+				e.Name, SourceEmbedded, sourceURL)
+		}
+	}
+
+	// Sanity: LoadBytes still stamps the embedded sentinel via the wrapper.
+	cat2, err := LoadBytes([]byte(y))
+	if err != nil {
+		t.Fatalf("LoadBytes: %v", err)
+	}
+	for _, e := range cat2.Entries() {
+		if e.Source != SourceEmbedded {
+			t.Errorf("LoadBytes wrapper must keep Source=%q for back-compat; entry %q got %q",
+				SourceEmbedded, e.Name, e.Source)
+		}
+	}
+}
+
+// TestLoadBytesWithVerifierAndSource_StampsProvidedSource (V123-PR-F1 / M1)
+// proves the source-explicit verifier-aware loader stamps the
+// caller-supplied source on every entry — including signed entries —
+// while still surfacing the verifier outcome on Verified +
+// SignatureIdentity. Existing LoadBytesWithVerifier callers still get
+// "embedded" via the wrapper.
+func TestLoadBytesWithVerifierAndSource_StampsProvidedSource(t *testing.T) {
+	const sourceURL = "https://catalogs.example.com/private/addons.yaml"
+	y := `
+addons:
+  - name: signed-one
+    description: x
+    chart: signed-one
+    repo: https://x
+    default_namespace: signed-one
+    maintainers: [m]
+    license: Apache-2.0
+    category: security
+    curated_by: [cncf-graduated]
+    signature:
+      bundle: https://signer.example.com/signed-one.bundle
+  - name: unsigned-two
+    description: x
+    chart: unsigned-two
+    repo: https://x
+    default_namespace: unsigned-two
+    maintainers: [m]
+    license: MIT
+    category: observability
+    curated_by: [cncf-incubating]
+`
+	stub := &stubVerifier{verified: true, issuer: "issuer@example"}
+	cat, err := LoadBytesWithVerifierAndSource(
+		context.Background(),
+		[]byte(y),
+		stub.Fn(),
+		sourceURL,
+	)
+	if err != nil {
+		t.Fatalf("LoadBytesWithVerifierAndSource: %v", err)
+	}
+	if cat.Len() != 2 {
+		t.Fatalf("expected 2 entries, got %d", cat.Len())
+	}
+	for _, e := range cat.Entries() {
+		if e.Source != sourceURL {
+			t.Errorf("entry %q: Source = %q, want %q", e.Name, e.Source, sourceURL)
+		}
+	}
+	signed, _ := cat.Get("signed-one")
+	if !signed.Verified {
+		t.Errorf("signed-one: Verified = false, want true")
+	}
+	if signed.SignatureIdentity != "issuer@example" {
+		t.Errorf("signed-one: SignatureIdentity = %q, want %q", signed.SignatureIdentity, "issuer@example")
+	}
+	unsigned, _ := cat.Get("unsigned-two")
+	if unsigned.Verified {
+		t.Errorf("unsigned-two: Verified = true, want false (no signature on entry)")
+	}
+
+	// Sanity: LoadBytesWithVerifier still stamps the embedded sentinel.
+	cat2, err := LoadBytesWithVerifier(context.Background(), []byte(y), stub.Fn())
+	if err != nil {
+		t.Fatalf("LoadBytesWithVerifier: %v", err)
+	}
+	for _, e := range cat2.Entries() {
+		if e.Source != SourceEmbedded {
+			t.Errorf("LoadBytesWithVerifier wrapper must keep Source=%q; entry %q got %q",
+				SourceEmbedded, e.Name, e.Source)
+		}
+	}
+}
+
 // Unknown YAML fields must NOT break parsing — design §4.2 requires forward
 // compatibility so older Sharko binaries can parse newer catalog files.
 func TestLoadBytes_TolerateUnknownFields(t *testing.T) {
