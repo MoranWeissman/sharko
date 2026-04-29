@@ -330,6 +330,48 @@ test('aws-eks-blueprints: GITHUB_TOKEN propagates to Authorization header', asyn
   }
 });
 
+test('aws-eks-blueprints: GITHUB_TOKEN does NOT propagate to download_url fetches (M2)', async (t) => {
+  // V123-PR-F3 / M2: pre-fix, the bearer token attached to every call
+  // including the raw .ts file download. That token works at
+  // raw.githubusercontent.com today but would leak to a third-party
+  // origin if a future plugin pointed `download_url` elsewhere.
+  // Post-fix: only api.github.com / configured apiBase URLs get the
+  // Authorization header; raw downloads get a no-auth header set.
+  withEnv(t, 'SHARKO_EKS_BLUEPRINTS_API_BASE', API_BASE);
+  withEnv(t, 'GITHUB_TOKEN', 'ghp_fixture_test_token_xxx');
+  const stub = buildHttpStub();
+  const { ctx } = makeCtx(stub);
+  await eksFetch(ctx);
+
+  // Partition calls by URL prefix.
+  const apiCalls = stub.calls.filter((c) => c.url.startsWith(API_BASE));
+  const rawCalls = stub.calls.filter((c) => c.url.startsWith(`${BASE_URL}/raw/`));
+  assert.ok(apiCalls.length > 0, 'expected at least one Contents API call');
+  assert.ok(rawCalls.length > 0, 'expected at least one raw download_url call');
+
+  // API calls carry auth.
+  for (const call of apiCalls) {
+    assert.equal(
+      call.opts?.headers?.Authorization,
+      'Bearer ghp_fixture_test_token_xxx',
+      `API call ${call.url} MUST carry bearer auth`,
+    );
+  }
+
+  // download_url calls MUST NOT carry auth — this is the bug fix.
+  for (const call of rawCalls) {
+    assert.equal(
+      call.opts?.headers?.Authorization,
+      undefined,
+      `download_url call ${call.url} MUST NOT carry bearer auth (M2 token-leak guard)`,
+    );
+    // Sanity: User-Agent + Accept still present (the no-auth set is
+    // identical EXCEPT for the missing Authorization).
+    assert.equal(call.opts?.headers?.['User-Agent'], 'sharko-catalog-scan/1.0');
+    assert.equal(call.opts?.headers?.Accept, 'application/vnd.github+json');
+  }
+});
+
 test('aws-eks-blueprints: no GITHUB_TOKEN → no Authorization header', async (t) => {
   withEnv(t, 'SHARKO_EKS_BLUEPRINTS_API_BASE', API_BASE);
   withEnv(t, 'GITHUB_TOKEN', undefined);
@@ -420,6 +462,191 @@ test('aws-eks-blueprints: non-2xx on dir-list throws with descriptive error', as
 /* ------------------------------------------------------------------ */
 /* Empty top-level dir                                                  */
 /* ------------------------------------------------------------------ */
+
+/* ------------------------------------------------------------------ */
+/* M7 — default_namespace extraction (V123-PR-F3)                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * V123-PR-F3 / M7: pre-fix, the loose `\bnamespace\s*:\s*['"`]` regex
+ * fired on ANY object literal anywhere in the source (including the
+ * `defaultProps` block where the value was the placeholder string
+ * `"namespace"`, which made apache-airflow render as
+ * `default_namespace: "namespace"`).
+ *
+ * Post-fix: extraction is anchored to the `defaultProps` block AND
+ * the placeholder string `"namespace"` is filtered (extractor falls
+ * through to the next match or returns undefined).
+ */
+
+const APACHE_AIRFLOW_TS_FIXTURE = `
+import { Construct } from 'constructs';
+import { ClusterInfo, Values } from '../../spi';
+import { HelmAddOn, HelmAddOnUserProps, HelmAddOnProps } from '../helm-addon';
+
+/**
+ * Configuration options for the add-on.
+ */
+export interface AirflowAddOnProps extends HelmAddOnUserProps {
+    /**
+     * Namespace where Airflow will be installed
+     * @default namespace will be created if it doesn't exist
+     */
+    namespace?: string;
+    airflowVersion?: string;
+}
+
+/**
+ * Defaults options for the add-on.
+ *
+ * NOTE: The literal string "namespace" below is intentional — the
+ * upstream cdk-eks-blueprints repo ships several addons (apache-airflow,
+ * external-secrets, etc.) with a placeholder value that the runtime
+ * overrides. The scanner used to capture this placeholder verbatim
+ * and emit \`default_namespace: "namespace"\` in proposals, which is
+ * obviously wrong. (V123-PR-F3 / M7 fix.)
+ */
+const defaultProps: HelmAddOnProps = {
+    name: 'apache-airflow',
+    namespace: "namespace",
+    chart: 'airflow',
+    release: 'release-name',
+    repository: 'https://airflow.apache.org',
+    version: '1.11.0',
+    values: {
+        airflowVersion: '2.5.1',
+    },
+};
+
+/**
+ * Implementation of the Airflow add-on.
+ */
+export class AirflowAddOn extends HelmAddOn {
+    constructor(props?: AirflowAddOnProps) {
+        super({...defaultProps as HelmAddOnUserProps, ...props});
+    }
+
+    deploy(clusterInfo: ClusterInfo): Promise<Construct> {
+        const dependable = utils.dependable(\`namespace: "namespace-foo"\`);
+        return Promise.resolve();
+    }
+}
+`;
+
+const CLOUDWATCH_TS_FIXTURE = `
+import { HelmAddOn, HelmAddOnUserProps } from '../helm-addon';
+
+const defaultProps = {
+    name: 'aws-cloudwatch-metrics',
+    chart: 'aws-cloudwatch-metrics',
+    namespace: "amazon-cloudwatch",
+    release: 'aws-cloudwatch-metrics',
+    repository: 'https://aws.github.io/eks-charts',
+    version: '0.0.10',
+    values: {},
+};
+
+// A regex literal that incidentally contains the word namespace.
+const namespaceRegex = /\\bnamespace\\s*:\\s*['"\\\`]([^'"\\\`]+)['"\\\`]/i;
+`;
+
+test('aws-eks-blueprints: default_namespace ignores literal "namespace" placeholder (M7)', async (t) => {
+  // Build a single-addon stub: top-level lists ONE addon, the dir-list
+  // returns a single .ts file, and the raw download serves the
+  // apache-airflow fixture above. We assert that the resulting entry
+  // does NOT have default_namespace="namespace".
+  withEnv(t, 'SHARKO_EKS_BLUEPRINTS_API_BASE', API_BASE);
+  withEnv(t, 'GITHUB_TOKEN', undefined);
+
+  const calls = [];
+  const ctx = {
+    logger: makeRecordedLogger(),
+    abortSignal: undefined,
+    http: async (url, opts = {}) => {
+      calls.push({ url, opts });
+      if (url === `${API_BASE}/lib/addons`) {
+        return jsonResponse(JSON.stringify([
+          { name: 'apache-airflow', type: 'dir', path: 'lib/addons/apache-airflow' },
+        ]), { rateLimit: '4990' });
+      }
+      if (url === `${API_BASE}/lib/addons/apache-airflow`) {
+        return jsonResponse(JSON.stringify([
+          {
+            name: 'index.ts',
+            type: 'file',
+            download_url: `${BASE_URL}/raw/apache-airflow.ts`,
+            html_url: `${BASE_URL}/blob/apache-airflow.ts`,
+          },
+        ]), { rateLimit: '4990' });
+      }
+      if (url === `${BASE_URL}/raw/apache-airflow.ts`) {
+        return textResponse(APACHE_AIRFLOW_TS_FIXTURE);
+      }
+      throw new Error(`unmocked URL: ${url}`);
+    },
+  };
+
+  const out = await eksFetch(ctx);
+  assert.equal(out.length, 1);
+  const e = out[0];
+  assert.equal(e.name, 'apache-airflow');
+  // The placeholder "namespace" must NOT survive into default_namespace.
+  // Acceptable post-fix outcomes:
+  //   - extractor returned undefined → fallback `apache-airflow-system`
+  //   - extractor matched some OTHER namespace value, NOT "namespace"
+  // Either way, the literal string "namespace" is not the result.
+  assert.notEqual(
+    e.default_namespace,
+    'namespace',
+    `default_namespace must not be the placeholder "namespace"; got: ${e.default_namespace}`,
+  );
+  // The fallback path produces `<slug>-system`; assert the shape so we
+  // catch a future regression where a different bad value sneaks in.
+  assert.equal(
+    e.default_namespace,
+    'apache-airflow-system',
+    `expected fallback default_namespace; got ${e.default_namespace}`,
+  );
+});
+
+test('aws-eks-blueprints: default_namespace extracts real value from defaultProps (M7)', async (t) => {
+  // The CLOUDWATCH fixture has BOTH a real `namespace: "amazon-cloudwatch"`
+  // value AND a regex literal that incidentally contains the word
+  // namespace. The post-fix extractor must capture "amazon-cloudwatch"
+  // (the real value) and NOT trip on the regex literal.
+  withEnv(t, 'SHARKO_EKS_BLUEPRINTS_API_BASE', API_BASE);
+  withEnv(t, 'GITHUB_TOKEN', undefined);
+
+  const ctx = {
+    logger: makeRecordedLogger(),
+    abortSignal: undefined,
+    http: async (url) => {
+      if (url === `${API_BASE}/lib/addons`) {
+        return jsonResponse(JSON.stringify([
+          { name: 'aws-cloudwatch-metrics', type: 'dir', path: 'lib/addons/aws-cloudwatch-metrics' },
+        ]), { rateLimit: '4990' });
+      }
+      if (url === `${API_BASE}/lib/addons/aws-cloudwatch-metrics`) {
+        return jsonResponse(JSON.stringify([
+          {
+            name: 'index.ts',
+            type: 'file',
+            download_url: `${BASE_URL}/raw/cloudwatch.ts`,
+            html_url: `${BASE_URL}/blob/cloudwatch.ts`,
+          },
+        ]), { rateLimit: '4990' });
+      }
+      if (url === `${BASE_URL}/raw/cloudwatch.ts`) {
+        return textResponse(CLOUDWATCH_TS_FIXTURE);
+      }
+      throw new Error(`unmocked URL: ${url}`);
+    },
+  };
+
+  const out = await eksFetch(ctx);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].default_namespace, 'amazon-cloudwatch');
+});
 
 test('aws-eks-blueprints: empty lib/addons returns [] cleanly', async (t) => {
   withEnv(t, 'SHARKO_EKS_BLUEPRINTS_API_BASE', API_BASE);

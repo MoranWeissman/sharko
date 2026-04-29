@@ -34,7 +34,7 @@ import { dirname, resolve, basename } from 'node:path';
 import { parse as yamlParse } from 'yaml';
 
 import { diff } from './catalog-scan/lib/diff.mjs';
-import { newChangeset, recordRun, finalizeChangeset, stringifyDeterministic } from './catalog-scan/lib/changeset.mjs';
+import { newChangeset, recordRun, finalizeChangeset, stringifyDeterministic, dedupAdds } from './catalog-scan/lib/changeset.mjs';
 import { fetchWithRetry } from './catalog-scan/lib/http.mjs';
 import { newLogger } from './catalog-scan/lib/logger.mjs';
 
@@ -232,6 +232,18 @@ export async function run(opts, { logger } = {}) {
   const aggregated = diff(current, allProposals);
   changeset.adds = aggregated.adds;
   changeset.updates = aggregated.updates;
+  // V123-PR-F3 / M3: route cross-plugin slug collisions into
+  // `changeset.duplicates` so the PR body renders them as a separate
+  // "Duplicate proposals" section. Without this, two plugins proposing
+  // the same new addon would both land in `adds` and the second one
+  // would crash `yaml-edit.applyChangeset`.
+  dedupAdds(changeset);
+  if (changeset.duplicates && changeset.duplicates.length > 0) {
+    log.warn('cross-plugin slug duplicates detected', {
+      count: changeset.duplicates.length,
+      names: changeset.duplicates.map((d) => d.entry?.name).filter(Boolean),
+    });
+  }
   finalizeChangeset(changeset);
 
   if (changeset.adds.length === 0 && changeset.updates.length === 0) {

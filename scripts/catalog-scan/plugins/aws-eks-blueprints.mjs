@@ -157,7 +157,7 @@ export async function fetch(ctx) {
     auth: token ? 'token' : 'none',
   });
 
-  const gh = makeGitHubClient(ctx, token);
+  const gh = makeGitHubClient(ctx, token, apiBase);
 
   // 1. Top-level dir listing.
   const topUrl = `${apiBase}/lib/addons`;
@@ -262,8 +262,19 @@ export async function fetch(ctx) {
 
 /**
  * Build a thin wrapper around `ctx.http` that:
- *   - Sets `User-Agent`, `Accept: application/vnd.github+json`, and
- *     optional `Authorization: Bearer <token>` headers.
+ *   - Sets `User-Agent` + `Accept: application/vnd.github+json` on
+ *     every call. Adds `Authorization: Bearer <token>` ONLY on calls
+ *     whose URL begins with `apiBase` (the Contents API endpoint that
+ *     needs the token for rate-limit headroom).
+ *   - `download_url` fetches (which target
+ *     `raw.githubusercontent.com` in production, or an arbitrary host
+ *     wired up by tests / future plugins) get a no-auth header set so
+ *     we can never accidentally ship a GitHub PAT to a third-party
+ *     origin. The token DOES work at `raw.githubusercontent.com`
+ *     today, but defense-in-depth is cheap (V123-PR-F3 / M2 — fixes a
+ *     latent token-leak risk where a future contributor wiring a
+ *     plugin to a non-GitHub `download_url` would inherit the bearer
+ *     header by accident).
  *   - Reads `X-RateLimit-Remaining` from each response and logs
  *     accordingly (`info` ≥ 10, `warn` < 10).
  *   - Throws on non-2xx with a descriptive error including status +
@@ -278,18 +289,27 @@ export async function fetch(ctx) {
  *
  * @param {{logger: object, http: Function}} ctx
  * @param {string} token GITHUB_TOKEN or empty
+ * @param {string} apiBase URL prefix for the Contents API (the only
+ *   tier that should receive the bearer token). Trailing slashes are
+ *   stripped by the caller.
  */
-function makeGitHubClient(ctx, token) {
-  const baseHeaders = {
+function makeGitHubClient(ctx, token, apiBase) {
+  // Two header sets: `apiHeaders` carries the bearer token (api.github.com
+  // calls need it for the 5000/hr rate-limit budget); `noAuthHeaders` is
+  // identical EXCEPT it never carries Authorization. The choice between
+  // them is a per-call URL-prefix check inside `call()`.
+  const noAuthHeaders = {
     'User-Agent': 'sharko-catalog-scan/1.0',
     Accept: 'application/vnd.github+json',
   };
+  const apiHeaders = { ...noAuthHeaders };
   if (token) {
-    baseHeaders.Authorization = `Bearer ${token}`;
+    apiHeaders.Authorization = `Bearer ${token}`;
   }
 
   async function call(url) {
-    const res = await ctx.http(url, { headers: baseHeaders });
+    const headers = shouldAttachAuth(url, apiBase) ? apiHeaders : noAuthHeaders;
+    const res = await ctx.http(url, { headers });
     if (!res.ok) {
       // Log the rate-limit headers even on failure so operators can
       // correlate a 403 with rate-limit exhaustion.
@@ -315,6 +335,33 @@ function makeGitHubClient(ctx, token) {
       return res.text();
     },
   };
+}
+
+/**
+ * Decide whether the bearer token attaches to a given URL. The token
+ * is only ever needed by Contents API calls: those start with the
+ * configured `apiBase` (e.g. `https://api.github.com/repos/.../contents`
+ * in production, or the env-overridden test base). `download_url`
+ * fetches go to a different host — historically `raw.githubusercontent.com`
+ * — and even though the token would silently work there today, leaking
+ * it across hostnames is exactly the latent risk M2 closes.
+ *
+ * We ALSO accept the literal `api.github.com` host as a safety net: if
+ * a future code path constructs a Contents API URL without going
+ * through `apiBase` (e.g. a search endpoint), the token still attaches.
+ */
+function shouldAttachAuth(url, apiBase) {
+  if (typeof apiBase === 'string' && apiBase.length > 0 && url.startsWith(apiBase)) {
+    return true;
+  }
+  try {
+    const host = new URL(url).host;
+    if (host === 'api.github.com') return true;
+  } catch {
+    // Unparseable URL — propagate the no-auth default; the underlying
+    // ctx.http will throw a useful network error.
+  }
+  return false;
 }
 
 function logRateLimit(ctx, res, url) {
@@ -381,6 +428,16 @@ function pickAddonTsFile(contents) {
  * (`HELM_CHART_NAME` etc.) AND the live `defaultProps = { chart,
  * repository, ... }` form observed in the upstream repo today. This
  * is a documented broadening — covered by V123-3-3 Decisions section.
+ *
+ * V123-PR-F3 / M7: the previous `\bnamespace\s*:\s*['"`]([^'"`]+)['"`]`
+ * regex captured the literal property name `"namespace"` when a real
+ * cdk-eks-blueprints source declared `namespace: "namespace"` (some
+ * upstream addons literally use the string `"namespace"` as a default
+ * value, e.g. apache-airflow rendered as `default_namespace: "namespace"`
+ * which is obviously wrong). The fix anchors namespace extraction to
+ * the `defaultProps`-style object literal AND filters the placeholder
+ * value `"namespace"` out — picking the next match if the first is
+ * the sentinel.
  */
 function extractMetadata(source) {
   return {
@@ -397,8 +454,74 @@ function extractMetadata(source) {
       firstMatch(
         source,
         /(?:helm[_]?chart[_]?namespace|chartNamespace)\s*[:=]\s*['"`]([^'"`]+)['"`]/i,
-      ) ?? firstMatch(source, /\bnamespace\s*:\s*['"`]([^'"`]+)['"`]/i),
+      ) ?? extractDefaultNamespace(source),
   };
+}
+
+/**
+ * Extract the `namespace` value from a `defaultProps`-style object
+ * literal. Two-step approach:
+ *
+ *   1. Locate a `defaultProps` declaration and capture its object
+ *      literal body (greedy-balanced via `{ ... }`).
+ *   2. Inside that body, find a top-level `namespace: "..."` entry
+ *      and return its value.
+ *
+ * If the value is the placeholder string `"namespace"` (the bug from
+ * M7 — some upstream addons use this as a literal "to be overridden"
+ * default), fall through to the next match. If no usable value is
+ * found, return undefined.
+ *
+ * The deliberate scope-narrowing to `defaultProps` is what makes this
+ * tighter than the previous `\bnamespace:` regex, which would fire on
+ * ANY object literal anywhere in the source — including comments,
+ * regex strings, and method bodies.
+ */
+function extractDefaultNamespace(source) {
+  const propsRe = /\bdefaultProps\s*(?::\s*[A-Za-z_][\w<>,\s|]*)?\s*=\s*\{/g;
+  let match;
+  while ((match = propsRe.exec(source)) !== null) {
+    const blockStart = match.index + match[0].length;
+    const block = sliceBalancedBlock(source, blockStart - 1);
+    if (!block) continue;
+    const nsRe = /(?:^|[,{\n])\s*namespace\s*:\s*['"`]([^'"`]+)['"`]/g;
+    let nsMatch;
+    while ((nsMatch = nsRe.exec(block)) !== null) {
+      const value = nsMatch[1];
+      if (typeof value === 'string' && value.length > 0 && value !== 'namespace') {
+        return value;
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Given a source string and the index of a `{` character, return the
+ * substring up to (but not including) the matching `}`. Tracks
+ * brace-depth only — does NOT understand strings, comments, or escape
+ * sequences. That's acceptable because:
+ *   - We only call this on `defaultProps = { ... }` blocks.
+ *   - Object literals inside strings would be vanishingly rare in
+ *     real EKS Blueprints sources.
+ *   - The downstream `nsRe` filters by leading `,` / `{` / `\n`, so
+ *     we won't match a stray `namespace:` inside a quoted JSON example.
+ *
+ * Returns null if the opening brace is not at `start` or no balanced
+ * close is found before EOF.
+ */
+function sliceBalancedBlock(source, start) {
+  if (source[start] !== '{') return null;
+  let depth = 0;
+  for (let i = start; i < source.length; i++) {
+    const c = source[i];
+    if (c === '{') depth++;
+    else if (c === '}') {
+      depth--;
+      if (depth === 0) return source.slice(start + 1, i);
+    }
+  }
+  return null;
 }
 
 function firstMatch(source, re) {

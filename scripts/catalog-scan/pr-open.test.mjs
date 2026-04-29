@@ -18,7 +18,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { run, parseArgs } from './pr-open.mjs';
+import { run, parseArgs, escTableCell } from './pr-open.mjs';
 
 /* ------------------------------------------------------------------ */
 /* Recorded logger                                                       */
@@ -346,6 +346,129 @@ test('pr-open: openPrExists rethrows on gh pr list failure (V123-PR-B / H5)', as
   // workflow logs sees the underlying gh error message.
   const errLog = logger.records.find((r) => r.level === 'error' && r.msg.includes('open-PR check failed'));
   assert.ok(errLog, 'expected open-PR-check error log');
+});
+
+/* ------------------------------------------------------------------ */
+/* M4 — escTableCell: pipe + backtick + backslash + newline (V123-PR-F3) */
+/* ------------------------------------------------------------------ */
+
+test('escTableCell: escapes pipe (existing behavior preserved)', () => {
+  assert.equal(escTableCell('foo|bar'), 'foo\\|bar');
+});
+
+test('escTableCell: escapes backtick (M4)', () => {
+  // Pre-fix, an entry name containing `code-spans` rendered as code
+  // inside the table cell, breaking the visual column layout for the
+  // following cells.
+  assert.equal(escTableCell('foo`bar'), 'foo\\`bar');
+});
+
+test('escTableCell: escapes backslash FIRST so subsequent escapes are not double-escaped (M4)', () => {
+  // Order matters: if `|` is escaped before `\\`, the `\\|` inserted by
+  // pipe-escape would itself be double-escaped to `\\\\|` and render
+  // visibly. The implementation runs `\\` -> `\\\\` first.
+  assert.equal(escTableCell('a\\b'), 'a\\\\b');
+  // Combined: backslash + pipe in the same cell.
+  assert.equal(escTableCell('a\\b|c'), 'a\\\\b\\|c');
+});
+
+test('escTableCell: collapses newlines into a single space (M4)', () => {
+  // Embedded newlines either break the table row or render as <br>
+  // depending on the markdown flavor — collapsing to a space is the
+  // conservative, deterministic choice.
+  assert.equal(escTableCell('foo\nbar'), 'foo bar');
+  assert.equal(escTableCell('foo\r\nbar'), 'foo bar');
+  assert.equal(escTableCell('foo\n\n\nbar'), 'foo bar');
+});
+
+test('escTableCell: handles all four special characters together (M4)', () => {
+  // A pathological cell value: backslash, backtick, pipe, newline.
+  // Escape order ensures none of them double-escape.
+  assert.equal(
+    escTableCell('a\\b`c|d\ne'),
+    'a\\\\b\\`c\\|d e',
+  );
+});
+
+test('escTableCell: passes plain text through unchanged', () => {
+  assert.equal(escTableCell('cert-manager'), 'cert-manager');
+  assert.equal(escTableCell('1.18.0'), '1.18.0');
+});
+
+test('escTableCell: handles null/undefined/numbers without throwing', () => {
+  assert.equal(escTableCell(null), '');
+  assert.equal(escTableCell(undefined), '');
+  assert.equal(escTableCell(42), '42');
+  assert.equal(escTableCell(0), '0');
+});
+
+/* ------------------------------------------------------------------ */
+/* M3 — duplicate proposals render in PR body (V123-PR-F3)              */
+/* ------------------------------------------------------------------ */
+
+test('pr-open: duplicates section renders when changeset.duplicates is non-empty (M3)', async (t) => {
+  const logger = makeRecordedLogger();
+  const { exec } = buildExecStub();
+  const cs = makeChangeset({ adds: [makeAdd('beta')], updates: [] });
+  // Inject a duplicate-proposal record (simulating dedupAdds upstream).
+  cs.duplicates = [{
+    plugin: 'aws-eks-blueprints',
+    entry: { name: 'beta', version: '0.2.0', chart: 'beta', repo: 'https://other.test' },
+    _duplicate_proposal: true,
+    first_plugin: 'cncf-landscape',
+  }];
+  const { deps } = buildDeps({ changeset: cs, exec, logger });
+
+  // Capture stdout (dry-run prints body).
+  const origWrite = process.stdout.write.bind(process.stdout);
+  let captured = '';
+  process.stdout.write = (chunk, ...rest) => {
+    captured += String(chunk);
+    return origWrite(chunk, ...rest);
+  };
+  t.after(() => { process.stdout.write = origWrite; });
+
+  const opts = {
+    changeset: '_dist/catalog-scan/changeset.json',
+    catalog: 'catalog/addons.yaml',
+    dryRun: true,
+    branch: 'catalog-scan/test',
+  };
+  const result = await run(opts, deps);
+  assert.equal(result.exitCode, 0);
+
+  // Section heading visible.
+  assert.match(captured, /## Duplicate proposals — review needed/);
+  // Three-column table header.
+  assert.match(captured, /\| Name \| Duplicate plugin \| First-winner plugin \|/);
+  // The losing-plugin record + winner pointer both rendered.
+  assert.match(captured, /\| `beta` \| aws-eks-blueprints \| cncf-landscape \|/);
+});
+
+test('pr-open: duplicates section is omitted when changeset.duplicates is empty', async (t) => {
+  const logger = makeRecordedLogger();
+  const { exec } = buildExecStub();
+  const cs = makeChangeset({ adds: [makeAdd('beta')], updates: [] });
+  // duplicates left at default empty array.
+  const { deps } = buildDeps({ changeset: cs, exec, logger });
+
+  const origWrite = process.stdout.write.bind(process.stdout);
+  let captured = '';
+  process.stdout.write = (chunk, ...rest) => {
+    captured += String(chunk);
+    return origWrite(chunk, ...rest);
+  };
+  t.after(() => { process.stdout.write = origWrite; });
+
+  const opts = {
+    changeset: '_dist/catalog-scan/changeset.json',
+    catalog: 'catalog/addons.yaml',
+    dryRun: true,
+    branch: 'catalog-scan/test',
+  };
+  await run(opts, deps);
+
+  assert.doesNotMatch(captured, /Duplicate proposals/);
 });
 
 test('pr-open: missing changeset file → exit 0 with "nothing to do" log (workflow safety)', async () => {
