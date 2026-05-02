@@ -1,5 +1,5 @@
 # generated: 2026-04-20
-# last_updated: 2026-04-27 — Epic V123-1 CLOSED (9/9). Epic V123-2 CLOSED (6/6). Epic V123-3 CLOSED (5/5) — V123-3.5 reviewer runbook landed; only Epic V123-4 (docs+release) remains for v1.23.0.
+# last_updated: 2026-05-02 — v1.24 hotfix bundle planned (V124-2 epic, 9 stories backlog) from Track A personal smoke pass against v1.23.0-pre.0 demo image. PR-A (3 highs) → PR-B (UX) → PR-C (docs) on dev/v1.24-hotfix.
 # project: sharko
 # project_key: NOKEY
 # tracking_system: file-system
@@ -183,11 +183,42 @@ development_status:
   V123-3-5-runbook-docs-for-reviewers: review  # Epic V123-3 CLOSES on this PR's merge
   epic-V123-3-retrospective: optional
 
-  # Epic V123-4: Documentation + release cut
-  epic-V123-4: backlog
-  V123-4-1-user-guide-catalog-sources-md-user-guide-verified-signatures-md: backlog
-  V123-4-2-operator-catalog-trust-policy-md-update-operator-supply-chain-md: backlog
-  V123-4-3-developer-guide-catalog-scan-plugins-md-update-contributing-catalog-md: backlog
-  V123-4-4-bmad-code-review-security-auditor-sweep: backlog
-  V123-4-5-changelog-pr-design-v1-23-extensibility-main-tag-v1-23-0: backlog
+  # Epic V123-4: Documentation + release cut — DONE (v1.23.0-pre.0 cut 2026-04-29)
+  epic-V123-4: done
+  V123-4-1-user-guide-catalog-sources-md-user-guide-verified-signatures-md: done  # PR #317 merged 2026-04-29 at 24a31405 (verified-signatures.md user guide + README + CHANGELOG)
+  V123-4-2-operator-catalog-trust-policy-md-update-operator-supply-chain-md: done  # operator/catalog-trust-policy.md + supply-chain.md shipped during V123-2 ramp; verified post-ship
+  V123-4-3-developer-guide-catalog-scan-plugins-md-update-contributing-catalog-md: done  # developer-guide/catalog-scan-runbook.md shipped via PR #306 (V123-3.5)
+  V123-4-4-bmad-code-review-security-auditor-sweep: done  # auto-pilot review batch ran 2026-04-27 producing 3 BLOCKER + 6 HIGH + 7 MEDIUM + 3 LOW findings; all addressed via PR-A through PR-F3
+  V123-4-5-changelog-pr-design-v1-23-extensibility-main-tag-v1-23-0: done  # PR #316 (release polish) + tag v1.23.0-pre.0 cut 2026-04-29; CHANGELOG.md added in PR #317
   epic-V123-4-retrospective: optional
+
+  # ============================================================
+  # V1.24 — Post-v1.23 polish bundle (from epics-v1.24.md, forward)
+  # ============================================================
+
+  # Epic V124-1: Post-v1.23 polish bundle — 5 deferred items
+  epic-V124-1: backlog
+  V124-1-1-cross-cutting-gray-class-refactor-on-addondetail-labels: backlog
+  V124-1-2-argosecrets-test-deprecation-cleanup: backlog
+  V124-1-3-v123-2-real-bundle-ci-smoke: backlog
+  V124-1-4-cosign-cert-claim-assertions: backlog
+  V124-1-5-third-party-fetcher-production-smoke-runbook: backlog
+  epic-V124-1-retrospective: optional
+
+  # Epic V124-2: Personal smoke-pass hotfix bundle — 7 bugs + 2 doc fixes
+  # Discovered during Track A demo-mode smoke pass on 2026-05-01/02 against
+  # ghcr.io/moranweissman/sharko:1.23.0-pre.0. PR-bundle plan: PR-A (highs:
+  # 2.2+2.5+2.6) → PR-B (UX: 2.1+2.3+2.4) → PR-C (docs: 2.7+2.8+2.9). All
+  # target dev/v1.24-hotfix branch off main. After merge: re-run Track A to
+  # verify, then proceed to Track B (kind+ArgoCD).
+  epic-V124-2: backlog
+  V124-2-1-login-footer-hardcoded-version: backlog
+  V124-2-2-clusters-500-on-missing-managed-clusters-yaml: backlog
+  V124-2-3-cluster-page-blank-after-error-transient: backlog
+  V124-2-4-cli-connection-error-no-server-hint: backlog
+  V124-2-5-cli-docker-image-mkdir-sharko-permission-denied: backlog
+  V124-2-6-sharko-login-leaks-raw-tty-mode-on-error-path: backlog
+  V124-2-7-personal-smoke-runbook-cli-command-list-wrong: backlog
+  V124-2-8-testing-guide-missing-hurl-install-instructions: backlog
+  V124-2-9-personal-smoke-runbook-host-vs-container-localhost-gotcha: backlog
+  epic-V124-2-retrospective: optional

@@ -25,11 +25,18 @@ RUN CGO_ENABLED=0 go build -ldflags "-X main.version=${VERSION}" -o sharko ./cmd
 
 # Stage 3: Final image
 FROM alpine:3.21
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates && \
+    mkdir -p /home/sharko/.sharko && \
+    chown -R 1001:1001 /home/sharko && \
+    chmod 700 /home/sharko/.sharko
 COPY --from=go-build /app/sharko /usr/local/bin/
 COPY --from=ui-build /app/ui/dist /app/static
 ENV SHARKO_STATIC_DIR=/app/static
 ENV SHARKO_PORT=8080
+# HOME is set so the CLI (sharko login, sharko apply, etc.) can persist its
+# config to ~/.sharko/config without needing an external -e HOME=... flag.
+# os.UserHomeDir() in Go reads $HOME, which is otherwise empty under USER 1001.
+ENV HOME=/home/sharko
 EXPOSE 8080
 USER 1001
 ENTRYPOINT ["sharko", "serve"]

@@ -20,21 +20,51 @@ type SharkoConfig struct {
 	Token  string `yaml:"token"`
 }
 
-// configPath returns the path to ~/.sharko/config.
-func configPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
+// configHomeWarned ensures the "$HOME not set" warning is only printed once
+// per CLI invocation, even when both load + save call configDir.
+var configHomeWarned bool
+
+// configDir returns the directory where the CLI config lives.
+//
+// Resolution order:
+//  1. SHARKO_CONFIG_DIR — explicit override (used by tests and constrained
+//     environments)
+//  2. ~/.sharko — the normal case, when $HOME is set to a real user home
+//  3. <os.TempDir()>/.sharko — fallback when $HOME is missing or resolves to
+//     an unwritable root path (e.g. inside a container running with no HOME
+//     env var, where os.UserHomeDir() can return "" or "/")
+//
+// The fallback exists so `sharko login` does not crash with
+// "mkdir /.sharko: permission denied" when run as a non-root user inside a
+// minimal container image. The first time the fallback fires, a one-line
+// warning is printed to stderr so the operator notices the unusual
+// resolution.
+func configDir() string {
+	if v := os.Getenv("SHARKO_CONFIG_DIR"); v != "" {
+		return v
 	}
-	return filepath.Join(home, ".sharko", "config")
+	home, err := os.UserHomeDir()
+	if err == nil && home != "" && home != "/" {
+		return filepath.Join(home, ".sharko")
+	}
+	fallback := filepath.Join(os.TempDir(), ".sharko")
+	if !configHomeWarned {
+		fmt.Fprintf(os.Stderr,
+			"warning: $HOME not set, using %s for config storage (set $HOME or SHARKO_CONFIG_DIR to override)\n",
+			fallback)
+		configHomeWarned = true
+	}
+	return fallback
 }
 
-// loadConfig reads ~/.sharko/config.
+// configPath returns the path to the CLI config file.
+func configPath() string {
+	return filepath.Join(configDir(), "config")
+}
+
+// loadConfig reads the CLI config file.
 func loadConfig() (*SharkoConfig, error) {
 	path := configPath()
-	if path == "" {
-		return nil, fmt.Errorf("cannot determine home directory")
-	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -48,16 +78,12 @@ func loadConfig() (*SharkoConfig, error) {
 	return &cfg, nil
 }
 
-// saveConfig writes ~/.sharko/config.
+// saveConfig writes the CLI config file.
 func saveConfig(cfg *SharkoConfig) error {
 	path := configPath()
-	if path == "" {
-		return fmt.Errorf("cannot determine home directory")
-	}
-
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0700); err != nil {
-		return fmt.Errorf("cannot create config directory: %w", err)
+		return fmt.Errorf("cannot create config directory %s: %w", dir, err)
 	}
 
 	data, err := yaml.Marshal(cfg)
