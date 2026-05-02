@@ -8,6 +8,7 @@ import { AddonStatesProvider } from '@/hooks/useAddonStates'
 import { Layout } from '@/components/Layout'
 import { Login } from '@/views/Login'
 import { FirstRunWizard } from '@/components/FirstRunWizard'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { api } from '@/services/api'
 
 // Lazy-loaded views — split into separate chunks for faster initial load
@@ -74,7 +75,18 @@ function ConnectedApp() {
         <Route path="/" element={<Layout />}>
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="dashboard" element={<Dashboard />} />
-          <Route path="clusters" element={<ClustersOverview />} />
+          {/* V124-2.3: wrap Clusters route in an ErrorBoundary so a transient
+              500 from /clusters that escapes the local error state never
+              leaves the page blank — the boundary renders a recoverable
+              fallback with a Try Again button. */}
+          <Route
+            path="clusters"
+            element={
+              <ErrorBoundary>
+                <ClustersOverview />
+              </ErrorBoundary>
+            }
+          />
           <Route path="clusters/:name" element={<ClusterDetail />} />
           <Route path="addons" element={<AddonCatalog />} />
           <Route path="addons/:name" element={<AddonDetail />} />

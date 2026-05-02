@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useAuth } from '@/hooks/useAuth'
 
 export function Login() {
@@ -7,6 +7,28 @@ export function Login() {
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  // Live server version for the footer. Sourced from /api/v1/health (public,
+  // no auth header needed). Falls back to an em-dash placeholder if the fetch
+  // fails or hasn't completed — never show a stale hard-coded string. Same
+  // pattern as Layout.tsx which fetches /api/v1/health on mount.
+  const [appVersion, setAppVersion] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/v1/health')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!cancelled && d && typeof d.version === 'string') {
+          setAppVersion(d.version)
+        }
+      })
+      .catch(() => {
+        // Swallow — appVersion stays empty and the footer renders a dash.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -94,9 +116,9 @@ export function Login() {
           </form>
         </div>
 
-        {/* Footer */}
+        {/* Footer — live version from /api/v1/health, dash fallback while loading or on error */}
         <p className="pb-4 text-center text-[10px] text-[#4a8abf]">
-          Sharko v1.0.0
+          Sharko v{appVersion || '—'}
         </p>
       </div>
     </div>

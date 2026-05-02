@@ -157,8 +157,13 @@ export function ClustersOverview() {
       } else {
         setLoading(true);
       }
-      setError(null);
       const response: ClustersResponse = await api.getClusters();
+      // Only clear `error` once we actually have fresh data in hand. Clearing
+      // pre-emptively (V124-2.3 bug) caused the page to flash blank when a
+      // background refresh kicked the prior ErrorState off-screen, then the
+      // refresh itself failed silently and left an empty cluster list with
+      // no error chrome.
+      setError(null);
       setAllClusters(response.clusters);
       setHealthStats(response.health_stats ?? null);
       // Detect ArgoCD unreachable: if all clusters have failed/unknown status or response is empty
@@ -168,10 +173,24 @@ export function ClustersOverview() {
         ));
       setArgoCDUnreachable(hasArgoError && response.clusters.length > 0);
     } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Failed to load clusters';
       if (!background) {
-        setError(e instanceof Error ? e.message : 'Failed to load clusters');
+        setError(message);
         setAllClusters([]);
         setHealthStats(null);
+      } else {
+        // V124-2.3: a background refresh that fails MUST surface an error
+        // when there is no prior data to show. Otherwise the page would
+        // render an empty stat grid with no indication anything went wrong.
+        // If we already have data, keep it on screen and let the next refresh
+        // try to recover — the user still sees the last-good state.
+        setAllClusters((prev) => {
+          if (prev.length === 0) {
+            setError(message);
+            setHealthStats(null);
+          }
+          return prev;
+        });
       }
     } finally {
       setLoading(false);
