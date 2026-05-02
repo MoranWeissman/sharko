@@ -338,6 +338,24 @@ For every page below the rubric is the same:
 
 The container ships the `sharko` binary; `--help` should respond on every subcommand. We're not testing functionality, just that the CLI doesn't panic.
 
+!!! warning "Two gotchas before you run any CLI in the container"
+
+    1. **`localhost` from `docker exec` means the container, not your host.** Your `-p 18080:8080` port mapping does NOT apply inside the container — it only forwards traffic from the host network into the container. From inside the container the binary is bound to `:8080`, so any CLI call that talks to the API needs `--server http://localhost:8080`. Using `--server http://localhost:18080` from inside the container will fail with connection-refused (no process is listening on host port 18080 from the container's perspective).
+
+        Quick rule: **inside the container `localhost:8080`, from the host `localhost:18080`.**
+
+    2. **`HOME` is unset in the official image** (tracked as V124-2.5). When `HOME` is empty, the cobra root command fails to create `~/.sharko/` and dies with a `mkdir /.sharko: permission denied` error before any subcommand runs. Until V124-2.5 ships, prefix every `docker exec` CLI call with `-e HOME=/tmp` to give cobra a writable config directory.
+
+        Example (the only `-it` call in this section — `login` needs a real TTY for the password prompt):
+
+        ```bash
+        docker exec -e HOME=/tmp -it sharko-smoke sharko login \
+          --username admin --password admin \
+          --server http://localhost:8080
+        ```
+
+    Once V124-2.5 lands, the `-e HOME=/tmp` step won't be needed and this admonition should be removed.
+
 !!! info "Authoritative source for command names"
     The list below is the cobra-registered command set, captured from the running binary. **It is not derived from filenames in `cmd/sharko/`** — cobra registers commands under names that don't always match their source-file paths (e.g. the file is `unadopt.go` but the command is `unadopt-cluster`; the file is `secrets.go` but it registers two commands, `secret-status` and `refresh-secrets`).
 
@@ -361,7 +379,7 @@ The container ships the `sharko` binary; `--help` should respond on every subcom
 - [ ] Top-level help
 
   ```bash
-  docker exec -i sharko-smoke sharko --help
+  docker exec -e HOME=/tmp -i sharko-smoke sharko --help
   ```
 
   **Expected:** usage block with the full subcommand list. **Flag if:** panic or empty output.
@@ -369,7 +387,7 @@ The container ships the `sharko` binary; `--help` should respond on every subcom
 - [ ] Version
 
   ```bash
-  docker exec -i sharko-smoke sharko version
+  docker exec -e HOME=/tmp -i sharko-smoke sharko version
   ```
 
   **Expected:** version matches the image tag and matches `/api/v1/health`'s `version` field. **Flag if:** mismatch (this is bug #1 in CLI form too).
@@ -387,7 +405,7 @@ The container ships the `sharko` binary; `--help` should respond on every subcom
              unadopt-cluster update-cluster upgrade-addon upgrade-addons \
              user validate version; do
     echo "=== $cmd ==="
-    docker exec -i sharko-smoke sharko $cmd --help 2>&1 | head -5
+    docker exec -e HOME=/tmp -i sharko-smoke sharko $cmd --help 2>&1 | head -5
     echo
   done
   ```
@@ -397,18 +415,18 @@ The container ships the `sharko` binary; `--help` should respond on every subcom
 - [ ] PR subcommands
 
   ```bash
-  docker exec -i sharko-smoke sharko pr --help
-  docker exec -i sharko-smoke sharko pr list --help
-  docker exec -i sharko-smoke sharko pr wait --help
+  docker exec -e HOME=/tmp -i sharko-smoke sharko pr --help
+  docker exec -e HOME=/tmp -i sharko-smoke sharko pr list --help
+  docker exec -e HOME=/tmp -i sharko-smoke sharko pr wait --help
   ```
 
 - [ ] Token subcommands
 
   ```bash
-  docker exec -i sharko-smoke sharko token --help
-  docker exec -i sharko-smoke sharko token create --help
-  docker exec -i sharko-smoke sharko token list --help
-  docker exec -i sharko-smoke sharko token revoke --help
+  docker exec -e HOME=/tmp -i sharko-smoke sharko token --help
+  docker exec -e HOME=/tmp -i sharko-smoke sharko token create --help
+  docker exec -e HOME=/tmp -i sharko-smoke sharko token list --help
+  docker exec -e HOME=/tmp -i sharko-smoke sharko token revoke --help
   ```
 
 ## A.7 Teardown
