@@ -385,18 +385,14 @@ Each plugin under `scripts/catalog-scan/plugins/` ships a fixture-driven test th
 
 Hurl plays the role Robot Framework does in Python shops: declarative, plain-text, runs in CI, and can target either a local Docker container (Layer 5) or a kind cluster (Layer 6). Bruno or Newman would also work; we pick Hurl because of the static-binary install and because the file format is human-readable plain text, not JSON.
 
-### Install
+### Install Hurl
 
-```bash
-# macOS
-brew install hurl
+- macOS: `brew install hurl`
+- Linux: `cargo install hurl` (or download a binary from <https://github.com/Orange-OpenSource/hurl/releases>)
+- Windows: scoop / chocolatey or download a binary
+- Full instructions: <https://hurl.dev/docs/installation.html>
 
-# Anywhere with cargo
-cargo install hurl
-
-# Verify
-hurl --version
-```
+Verify: `hurl --version` should print 4.x or later.
 
 ### Sample — `tests/api/smoke.hurl`
 
