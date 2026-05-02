@@ -4,8 +4,11 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/url"
 	"os"
 	"strings"
 	"syscall"
@@ -42,13 +45,11 @@ var loginCmd = &cobra.Command{
 		case flagUsername != "":
 			// Username provided — only prompt for password
 			username = flagUsername
-			fmt.Print("Password: ")
-			passwordBytes, err := term.ReadPassword(int(syscall.Stdin))
-			fmt.Println()
+			pw, err := readPasswordSafe("Password: ")
 			if err != nil {
 				return fmt.Errorf("failed to read password: %w", err)
 			}
-			password = string(passwordBytes)
+			password = pw
 		default:
 			// Neither provided — prompt for both (original behavior)
 			fmt.Print("Username: ")
@@ -59,13 +60,11 @@ var loginCmd = &cobra.Command{
 			}
 			username = strings.TrimSpace(line)
 
-			fmt.Print("Password: ")
-			passwordBytes, err := term.ReadPassword(int(syscall.Stdin))
-			fmt.Println()
+			pw, err := readPasswordSafe("Password: ")
 			if err != nil {
 				return fmt.Errorf("failed to read password: %w", err)
 			}
-			password = string(passwordBytes)
+			password = pw
 		}
 
 		// POST directly to the server — no config saved yet.
@@ -81,7 +80,7 @@ var loginCmd = &cobra.Command{
 		httpClient := buildHTTPClient(insecure)
 		resp, err := httpClient.Post(server+"/api/v1/auth/login", "application/json", bytes.NewReader(payload))
 		if err != nil {
-			return fmt.Errorf("login request failed: %w", err)
+			return formatConnectionError(server, err)
 		}
 		defer resp.Body.Close()
 
@@ -92,7 +91,7 @@ var loginCmd = &cobra.Command{
 
 		if resp.StatusCode != 200 {
 			var errResp map[string]string
-			json.Unmarshal(respBody, &errResp)
+			_ = json.Unmarshal(respBody, &errResp)
 			msg := errResp["error"]
 			if msg == "" {
 				msg = string(respBody)
@@ -119,7 +118,118 @@ var loginCmd = &cobra.Command{
 			return fmt.Errorf("failed to save config: %w", err)
 		}
 
-		fmt.Printf("Logged in as %s. Token saved to ~/.sharko/config\n", username)
+		fmt.Printf("Logged in as %s. Token saved to %s\n", username, configPath())
 		return nil
 	},
+}
+
+// readPasswordSafe prompts the user for a password and returns the entered
+// value. It explicitly snapshots and restores the terminal state around the
+// read, defending against the well-known footgun where a panic, signal, or
+// bug inside golang.org/x/term leaves the parent shell in raw mode (visible
+// as stair-stepped output requiring `stty sane`).
+//
+// The double-restore is intentional: term.ReadPassword internally restores
+// the saved state, but our outer defer guarantees restoration even if
+// ReadPassword's defer is skipped (e.g. if the goroutine is interrupted by a
+// signal that bypasses normal defer semantics, or if a future refactor
+// replaces ReadPassword with a non-restoring primitive).
+func readPasswordSafe(prompt string) (string, error) {
+	fd := int(syscall.Stdin)
+
+	// If stdin is not a terminal (e.g. piped input), fall back to a plain
+	// line read. This keeps non-interactive callers working without trying
+	// to set a terminal mode that does not exist.
+	if !term.IsTerminal(fd) {
+		fmt.Print(prompt)
+		reader := bufio.NewReader(os.Stdin)
+		line, err := reader.ReadString('\n')
+		if err != nil && err != io.EOF {
+			return "", err
+		}
+		return strings.TrimRight(line, "\r\n"), nil
+	}
+
+	// Snapshot current TTY state and guarantee restoration even if
+	// ReadPassword fails to do so on its own.
+	state, stateErr := term.GetState(fd)
+	if stateErr == nil && state != nil {
+		defer func() {
+			_ = term.Restore(fd, state)
+		}()
+	}
+
+	fmt.Print(prompt)
+	pwBytes, err := term.ReadPassword(fd)
+	// Always emit the trailing newline (ReadPassword swallows the user's
+	// CR), even on the error path, so the next line of output is not glued
+	// to the prompt.
+	fmt.Println()
+	if err != nil {
+		return "", err
+	}
+	return string(pwBytes), nil
+}
+
+// formatConnectionError turns a low-level dial error into a friendly,
+// actionable message that points the user at their --server flag. The
+// underlying error is preserved (wrapped) so verbose debugging is not lost.
+//
+// Categories detected:
+//   - connection refused (ECONNREFUSED) — server not running on that port
+//   - DNS lookup failure (*net.DNSError) — hostname does not resolve
+//   - generic *net.OpError — falls back to the catch-all hint
+func formatConnectionError(server string, err error) error {
+	if err == nil {
+		return nil
+	}
+
+	host := server
+	if u, parseErr := url.Parse(server); parseErr == nil && u.Host != "" {
+		host = u.Host
+	}
+
+	if isConnectionRefused(err) {
+		return fmt.Errorf(
+			"cannot reach Sharko server at %s — connection refused\n"+
+				"  → check that the --server URL is correct and the server is running\n"+
+				"  → underlying: %w",
+			server, err)
+	}
+
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return fmt.Errorf(
+			"cannot reach Sharko server at %s — DNS lookup failed for %s\n"+
+				"  → check the --server hostname for typos\n"+
+				"  → underlying: %w",
+			server, host, err)
+	}
+
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		return fmt.Errorf(
+			"cannot reach Sharko server at %s — network error\n"+
+				"  → check that the --server URL is reachable from this host\n"+
+				"  → underlying: %w",
+			server, err)
+	}
+
+	return fmt.Errorf("login request failed: %w", err)
+}
+
+// isConnectionRefused reports whether err (or any wrapped error) is a TCP
+// connection-refused condition. errors.Is on syscall.ECONNREFUSED works on
+// Linux and macOS for the standard net.OpError → os.SyscallError chain.
+func isConnectionRefused(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return true
+	}
+	// Best-effort string match for environments where the syscall errno is
+	// wrapped in a non-standard way (rare, but cheaper to check than to
+	// unwrap manually).
+	return strings.Contains(err.Error(), "connection refused")
 }

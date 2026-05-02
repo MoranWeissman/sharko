@@ -30,7 +30,7 @@ func (s *Server) handleGetDashboardStats(w http.ResponseWriter, r *http.Request)
 
 	resp, err := s.dashboardSvc.GetStats(r.Context(), gp, ac)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeServerError(w, "dashboard_stats", err)
 		return
 	}
 
@@ -59,7 +59,7 @@ func (s *Server) handleGetAttentionItems(w http.ResponseWriter, r *http.Request)
 	defer cancel()
 	apps, err := ac.ListApplications(ctx)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeServerError(w, "dashboard_attention", err)
 		return
 	}
 
@@ -130,7 +130,7 @@ func (s *Server) handleGetPullRequests(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := s.dashboardSvc.GetPullRequests(r.Context(), gp)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeServerError(w, "dashboard_pull_requests", err)
 		return
 	}
 
