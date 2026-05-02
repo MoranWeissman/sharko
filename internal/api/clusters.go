@@ -32,7 +32,7 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := s.clusterSvc.ListClusters(r.Context(), gp, ac)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeServerError(w, "list_clusters", err)
 		return
 	}
 
@@ -139,7 +139,7 @@ func (s *Server) handleGetCluster(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := s.clusterSvc.GetClusterDetail(r.Context(), name, gp, ac)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeServerError(w, "get_cluster", err)
 		return
 	}
 	if resp == nil {
@@ -177,7 +177,7 @@ func (s *Server) handleGetClusterValues(w http.ResponseWriter, r *http.Request) 
 
 	resp, err := s.clusterSvc.GetClusterValues(r.Context(), name, gp)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeServerError(w, "get_cluster_values", err)
 		return
 	}
 
@@ -211,7 +211,7 @@ func (s *Server) handleGetConfigDiff(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := s.clusterSvc.GetConfigDiff(r.Context(), name, gp)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeServerError(w, "get_cluster_config_diff", err)
 		return
 	}
 
@@ -252,7 +252,7 @@ func (s *Server) handleGetClusterComparison(w http.ResponseWriter, r *http.Reque
 
 	resp, err := s.clusterSvc.GetClusterComparison(r.Context(), name, gp, ac)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeServerError(w, "get_cluster_comparison", err)
 		return
 	}
 	if resp == nil {

@@ -24,7 +24,7 @@ import (
 func (s *Server) handleListConnections(w http.ResponseWriter, r *http.Request) {
 	resp, err := s.connSvc.List()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeServerError(w, "list_connections", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -53,7 +53,7 @@ func (s *Server) handleCreateConnection(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err := s.connSvc.Create(req); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeServerError(w, "create_connection", err)
 		return
 	}
 
@@ -136,7 +136,7 @@ func (s *Server) handleUpdateConnection(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err := s.connSvc.Create(req); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeServerError(w, "update_connection", err)
 		return
 	}
 
@@ -170,7 +170,7 @@ func (s *Server) handleDeleteConnection(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err := s.connSvc.Delete(name); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeServerError(w, "delete_connection", err)
 		return
 	}
 
@@ -204,7 +204,7 @@ func (s *Server) handleSetActiveConnection(w http.ResponseWriter, r *http.Reques
 	}
 
 	if err := s.connSvc.SetActive(req.ConnectionName); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeServerError(w, "set_active_connection", err)
 		return
 	}
 

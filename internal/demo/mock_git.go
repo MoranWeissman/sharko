@@ -31,7 +31,15 @@ func NewMockGitProvider() *MockGitProvider {
 }
 
 func (p *MockGitProvider) seedFiles() {
-	// cluster-addons.yaml — lists all clusters with addon enable labels
+	// managed-clusters.yaml — the file ClusterService.ListClusters reads.
+	// Without this, GET /api/v1/clusters returns the BUG-005 500 because
+	// the service tries to read managed-clusters.yaml from this provider
+	// and the demo previously only seeded the legacy cluster-addons.yaml
+	// path.
+	p.files["configuration/managed-clusters.yaml"] = []byte(clusterAddonsYAML)
+
+	// cluster-addons.yaml — legacy alias kept so any older read paths or
+	// external tooling pointed at it still resolve.
 	p.files["configuration/cluster-addons.yaml"] = []byte(clusterAddonsYAML)
 
 	// addons-catalog.yaml — the addon catalog (applicationsets format)
