@@ -4,8 +4,11 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/url"
 	"os"
 	"strings"
 	"syscall"
@@ -77,7 +80,7 @@ var loginCmd = &cobra.Command{
 		httpClient := buildHTTPClient(insecure)
 		resp, err := httpClient.Post(server+"/api/v1/auth/login", "application/json", bytes.NewReader(payload))
 		if err != nil {
-			return fmt.Errorf("login request failed: %w", err)
+			return formatConnectionError(server, err)
 		}
 		defer resp.Body.Close()
 
@@ -166,4 +169,67 @@ func readPasswordSafe(prompt string) (string, error) {
 		return "", err
 	}
 	return string(pwBytes), nil
+}
+
+// formatConnectionError turns a low-level dial error into a friendly,
+// actionable message that points the user at their --server flag. The
+// underlying error is preserved (wrapped) so verbose debugging is not lost.
+//
+// Categories detected:
+//   - connection refused (ECONNREFUSED) — server not running on that port
+//   - DNS lookup failure (*net.DNSError) — hostname does not resolve
+//   - generic *net.OpError — falls back to the catch-all hint
+func formatConnectionError(server string, err error) error {
+	if err == nil {
+		return nil
+	}
+
+	host := server
+	if u, parseErr := url.Parse(server); parseErr == nil && u.Host != "" {
+		host = u.Host
+	}
+
+	if isConnectionRefused(err) {
+		return fmt.Errorf(
+			"cannot reach Sharko server at %s — connection refused\n"+
+				"  → check that the --server URL is correct and the server is running\n"+
+				"  → underlying: %w",
+			server, err)
+	}
+
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return fmt.Errorf(
+			"cannot reach Sharko server at %s — DNS lookup failed for %s\n"+
+				"  → check the --server hostname for typos\n"+
+				"  → underlying: %w",
+			server, host, err)
+	}
+
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		return fmt.Errorf(
+			"cannot reach Sharko server at %s — network error\n"+
+				"  → check that the --server URL is reachable from this host\n"+
+				"  → underlying: %w",
+			server, err)
+	}
+
+	return fmt.Errorf("login request failed: %w", err)
+}
+
+// isConnectionRefused reports whether err (or any wrapped error) is a TCP
+// connection-refused condition. errors.Is on syscall.ECONNREFUSED works on
+// Linux and macOS for the standard net.OpError → os.SyscallError chain.
+func isConnectionRefused(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return true
+	}
+	// Best-effort string match for environments where the syscall errno is
+	// wrapped in a non-standard way (rare, but cheaper to check than to
+	// unwrap manually).
+	return strings.Contains(err.Error(), "connection refused")
 }
