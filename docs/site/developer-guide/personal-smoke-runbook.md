@@ -16,12 +16,12 @@ The goal of one full pass:
 - One pass through **Track B** (kind + ArgoCD, Layer 6) — about 60–90 minutes.
 - File every rough edge into the [Bug Log](#bug-log-template) at the bottom. You're seeding the v1.24 hotfix bundle.
 
-!!! warning "Known bugs as of 2026-05-01"
-    Three bugs have already been observed in the live product within the first 15 minutes of testing today. **Verify each is still present** as you walk the runbook — if any is fixed, mark it done.
+!!! note "Bugs found in the first smoke pass (2026-05-01) — historical reference"
+    These were the three bugs found in the very first hands-on smoke pass and are listed here for context. Keep an eye out for regressions, but do not expect to reproduce them as-is.
 
-    1. **Login page footer shows wrong version** (UI). The footer renders a stale or hardcoded version string instead of the running binary's version.
-    2. **`GET /api/v1/clusters` returns 500** with raw error `reading managed-clusters.yaml: file not found`. The error string also leaks to the UI verbatim. (Backend bug + UI safety bug — should be a clean empty list, not a 500.)
-    3. **Cluster list page goes blank after ~30 s** when the underlying error clears. Recovers only on Dashboard click or hard refresh — the list view doesn't re-fetch on its own.
+    1. **Login page footer shows wrong version** (BUG-001) — fixed in the v1.24 hotfix bundle (V124-2.1).
+    2. **`GET /api/v1/clusters` returns 500** with raw filesystem error string leaking to the UI (BUG-002) — fixed in the v1.24 hotfix bundle (V124-2.2).
+    3. **Cluster list page goes blank after ~30 s** when the underlying error clears (BUG-003) — UI white-screen on background-refresh failure. Recovery still requires nav-and-back or hard refresh; tracked separately, not yet closed in the v1.24 hotfix bundle.
 
 ---
 
@@ -338,23 +338,19 @@ For every page below the rubric is the same:
 
 The container ships the `sharko` binary; `--help` should respond on every subcommand. We're not testing functionality, just that the CLI doesn't panic.
 
-!!! warning "Two gotchas before you run any CLI in the container"
+!!! warning "One gotcha before you run any CLI in the container"
 
-    1. **`localhost` from `docker exec` means the container, not your host.** Your `-p 18080:8080` port mapping does NOT apply inside the container — it only forwards traffic from the host network into the container. From inside the container the binary is bound to `:8080`, so any CLI call that talks to the API needs `--server http://localhost:8080`. Using `--server http://localhost:18080` from inside the container will fail with connection-refused (no process is listening on host port 18080 from the container's perspective).
+    **`localhost` from `docker exec` means the container, not your host.** Your `-p 18080:8080` port mapping does NOT apply inside the container — it only forwards traffic from the host network into the container. From inside the container the binary is bound to `:8080`, so any CLI call that talks to the API needs `--server http://localhost:8080`. Using `--server http://localhost:18080` from inside the container will fail with connection-refused (no process is listening on host port 18080 from the container's perspective).
 
-        Quick rule: **inside the container `localhost:8080`, from the host `localhost:18080`.**
+    Quick rule: **inside the container `localhost:8080`, from the host `localhost:18080`.**
 
-    2. **`HOME` is unset in the official image** (tracked as V124-2.5). When `HOME` is empty, the cobra root command fails to create `~/.sharko/` and dies with a `mkdir /.sharko: permission denied` error before any subcommand runs. Until V124-2.5 ships, prefix every `docker exec` CLI call with `-e HOME=/tmp` to give cobra a writable config directory.
+    Example (the only `-it` call in this section — `login` needs a real TTY for the password prompt):
 
-        Example (the only `-it` call in this section — `login` needs a real TTY for the password prompt):
-
-        ```bash
-        docker exec -e HOME=/tmp -it sharko-smoke sharko login \
-          --username admin --password admin \
-          --server http://localhost:8080
-        ```
-
-    Once V124-2.5 lands, the `-e HOME=/tmp` step won't be needed and this admonition should be removed.
+    ```bash
+    docker exec -it sharko-smoke sharko login \
+      --username admin --password admin \
+      --server http://localhost:8080
+    ```
 
 !!! info "Authoritative source for command names"
     The list below is the cobra-registered command set, captured from the running binary. **It is not derived from filenames in `cmd/sharko/`** — cobra registers commands under names that don't always match their source-file paths (e.g. the file is `unadopt.go` but the command is `unadopt-cluster`; the file is `secrets.go` but it registers two commands, `secret-status` and `refresh-secrets`).
@@ -366,7 +362,7 @@ The container ships the `sharko` binary; `--help` should respond on every subcom
     docker run --rm -d --platform linux/amd64 --name sharko-doc-verify -p 18099:8080 \
       ghcr.io/moranweissman/sharko:<tag> sharko serve --demo --port 8080
     sleep 5
-    docker exec -e HOME=/tmp sharko-doc-verify sharko --help \
+    docker exec sharko-doc-verify sharko --help \
       | sed -n '/Available Commands:/,/^Flags:/p'
     docker rm -f sharko-doc-verify
     ```
@@ -379,7 +375,7 @@ The container ships the `sharko` binary; `--help` should respond on every subcom
 - [ ] Top-level help
 
   ```bash
-  docker exec -e HOME=/tmp -i sharko-smoke sharko --help
+  docker exec -i sharko-smoke sharko --help
   ```
 
   **Expected:** usage block with the full subcommand list. **Flag if:** panic or empty output.
@@ -387,7 +383,7 @@ The container ships the `sharko` binary; `--help` should respond on every subcom
 - [ ] Version
 
   ```bash
-  docker exec -e HOME=/tmp -i sharko-smoke sharko version
+  docker exec -i sharko-smoke sharko version
   ```
 
   **Expected:** version matches the image tag and matches `/api/v1/health`'s `version` field. **Flag if:** mismatch (this is bug #1 in CLI form too).
@@ -405,7 +401,7 @@ The container ships the `sharko` binary; `--help` should respond on every subcom
              unadopt-cluster update-cluster upgrade-addon upgrade-addons \
              user validate version; do
     echo "=== $cmd ==="
-    docker exec -e HOME=/tmp -i sharko-smoke sharko $cmd --help 2>&1 | head -5
+    docker exec -i sharko-smoke sharko $cmd --help 2>&1 | head -5
     echo
   done
   ```
@@ -415,18 +411,18 @@ The container ships the `sharko` binary; `--help` should respond on every subcom
 - [ ] PR subcommands
 
   ```bash
-  docker exec -e HOME=/tmp -i sharko-smoke sharko pr --help
-  docker exec -e HOME=/tmp -i sharko-smoke sharko pr list --help
-  docker exec -e HOME=/tmp -i sharko-smoke sharko pr wait --help
+  docker exec -i sharko-smoke sharko pr --help
+  docker exec -i sharko-smoke sharko pr list --help
+  docker exec -i sharko-smoke sharko pr wait --help
   ```
 
 - [ ] Token subcommands
 
   ```bash
-  docker exec -e HOME=/tmp -i sharko-smoke sharko token --help
-  docker exec -e HOME=/tmp -i sharko-smoke sharko token create --help
-  docker exec -e HOME=/tmp -i sharko-smoke sharko token list --help
-  docker exec -e HOME=/tmp -i sharko-smoke sharko token revoke --help
+  docker exec -i sharko-smoke sharko token --help
+  docker exec -i sharko-smoke sharko token create --help
+  docker exec -i sharko-smoke sharko token list --help
+  docker exec -i sharko-smoke sharko token revoke --help
   ```
 
 ## A.7 Teardown
