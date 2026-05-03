@@ -29,6 +29,10 @@ func (a *AzureDevOpsProvider) TestConnection(_ context.Context) error {
 }
 
 // GetFileContent retrieves the raw content of a single file at the given ref.
+//
+// When the path does not exist Azure DevOps returns 404; the error is wrapped
+// with gitprovider.ErrFileNotFound so callers can use errors.Is to detect the
+// missing-file case (review finding H2).
 func (a *AzureDevOpsProvider) GetFileContent(_ context.Context, filePath, ref string) ([]byte, error) {
 	// Use includeContent=true to get raw file content
 	apiURL := fmt.Sprintf("%s/items?path=%s&versionDescriptor.version=%s&includeContent=true&api-version=7.1",
@@ -37,6 +41,9 @@ func (a *AzureDevOpsProvider) GetFileContent(_ context.Context, filePath, ref st
 	resp, body, err := a.doGet(apiURL)
 	if err != nil {
 		return nil, fmt.Errorf("get file content: %w", err)
+	}
+	if resp.StatusCode == 404 {
+		return nil, fmt.Errorf("get file content: path %q at ref %q: %w", filePath, ref, ErrFileNotFound)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("get file content: unexpected status %d", resp.StatusCode)

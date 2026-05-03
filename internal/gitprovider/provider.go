@@ -1,6 +1,22 @@
 package gitprovider
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrFileNotFound is the canonical sentinel returned by GitProvider
+// implementations when a requested path does not exist in the repository at
+// the requested ref. Callers MUST detect missing-file conditions via
+// errors.Is(err, gitprovider.ErrFileNotFound) rather than substring-matching
+// the error message — substring matching silently masks legitimate
+// auth/branch/perm errors that happen to contain the words "not found" or
+// "404" (review finding H2 against PR #318).
+//
+// Implementations should wrap the sentinel with additional context using
+// fmt.Errorf("...: %w", gitprovider.ErrFileNotFound) so logs retain the path
+// and provider while errors.Is still works.
+var ErrFileNotFound = errors.New("file not found")
 
 // PullRequest represents a pull request from any Git provider.
 type PullRequest struct {

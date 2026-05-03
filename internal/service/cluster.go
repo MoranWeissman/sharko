@@ -19,27 +19,32 @@ import (
 )
 
 // isGitFileNotFound reports whether err signals "file does not exist" from a
-// gitprovider.GitProvider.GetFileContent call. Each provider raises a
-// slightly different error shape, so we check several variants:
+// gitprovider.GitProvider.GetFileContent call.
 //
-//   - errors.Is(err, fs.ErrNotExist) — for providers that wrap stdlib errors
-//   - "404" substring                — GitHub REST API
-//   - "not found" / "file not found" — Azure DevOps and the demo mock
+// Detection is type-based — every provider implementation wraps actual
+// missing-file conditions with gitprovider.ErrFileNotFound (see
+// internal/gitprovider/provider.go). The previous substring-matching
+// implementation silently masked legitimate auth/branch/perm errors that
+// happened to contain the words "not found" or "404" as "missing file →
+// empty list" (review finding H2 against PR #318) — examples that would
+// have tripped the old helper:
 //
-// A nil err returns false. This helper is intentionally lenient so a
-// missing managed-clusters.yaml in a brand-new install (the Sharko v1.24
-// reproducer for BUG-005) is treated as an empty list rather than a 500.
+//   - "GitHub repository not found — check the URL and credentials"
+//   - "branch 'main' not found"
+//   - "deployment 'foo' not found"
+//   - "got 4040 bytes" (the "404" substring case)
+//
+// fs.ErrNotExist is also accepted for callers that go through stdlib paths
+// (e.g. local filesystem in tests).
+//
+// A nil err returns false. This helper is intentionally lenient so a missing
+// managed-clusters.yaml in a brand-new install (the Sharko v1.24 reproducer
+// for BUG-005) is treated as an empty list rather than a 500.
 func isGitFileNotFound(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, fs.ErrNotExist) {
-		return true
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "404") ||
-		strings.Contains(msg, "not found") ||
-		strings.Contains(msg, "no such file")
+	return errors.Is(err, gitprovider.ErrFileNotFound) || errors.Is(err, fs.ErrNotExist)
 }
 
 // ClusterService handles cluster-related operations.
