@@ -18,19 +18,19 @@ import (
 func (s *Server) handleGetDashboardStats(w http.ResponseWriter, r *http.Request) {
 	gp, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		writeServerError(w, http.StatusServiceUnavailable, "get_active_git_provider", err)
 		return
 	}
 
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		writeServerError(w, http.StatusServiceUnavailable, "get_active_argocd_client", err)
 		return
 	}
 
 	resp, err := s.dashboardSvc.GetStats(r.Context(), gp, ac)
 	if err != nil {
-		writeServerError(w, "dashboard_stats", err)
+		writeServerError(w, http.StatusInternalServerError, "dashboard_stats", err)
 		return
 	}
 
@@ -51,7 +51,7 @@ func (s *Server) handleGetDashboardStats(w http.ResponseWriter, r *http.Request)
 func (s *Server) handleGetAttentionItems(w http.ResponseWriter, r *http.Request) {
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		writeServerError(w, http.StatusServiceUnavailable, "get_active_argocd_client", err)
 		return
 	}
 
@@ -59,7 +59,7 @@ func (s *Server) handleGetAttentionItems(w http.ResponseWriter, r *http.Request)
 	defer cancel()
 	apps, err := ac.ListApplications(ctx)
 	if err != nil {
-		writeServerError(w, "dashboard_attention", err)
+		writeServerError(w, http.StatusInternalServerError, "dashboard_attention", err)
 		return
 	}
 
@@ -124,13 +124,13 @@ func (s *Server) handleGetAttentionItems(w http.ResponseWriter, r *http.Request)
 func (s *Server) handleGetPullRequests(w http.ResponseWriter, r *http.Request) {
 	gp, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		writeServerError(w, http.StatusServiceUnavailable, "get_active_git_provider", err)
 		return
 	}
 
 	resp, err := s.dashboardSvc.GetPullRequests(r.Context(), gp)
 	if err != nil {
-		writeServerError(w, "dashboard_pull_requests", err)
+		writeServerError(w, http.StatusInternalServerError, "dashboard_pull_requests", err)
 		return
 	}
 

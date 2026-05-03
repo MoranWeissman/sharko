@@ -20,19 +20,19 @@ import (
 func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 	gp, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		writeServerError(w, http.StatusServiceUnavailable, "get_active_git_provider", err)
 		return
 	}
 
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		writeServerError(w, http.StatusServiceUnavailable, "get_active_argocd_client", err)
 		return
 	}
 
 	resp, err := s.clusterSvc.ListClusters(r.Context(), gp, ac)
 	if err != nil {
-		writeServerError(w, "list_clusters", err)
+		writeServerError(w, http.StatusInternalServerError, "list_clusters", err)
 		return
 	}
 
@@ -127,19 +127,19 @@ func (s *Server) handleGetCluster(w http.ResponseWriter, r *http.Request) {
 
 	gp, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		writeServerError(w, http.StatusServiceUnavailable, "get_active_git_provider", err)
 		return
 	}
 
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		writeServerError(w, http.StatusServiceUnavailable, "get_active_argocd_client", err)
 		return
 	}
 
 	resp, err := s.clusterSvc.GetClusterDetail(r.Context(), name, gp, ac)
 	if err != nil {
-		writeServerError(w, "get_cluster", err)
+		writeServerError(w, http.StatusInternalServerError, "get_cluster", err)
 		return
 	}
 	if resp == nil {
@@ -171,13 +171,13 @@ func (s *Server) handleGetClusterValues(w http.ResponseWriter, r *http.Request) 
 
 	gp, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		writeServerError(w, http.StatusServiceUnavailable, "get_active_git_provider", err)
 		return
 	}
 
 	resp, err := s.clusterSvc.GetClusterValues(r.Context(), name, gp)
 	if err != nil {
-		writeServerError(w, "get_cluster_values", err)
+		writeServerError(w, http.StatusInternalServerError, "get_cluster_values", err)
 		return
 	}
 
@@ -205,13 +205,13 @@ func (s *Server) handleGetConfigDiff(w http.ResponseWriter, r *http.Request) {
 
 	gp, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		writeServerError(w, http.StatusServiceUnavailable, "get_active_git_provider", err)
 		return
 	}
 
 	resp, err := s.clusterSvc.GetConfigDiff(r.Context(), name, gp)
 	if err != nil {
-		writeServerError(w, "get_cluster_config_diff", err)
+		writeServerError(w, http.StatusInternalServerError, "get_cluster_config_diff", err)
 		return
 	}
 
@@ -240,19 +240,19 @@ func (s *Server) handleGetClusterComparison(w http.ResponseWriter, r *http.Reque
 
 	gp, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		writeServerError(w, http.StatusServiceUnavailable, "get_active_git_provider", err)
 		return
 	}
 
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, err.Error())
+		writeServerError(w, http.StatusServiceUnavailable, "get_active_argocd_client", err)
 		return
 	}
 
 	resp, err := s.clusterSvc.GetClusterComparison(r.Context(), name, gp, ac)
 	if err != nil {
-		writeServerError(w, "get_cluster_comparison", err)
+		writeServerError(w, http.StatusInternalServerError, "get_cluster_comparison", err)
 		return
 	}
 	if resp == nil {
