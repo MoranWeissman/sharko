@@ -3,11 +3,15 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
+	"reflect"
 	"strings"
 	"syscall"
 	"testing"
+
+	"golang.org/x/term"
 )
 
 // ---------------------------------------------------------------------------
@@ -159,5 +163,162 @@ func TestReadPasswordSafe_NonTerminalBranch(t *testing.T) {
 	}
 	if pw != "hunter2" {
 		t.Errorf("got password %q, want %q", pw, "hunter2")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// V124-2.13 + V124-2.14 — behavioural TTY-restore coverage via terminalIO.
+//
+// V124-2.6 spec required asserting term.Restore is called on every exit
+// path. The original test only exercised the non-terminal branch, which
+// returns BEFORE GetState/defer — leaving the actual TTY-restore code with
+// zero behavioural coverage (review finding H3).
+//
+// readPasswordSafeWith now takes an injectable terminalIO. The recordingTIO
+// double below records the order of method calls and lets each test inject
+// its own GetState / ReadPassword outcomes. We can therefore prove:
+//
+//   - the success path calls IsTerminal → GetState → ReadPassword → Restore
+//   - the ReadPassword-error path STILL calls Restore (defer fires)
+//   - the GetState-failure path BAILS without calling ReadPassword and
+//     without calling Restore (M3 — there is no state to restore to, and
+//     continuing would defeat the safety net entirely)
+//   - the non-terminal branch still works through the wrapper
+// ---------------------------------------------------------------------------
+
+// recordingTIO is a controllable terminalIO double. Each method appends its
+// name to calls so tests can assert exact invocation order.
+type recordingTIO struct {
+	isTerminal      bool
+	getStateErr     error
+	readPasswordOut []byte
+	readPasswordErr error
+	calls           []string
+}
+
+func (r *recordingTIO) IsTerminal(fd int) bool {
+	r.calls = append(r.calls, "IsTerminal")
+	return r.isTerminal
+}
+
+func (r *recordingTIO) GetState(fd int) (*term.State, error) {
+	r.calls = append(r.calls, "GetState")
+	if r.getStateErr != nil {
+		return nil, r.getStateErr
+	}
+	// Return a non-nil but empty State so the defer-Restore path engages.
+	return &term.State{}, nil
+}
+
+func (r *recordingTIO) Restore(fd int, state *term.State) error {
+	r.calls = append(r.calls, "Restore")
+	return nil
+}
+
+func (r *recordingTIO) ReadPassword(fd int) ([]byte, error) {
+	r.calls = append(r.calls, "ReadPassword")
+	return r.readPasswordOut, r.readPasswordErr
+}
+
+func TestReadPasswordSafeWith_SuccessPath_RestoresAfterReadPassword(t *testing.T) {
+	tio := &recordingTIO{
+		isTerminal:      true,
+		readPasswordOut: []byte("hunter2"),
+	}
+	pw, err := readPasswordSafeWith(tio, "Password: ")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pw != "hunter2" {
+		t.Errorf("got password %q, want %q", pw, "hunter2")
+	}
+	want := []string{"IsTerminal", "GetState", "ReadPassword", "Restore"}
+	if !reflect.DeepEqual(tio.calls, want) {
+		t.Errorf("call order = %v, want %v", tio.calls, want)
+	}
+}
+
+func TestReadPasswordSafeWith_ReadPasswordError_StillRestores(t *testing.T) {
+	// EOF mid-read (e.g. user hit Ctrl-D) — the defer must still fire so
+	// the TTY is restored to cooked mode. This is the BUG-006 case the
+	// original V124-2.6 fix was written for.
+	tio := &recordingTIO{
+		isTerminal:      true,
+		readPasswordErr: io.EOF,
+	}
+	_, err := readPasswordSafeWith(tio, "Password: ")
+	if err == nil {
+		t.Fatal("expected error from ReadPassword EOF, got nil")
+	}
+	if !errors.Is(err, io.EOF) {
+		t.Errorf("expected wrapped io.EOF, got: %v", err)
+	}
+	want := []string{"IsTerminal", "GetState", "ReadPassword", "Restore"}
+	if !reflect.DeepEqual(tio.calls, want) {
+		t.Errorf("call order = %v, want %v (Restore must fire on error path via defer)", tio.calls, want)
+	}
+}
+
+func TestReadPasswordSafeWith_GetStateError_BailsBeforeReadPassword(t *testing.T) {
+	// M3 — if GetState fails we cannot install the safety-net defer, so
+	// continuing into ReadPassword would leave the TTY at the mercy of
+	// term.ReadPassword's own restore (the very thing BUG-006 said couldn't
+	// be trusted). Bail loudly instead.
+	getStateErr := errors.New("ioctl TIOCGETA: inappropriate ioctl for device")
+	tio := &recordingTIO{
+		isTerminal:  true,
+		getStateErr: getStateErr,
+	}
+	_, err := readPasswordSafeWith(tio, "Password: ")
+	if err == nil {
+		t.Fatal("expected error when GetState fails, got nil")
+	}
+	if !errors.Is(err, getStateErr) {
+		t.Errorf("expected wrapped GetState err, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "snapshot terminal state") {
+		t.Errorf("error does not explain the bail reason: %v", err)
+	}
+	// CRITICAL: ReadPassword must NOT be called (no state captured → no
+	// safety net → don't risk the TTY) and Restore must NOT be called
+	// (nothing to restore to).
+	want := []string{"IsTerminal", "GetState"}
+	if !reflect.DeepEqual(tio.calls, want) {
+		t.Errorf("call order = %v, want %v (must bail before ReadPassword/Restore)", tio.calls, want)
+	}
+}
+
+func TestReadPasswordSafeWith_NonTerminalBranch_StillWorks(t *testing.T) {
+	// The non-terminal path doesn't go through GetState/Restore — it uses
+	// bufio against os.Stdin. We can't easily inject the bufio reader
+	// without further refactoring, so we verify the call shape (only
+	// IsTerminal is invoked on the terminalIO) and let
+	// TestReadPasswordSafe_NonTerminalBranch above cover the actual stdin
+	// read against real os.Pipe.
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	defer r.Close()
+	origStdin := os.Stdin
+	os.Stdin = r
+	t.Cleanup(func() { os.Stdin = origStdin })
+
+	go func() {
+		fmt.Fprintln(w, "piped-secret")
+		w.Close()
+	}()
+
+	tio := &recordingTIO{isTerminal: false}
+	pw, err := readPasswordSafeWith(tio, "Password: ")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pw != "piped-secret" {
+		t.Errorf("got password %q, want %q", pw, "piped-secret")
+	}
+	want := []string{"IsTerminal"}
+	if !reflect.DeepEqual(tio.calls, want) {
+		t.Errorf("call order = %v, want %v (non-terminal path must NOT touch GetState/ReadPassword/Restore)", tio.calls, want)
 	}
 }
