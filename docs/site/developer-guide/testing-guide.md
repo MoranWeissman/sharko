@@ -1,5 +1,7 @@
 # Testing Guide
 
+> **Verified:** Not verified end-to-end since authoring; review pending. Cross-reference text was updated alongside V124-3.10 to qualify `admin/admin` as demo-only and reflect V124-3.7's env-var-driven e2e creds, but the full layer-by-layer walk against a fresh image has not been re-executed since the original write-up. Treat any layer-specific command as authoritative ONLY if you can match it against the layer's source files (e.g. `tests/e2e/setup.sh`, `tests/api/*.hurl`, `cmd/sharko/*.go`).
+
 The single canonical reference for testing Sharko — what we have, what we don't, the exact commands to run, and which tool fits which layer. Use this when you want to verify a release candidate, when you add a feature and need to know what tests to write, or when you're about to copy a pattern from somewhere else and want to check that we already have one.
 
 It is paired with the [Catalog Scan Runbook](catalog-scan-runbook.md) (operational doc for the daily scanner) — same voice, same level of detail, same "every command is copy-pasteable" rule.
@@ -396,7 +398,7 @@ Verify: `hurl --version` should print 4.x or later.
 
 ### Sample — `tests/api/smoke.hurl`
 
-A real, runnable file. Targets a Sharko started via Layer 5 on `localhost:18080` in demo mode (admin/admin).
+A real, runnable file. Targets a Sharko started via Layer 5 on `localhost:18080` in demo mode (admin/admin — **demo only**; real Helm installs use the bootstrap credential from [Initial Credentials](../operator/installation.md#initial-credentials)).
 
 ```hurl
 # tests/api/smoke.hurl — minimal smoke pack
@@ -534,6 +536,9 @@ done
 
 ### Step 4 — login and grab a bearer token
 
+!!! warning "`admin/admin` is demo-mode only"
+    The `admin/admin` credential below works because the demo container ships with that user pre-seeded. Real Helm installs do NOT accept `admin/admin` — they generate a random bootstrap password (or accept an operator-supplied one). For real K8s installs see [Initial Credentials](../operator/installation.md#initial-credentials) in the operator install guide.
+
 ```bash
 TOKEN=$(curl -fsS -X POST http://localhost:18080/api/v1/auth/login \
   -H 'content-type: application/json' \
@@ -661,7 +666,7 @@ Three tests, all in `tests/e2e/e2e_test.go`:
 | Test | What it checks |
 |---|---|
 | `TestHealthEndpoint` | `GET /api/v1/health` returns 200 and `status: healthy` |
-| `TestLoginAndAuth` | `POST /api/v1/auth/login` with `admin/admin` returns a non-empty token |
+| `TestLoginAndAuth` | `POST /api/v1/auth/login` with `$SHARKO_E2E_USERNAME` / `$SHARKO_E2E_PASSWORD` (defaults to `admin`/`admin` for demo mode; pass real bootstrap creds for kind via `SHARKO_E2E_PASSWORD=...` — see V124-3.7) returns a non-empty token |
 | `TestRepoStatus` | Authenticated `GET /api/v1/repo/status` returns a JSON `initialized` boolean |
 
 That's it. Three tests. The skeleton exists so we can grow it without re-litigating the harness.
@@ -822,6 +827,8 @@ hurl --test --report-html ./hurl-report --variable host=http://localhost:18080 t
 
 ### Layer 5 — Local Docker smoke
 
+`admin/admin` works here only because `--demo` ships pre-seeded with that credential. **Real Helm installs do NOT accept `admin/admin`** — see [Initial Credentials](../operator/installation.md#initial-credentials).
+
 ```bash
 docker pull --platform linux/amd64 ghcr.io/moranweissman/sharko:latest
 
@@ -833,7 +840,7 @@ docker run --rm -d --platform linux/amd64 \
 curl -fsS http://localhost:18080/api/v1/health | jq .
 TOKEN=$(curl -fsS -X POST http://localhost:18080/api/v1/auth/login \
   -H 'content-type: application/json' \
-  -d '{"username":"admin","password":"admin"}' | jq -r .token)
+  -d '{"username":"admin","password":"admin"}' | jq -r .token)   # demo only
 curl -fsS http://localhost:18080/api/v1/clusters \
   -H "authorization: Bearer $TOKEN" | jq .
 
