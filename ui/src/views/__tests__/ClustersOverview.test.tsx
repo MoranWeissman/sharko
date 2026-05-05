@@ -78,6 +78,54 @@ describe('ClustersOverview', () => {
     });
   });
 
+  it('renders Try Again button on error and re-fetches when clicked (V124-2.3)', async () => {
+    // First call fails, second call (the retry) succeeds.
+    mockGetClusters.mockRejectedValueOnce(new Error('Boom'));
+    mockGetClusters.mockResolvedValueOnce(clustersResponse);
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Boom')).toBeInTheDocument();
+    });
+
+    const retryBtn = screen.getByRole('button', { name: /try again/i });
+    fireEvent.click(retryBtn);
+
+    await waitFor(() => {
+      // Successful retry surfaces the cluster list.
+      expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    });
+    // The error message must be gone — not silently lingering.
+    expect(screen.queryByText('Boom')).not.toBeInTheDocument();
+    expect(mockGetClusters).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps prior data on screen when a background refresh fails (V124-2.3)', async () => {
+    // Initial load succeeds.
+    mockGetClusters.mockResolvedValueOnce(clustersResponse);
+    // Background refresh (Refresh button click) fails.
+    mockGetClusters.mockRejectedValueOnce(new Error('Transient 5xx'));
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    });
+
+    // Trigger a background refresh via the Refresh button (same code path as
+    // the 30s auto-refresh tick). The failed refresh must NOT wipe the
+    // visible cluster list — that was the V124-2.3 blank-out bug.
+    fireEvent.click(screen.getByTitle('Refresh'));
+
+    await waitFor(() => {
+      expect(mockGetClusters).toHaveBeenCalledTimes(2);
+    });
+
+    // Prior good data still on screen — no blank state, no ErrorState
+    // takeover that would wipe the cluster table.
+    expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    expect(screen.queryByText('Transient 5xx')).not.toBeInTheDocument();
+  });
+
   it('renders clusters data with stat cards and table', async () => {
     renderView();
 

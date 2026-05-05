@@ -3,7 +3,9 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"sort"
 	"strings"
@@ -15,6 +17,35 @@ import (
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/models"
 )
+
+// isGitFileNotFound reports whether err signals "file does not exist" from a
+// gitprovider.GitProvider.GetFileContent call.
+//
+// Detection is type-based — every provider implementation wraps actual
+// missing-file conditions with gitprovider.ErrFileNotFound (see
+// internal/gitprovider/provider.go). The previous substring-matching
+// implementation silently masked legitimate auth/branch/perm errors that
+// happened to contain the words "not found" or "404" as "missing file →
+// empty list" (review finding H2 against PR #318) — examples that would
+// have tripped the old helper:
+//
+//   - "GitHub repository not found — check the URL and credentials"
+//   - "branch 'main' not found"
+//   - "deployment 'foo' not found"
+//   - "got 4040 bytes" (the "404" substring case)
+//
+// fs.ErrNotExist is also accepted for callers that go through stdlib paths
+// (e.g. local filesystem in tests).
+//
+// A nil err returns false. This helper is intentionally lenient so a missing
+// managed-clusters.yaml in a brand-new install (the Sharko v1.24 reproducer
+// for BUG-005) is treated as an empty list rather than a 500.
+func isGitFileNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, gitprovider.ErrFileNotFound) || errors.Is(err, fs.ErrNotExist)
+}
 
 // ClusterService handles cluster-related operations.
 type ClusterService struct {
@@ -41,7 +72,7 @@ func (s *ClusterService) ListClusters(ctx context.Context, gp gitprovider.GitPro
 	// Fetch Git config
 	clusterData, err := gp.GetFileContent(ctx, s.managedClustersPath, "main")
 	if err != nil {
-		if strings.Contains(err.Error(), "404") {
+		if isGitFileNotFound(err) {
 			clusterData = []byte("clusters: []")
 		} else {
 			return nil, fmt.Errorf("reading managed-clusters.yaml: %w", err)
@@ -109,7 +140,7 @@ func (s *ClusterService) ListClusters(ctx context.Context, gp gitprovider.GitPro
 func (s *ClusterService) GetClusterDetail(ctx context.Context, clusterName string, gp gitprovider.GitProvider, ac *argocd.Client) (*models.ClusterDetailResponse, error) {
 	clusterData, err := gp.GetFileContent(ctx, s.managedClustersPath, "main")
 	if err != nil {
-		if strings.Contains(err.Error(), "404") {
+		if isGitFileNotFound(err) {
 			clusterData = []byte("clusters: []")
 		} else {
 			return nil, fmt.Errorf("reading managed-clusters.yaml: %w", err)
@@ -118,7 +149,7 @@ func (s *ClusterService) GetClusterDetail(ctx context.Context, clusterName strin
 
 	catalogData, err := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", "main")
 	if err != nil {
-		if strings.Contains(err.Error(), "404") {
+		if isGitFileNotFound(err) {
 			catalogData = []byte("applicationsets: []")
 		} else {
 			return nil, fmt.Errorf("reading addons-catalog.yaml: %w", err)
@@ -184,7 +215,7 @@ func (s *ClusterService) GetClusterDetail(ctx context.Context, clusterName strin
 func (s *ClusterService) GetClusterComparison(ctx context.Context, clusterName string, gp gitprovider.GitProvider, ac *argocd.Client) (*models.ClusterComparisonResponse, error) {
 	clusterData, err := gp.GetFileContent(ctx, s.managedClustersPath, "main")
 	if err != nil {
-		if strings.Contains(err.Error(), "404") {
+		if isGitFileNotFound(err) {
 			clusterData = []byte("clusters: []")
 		} else {
 			return nil, fmt.Errorf("reading managed-clusters.yaml: %w", err)
@@ -193,7 +224,7 @@ func (s *ClusterService) GetClusterComparison(ctx context.Context, clusterName s
 
 	catalogData, err := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", "main")
 	if err != nil {
-		if strings.Contains(err.Error(), "404") {
+		if isGitFileNotFound(err) {
 			catalogData = []byte("applicationsets: []")
 		} else {
 			return nil, fmt.Errorf("reading addons-catalog.yaml: %w", err)

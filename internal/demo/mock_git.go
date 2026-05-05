@@ -31,7 +31,15 @@ func NewMockGitProvider() *MockGitProvider {
 }
 
 func (p *MockGitProvider) seedFiles() {
-	// cluster-addons.yaml — lists all clusters with addon enable labels
+	// managed-clusters.yaml — the file ClusterService.ListClusters reads.
+	// Without this, GET /api/v1/clusters returns the BUG-005 500 because
+	// the service tries to read managed-clusters.yaml from this provider
+	// and the demo previously only seeded the legacy cluster-addons.yaml
+	// path.
+	p.files["configuration/managed-clusters.yaml"] = []byte(clusterAddonsYAML)
+
+	// cluster-addons.yaml — legacy alias kept so any older read paths or
+	// external tooling pointed at it still resolve.
 	p.files["configuration/cluster-addons.yaml"] = []byte(clusterAddonsYAML)
 
 	// addons-catalog.yaml — the addon catalog (applicationsets format)
@@ -124,13 +132,17 @@ func (p *MockGitProvider) seedPRs() {
 }
 
 // GetFileContent returns the content of a file at the given path and ref.
+//
+// Missing files return an error wrapping gitprovider.ErrFileNotFound so
+// callers can detect the missing-file case via errors.Is — substring matching
+// the message is unsafe (review finding H2).
 func (p *MockGitProvider) GetFileContent(_ context.Context, path, _ string) ([]byte, error) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	if content, ok := p.files[path]; ok {
 		return content, nil
 	}
-	return nil, fmt.Errorf("file not found: %s", path)
+	return nil, fmt.Errorf("mock git: %s: %w", path, gitprovider.ErrFileNotFound)
 }
 
 // ListDirectory returns the names of items under a directory path.

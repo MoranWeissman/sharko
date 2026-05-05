@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
+	"syscall"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -20,21 +23,188 @@ type SharkoConfig struct {
 	Token  string `yaml:"token"`
 }
 
-// configPath returns the path to ~/.sharko/config.
-func configPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
+// configHomeWarned ensures the "$HOME not set" warning is only printed once
+// per CLI invocation, even when both load + save call configDir.
+var configHomeWarned bool
+
+// configDir returns the directory where the CLI config lives.
+//
+// Resolution order:
+//  1. SHARKO_CONFIG_DIR — explicit override (used by tests and constrained
+//     environments). Bypasses every safety check below — operator opted in.
+//  2. ~/.sharko — the normal case, when $HOME is set to a real user home.
+//  3. <os.TempDir()>/.sharko — fallback when $HOME is missing or resolves to
+//     an unwritable root path (e.g. inside a container running with no HOME
+//     env var, where os.UserHomeDir() can return "" or "/").
+//
+// The fallback exists so `sharko login` does not crash with
+// "mkdir /.sharko: permission denied" when run as a non-root user inside a
+// minimal container image. The first time the fallback fires, a one-line
+// warning is printed to stderr so the operator notices the unusual
+// resolution.
+//
+// The fallback path itself is NOT inspected here; safety checks happen
+// later in resolveSafeConfigDir, which loadConfig/saveConfig call before
+// writing. configDir intentionally stays a pure path-resolver so it can be
+// composed in tests and downstream tooling without I/O.
+func configDir() string {
+	if v := os.Getenv("SHARKO_CONFIG_DIR"); v != "" {
+		return v
 	}
-	return filepath.Join(home, ".sharko", "config")
+	home, err := os.UserHomeDir()
+	if err == nil && home != "" && home != "/" {
+		return filepath.Join(home, ".sharko")
+	}
+	fallback := filepath.Join(os.TempDir(), ".sharko")
+	if !configHomeWarned {
+		fmt.Fprintf(os.Stderr,
+			"warning: $HOME not set, using %s for config storage (set $HOME or SHARKO_CONFIG_DIR to override)\n",
+			fallback)
+		configHomeWarned = true
+	}
+	return fallback
 }
 
-// loadConfig reads ~/.sharko/config.
-func loadConfig() (*SharkoConfig, error) {
-	path := configPath()
-	if path == "" {
-		return nil, fmt.Errorf("cannot determine home directory")
+// configPath returns the path to the CLI config file.
+func configPath() string {
+	return filepath.Join(configDir(), "config")
+}
+
+// dirSafetyDecision is the result of evaluating a candidate config dir for
+// safety. evaluateDirSafety returns one of these values; resolveSafeConfigDir
+// translates the decision into the user-visible error.
+type dirSafetyDecision int
+
+const (
+	// dirSafeOK — the dir exists, is not a symlink, and (on Unix) is owned
+	// by the current euid. Caller may use it as-is.
+	dirSafeOK dirSafetyDecision = iota
+	// dirSafeNotExist — the dir does not exist. Caller is expected to call
+	// MkdirAll(0700) which will create it owned by the current user.
+	dirSafeNotExist
+	// dirUnsafeSymlink — the dir exists and is a symlink. Refuse — an
+	// attacker on a shared host could redirect token writes.
+	dirUnsafeSymlink
+	// dirUnsafeWrongOwner — the dir exists and is owned by a different
+	// uid than the current euid. Refuse — another user could read or
+	// replace the token.
+	dirUnsafeWrongOwner
+	// dirUnsafeStatError — Lstat failed with an error other than
+	// os.ErrNotExist. Refuse rather than guess.
+	dirUnsafeStatError
+)
+
+// evaluateDirSafety inspects info (typically from os.Lstat) and decides
+// whether the dir is safe to use as the CLI config directory.
+//
+// Decision matrix:
+//
+//   - statErr is os.ErrNotExist        → dirSafeNotExist
+//   - statErr is any other error       → dirUnsafeStatError
+//   - info.Mode() has ModeSymlink set  → dirUnsafeSymlink
+//   - on Windows                       → dirSafeOK (TempDir is per-user;
+//     ownership check via *syscall.Stat_t is not portable)
+//   - info.Sys() is *syscall.Stat_t with Uid != currentEUID → dirUnsafeWrongOwner
+//   - otherwise                        → dirSafeOK
+//
+// This helper is deliberately I/O-free — it operates purely on the
+// (info, statErr, currentEUID) tuple. That makes the wrong-owner branch
+// testable without actually being root: tests construct a mockFileInfo
+// whose Sys() returns a *syscall.Stat_t with a chosen Uid.
+func evaluateDirSafety(info os.FileInfo, statErr error, currentEUID int) dirSafetyDecision {
+	if statErr != nil {
+		if errors.Is(statErr, os.ErrNotExist) {
+			return dirSafeNotExist
+		}
+		return dirUnsafeStatError
 	}
+	if info == nil {
+		// Defensive: a nil info with nil statErr should never happen, but
+		// treat it as unsafe rather than panic.
+		return dirUnsafeStatError
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return dirUnsafeSymlink
+	}
+	if runtime.GOOS == "windows" {
+		// TempDir on Windows is C:\Users\<user>\AppData\Local\Temp —
+		// already per-user. The *syscall.Stat_t shape doesn't apply.
+		return dirSafeOK
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		// Sys() returned something we don't understand. Be conservative —
+		// the symlink check passed, but we can't prove ownership, so
+		// allow it. The realistic case where Sys() is not *syscall.Stat_t
+		// on Linux/macOS is a custom os.FileInfo (e.g. an embedded FS) —
+		// not the os.Lstat output we get from configDir().
+		return dirSafeOK
+	}
+	if int(stat.Uid) != currentEUID {
+		return dirUnsafeWrongOwner
+	}
+	return dirSafeOK
+}
+
+// resolveSafeConfigDir returns dir after applying TOCTOU/symlink-squatting
+// guards. It is a no-op for SHARKO_CONFIG_DIR overrides (the operator opted
+// in explicitly) but enforces ownership + non-symlink for the os.TempDir()
+// fallback, which is otherwise vulnerable on shared hosts (CI runners,
+// dev servers, multi-tenant containers): an attacker who pre-creates
+// /tmp/.sharko or symlinks it can capture the bearer token at write time
+// because os.MkdirAll is a no-op on existing dirs and os.WriteFile follows
+// symlinks (review finding H1).
+//
+// Decision logic is delegated to evaluateDirSafety so the wrong-owner branch
+// can be unit-tested without root privileges. resolveSafeConfigDir handles
+// only the SHARKO_CONFIG_DIR override and the user-visible error formatting.
+//
+// On Windows the ownership check is skipped (TempDir is per-user and the
+// shared-squat threat is not the same shape) but the symlink check still
+// runs.
+func resolveSafeConfigDir(dir string) (string, error) {
+	if os.Getenv("SHARKO_CONFIG_DIR") != "" {
+		return dir, nil
+	}
+	info, statErr := os.Lstat(dir)
+	switch evaluateDirSafety(info, statErr, os.Geteuid()) {
+	case dirSafeOK, dirSafeNotExist:
+		return dir, nil
+	case dirUnsafeSymlink:
+		return "", fmt.Errorf(
+			"refusing to use config dir at %s: is a symlink "+
+				"(security risk on shared hosts where another user could redirect token writes). "+
+				"Set SHARKO_CONFIG_DIR to override.",
+			dir)
+	case dirUnsafeWrongOwner:
+		// We re-derive the uid here purely for the error message — the
+		// safety decision was already made above.
+		var ownerUID int = -1
+		if info != nil {
+			if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+				ownerUID = int(stat.Uid)
+			}
+		}
+		return "", fmt.Errorf(
+			"refusing to use config dir at %s: owned by uid %d but current process is uid %d "+
+				"(security risk on shared hosts where another user could read token writes). "+
+				"Set SHARKO_CONFIG_DIR to override.",
+			dir, ownerUID, os.Geteuid())
+	case dirUnsafeStatError:
+		return "", fmt.Errorf("inspecting config directory %s: %w. Set SHARKO_CONFIG_DIR to override.", dir, statErr)
+	default:
+		// Unreachable — evaluateDirSafety only returns the values above.
+		return "", fmt.Errorf("internal: unrecognised dir safety decision for %s", dir)
+	}
+}
+
+// loadConfig reads the CLI config file.
+func loadConfig() (*SharkoConfig, error) {
+	dir, err := resolveSafeConfigDir(configDir())
+	if err != nil {
+		return nil, err
+	}
+	path := filepath.Join(dir, "config")
 
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -48,16 +218,15 @@ func loadConfig() (*SharkoConfig, error) {
 	return &cfg, nil
 }
 
-// saveConfig writes ~/.sharko/config.
+// saveConfig writes the CLI config file.
 func saveConfig(cfg *SharkoConfig) error {
-	path := configPath()
-	if path == "" {
-		return fmt.Errorf("cannot determine home directory")
+	dir, err := resolveSafeConfigDir(configDir())
+	if err != nil {
+		return err
 	}
-
-	dir := filepath.Dir(path)
+	path := filepath.Join(dir, "config")
 	if err := os.MkdirAll(dir, 0700); err != nil {
-		return fmt.Errorf("cannot create config directory: %w", err)
+		return fmt.Errorf("cannot create config directory %s: %w", dir, err)
 	}
 
 	data, err := yaml.Marshal(cfg)

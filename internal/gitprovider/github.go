@@ -2,8 +2,10 @@ package gitprovider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 
 	"github.com/google/go-github/v68/github"
 	"golang.org/x/oauth2"
@@ -29,13 +31,29 @@ func NewGitHubProvider(owner, repo, token string) *GitHubProvider {
 }
 
 // GetFileContent retrieves the raw content of a single file at the given ref.
+//
+// When the file does not exist at the given ref, GitHub returns 404 either as
+// a *github.ErrorResponse (the err return) or as a non-2xx response status.
+// In both cases the returned error is wrapped with gitprovider.ErrFileNotFound
+// so callers can use errors.Is(err, gitprovider.ErrFileNotFound) — substring
+// matching the message is unsafe because legitimate auth/branch/perm errors
+// also contain "not found" / "404" (review finding H2).
 func (g *GitHubProvider) GetFileContent(ctx context.Context, path, ref string) ([]byte, error) {
 	opts := &github.RepositoryContentGetOptions{Ref: ref}
 
 	fileContent, _, resp, err := g.client.Repositories.GetContents(ctx, g.owner, g.repo, path, opts)
 	if err != nil {
+		// go-github returns *github.ErrorResponse with the HTTP response
+		// attached; a 404 here means the requested path does not exist.
+		var ghErr *github.ErrorResponse
+		if errors.As(err, &ghErr) && ghErr.Response != nil && ghErr.Response.StatusCode == http.StatusNotFound {
+			return nil, fmt.Errorf("get file content: path %q at ref %q: %w", path, ref, ErrFileNotFound)
+		}
 		slog.Error("github get file content failed", "error", err, "path", path, "ref", ref)
 		return nil, fmt.Errorf("get file content: %w", err)
+	}
+	if resp != nil && resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("get file content: path %q at ref %q: %w", path, ref, ErrFileNotFound)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("get file content: unexpected status %d", resp.StatusCode)

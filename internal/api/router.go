@@ -1270,4 +1270,28 @@ func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
 }
+
+// writeServerError writes a sanitized 5xx response while logging the full
+// error server-side. The response body deliberately does NOT include the
+// underlying error string because that often leaks filesystem paths or
+// upstream error messages (e.g. "reading managed-clusters.yaml: file not
+// found: configuration/managed-clusters.yaml" — exposed to the operator
+// during the v1.24 BUG-005 reproduction). The full error is preserved in
+// structured logs under "error" + context fields so debugging is unaffected.
+//
+// status MUST be a 5xx HTTP status (e.g. http.StatusInternalServerError,
+// http.StatusServiceUnavailable, http.StatusBadGateway). The response body
+// uses http.StatusText(status) for the user-visible "error" field so the
+// message stays consistent with the HTTP status line.
+//
+// op should be a short, snake_case identifier for the failing operation
+// (e.g. "list_clusters") so logs are grep-friendly. Use writeError for any
+// 4xx response — those messages are user-actionable and safe to surface.
+func writeServerError(w http.ResponseWriter, status int, op string, err error) {
+	slog.Error("server error", "op", op, "status", status, "error", err)
+	writeJSON(w, status, map[string]string{
+		"error": http.StatusText(status),
+		"op":    op,
+	})
+}
 // v1.39.3 route fix
