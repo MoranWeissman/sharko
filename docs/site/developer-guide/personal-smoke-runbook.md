@@ -1,5 +1,7 @@
 # Personal Smoke Runbook
 
+> **Verified:** Last executed end-to-end on 2026-05-06 against image `sharko:runbook-verify` built locally from commit `95b51cad` (dev/v1.24-cleanup, V124-3.6+3.7+3.8 merged). Track A demo flow + Track B B.1–B.7 walked in full; Track B B.8 (Git connect → init → register cluster → addon → ArgoCD sync) requires a real GitHub PAT and was not executed during this verification — it is marked with a warning in the section itself.
+
 A hands-on, checkbox-driven smoke pass for the Sharko maintainer. This is **not** a reference doc — it's a list you literally check off, top to bottom, while running the product yourself.
 
 If you want background on the test pyramid and what each layer is for, read [Testing Guide](testing-guide.md). This runbook is the in-the-moment companion: open it in one window, terminal + browser in the others, and walk it.

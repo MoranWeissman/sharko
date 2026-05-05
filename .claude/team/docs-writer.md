@@ -209,5 +209,20 @@ The API contract (`docs/api-contract.md`) is the single source of truth for endp
 ## Context7 MCP
 When documenting tools, frameworks, or libraries, use context7 MCP to verify current syntax and behavior rather than relying on memory.
 
+## Verified-by-execution rule (applies to all runbooks)
+
+Every runbook in `docs/site/developer-guide/` MUST carry a `> **Verified:** ...`
+header at the top. The header date and image MUST be updated to reflect actual
+end-to-end execution whenever the runbook content changes substantively.
+Reviewers REJECT runbook PRs that:
+- Add a runbook without the header
+- Modify a runbook without updating the header date
+- Carry a header date older than the most recent commit to the runbook file
+
+Authoring discipline: NEVER write runbook steps you have not personally
+executed. Read-only inspection of code is insufficient — author by execution.
+This rule exists because BUG-015 (Track B runbook authored without execution)
+shipped a broken runbook that blocked the maintainer's first real-K8s smoke pass.
+
 ## Report Status
 End with: DONE, DONE_WITH_CONCERNS, NEEDS_CONTEXT, or BLOCKED

@@ -1,5 +1,7 @@
 # Catalog Scan Runbook
 
+> **Verified:** Not verified end-to-end since authoring (V123-3.5, 2026-04-25); review pending. The runbook describes a daily, stateless GitHub Actions workflow whose source-of-truth is `.github/workflows/catalog-scan.yml` + `scripts/catalog-scan.mjs` — those have not changed materially since v1.23. A re-walk against a real bot-opened PR is recommended before V2.0.0 ships.
+
 Operational guide for reviewers of `catalog-scan` bot PRs.
 
 The bot was introduced in **v1.23** (Epic V123-3). It opens one **draft PR per scan day** with proposed catalog additions and updates derived from upstream sources. Reviewers triage these PRs — the bot **never** auto-merges.

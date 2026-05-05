@@ -1,5 +1,7 @@
 # Testing Guide
 
+> **Verified:** Not verified end-to-end since authoring; review pending. Cross-reference text was updated alongside V124-3.10 to qualify `admin/admin` as demo-only and reflect V124-3.7's env-var-driven e2e creds, but the full layer-by-layer walk against a fresh image has not been re-executed since the original write-up. Treat any layer-specific command as authoritative ONLY if you can match it against the layer's source files (e.g. `tests/e2e/setup.sh`, `tests/api/*.hurl`, `cmd/sharko/*.go`).
+
 The single canonical reference for testing Sharko — what we have, what we don't, the exact commands to run, and which tool fits which layer. Use this when you want to verify a release candidate, when you add a feature and need to know what tests to write, or when you're about to copy a pattern from somewhere else and want to check that we already have one.
 
 It is paired with the [Catalog Scan Runbook](catalog-scan-runbook.md) (operational doc for the daily scanner) — same voice, same level of detail, same "every command is copy-pasteable" rule.
