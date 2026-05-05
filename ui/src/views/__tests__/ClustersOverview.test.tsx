@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import { StrictMode } from 'react';
 import { ClustersOverview } from '@/views/ClustersOverview';
 
 const mockNavigate = vi.fn();
@@ -184,6 +185,85 @@ describe('ClustersOverview', () => {
 
     fireEvent.click(screen.getByText('in-cluster'));
     expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it('failed background refresh stays clean in StrictMode (V124-3.1)', async () => {
+    // Regression guard for the React anti-pattern in fetchData's catch block.
+    //
+    // The pre-fix code called setError + setHealthStats from inside a
+    //   setAllClusters((prev) => { ... return prev; })
+    // updater. React 18+ StrictMode invokes setState updaters TWICE in dev to
+    // surface impurity. With side effects inside the updater, this meant
+    // setError + setHealthStats were dispatched twice per failed refresh and
+    // would emit "Cannot update a component while rendering a different
+    // component" / impure-updater warnings in dev.
+    //
+    // The fix moves the conditional state writes outside any updater. In
+    // StrictMode the failed background refresh:
+    //   1. Produces no React warnings about impure updaters or nested setState
+    //   2. Leaves prior data on screen (no duplicated DOM, no blank state)
+    //
+    // A regression — re-introducing setError inside an updater — would
+    // either trip a console warning (caught here) or render anomalously.
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      // Initial load(s) succeed so we have prior data on screen. StrictMode
+      // double-mounts the fetch effect, so the initial mount may invoke
+      // getClusters twice — both must resolve. We swap to a rejecting impl
+      // only after the initial render is committed and we have prior data
+      // visible (so the failed refresh hits the prior-data branch).
+      mockGetClusters.mockResolvedValue(clustersResponse);
+
+      render(
+        <StrictMode>
+          <MemoryRouter>
+            <ClustersOverview />
+          </MemoryRouter>
+        </StrictMode>,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('prod-eu')).toBeInTheDocument();
+      });
+
+      // Now flip the mock so the next call (the background refresh) fails.
+      mockGetClusters.mockReset();
+      mockGetClusters.mockRejectedValue(new Error('Strict refresh fail'));
+
+      // Reset the error spy after the initial mount so we only capture
+      // warnings from the explicit background refresh below.
+      errorSpy.mockClear();
+      const callsBeforeRefresh = mockGetClusters.mock.calls.length;
+
+      fireEvent.click(screen.getByTitle('Refresh'));
+      await waitFor(() => {
+        expect(mockGetClusters.mock.calls.length).toBe(callsBeforeRefresh + 1);
+      });
+
+      // 1. No React warnings from the failed refresh. The previous anti-pattern
+      //    (state updates inside a setState updater) is exactly the kind of
+      //    thing React surfaces in dev, and we explicitly want zero such
+      //    warnings on the catch path.
+      const reactWarnings = errorSpy.mock.calls.filter((args) => {
+        const first = args[0];
+        if (typeof first !== 'string') return false;
+        return (
+          first.includes('Warning:') ||
+          first.includes('Cannot update a component') ||
+          first.includes('act(')
+        );
+      });
+      expect(reactWarnings).toEqual([]);
+
+      // 2. Prior data still rendered exactly once (no duplicated rows from a
+      //    re-invoked impure updater); error message NOT surfaced because we
+      //    have prior data.
+      expect(screen.getAllByText('prod-eu').length).toBe(1);
+      expect(screen.queryByText('Strict refresh fail')).not.toBeInTheDocument();
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 
   it('toggles status filter on stat card click', async () => {
