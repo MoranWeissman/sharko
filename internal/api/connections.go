@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/service"
 )
 
 // handleListConnections godoc
@@ -53,6 +55,13 @@ func (s *Server) handleCreateConnection(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err := s.connSvc.Create(req); err != nil {
+		// V124-3.3 / M4: validation errors (e.g. invalid git URL) are
+		// user-actionable — surface as 400 with the underlying message.
+		// Genuine internal failures still 500 with a sanitized body.
+		if errors.Is(err, service.ErrValidation) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		writeServerError(w, http.StatusInternalServerError, "create_connection", err)
 		return
 	}
@@ -136,6 +145,11 @@ func (s *Server) handleUpdateConnection(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err := s.connSvc.Create(req); err != nil {
+		// V124-3.3 / M4: validation errors → 400 (see handleCreateConnection).
+		if errors.Is(err, service.ErrValidation) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		writeServerError(w, http.StatusInternalServerError, "update_connection", err)
 		return
 	}
