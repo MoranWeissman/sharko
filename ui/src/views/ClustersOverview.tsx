@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useContext } from 'react';
+import { useState, useEffect, useMemo, useCallback, useContext, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Server,
@@ -71,6 +71,11 @@ interface Filters {
 
 export function ClustersOverview() {
   const [allClusters, setAllClusters] = useState<Cluster[]>([]);
+  // Mirror the latest allClusters in a ref so fetchData's catch block can read
+  // the current length without (a) closing over stale state and (b) putting
+  // allClusters in fetchData's dep array (which would cause the fetch effect
+  // to re-fire on every state update). V124-3.1.
+  const allClustersRef = useRef<Cluster[]>([]);
   const [healthStats, setHealthStats] = useState<ClusterHealthStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -184,13 +189,17 @@ export function ClustersOverview() {
         // render an empty stat grid with no indication anything went wrong.
         // If we already have data, keep it on screen and let the next refresh
         // try to recover — the user still sees the last-good state.
-        setAllClusters((prev) => {
-          if (prev.length === 0) {
-            setError(message);
-            setHealthStats(null);
-          }
-          return prev;
-        });
+        //
+        // V124-3.1: read the prior length OUTSIDE any state updater. The
+        // previous code called setError/setHealthStats inside a setAllClusters
+        // updater function — a React anti-pattern that fires twice in
+        // StrictMode (updaters must be pure). Read via the ref so we see the
+        // current value without putting allClusters in fetchData's deps.
+        if (allClustersRef.current.length === 0) {
+          setError(message);
+          setHealthStats(null);
+        }
+        // Intentionally do NOT call setAllClusters — prior data stays on screen.
       }
     } finally {
       setLoading(false);
@@ -201,6 +210,13 @@ export function ClustersOverview() {
   const handleRefresh = useCallback(() => {
     void fetchData(true);
   }, [fetchData]);
+
+  // Keep allClustersRef in sync with allClusters so fetchData's catch block
+  // can check "did we have prior data on screen?" without depending on
+  // allClusters in its dep array (V124-3.1).
+  useEffect(() => {
+    allClustersRef.current = allClusters;
+  }, [allClusters]);
 
   useEffect(() => {
     void fetchData();
