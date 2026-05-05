@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"io"
@@ -324,6 +325,83 @@ func TestReadPasswordSafeWith_GetStateError_BailsBeforeReadPassword(t *testing.T
 	want := []string{"IsTerminal", "GetState"}
 	if !reflect.DeepEqual(tio.calls, want) {
 		t.Errorf("call order = %v, want %v (must bail before ReadPassword/Restore)", tio.calls, want)
+	}
+}
+
+// L8 — When the username read upstream uses a bufio.Reader and pulls in
+// more bytes than the first newline, those buffered bytes belong to the
+// password. Constructing a fresh reader for the password call would lose
+// them. readPasswordSafeWithReader must accept the upstream reader and
+// reuse its buffered tail.
+func TestReadPasswordSafeWithReader_SharedReaderPreservesBufferedBytes(t *testing.T) {
+	// Pipe BOTH lines into stdin in one Write so the username's
+	// bufio.Reader almost certainly buffers the password line past the
+	// first newline. If readPasswordSafeWithReader silently constructed a
+	// new reader, the password line would be discarded and the call would
+	// block (or return the empty string on EOF).
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	defer r.Close()
+
+	origStdin := os.Stdin
+	os.Stdin = r
+	t.Cleanup(func() { os.Stdin = origStdin })
+
+	go func() {
+		// Single Write — emulates `printf "user\npass\n" | sharko login`.
+		_, _ = w.Write([]byte("ignored-username\nhunter2\n"))
+		w.Close()
+	}()
+
+	// Drain the username line through a fresh bufio.Reader (mirrors the
+	// loginCmd default branch).
+	upstream := bufio.NewReader(os.Stdin)
+	usernameLine, err := upstream.ReadString('\n')
+	if err != nil {
+		t.Fatalf("username read: %v", err)
+	}
+	if got := strings.TrimSpace(usernameLine); got != "ignored-username" {
+		t.Fatalf("username = %q, want %q", got, "ignored-username")
+	}
+
+	// Hand the same reader to the password call. If the bytes had been
+	// silently dropped, this would either hang (no test timeout) or
+	// return an empty string.
+	pw, err := readPasswordSafeWithReader(upstream, "Password: ")
+	if err != nil {
+		t.Fatalf("readPasswordSafeWithReader: %v", err)
+	}
+	if pw != "hunter2" {
+		t.Errorf("got password %q, want %q (shared bufio.Reader must preserve buffered bytes)", pw, "hunter2")
+	}
+}
+
+// L8 — guard against an explicit nil reader: the helper must fall back to
+// constructing a fresh bufio.Reader so callers that have no upstream read
+// (everything except the loginCmd default branch) keep working.
+func TestReadPasswordSafeWithReader_NilReaderFallsBack(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	defer r.Close()
+	origStdin := os.Stdin
+	os.Stdin = r
+	t.Cleanup(func() { os.Stdin = origStdin })
+
+	go func() {
+		fmt.Fprintln(w, "piped-secret")
+		w.Close()
+	}()
+
+	pw, err := readPasswordSafeWithReader(nil, "Password: ")
+	if err != nil {
+		t.Fatalf("readPasswordSafeWithReader(nil): %v", err)
+	}
+	if pw != "piped-secret" {
+		t.Errorf("got password %q, want %q", pw, "piped-secret")
 	}
 }
 
