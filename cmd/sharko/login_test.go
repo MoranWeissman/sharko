@@ -115,6 +115,13 @@ func TestIsConnectionRefused_Detection(t *testing.T) {
 			&net.OpError{Err: &os.SyscallError{Err: syscall.ECONNREFUSED}}, true},
 		{"plain string fallback",
 			errors.New("dial tcp 127.0.0.1:1234: connect: connection refused"), true},
+		// L4 — case-insensitive fallback. Windows-style messages can capitalise
+		// the substring; we should still detect it via the string-match
+		// fallback even when the syscall errno chain isn't preserved.
+		{"mixed-case Windows-style message",
+			errors.New("No connection could be made because the target machine actively refused it. Connection Refused."), true},
+		{"upper-case fallback",
+			errors.New("CONNECTION REFUSED"), true},
 		{"nil", nil, false},
 		{"unrelated", errors.New("something else"), false},
 	}
