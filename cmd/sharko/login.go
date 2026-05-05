@@ -18,10 +18,10 @@ import (
 )
 
 func init() {
-	loginCmd.Flags().String("server", "", "Sharko server URL (required)")
+	// --server lives on rootCmd as a persistent flag (V124-3.5 / BUG-010);
+	// loginCmd inherits it. We only define the login-specific flags here.
 	loginCmd.Flags().String("username", "", "Username (skips interactive prompt)")
 	loginCmd.Flags().String("password", "", "Password (skips interactive prompt, use with --username)")
-	loginCmd.MarkFlagRequired("server")
 	rootCmd.AddCommand(loginCmd)
 }
 
@@ -29,8 +29,15 @@ var loginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Authenticate with a Sharko server",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		server, _ := cmd.Flags().GetString("server")
-		server = strings.TrimRight(server, "/")
+		// `sharko login` must specify --server; there is no saved config to
+		// fall back to (this command is what creates it). The check lives
+		// here rather than via cobra.MarkPersistentFlagRequired on rootCmd
+		// to avoid forcing --server on commands that have a saved-config
+		// fallback (list-clusters, status, version, etc.).
+		server := strings.TrimRight(effectiveServer(""), "/")
+		if server == "" {
+			return fmt.Errorf("required flag(s) \"server\" not set")
+		}
 
 		flagUsername, _ := cmd.Flags().GetString("username")
 		flagPassword, _ := cmd.Flags().GetString("password")
@@ -272,6 +279,9 @@ func isConnectionRefused(err error) bool {
 	}
 	// Best-effort string match for environments where the syscall errno is
 	// wrapped in a non-standard way (rare, but cheaper to check than to
-	// unwrap manually).
-	return strings.Contains(err.Error(), "connection refused")
+	// unwrap manually). Lowercased to be defensive against locale/casing
+	// differences (review L4) — Windows surfaces variants like
+	// "No connection could be made because the target machine actively
+	// refused it." where the substring may appear in mixed case.
+	return strings.Contains(strings.ToLower(err.Error()), "connection refused")
 }

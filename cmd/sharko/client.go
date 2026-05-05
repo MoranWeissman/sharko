@@ -255,6 +255,13 @@ func buildHTTPClient(insecure bool) *http.Client {
 
 // apiRequest sends an authenticated HTTP request to the Sharko server.
 // Returns the response body bytes and status code.
+//
+// Server URL precedence (V124-3.5 / BUG-010): the global --server flag, when
+// set, overrides the saved config's server URL. This lets users run
+// `sharko list-clusters --server URL` against a different server than the
+// one they're logged into without rewriting ~/.sharko/config. The token is
+// always taken from the saved config — --server is a URL override, not a
+// new auth context.
 func apiRequest(method, path string, body interface{}) ([]byte, int, error) {
 	cfg, err := loadConfig()
 	if err != nil {
@@ -273,7 +280,8 @@ func apiRequest(method, path string, body interface{}) ([]byte, int, error) {
 		reqBody = bytes.NewReader(data)
 	}
 
-	url := cfg.Server + path
+	server := effectiveServer(cfg.Server)
+	url := server + path
 	req, err := http.NewRequest(method, url, reqBody)
 	if err != nil {
 		return nil, 0, fmt.Errorf("cannot create request: %w", err)

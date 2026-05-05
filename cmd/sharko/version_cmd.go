@@ -23,20 +23,24 @@ var versionCmd = &cobra.Command{
 			return nil
 		}
 
+		// Honour the global --server override (V124-3.5 / BUG-010) when
+		// reporting which server we're talking to.
+		server := effectiveServer(cfg.Server)
+
 		respBody, status, err := apiGet("/api/v1/health")
 		if err != nil {
-			fmt.Printf("Server: %s (unreachable: %v)\n", cfg.Server, err)
+			fmt.Printf("Server: %s (unreachable: %v)\n", server, err)
 			return nil
 		}
 
 		if status != 200 {
-			fmt.Printf("Server: %s (unhealthy, HTTP %d)\n", cfg.Server, status)
+			fmt.Printf("Server: %s (unhealthy, HTTP %d)\n", server, status)
 			return nil
 		}
 
 		var health map[string]string
 		if err := json.Unmarshal(respBody, &health); err != nil {
-			fmt.Printf("Server: %s (invalid health response)\n", cfg.Server)
+			fmt.Printf("Server: %s (invalid health response)\n", server)
 			return nil
 		}
 
@@ -51,7 +55,7 @@ var versionCmd = &cobra.Command{
 			detail = fmt.Sprintf("connected, %s, %s", serverVersion, mode)
 		}
 
-		fmt.Printf("Server: %s (%s)\n", cfg.Server, detail)
+		fmt.Printf("Server: %s (%s)\n", server, detail)
 		return nil
 	},
 }
