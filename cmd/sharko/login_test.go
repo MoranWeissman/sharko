@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"os"
 	"reflect"
 	"strings"
@@ -19,13 +21,21 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestFormatConnectionError_ConnectionRefused(t *testing.T) {
-	// Real connection-refused error returned by Dial when no server is
-	// listening on a closed port. We construct the equivalent net.OpError
-	// chain by hand to keep the test hermetic.
-	wrapped := &net.OpError{
-		Op:  "dial",
-		Net: "tcp",
-		Err: &os.SyscallError{Syscall: "connect", Err: syscall.ECONNREFUSED},
+	// Real connection-refused error returned by http.Client.Post when no
+	// server is listening on the target port. We construct the equivalent
+	// chain by hand to keep the test hermetic. The outer *url.Error mirrors
+	// what http.Client wraps the underlying *net.OpError in (review L5 —
+	// the previous fixture used a bare *net.OpError, which short-circuited
+	// the production unwrap chain and silently passed even if a regression
+	// dropped errors.As-based unwrap from formatConnectionError).
+	wrapped := &url.Error{
+		Op:  "Post",
+		URL: "http://wrong:1234/api/v1/auth/login",
+		Err: &net.OpError{
+			Op:  "dial",
+			Net: "tcp",
+			Err: &os.SyscallError{Syscall: "connect", Err: syscall.ECONNREFUSED},
+		},
 	}
 
 	out := formatConnectionError("http://wrong:1234", wrapped)
@@ -47,10 +57,17 @@ func TestFormatConnectionError_ConnectionRefused(t *testing.T) {
 }
 
 func TestFormatConnectionError_DNSLookup(t *testing.T) {
-	wrapped := &net.OpError{
-		Op:  "dial",
-		Net: "tcp",
-		Err: &net.DNSError{Name: "no.such.host.invalid", Err: "no such host", IsNotFound: true},
+	// Match production wrapping: http.Client → *url.Error → *net.OpError →
+	// *net.DNSError. Without the outer *url.Error layer (review L5) the
+	// fixture would not exercise the same unwrap depth as production.
+	wrapped := &url.Error{
+		Op:  "Post",
+		URL: "http://no.such.host.invalid:8080/api/v1/auth/login",
+		Err: &net.OpError{
+			Op:  "dial",
+			Net: "tcp",
+			Err: &net.DNSError{Name: "no.such.host.invalid", Err: "no such host", IsNotFound: true},
+		},
 	}
 
 	out := formatConnectionError("http://no.such.host.invalid:8080", wrapped)
@@ -69,10 +86,17 @@ func TestFormatConnectionError_DNSLookup(t *testing.T) {
 }
 
 func TestFormatConnectionError_GenericNetOpError(t *testing.T) {
-	wrapped := &net.OpError{
-		Op:  "dial",
-		Net: "tcp",
-		Err: errors.New("i/o timeout"),
+	// Match production wrapping (review L5): the *net.OpError sits inside
+	// a *url.Error returned by http.Client. errors.As must walk both layers
+	// to reach *net.OpError, so the test fixture must reflect that depth.
+	wrapped := &url.Error{
+		Op:  "Post",
+		URL: "http://slow:9999/api/v1/auth/login",
+		Err: &net.OpError{
+			Op:  "dial",
+			Net: "tcp",
+			Err: errors.New("i/o timeout"),
+		},
 	}
 
 	out := formatConnectionError("http://slow:9999", wrapped)
@@ -113,8 +137,24 @@ func TestIsConnectionRefused_Detection(t *testing.T) {
 	}{
 		{"errors.Is via OpError chain",
 			&net.OpError{Err: &os.SyscallError{Err: syscall.ECONNREFUSED}}, true},
+		// L5 — production-realistic wrapping: http.Client.Post returns
+		// *url.Error{Err: *net.OpError{Err: *os.SyscallError{Err: ECONNREFUSED}}}.
+		// errors.Is must walk all three layers — verify it does.
+		{"errors.Is via url.Error -> OpError -> SyscallError",
+			&url.Error{
+				Op:  "Post",
+				URL: "http://x:1/api/v1/auth/login",
+				Err: &net.OpError{Err: &os.SyscallError{Err: syscall.ECONNREFUSED}},
+			}, true},
 		{"plain string fallback",
 			errors.New("dial tcp 127.0.0.1:1234: connect: connection refused"), true},
+		// L4 — case-insensitive fallback. Windows-style messages can capitalise
+		// the substring; we should still detect it via the string-match
+		// fallback even when the syscall errno chain isn't preserved.
+		{"mixed-case Windows-style message",
+			errors.New("No connection could be made because the target machine actively refused it. Connection Refused."), true},
+		{"upper-case fallback",
+			errors.New("CONNECTION REFUSED"), true},
 		{"nil", nil, false},
 		{"unrelated", errors.New("something else"), false},
 	}
@@ -285,6 +325,83 @@ func TestReadPasswordSafeWith_GetStateError_BailsBeforeReadPassword(t *testing.T
 	want := []string{"IsTerminal", "GetState"}
 	if !reflect.DeepEqual(tio.calls, want) {
 		t.Errorf("call order = %v, want %v (must bail before ReadPassword/Restore)", tio.calls, want)
+	}
+}
+
+// L8 — When the username read upstream uses a bufio.Reader and pulls in
+// more bytes than the first newline, those buffered bytes belong to the
+// password. Constructing a fresh reader for the password call would lose
+// them. readPasswordSafeWithReader must accept the upstream reader and
+// reuse its buffered tail.
+func TestReadPasswordSafeWithReader_SharedReaderPreservesBufferedBytes(t *testing.T) {
+	// Pipe BOTH lines into stdin in one Write so the username's
+	// bufio.Reader almost certainly buffers the password line past the
+	// first newline. If readPasswordSafeWithReader silently constructed a
+	// new reader, the password line would be discarded and the call would
+	// block (or return the empty string on EOF).
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	defer r.Close()
+
+	origStdin := os.Stdin
+	os.Stdin = r
+	t.Cleanup(func() { os.Stdin = origStdin })
+
+	go func() {
+		// Single Write — emulates `printf "user\npass\n" | sharko login`.
+		_, _ = w.Write([]byte("ignored-username\nhunter2\n"))
+		w.Close()
+	}()
+
+	// Drain the username line through a fresh bufio.Reader (mirrors the
+	// loginCmd default branch).
+	upstream := bufio.NewReader(os.Stdin)
+	usernameLine, err := upstream.ReadString('\n')
+	if err != nil {
+		t.Fatalf("username read: %v", err)
+	}
+	if got := strings.TrimSpace(usernameLine); got != "ignored-username" {
+		t.Fatalf("username = %q, want %q", got, "ignored-username")
+	}
+
+	// Hand the same reader to the password call. If the bytes had been
+	// silently dropped, this would either hang (no test timeout) or
+	// return an empty string.
+	pw, err := readPasswordSafeWithReader(upstream, "Password: ")
+	if err != nil {
+		t.Fatalf("readPasswordSafeWithReader: %v", err)
+	}
+	if pw != "hunter2" {
+		t.Errorf("got password %q, want %q (shared bufio.Reader must preserve buffered bytes)", pw, "hunter2")
+	}
+}
+
+// L8 — guard against an explicit nil reader: the helper must fall back to
+// constructing a fresh bufio.Reader so callers that have no upstream read
+// (everything except the loginCmd default branch) keep working.
+func TestReadPasswordSafeWithReader_NilReaderFallsBack(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	defer r.Close()
+	origStdin := os.Stdin
+	os.Stdin = r
+	t.Cleanup(func() { os.Stdin = origStdin })
+
+	go func() {
+		fmt.Fprintln(w, "piped-secret")
+		w.Close()
+	}()
+
+	pw, err := readPasswordSafeWithReader(nil, "Password: ")
+	if err != nil {
+		t.Fatalf("readPasswordSafeWithReader(nil): %v", err)
+	}
+	if pw != "piped-secret" {
+		t.Errorf("got password %q, want %q", pw, "piped-secret")
 	}
 }
 

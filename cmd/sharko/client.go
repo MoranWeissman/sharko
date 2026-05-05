@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -32,6 +33,10 @@ var configHomeWarned bool
 // Resolution order:
 //  1. SHARKO_CONFIG_DIR — explicit override (used by tests and constrained
 //     environments). Bypasses every safety check below — operator opted in.
+//     A leading "~/" or bare "~" is expanded to the user's home directory
+//     so values like SHARKO_CONFIG_DIR=~/sharko-test work as a shell user
+//     would expect (review L11). When $HOME is missing the literal "~/"
+//     is left intact — better to surface the path than silently rewrite it.
 //  2. ~/.sharko — the normal case, when $HOME is set to a real user home.
 //  3. <os.TempDir()>/.sharko — fallback when $HOME is missing or resolves to
 //     an unwritable root path (e.g. inside a container running with no HOME
@@ -49,7 +54,7 @@ var configHomeWarned bool
 // composed in tests and downstream tooling without I/O.
 func configDir() string {
 	if v := os.Getenv("SHARKO_CONFIG_DIR"); v != "" {
-		return v
+		return expandHomeTilde(v)
 	}
 	home, err := os.UserHomeDir()
 	if err == nil && home != "" && home != "/" {
@@ -63,6 +68,34 @@ func configDir() string {
 		configHomeWarned = true
 	}
 	return fallback
+}
+
+// expandHomeTilde rewrites a leading "~/" (or bare "~") in path to the
+// caller's home directory. Anything else is returned unchanged. If the
+// home directory cannot be resolved, the original path is returned so the
+// caller surfaces the literal value rather than silently substituting an
+// empty string (review L11).
+//
+// Only the leading segment is rewritten — embedded tildes (e.g.
+// "/foo/~bar") are intentionally untouched to mirror standard shell
+// behaviour where only ~ at the start of a word expands.
+func expandHomeTilde(path string) string {
+	if path == "" {
+		return path
+	}
+	if path != "~" && !strings.HasPrefix(path, "~/") && !strings.HasPrefix(path, "~"+string(os.PathSeparator)) {
+		return path
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return path
+	}
+	if path == "~" {
+		return home
+	}
+	// Strip the leading "~" — the remainder starts with the OS path
+	// separator (or "/" on Unix), so filepath.Join handles the rest.
+	return filepath.Join(home, path[1:])
 }
 
 // configPath returns the path to the CLI config file.
