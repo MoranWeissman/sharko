@@ -11,13 +11,32 @@ import (
 	"time"
 )
 
-var baseURL string
+var (
+	baseURL  string
+	username string
+	password string
+)
 
 func TestMain(m *testing.M) {
 	baseURL = os.Getenv("SHARKO_E2E_URL")
 	if baseURL == "" {
 		baseURL = "http://localhost:8080"
 	}
+
+	// Credentials: read from env vars to support both demo-mode CI runs and
+	// real-K8s runs against a bootstrapped Sharko deployment. Fall back to
+	// admin/admin only when BOTH vars are unset, which preserves the existing
+	// `--demo` server behaviour where admin/admin is hardcoded.
+	envUser := os.Getenv("SHARKO_E2E_USERNAME")
+	envPass := os.Getenv("SHARKO_E2E_PASSWORD")
+	if envUser == "" && envPass == "" {
+		username = "admin"
+		password = "admin"
+	} else {
+		username = envUser
+		password = envPass
+	}
+
 	os.Exit(m.Run())
 }
 
@@ -39,8 +58,8 @@ func TestHealthEndpoint(t *testing.T) {
 
 func TestLoginAndAuth(t *testing.T) {
 	payload := map[string]string{
-		"username": "admin",
-		"password": "admin",
+		"username": username,
+		"password": password,
 	}
 	body, _ := json.Marshal(payload)
 
@@ -68,8 +87,8 @@ func TestLoginAndAuth(t *testing.T) {
 func TestRepoStatus(t *testing.T) {
 	// Login first to get a token
 	payload := map[string]string{
-		"username": "admin",
-		"password": "admin",
+		"username": username,
+		"password": password,
 	}
 	body, _ := json.Marshal(payload)
 
