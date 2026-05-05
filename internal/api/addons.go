@@ -27,7 +27,8 @@ func (s *Server) handleListAddons(w http.ResponseWriter, r *http.Request) {
 
 	addons, err := s.addonSvc.ListAddons(r.Context(), gp)
 	if err != nil {
-		writeServerError(w, http.StatusInternalServerError, "list_addons", err)
+		// Upstream call (Git provider): classify (V124-3.2).
+		writeUpstreamError(w, "list_addons", err)
 		return
 	}
 
@@ -72,7 +73,8 @@ func (s *Server) handleGetAddonCatalog(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := s.addonSvc.GetCatalog(r.Context(), gp, ac)
 	if err != nil {
-		writeServerError(w, http.StatusInternalServerError, "get_addon_catalog", err)
+		// Upstream call (Git provider + ArgoCD): classify (V124-3.2).
+		writeUpstreamError(w, "get_addon_catalog", err)
 		return
 	}
 
@@ -113,7 +115,8 @@ func (s *Server) handleGetAddonDetail(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := s.addonSvc.GetAddonDetail(r.Context(), name, gp, ac)
 	if err != nil {
-		writeServerError(w, http.StatusInternalServerError, "get_addon_detail", err)
+		// Upstream call (Git provider + ArgoCD): classify (V124-3.2).
+		writeUpstreamError(w, "get_addon_detail", err)
 		return
 	}
 	if resp == nil {
@@ -151,7 +154,8 @@ func (s *Server) handleGetAddonValues(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := s.addonSvc.GetAddonValues(r.Context(), name, gp)
 	if err != nil {
-		writeServerError(w, http.StatusInternalServerError, "get_addon_values", err)
+		// Upstream call (Git provider): classify (V124-3.2).
+		writeUpstreamError(w, "get_addon_values", err)
 		return
 	}
 
@@ -184,7 +188,8 @@ func (s *Server) handleGetVersionMatrix(w http.ResponseWriter, r *http.Request) 
 
 	resp, err := s.addonSvc.GetVersionMatrix(r.Context(), gp, ac)
 	if err != nil {
-		writeServerError(w, http.StatusInternalServerError, "get_version_matrix", err)
+		// Upstream call (Git provider + ArgoCD): classify (V124-3.2).
+		writeUpstreamError(w, "get_version_matrix", err)
 		return
 	}
 

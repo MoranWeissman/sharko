@@ -32,7 +32,9 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := s.clusterSvc.ListClusters(r.Context(), gp, ac)
 	if err != nil {
-		writeServerError(w, http.StatusInternalServerError, "list_clusters", err)
+		// Upstream call (Git provider + ArgoCD): classify so a Git timeout
+		// reads as 504 and a refused TCP connection reads as 502 (V124-3.2).
+		writeUpstreamError(w, "list_clusters", err)
 		return
 	}
 
@@ -139,7 +141,8 @@ func (s *Server) handleGetCluster(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := s.clusterSvc.GetClusterDetail(r.Context(), name, gp, ac)
 	if err != nil {
-		writeServerError(w, http.StatusInternalServerError, "get_cluster", err)
+		// Upstream call (Git provider + ArgoCD): classify (V124-3.2).
+		writeUpstreamError(w, "get_cluster", err)
 		return
 	}
 	if resp == nil {
@@ -177,7 +180,8 @@ func (s *Server) handleGetClusterValues(w http.ResponseWriter, r *http.Request) 
 
 	resp, err := s.clusterSvc.GetClusterValues(r.Context(), name, gp)
 	if err != nil {
-		writeServerError(w, http.StatusInternalServerError, "get_cluster_values", err)
+		// Upstream call (Git provider): classify (V124-3.2).
+		writeUpstreamError(w, "get_cluster_values", err)
 		return
 	}
 
@@ -211,7 +215,8 @@ func (s *Server) handleGetConfigDiff(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := s.clusterSvc.GetConfigDiff(r.Context(), name, gp)
 	if err != nil {
-		writeServerError(w, http.StatusInternalServerError, "get_cluster_config_diff", err)
+		// Upstream call (Git provider): classify (V124-3.2).
+		writeUpstreamError(w, "get_cluster_config_diff", err)
 		return
 	}
 
@@ -252,7 +257,8 @@ func (s *Server) handleGetClusterComparison(w http.ResponseWriter, r *http.Reque
 
 	resp, err := s.clusterSvc.GetClusterComparison(r.Context(), name, gp, ac)
 	if err != nil {
-		writeServerError(w, http.StatusInternalServerError, "get_cluster_comparison", err)
+		// Upstream call (Git provider + ArgoCD): classify (V124-3.2).
+		writeUpstreamError(w, "get_cluster_comparison", err)
 		return
 	}
 	if resp == nil {

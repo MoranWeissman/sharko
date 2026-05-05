@@ -5,13 +5,17 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -1294,4 +1298,79 @@ func writeServerError(w http.ResponseWriter, status int, op string, err error) {
 		"op":    op,
 	})
 }
+
+// classifyUpstreamError maps a Go error returned from an upstream service
+// (Git provider, ArgoCD, AWS, K8s API server, …) onto an appropriate HTTP
+// status code so that operators and clients can distinguish "the upstream
+// is unreachable" (502) from "the upstream timed out" (504), "the upstream
+// rate-limited us" (429), and "something went wrong on our end" (500).
+//
+// Branches:
+//   - errors.Is(err, syscall.ECONNREFUSED)               → 502 Bad Gateway
+//   - errors.As to *net.DNSError                         → 502 Bad Gateway
+//   - errors.As to *url.Error with Timeout()             → 504 Gateway Timeout
+//   - case-insensitive substring match for "rate limit"
+//     or "too many requests" or "429"                    → 429 Too Many Requests
+//   - default                                            → 500 Internal Server Error
+//
+// The string match is intentionally broad because Git providers
+// (GitHub/Azure DevOps) and Helm registries surface rate-limit conditions
+// through different concrete types — sometimes a wrapped *url.Error
+// carrying a JSON body, sometimes a synthesized error built from the
+// response body. Matching on the canonical phrasing keeps the classifier
+// useful without needing per-provider error types.
+//
+// Closes V124-3.2 (M2 extended).
+func classifyUpstreamError(err error) int {
+	if err == nil {
+		return http.StatusInternalServerError
+	}
+
+	// 502 — connection refused (the remote port wasn't accepting).
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return http.StatusBadGateway
+	}
+
+	// 502 — DNS resolution failed (the remote hostname doesn't resolve).
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return http.StatusBadGateway
+	}
+
+	// 504 — request timed out somewhere in the URL stack. We check this
+	// before the rate-limit string match because *url.Error wraps a
+	// concrete cause and the Timeout() helper is more precise than any
+	// substring search.
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) && urlErr.Timeout() {
+		return http.StatusGatewayTimeout
+	}
+
+	// 429 — upstream rate limit. The phrasing is normalised to lower case
+	// so we match irrespective of how the upstream surfaced it.
+	low := strings.ToLower(err.Error())
+	if strings.Contains(low, "rate limit") ||
+		strings.Contains(low, "too many requests") ||
+		strings.Contains(low, "429") {
+		return http.StatusTooManyRequests
+	}
+
+	// Default — opaque internal failure.
+	return http.StatusInternalServerError
+}
+
+// writeUpstreamError is the convenience wrapper for the V124-2.10 sweep:
+// classify the error first, then funnel through writeServerError so the
+// response body stays sanitized (no leak of upstream paths/messages) and
+// the structured log preserves the full error for debugging.
+//
+// Use this at any handler call site where the error originates from a
+// remote service (Git provider, ArgoCD, AWS API, K8s API server). For
+// genuinely internal failures (config parse, in-memory store, etc.) keep
+// using writeServerError directly with an explicit 500 — those are not
+// upstream-classifiable and pretending otherwise would mislead operators.
+func writeUpstreamError(w http.ResponseWriter, op string, err error) {
+	writeServerError(w, classifyUpstreamError(err), op, err)
+}
+
 // v1.39.3 route fix
