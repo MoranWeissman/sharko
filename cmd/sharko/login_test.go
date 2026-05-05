@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"os"
 	"reflect"
 	"strings"
@@ -19,13 +20,21 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestFormatConnectionError_ConnectionRefused(t *testing.T) {
-	// Real connection-refused error returned by Dial when no server is
-	// listening on a closed port. We construct the equivalent net.OpError
-	// chain by hand to keep the test hermetic.
-	wrapped := &net.OpError{
-		Op:  "dial",
-		Net: "tcp",
-		Err: &os.SyscallError{Syscall: "connect", Err: syscall.ECONNREFUSED},
+	// Real connection-refused error returned by http.Client.Post when no
+	// server is listening on the target port. We construct the equivalent
+	// chain by hand to keep the test hermetic. The outer *url.Error mirrors
+	// what http.Client wraps the underlying *net.OpError in (review L5 —
+	// the previous fixture used a bare *net.OpError, which short-circuited
+	// the production unwrap chain and silently passed even if a regression
+	// dropped errors.As-based unwrap from formatConnectionError).
+	wrapped := &url.Error{
+		Op:  "Post",
+		URL: "http://wrong:1234/api/v1/auth/login",
+		Err: &net.OpError{
+			Op:  "dial",
+			Net: "tcp",
+			Err: &os.SyscallError{Syscall: "connect", Err: syscall.ECONNREFUSED},
+		},
 	}
 
 	out := formatConnectionError("http://wrong:1234", wrapped)
@@ -47,10 +56,17 @@ func TestFormatConnectionError_ConnectionRefused(t *testing.T) {
 }
 
 func TestFormatConnectionError_DNSLookup(t *testing.T) {
-	wrapped := &net.OpError{
-		Op:  "dial",
-		Net: "tcp",
-		Err: &net.DNSError{Name: "no.such.host.invalid", Err: "no such host", IsNotFound: true},
+	// Match production wrapping: http.Client → *url.Error → *net.OpError →
+	// *net.DNSError. Without the outer *url.Error layer (review L5) the
+	// fixture would not exercise the same unwrap depth as production.
+	wrapped := &url.Error{
+		Op:  "Post",
+		URL: "http://no.such.host.invalid:8080/api/v1/auth/login",
+		Err: &net.OpError{
+			Op:  "dial",
+			Net: "tcp",
+			Err: &net.DNSError{Name: "no.such.host.invalid", Err: "no such host", IsNotFound: true},
+		},
 	}
 
 	out := formatConnectionError("http://no.such.host.invalid:8080", wrapped)
@@ -69,10 +85,17 @@ func TestFormatConnectionError_DNSLookup(t *testing.T) {
 }
 
 func TestFormatConnectionError_GenericNetOpError(t *testing.T) {
-	wrapped := &net.OpError{
-		Op:  "dial",
-		Net: "tcp",
-		Err: errors.New("i/o timeout"),
+	// Match production wrapping (review L5): the *net.OpError sits inside
+	// a *url.Error returned by http.Client. errors.As must walk both layers
+	// to reach *net.OpError, so the test fixture must reflect that depth.
+	wrapped := &url.Error{
+		Op:  "Post",
+		URL: "http://slow:9999/api/v1/auth/login",
+		Err: &net.OpError{
+			Op:  "dial",
+			Net: "tcp",
+			Err: errors.New("i/o timeout"),
+		},
 	}
 
 	out := formatConnectionError("http://slow:9999", wrapped)
@@ -113,6 +136,15 @@ func TestIsConnectionRefused_Detection(t *testing.T) {
 	}{
 		{"errors.Is via OpError chain",
 			&net.OpError{Err: &os.SyscallError{Err: syscall.ECONNREFUSED}}, true},
+		// L5 — production-realistic wrapping: http.Client.Post returns
+		// *url.Error{Err: *net.OpError{Err: *os.SyscallError{Err: ECONNREFUSED}}}.
+		// errors.Is must walk all three layers — verify it does.
+		{"errors.Is via url.Error -> OpError -> SyscallError",
+			&url.Error{
+				Op:  "Post",
+				URL: "http://x:1/api/v1/auth/login",
+				Err: &net.OpError{Err: &os.SyscallError{Err: syscall.ECONNREFUSED}},
+			}, true},
 		{"plain string fallback",
 			errors.New("dial tcp 127.0.0.1:1234: connect: connection refused"), true},
 		// L4 — case-insensitive fallback. Windows-style messages can capitalise
