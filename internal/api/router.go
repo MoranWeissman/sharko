@@ -154,6 +154,24 @@ func NewServer(
 	// Initialize auth store (auto-detects K8s vs local mode)
 	authStore := auth.NewStore()
 
+	// Bootstrap admin credential handling (V124-3.8 / BUG-013):
+	//
+	//   1. Operator-supplied path — if SHARKO_BOOTSTRAP_ADMIN_PASSWORD is
+	//      set (via Helm `bootstrapAdmin.password` or `existingSecret`),
+	//      seed admin.password from it. The plaintext is NEVER logged.
+	//   2. Auto-generated path — if no operator value was supplied, the
+	//      Helm chart wrote `admin.initialPassword` to the Sharko Secret
+	//      on first install. Log it once in a clearly-marked block so
+	//      operators can grep `kubectl logs` instead of needing
+	//      out-of-band knowledge of `sharko reset-admin`.
+	//
+	// Order matters: seed first so MaybeLogBootstrapCredential does not
+	// log a stale auto-generated value when the operator has supplied one.
+	if err := authStore.SeedBootstrapAdminFromEnv(); err != nil {
+		slog.Warn("could not apply operator-supplied bootstrap admin password", "error", err)
+	}
+	authStore.MaybeLogBootstrapCredential()
+
 	if !authStore.HasUsers() {
 		slog.Warn("WARNING: Authentication is DISABLED — all API endpoints are publicly accessible. Configure users via K8s ConfigMap or SHARKO_AUTH_USER env var.")
 	}

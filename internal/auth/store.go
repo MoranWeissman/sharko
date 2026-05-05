@@ -16,6 +16,14 @@ import (
 	"k8s.io/client-go/rest"
 )
 
+// EnvBootstrapAdminPassword is the environment variable that, when set,
+// supplies the bootstrap admin password from an operator (Helm value or an
+// existing Secret). When this variable is non-empty, Sharko adopts that
+// password as the bcrypt-hashed `admin.password` and MUST NOT log it
+// anywhere — operator-supplied secrets are never logged. This contract is
+// enforced by MaybeLogBootstrapCredential / SeedBootstrapAdminFromEnv.
+const EnvBootstrapAdminPassword = "SHARKO_BOOTSTRAP_ADMIN_PASSWORD"
+
 // Mode represents the auth backend mode.
 type Mode string
 
@@ -539,6 +547,136 @@ func getEnvDefault(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// MaybeLogBootstrapCredential logs the auto-generated bootstrap admin
+// credential exactly once on first boot, when all of the following hold:
+//
+//   - The store is running in K8s mode.
+//   - The bootstrap admin password was NOT supplied by the operator
+//     (the SHARKO_BOOTSTRAP_ADMIN_PASSWORD env var is empty).
+//   - The Sharko Secret carries an `admin.initialPassword` key, which the
+//     Helm chart writes only on first install when no operator-supplied
+//     password is configured.
+//
+// The credential is logged in a clearly-marked block so operators can
+// recover it from `kubectl logs -n sharko deployment/sharko | grep -A4 BOOTSTRAP`.
+// After logging, the `admin.initialPassword` key is removed from the Secret
+// so subsequent restarts do not re-emit the credential.
+//
+// SECURITY: this function MUST NOT log when the operator supplied a
+// password (env var path). Operator-supplied passwords are never logged
+// anywhere — see SeedBootstrapAdminFromEnv. This invariant is exercised
+// by TestMaybeLogBootstrapCredential_OperatorSuppliedNotLogged.
+func (s *Store) MaybeLogBootstrapCredential() {
+	if s.mode != ModeK8s || s.clientset == nil {
+		return
+	}
+	// CRITICAL: never log when operator supplied a password.
+	if os.Getenv(EnvBootstrapAdminPassword) != "" {
+		return
+	}
+
+	ctx := context.Background()
+	secret, err := s.clientset.CoreV1().Secrets(s.namespace).Get(ctx, s.secretName, metav1.GetOptions{})
+	if err != nil {
+		slog.Debug("bootstrap credential check skipped: cannot read secret", "error", err)
+		return
+	}
+
+	pwBytes, ok := secret.Data["admin.initialPassword"]
+	if !ok || len(pwBytes) == 0 {
+		return
+	}
+	password := string(pwBytes)
+
+	slog.Info("=== BOOTSTRAP ADMIN CREDENTIAL ===")
+	slog.Info("bootstrap admin generated", "username", "admin", "password", password)
+	slog.Info("This is the only time this credential will be shown. Store it securely.")
+	slog.Info("=== END BOOTSTRAP ADMIN CREDENTIAL ===")
+
+	// Best-effort cleanup so the credential is not logged on every restart.
+	// A failure here is non-fatal — the next restart will simply re-emit.
+	delete(secret.Data, "admin.initialPassword")
+	if _, updateErr := s.clientset.CoreV1().Secrets(s.namespace).Update(ctx, secret, metav1.UpdateOptions{}); updateErr != nil {
+		slog.Warn("failed to remove admin.initialPassword from secret after bootstrap log", "error", updateErr)
+	}
+}
+
+// SeedBootstrapAdminFromEnv consumes the SHARKO_BOOTSTRAP_ADMIN_PASSWORD
+// env var and writes its bcrypt hash into the Sharko Secret as
+// `admin.password`. This is the operator-supplied credential path, used
+// when the Helm value `bootstrapAdmin.password` is set or when
+// `bootstrapAdmin.existingSecret.name` is wired into the deployment as an
+// env var via `valueFrom.secretKeyRef`.
+//
+// On every startup the env var is authoritative — Sharko overwrites
+// admin.password with the bcrypt hash of the env value. Operators rotate
+// the password by updating the source (Helm value or existing Secret) and
+// restarting the pod.
+//
+// Also clears any stale `admin.initialPassword` key so that
+// MaybeLogBootstrapCredential never emits a stale credential.
+//
+// SECURITY: the plaintext env value is NEVER logged. The function emits a
+// single info log noting that an operator-supplied password was applied,
+// without the value. This invariant is exercised by
+// TestSeedBootstrapAdminFromEnv_DoesNotLogPassword.
+func (s *Store) SeedBootstrapAdminFromEnv() error {
+	password := os.Getenv(EnvBootstrapAdminPassword)
+	if password == "" {
+		return nil
+	}
+	if s.mode != ModeK8s || s.clientset == nil {
+		// Local-mode operator-supplied passwords flow through SHARKO_AUTH_*.
+		return nil
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash bootstrap admin password: %w", err)
+	}
+
+	ctx := context.Background()
+	secret, err := s.clientset.CoreV1().Secrets(s.namespace).Get(ctx, s.secretName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("read sharko secret %s/%s: %w", s.namespace, s.secretName, err)
+	}
+	if secret.Data == nil {
+		secret.Data = make(map[string][]byte)
+	}
+	secret.Data["admin.password"] = hash
+	// Clear any stale initial-password marker so MaybeLogBootstrapCredential
+	// does not log a value that has been superseded by the operator.
+	delete(secret.Data, "admin.initialPassword")
+
+	if _, err := s.clientset.CoreV1().Secrets(s.namespace).Update(ctx, secret, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("update sharko secret with bootstrap password: %w", err)
+	}
+
+	// Refresh in-memory state so authentication works without waiting for
+	// the next reload tick.
+	s.mu.Lock()
+	if _, ok := s.users["admin"]; !ok {
+		s.users["admin"] = &UserAccount{Username: "admin", Enabled: true, Role: "admin"}
+	}
+	s.passHash["admin"] = string(hash)
+	s.mu.Unlock()
+
+	// SECURITY: do NOT log the password. Only log that an operator-supplied
+	// credential was applied.
+	slog.Info("operator-supplied bootstrap admin password applied (not logged)")
+	return nil
+}
+
+// SetClientForTest installs a fake K8s client for tests. Production code
+// must use NewStore(); this exists only so unit tests can exercise the
+// bootstrap-credential flows without a real in-cluster config.
+func (s *Store) SetClientForTest(clientset kubernetes.Interface, namespace, secretName string) {
+	s.mode = ModeK8s
+	s.clientset = clientset
+	s.namespace = namespace
+	s.secretName = secretName
 }
 
 // AddUser creates a user with a known plaintext password directly in the

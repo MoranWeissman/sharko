@@ -47,6 +47,25 @@ spec:
                   fieldPath: metadata.namespace
             - name: SHARKO_SECRET_NAME
               value: {{ include "sharko.fullname" . | quote }}
+            {{- /*
+              Bootstrap admin password (V124-3.8 / BUG-013).
+              Two operator-supplied paths surface here as SHARKO_BOOTSTRAP_ADMIN_PASSWORD;
+              Sharko consumes the env var on startup and bcrypt-hashes it into the
+              Sharko Secret. The plaintext is NEVER logged — see
+              internal/auth/store.go SeedBootstrapAdminFromEnv.
+            */}}
+            {{- $bootstrap := .Values.bootstrapAdmin | default dict }}
+            {{- $existingBootstrapSecret := $bootstrap.existingSecret | default dict }}
+            {{- if and $existingBootstrapSecret.name (ne $existingBootstrapSecret.name "") }}
+            - name: SHARKO_BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $existingBootstrapSecret.name | quote }}
+                  key: {{ default "password" $existingBootstrapSecret.key | quote }}
+            {{- else if and $bootstrap.password (ne $bootstrap.password "") }}
+            - name: SHARKO_BOOTSTRAP_ADMIN_PASSWORD
+              value: {{ $bootstrap.password | quote }}
+            {{- end }}
             {{- if .Values.ai.enabled }}
             - name: AI_PROVIDER
               value: {{ .Values.ai.provider | quote }}
