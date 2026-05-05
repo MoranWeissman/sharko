@@ -64,6 +64,9 @@ Three steps, every time. This is the minimum payload that makes a bug actionable
 
 Self-contained, no cluster, no Helm. Boots in under 5 seconds. Use this to find the cheap bugs first.
 
+!!! warning "`admin/admin` is demo-mode only"
+    Track A uses `admin/admin` because the demo container ships pre-seeded with that credential — it's a fixed-string default for friction-free local runs only. **Real Helm installs do NOT accept `admin/admin`.** They generate a random bootstrap password on first start (or accept an operator-supplied one). For real K8s installs see [Initial Credentials](../operator/installation.md#initial-credentials) in the operator install guide, and walk Track B (which uses the real bootstrap flow) instead.
+
 ## A.1 Prereqs
 
 - [ ] Docker Desktop / Colima / Rancher Desktop is running
@@ -161,7 +164,7 @@ Set the host once and grab a token. Keep this terminal open for the whole pass.
   **Expected:** 200, JSON with at least `status: "healthy"` and a `version` field.
   **Flag if:** `version` field is missing, empty, or doesn't match the image tag.
 
-- [ ] `POST /api/v1/auth/login` (admin/admin)
+- [ ] `POST /api/v1/auth/login` (admin/admin — **demo mode only**, see callout at top of Track A)
 
   ```bash
   TOKEN=$(curl -fsS -X POST $HOST/api/v1/auth/login \
@@ -170,7 +173,7 @@ Set the host once and grab a token. Keep this terminal open for the whole pass.
   echo "admin token: ${TOKEN:0:24}…"
   ```
 
-  **Expected:** non-empty token string printed. **Flag if:** `null`, empty, or the login endpoint returns 4xx — demo seeding failed.
+  **Expected:** non-empty token string printed. **Flag if:** `null`, empty, or the login endpoint returns 4xx — demo seeding failed. **In a real Helm install** this would 401 — see [Initial Credentials](../operator/installation.md#initial-credentials).
 
 - [ ] `GET /api/v1/catalog/addons`
 
@@ -293,7 +296,7 @@ For every page below the rubric is the same:
   - Compare footer version against `curl $HOST/api/v1/health | jq .version`.
   - If they don't match → confirm bug. If they match → mark bug fixed.
 
-- [ ] **Login submit** — admin/admin → land on Dashboard.
+- [ ] **Login submit** — admin/admin (**demo mode only**) → land on Dashboard.
 
 - [ ] **Dashboard** — stats cards, attention items, PR widget all render. No "loading…" stuck spinners.
 
