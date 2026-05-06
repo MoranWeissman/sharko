@@ -31,10 +31,13 @@ func TestHandleCreateConnection_InvalidGitURL_Returns400(t *testing.T) {
 
 	// A URL that ParseRepoURL rejects: dev.azure.com without the required
 	// /_git/ segment. ParseRepoURL returns a clear validation message.
+	// V124-4.2: provider must be set so the required-field validator (which
+	// runs before ParseRepoURL) doesn't short-circuit with a different message.
 	body, _ := json.Marshal(models.CreateConnectionRequest{
 		Name: "bad-conn",
 		Git: models.GitRepoConfig{
-			RepoURL: "https://dev.azure.com/org/project/repo", // missing _git/
+			Provider: models.GitProviderAzureDevOps,
+			RepoURL:  "https://dev.azure.com/org/project/repo", // missing _git/
 		},
 	})
 
@@ -72,6 +75,7 @@ func TestHandleCreateConnection_InvalidGitURL_DoesNotReturn500(t *testing.T) {
 	body, _ := json.Marshal(models.CreateConnectionRequest{
 		Name: "bad-conn-2",
 		Git: models.GitRepoConfig{
+			Provider: models.GitProviderAzureDevOps,
 			// .visualstudio.com URL missing /_git/ segment.
 			RepoURL: "https://example.visualstudio.com/project/just-repo",
 		},

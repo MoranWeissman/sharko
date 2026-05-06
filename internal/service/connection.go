@@ -62,6 +62,18 @@ func (s *ConnectionService) List() (*models.ConnectionsListResponse, error) {
 
 	responses := make([]models.ConnectionResponse, 0, len(connections))
 	for _, c := range connections {
+		// V124-4.2 / BUG-017 defensive read-side guard. Pre-V124-4 the Create
+		// path persisted entries with an empty name on `POST {}` (no required-
+		// field validation). Those entries are now rejected at write time, but
+		// stores that already contain such garbage (e.g. the maintainer's demo
+		// cluster from the BUG-017 reproducer) would still surface them via
+		// List. We skip them here with a single warning per startup pass —
+		// no destructive on-disk migration, just a read-time filter.
+		if c.Name == "" {
+			slog.Warn("connection skipped: empty name (legacy garbage from pre-V124-4 store)",
+				"component", "connection-service")
+			continue
+		}
 		responses = append(responses, c.ToResponse(c.Name == activeName))
 	}
 
@@ -79,6 +91,16 @@ func (s *ConnectionService) List() (*models.ConnectionsListResponse, error) {
 // preserves the original error chain — callers can still errors.As for
 // the concrete cause if they need it.
 func (s *ConnectionService) Create(req models.CreateConnectionRequest) error {
+	// V124-4.2 / BUG-017: required-field validation runs before any other
+	// processing so an empty `{}` body fails fast with a 400 instead of
+	// persisting a name="default" placeholder with no usable Git config.
+	//
+	// "Required" here is the minimum a connection needs to be useful:
+	// a Git provider type AND a way to identify the repo (either an
+	// explicit RepoURL or the per-provider identifier fields).
+	if err := validateConnectionRequest(req); err != nil {
+		return err
+	}
 	// Parse repo URL into provider/owner/repo if provided
 	if err := req.Git.ParseRepoURL(); err != nil {
 		return fmt.Errorf("invalid git URL: %w: %w", ErrValidation, err)
@@ -97,6 +119,43 @@ func (s *ConnectionService) Create(req models.CreateConnectionRequest) error {
 		conn.Name = deriveConnectionName(conn.Git)
 	}
 	return s.store.SaveConnection(conn)
+}
+
+// validateConnectionRequest checks that the create/update request has the
+// minimum fields needed for a usable connection. All errors are wrapped with
+// ErrValidation so handlers surface them as 400 with the underlying message.
+//
+// Rules (V124-4.2 / BUG-017):
+//   - git.provider must be set (so we know which Git backend to use)
+//   - git.provider must be one of the supported values
+//   - either git.repo_url is set (parsed downstream) OR the per-provider
+//     identifier fields are set:
+//       github      → owner + repo
+//       azuredevops → organization + project + repository
+//
+// Token / PAT fields are NOT required at create time — the test-credentials
+// endpoint and the env-var fallback (SHARKO_DEV_MODE) cover those flows.
+//
+// The handler `handleUpdateConnection` overlays empty token fields from the
+// saved connection before calling Create, so update-with-partial-body still
+// passes through this validator unchanged.
+func validateConnectionRequest(req models.CreateConnectionRequest) error {
+	if req.Git.Provider == "" {
+		return fmt.Errorf("git.provider is required (one of: github, azuredevops): %w", ErrValidation)
+	}
+	switch req.Git.Provider {
+	case models.GitProviderGitHub:
+		if req.Git.RepoURL == "" && (req.Git.Owner == "" || req.Git.Repo == "") {
+			return fmt.Errorf("git.repo_url or (git.owner + git.repo) is required for github provider: %w", ErrValidation)
+		}
+	case models.GitProviderAzureDevOps:
+		if req.Git.RepoURL == "" && (req.Git.Organization == "" || req.Git.Project == "" || req.Git.Repository == "") {
+			return fmt.Errorf("git.repo_url or (git.organization + git.project + git.repository) is required for azuredevops provider: %w", ErrValidation)
+		}
+	default:
+		return fmt.Errorf("git.provider %q is not supported (must be one of: github, azuredevops): %w", req.Git.Provider, ErrValidation)
+	}
+	return nil
 }
 
 // deriveConnectionName builds a connection name from the git config.
