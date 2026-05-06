@@ -36,19 +36,14 @@ func (s *Server) handleAddAddon(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "addon.add-to-catalog") {
 		return
 	}
-	ac, err := s.connSvc.GetActiveArgocdClient()
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
-		return
-	}
 
-	// Tier 2: configuration change — prefer per-user PAT, fall back to service token.
-	ctx, git, tokRes, err := s.GitProviderForTier(r.Context(), r, audit.Tier2)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
-		return
-	}
-
+	// V124-4.3 / BUG-019: validate request body BEFORE any upstream call.
+	// Pre-V124-4 the handler dialled out to ArgoCD + the Git provider
+	// (potentially via per-user PAT verification) before checking that the
+	// payload had the required fields, so an empty `{}` POST returned a
+	// confusing 502 (`no active ArgoCD connection: …`) AND burned external
+	// API quota on every empty/invalid attempt. Decoding + required-field
+	// validation are O(1) work and must run first.
 	var req orchestrator.AddAddonRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
@@ -68,6 +63,20 @@ func (s *Server) handleAddAddon(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Version == "" {
 		writeError(w, http.StatusBadRequest, "addon version is required")
+		return
+	}
+
+	// Now that the request is well-formed, resolve the upstream connections.
+	ac, err := s.connSvc.GetActiveArgocdClient()
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
+		return
+	}
+
+	// Tier 2: configuration change — prefer per-user PAT, fall back to service token.
+	ctx, git, tokRes, err := s.GitProviderForTier(r.Context(), r, audit.Tier2)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
 		return
 	}
 
