@@ -33,6 +33,17 @@ func (s *Server) handleAdoptClusters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// V124-4.5 (BUG-019 class): validate body BEFORE any upstream call.
+	var req orchestrator.AdoptClustersRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+	if len(req.Clusters) == 0 {
+		writeError(w, http.StatusBadRequest, "at least one cluster name is required")
+		return
+	}
+
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
@@ -42,16 +53,6 @@ func (s *Server) handleAdoptClusters(w http.ResponseWriter, r *http.Request) {
 	git, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
-		return
-	}
-
-	var req orchestrator.AdoptClustersRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
-		return
-	}
-	if len(req.Clusters) == 0 {
-		writeError(w, http.StatusBadRequest, "at least one cluster name is required")
 		return
 	}
 
@@ -145,18 +146,7 @@ func (s *Server) handleUnadoptCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	git, err := s.connSvc.GetActiveGitProvider()
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
-		return
-	}
-
-	ac, err := s.connSvc.GetActiveArgocdClient()
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
-		return
-	}
-
+	// V124-4.5 (BUG-019 class): decode + validate body BEFORE upstream call.
 	var req orchestrator.UnadoptClusterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
@@ -166,6 +156,18 @@ func (s *Server) handleUnadoptCluster(w http.ResponseWriter, r *http.Request) {
 	// Require confirmation unless dry-run.
 	if !req.DryRun && !req.Yes {
 		writeError(w, http.StatusBadRequest, "confirmation required: set yes: true in request body")
+		return
+	}
+
+	git, err := s.connSvc.GetActiveGitProvider()
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
+		return
+	}
+
+	ac, err := s.connSvc.GetActiveArgocdClient()
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
 		return
 	}
 

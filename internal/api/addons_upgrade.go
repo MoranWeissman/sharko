@@ -41,18 +41,7 @@ func (s *Server) handleUpgradeAddon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ac, err := s.connSvc.GetActiveArgocdClient()
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
-		return
-	}
-
-	git, err := s.connSvc.GetActiveGitProvider()
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
-		return
-	}
-
+	// V124-4.5 (BUG-019 class): decode + validate body BEFORE upstream call.
 	var req struct {
 		Version string `json:"version"`
 		Cluster string `json:"cluster"`
@@ -63,6 +52,18 @@ func (s *Server) handleUpgradeAddon(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Version == "" {
 		writeError(w, http.StatusBadRequest, "version is required")
+		return
+	}
+
+	ac, err := s.connSvc.GetActiveArgocdClient()
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
+		return
+	}
+
+	git, err := s.connSvc.GetActiveGitProvider()
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
 		return
 	}
 
@@ -135,18 +136,7 @@ func (s *Server) handleUpgradeAddonsBatch(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	ac, err := s.connSvc.GetActiveArgocdClient()
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
-		return
-	}
-
-	git, err := s.connSvc.GetActiveGitProvider()
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
-		return
-	}
-
+	// V124-4.5 (BUG-019 class): decode + validate body BEFORE upstream call.
 	var req struct {
 		Upgrades map[string]string `json:"upgrades"`
 	}
@@ -156,6 +146,18 @@ func (s *Server) handleUpgradeAddonsBatch(w http.ResponseWriter, r *http.Request
 	}
 	if len(req.Upgrades) == 0 {
 		writeError(w, http.StatusBadRequest, "at least one addon upgrade is required")
+		return
+	}
+
+	ac, err := s.connSvc.GetActiveArgocdClient()
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
+		return
+	}
+
+	git, err := s.connSvc.GetActiveGitProvider()
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
 		return
 	}
 

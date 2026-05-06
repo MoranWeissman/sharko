@@ -216,6 +216,13 @@ func (s *Server) handleSetActiveConnection(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	// V124-4.5: empty body would set ConnectionName="" and surface as a
+	// confusing 500 "connection \"\" not found" via writeServerError. Treat
+	// empty connection name as a 400 with a clear field-specific message.
+	if req.ConnectionName == "" {
+		writeError(w, http.StatusBadRequest, "connection_name is required")
+		return
+	}
 
 	if err := s.connSvc.SetActive(req.ConnectionName); err != nil {
 		writeServerError(w, http.StatusInternalServerError, "set_active_connection", err)

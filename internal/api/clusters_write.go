@@ -47,19 +47,11 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ac, err := s.connSvc.GetActiveArgocdClient()
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
-		return
-	}
-
-	// Tier 1: operational action — service token + co-author trailer.
-	ctx, git, _, err := s.GitProviderForTier(r.Context(), r, audit.Tier1)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
-		return
-	}
-
+	// V124-4.5 (BUG-019 class): decode + validate request body BEFORE any
+	// upstream call. Pre-V124-4 the handler resolved ArgoCD + Git provider
+	// connections first, so an empty body burned external API quota and
+	// returned a confusing upstream-error message instead of the field-
+	// specific validation message.
 	var req orchestrator.RegisterClusterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
@@ -71,6 +63,19 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 	}
 	if !validClusterNameRe.MatchString(req.Name) {
 		writeError(w, http.StatusBadRequest, "invalid cluster name: must be alphanumeric with hyphens, starting with alphanumeric")
+		return
+	}
+
+	ac, err := s.connSvc.GetActiveArgocdClient()
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
+		return
+	}
+
+	// Tier 1: operational action — service token + co-author trailer.
+	ctx, git, _, err := s.GitProviderForTier(r.Context(), r, audit.Tier1)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
 		return
 	}
 
