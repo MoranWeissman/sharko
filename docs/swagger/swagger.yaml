@@ -3357,6 +3357,11 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "503":
+          description: Credentials provider not configured (V124-4.1)
+          schema:
+            additionalProperties: true
+            type: object
       security:
       - BearerAuth: []
       summary: Register cluster
@@ -3929,6 +3934,11 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "503":
+          description: Credentials provider not configured (V124-4.1)
+          schema:
+            additionalProperties: true
+            type: object
       security:
       - BearerAuth: []
       summary: Refresh cluster credentials
@@ -3961,13 +3971,13 @@ paths:
           schema:
             additionalProperties: true
             type: object
-        "501":
-          description: Provider not configured
+        "502":
+          description: Gateway error
           schema:
             additionalProperties: true
             type: object
-        "502":
-          description: Gateway error
+        "503":
+          description: Credentials provider not configured (V124-4.1)
           schema:
             additionalProperties: true
             type: object
@@ -4003,13 +4013,13 @@ paths:
           schema:
             additionalProperties: true
             type: object
-        "501":
-          description: Provider not configured
+        "502":
+          description: Gateway error
           schema:
             additionalProperties: true
             type: object
-        "502":
-          description: Gateway error
+        "503":
+          description: Credentials provider not configured (V124-4.1)
           schema:
             additionalProperties: true
             type: object
@@ -4217,13 +4227,13 @@ paths:
           schema:
             additionalProperties: true
             type: object
-        "501":
-          description: Provider not configured
+        "502":
+          description: Gateway error
           schema:
             additionalProperties: true
             type: object
-        "502":
-          description: Gateway error
+        "503":
+          description: Credentials provider not configured (V124-4.1)
           schema:
             additionalProperties: true
             type: object
@@ -4270,6 +4280,11 @@ paths:
             type: object
         "502":
           description: Gateway error
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Credentials provider not configured (V124-4.1)
           schema:
             additionalProperties: true
             type: object

@@ -35,6 +35,7 @@ var validClusterNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]*$`)
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 409 {object} map[string]interface{} "Cluster already exists"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
+// @Failure 503 {object} map[string]interface{} "Credentials provider not configured (V124-4.1)"
 // @Router /clusters [post]
 // handleRegisterCluster handles POST /api/v1/clusters — register a new cluster.
 func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
@@ -42,7 +43,7 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.credProvider == nil {
-		writeError(w, http.StatusNotImplemented, "secrets provider not configured")
+		writeMissingProviderError(w)
 		return
 	}
 
@@ -386,6 +387,7 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 404 {object} map[string]interface{} "Cluster not found"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
+// @Failure 503 {object} map[string]interface{} "Credentials provider not configured (V124-4.1)"
 // @Router /clusters/{name}/refresh [post]
 // handleRefreshClusterCredentials handles POST /api/v1/clusters/{name}/refresh.
 func (s *Server) handleRefreshClusterCredentials(w http.ResponseWriter, r *http.Request) {
@@ -399,7 +401,7 @@ func (s *Server) handleRefreshClusterCredentials(w http.ResponseWriter, r *http.
 	}
 
 	if s.credProvider == nil {
-		writeError(w, http.StatusNotImplemented, "secrets provider not configured")
+		writeMissingProviderError(w)
 		return
 	}
 

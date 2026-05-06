@@ -2658,6 +2658,13 @@ const docTemplate = `{
                             "type": "object",
                             "additionalProperties": true
                         }
+                    },
+                    "503": {
+                        "description": "Credentials provider not configured (V124-4.1)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
                     }
                 }
             }
@@ -2765,15 +2772,15 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     },
-                    "501": {
-                        "description": "Provider not configured",
+                    "502": {
+                        "description": "Gateway error",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
                     },
-                    "502": {
-                        "description": "Gateway error",
+                    "503": {
+                        "description": "Credentials provider not configured (V124-4.1)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -2843,6 +2850,13 @@ const docTemplate = `{
                     },
                     "502": {
                         "description": "Gateway error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "Credentials provider not configured (V124-4.1)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -3735,6 +3749,13 @@ const docTemplate = `{
                             "type": "object",
                             "additionalProperties": true
                         }
+                    },
+                    "503": {
+                        "description": "Credentials provider not configured (V124-4.1)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
                     }
                 }
             }
@@ -3785,15 +3806,15 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     },
-                    "501": {
-                        "description": "Provider not configured",
+                    "502": {
+                        "description": "Gateway error",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
                     },
-                    "502": {
-                        "description": "Gateway error",
+                    "503": {
+                        "description": "Credentials provider not configured (V124-4.1)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -3848,15 +3869,15 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     },
-                    "501": {
-                        "description": "Provider not configured",
+                    "502": {
+                        "description": "Gateway error",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
                     },
-                    "502": {
-                        "description": "Gateway error",
+                    "503": {
+                        "description": "Credentials provider not configured (V124-4.1)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true

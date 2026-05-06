@@ -30,7 +30,7 @@ type discoverClusterEntry struct {
 // @Security BearerAuth
 // @Success 200 {object} map[string]interface{} "Available clusters"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
-// @Failure 501 {object} map[string]interface{} "Provider not configured"
+// @Failure 503 {object} map[string]interface{} "Credentials provider not configured (V124-4.1)"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
 // @Router /clusters/available [get]
 // handleDiscoverClusters handles GET /api/v1/clusters/available — list provider clusters
@@ -40,7 +40,7 @@ func (s *Server) handleDiscoverClusters(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if s.credProvider == nil {
-		writeError(w, http.StatusNotImplemented, "secrets provider not configured")
+		writeMissingProviderError(w)
 		return
 	}
 

@@ -1391,4 +1391,39 @@ func writeUpstreamError(w http.ResponseWriter, op string, err error) {
 	writeServerError(w, classifyUpstreamError(err), op, err)
 }
 
+// writeMissingProviderError is the canonical response for write/discover
+// endpoints whose backing credentials provider is not configured at runtime.
+//
+// V124-4.1 / BUG-018 fix: prior code returned `501 Not Implemented` with a
+// body of just `{"error":"secrets provider not configured"}`. That was
+// misleading on two axes:
+//
+//  1. 501 is reserved by RFC 9110 for "server does not support the
+//     functionality required to fulfil the request" — i.e. the endpoint
+//     itself is missing. Sharko's cluster CRUD endpoint IS implemented; what
+//     is missing is the operational prerequisite (credentials provider).
+//     Operators reading a 501 reasonably concluded "this endpoint is a
+//     stub, file a feature request" instead of "I need to configure a
+//     provider via Settings → Connections".
+//  2. The empty body offered no actionable next step. Operators had to
+//     grep server logs to discover that the absent piece was the secrets
+//     provider, and even then could not tell from the error whether the
+//     fix was via the UI, env vars, or a Helm value.
+//
+// 503 Service Unavailable is the correct status: the endpoint exists, the
+// resource (cluster CRUD) is temporarily unavailable because a precondition
+// is unmet, and the operator can fix it themselves. The response body
+// surfaces a structured `hint` field pointing at the standard configuration
+// flows so the UI / CLI can render an actionable message without parsing
+// English text.
+//
+// Used by every handler that calls `s.credProvider == nil` early-return.
+func writeMissingProviderError(w http.ResponseWriter) {
+	writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+		"error": "credentials provider is not configured",
+		"code":  "provider_not_configured",
+		"hint":  "configure a secrets provider via Settings → Connections (UI), or POST /api/v1/connections/ with provider config (API)",
+	})
+}
+
 // v1.39.3 route fix

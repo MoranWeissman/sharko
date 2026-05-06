@@ -22,7 +22,7 @@ import (
 // @Success 200 {object} map[string]interface{} "Cluster secrets"
 // @Failure 400 {object} map[string]interface{} "Bad request"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
-// @Failure 501 {object} map[string]interface{} "Provider not configured"
+// @Failure 503 {object} map[string]interface{} "Credentials provider not configured (V124-4.1)"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
 // @Router /clusters/{name}/secrets [get]
 func (s *Server) handleListClusterSecrets(w http.ResponseWriter, r *http.Request) {
@@ -35,7 +35,7 @@ func (s *Server) handleListClusterSecrets(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if s.credProvider == nil {
-		writeError(w, http.StatusNotImplemented, "secrets provider not configured")
+		writeMissingProviderError(w)
 		return
 	}
 
@@ -101,7 +101,7 @@ func (s *Server) handleListClusterSecrets(w http.ResponseWriter, r *http.Request
 // @Success 200 {object} map[string]interface{} "Secrets refreshed"
 // @Failure 400 {object} map[string]interface{} "Bad request"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
-// @Failure 501 {object} map[string]interface{} "Provider not configured"
+// @Failure 503 {object} map[string]interface{} "Credentials provider not configured (V124-4.1)"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
 // @Router /clusters/{name}/secrets/refresh [post]
 func (s *Server) handleRefreshClusterSecrets(w http.ResponseWriter, r *http.Request) {
@@ -114,7 +114,7 @@ func (s *Server) handleRefreshClusterSecrets(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if s.credProvider == nil {
-		writeError(w, http.StatusNotImplemented, "secrets provider not configured")
+		writeMissingProviderError(w)
 		return
 	}
 

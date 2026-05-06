@@ -25,6 +25,7 @@ import (
 // @Failure 400 {object} map[string]interface{} "Bad request"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
+// @Failure 503 {object} map[string]interface{} "Credentials provider not configured (V124-4.1)"
 // @Router /clusters/batch [post]
 // handleBatchRegisterClusters handles POST /api/v1/clusters/batch — register multiple clusters.
 func (s *Server) handleBatchRegisterClusters(w http.ResponseWriter, r *http.Request) {
@@ -32,7 +33,7 @@ func (s *Server) handleBatchRegisterClusters(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if s.credProvider == nil {
-		writeError(w, http.StatusNotImplemented, "secrets provider not configured")
+		writeMissingProviderError(w)
 		return
 	}
 
