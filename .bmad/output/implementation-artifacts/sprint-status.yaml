@@ -1,5 +1,5 @@
 # generated: 2026-04-20
-# last_updated: 2026-05-02 — v1.24 hotfix bundle planned (V124-2 epic, 9 stories backlog) from Track A personal smoke pass against v1.23.0-pre.0 demo image. PR-A (3 highs) → PR-B (UX) → PR-C (docs) on dev/v1.24-hotfix.
+# last_updated: 2026-05-06 — V124-3 cleanup epic shipped (10/11 stories done; only V124-3.5 --server-persistent-flag deferred). PR #319 open against main (CI green). Track B re-smoke (B.1-B.4) surfaced 4 NEW write-endpoint validation bugs (BUG-017/018/019/020) + class-of-bug pattern → V124-4 epic added below to stack on dev/v1.24-cleanup. After V124-4 lands: resume Track B B.5-B.9 → merge PR #319 → cut v1.24.0-pre.0.
 # project: sharko
 # project_key: NOKEY
 # tracking_system: file-system
@@ -40,7 +40,7 @@
 # - Tagging: NO tags cut reflexively — merge PRs to main when green; tag only when user explicitly asks (see feedback_release_cadence.md)
 
 generated: 2026-04-20
-last_updated: 2026-04-27 (Epic V123-3 CLOSED 5/5 — V123-3.5 in review)
+last_updated: 2026-05-06 (V124-3 cleanup 10/11 shipped; V124-4 write-endpoint validation hotfix opened — stacking on dev/v1.24-cleanup → PR #319)
 project: sharko
 project_key: NOKEY
 tracking_system: file-system
@@ -206,19 +206,65 @@ development_status:
   epic-V124-1-retrospective: optional
 
   # Epic V124-2: Personal smoke-pass hotfix bundle — 7 bugs + 2 doc fixes
-  # Discovered during Track A demo-mode smoke pass on 2026-05-01/02 against
-  # ghcr.io/moranweissman/sharko:1.23.0-pre.0. PR-bundle plan: PR-A (highs:
-  # 2.2+2.5+2.6) → PR-B (UX: 2.1+2.3+2.4) → PR-C (docs: 2.7+2.8+2.9). All
-  # target dev/v1.24-hotfix branch off main. After merge: re-run Track A to
-  # verify, then proceed to Track B (kind+ArgoCD).
-  epic-V124-2: backlog
-  V124-2-1-login-footer-hardcoded-version: backlog
-  V124-2-2-clusters-500-on-missing-managed-clusters-yaml: backlog
-  V124-2-3-cluster-page-blank-after-error-transient: backlog
-  V124-2-4-cli-connection-error-no-server-hint: backlog
-  V124-2-5-cli-docker-image-mkdir-sharko-permission-denied: backlog
-  V124-2-6-sharko-login-leaks-raw-tty-mode-on-error-path: backlog
-  V124-2-7-personal-smoke-runbook-cli-command-list-wrong: backlog
-  V124-2-8-testing-guide-missing-hurl-install-instructions: backlog
-  V124-2-9-personal-smoke-runbook-host-vs-container-localhost-gotcha: backlog
+  # SHIPPED 2026-05-05 via PR #318 squash-merged to main. Two passes:
+  #   Pass 1 (V124-2.1..2.9): Track A discovery fixes — committed via PR-A/B/C
+  #   Pass 2 (V124-2.10..2.15): adversarial code-review follow-ups — 1B+3H+1M+1doc
+  # Track A re-smoke against pr-318 image confirmed all 7 user-facing bugs closed.
+  epic-V124-2: done
+  V124-2-1-login-footer-hardcoded-version: done
+  V124-2-2-clusters-500-on-missing-managed-clusters-yaml: done
+  V124-2-3-cluster-page-blank-after-error-transient: done
+  V124-2-4-cli-connection-error-no-server-hint: done
+  V124-2-5-cli-docker-image-mkdir-sharko-permission-denied: done
+  V124-2-6-sharko-login-leaks-raw-tty-mode-on-error-path: done
+  V124-2-7-personal-smoke-runbook-cli-command-list-wrong: done
+  V124-2-8-testing-guide-missing-hurl-install-instructions: done
+  V124-2-9-personal-smoke-runbook-host-vs-container-localhost-gotcha: done
+  # V124-2-FIX: review-driven follow-up addressing 1B+3H+1M+1doc from PR#318 adversarial code review
+  V124-2-10-generalize-writeservererror-sweep-503-sites: done
+  V124-2-11-toctou-symlink-guard-on-tmp-sharko-fallback: done
+  V124-2-12-isgitfilenotfound-error-type-matching: done
+  V124-2-13-tty-restore-behavioral-test: done
+  V124-2-14-bail-on-term-getstate-failure: done
+  V124-2-15-prune-stale-doc-admonitions: done
   epic-V124-2-retrospective: optional
+
+  # Epic V124-3: Cleanup epic — deferred mediums + Track A bug + Track B test-infra + UX rot
+  # SHIPPED 10/11 stories on dev/v1.24-cleanup (PR #319 open against main, CI green).
+  # Only V124-3.5 (--server persistent flag, BUG-010) deferred — Track A finding, not blocker.
+  # Track B re-smoke (B.1-B.4) on 2026-05-06 surfaced V124-4 bugs → stacking V124-4 on same branch.
+  epic-V124-3: in-progress
+  # PR-A — test infrastructure (CRITICAL PATH for Track B re-run)
+  V124-3-6-setup-sh-server-side-apply-for-argocd-crds: done                 # BUG-011 — commit 95b51cad
+  V124-3-7-e2e-suite-env-var-credentials: done                              # BUG-014 — commit 95b51cad
+  # PR-B — operator UX (HIGH severity, biggest user-visible bug from Track B)
+  V124-3-8-bootstrap-admin-credential-visibility-and-helm-value: done       # BUG-013 — commit 2c745fff + 09a838ae
+  # PR-C — runbook honesty (HIGH for new operators)
+  V124-3-9-rewrite-track-b-runbook-by-execution: done                       # BUG-015 — commit 20a88633
+  V124-3-10-runbook-admin-admin-only-in-demo-mode-callout: done             # BUG-012 — commit 3461f037
+  V124-3-11-verified-by-execution-header-on-all-runbooks: done              # BUG-016 — commit df10af80
+  # PR-D — CLI + API correctness (MED severity)
+  V124-3-5-cli-server-flag-promote-to-persistent-rootcmd: backlog           # BUG-010 — DEFERRED (Track A finding, not blocker; revisit post-V124-4)
+  V124-3-2-writeservererror-upstream-error-classification-502-504-429: done # M2 extended — commit 55748a71
+  V124-3-3-connections-validation-errors-classified-as-400-not-500: done    # M4 — commit fc1b9b5e (established ErrValidation pattern that V124-4 extends)
+  # PR-E — UI polish (MED severity)
+  V124-3-1-react-setstate-updater-anti-pattern-clustersoverview: done       # M1 — commit 69337754
+  V124-3-4-axe-core-test-for-errorboundary-recovery-path: done              # M5 — commit 0e016b7f
+  # PR-F — Lows bundle (LOW priority)
+  V124-3-99-low-bundle: done                                                # commits fda16340 (L8) + a6e6bbeb (L11) + 8b1d3b27 (L4+L5)
+  epic-V124-3-retrospective: optional
+
+  # Epic V124-4: Write-endpoint validation hotfix bundle
+  # Track B re-smoke (B.1-B.4) on 2026-05-06 surfaced 4 new validation bugs + class-of-bug pattern.
+  # Only POST /users today returns 400 on empty body (gold standard); all other write endpoints
+  # either persist garbage (BUG-017), call upstream-before-validation (BUG-019), silent-success
+  # (BUG-020), or stub-501 (BUG-018). V124-4 reifies the V124-3.3 ErrValidation pattern across
+  # the entire write-endpoint surface. Single PR-bundle, stacked on dev/v1.24-cleanup (extends
+  # PR #319 — does NOT open new PR). After V124-4 lands: resume Track B B.5-B.9 → merge PR #319.
+  epic-V124-4: backlog
+  V124-4-1-investigate-bug-018-clusters-post-501-intent: backlog            # BUG-018 — wire handler OR change to 405 with body
+  V124-4-2-bug-017-connections-required-field-validation: backlog           # BUG-017 — POST + PUT + skip-on-load defensive
+  V124-4-3-bug-019-addons-validate-before-upstream-call: backlog            # BUG-019 — fix resource-leak pattern
+  V124-4-4-bug-020-notifications-providers-validation: backlog              # BUG-020 — investigate semantics first
+  V124-4-5-class-of-bug-sweep-all-write-endpoints: backlog                  # systemic — apply ErrValidation pattern uniformly + audit table
+  epic-V124-4-retrospective: optional
