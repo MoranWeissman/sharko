@@ -709,6 +709,30 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("DELETE /api/v1/users/{username}", srv.handleDeleteUser)
 	mux.HandleFunc("POST /api/v1/users/{username}/reset-password", srv.handleResetPassword)
 
+	// V124-4.4 / BUG-020: catch-all for unknown /api/v1/* paths.
+	//
+	// Pre-V124-4 the SPA catch-all below served index.html for any path not
+	// matched by a more specific route. That swallowed mistyped or removed
+	// API paths into the SPA — the symptom that surfaced as `POST
+	// /api/v1/notifications/providers → 200 OK` (HTML body) in V124 Track B
+	// re-smoke (B.4), with the smoke runner reading "200" as a passing
+	// validation case.
+	//
+	// Registering a literal `/api/v1/` prefix BEFORE the SPA catch-all
+	// (Go 1.22+ ServeMux longest-match semantics) ensures every unmatched
+	// API path returns a structured 404 JSON the smoke runner / UI / CLI
+	// can detect deterministically. Real API routes are registered above
+	// with method+path patterns that win the match by specificity.
+	mux.HandleFunc("/api/v1/", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusNotFound, map[string]string{
+			"error":  "API endpoint not found",
+			"code":   "endpoint_not_found",
+			"path":   r.URL.Path,
+			"method": r.Method,
+			"hint":   "see /swagger/index.html for the supported API surface",
+		})
+	})
+
 	// Static files (SPA)
 	if staticFS != nil {
 		fileServer := http.FileServer(http.FS(staticFS))
