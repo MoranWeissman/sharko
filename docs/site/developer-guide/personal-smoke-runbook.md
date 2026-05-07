@@ -1,6 +1,6 @@
 # Personal Smoke Runbook
 
-> **Verified:** Last executed end-to-end on 2026-05-06 against image `sharko:runbook-verify` built locally from commit `95b51cad` (dev/v1.24-cleanup, V124-3.6+3.7+3.8 merged). Track A demo flow + Track B B.1–B.7 walked in full; Track B B.8 (Git connect → init → register cluster → addon → ArgoCD sync) requires a real GitHub PAT and was not executed during this verification — it is marked with a warning in the section itself.
+> **Verified:** The mechanical Track A + Track B B.1–B.6 portions were last executed end-to-end on 2026-05-07 by `scripts/dev-rebuild.sh` + `scripts/smoke.sh` against image `sharko:e2e` built from commit `60ed8a9d` (dev/v1.24-cleanup tip — V124-4.1/.2/.3/.4/.5 merged). 47/47 PASS in 5 s of script time. The hand-walked baseline that the scripts encode was last executed end-to-end on 2026-05-06 against image `sharko:runbook-verify` built locally from commit `95b51cad` (dev/v1.24-cleanup, V124-3.6+3.7+3.8 merged); Track B B.7 (ArgoCD UI) was walked manually then. Track B B.8 (Git connect → init → register cluster → addon → ArgoCD sync) requires a real GitHub PAT and remains script-exempt — it is marked with a warning in the section itself.
 
 A hands-on, checkbox-driven smoke pass for the Sharko maintainer. This is **not** a reference doc — it's a list you literally check off, top to bottom, while running the product yourself.
 
@@ -65,6 +65,9 @@ Three steps, every time. This is the minimum payload that makes a bug actionable
 # Track A — Demo mode (Layer 5)
 
 Self-contained, no cluster, no Helm. Boots in under 5 seconds. Use this to find the cheap bugs first.
+
+!!! tip "Now automated by `scripts/smoke.sh`"
+    The mechanical CLI + API sweep portions of Track A (A.4 API checklist + A.6 CLI sweep) are codified in `scripts/smoke.sh`. After `source scripts/dev-rebuild.sh` populates `$ADMIN_PW` and `$TOKEN`, running `./scripts/smoke.sh` walks the same set of checks against your kind cluster in ~30 seconds. The manual steps below remain for understanding/troubleshooting and for the human-only portions (A.5 UI sweep). See [Automation scripts](#automation-scripts) at the bottom of this doc.
 
 !!! warning "`admin/admin` is demo-mode only"
     Track A uses `admin/admin` because the demo container ships pre-seeded with that credential — it's a fixed-string default for friction-free local runs only. **Real Helm installs do NOT accept `admin/admin`.** They generate a random bootstrap password on first start (or accept an operator-supplied one). For real K8s installs see [Initial Credentials](../operator/installation.md#initial-credentials) in the operator install guide, and walk Track B (which uses the real bootstrap flow) instead.
@@ -445,6 +448,14 @@ The container ships the `sharko` binary; `--help` should respond on every subcom
 # Track B — Kind + ArgoCD (Layer 6)
 
 Real K8s, real ArgoCD, real Helm chart. Catches integration bugs that Track A cannot. Budget 60–90 minutes; first run pulls a few GB of images.
+
+!!! tip "Now automated by `scripts/dev-rebuild.sh` + `scripts/smoke.sh`"
+    Track B sections B.1 (prereqs check), B.2 (kind + Helm rebuild), B.3 (port-forward + health), B.4 (extract bootstrap admin credential + login), and B.5 (API sweep + V124-4 regression pins + Go E2E suite) are codified into two scripts:
+
+    1. `source scripts/dev-rebuild.sh` — `docker build → kind load → kubectl rollout restart` and exports `$ADMIN_PW` + `$TOKEN`.
+    2. `./scripts/smoke.sh` — runs the CLI sweep, API sweep, V124-4 regression pins (BUG-017/18/19/20), and the Go E2E suite under build tag `e2e`.
+
+    Total runtime ~30 s on a warm machine after the first build. The manual steps below remain for understanding/troubleshooting and for the human-only portions (**B.7 ArgoCD UI**, **B.8 deep flow with real GitHub PAT**) which the scripts intentionally do not automate. See [Automation scripts](#automation-scripts) at the bottom of this doc.
 
 !!! info "Verified by execution"
     Every command in Track B was personally executed end-to-end on **2026-05-06** against a kind cluster built from this commit, with ArgoCD `stable` manifests and a locally-built Sharko image. Outputs shown in **Observed:** lines are the actual outputs captured during that run. The previous version of this section was authored by reading code without execution and shipped four wrong commands; see [BUG-015](#bug-log-template) for the postmortem.
@@ -954,9 +965,58 @@ Pre-seeded entries from today's pass — verify these and update status:
 
 ---
 
+# Automation scripts
+
+Two helper scripts codify the mechanical portions of the runbook so re-smoke takes ~30 seconds of script time + your UI sweep. They live in `scripts/` and are intentionally distinct from `scripts/upgrade.sh` (which targets the released-Helm-chart flow, not the local-build flow).
+
+## `scripts/dev-rebuild.sh` — kind local-build inner-loop
+
+Replaces the hand sequence at the top of Track B (B.2 → B.4):
+
+```bash
+source scripts/dev-rebuild.sh    # exports $ADMIN_PW and $TOKEN into your shell
+./scripts/dev-rebuild.sh         # prints the export commands instead
+./scripts/dev-rebuild.sh -h      # show built-in help
+```
+
+Pipeline (six steps): pre-flight → `docker build` → `kind load` → `kubectl rollout restart` → bootstrap-password extraction → port-forward + login.
+
+**V124-3.8 gotcha (read this once, then forget it):** the bootstrap admin password is logged to the pod's stdout exactly ONCE, on first install. Subsequent `rollout restart` cycles do NOT re-emit it. The script handles this by:
+
+1. Polling the new pod's logs (first install case).
+2. Falling back to the previous pod's logs (`kubectl logs --previous`).
+3. Falling back to a cache file (`~/.sharko-dev-pw`, override with `SHARKO_DEV_PW_CACHE`).
+4. If all three fail, printing recovery instructions (`helm uninstall + tests/e2e/setup.sh`).
+
+The cache file is written 0600 on first successful extraction.
+
+Configurable via env: `KIND_CLUSTER_NAME` (default `sharko-e2e`), `SHARKO_NAMESPACE` (`sharko`), `SHARKO_LOCAL_PORT` (`8080`), `IMAGE_TAG` (`e2e`).
+
+## `scripts/smoke.sh` — Track A + Track B mechanical sweep
+
+Replaces Track A's A.4 + A.6 and Track B's B.5 + B.6:
+
+```bash
+./scripts/smoke.sh        # concise output, exit 0 if all pass else 1
+./scripts/smoke.sh -v     # verbose: full curl bodies on failure + go test -v
+./scripts/smoke.sh -h     # show built-in help
+```
+
+Five sequential phases, all PASS/FAIL with an exit code:
+
+1. **Pre-flight** — kubectl context, deployment availability, port-forward, `/api/v1/health` 200.
+2. **CLI sweep** — discovers cobra subcommands by exec'ing `sharko --help` in the pod, then runs `--help` on each one.
+3. **API sweep** — read endpoints that should always 200 on a fresh cluster (no Git connection needed): `/health`, `/config`, `/audit`, `/repo/status`, `/users/me`, `/fleet/status`, `/notifications`, `/catalog/addons`, `/catalog/sources`, `/providers`. Asserts 200 + valid JSON + expected top-level key.
+4. **V124-4 regression pins** — POSTs the four write endpoints from the V124-4 fix bundle with empty `{}` bodies and asserts the post-fix status codes (BUG-017 → 400, BUG-018 → 503, BUG-019 → 400, BUG-020 → 404 with `code=endpoint_not_found`). Each check carries the BUG ID for traceability back to the relevant commit.
+5. **Go E2E suite** — runs `go test -tags e2e ./tests/e2e/...` with `SHARKO_E2E_USERNAME=admin` + `SHARKO_E2E_PASSWORD=$ADMIN_PW`.
+
+The script intentionally does NOT automate B.7 (ArgoCD UI) or B.8 (the deep Git → init → register → addon → sync flow) — those need human eyes and a real GitHub PAT.
+
 # Cross-reference
 
 - [Testing Guide](testing-guide.md) — the reference doc this runbook complements (test layers, patterns, command cheatsheet)
 - [Catalog Scan Runbook](catalog-scan-runbook.md) — the operational doc for the daily scanner bot
-- `tests/e2e/setup.sh` and `tests/e2e/teardown.sh` — the scripts Track B leans on
+- `scripts/dev-rebuild.sh` and `scripts/smoke.sh` — the maintainer-DX automation described above (V124-5)
+- `scripts/upgrade.sh` — the released-Helm-chart upgrade verifier (different flow, do not confuse)
+- `tests/e2e/setup.sh` and `tests/e2e/teardown.sh` — the scripts Track B leans on for cluster bringup/teardown
 - `internal/api/router.go` — source of truth for which routes actually exist (don't guess paths from memory)
