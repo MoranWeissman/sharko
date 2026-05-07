@@ -688,6 +688,20 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 		}
 		srv.handleLogin(w, r)
 	})
+
+	// Stale dead-route stub (V124-6.1 / BUG-021).
+	//
+	// `/api/v1/login` was never registered, but unauthenticated POSTs to it
+	// were absorbed by basicAuthMiddleware and returned 401 — making the
+	// path look like a real auth-protected endpoint. The maintainer's
+	// 2026-05-08 walkthrough hit this and reported "401 in 146µs" which
+	// was indistinguishable from a real-route auth failure.
+	//
+	// Returning an explicit 404 with a hint pointing to /api/v1/auth/login
+	// (the actual route — see handleLogin) eliminates the false-positive.
+	// basicAuthMiddleware skips auth for this path so the 404 actually
+	// reaches the client (see /api/v1/login carve-out below).
+	mux.HandleFunc("POST /api/v1/login", srv.handleStaleLoginRoute)
 	mux.HandleFunc("POST /api/v1/auth/logout", srv.handleLogout)
 	mux.HandleFunc("POST /api/v1/auth/update-password", srv.handleUpdatePassword)
 	mux.HandleFunc("POST /api/v1/auth/hash", srv.handleHashPassword)
@@ -1012,6 +1026,27 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"token": token, "username": req.Username, "role": role})
 }
 
+// handleStaleLoginRoute serves the dead `/api/v1/login` path with an explicit
+// 404 + hint pointing at the real `/api/v1/auth/login` endpoint
+// (V124-6.1 / BUG-021).
+//
+// History: nothing in the codebase, scripts, CLI, UI, or docs uses
+// `/api/v1/login` — verified via repo-wide grep on 2026-05-08. The path was
+// never registered, but unauthenticated POSTs to it were absorbed by
+// basicAuthMiddleware and returned 401, which looked like a real
+// auth-protected endpoint to operators tracing through. Returning 404 with
+// a clear hint disambiguates "wrong path" from "wrong creds".
+//
+// The `/api/v1/login` path is also added to the basicAuthMiddleware skip
+// list so this handler — not the 401 response — is what the client sees.
+func (s *Server) handleStaleLoginRoute(w http.ResponseWriter, r *http.Request) {
+	slog.Warn("client hit dead /api/v1/login route — real endpoint is /api/v1/auth/login (V124-6.1 / BUG-021)",
+		"path", r.URL.Path,
+		"client_ip", clientIP(r),
+	)
+	writeError(w, http.StatusNotFound, "endpoint not found — did you mean POST /api/v1/auth/login?")
+}
+
 // handleLogout godoc
 //
 // @Summary Logout
@@ -1071,8 +1106,10 @@ func (s *Server) basicAuthMiddleware(next http.Handler) http.Handler {
 
 		path := r.URL.Path
 
-		// Skip auth for: health, login, git webhooks (signature-verified), static files
-		if path == "/api/v1/health" || path == "/api/v1/auth/login" || path == "/api/v1/webhooks/git" || !strings.HasPrefix(path, "/api/") {
+		// Skip auth for: health, login, git webhooks (signature-verified), static files.
+		// /api/v1/login is the V124-6.1 dead-route stub — it must reach handleStaleLoginRoute
+		// so we return a clean 404 instead of swallowing the request as a 401 here.
+		if path == "/api/v1/health" || path == "/api/v1/auth/login" || path == "/api/v1/login" || path == "/api/v1/webhooks/git" || !strings.HasPrefix(path, "/api/") {
 			next.ServeHTTP(w, r)
 			return
 		}
