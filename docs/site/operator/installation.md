@@ -75,7 +75,34 @@ Sharko ships with a single bootstrap `admin` user. There are three ways to set t
 
 ### 1. Auto-generated (default)
 
-If you set neither `bootstrapAdmin.password` nor `bootstrapAdmin.existingSecret.name`, Sharko generates a random 16-character password on first install. The credential is logged ONCE to the pod's stdout in a clearly-marked block:
+If you set neither `bootstrapAdmin.password` nor `bootstrapAdmin.existingSecret.name`, Sharko generates a random 16-character password on first install. There are then three ways to retrieve it:
+
+#### (a) Dedicated `sharko-initial-admin-secret` (recommended for production)
+
+Sharko writes a dedicated Secret carrying the plaintext bootstrap password — mirrors ArgoCD's `argocd-initial-admin-secret` pattern. Retrieve with:
+
+```bash
+kubectl get secret sharko-initial-admin-secret -n sharko \
+  -o jsonpath='{.data.password}' | base64 -d
+```
+
+The Secret is labeled `app.kubernetes.io/managed-by=sharko` and `app.kubernetes.io/component=bootstrap`, so you can also find it via:
+
+```bash
+kubectl get secret -n sharko -l app.kubernetes.io/component=bootstrap
+```
+
+After you have logged in and rotated the password (UI **Settings → Users → Change Password** or `kubectl exec -n sharko deploy/sharko -- sharko reset-admin`), Sharko deletes `sharko-initial-admin-secret` automatically — the bootstrap secret is no longer the source of truth, so it is removed to prevent reuse of the stale credential. Operators can also delete it manually at any time:
+
+```bash
+kubectl delete secret sharko-initial-admin-secret -n sharko
+```
+
+To opt out of the dedicated secret entirely (keep the plaintext only in transient pod logs), set `bootstrapAdmin.writeInitialSecret: false` in your values file.
+
+#### (b) Pod logs (always works as fallback)
+
+The credential is also logged ONCE to the pod's stdout in a clearly-marked block:
 
 ```bash
 kubectl logs -n sharko deployment/sharko | grep -A4 "BOOTSTRAP ADMIN"
@@ -90,16 +117,20 @@ This is the only time this credential will be shown. Store it securely.
 === END BOOTSTRAP ADMIN CREDENTIAL ===
 ```
 
-After logging, Sharko removes the marker from the Secret so the credential is never re-emitted on subsequent restarts. **Store the value somewhere durable immediately** (a password manager, your secrets vault).
+After logging, Sharko removes the marker from the Sharko Secret so the credential is never re-emitted on subsequent restarts. **Store the value somewhere durable immediately** (a password manager, your secrets vault).
 
-You can also retrieve the value directly from the Secret while it is still present (i.e. before the first successful pod start):
+#### (c) Sharko Secret marker (only works before first restart)
+
+You can also retrieve the value directly from the Sharko Secret while the `admin.initialPassword` key is still present (i.e. before the first successful pod start):
 
 ```bash
 kubectl get secret sharko -n sharko \
   -o jsonpath='{.data.admin\.initialPassword}' | base64 -d
 ```
 
-If you missed the log window AND the Secret no longer carries `admin.initialPassword`, run `kubectl exec -n sharko deployment/sharko -- sharko reset-admin` to mint a fresh password.
+#### Recovery path
+
+If you missed all three windows above (no dedicated secret because you opted out, log scrolled off, marker already deleted), run `kubectl exec -n sharko deployment/sharko -- sharko reset-admin` to mint a fresh random password. The reset command also deletes any stale `sharko-initial-admin-secret` so it doesn't outlive the rotated credential.
 
 ### 2. Operator-supplied inline (`bootstrapAdmin.password`)
 

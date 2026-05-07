@@ -98,6 +98,15 @@ rules:
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["create"]  # needed to create new secrets (resourceNames can't restrict create)
+  # V124-6.3 / BUG-023: dedicated bootstrap secret (mirrors ArgoCD's
+  # argocd-initial-admin-secret). Sharko writes it on auto-generated bootstrap
+  # and deletes it on `sharko reset-admin` so it doesn't outlive the rotated
+  # password. Get is needed for the idempotent create-or-update path; delete
+  # is needed for the rotation cleanup.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["sharko-initial-admin-secret"]
+    verbs: ["get", "update", "delete"]
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "list", "create", "update", "delete"]  # migration state stored in ConfigMaps

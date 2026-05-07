@@ -66,6 +66,19 @@ spec:
             - name: SHARKO_BOOTSTRAP_ADMIN_PASSWORD
               value: {{ $bootstrap.password | quote }}
             {{- end }}
+            {{- /*
+              V124-6.3 / BUG-023: surface bootstrapAdmin.writeInitialSecret as
+              SHARKO_WRITE_INITIAL_ADMIN_SECRET. Sharko reads this in
+              MaybeLogBootstrapCredential — when the env is "false" the
+              dedicated `sharko-initial-admin-secret` is NOT written. Default
+              (env unset or "true") writes the secret, mirroring ArgoCD's
+              argocd-initial-admin-secret behavior.
+              The toggle has no effect on the operator-supplied paths above.
+            */}}
+            {{- if hasKey $bootstrap "writeInitialSecret" }}
+            - name: SHARKO_WRITE_INITIAL_ADMIN_SECRET
+              value: {{ ternary "true" "false" $bootstrap.writeInitialSecret | quote }}
+            {{- end }}
             {{- if .Values.ai.enabled }}
             - name: AI_PROVIDER
               value: {{ .Values.ai.provider | quote }}

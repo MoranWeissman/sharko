@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/bcrypt"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -60,6 +61,24 @@ in the Sharko Secret, and prints the new password to stdout.`,
 
 		if _, err := clientset.CoreV1().Secrets(namespace).Update(ctx, secret, metav1.UpdateOptions{}); err != nil {
 			return fmt.Errorf("failed to update Secret: %w", err)
+		}
+
+		// V124-6.3 / BUG-023: delete the dedicated `sharko-initial-admin-secret`
+		// (mirrors ArgoCD's argocd-initial-admin-secret). On a password reset
+		// the bootstrap secret is no longer the source of truth and SHOULD be
+		// removed so operators don't accidentally reuse a stale credential.
+		// Idempotent: if the secret never existed (writeInitialSecret=false at
+		// install time, or operator already deleted it), this is a no-op.
+		const initialAdminSecretName = "sharko-initial-admin-secret"
+		if err := clientset.CoreV1().Secrets(namespace).Delete(ctx, initialAdminSecretName, metav1.DeleteOptions{}); err != nil {
+			if !errors.IsNotFound(err) {
+				// Non-fatal: the password reset succeeded. Log a warning so
+				// the operator knows to clean up the stale secret manually.
+				fmt.Fprintf(os.Stderr, "warning: failed to delete %s/%s after reset: %v\n",
+					namespace, initialAdminSecretName, err)
+			}
+		} else {
+			fmt.Printf("Deleted %s/%s (no longer the source of truth).\n", namespace, initialAdminSecretName)
 		}
 
 		fmt.Printf("Admin password has been reset.\n")
