@@ -1,5 +1,5 @@
 # generated: 2026-04-20
-# last_updated: 2026-05-06 — V124-3 cleanup epic shipped (10/11 stories done; only V124-3.5 --server-persistent-flag deferred). PR #319 open against main (CI green). Track B re-smoke (B.1-B.4) surfaced 4 NEW write-endpoint validation bugs (BUG-017/018/019/020) + class-of-bug pattern → V124-4 epic added below to stack on dev/v1.24-cleanup. After V124-4 lands: resume Track B B.5-B.9 → merge PR #319 → cut v1.24.0-pre.0.
+# last_updated: 2026-05-08 — V124-3 (10/11) + V124-4 (5/5) + V124-5 (2/2) shipped on dev/v1.24-cleanup at ce7185ba. PR #319 CI green. UI smoke testing surfaced 4 more issues: BUG-021 dead /api/v1/login route, BUG-022 V124-4.2 guard incomplete, BUG-023 ArgoCD-style initial-admin-secret missing, BUG-024 wizard resume header misleading. V124-6 cleanup epic opened to fix all 4, stacking on PR #319. After V124-6: resume UI testing on clean baseline → merge PR #319 → cut v1.24.0-pre.0.
 # project: sharko
 # project_key: NOKEY
 # tracking_system: file-system
@@ -40,7 +40,7 @@
 # - Tagging: NO tags cut reflexively — merge PRs to main when green; tag only when user explicitly asks (see feedback_release_cadence.md)
 
 generated: 2026-04-20
-last_updated: 2026-05-06 (V124-3 cleanup 10/11 shipped; V124-4 write-endpoint validation hotfix opened — stacking on dev/v1.24-cleanup → PR #319)
+last_updated: 2026-05-08 (V124-3 10/11 + V124-4 5/5 + V124-5 2/2 shipped at ce7185ba; V124-6 cleanup bundle opened for 4 UI-smoke findings — stacking on PR #319)
 project: sharko
 project_key: NOKEY
 tracking_system: file-system
@@ -262,9 +262,33 @@ development_status:
   # the entire write-endpoint surface. Single PR-bundle, stacked on dev/v1.24-cleanup (extends
   # PR #319 — does NOT open new PR). After V124-4 lands: resume Track B B.5-B.9 → merge PR #319.
   epic-V124-4: backlog
-  V124-4-1-investigate-bug-018-clusters-post-501-intent: backlog            # BUG-018 — wire handler OR change to 405 with body
-  V124-4-2-bug-017-connections-required-field-validation: backlog           # BUG-017 — POST + PUT + skip-on-load defensive
-  V124-4-3-bug-019-addons-validate-before-upstream-call: backlog            # BUG-019 — fix resource-leak pattern
-  V124-4-4-bug-020-notifications-providers-validation: backlog              # BUG-020 — investigate semantics first
-  V124-4-5-class-of-bug-sweep-all-write-endpoints: backlog                  # systemic — apply ErrValidation pattern uniformly + audit table
+  V124-4-1-investigate-bug-018-clusters-post-501-intent: done               # BUG-018 → Outcome C (503 + provider_not_configured) — commit 6d09a939
+  V124-4-2-bug-017-connections-required-field-validation: done              # BUG-017 — commit 1b5c0257
+  V124-4-3-bug-019-addons-validate-before-upstream-call: done               # BUG-019 — commit 3a5e504f
+  V124-4-4-bug-020-notifications-providers-validation: done                 # BUG-020 + bonus /api/v1/* catch-all — commit 2e1a6ad9
+  V124-4-5-class-of-bug-sweep-all-write-endpoints: done                     # ~60 endpoints audited, ~12 fixed — commit b618eba4
   epic-V124-4-retrospective: optional
+
+  # Epic V124-5: Maintainer DX tooling bundle
+  # Cut Track A/B re-smoke time from ~30 min orchestrator-runs-each-command to
+  # ~30 sec script + maintainer-runs-UI. Two scripts: dev-rebuild.sh (build+restart+
+  # auto-extract creds) and smoke.sh (Track A + B.1-B.5 automated). UI portion stays
+  # human per maintainer's explicit ask. Stacks on dev/v1.24-cleanup, extends PR #319.
+  epic-V124-5: backlog
+  V124-5-1-scripts-dev-rebuild-sh-build-restart-extract-creds: done         # commit 1db05f84
+  V124-5-2-scripts-smoke-sh-cli-api-e2e-automation: done                    # commit ce7185ba — agent ran 47/47 PASS in maintainer's live cluster
+  epic-V124-5-retrospective: optional
+
+  # Epic V124-6: Cleanup bundle from Track B UI smoke (2026-05-08)
+  # Maintainer's UI walkthrough surfaced 4 issues:
+  #   - BUG-021 dead /api/v1/login route (returns 401 instead of 404)
+  #   - BUG-022 V124-4.2 skip-on-load guard incomplete (caught empty-name only)
+  #   - BUG-023 ArgoCD-style sharko-initial-admin-secret missing (gap from V124-3.8)
+  #   - BUG-024 wizard "Step 4 of 4" header misleading in resume mode
+  # Stacks on dev/v1.24-cleanup, extends PR #319.
+  epic-V124-6: backlog
+  V124-6-1-bug-021-clean-up-dead-login-route: backlog                       # XS-S
+  V124-6-2-bug-022-extend-skip-on-load-guard-required-fields: backlog       # S
+  V124-6-3-bug-023-sharko-initial-admin-secret-argocd-style: backlog        # M (code + Helm + docs + sec-audit)
+  V124-6-4-bug-024-wizard-resume-mode-header-label: backlog                 # XS
+  epic-V124-6-retrospective: optional
