@@ -62,15 +62,27 @@ func (s *ConnectionService) List() (*models.ConnectionsListResponse, error) {
 
 	responses := make([]models.ConnectionResponse, 0, len(connections))
 	for _, c := range connections {
-		// V124-4.2 / BUG-017 defensive read-side guard. Pre-V124-4 the Create
-		// path persisted entries with an empty name on `POST {}` (no required-
-		// field validation). Those entries are now rejected at write time, but
-		// stores that already contain such garbage (e.g. the maintainer's demo
-		// cluster from the BUG-017 reproducer) would still surface them via
-		// List. We skip them here with a single warning per startup pass —
-		// no destructive on-disk migration, just a read-time filter.
-		if c.Name == "" {
-			slog.Warn("connection skipped: empty name (legacy garbage from pre-V124-4 store)",
+		// V124-4.2 / BUG-017 defensive read-side guard, broadened by V124-6.2 /
+		// BUG-022. Pre-V124-4 the Create path persisted entries with missing
+		// required fields on `POST {}`. Those are now rejected at write time
+		// (validateConnectionRequest), but stores that already contain such
+		// garbage (e.g. the maintainer's demo cluster from the BUG-017
+		// reproducer) would still surface them via List.
+		//
+		// V124-4.2 only checked `Name == ""`, which let through a record with
+		// a non-empty name but empty git.provider / repo identifiers — exactly
+		// the case the maintainer's 2026-05-08 walkthrough reproduced. We now
+		// run the full required-field check (mirrors the create-time validator
+		// — see validateConnection) and skip ANY connection missing a required
+		// field, with a structured log naming the missing fields so operators
+		// can diagnose without grep-archaeology.
+		//
+		// No destructive on-disk migration — pure read-time filter. A future
+		// operator-driven cleanup remains possible.
+		if missing := missingRequiredConnectionFields(c); len(missing) > 0 {
+			slog.Warn("connection skipped: required fields empty (legacy garbage from pre-V124-4 store)",
+				"name", c.Name,
+				"missing", missing,
 				"component", "connection-service")
 			continue
 		}
@@ -125,7 +137,8 @@ func (s *ConnectionService) Create(req models.CreateConnectionRequest) error {
 // minimum fields needed for a usable connection. All errors are wrapped with
 // ErrValidation so handlers surface them as 400 with the underlying message.
 //
-// Rules (V124-4.2 / BUG-017):
+// Rules (V124-4.2 / BUG-017, broadened internally by V124-6.2 / BUG-022 to
+// share the missing-fields helper with the read-side guard):
 //   - git.provider must be set (so we know which Git backend to use)
 //   - git.provider must be one of the supported values
 //   - either git.repo_url is set (parsed downstream) OR the per-provider
@@ -140,22 +153,94 @@ func (s *ConnectionService) Create(req models.CreateConnectionRequest) error {
 // saved connection before calling Create, so update-with-partial-body still
 // passes through this validator unchanged.
 func validateConnectionRequest(req models.CreateConnectionRequest) error {
-	if req.Git.Provider == "" {
-		return fmt.Errorf("git.provider is required (one of: github, azuredevops): %w", ErrValidation)
-	}
-	switch req.Git.Provider {
-	case models.GitProviderGitHub:
-		if req.Git.RepoURL == "" && (req.Git.Owner == "" || req.Git.Repo == "") {
-			return fmt.Errorf("git.repo_url or (git.owner + git.repo) is required for github provider: %w", ErrValidation)
-		}
-	case models.GitProviderAzureDevOps:
-		if req.Git.RepoURL == "" && (req.Git.Organization == "" || req.Git.Project == "" || req.Git.Repository == "") {
-			return fmt.Errorf("git.repo_url or (git.organization + git.project + git.repository) is required for azuredevops provider: %w", ErrValidation)
-		}
-	default:
+	// Reject unsupported provider explicitly so the operator gets the bad
+	// value echoed back. The general missing-fields helper handles empty +
+	// per-provider identifier checks.
+	if req.Git.Provider != "" &&
+		req.Git.Provider != models.GitProviderGitHub &&
+		req.Git.Provider != models.GitProviderAzureDevOps {
 		return fmt.Errorf("git.provider %q is not supported (must be one of: github, azuredevops): %w", req.Git.Provider, ErrValidation)
 	}
+
+	// Probe with a synthetic non-empty name. Create() auto-derives the name
+	// from owner/repo when the request name is empty or "default", so the
+	// create-time validator must NOT require Name to be set in the request.
+	// The read-side guard uses missingRequiredConnectionFields directly and
+	// DOES enforce the name check (because at read time there's no
+	// auto-derive — the FileStore already passed it through).
+	probe := models.Connection{Name: "_probe", Git: req.Git}
+	if missing := missingRequiredConnectionFields(probe); len(missing) > 0 {
+		// First missing field becomes the message — keeps the existing
+		// operator-facing wording stable for the TestRejects… cases.
+		switch missing[0] {
+		case "git.provider":
+			return fmt.Errorf("git.provider is required (one of: github, azuredevops): %w", ErrValidation)
+		case "git.owner_repo_or_repo_url":
+			return fmt.Errorf("git.repo_url or (git.owner + git.repo) is required for github provider: %w", ErrValidation)
+		case "git.azure_repo_or_repo_url":
+			return fmt.Errorf("git.repo_url or (git.organization + git.project + git.repository) is required for azuredevops provider: %w", ErrValidation)
+		default:
+			return fmt.Errorf("connection request missing required fields %v: %w", missing, ErrValidation)
+		}
+	}
 	return nil
+}
+
+// MissingRequiredConnectionFieldsForTest exposes missingRequiredConnectionFields
+// for table-driven unit tests in other packages. Production code MUST call the
+// unexported version; this exists only so we don't widen the public API
+// surface for an internal helper. The "ForTest" suffix is intentional.
+func MissingRequiredConnectionFieldsForTest(c models.Connection) []string {
+	return missingRequiredConnectionFields(c)
+}
+
+// missingRequiredConnectionFields returns the list of missing required fields
+// for a Connection, in canonical order. Used by both:
+//
+//   - validateConnectionRequest (write-time, returns ErrValidation)
+//   - List() defensive read-side guard (V124-4.2 + V124-6.2 / BUG-022)
+//
+// Returning a list (rather than a single error) lets the read-side guard log
+// every missing field at once — operators tracing pre-V124-4 garbage records
+// see the full picture without re-running the check repeatedly.
+//
+// "Required" mirrors what V124-4.2 made required at write time. We do NOT add
+// new required fields here without also adding them to the create-time
+// validator — that would split the read-side and write-side contracts.
+//
+// V124-6.2 SCOPE NOTE: connection.Name is NOT in this list because the
+// read-side caller (`List()`) already filtered empty-name entries via this
+// helper's predecessor (V124-4.2). We keep that contract — empty-name is one
+// of the missing-fields conditions, surfaced under the canonical key
+// "name". Callers can treat "name" specially if they need to keep the old
+// wording (e.g., for backward-compatible logs).
+func missingRequiredConnectionFields(c models.Connection) []string {
+	var missing []string
+
+	if c.Name == "" {
+		missing = append(missing, "name")
+	}
+
+	switch c.Git.Provider {
+	case "":
+		missing = append(missing, "git.provider")
+	case models.GitProviderGitHub:
+		if c.Git.RepoURL == "" && (c.Git.Owner == "" || c.Git.Repo == "") {
+			missing = append(missing, "git.owner_repo_or_repo_url")
+		}
+	case models.GitProviderAzureDevOps:
+		if c.Git.RepoURL == "" && (c.Git.Organization == "" || c.Git.Project == "" || c.Git.Repository == "") {
+			missing = append(missing, "git.azure_repo_or_repo_url")
+		}
+	default:
+		// Unsupported provider — surface as an unknown-provider missing
+		// signal so the read-side log is informative. The write-side
+		// path catches this earlier via the explicit unsupported-provider
+		// check in validateConnectionRequest.
+		missing = append(missing, "git.provider_unsupported:"+string(c.Git.Provider))
+	}
+
+	return missing
 }
 
 // deriveConnectionName builds a connection name from the git config.

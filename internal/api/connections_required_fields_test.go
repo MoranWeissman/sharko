@@ -234,3 +234,164 @@ connections:
 		t.Errorf("expected real-conn to remain, got %q", resp.Connections[0].Name)
 	}
 }
+
+// TestList_SkipsAnyMissingRequiredField_Defensive — V124-6.2 / BUG-022.
+//
+// V124-4.2's read-side guard only checked Name == "". The maintainer's
+// 2026-05-08 walkthrough surfaced a record with name="default" and ALL OTHER
+// required fields empty (git.provider="", repo identifiers all blank) — which
+// slipped past the empty-name guard. V124-6.2 broadens the guard to mirror
+// the create-time validator: any record missing a required field is skipped
+// on load with a structured warning naming the missing fields.
+//
+// We verify the broadened behavior with a fixture containing four kinds of
+// garbage records and one valid record, expecting only the valid one through.
+func TestList_SkipsAnyMissingRequiredField_Defensive(t *testing.T) {
+	fixture := []byte(`
+connections:
+  # Pre-V124-4 wizard residue: name set, everything else empty.
+  # This is the exact shape that slipped past V124-4.2's empty-name-only guard.
+  - name: default
+    git:
+      provider: ""
+      owner: ""
+      repo: ""
+  # Empty-name (V124-4.2 case still needs to keep passing). NOTE: owner/repo
+  # are intentionally empty so the FileStore.load auto-derive (which renames
+  # ""/"default" to owner/repo) does NOT promote this entry to a non-empty
+  # name. This is the exact shape V124-4.2 already filters.
+  - name: ""
+    git:
+      provider: github
+      owner: ""
+      repo: ""
+  # Provider set but per-provider identifiers all empty (github).
+  - name: github-no-identifier
+    git:
+      provider: github
+      owner: ""
+      repo: ""
+      repo_url: ""
+  # Provider set but per-provider identifiers all empty (azuredevops).
+  - name: azure-no-identifier
+    git:
+      provider: azuredevops
+      organization: ""
+      project: ""
+      repository: ""
+      repo_url: ""
+  # Unsupported provider value.
+  - name: gitlab-not-supported
+    git:
+      provider: gitlab
+      owner: o
+      repo: r
+  # The only legitimate record — must survive.
+  - name: real-conn
+    git:
+      provider: github
+      owner: owner
+      repo: repo
+`)
+	f, err := os.CreateTemp("", "sharko-bug022-fixture-*.yaml")
+	if err != nil {
+		t.Fatalf("create temp fixture: %v", err)
+	}
+	defer os.Remove(f.Name())
+	if _, err := f.Write(fixture); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	f.Close()
+
+	store := config.NewFileStore(f.Name())
+	connSvc := service.NewConnectionService(store)
+
+	resp, err := connSvc.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(resp.Connections) != 1 {
+		names := make([]string, len(resp.Connections))
+		for i, c := range resp.Connections {
+			names[i] = c.Name
+		}
+		t.Fatalf("expected 1 connection (5 garbage skipped), got %d: %v", len(resp.Connections), names)
+	}
+	if resp.Connections[0].Name != "real-conn" {
+		t.Errorf("expected real-conn to remain, got %q", resp.Connections[0].Name)
+	}
+}
+
+// TestMissingRequiredConnectionFields covers the helper directly (the same
+// helper is used by both the create-time validator and the read-side guard,
+// so we want unit-level coverage independent of the API surface).
+func TestMissingRequiredConnectionFields(t *testing.T) {
+	tests := []struct {
+		name    string
+		conn    models.Connection
+		want    []string
+	}{
+		{
+			name: "valid github with owner+repo",
+			conn: models.Connection{
+				Name: "ok",
+				Git:  models.GitRepoConfig{Provider: "github", Owner: "o", Repo: "r"},
+			},
+			want: nil,
+		},
+		{
+			name: "valid github with repo_url",
+			conn: models.Connection{
+				Name: "ok",
+				Git:  models.GitRepoConfig{Provider: "github", RepoURL: "https://github.com/o/r"},
+			},
+			want: nil,
+		},
+		{
+			name: "valid azuredevops with org+project+repository",
+			conn: models.Connection{
+				Name: "ok",
+				Git:  models.GitRepoConfig{Provider: "azuredevops", Organization: "o", Project: "p", Repository: "r"},
+			},
+			want: nil,
+		},
+		{
+			name: "empty everything (BUG-022 garbage)",
+			conn: models.Connection{Name: "default", Git: models.GitRepoConfig{}},
+			want: []string{"git.provider"},
+		},
+		{
+			name: "empty name only",
+			conn: models.Connection{Name: "", Git: models.GitRepoConfig{Provider: "github", Owner: "o", Repo: "r"}},
+			want: []string{"name"},
+		},
+		{
+			name: "github missing identifier",
+			conn: models.Connection{Name: "n", Git: models.GitRepoConfig{Provider: "github"}},
+			want: []string{"git.owner_repo_or_repo_url"},
+		},
+		{
+			name: "azuredevops missing identifier",
+			conn: models.Connection{Name: "n", Git: models.GitRepoConfig{Provider: "azuredevops"}},
+			want: []string{"git.azure_repo_or_repo_url"},
+		},
+		{
+			name: "unsupported provider",
+			conn: models.Connection{Name: "n", Git: models.GitRepoConfig{Provider: "gitlab"}},
+			want: []string{"git.provider_unsupported:gitlab"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := service.MissingRequiredConnectionFieldsForTest(tt.conn)
+			if len(got) != len(tt.want) {
+				t.Fatalf("missing fields = %v, want %v", got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("missing[%d] = %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
