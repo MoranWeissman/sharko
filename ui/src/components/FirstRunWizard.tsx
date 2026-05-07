@@ -823,10 +823,23 @@ export function FirstRunWizard({ initialStep = 1 }: { initialStep?: number } = {
             </div>
           </div>
 
-          {/* Step label */}
+          {/* Step label.
+              V124-6.4 / BUG-024: when App.tsx resumes the wizard at step 4
+              (because a connection exists but the repo is not yet
+              initialized), drop the "Step N of M" counter — there is no
+              counter that makes sense for "you skipped 1-3 because they
+              already happened in a prior session". Show "Resuming setup —
+              Initialize" instead. The counter still appears for the normal
+              start-from-step-1 flow.
+              */}
           <div className="border-b border-[#bee0ff] dark:border-gray-800 bg-[#e8f4ff] dark:bg-gray-800/50 px-6 py-2">
-            <p className="text-xs font-semibold uppercase tracking-wider text-[#3a6a8a] dark:text-gray-400">
-              Step {step} of {stepLabels.length} — {stepLabels[step - 1]}
+            <p
+              className="text-xs font-semibold uppercase tracking-wider text-[#3a6a8a] dark:text-gray-400"
+              data-testid="wizard-step-label"
+            >
+              {initialStep === 4
+                ? `Resuming setup — ${stepLabels[step - 1]}`
+                : `Step ${step} of ${stepLabels.length} — ${stepLabels[step - 1]}`}
             </p>
           </div>
 
