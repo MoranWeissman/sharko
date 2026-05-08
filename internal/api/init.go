@@ -153,9 +153,40 @@ func (s *Server) runInitOperation(
 
 	s.opsStore.Start(sessionID)
 
-	// Check for already-initialized repo before doing any work.
+	// V124-15 / BUG-034: when bootstrap/root-app.yaml is already present on
+	// the base branch, the user is retrying an already-completed init. The
+	// previous behavior — Fail with "repo already initialized" — is wrong
+	// when the cluster reality is healthy: the wizard then renders red and
+	// the user assumes setup broke, when in fact everything is fine.
+	//
+	// Probe ArgoCD to disambiguate:
+	//   * Synced + Healthy   → idempotent success. Mark every step
+	//     "already initialized" and Complete the session — the wizard's
+	//     existing done-state UI does the right thing without changes.
+	//   * Missing / Degraded → real partial state. Fail with a descriptive
+	//     error so the user can decide (delete the orphaned repo files,
+	//     manually re-create the ArgoCD app, etc.).
+	//
+	// We deliberately do NOT just blindly Complete on file-exists alone —
+	// that would re-introduce a different false-success bug if the user
+	// manually deleted the ArgoCD app and the wizard reported "all good"
+	// while their cluster has nothing running.
 	if _, checkErr := gp.GetFileContent(ctx, "bootstrap/root-app.yaml", gitopsCfg.BaseBranch); checkErr == nil {
-		s.opsStore.Fail(sessionID, "repo already initialized: bootstrap/root-app.yaml exists")
+		argoStatus, argoDetail := probeBootstrapApp(ctx, ac)
+		if argoStatus == "healthy" {
+			// Advance every step as already-completed so the wizard's
+			// step-list UI shows a clean checkmarked sequence. We know the
+			// step count from the Create() call above (6 steps); the
+			// helper paginates by reading session state so it stays in
+			// sync if the step list ever changes.
+			markAllStepsAlreadyInitialized(s.opsStore, sessionID)
+			s.opsStore.Complete(sessionID,
+				"repo already initialized — ArgoCD bootstrap detected and healthy")
+			return
+		}
+		s.opsStore.Fail(sessionID,
+			fmt.Sprintf("repo initialized but ArgoCD bootstrap is missing or unhealthy: %s",
+				argoDetail))
 		return
 	}
 
@@ -322,6 +353,56 @@ func (s *Server) pollPRMerge(ctx context.Context, sessionID string, gp gitprovid
 		case <-ctx.Done():
 			return false
 		}
+	}
+}
+
+// probeBootstrapApp checks whether the canonical ArgoCD root application
+// (orchestrator.BootstrapRootAppName) exists and is Synced + Healthy.
+//
+// Returns ("healthy", "") when the app is present, Sync=Synced, and
+// Health=Healthy. Returns ("unhealthy", <detail>) otherwise — including
+// when the app is missing (GetApplication returns an error), the sync
+// status is anything other than "Synced", or the health status is
+// anything other than "Healthy".
+//
+// Used by V124-15 / BUG-034 to disambiguate "repo file exists" between
+// idempotent-success and partial-state on first-run init retry.
+func probeBootstrapApp(ctx context.Context, ac orchestrator.ArgocdClient) (status, detail string) {
+	if ac == nil {
+		return "unhealthy", "no ArgoCD client configured"
+	}
+	app, err := ac.GetApplication(ctx, orchestrator.BootstrapRootAppName)
+	if err != nil {
+		return "unhealthy", fmt.Sprintf("argocd app %q not found: %v",
+			orchestrator.BootstrapRootAppName, err)
+	}
+	if app == nil {
+		return "unhealthy", fmt.Sprintf("argocd app %q not found",
+			orchestrator.BootstrapRootAppName)
+	}
+	if app.SyncStatus != "Synced" || app.HealthStatus != "Healthy" {
+		return "unhealthy", fmt.Sprintf("argocd app %q sync=%s health=%s",
+			orchestrator.BootstrapRootAppName, app.SyncStatus, app.HealthStatus)
+	}
+	return "healthy", ""
+}
+
+// markAllStepsAlreadyInitialized walks the session's steps and marks each as
+// completed with the detail "already initialized". Used when the repo + ArgoCD
+// bootstrap already exist on a healthy cluster and the user is retrying init.
+//
+// We can't just call s.opsStore.Complete() — the wizard's step UI expects to
+// see each step transition through completed-with-detail, otherwise the
+// "Steps:" panel renders blank/pending while the overall status is
+// "completed", which is more confusing than helpful.
+func markAllStepsAlreadyInitialized(store *operations.Store, sessionID string) {
+	sess, ok := store.Get(sessionID)
+	if !ok {
+		return
+	}
+	// UpdateStep advances internally; one call per step is correct.
+	for range sess.Steps {
+		store.UpdateStep(sessionID, operations.StatusCompleted, "already initialized")
 	}
 }
 

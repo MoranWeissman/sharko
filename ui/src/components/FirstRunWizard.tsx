@@ -16,7 +16,13 @@ import {
   ChevronRight,
   KeyRound,
 } from 'lucide-react'
-import { api, initRepo, getOperation, operationHeartbeat } from '@/services/api'
+import {
+  api,
+  initRepo,
+  getOperation,
+  operationHeartbeat,
+  isUnauthorizedError,
+} from '@/services/api'
 import type { OperationStep } from '@/services/api'
 import { useConnections } from '@/hooks/useConnections'
 
@@ -447,10 +453,16 @@ function StepInit({ onDone, resumed }: { onDone: () => void; resumed?: boolean }
   const [steps, setSteps] = useState<OperationStep[]>([])
   const [operationStatus, setOperationStatus] = useState<string>('idle')
   const [prUrl, setPrUrl] = useState<string | null>(null)
+  // V124-15 / BUG-033: when session expires mid-poll, render a "Log in
+  // again" button (instead of the generic "Retry"/"Skip"). Tracked
+  // separately from `error` so a malformed error string can't accidentally
+  // trigger the auth-recovery flow.
+  const [sessionExpired, setSessionExpired] = useState(false)
 
   const handleInit = async (autoMerge: boolean) => {
     setState('running')
     setError(null)
+    setSessionExpired(false)
     setSteps([])
     setOperationStatus('idle')
     setPrUrl(null)
@@ -495,8 +507,21 @@ function StepInit({ onDone, resumed }: { onDone: () => void; resumed?: boolean }
             setState('error')
           }
         }
-      } catch {
-        // ignore transient poll errors
+      } catch (e: unknown) {
+        // V124-15 / BUG-033: distinguish 401 (session expired — fatal,
+        // surface to user) from transient errors (network blip, 5xx —
+        // keep swallowing so a single transient doesn't tear down the
+        // wizard). On 401 we stop both intervals so we don't keep
+        // hammering the server, then drop into the error state with a
+        // clear "log in again" call to action.
+        if (isUnauthorizedError(e)) {
+          clearInterval(pollInterval)
+          clearInterval(heartbeatInterval)
+          setSessionExpired(true)
+          setError('Session expired — please log in again.')
+          setState('error')
+        }
+        // Other errors: ignore transient poll errors (existing behavior).
       }
     }, 2000)
 
@@ -645,20 +670,40 @@ function StepInit({ onDone, resumed }: { onDone: () => void; resumed?: boolean }
             <p>{error}</p>
           </div>
           <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={() => setState('idle')}
-              className="inline-flex items-center gap-2 rounded-full bg-[#0a2a4a] px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#14466e]"
-            >
-              Retry
-            </button>
-            <button
-              type="button"
-              onClick={onDone}
-              className="rounded-lg px-4 py-2 text-sm font-medium text-[#1a4a6a] hover:text-[#0a3a5a] dark:text-gray-400"
-            >
-              Skip, go to Dashboard
-            </button>
+            {sessionExpired ? (
+              // V124-15 / BUG-033: 401 during polling — clear the auth
+              // token (keeps the rest of the SPA from re-auth-looping
+              // against a stale token) and bounce the user to login.
+              // We use window.location to force a full reload so all
+              // in-flight effects in the wizard are torn down cleanly.
+              <button
+                type="button"
+                onClick={() => {
+                  sessionStorage.removeItem('sharko-auth-token')
+                  window.location.assign('/login')
+                }}
+                className="inline-flex items-center gap-2 rounded-full bg-[#0a2a4a] px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#14466e]"
+              >
+                Log in again
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setState('idle')}
+                  className="inline-flex items-center gap-2 rounded-full bg-[#0a2a4a] px-5 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#14466e]"
+                >
+                  Retry
+                </button>
+                <button
+                  type="button"
+                  onClick={onDone}
+                  className="rounded-lg px-4 py-2 text-sm font-medium text-[#1a4a6a] hover:text-[#0a3a5a] dark:text-gray-400"
+                >
+                  Skip, go to Dashboard
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}

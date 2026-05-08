@@ -1,5 +1,5 @@
 # generated: 2026-04-20
-# last_updated: 2026-05-08 (final) — V124-3..11 shipped (29 stories) on dev/v1.24-cleanup at 9809efb9. PR #319 CI green. Maintainer demanded one-command end-to-end env: "I want end to end makefile or whatever that is doing everything for me". V124-12 opened: new `ready` subcommand (state-detect + idempotent bring-up + unified credential summary + both port-forwards), standalone `port-forward` subcommand, fix argocd-token to leave port-forward running. 3 stories. After V124-12: maintainer has one-command flow forever → resume Track B UI → merge PR #319 → cut v1.24.0-pre.0.
+# last_updated: 2026-05-08 (final-final-final) — V124-14 shipped (wizard step 4 surfaces app-name + sync-timeout failures) at 03893ecf. V124-14 validation surfaced two more wizard UX bugs: BUG-033 (polling silently swallows 401 → wizard appears frozen forever after token expiry; same class as the false-success pattern V124-14 fixed) and BUG-034 (already-initialized retry path is hostile — wizard treats repo-already-initialized as failure even when cluster is genuinely fine). V124-15 opened: 1 story, single agent, narrows the wizard's catch block to handle 401 explicitly + changes runInitOperation's already-initialized check to Complete (not Fail) when both repo + ArgoCD app are healthy. Actual last hardstop before merge PR #319 + cut v1.24.0-pre.0.
 # project: sharko
 # project_key: NOKEY
 # tracking_system: file-system
@@ -40,7 +40,7 @@
 # - Tagging: NO tags cut reflexively — merge PRs to main when green; tag only when user explicitly asks (see feedback_release_cadence.md)
 
 generated: 2026-04-20
-last_updated: 2026-05-08 (final) (V124-3..11 shipped at 9809efb9; V124-12 one-command ready subcommand opened — stacking on PR #319)
+last_updated: 2026-05-08 (final-final-final) (V124-14 shipped at 03893ecf; V124-15 wizard 401 + idempotent-retry opened — actual last hardstop before v1.24.0-pre.0)
 project: sharko
 project_key: NOKEY
 tracking_system: file-system
@@ -360,6 +360,41 @@ development_status:
   # copy-pasteable values. Tiny fix: remove the ${var:0:30}... patterns in the
   # default-mode summary box (and --quiet mode if applicable). No security ask
   # here — local kind cluster on maintainer's laptop, no over-the-shoulder threat.
-  epic-V124-13: backlog
-  V124-13-1-bug-030-show-full-credential-values-in-ready-summary: backlog        # XS — 2-4 line change
+  epic-V124-13: done
+  V124-13-1-bug-030-show-full-credential-values-in-ready-summary: done           # commit 10309ad9 — full token + password values in ready summary
   epic-V124-13-retrospective: optional
+
+  # Epic V124-14: Wizard step 4 false-success on bootstrap sync timeout (BUG-031 + BUG-032)
+  # Maintainer hit during real-cluster wizard test against MoranWeissman/sharko-smoke-addons:
+  # wizard claimed "Repository initialized successfully" but ArgoCD app was actually fine
+  # (cluster-addons-bootstrap Synced+Healthy) — Sharko was polling the WRONG app name
+  # ("addons-bootstrap" hardcoded in init.go:126,130) for 2 full minutes, hitting 403
+  # (ArgoCD's gRPC code 7 conflates unauth+notfound), then orchestrator silently set
+  # result.Status = "syncing" but returned nil error → operation marked completed →
+  # wizard shows success. Two bugs, same file, single coupled story:
+  #   BUG-031: hardcoded app name vs templates/bootstrap/{Chart,root-app}.yaml mismatch
+  #   BUG-032: sync timeout / non-synced returns nil error → false-success in wizard
+  # Fix (A): extract BootstrapRootAppName constant + drift-guard test reading templates
+  # Fix (B): return non-nil error from Init when syncStatus != "synced" (op contract:
+  #          "completed" = the thing fully worked); wizard surfaces SyncError in error UI
+  # Single agent dispatch, stacked on dev/v1.24-cleanup, extends PR #319.
+  # LAST HARDSTOP before merge + tag v1.24.0-pre.0.
+  epic-V124-14: done
+  V124-14-1-wizard-step-4-bootstrap-app-name-and-sync-timeout: done               # commit 03893ecf — BootstrapRootAppName constant + drift-guard test + Init returns non-nil err on sync timeout + api/init.go runInitOperation Fail-on-non-synced + wizard test surfacing error verbatim; CI green on PR #319
+  epic-V124-14-retrospective: optional
+
+  # Epic V124-15: Wizard error-handling + idempotent retry (BUG-033 + BUG-034)
+  # Bugs surfaced during V124-14 validation against MoranWeissman/sharko-smoke-addons:
+  #   BUG-033 (HIGH): wizard polling silently swallows 401 — `catch {}` at
+  #                   FirstRunWizard.tsx:498-500 makes auth-expired errors invisible;
+  #                   wizard appears frozen forever, no recovery path. Same class as
+  #                   V124-14's silent-success bug, just on the frontend layer.
+  #   BUG-034 (MED):  already-initialized retry treated as failure even when cluster
+  #                   is genuinely fine. internal/api/init.go:158 Fails the operation
+  #                   on idempotent retry; should Complete when both repo + ArgoCD app
+  #                   are healthy (idempotent success, not failure).
+  # Single agent dispatch, stacks on dev/v1.24-cleanup, extends PR #319.
+  # ACTUAL LAST HARDSTOP before merge + tag v1.24.0-pre.0.
+  epic-V124-15: backlog
+  V124-15-1-wizard-401-handling-and-idempotent-retry-success: backlog              # S — both bugs, single commit; embeds frontend-expert + go-expert + test-engineer + tech-lead
+  epic-V124-15-retrospective: optional

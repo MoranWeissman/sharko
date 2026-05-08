@@ -28,20 +28,46 @@ vi.mock('@/hooks/useConnections', () => ({
   }),
 }))
 
-vi.mock('@/services/api', () => ({
-  api: {
-    testGitConnection: vi.fn().mockResolvedValue({ ok: true }),
-    testArgocdConnection: vi.fn().mockResolvedValue({ ok: true }),
-    saveConnection: vi.fn().mockResolvedValue({ ok: true }),
-  },
-  initRepo: vi.fn().mockResolvedValue({ operation_id: 'op-1' }),
-  getOperation: vi.fn().mockResolvedValue({
-    id: 'op-1',
-    status: 'pending',
-    steps: [],
-  }),
-  operationHeartbeat: vi.fn().mockResolvedValue({}),
-}))
+vi.mock('@/services/api', () => {
+  // V124-15 / BUG-033: re-declare the typed error class inside the mock so
+  // tests that throw a 401-shaped error from `getOperation` exercise the
+  // real `isUnauthorizedError` path. Vitest hoists vi.mock; importing the
+  // real class would create a circular reference.
+  class OperationApiError extends Error {
+    status: number
+    constructor(message: string, status: number) {
+      super(message)
+      this.name = 'OperationApiError'
+      this.status = status
+    }
+  }
+  return {
+    api: {
+      testGitConnection: vi.fn().mockResolvedValue({ ok: true }),
+      testArgocdConnection: vi.fn().mockResolvedValue({ ok: true }),
+      saveConnection: vi.fn().mockResolvedValue({ ok: true }),
+    },
+    initRepo: vi.fn().mockResolvedValue({ operation_id: 'op-1' }),
+    getOperation: vi.fn().mockResolvedValue({
+      id: 'op-1',
+      status: 'pending',
+      steps: [],
+    }),
+    operationHeartbeat: vi.fn().mockResolvedValue({}),
+    OperationApiError,
+    // Mirror the real isUnauthorizedError predicate so the wizard's catch
+    // block treats the mocked OperationApiError(401) as fatal.
+    isUnauthorizedError: (err: unknown) => {
+      if (err instanceof OperationApiError) return err.status === 401
+      if (err instanceof Error) {
+        return /\b401\b|unauthorized|unauthenticated|session expired/i.test(
+          err.message,
+        )
+      }
+      return false
+    },
+  }
+})
 
 function renderWizard(initialStep?: number) {
   return render(
@@ -189,6 +215,92 @@ describe('FirstRunWizard step 4 — sync-failure surfacing (V124-14 / BUG-032)',
     } finally {
       vi.useRealTimers()
       // Reset the default mock so it doesn't leak into other tests.
+      getOperationMock.mockResolvedValue({
+        id: 'op-1',
+        status: 'pending',
+        steps: [],
+      })
+      initRepoMock.mockResolvedValue({ operation_id: 'op-1' })
+    }
+  })
+})
+
+// V124-15 / BUG-033 — wizard surfaces 401 (session expired) during polling.
+//
+// Pre-V124-15, the wizard's polling useEffect had a blanket `catch {}` that
+// swallowed every error including 401s. When the user's auth token expired
+// mid-init (real reproducer: 5-minute disk-full recovery window), every poll
+// silently 401'd while the wizard kept rendering the last-known step list,
+// looking frozen with no way out. The fix:
+//   1. `getOperation` now throws an OperationApiError with status=401.
+//   2. The wizard's catch block detects 401 via `isUnauthorizedError`,
+//      stops both polling and heartbeat intervals, sets state=error, and
+//      renders "Session expired — please log in again." plus a Log in
+//      again button.
+//   3. Other transients (network blips, 5xx) keep the swallow-and-retry
+//      behavior — only 401 is fatal.
+describe('FirstRunWizard step 4 — 401 during polling (V124-15 / BUG-033)', () => {
+  it('surfaces a 401 as "Session expired", stops polling, and shows Log in again', async () => {
+    const initRepoMock = apiModule.initRepo as ReturnType<typeof vi.fn>
+    const getOperationMock = apiModule.getOperation as ReturnType<typeof vi.fn>
+    initRepoMock.mockResolvedValueOnce({ operation_id: 'op-401' })
+
+    // The mock's OperationApiError is exposed on the mocked module so we
+    // can throw the real shape the wizard expects.
+    const ErrCtor = (apiModule as unknown as {
+      OperationApiError: new (msg: string, status: number) => Error & { status: number }
+    }).OperationApiError
+    getOperationMock.mockImplementation(async () => {
+      throw new ErrCtor('Unauthorized: session expired', 401)
+    })
+
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      renderWizard(4)
+
+      const initBtn = screen.getByRole('button', {
+        name: /Initialize.*Auto-merge/i,
+      })
+      fireEvent.click(initBtn)
+
+      // Resolve the initRepo promise.
+      await act(async () => {
+        await Promise.resolve()
+      })
+
+      // First poll tick — getOperation throws 401.
+      await act(async () => {
+        vi.advanceTimersByTime(2100)
+        await Promise.resolve()
+      })
+
+      // The wizard should now show the session-expired message + button.
+      await waitFor(() => {
+        expect(
+          screen.getByText(/Session expired — please log in again\./i),
+        ).toBeInTheDocument()
+      })
+      expect(
+        screen.getByRole('button', { name: /Log in again/i }),
+      ).toBeInTheDocument()
+
+      // Polling MUST be stopped — record the call count, advance time
+      // well past several poll intervals, and verify it didn't grow.
+      const callsAfterFirst401 = getOperationMock.mock.calls.length
+      await act(async () => {
+        vi.advanceTimersByTime(10_000)
+        await Promise.resolve()
+      })
+      expect(getOperationMock.mock.calls.length).toBe(callsAfterFirst401)
+
+      // Belt-and-suspenders: the success message must NOT appear.
+      expect(
+        screen.queryByText(/Repository initialized successfully/i),
+      ).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+      // Reset mocks so this test doesn't leak its 401-throwing behavior.
+      getOperationMock.mockReset()
       getOperationMock.mockResolvedValue({
         id: 'op-1',
         status: 'pending',

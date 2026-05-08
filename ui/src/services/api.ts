@@ -393,14 +393,54 @@ export async function initRepo(data?: { bootstrap_argocd?: boolean; auto_merge?:
   return res.json()
 }
 
+/**
+ * V124-15 / BUG-033: typed error thrown by `getOperation` so the wizard can
+ * distinguish a 401 (session expired — fatal, stop polling) from transient
+ * network errors (swallow + retry).
+ *
+ * We intentionally do NOT call `window.location.reload()` from `getOperation`
+ * (unlike most other helpers in this file). The wizard polls every 2s; a
+ * silent reload mid-init would interrupt the in-progress operation display
+ * before the user understands what happened, and a queued reload during a
+ * 401 storm produces the "wizard appears frozen" symptom that BUG-033
+ * documents. The wizard owns the error UX instead.
+ *
+ * Rest of the UI keeps its existing 401 → reload behavior — this typed
+ * error is opt-in and only used by `getOperation` today. Generalizing the
+ * pattern is V125+ scope.
+ */
+export class OperationApiError extends Error {
+  status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = 'OperationApiError'
+    this.status = status
+  }
+}
+
+export function isUnauthorizedError(err: unknown): boolean {
+  if (err instanceof OperationApiError) return err.status === 401
+  if (err instanceof Error) {
+    // Defense in depth: `getOperation` always throws OperationApiError, but
+    // other layers (e.g. a fetch wrapper) might surface 401 as a plain
+    // Error with the status in the message. Match the few common shapes.
+    return /\b401\b|unauthorized|unauthenticated|session expired/i.test(
+      err.message,
+    )
+  }
+  return false
+}
+
 export async function getOperation(id: string): Promise<OperationSession> {
   const res = await fetch(`${BASE_URL}/operations/${id}`, { headers: authHeaders() })
   if (res.status === 401) {
-    sessionStorage.removeItem(TOKEN_KEY)
-    window.location.reload()
-    throw new Error('Session expired')
+    // Don't auto-reload — let the wizard surface a "Session expired"
+    // error and provide a Log in again button. See OperationApiError above.
+    throw new OperationApiError('Unauthorized: session expired', 401)
   }
-  if (!res.ok) throw new Error('Failed to get operation')
+  if (!res.ok) {
+    throw new OperationApiError(`Failed to get operation (HTTP ${res.status})`, res.status)
+  }
   return res.json()
 }
 
