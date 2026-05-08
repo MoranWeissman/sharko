@@ -1,5 +1,5 @@
 # generated: 2026-04-20
-# last_updated: 2026-05-08 (later) — V124-3 (10/11) + V124-4 (5/5) + V124-5 (2/2) + V124-6 (4/4) + V124-7 (1/1) + V124-8 (3/3) + V124-9 (1/1) shipped on dev/v1.24-cleanup at 839a9e1b. PR #319 CI green. Maintainer hit BUG-028 at wizard step 3 → 4: V124-4.2 made git.provider required at backend but FirstRunWizard.buildPayload never sends it. V124-10 opened to auto-derive provider from URL host (backend) AND populate proactively (frontend). Single story. After V124-10: wizard finishes step 4 → resume Track B UI → merge PR #319 → cut v1.24.0-pre.0.
+# last_updated: 2026-05-08 (latest) — V124-3 (10/11) + V124-4 (5/5) + V124-5 (2/2) + V124-6 (4/4) + V124-7 (1/1) + V124-8 (3/3) + V124-9 (1/1) + V124-10 (1/1) shipped on dev/v1.24-cleanup at cf49e0d9. PR #319 CI green. Maintainer hit BUG-029 at wizard step 4 (Initialize): GitHub provider does `get ref heads/main` first → 409 "Git Repository is empty" on truly-empty repo. V124-11 opened to detect 409-empty + fall through to direct-to-main first-commit path. Single story. After V124-11: wizard step 4 finishes against empty repo → Track B UI complete → merge PR #319 → cut v1.24.0-pre.0.
 # project: sharko
 # project_key: NOKEY
 # tracking_system: file-system
@@ -40,7 +40,7 @@
 # - Tagging: NO tags cut reflexively — merge PRs to main when green; tag only when user explicitly asks (see feedback_release_cadence.md)
 
 generated: 2026-04-20
-last_updated: 2026-05-08 (later) (V124-3 10/11 + V124-4 5/5 + V124-5 2/2 + V124-6 4/4 + V124-7 1/1 + V124-8 3/3 + V124-9 1/1 shipped at 839a9e1b; V124-10 wizard provider auto-derive opened — stacking on PR #319)
+last_updated: 2026-05-08 (latest) (V124-3 10/11 + V124-4 5/5 + V124-5 2/2 + V124-6 4/4 + V124-7 1/1 + V124-8 3/3 + V124-9 1/1 + V124-10 1/1 shipped at cf49e0d9; V124-11 empty-repo wizard step 4 opened — stacking on PR #319)
 project: sharko
 project_key: NOKEY
 tracking_system: file-system
@@ -329,5 +329,14 @@ development_status:
   # Backend rejects every wizard submission with "git.provider is required". Single
   # story: backend auto-derives from URL host + frontend populates proactively.
   epic-V124-10: backlog
-  V124-10-1-bug-028-auto-derive-git-provider-from-url-host: done            # backend deriveProviderFromURL + UI detectGitProvider + 9 backend tests + 9 frontend tests; e2e validated 5/5 scenarios on kind-sharko-e2e
+  V124-10-1-bug-028-auto-derive-git-provider-from-url-host: done            # commit cf49e0d9 — strict whitelist (github / azuredevops); 9 backend + 9 frontend tests; 5/5 real-cluster validation
   epic-V124-10-retrospective: optional
+
+  # Epic V124-11: Wizard step 4 handles empty repos (BUG-029)
+  # Maintainer hit at wizard final step (Initialize): GitHub provider does
+  # `get ref heads/main` first, gets 409 "Git Repository is empty" on truly-empty
+  # repo, fails to push bootstrap files. Wizard literally unfinishable on the
+  # fresh-repo flow. Single story: detect 409-empty + first-commit-direct-to-main.
+  epic-V124-11: backlog
+  V124-11-1-bug-029-empty-repo-first-commit-direct-to-main: backlog         # S-M — github + maybe ado; type-asserted detection; real-cluster validation
+  epic-V124-11-retrospective: optional
