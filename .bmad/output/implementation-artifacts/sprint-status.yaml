@@ -1,5 +1,5 @@
 # generated: 2026-04-20
-# last_updated: 2026-05-08 (latest) — V124-3 (10/11) + V124-4 (5/5) + V124-5 (2/2) + V124-6 (4/4) + V124-7 (1/1) + V124-8 (3/3) + V124-9 (1/1) + V124-10 (1/1) shipped on dev/v1.24-cleanup at cf49e0d9. PR #319 CI green. Maintainer hit BUG-029 at wizard step 4 (Initialize): GitHub provider does `get ref heads/main` first → 409 "Git Repository is empty" on truly-empty repo. V124-11 opened to detect 409-empty + fall through to direct-to-main first-commit path. Single story. After V124-11: wizard step 4 finishes against empty repo → Track B UI complete → merge PR #319 → cut v1.24.0-pre.0.
+# last_updated: 2026-05-08 (final) — V124-3..11 shipped (29 stories) on dev/v1.24-cleanup at 9809efb9. PR #319 CI green. Maintainer demanded one-command end-to-end env: "I want end to end makefile or whatever that is doing everything for me". V124-12 opened: new `ready` subcommand (state-detect + idempotent bring-up + unified credential summary + both port-forwards), standalone `port-forward` subcommand, fix argocd-token to leave port-forward running. 3 stories. After V124-12: maintainer has one-command flow forever → resume Track B UI → merge PR #319 → cut v1.24.0-pre.0.
 # project: sharko
 # project_key: NOKEY
 # tracking_system: file-system
@@ -40,7 +40,7 @@
 # - Tagging: NO tags cut reflexively — merge PRs to main when green; tag only when user explicitly asks (see feedback_release_cadence.md)
 
 generated: 2026-04-20
-last_updated: 2026-05-08 (latest) (V124-3 10/11 + V124-4 5/5 + V124-5 2/2 + V124-6 4/4 + V124-7 1/1 + V124-8 3/3 + V124-9 1/1 + V124-10 1/1 shipped at cf49e0d9; V124-11 empty-repo wizard step 4 opened — stacking on PR #319)
+last_updated: 2026-05-08 (final) (V124-3..11 shipped at 9809efb9; V124-12 one-command ready subcommand opened — stacking on PR #319)
 project: sharko
 project_key: NOKEY
 tracking_system: file-system
@@ -338,5 +338,18 @@ development_status:
   # repo, fails to push bootstrap files. Wizard literally unfinishable on the
   # fresh-repo flow. Single story: detect 409-empty + first-commit-direct-to-main.
   epic-V124-11: backlog
-  V124-11-1-bug-029-empty-repo-first-commit-direct-to-main: backlog         # S-M — github + maybe ado; type-asserted detection; real-cluster validation
+  V124-11-1-bug-029-empty-repo-first-commit-direct-to-main: done            # commit 9809efb9 — isEmptyRepo detector via errors.As + 409 + "empty"; route through existing initEmptyRepo+PR flow; ADO same gotcha deferred to V125; real-cluster validated against MoranWeissman/sharko-smoke-addons
   epic-V124-11-retrospective: optional
+
+  # Epic V124-12: One-command end-to-end dev environment + unified credential summary
+  # Maintainer demanded: "I want end to end makefile or whatever that is doing
+  # everything for me, identifying whats needed or not and at the end gives me —
+  # local argocd url, local argocd admin pass, local argocd admin token, sharko
+  # admin pass, sharko local url, and all port forwards running!!!! GO!"
+  # Three stories: argocd-token leaves port-forward running (XS); standalone
+  # port-forward subcommand (S); ready subcommand orchestration + summary (M).
+  epic-V124-12: backlog
+  V124-12-1-ready-subcommand-state-detect-bring-up-credential-summary: backlog  # M
+  V124-12-2-port-forward-standalone-subcommand: backlog                          # S
+  V124-12-3-argocd-token-leaves-port-forward-running: backlog                    # XS
+  epic-V124-12-retrospective: optional
