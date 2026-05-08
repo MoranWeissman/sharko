@@ -78,7 +78,10 @@ log_fail() { printf '%s %s\n' "$FAIL_MARK" "$*" >&2; }
 preflight_tools() {
     local missing=()
     local t
-    for t in kubectl kind docker helm python3 curl; do
+    # argocd CLI is required by the argocd-token subcommand (V124-9); included
+    # in the global preflight so a missing CLI fails fast with a friendly hint
+    # before any kubectl side-effects.
+    for t in kubectl kind docker helm python3 curl argocd; do
         command -v "$t" >/dev/null 2>&1 || missing+=("$t")
     done
     if [ ${#missing[@]} -gt 0 ]; then
@@ -92,6 +95,7 @@ preflight_tools() {
                 helm)    echo "         brew install helm" >&2 ;;
                 python3) echo "         brew install python3" >&2 ;;
                 curl)    echo "         (curl is built-in on macOS / brew install curl)" >&2 ;;
+                argocd)  echo "         brew install argocd" >&2 ;;
             esac
         done
         return 1
@@ -1068,6 +1072,295 @@ EOF
 }
 
 # =====================================================================
+# Subcommand: do_argocd_token (V124-9)
+# Generates an ArgoCD API token for use in Sharko's wizard step 3.
+# Codifies the 8-command apiKey gauntlet: port-forward, patch argocd-cm,
+# restart argocd-server, re-establish port-forward, argocd login, generate.
+# =====================================================================
+do_argocd_token() {
+    local mode="default"           # default | export | quiet
+    local service_account=0        # 0 = use admin, 1 = use 'sharko' account
+    local local_port="${ARGOCD_LOCAL_PORT:-18080}"
+
+    # ArgoCD's in-cluster service URL (what the Sharko wizard step 3 expects;
+    # printed verbatim alongside the token so the maintainer can paste both).
+    local argocd_url="https://argocd-server.argocd.svc.cluster.local"
+
+    local arg
+    while [ $# -gt 0 ]; do
+        arg="$1"
+        case "$arg" in
+            -h|--help)
+                cat <<EOF
+sharko-dev.sh argocd-token — generate an ArgoCD account token for Sharko
+
+Generates an API token usable in Sharko's wizard step 3 (ArgoCD connection).
+Handles the full apiKey-capability dance: argocd-cm patch (if needed),
+argocd-server restart, port-forward management, login, token generate.
+
+Usage:
+  ./scripts/sharko-dev.sh argocd-token [flags]
+
+Flags:
+  --export              Print only \`export ARGOCD_TOKEN=... ARGOCD_URL=...\`
+                        for eval-via-pipe: eval "\$(./scripts/sharko-dev.sh argocd-token --export)"
+  -q, --quiet           Print only the raw token (for piping)
+  --service-account     Use a dedicated 'sharko' ArgoCD account instead of 'admin'
+                        (recommended for production-like setups; default uses admin)
+  --port <N>            ArgoCD port-forward local port (default 18080)
+  -h, --help            This message
+
+Environment:
+  ARGOCD_LOCAL_PORT     Default 18080
+EOF
+                return 0
+                ;;
+            --export) mode="export" ;;
+            -q|--quiet) mode="quiet" ;;
+            --service-account) service_account=1 ;;
+            --port)
+                shift
+                if [ -z "${1:-}" ]; then
+                    log_fail "--port requires a numeric argument"
+                    return 1
+                fi
+                local_port="$1"
+                ;;
+        esac
+        shift
+    done
+
+    # Pick which ArgoCD account we'll act on. Single point of branching for
+    # everything below (which capability key to patch + which account to login
+    # / generate-token against).
+    local target_account="admin"
+    if [ "$service_account" = "1" ]; then
+        target_account="sharko"
+    fi
+
+    # ---- 1. Port-forward up? ----
+    # Tests in order: TCP listener on the port AND a clean /healthz response
+    # from argocd-server. Either failure => kill stale port-forwards and
+    # start fresh.
+    local pf_ok=0
+    if nc -z localhost "$local_port" >/dev/null 2>&1; then
+        if curl -sS -o /dev/null --connect-timeout 2 -k \
+             "https://localhost:${local_port}/healthz" >/dev/null 2>&1; then
+            pf_ok=1
+        fi
+    fi
+
+    if [ "$pf_ok" = "1" ]; then
+        [ "$mode" = "default" ] && log_info "reusing existing port-forward on localhost:${local_port}"
+    else
+        [ "$mode" = "default" ] && log_info "starting port-forward localhost:${local_port} -> svc/argocd-server:443"
+        pkill -f "kubectl port-forward.*argocd-server" >/dev/null 2>&1 || true
+        sleep 1
+        kubectl port-forward -n argocd svc/argocd-server "${local_port}:443" \
+            > /tmp/argocd-pf.log 2>&1 &
+        disown 2>/dev/null || true
+
+        local i
+        local pf_alive=0
+        for i in $(seq 1 10); do
+            if nc -z localhost "$local_port" >/dev/null 2>&1; then
+                pf_alive=1
+                break
+            fi
+            sleep 1
+        done
+        if [ "$pf_alive" != "1" ]; then
+            log_fail "port-forward to argocd-server did not come up on localhost:${local_port}"
+            cat /tmp/argocd-pf.log >&2 2>/dev/null || true
+            return 1
+        fi
+    fi
+
+    # ---- 2. apiKey capability check + patch ----
+    # The capability key depends on the target account:
+    #   admin  → "apiKey, login"  (admin still needs to be able to login via UI)
+    #   sharko → "apiKey"          (service account, no UI login needed)
+    local cap_key="accounts.${target_account}"
+    local desired_caps
+    if [ "$service_account" = "1" ]; then
+        desired_caps="apiKey"
+    else
+        desired_caps="apiKey, login"
+    fi
+
+    # jsonpath traverses on '.', so we must escape the dot in the dotted key
+    # (e.g. 'accounts.admin' → 'accounts\.admin') for kubectl to look up the
+    # right ConfigMap data field instead of trying to descend into 'accounts'.
+    local cap_key_jp="${cap_key/./\\.}"
+    local current_caps
+    current_caps=$(kubectl get configmap argocd-cm -n argocd \
+        -o "jsonpath={.data.${cap_key_jp}}" 2>/dev/null || true)
+
+    local patched=0
+    if printf '%s' "$current_caps" | grep -q "apiKey"; then
+        [ "$mode" = "default" ] && log_info "apiKey capability already enabled for account '${target_account}'"
+    else
+        [ "$mode" = "default" ] && log_info "patching argocd-cm: ${cap_key}=\"${desired_caps}\""
+        if ! kubectl patch configmap argocd-cm -n argocd --type merge \
+             -p "{\"data\":{\"${cap_key}\":\"${desired_caps}\"}}" >/dev/null 2>&1; then
+            log_fail "kubectl patch configmap argocd-cm failed"
+            return 1
+        fi
+        patched=1
+    fi
+
+    # ---- 3. Service-account RBAC (only on --service-account) ----
+    # Goal: ensure "g, sharko, role:admin" is in argocd-rbac-cm policy.csv.
+    # Idempotency caveat: kubectl patch --type merge REPLACES the whole
+    # policy.csv string. We avoid that by reading current value, appending
+    # only if our line is not already present, then writing the merged
+    # value back.
+    if [ "$service_account" = "1" ]; then
+        local current_policy
+        current_policy=$(kubectl get configmap argocd-rbac-cm -n argocd \
+            -o jsonpath='{.data.policy\.csv}' 2>/dev/null || true)
+
+        local sharko_rule="g, sharko, role:admin"
+        if printf '%s' "$current_policy" | grep -qxF "$sharko_rule"; then
+            [ "$mode" = "default" ] && log_info "argocd-rbac-cm already grants sharko role:admin"
+        else
+            local new_policy
+            if [ -z "$current_policy" ]; then
+                new_policy="$sharko_rule"
+            else
+                # Preserve trailing newline behavior — append our line.
+                new_policy="${current_policy}
+${sharko_rule}"
+                [ "$mode" = "default" ] && log_warn "argocd-rbac-cm policy.csv had pre-existing rules — appending sharko role:admin (verify with: kubectl get configmap argocd-rbac-cm -n argocd -o jsonpath='{.data.policy\\.csv}')"
+            fi
+
+            # Use kubectl patch via stdin to avoid embedding newlines in a
+            # one-liner shell-quoted JSON string. python3 (already a preflight
+            # tool) renders the JSON safely.
+            local patch_json
+            patch_json=$(NEW_POLICY="$new_policy" python3 -c '
+import json, os
+print(json.dumps({"data": {"policy.csv": os.environ["NEW_POLICY"]}}))
+' 2>/dev/null)
+            if [ -z "$patch_json" ]; then
+                log_fail "failed to render argocd-rbac-cm patch JSON"
+                return 1
+            fi
+            if ! printf '%s' "$patch_json" | kubectl patch configmap argocd-rbac-cm \
+                 -n argocd --type merge --patch-file=/dev/stdin >/dev/null 2>&1; then
+                log_fail "kubectl patch configmap argocd-rbac-cm failed"
+                return 1
+            fi
+            [ "$mode" = "default" ] && log_ok "patched argocd-rbac-cm to grant sharko role:admin"
+        fi
+    fi
+
+    # ---- 4. Restart argocd-server (only if we patched argocd-cm) ----
+    if [ "$patched" = "1" ]; then
+        [ "$mode" = "default" ] && log_info "restarting argocd-server (apiKey capability change)"
+        if ! kubectl rollout restart -n argocd deployment/argocd-server >/dev/null 2>&1; then
+            log_fail "kubectl rollout restart deployment/argocd-server failed"
+            return 1
+        fi
+        if ! kubectl rollout status -n argocd deployment/argocd-server --timeout=90s >/dev/null 2>&1; then
+            log_fail "argocd-server rollout did not complete within 90s"
+            return 1
+        fi
+
+        # The deployment restart killed our port-forward — re-establish it.
+        [ "$mode" = "default" ] && log_info "re-establishing port-forward after argocd-server restart"
+        pkill -f "kubectl port-forward.*argocd-server" >/dev/null 2>&1 || true
+        sleep 1
+        kubectl port-forward -n argocd svc/argocd-server "${local_port}:443" \
+            > /tmp/argocd-pf.log 2>&1 &
+        disown 2>/dev/null || true
+
+        local j
+        local pf_alive=0
+        for j in $(seq 1 15); do
+            if nc -z localhost "$local_port" >/dev/null 2>&1 \
+               && curl -sS -o /dev/null --connect-timeout 2 -k \
+                  "https://localhost:${local_port}/healthz" >/dev/null 2>&1; then
+                pf_alive=1
+                break
+            fi
+            sleep 1
+        done
+        if [ "$pf_alive" != "1" ]; then
+            log_fail "port-forward did not recover after argocd-server restart"
+            cat /tmp/argocd-pf.log >&2 2>/dev/null || true
+            return 1
+        fi
+        [ "$mode" = "default" ] && log_ok "patched argocd-cm to enable apiKey capability + restarted argocd-server"
+    fi
+
+    # ---- 5. Read admin password ----
+    local admin_pw
+    admin_pw=$(kubectl get secret -n argocd argocd-initial-admin-secret \
+        -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
+    if [ -z "$admin_pw" ]; then
+        log_fail "argocd-initial-admin-secret not found or empty"
+        echo "       Either restore via fresh ArgoCD install OR document the rotated password manually." >&2
+        return 1
+    fi
+
+    # ---- 6. argocd login ----
+    # We always login as admin (admin can always login; sharko service account
+    # has only apiKey capability and cannot login via the CLI). To generate a
+    # token for the sharko account we use --account on generate-token below.
+    [ "$mode" = "default" ] && log_info "argocd login localhost:${local_port} as admin"
+    local login_out
+    login_out=$(argocd login "localhost:${local_port}" \
+        --username admin --password "$admin_pw" \
+        --insecure --grpc-web 2>&1)
+    local login_rc=$?
+    if [ $login_rc -ne 0 ]; then
+        log_fail "argocd login failed (rc=${login_rc})"
+        printf '%s\n' "$login_out" | head -10 >&2
+        return 1
+    fi
+
+    # ---- 7. Generate token ----
+    [ "$mode" = "default" ] && log_info "argocd account generate-token --account ${target_account}"
+    local token
+    token=$(argocd account generate-token --account "$target_account" 2>&1)
+    local gen_rc=$?
+    if [ $gen_rc -ne 0 ] || [ -z "$token" ]; then
+        log_fail "argocd account generate-token failed (rc=${gen_rc})"
+        printf '%s\n' "$token" | head -10 >&2
+        return 1
+    fi
+
+    # generate-token sometimes prints leading/trailing whitespace; trim.
+    token=$(printf '%s' "$token" | tr -d '[:space:]')
+    if [ -z "$token" ]; then
+        log_fail "generated token is empty after trim"
+        return 1
+    fi
+
+    # ---- 8. Output ----
+    case "$mode" in
+        export)
+            printf 'export ARGOCD_TOKEN=%s\n' "$token"
+            printf 'export ARGOCD_URL=%s\n' "$argocd_url"
+            ;;
+        quiet)
+            printf '%s\n' "$token"
+            ;;
+        *)
+            log_ok "ArgoCD token generated for account '${target_account}'"
+            printf '       Token: %s...\n' "${token:0:20}"
+            echo
+            echo "       Use eval-via-pipe to export into your shell:"
+            echo "         eval \"\$(./scripts/sharko-dev.sh argocd-token --export)\""
+            echo
+            printf '       ARGOCD_URL: %s\n' "$argocd_url"
+            ;;
+    esac
+    return 0
+}
+
+# =====================================================================
 # usage / help
 # =====================================================================
 usage() {
@@ -1087,6 +1380,7 @@ ${BOLD}Credentials${RESET}
   creds         Get current admin password (smart fallback chain)
   login         Login + extract bearer token
   rotate        Rotate admin password (also verifies V124-7 secret rotation)
+  argocd-token  Generate ArgoCD account token (for wizard step 3)
 
 ${BOLD}Operations${RESET}
   smoke         Run smoke tests (auto-extracts creds if missing)
@@ -1120,6 +1414,12 @@ main() {
             shift
             preflight_tools || return 1
             "do_${cmd}" "$@"
+            return $?
+            ;;
+        argocd-token)
+            shift
+            preflight_tools || return 1
+            do_argocd_token "$@"
             return $?
             ;;
         help|--help|-h|"")

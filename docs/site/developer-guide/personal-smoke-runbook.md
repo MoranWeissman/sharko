@@ -1,6 +1,6 @@
 # Personal Smoke Runbook
 
-> **Verified:** The mechanical Track A + Track B B.1–B.6 portions were last executed end-to-end on 2026-05-08 by `./scripts/sharko-dev.sh smoke` (which forwards to `scripts/smoke.sh` after auto-extracting credentials) against image `sharko:e2e` built from commit `96567f0e` (dev/v1.24-cleanup tip — V124-8.1 + V124-8.2 merged). 47/47 PASS in 14 s of script time, including the auto-extract of `$ADMIN_PW` and `$TOKEN`. The hand-walked baseline that the scripts encode was last executed end-to-end on 2026-05-06 against image `sharko:runbook-verify` built locally from commit `95b51cad` (dev/v1.24-cleanup, V124-3.6+3.7+3.8 merged); Track B B.7 (ArgoCD UI) was walked manually then. Track B B.8 (Git connect → init → register cluster → addon → ArgoCD sync) requires a real GitHub PAT and remains script-exempt — it is marked with a warning in the section itself.
+> **Verified:** The mechanical Track A + Track B B.1–B.6 portions were last executed end-to-end on 2026-05-08 by `./scripts/sharko-dev.sh smoke` (which forwards to `scripts/smoke.sh` after auto-extracting credentials) against image `sharko:e2e` built from commit `96567f0e` (dev/v1.24-cleanup tip — V124-8.1 + V124-8.2 merged). 47/47 PASS in 14 s of script time, including the auto-extract of `$ADMIN_PW` and `$TOKEN`. The `argocd-token` subcommand (V124-9) was end-to-end validated on 2026-05-09 against the same `kind-sharko-e2e` cluster: cold-start (apiKey patch + argocd-server restart + port-forward recovery + login + token generate), eval-via-pipe `--export`, quiet mode, idempotency (1.7 s second-run vs 34 s cold), `--service-account` (patches `accounts.sharko` + `argocd-rbac-cm` policy.csv + token generate), and bearer-token usability against `https://localhost:18080/api/v1/account`. The hand-walked baseline that the scripts encode was last executed end-to-end on 2026-05-06 against image `sharko:runbook-verify` built locally from commit `95b51cad` (dev/v1.24-cleanup, V124-3.6+3.7+3.8 merged); Track B B.7 (ArgoCD UI) was walked manually then. Track B B.8 (Git connect → init → register cluster → addon → ArgoCD sync) requires a real GitHub PAT and remains script-exempt — it is marked with a warning in the section itself.
 
 A hands-on, checkbox-driven smoke pass for the Sharko maintainer. This is **not** a reference doc — it's a list you literally check off, top to bottom, while running the product yourself.
 
@@ -24,6 +24,8 @@ The maintainer-DX automation is a single entry point with subcommand dispatch (V
 | Capture admin password into `$ADMIN_PW` | `eval "$(./scripts/sharko-dev.sh creds --export)"` |
 | Login + capture `$ADMIN_PW` and `$TOKEN` | `eval "$(./scripts/sharko-dev.sh login --export)"` |
 | Rotate admin password (verifies V124-7) | `./scripts/sharko-dev.sh rotate` |
+| Generate ArgoCD account token (for wizard step 3) | `./scripts/sharko-dev.sh argocd-token` |
+| Capture `$ARGOCD_TOKEN` + `$ARGOCD_URL` into shell | `eval "$(./scripts/sharko-dev.sh argocd-token --export)"` |
 | Run the full smoke suite | `./scripts/sharko-dev.sh smoke` |
 | Show current env state | `./scripts/sharko-dev.sh status` |
 | Per-subcommand help | `./scripts/sharko-dev.sh <cmd> --help` |
@@ -892,6 +894,24 @@ You have two choices for the Git repo:
 
 There's no public test repo guaranteed to be there forever; use one of the above.
 
+### Step 3: ArgoCD connection
+
+Before the GitHub connection, the wizard's step 3 needs an ArgoCD bearer token. The full flow (port-forward → patch `argocd-cm` to enable `apiKey` capability → restart argocd-server → re-establish port-forward → `argocd login` → `argocd account generate-token`) is codified into a single subcommand (V124-9):
+
+```bash
+eval "$(./scripts/sharko-dev.sh argocd-token --export)"
+echo "$ARGOCD_TOKEN"   # paste this into the wizard token field
+echo "$ARGOCD_URL"     # paste this as the server URL
+```
+
+Use `--service-account` to generate against a dedicated `sharko` ArgoCD account (recommended for production-like setups; the script also patches `argocd-rbac-cm` to grant `role:admin`):
+
+```bash
+eval "$(./scripts/sharko-dev.sh argocd-token --service-account --export)"
+```
+
+The subcommand is idempotent — second run reuses the existing port-forward and skips the patch+restart if the capability is already enabled (~1–2 s vs ~30 s on cold-start).
+
 - [ ] In the Sharko UI (<http://localhost:8080>), Settings → Connections → add a new GitHub connection
   - URL: your fork
   - PAT: a token with `repo` scope
@@ -1008,7 +1028,7 @@ Pre-seeded entries from today's pass — verify these and update status:
 
 The maintainer-DX tooling is built around a single subcommand dispatcher with two underlying helper scripts. All three live in `scripts/` and are intentionally distinct from `scripts/upgrade.sh` (which targets the released-Helm-chart flow, not the local-build flow).
 
-## `scripts/sharko-dev.sh` — single entry, 11 subcommands (V124-8.1, canonical)
+## `scripts/sharko-dev.sh` — single entry, 12 subcommands (V124-8.1 + V124-9, canonical)
 
 The maintainer's primary entry point. Subcommand dispatch (like `git` / `kubectl`) so each scenario gets its own one-liner with `--help`:
 
@@ -1020,6 +1040,7 @@ The maintainer's primary entry point. Subcommand dispatch (like `git` / `kubectl
 ./scripts/sharko-dev.sh creds             # fetch admin password (smart fallback chain)
 ./scripts/sharko-dev.sh login --export    # eval-via-pipe: ADMIN_PW + TOKEN
 ./scripts/sharko-dev.sh rotate            # rotate password (verifies V124-7)
+./scripts/sharko-dev.sh argocd-token --export   # eval-via-pipe: ARGOCD_TOKEN + ARGOCD_URL (V124-9)
 ./scripts/sharko-dev.sh smoke             # auto-extracts creds, runs smoke
 ./scripts/sharko-dev.sh status            # current env state
 ./scripts/sharko-dev.sh reset --yes       # uninstall (preserves cluster)
@@ -1027,6 +1048,8 @@ The maintainer's primary entry point. Subcommand dispatch (like `git` / `kubectl
 ```
 
 The `creds` subcommand has a five-path fallback chain (V124-6.3 secret → cache → current pod logs → previous pod logs → error with recovery hints) so the password is retrievable in every state the maintainer hits during V124-3 through V124-7. The `rotate` subcommand also asserts V124-7's secret-rotation behavior — the new password must land in `sharko-initial-admin-secret` or the command exits non-zero.
+
+The `argocd-token` subcommand (V124-9) codifies the 8-command apiKey gauntlet for Sharko's wizard step 3: it reuses any live port-forward to `argocd-server`, patches `argocd-cm` to enable the `apiKey` capability if missing, restarts `argocd-server` and re-establishes the port-forward, runs `argocd login` against `localhost:18080` with the bootstrap admin password, then `argocd account generate-token` for either `admin` (default) or a dedicated `sharko` service account (`--service-account`). Idempotent — second run skips the patch+restart and finishes in ~1–2 s.
 
 Sourcing model: **eval-via-pipe**, not `source`. The `--export` flag prints ONLY export lines so:
 ```bash
