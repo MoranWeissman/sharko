@@ -1669,10 +1669,10 @@ EOF
             return 0
             ;;
         quiet)
-            printf 'Sharko: %s  pw=%s  token=%s...\n' \
-                "$sharko_local_url" "$sharko_pw" "${sharko_token:0:20}"
-            printf 'ArgoCD: %s  pw=%s  token=%s...\n' \
-                "$argocd_local_url" "$argocd_pw" "${argocd_token:0:20}"
+            printf 'Sharko: %s  pw=%s  token=%s\n' \
+                "$sharko_local_url" "$sharko_pw" "$sharko_token"
+            printf 'ArgoCD: %s  pw=%s  token=%s\n' \
+                "$argocd_local_url" "$argocd_pw" "$argocd_token"
             return 0
             ;;
     esac
@@ -1697,27 +1697,27 @@ EOF
     local i
     for i in $(seq 1 66); do rule="${rule}${HZ}"; done
 
-    local sharko_token_short="${sharko_token:0:30}..."
-    local argocd_token_short="${argocd_token:0:30}..."
-
     echo
     printf '%s%s%s\n' "$TL" "$rule" "$TR"
     printf '%s  %sSharko dev environment - READY%s\n' "$VT" "$BOLD" "$RESET"
     # Inner rows: left-VT only. Right-edge alignment intentionally relaxed
-    # because credential strings vary in width.
+    # because credential strings vary in width. Tokens are printed in full
+    # (V124-13.1) so the maintainer can copy-paste without a re-extraction
+    # round-trip; this is a local kind-cluster summary so masking is not in
+    # scope.
     printf '%s%s%s\n' "$MID_L" "$rule" "$MID_R"
     printf '%s\n' "$VT"
     printf '%s  %sSharko%s\n' "$VT" "$BOLD" "$RESET"
     printf '%s    URL (local):       %s\n'             "$VT" "$sharko_local_url"
     printf '%s    URL (in-cluster):  %s\n'             "$VT" "$sharko_incluster_url"
     printf '%s    Admin password:    %s\n'             "$VT" "$sharko_pw"
-    printf '%s    Bearer token:      %s\n'             "$VT" "$sharko_token_short"
+    printf '%s    Bearer token:      %s\n'             "$VT" "$sharko_token"
     printf '%s\n' "$VT"
     printf '%s  %sArgoCD%s\n' "$VT" "$BOLD" "$RESET"
     printf '%s    URL (local):       %s\n'             "$VT" "$argocd_local_url"
     printf '%s    URL (in-cluster):  %s\n'             "$VT" "$argocd_incluster_url"
     printf '%s    Admin password:    %s\n'             "$VT" "$argocd_pw"
-    printf '%s    Account token:     %s\n'             "$VT" "$argocd_token_short"
+    printf '%s    Account token:     %s\n'             "$VT" "$argocd_token"
     printf '%s\n' "$VT"
     printf '%s  Port-forwards: %sBOTH running (sharko %s, argocd %s)%s\n' \
         "$VT" "$GREEN" "$SHARKO_LOCAL_PORT" "$ARGOCD_LOCAL_PORT" "$RESET"
