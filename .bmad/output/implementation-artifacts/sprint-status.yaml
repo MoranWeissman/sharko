@@ -349,7 +349,17 @@ development_status:
   # Three stories: argocd-token leaves port-forward running (XS); standalone
   # port-forward subcommand (S); ready subcommand orchestration + summary (M).
   epic-V124-12: backlog
-  V124-12-1-ready-subcommand-state-detect-bring-up-credential-summary: backlog  # M
-  V124-12-2-port-forward-standalone-subcommand: backlog                          # S
-  V124-12-3-argocd-token-leaves-port-forward-running: backlog                    # XS
+  V124-12-1-ready-subcommand-state-detect-bring-up-credential-summary: done     # commit 899953a5 — TTY-color box + ASCII fallback; idempotent <2s; smoke 47/47 PASS post-reset
+  V124-12-2-port-forward-standalone-subcommand: done                             # commit 392ef73f — port-forward + pf alias; --sharko / --argocd scope
+  V124-12-3-argocd-token-leaves-port-forward-running: done                       # commit 909b67fe — was already surviving (kubectl port-forward + disown); doc-only fix
   epic-V124-12-retrospective: optional
+
+  # Epic V124-13: Show full token + password values in ready summary (BUG-030)
+  # Maintainer called out V124-12.1's truncation: "you're trimming token and long
+  # strings....! Bearer token: 15975ea5f8fc8623c9d2b19b2129f3..." — wants full
+  # copy-pasteable values. Tiny fix: remove the ${var:0:30}... patterns in the
+  # default-mode summary box (and --quiet mode if applicable). No security ask
+  # here — local kind cluster on maintainer's laptop, no over-the-shoulder threat.
+  epic-V124-13: backlog
+  V124-13-1-bug-030-show-full-credential-values-in-ready-summary: backlog        # XS — 2-4 line change
+  epic-V124-13-retrospective: optional
