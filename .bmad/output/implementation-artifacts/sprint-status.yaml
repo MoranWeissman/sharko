@@ -1,5 +1,5 @@
 # generated: 2026-04-20
-# last_updated: 2026-05-08 — V124-3 (10/11) + V124-4 (5/5) + V124-5 (2/2) shipped on dev/v1.24-cleanup at ce7185ba. PR #319 CI green. UI smoke testing surfaced 4 more issues: BUG-021 dead /api/v1/login route, BUG-022 V124-4.2 guard incomplete, BUG-023 ArgoCD-style initial-admin-secret missing, BUG-024 wizard resume header misleading. V124-6 cleanup epic opened to fix all 4, stacking on PR #319. After V124-6: resume UI testing on clean baseline → merge PR #319 → cut v1.24.0-pre.0.
+# last_updated: 2026-05-08 (late) — V124-3 (10/11) + V124-4 (5/5) + V124-5 (2/2) + V124-6 (4/4) shipped on dev/v1.24-cleanup at 08411e41. PR #319 CI green. Maintainer pushed back on V124-3.8/V124-6.3 leaving log-grep as the only post-rotation password recovery path; V124-7 opened to extend `sharko reset-admin` to (re)write `sharko-initial-admin-secret` instead of just deleting it. Single story. After V124-7: maintainer does helm reinstall + reset-admin validation → resume Track B UI → merge PR #319 → cut v1.24.0-pre.0.
 # project: sharko
 # project_key: NOKEY
 # tracking_system: file-system
@@ -40,7 +40,7 @@
 # - Tagging: NO tags cut reflexively — merge PRs to main when green; tag only when user explicitly asks (see feedback_release_cadence.md)
 
 generated: 2026-04-20
-last_updated: 2026-05-08 (V124-3 10/11 + V124-4 5/5 + V124-5 2/2 shipped at ce7185ba; V124-6 cleanup bundle opened for 4 UI-smoke findings — stacking on PR #319)
+last_updated: 2026-05-08 (late) (V124-3 10/11 + V124-4 5/5 + V124-5 2/2 + V124-6 4/4 shipped at 08411e41; V124-7 opened to close reset-admin rotation gap — stacking on PR #319)
 project: sharko
 project_key: NOKEY
 tracking_system: file-system
@@ -287,8 +287,17 @@ development_status:
   #   - BUG-024 wizard "Step 4 of 4" header misleading in resume mode
   # Stacks on dev/v1.24-cleanup, extends PR #319.
   epic-V124-6: backlog
-  V124-6-1-bug-021-clean-up-dead-login-route: backlog                       # XS-S
-  V124-6-2-bug-022-extend-skip-on-load-guard-required-fields: backlog       # S
-  V124-6-3-bug-023-sharko-initial-admin-secret-argocd-style: backlog        # M (code + Helm + docs + sec-audit)
-  V124-6-4-bug-024-wizard-resume-mode-header-label: backlog                 # XS
+  V124-6-1-bug-021-clean-up-dead-login-route: done                          # commit 152090c4 (handleStaleLoginRoute 404 + middleware skip)
+  V124-6-2-bug-022-extend-skip-on-load-guard-required-fields: done          # commit e5378da2 (missingRequiredConnectionFields helper)
+  V124-6-3-bug-023-sharko-initial-admin-secret-argocd-style: done           # commit e48e96c0 (writeInitialAdminSecret + Helm value + docs)
+  V124-6-4-bug-024-wizard-resume-mode-header-label: done                    # commit 08411e41 ("Resuming setup — Initialize")
   epic-V124-6-retrospective: optional
+
+  # Epic V124-7: Close reset-admin rotation gap left by V124-6.3
+  # Maintainer pushed back: "fetching from a pod log sounds right to you? honestly?"
+  # V124-6.3 writes sharko-initial-admin-secret on FRESH bootstrap, but reset-admin
+  # only DELETES it. So once you rotate, kubectl-get-secret access disappears
+  # forever — log-grep becomes the only path. Wrong. Single story to fix.
+  epic-V124-7: backlog
+  V124-7-1-reset-admin-rotates-initial-admin-secret-not-deletes: backlog    # XS-S
+  epic-V124-7-retrospective: optional
