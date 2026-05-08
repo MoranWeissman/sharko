@@ -38,6 +38,7 @@ KIND_CLUSTER_NAME="${KIND_CLUSTER_NAME:-sharko-e2e}"
 SHARKO_NAMESPACE="${SHARKO_NAMESPACE:-sharko}"
 SHARKO_LOCAL_PORT="${SHARKO_LOCAL_PORT:-8080}"
 SHARKO_REMOTE_PORT="${SHARKO_REMOTE_PORT:-80}"
+ARGOCD_LOCAL_PORT="${ARGOCD_LOCAL_PORT:-18080}"
 IMAGE_TAG="${IMAGE_TAG:-e2e}"
 SHARKO_DEV_PW_CACHE="${SHARKO_DEV_PW_CACHE:-${HOME}/.sharko-dev-pw}"
 HOST="http://localhost:${SHARKO_LOCAL_PORT}"
@@ -145,6 +146,47 @@ start_port_forward() {
     done
     log_fail "port-forward did not become reachable on localhost:${SHARKO_LOCAL_PORT}"
     cat /tmp/sharko-dev-pf.log >&2 2>/dev/null || true
+    return 1
+}
+
+# argocd_pf_alive: 0 if argocd-server port-forward is alive (TCP listener AND
+# /healthz responsive). Optional first arg overrides the port (default
+# $ARGOCD_LOCAL_PORT). V124-12.2 — shared by argocd-token, port-forward, ready.
+argocd_pf_alive() {
+    local port="${1:-${ARGOCD_LOCAL_PORT}}"
+    nc -z localhost "$port" >/dev/null 2>&1 || return 1
+    curl -sS -o /dev/null --connect-timeout 2 -k \
+        "https://localhost:${port}/healthz" >/dev/null 2>&1 || return 1
+    return 0
+}
+
+# kill_argocd_port_forward: best-effort kill of any kubectl port-forward bound
+# to argocd-server. V124-12.2 — shared helper.
+kill_argocd_port_forward() {
+    pkill -f "kubectl port-forward.*argocd-server" >/dev/null 2>&1 || true
+    sleep 1
+}
+
+# start_argocd_port_forward: kill stale + restart kubectl port-forward to
+# argocd-server. Optional first arg overrides the port. Waits up to 15s for
+# both TCP listener AND /healthz. Returns 0 on success, 1 on failure.
+# V124-12.2 — shared by argocd-token, port-forward, ready.
+start_argocd_port_forward() {
+    local port="${1:-${ARGOCD_LOCAL_PORT}}"
+    kill_argocd_port_forward
+    kubectl port-forward -n argocd svc/argocd-server "${port}:443" \
+        > /tmp/argocd-pf.log 2>&1 &
+    disown 2>/dev/null || true
+
+    local i
+    for i in $(seq 1 15); do
+        if argocd_pf_alive "$port"; then
+            return 0
+        fi
+        sleep 1
+    done
+    log_fail "port-forward to argocd-server did not come up on localhost:${port}"
+    cat /tmp/argocd-pf.log >&2 2>/dev/null || true
     return 1
 }
 
@@ -1080,7 +1122,7 @@ EOF
 do_argocd_token() {
     local mode="default"           # default | export | quiet
     local service_account=0        # 0 = use admin, 1 = use 'sharko' account
-    local local_port="${ARGOCD_LOCAL_PORT:-18080}"
+    local local_port="${ARGOCD_LOCAL_PORT}"
 
     # ArgoCD's in-cluster service URL (what the Sharko wizard step 3 expects;
     # printed verbatim alongside the token so the maintainer can paste both).
@@ -1146,39 +1188,14 @@ EOF
     fi
 
     # ---- 1. Port-forward up? ----
-    # Tests in order: TCP listener on the port AND a clean /healthz response
-    # from argocd-server. Either failure => kill stale port-forwards and
-    # start fresh.
-    local pf_ok=0
-    if nc -z localhost "$local_port" >/dev/null 2>&1; then
-        if curl -sS -o /dev/null --connect-timeout 2 -k \
-             "https://localhost:${local_port}/healthz" >/dev/null 2>&1; then
-            pf_ok=1
-        fi
-    fi
-
-    if [ "$pf_ok" = "1" ]; then
+    # V124-12.2: delegate to shared helpers (argocd_pf_alive +
+    # start_argocd_port_forward) so do_argocd_token, do_port_forward, and
+    # do_ready all use the same kill+restart pattern.
+    if argocd_pf_alive "$local_port"; then
         [ "$mode" = "default" ] && log_info "reusing existing port-forward on localhost:${local_port}"
     else
         [ "$mode" = "default" ] && log_info "starting port-forward localhost:${local_port} -> svc/argocd-server:443"
-        pkill -f "kubectl port-forward.*argocd-server" >/dev/null 2>&1 || true
-        sleep 1
-        kubectl port-forward -n argocd svc/argocd-server "${local_port}:443" \
-            > /tmp/argocd-pf.log 2>&1 &
-        disown 2>/dev/null || true
-
-        local i
-        local pf_alive=0
-        for i in $(seq 1 10); do
-            if nc -z localhost "$local_port" >/dev/null 2>&1; then
-                pf_alive=1
-                break
-            fi
-            sleep 1
-        done
-        if [ "$pf_alive" != "1" ]; then
-            log_fail "port-forward to argocd-server did not come up on localhost:${local_port}"
-            cat /tmp/argocd-pf.log >&2 2>/dev/null || true
+        if ! start_argocd_port_forward "$local_port"; then
             return 1
         fi
     fi
@@ -1275,27 +1292,10 @@ print(json.dumps({"data": {"policy.csv": os.environ["NEW_POLICY"]}}))
         fi
 
         # The deployment restart killed our port-forward — re-establish it.
+        # V124-12.2: shared helper handles kill+restart+wait.
         [ "$mode" = "default" ] && log_info "re-establishing port-forward after argocd-server restart"
-        pkill -f "kubectl port-forward.*argocd-server" >/dev/null 2>&1 || true
-        sleep 1
-        kubectl port-forward -n argocd svc/argocd-server "${local_port}:443" \
-            > /tmp/argocd-pf.log 2>&1 &
-        disown 2>/dev/null || true
-
-        local j
-        local pf_alive=0
-        for j in $(seq 1 15); do
-            if nc -z localhost "$local_port" >/dev/null 2>&1 \
-               && curl -sS -o /dev/null --connect-timeout 2 -k \
-                  "https://localhost:${local_port}/healthz" >/dev/null 2>&1; then
-                pf_alive=1
-                break
-            fi
-            sleep 1
-        done
-        if [ "$pf_alive" != "1" ]; then
+        if ! start_argocd_port_forward "$local_port"; then
             log_fail "port-forward did not recover after argocd-server restart"
-            cat /tmp/argocd-pf.log >&2 2>/dev/null || true
             return 1
         fi
         [ "$mode" = "default" ] && log_ok "patched argocd-cm to enable apiKey capability + restarted argocd-server"
@@ -1372,6 +1372,114 @@ print(json.dumps({"data": {"policy.csv": os.environ["NEW_POLICY"]}}))
 }
 
 # =====================================================================
+# Subcommand: do_port_forward (V124-12.2)
+# Restart Sharko + ArgoCD port-forwards together (or one of them) so the
+# maintainer never has to remember both kubectl invocations.
+# =====================================================================
+do_port_forward() {
+    local target="both"            # both | sharko | argocd
+    local sharko_port="${SHARKO_LOCAL_PORT}"
+    local argocd_port="${ARGOCD_LOCAL_PORT}"
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -h|--help)
+                cat <<EOF
+sharko-dev.sh port-forward (alias: pf) — restart kubectl port-forwards
+
+Default: kills any existing Sharko AND ArgoCD port-forwards, restarts
+both, verifies TCP + health on each. Use the flags below to scope it
+to one target.
+
+Flags:
+  --sharko              only restart the Sharko port-forward
+  --argocd              only restart the ArgoCD port-forward
+  --port <N>            override Sharko local port (default ${SHARKO_LOCAL_PORT})
+  --argocd-port <N>     override ArgoCD local port (default ${ARGOCD_LOCAL_PORT})
+  -h, --help            this message
+
+Environment:
+  SHARKO_LOCAL_PORT     default 8080
+  ARGOCD_LOCAL_PORT     default 18080
+
+Usage:
+  ./scripts/sharko-dev.sh port-forward
+  ./scripts/sharko-dev.sh pf --sharko
+  ./scripts/sharko-dev.sh pf --argocd
+  ./scripts/sharko-dev.sh pf --port 8081 --argocd-port 18081
+EOF
+                return 0
+                ;;
+            --sharko) target="sharko" ;;
+            --argocd) target="argocd" ;;
+            --port)
+                shift
+                if [ -z "${1:-}" ]; then
+                    log_fail "--port requires a numeric argument"
+                    return 1
+                fi
+                sharko_port="$1"
+                ;;
+            --argocd-port)
+                shift
+                if [ -z "${1:-}" ]; then
+                    log_fail "--argocd-port requires a numeric argument"
+                    return 1
+                fi
+                argocd_port="$1"
+                ;;
+            *)
+                log_fail "unknown flag: $1"
+                echo "       Try: ./scripts/sharko-dev.sh port-forward --help" >&2
+                return 1
+                ;;
+        esac
+        shift
+    done
+
+    local rc=0
+
+    if [ "$target" = "both" ] || [ "$target" = "sharko" ]; then
+        if ! kubectl get deployment -n "${SHARKO_NAMESPACE}" sharko >/dev/null 2>&1; then
+            log_warn "deployment/sharko not found in namespace '${SHARKO_NAMESPACE}' — skipping Sharko port-forward"
+            [ "$target" = "sharko" ] && rc=1
+        else
+            log_info "restarting Sharko port-forward localhost:${sharko_port} -> svc/sharko:${SHARKO_REMOTE_PORT}"
+            # start_port_forward uses $SHARKO_LOCAL_PORT internally; if the
+            # caller overrode --port, propagate via env for this call.
+            local _saved="${SHARKO_LOCAL_PORT}"
+            SHARKO_LOCAL_PORT="$sharko_port"
+            HOST="http://localhost:${SHARKO_LOCAL_PORT}"
+            if start_port_forward; then
+                log_ok "Sharko port-forward: localhost:${sharko_port} (alive)"
+            else
+                log_fail "Sharko port-forward: localhost:${sharko_port} (failed)"
+                rc=1
+            fi
+            SHARKO_LOCAL_PORT="$_saved"
+            HOST="http://localhost:${SHARKO_LOCAL_PORT}"
+        fi
+    fi
+
+    if [ "$target" = "both" ] || [ "$target" = "argocd" ]; then
+        if ! kubectl get deployment -n argocd argocd-server >/dev/null 2>&1; then
+            log_warn "deployment/argocd-server not found — skipping ArgoCD port-forward"
+            [ "$target" = "argocd" ] && rc=1
+        else
+            log_info "restarting ArgoCD port-forward localhost:${argocd_port} -> svc/argocd-server:443"
+            if start_argocd_port_forward "$argocd_port"; then
+                log_ok "ArgoCD port-forward: localhost:${argocd_port} (alive)"
+            else
+                log_fail "ArgoCD port-forward: localhost:${argocd_port} (failed)"
+                rc=1
+            fi
+        fi
+    fi
+
+    return $rc
+}
+
+# =====================================================================
 # usage / help
 # =====================================================================
 usage() {
@@ -1394,6 +1502,7 @@ ${BOLD}Credentials${RESET}
   argocd-token  Generate ArgoCD account token (for wizard step 3)
 
 ${BOLD}Operations${RESET}
+  port-forward / pf    Restart Sharko + ArgoCD port-forwards (--sharko / --argocd to scope)
   smoke         Run smoke tests (auto-extracts creds if missing)
   status        Show current env state (cluster, Sharko, creds, token)
 
@@ -1431,6 +1540,12 @@ main() {
             shift
             preflight_tools || return 1
             do_argocd_token "$@"
+            return $?
+            ;;
+        port-forward|pf)
+            shift
+            preflight_tools || return 1
+            do_port_forward "$@"
             return $?
             ;;
         help|--help|-h|"")
