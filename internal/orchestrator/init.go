@@ -123,15 +123,27 @@ func (o *Orchestrator) InitRepo(ctx context.Context, req InitRepoRequest) (*Init
 
 		result.ArgoCD = &InitArgocdInfo{
 			Bootstrapped: true,
-			RootApp:      "addons-bootstrap",
+			RootApp:      BootstrapRootAppName,
 		}
 
 		// Step 7 — Poll for sync verification (up to 2 minutes).
-		syncStatus, syncErr := o.waitForSync(ctx, "addons-bootstrap", 2*time.Minute)
+		syncStatus, syncErr := o.waitForSync(ctx, BootstrapRootAppName, 2*time.Minute)
 		result.ArgoCD.SyncStatus = syncStatus
 		result.ArgoCD.SyncError = syncErr
 		if syncStatus != "synced" {
+			// V124-14 / BUG-032: a sync timeout/failure must surface as a
+			// non-nil error so the operations framework marks the operation
+			// as `failed` and the first-run wizard renders the actual cause
+			// instead of "Repository initialized successfully." The caller
+			// may still inspect `result` for partial info — the error
+			// message itself carries enough detail for the wizard.
 			result.Status = "syncing"
+			detail := syncStatus
+			if syncErr != "" {
+				detail = syncStatus + ": " + syncErr
+			}
+			return result, fmt.Errorf("argocd application %q did not reach synced state: %s",
+				BootstrapRootAppName, detail)
 		}
 	}
 

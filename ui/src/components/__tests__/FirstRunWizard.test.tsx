@@ -5,11 +5,17 @@
 // header MUST drop the "Step N of M" counter. Showing "Step 4 of 4 —
 // Initialize" makes it look like steps 1-3 vanished, which the maintainer's
 // 2026-05-08 walkthrough flagged as confusing.
+//
+// V124-14 / BUG-032 also adds: when the backend marks an init op `failed`
+// with a descriptive error (e.g. "argocd application 'cluster-addons-bootstrap'
+// did not reach synced state: timeout: ..."), the wizard MUST render that
+// error string verbatim instead of "Repository initialized successfully."
 
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { FirstRunWizard, detectGitProvider } from '@/components/FirstRunWizard'
+import * as apiModule from '@/services/api'
 
 vi.mock('@/hooks/useConnections', () => ({
   useConnections: () => ({
@@ -124,5 +130,71 @@ describe('FirstRunWizard step header', () => {
     expect(label.textContent).toBe('Resuming setup — Initialize')
     // Defensive: explicitly assert the counter substring is absent.
     expect(label.textContent).not.toContain('Step 4 of 4')
+  })
+})
+
+// V124-14 / BUG-032 — wizard surfaces operation `failed` errors verbatim.
+//
+// When the backend's runInitOperation Fail()s the session because the
+// ArgoCD root app never reaches Synced, the operation polling endpoint
+// returns `{ status: 'failed', error: 'argocd application "cluster-addons-bootstrap"
+// did not reach synced state: timeout: sync verification timed out after 2m0s' }`.
+//
+// The wizard MUST display that error string verbatim — anything more
+// generic (or worse, "Repository initialized successfully") would put the
+// user back into the silent-failure trap that BUG-032 created.
+describe('FirstRunWizard step 4 — sync-failure surfacing (V124-14 / BUG-032)', () => {
+  it('renders the backend failure error string when operation status=failed', async () => {
+    const failureError =
+      'argocd application "cluster-addons-bootstrap" did not reach synced state: timeout: sync verification timed out after 2m0s'
+
+    // Drive the polling effect: first poll returns running, second returns failed.
+    const initRepoMock = apiModule.initRepo as ReturnType<typeof vi.fn>
+    const getOperationMock = apiModule.getOperation as ReturnType<typeof vi.fn>
+    initRepoMock.mockResolvedValueOnce({ operation_id: 'op-failure-1' })
+    getOperationMock.mockResolvedValue({
+      id: 'op-failure-1',
+      status: 'failed',
+      error: failureError,
+      steps: [],
+    })
+
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      renderWizard(4)
+
+      // Click "Initialize & Auto-merge" to kick off init.
+      const initBtn = screen.getByRole('button', { name: /Initialize.*Auto-merge/i })
+      fireEvent.click(initBtn)
+
+      // Let the initRepo promise resolve (microtasks).
+      await act(async () => {
+        await Promise.resolve()
+      })
+
+      // Advance past the 2s polling interval so the polled getOperation runs.
+      await act(async () => {
+        vi.advanceTimersByTime(2100)
+        await Promise.resolve()
+      })
+
+      await waitFor(() => {
+        expect(screen.getByText(failureError)).toBeInTheDocument()
+      })
+
+      // Belt-and-suspenders: success message must NOT be shown.
+      expect(
+        screen.queryByText(/Repository initialized successfully/i),
+      ).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+      // Reset the default mock so it doesn't leak into other tests.
+      getOperationMock.mockResolvedValue({
+        id: 'op-1',
+        status: 'pending',
+        steps: [],
+      })
+      initRepoMock.mockResolvedValue({ operation_id: 'op-1' })
+    }
   })
 })

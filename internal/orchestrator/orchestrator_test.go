@@ -315,7 +315,7 @@ spec:
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: addons-bootstrap
+  name: cluster-addons-bootstrap
   namespace: argocd
 spec:
   project: addons
@@ -392,6 +392,11 @@ func TestInitRepo_AlreadyInitialized(t *testing.T) {
 }
 
 func TestInitRepo_SyncTimeout(t *testing.T) {
+	// V124-14 / BUG-032: sync timeout must surface as a non-nil error so the
+	// operations framework marks the op as failed and the wizard renders the
+	// real cause instead of "Repository initialized successfully." The
+	// orchestrator still attaches the partial `result` so callers (or
+	// upstream layers that preserve result-on-error) can show progress.
 	argocd := newMockArgocd()
 	// GetApplication always returns "not found" — triggers timeout.
 	argocd.getAppErr = fmt.Errorf("not found")
@@ -407,11 +412,20 @@ func TestInitRepo_SyncTimeout(t *testing.T) {
 
 	result, err := orch.InitRepo(ctx, InitRepoRequest{
 		BootstrapArgoCD: true,
-		GitUsername:      "x-access-token",
-		GitToken:         "test-token",
+		GitUsername:     "x-access-token",
+		GitToken:        "test-token",
 	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatalf("expected non-nil error on sync timeout, got nil")
+	}
+	if !strings.Contains(err.Error(), "did not reach synced state") {
+		t.Errorf("error message should reference sync state, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), BootstrapRootAppName) {
+		t.Errorf("error message should reference app %q, got: %v", BootstrapRootAppName, err)
+	}
+	if result == nil {
+		t.Fatal("expected partial result alongside non-nil error")
 	}
 	if result.ArgoCD == nil {
 		t.Fatal("expected ArgoCD info in result")
@@ -427,8 +441,8 @@ func TestInitRepo_SyncTimeout(t *testing.T) {
 func TestInitRepo_WithBootstrapAndSync(t *testing.T) {
 	argocd := newMockArgocd()
 	argocd.applications = map[string]*models.ArgocdApplication{
-		"addons-bootstrap": {
-			Name:         "addons-bootstrap",
+		BootstrapRootAppName: {
+			Name:         BootstrapRootAppName,
 			SyncStatus:   "Synced",
 			HealthStatus: "Healthy",
 		},

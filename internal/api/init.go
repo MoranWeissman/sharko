@@ -244,18 +244,28 @@ func (s *Server) runInitOperation(
 		s.opsStore.UpdateStep(sessionID, operations.StatusCompleted, "ArgoCD bootstrapped")
 
 		// Step 6: Wait for sync.
-		syncStatus, syncErr := orch.WaitForSync(ctx, "addons-bootstrap", 2*time.Minute)
+		// V124-14 / BUG-031: poll the canonical bootstrap app name. The
+		// constant is verified by templates_test.go to match the value of
+		// metadata.name in templates/bootstrap/root-app.yaml — drift in
+		// either direction breaks first-run init.
+		syncStatus, syncErr := orch.WaitForSync(ctx, orchestrator.BootstrapRootAppName, 2*time.Minute)
 		detail := syncStatus
 		if syncErr != "" {
 			detail = syncStatus + ": " + syncErr
 		}
 		if syncStatus != "synced" {
+			// V124-14 / BUG-032: a sync timeout/failure must Fail the
+			// operation, not Complete it. The wizard treats `completed` as
+			// success and would otherwise show "Repository initialized
+			// successfully" while ArgoCD silently never reached Synced.
 			s.opsStore.UpdateStep(sessionID, operations.StatusFailed, detail)
-			s.opsStore.Complete(sessionID, "init complete (sync: "+detail+")")
-		} else {
-			s.opsStore.UpdateStep(sessionID, operations.StatusCompleted, "synced")
-			s.opsStore.Complete(sessionID, "init complete")
+			s.opsStore.Fail(sessionID, fmt.Sprintf(
+				"argocd application %q did not reach synced state: %s",
+				orchestrator.BootstrapRootAppName, detail))
+			return
 		}
+		s.opsStore.UpdateStep(sessionID, operations.StatusCompleted, "synced")
+		s.opsStore.Complete(sessionID, "init complete")
 	} else {
 		// Skip steps 5 and 6 — advance them as skipped.
 		s.opsStore.UpdateStep(sessionID, operations.StatusCompleted, "skipped")
