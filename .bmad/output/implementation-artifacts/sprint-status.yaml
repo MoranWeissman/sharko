@@ -1,5 +1,5 @@
 # generated: 2026-04-20
-# last_updated: 2026-05-08 (late) — V124-3 (10/11) + V124-4 (5/5) + V124-5 (2/2) + V124-6 (4/4) shipped on dev/v1.24-cleanup at 08411e41. PR #319 CI green. Maintainer pushed back on V124-3.8/V124-6.3 leaving log-grep as the only post-rotation password recovery path; V124-7 opened to extend `sharko reset-admin` to (re)write `sharko-initial-admin-secret` instead of just deleting it. Single story. After V124-7: maintainer does helm reinstall + reset-admin validation → resume Track B UI → merge PR #319 → cut v1.24.0-pre.0.
+# last_updated: 2026-05-08 (latest) — V124-3 (10/11) + V124-4 (5/5) + V124-5 (2/2) + V124-6 (4/4) + V124-7 (1/1) shipped on dev/v1.24-cleanup at 7c4d4e4c. PR #319 CI green. Maintainer asked: "would you just make me automation for every possible scenario we encountered so far instead of me copying commands to the cli?" — V124-8 maintainer DX framework opened. Single entry `scripts/sharko-dev.sh` with 11 subcommands (up/install/rebuild/reset/creds/login/rotate/smoke/status/down/help) covering every dev-loop flow this session uncovered. Plus BUG-026 fix (dev-rebuild.sh set -e leak when sourced) and runbook update. 3 stories. After V124-8: resume Track B UI → merge PR #319 → cut v1.24.0-pre.0.
 # project: sharko
 # project_key: NOKEY
 # tracking_system: file-system
@@ -40,7 +40,7 @@
 # - Tagging: NO tags cut reflexively — merge PRs to main when green; tag only when user explicitly asks (see feedback_release_cadence.md)
 
 generated: 2026-04-20
-last_updated: 2026-05-08 (late) (V124-3 10/11 + V124-4 5/5 + V124-5 2/2 + V124-6 4/4 shipped at 08411e41; V124-7 opened to close reset-admin rotation gap — stacking on PR #319)
+last_updated: 2026-05-08 (latest) (V124-3 10/11 + V124-4 5/5 + V124-5 2/2 + V124-6 4/4 + V124-7 1/1 shipped at 7c4d4e4c; V124-8 maintainer DX framework opened — stacking on PR #319)
 project: sharko
 project_key: NOKEY
 tracking_system: file-system
@@ -299,5 +299,17 @@ development_status:
   # only DELETES it. So once you rotate, kubectl-get-secret access disappears
   # forever — log-grep becomes the only path. Wrong. Single story to fix.
   epic-V124-7: backlog
-  V124-7-1-reset-admin-rotates-initial-admin-secret-not-deletes: backlog    # XS-S
+  V124-7-1-reset-admin-rotates-initial-admin-secret-not-deletes: done       # commit 7c4d4e4c — annotation updated to "rotated-on-reset-admin"; +7 tests in cmd/sharko (new file) + 1 updated in internal/auth
   epic-V124-7-retrospective: optional
+
+  # Epic V124-8: Maintainer DX automation framework
+  # Maintainer pushback: "would you just make me automation for every possible scenario
+  # we encountered so far instead of me copying commands to the cli?" — direct frustration
+  # with the per-session command-paste burden. Goal: single entry scripts/sharko-dev.sh
+  # with 11 subcommands covering every dev-loop scenario this session uncovered.
+  # Stacks on dev/v1.24-cleanup, extends PR #319.
+  epic-V124-8: backlog
+  V124-8-1-scripts-sharko-dev-sh-entry-and-subcommands: backlog             # L (4-6h, 11 subcommands, real-cluster validation)
+  V124-8-2-bug-026-dev-rebuild-sh-set-e-leak-and-install-fallback: backlog  # S
+  V124-8-3-runbook-references-sharko-dev-sh-as-canonical: backlog           # XS-S
+  epic-V124-8-retrospective: optional
