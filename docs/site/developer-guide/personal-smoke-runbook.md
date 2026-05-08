@@ -10,12 +10,15 @@ If you want background on the test pyramid and what each layer is for, read [Tes
 
 ## Quick reference — `sharko-dev.sh` subcommand cheatsheet
 
-The maintainer-DX automation is a single entry point with subcommand dispatch (V124-8.1). Use this as your first stop before walking the manual sections below.
+The maintainer-DX automation is a single entry point with subcommand dispatch (V124-8.1). The `ready` subcommand (V124-12.1) is the canonical first step for a smoke pass: from any state (no cluster, partial install, dead port-forwards) it brings everything up and prints a unified credential summary in one go.
 
 | Scenario | Command |
 |---|---|
-| Bring up env from nothing (kind + ArgoCD + Sharko) | `./scripts/sharko-dev.sh up` |
-| Install Sharko on existing kind cluster | `./scripts/sharko-dev.sh install` |
+| **PRIMARY** — bring env to ready + print all credentials | `./scripts/sharko-dev.sh ready` |
+| **PRIMARY** — capture all credentials into shell | `eval "$(./scripts/sharko-dev.sh ready --export)"` |
+| Restart Sharko + ArgoCD port-forwards | `./scripts/sharko-dev.sh pf` |
+| (low-level) Bring up env from nothing | `./scripts/sharko-dev.sh up` |
+| (low-level) Install Sharko on existing cluster | `./scripts/sharko-dev.sh install` |
 | Rebuild after a code change (existing install) | `./scripts/sharko-dev.sh rebuild` |
 | Rebuild but auto-install if missing | `./scripts/sharko-dev.sh rebuild --auto-install` |
 | Cleanup helm release (preserves cluster + ArgoCD) | `./scripts/sharko-dev.sh reset --yes` |
@@ -29,6 +32,13 @@ The maintainer-DX automation is a single entry point with subcommand dispatch (V
 | Run the full smoke suite | `./scripts/sharko-dev.sh smoke` |
 | Show current env state | `./scripts/sharko-dev.sh status` |
 | Per-subcommand help | `./scripts/sharko-dev.sh <cmd> --help` |
+
+!!! tip "One-command env + creds with `ready` (V124-12.1)"
+    For a smoke pass, the canonical first step is:
+    ```bash
+    eval "$(./scripts/sharko-dev.sh ready --export)"
+    ```
+    This brings the env to ready (creates kind + installs ArgoCD + Sharko if missing, starts both port-forwards, regenerates the ArgoCD apiKey patch + token if needed) and exports `SHARKO_URL`, `ADMIN_PW`, `TOKEN`, `ARGOCD_LOCAL_URL`, `ARGOCD_URL`, `ARGOCD_ADMIN_PW`, `ARGOCD_TOKEN` into your shell. Re-running on a fully-up env is idempotent and finishes in ~2 seconds. The default mode (no flags) prints a unicode-box summary instead of export lines.
 
 !!! tip "Sourcing model — use eval-via-pipe, not `source`"
     `./scripts/sharko-dev.sh login --export` prints **only** `export` lines so you can run:
@@ -486,15 +496,15 @@ The container ships the `sharko` binary; `--help` should respond on every subcom
 
 Real K8s, real ArgoCD, real Helm chart. Catches integration bugs that Track A cannot. Budget 60–90 minutes; first run pulls a few GB of images.
 
-!!! tip "Now automated by `./scripts/sharko-dev.sh` (V124-8.1)"
-    Track B sections B.1 (prereqs check), B.2 (kind + Helm install/rebuild), B.3 (port-forward + health), B.4 (extract bootstrap admin credential + login), and B.5 (API sweep + V124-4 regression pins + Go E2E suite) are codified under the subcommand dispatcher:
+!!! tip "Now automated by `./scripts/sharko-dev.sh ready` (V124-12.1) — primary entry"
+    Track B sections B.1 (prereqs check), B.2 (kind + Helm install/rebuild), B.3 (port-forward + health), B.4 (extract bootstrap admin credential + login), and B.5 (API sweep + V124-4 regression pins + Go E2E suite) are codified under the subcommand dispatcher. The canonical first step is now a single command:
 
-    1. **From nothing** → `./scripts/sharko-dev.sh up` (kind cluster + ArgoCD + Sharko + port-forward + creds extraction, end-to-end).
-    2. **Existing install, code change** → `./scripts/sharko-dev.sh rebuild` (forwards to `scripts/dev-rebuild.sh` and refreshes the creds cache).
-    3. **Capture creds** → `eval "$(./scripts/sharko-dev.sh login --export)"` (no `source`, no `set -e` leak).
+    1. **From any state — primary entry** → `./scripts/sharko-dev.sh ready` (creates kind + installs ArgoCD + Sharko if missing, starts both port-forwards, prints unicode-box summary with `SHARKO_URL`, `ADMIN_PW`, `TOKEN`, `ARGOCD_LOCAL_URL`, `ARGOCD_URL`, `ARGOCD_ADMIN_PW`, `ARGOCD_TOKEN`).
+    2. **Capture all credentials in one shot** → `eval "$(./scripts/sharko-dev.sh ready --export)"` (no `source`, no `set -e` leak).
+    3. **Existing install, code change** → `./scripts/sharko-dev.sh rebuild` (forwards to `scripts/dev-rebuild.sh` and refreshes the creds cache).
     4. **Run smoke** → `./scripts/sharko-dev.sh smoke` (auto-extracts creds if missing, then forwards to `scripts/smoke.sh`).
 
-    Total runtime ~30 s on a warm machine after the first build. The manual steps below remain for understanding/troubleshooting and for the human-only portions (**B.7 ArgoCD UI**, **B.8 deep flow with real GitHub PAT**) which the scripts intentionally do not automate. See [Automation scripts](#automation-scripts) at the bottom of this doc.
+    `ready` is idempotent — re-running on a fully-up env finishes in ~2 seconds with an identical summary. The lower-level subcommands (`up`, `install`, `creds`, `login`, `argocd-token`) still exist for surgical interventions; `ready` simply orchestrates them in the right order. Total runtime: ~30 s on a warm machine after the first build, ~2 s on a fully-up env. The manual steps below remain for understanding/troubleshooting and for the human-only portions (**B.7 ArgoCD UI**, **B.8 deep flow with real GitHub PAT**) which the scripts intentionally do not automate. See [Automation scripts](#automation-scripts) at the bottom of this doc.
 
     The wrappers forward to `scripts/dev-rebuild.sh` and `scripts/smoke.sh` — direct invocation of those still works for back-compat.
 

@@ -232,6 +232,58 @@ confirm_or_abort() {
 }
 
 # =====================================================================
+# up_cluster_only / up_argocd_only / argocd_ready
+# Factored phases of `up`. V124-12.1 uses these in `do_ready` so each
+# bring-up step is a single source of truth.
+# =====================================================================
+
+# argocd_ready: 0 if argocd-server deployment exists and has >=1 available replica.
+argocd_ready() {
+    local n
+    n=$(kubectl get deployment -n argocd argocd-server \
+        -o jsonpath='{.status.availableReplicas}' 2>/dev/null || true)
+    [ -n "$n" ] && [ "$n" -ge 1 ] 2>/dev/null
+}
+
+# up_cluster_only: create kind cluster if missing. Idempotent.
+up_cluster_only() {
+    if kind_cluster_exists; then
+        log_ok "kind cluster '${KIND_CLUSTER_NAME}' already exists"
+        return 0
+    fi
+    log_info "creating kind cluster '${KIND_CLUSTER_NAME}'"
+    if ! kind create cluster --name "${KIND_CLUSTER_NAME}" --wait 60s; then
+        log_fail "kind create cluster failed"
+        return 1
+    fi
+    log_ok "kind cluster created"
+    return 0
+}
+
+# up_argocd_only: install ArgoCD into the argocd namespace if not yet ready.
+# Idempotent. V124-12.1 uses this directly from do_ready.
+up_argocd_only() {
+    if argocd_ready; then
+        log_ok "ArgoCD already installed"
+        return 0
+    fi
+    log_info "installing ArgoCD (server-side apply for large CRDs)"
+    kubectl create namespace argocd >/dev/null 2>&1 || true
+    if ! kubectl apply --server-side --force-conflicts -n argocd \
+         -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml; then
+        log_fail "ArgoCD manifest apply failed"
+        return 1
+    fi
+    log_info "waiting for argocd-server (timeout 180s)"
+    if ! kubectl wait --for=condition=available --timeout=180s deployment/argocd-server -n argocd; then
+        log_fail "argocd-server did not become available within 180s"
+        return 1
+    fi
+    log_ok "ArgoCD ready"
+    return 0
+}
+
+# =====================================================================
 # Subcommand: do_up
 # End-to-end "from nothing to running": kind + ArgoCD + Sharko + creds.
 # =====================================================================
@@ -241,13 +293,17 @@ do_up() {
         case "$arg" in
             -h|--help)
                 cat <<EOF
-sharko-dev.sh up — bring up dev environment from nothing
+sharko-dev.sh up — (low-level) create kind cluster + install ArgoCD + Sharko
 
 Creates kind cluster (if missing), installs ArgoCD (if missing), then
 forwards to 'install' to build + load + helm install Sharko.
 
 Idempotent: re-running on a partially-up environment skips work that's
 already done.
+
+Note: most maintainers should use 'ready' instead — it brings up missing
+pieces AND prints a unified credential summary (Sharko + ArgoCD admin
+passwords + tokens + URLs + port-forwards).
 
 Usage: ./scripts/sharko-dev.sh up [--help]
 EOF
@@ -258,39 +314,8 @@ EOF
 
     log_info "bringing up dev environment (cluster=${KIND_CLUSTER_NAME}, namespace=${SHARKO_NAMESPACE})"
 
-    # 1. kind cluster
-    if kind_cluster_exists; then
-        log_ok "kind cluster '${KIND_CLUSTER_NAME}' already exists"
-    else
-        log_info "creating kind cluster '${KIND_CLUSTER_NAME}'"
-        if ! kind create cluster --name "${KIND_CLUSTER_NAME}" --wait 60s; then
-            log_fail "kind create cluster failed"
-            return 1
-        fi
-        log_ok "kind cluster created"
-    fi
-
-    # 2. ArgoCD
-    if kubectl get namespace argocd >/dev/null 2>&1 \
-       && kubectl get deployment -n argocd argocd-server >/dev/null 2>&1; then
-        log_ok "ArgoCD already installed"
-    else
-        log_info "installing ArgoCD (server-side apply for large CRDs)"
-        kubectl create namespace argocd >/dev/null 2>&1 || true
-        if ! kubectl apply --server-side --force-conflicts -n argocd \
-             -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml; then
-            log_fail "ArgoCD manifest apply failed"
-            return 1
-        fi
-        log_info "waiting for argocd-server (timeout 180s)"
-        if ! kubectl wait --for=condition=available --timeout=180s deployment/argocd-server -n argocd; then
-            log_fail "argocd-server did not become available within 180s"
-            return 1
-        fi
-        log_ok "ArgoCD ready"
-    fi
-
-    # 3. Forward to install
+    up_cluster_only || return $?
+    up_argocd_only || return $?
     do_install || return $?
 
     echo
@@ -1480,6 +1505,233 @@ EOF
 }
 
 # =====================================================================
+# Subcommand: do_ready (V124-12.1)
+# THE primary maintainer entry point. From any state (no cluster, partial
+# install, partial port-forward) brings the dev env to "ready" + prints
+# a unified summary of every credential the maintainer needs.
+# =====================================================================
+do_ready() {
+    local mode="default"           # default | export | quiet
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -h|--help)
+                cat <<EOF
+sharko-dev.sh ready — one-command dev environment + unified credential summary
+
+THE primary maintainer entry point. From any state (no cluster, partial
+install, dead port-forwards) brings everything up to "ready" and prints
+every credential the maintainer needs:
+  - Sharko URL (local + in-cluster) + admin password + bearer token
+  - ArgoCD URL (local + in-cluster) + admin password + account token
+  - Both port-forwards live (sharko on ${SHARKO_LOCAL_PORT}, argocd on ${ARGOCD_LOCAL_PORT})
+
+State-aware: each phase only runs if its check fails. Re-running on a
+fully-up env is idempotent and finishes in under 2 seconds.
+
+Output modes:
+  default       unicode-box human-readable summary (or ASCII if piped)
+  --export      export lines for eval-via-pipe:
+                  eval "\$(./scripts/sharko-dev.sh ready --export)"
+                Exports SHARKO_URL, ADMIN_PW, TOKEN, ARGOCD_URL,
+                ARGOCD_LOCAL_URL, ARGOCD_ADMIN_PW, ARGOCD_TOKEN.
+  -q|--quiet    one-liner per service (terse but readable)
+  -h|--help     this message
+
+Usage: ./scripts/sharko-dev.sh ready [--export | -q | --quiet]
+EOF
+                return 0
+                ;;
+            --export) mode="export" ;;
+            -q|--quiet) mode="quiet" ;;
+            *)
+                log_fail "unknown flag: $1"
+                echo "       Try: ./scripts/sharko-dev.sh ready --help" >&2
+                return 1
+                ;;
+        esac
+        shift
+    done
+
+    # ---- 1. State detection ----
+    local need_cluster=0 need_argocd=0 need_sharko=0
+    local need_sharko_pf=0 need_argocd_pf=0
+
+    kind_cluster_exists || need_cluster=1
+    if [ "$need_cluster" = "0" ]; then
+        argocd_ready || need_argocd=1
+        helm_release_exists || need_sharko=1
+    else
+        # No cluster ⇒ nothing else can be present.
+        need_argocd=1
+        need_sharko=1
+    fi
+    port_forward_alive || need_sharko_pf=1
+    argocd_pf_alive || need_argocd_pf=1
+
+    # ---- 2. Bring up missing pieces ----
+    if [ "$mode" = "default" ]; then
+        log_info "ready: state — cluster=${need_cluster}/argocd=${need_argocd}/sharko=${need_sharko}/sharko_pf=${need_sharko_pf}/argocd_pf=${need_argocd_pf} (1=needed)"
+    fi
+
+    if [ "$need_cluster" = "1" ]; then
+        up_cluster_only || return $?
+    fi
+    if [ "$need_argocd" = "1" ]; then
+        up_argocd_only || return $?
+    fi
+    if [ "$need_sharko" = "1" ]; then
+        # do_install handles docker daemon + build + helm + rollout + pf
+        # + creds extraction. After this, Sharko port-forward is alive too.
+        do_install || return $?
+        need_sharko_pf=0
+    fi
+    if [ "$need_sharko_pf" = "1" ]; then
+        log_info "starting Sharko port-forward"
+        if ! start_port_forward; then
+            log_fail "Sharko port-forward did not come up"
+            return 1
+        fi
+    fi
+    if [ "$need_argocd_pf" = "1" ]; then
+        log_info "starting ArgoCD port-forward"
+        if ! start_argocd_port_forward; then
+            log_fail "ArgoCD port-forward did not come up"
+            return 1
+        fi
+    fi
+
+    # ---- 3. Extract credentials (idempotent — always run) ----
+    local sharko_pw=""
+    local sharko_token=""
+    local argocd_pw=""
+    local argocd_token=""
+
+    sharko_pw=$(do_creds --quiet 2>/dev/null || true)
+    if [ -z "$sharko_pw" ]; then
+        log_fail "could not extract Sharko admin password (try: ./scripts/sharko-dev.sh creds)"
+        return 1
+    fi
+
+    # If the caller has a valid $TOKEN already, reuse it. This keeps `ready`
+    # from hammering /api/v1/auth/login on every re-run — the Sharko backend
+    # rate-limits admin logins (V124-3.x) so even though re-extraction is
+    # the documented model, blindly re-logging in 5x in 30s blocks the test
+    # loop. /api/v1/users/me is a cheap auth-check.
+    if [ -n "${TOKEN:-}" ]; then
+        local me_code
+        me_code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 3 \
+            -H "Authorization: Bearer ${TOKEN}" \
+            "${HOST}/api/v1/users/me" 2>/dev/null)
+        if [ "$me_code" = "200" ]; then
+            sharko_token="$TOKEN"
+        fi
+    fi
+
+    if [ -z "$sharko_token" ]; then
+        # Re-export so do_login picks it up without re-querying creds.
+        ADMIN_PW="$sharko_pw"
+        export ADMIN_PW
+        sharko_token=$(do_login --quiet 2>/dev/null || true)
+        if [ -z "$sharko_token" ]; then
+            log_fail "could not log in to Sharko (try: ./scripts/sharko-dev.sh login or wait 60s if rate-limited)"
+            return 1
+        fi
+    fi
+
+    argocd_pw=$(kubectl get secret -n argocd argocd-initial-admin-secret \
+        -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
+    if [ -z "$argocd_pw" ]; then
+        log_warn "argocd-initial-admin-secret missing — token generation may have rotated it; password unavailable"
+    fi
+
+    argocd_token=$(do_argocd_token --quiet 2>/dev/null || true)
+    if [ -z "$argocd_token" ]; then
+        log_fail "could not generate ArgoCD token (try: ./scripts/sharko-dev.sh argocd-token)"
+        return 1
+    fi
+
+    local sharko_local_url="http://localhost:${SHARKO_LOCAL_PORT}"
+    local sharko_incluster_url="http://sharko.${SHARKO_NAMESPACE}.svc.cluster.local"
+    local argocd_local_url="https://localhost:${ARGOCD_LOCAL_PORT}"
+    local argocd_incluster_url="https://argocd-server.argocd.svc.cluster.local"
+
+    # ---- 4. Output ----
+    case "$mode" in
+        export)
+            printf 'export SHARKO_URL=%s\n' "$sharko_local_url"
+            printf 'export ADMIN_PW=%s\n' "$sharko_pw"
+            printf 'export TOKEN=%s\n' "$sharko_token"
+            printf 'export ARGOCD_LOCAL_URL=%s\n' "$argocd_local_url"
+            printf 'export ARGOCD_URL=%s\n' "$argocd_incluster_url"
+            printf 'export ARGOCD_ADMIN_PW=%s\n' "$argocd_pw"
+            printf 'export ARGOCD_TOKEN=%s\n' "$argocd_token"
+            return 0
+            ;;
+        quiet)
+            printf 'Sharko: %s  pw=%s  token=%s...\n' \
+                "$sharko_local_url" "$sharko_pw" "${sharko_token:0:20}"
+            printf 'ArgoCD: %s  pw=%s  token=%s...\n' \
+                "$argocd_local_url" "$argocd_pw" "${argocd_token:0:20}"
+            return 0
+            ;;
+    esac
+
+    # ---- default: unicode-box (TTY) or ASCII (pipe) summary ----
+    # Picking simple character constants keeps the layout readable and easy
+    # to audit. We don't right-pad lines; modern terminals handle ragged
+    # right edges fine and the ASCII fallback would otherwise need careful
+    # width math.
+    local TL TR BL BR HZ VT MID_L MID_R
+    if [ -t 1 ]; then
+        TL=$'╔'; TR=$'╗'; BL=$'╚'; BR=$'╝'
+        HZ=$'═'; VT=$'║'
+        MID_L=$'╠'; MID_R=$'╣'
+    else
+        TL='+'; TR='+'; BL='+'; BR='+'
+        HZ='-'; VT='|'
+        MID_L='+'; MID_R='+'
+    fi
+    # Build the horizontal rule: 66 HZ chars between the corners.
+    local rule=""
+    local i
+    for i in $(seq 1 66); do rule="${rule}${HZ}"; done
+
+    local sharko_token_short="${sharko_token:0:30}..."
+    local argocd_token_short="${argocd_token:0:30}..."
+
+    echo
+    printf '%s%s%s\n' "$TL" "$rule" "$TR"
+    printf '%s  %sSharko dev environment - READY%s\n' "$VT" "$BOLD" "$RESET"
+    # Inner rows: left-VT only. Right-edge alignment intentionally relaxed
+    # because credential strings vary in width.
+    printf '%s%s%s\n' "$MID_L" "$rule" "$MID_R"
+    printf '%s\n' "$VT"
+    printf '%s  %sSharko%s\n' "$VT" "$BOLD" "$RESET"
+    printf '%s    URL (local):       %s\n'             "$VT" "$sharko_local_url"
+    printf '%s    URL (in-cluster):  %s\n'             "$VT" "$sharko_incluster_url"
+    printf '%s    Admin password:    %s\n'             "$VT" "$sharko_pw"
+    printf '%s    Bearer token:      %s\n'             "$VT" "$sharko_token_short"
+    printf '%s\n' "$VT"
+    printf '%s  %sArgoCD%s\n' "$VT" "$BOLD" "$RESET"
+    printf '%s    URL (local):       %s\n'             "$VT" "$argocd_local_url"
+    printf '%s    URL (in-cluster):  %s\n'             "$VT" "$argocd_incluster_url"
+    printf '%s    Admin password:    %s\n'             "$VT" "$argocd_pw"
+    printf '%s    Account token:     %s\n'             "$VT" "$argocd_token_short"
+    printf '%s\n' "$VT"
+    printf '%s  Port-forwards: %sBOTH running (sharko %s, argocd %s)%s\n' \
+        "$VT" "$GREEN" "$SHARKO_LOCAL_PORT" "$ARGOCD_LOCAL_PORT" "$RESET"
+    printf '%s\n' "$VT"
+    printf '%s%s%s\n' "$MID_L" "$rule" "$MID_R"
+    printf '%s  Eval-via-pipe to export into your shell:\n' "$VT"
+    printf '%s    %seval "$(./scripts/sharko-dev.sh ready --export)"%s\n' \
+        "$VT" "$BOLD" "$RESET"
+    printf '%s%s%s\n' "$BL" "$rule" "$BR"
+
+    return 0
+}
+
+# =====================================================================
 # usage / help
 # =====================================================================
 usage() {
@@ -1488,10 +1740,11 @@ ${BOLD}Sharko maintainer dev-loop tool${RESET}
 
 Usage: ./scripts/sharko-dev.sh <subcommand> [flags]
 
-${BOLD}Lifecycle${RESET}
-  up            Bring up env from nothing (kind + ArgoCD + Sharko + port-forward)
-  install       Install Sharko on existing kind cluster (build, load, helm install)
-  rebuild       Rebuild after a code change (existing install required)
+${BOLD}Lifecycle${RESET} (use 'ready' for one-command end-to-end)
+  ready         ${BOLD}PRIMARY ENTRY${RESET} — bring env to ready state + print all credentials
+  up            (low-level) Create kind cluster + install ArgoCD + Sharko
+  install       (low-level) Install Sharko on existing kind cluster (build, load, helm install)
+  rebuild       Rebuild Sharko after a code change (existing install required)
   reset         Cleanup helm release + secrets (preserves kind cluster + ArgoCD)
   down          Full teardown (deletes kind cluster)
 
@@ -1530,7 +1783,7 @@ EOF
 main() {
     local cmd="${1:-help}"
     case "$cmd" in
-        up|install|rebuild|reset|creds|login|rotate|smoke|status|down)
+        up|install|rebuild|reset|creds|login|rotate|smoke|status|down|ready)
             shift
             preflight_tools || return 1
             "do_${cmd}" "$@"
