@@ -9,7 +9,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import { FirstRunWizard } from '@/components/FirstRunWizard'
+import { FirstRunWizard, detectGitProvider } from '@/components/FirstRunWizard'
 
 vi.mock('@/hooks/useConnections', () => ({
   useConnections: () => ({
@@ -48,6 +48,58 @@ function renderWizard(initialStep?: number) {
     </MemoryRouter>,
   )
 }
+
+// V124-10 / BUG-028 — detectGitProvider unit tests.
+//
+// The wizard's `buildPayload` calls detectGitProvider(form.git_url) and the
+// resulting value flows into the JSON body sent to POST /api/v1/connections/.
+// `undefined` is dropped by JSON.stringify and the backend's auto-derive
+// takes over; recognized hosts populate `git.provider` so the wizard's
+// "Test Connection" round-trip carries the value verbatim.
+describe('detectGitProvider', () => {
+  it('returns "github" for github.com', () => {
+    expect(detectGitProvider('https://github.com/foo/bar')).toBe('github')
+  })
+
+  it('returns "github" for *.github.com (e.g. api.github.com)', () => {
+    expect(detectGitProvider('https://api.github.com/foo/bar')).toBe('github')
+  })
+
+  it('returns "azuredevops" for dev.azure.com', () => {
+    expect(
+      detectGitProvider('https://dev.azure.com/myorg/myproj/_git/myrepo'),
+    ).toBe('azuredevops')
+  })
+
+  it('returns "azuredevops" for legacy *.visualstudio.com', () => {
+    expect(
+      detectGitProvider('https://myorg.visualstudio.com/myproj/_git/myrepo'),
+    ).toBe('azuredevops')
+  })
+
+  it('returns undefined for unsupported hosts (gitlab.com)', () => {
+    expect(detectGitProvider('https://gitlab.com/foo/bar')).toBeUndefined()
+  })
+
+  it('returns undefined for unsupported hosts (bitbucket.org)', () => {
+    expect(detectGitProvider('https://bitbucket.org/foo/bar')).toBeUndefined()
+  })
+
+  it('returns undefined for malformed URLs (URL constructor throws)', () => {
+    expect(detectGitProvider('not-a-url')).toBeUndefined()
+  })
+
+  it('returns undefined for empty input', () => {
+    expect(detectGitProvider('')).toBeUndefined()
+  })
+
+  it('is case-insensitive on the host portion', () => {
+    expect(detectGitProvider('https://GitHub.COM/foo/bar')).toBe('github')
+    expect(detectGitProvider('https://DEV.AZURE.COM/o/p/_git/r')).toBe(
+      'azuredevops',
+    )
+  })
+})
 
 describe('FirstRunWizard step header', () => {
   it('shows "Step 1 of 4 — Welcome" when started fresh from step 1', () => {

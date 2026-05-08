@@ -329,5 +329,5 @@ development_status:
   # Backend rejects every wizard submission with "git.provider is required". Single
   # story: backend auto-derives from URL host + frontend populates proactively.
   epic-V124-10: backlog
-  V124-10-1-bug-028-auto-derive-git-provider-from-url-host: backlog         # S — backend deriveProviderFromURL + UI detectGitProvider + tests
+  V124-10-1-bug-028-auto-derive-git-provider-from-url-host: done            # backend deriveProviderFromURL + UI detectGitProvider + 9 backend tests + 9 frontend tests; e2e validated 5/5 scenarios on kind-sharko-e2e
   epic-V124-10-retrospective: optional

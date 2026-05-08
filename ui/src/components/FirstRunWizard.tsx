@@ -668,6 +668,45 @@ function StepInit({ onDone, resumed }: { onDone: () => void; resumed?: boolean }
 }
 
 /* ------------------------------------------------------------------ */
+/*  Helpers                                                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * detectGitProvider — V124-10 / BUG-028.
+ *
+ * Inspect a git repo URL and return the canonical Sharko provider name
+ * the backend expects (`'github'` / `'azuredevops'`), or `undefined` when
+ * the host is unsupported or the URL is not parseable.
+ *
+ * Why client-side: the FirstRunWizard's `buildPayload` historically sent
+ * only `repo_url` + `token`, which V124-4.2's required-field gate then
+ * rejects with "git.provider is required". The backend now auto-derives
+ * the provider too (defense in depth), but populating it here lets the
+ * wizard's "Test Connection" round-trip surface a recognizable provider
+ * value in the test response without round-tripping through derivation.
+ *
+ * Returning `undefined` (instead of throwing) lets `buildPayload`
+ * naturally omit the field via `JSON.stringify` — the backend's
+ * derivation then takes over and either succeeds or returns a clear
+ * unsupported-host error that the wizard already surfaces in
+ * `setSaveError` / `setTestStatus`.
+ *
+ * Recognized hosts (mirror of backend deriveProviderFromURL whitelist):
+ *   - github.com, *.github.com
+ *   - dev.azure.com, *.visualstudio.com
+ */
+export function detectGitProvider(repoURL: string): 'github' | 'azuredevops' | undefined {
+  try {
+    const host = new URL(repoURL).hostname.toLowerCase()
+    if (host === 'github.com' || host.endsWith('.github.com')) return 'github'
+    if (host === 'dev.azure.com' || host.endsWith('.visualstudio.com')) return 'azuredevops'
+    return undefined
+  } catch {
+    return undefined
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /*  Main wizard                                                         */
 /* ------------------------------------------------------------------ */
 
@@ -688,6 +727,12 @@ export function FirstRunWizard({ initialStep = 1 }: { initialStep?: number } = {
 
   const buildPayload = () => ({
     git: {
+      // V124-10 / BUG-028: send provider proactively so the create-time
+      // required-field gate (V124-4.2) doesn't fire on every wizard
+      // submission. `undefined` is dropped by JSON.stringify, in which
+      // case the backend's deriveProviderFromURL takes over. See
+      // detectGitProvider for the recognized-host list.
+      provider: detectGitProvider(form.git_url),
       repo_url: form.git_url,
       token: form.git_token || undefined,
     },

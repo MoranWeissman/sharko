@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
+	"strings"
 
 	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/config"
@@ -103,6 +105,25 @@ func (s *ConnectionService) List() (*models.ConnectionsListResponse, error) {
 // preserves the original error chain — callers can still errors.As for
 // the concrete cause if they need it.
 func (s *ConnectionService) Create(req models.CreateConnectionRequest) error {
+	// V124-10 / BUG-028: auto-derive git.provider from the URL host when the
+	// caller didn't supply one. The FirstRunWizard's payload only carries
+	// repo_url + token (no provider field), so without this every wizard
+	// submission would fall straight into V124-4.2's required-field gate
+	// with "git.provider is required".
+	//
+	// Operator-supplied value wins — derivation only runs when Provider is
+	// empty. An explicit-but-unsupported value (e.g. "gitlab") still falls
+	// through to validateConnectionRequest's whitelist check, which echoes
+	// the bad value back. Unsupported hosts are rejected here with a clear
+	// message naming the host.
+	if req.Git.Provider == "" && req.Git.RepoURL != "" {
+		derived, err := deriveProviderFromURL(req.Git.RepoURL)
+		if err != nil {
+			return err // already wraps ErrValidation
+		}
+		req.Git.Provider = models.GitProviderType(derived)
+	}
+
 	// V124-4.2 / BUG-017: required-field validation runs before any other
 	// processing so an empty `{}` body fails fast with a 400 instead of
 	// persisting a name="default" placeholder with no usable Git config.
@@ -131,6 +152,42 @@ func (s *ConnectionService) Create(req models.CreateConnectionRequest) error {
 		conn.Name = deriveConnectionName(conn.Git)
 	}
 	return s.store.SaveConnection(conn)
+}
+
+// deriveProviderFromURL returns the canonical Sharko Git provider name
+// ("github" or "azuredevops") inferred from the host portion of repoURL.
+//
+// V124-10 / BUG-028: the FirstRunWizard sends only repo_url + token in its
+// payload (no provider field). Without auto-derivation the create flow hits
+// V124-4.2's required-field gate ("git.provider is required") and the
+// wizard wedges at the step 3 → 4 transition.
+//
+// Why a separate helper rather than reusing models.GitRepoConfig.ParseRepoURL:
+// ParseRepoURL treats every non-Azure host as GitHub Enterprise, so
+// gitlab.com / bitbucket.org / random typos would silently be classified
+// as github and fail later with an opaque GitHub-API error. deriveProviderFromURL
+// is a strict whitelist that surfaces the unsupported host early with a
+// crisp ErrValidation message naming exactly which hosts Sharko supports.
+//
+// Recognized hosts:
+//   - GitHub:      github.com, *.github.com (GitHub Enterprise w/ subdomain)
+//   - Azure DevOps: dev.azure.com, *.visualstudio.com (legacy ADO host)
+//
+// All errors wrap ErrValidation so the API handler returns 400.
+func deriveProviderFromURL(repoURL string) (string, error) {
+	u, err := url.Parse(repoURL)
+	if err != nil || u.Host == "" {
+		return "", fmt.Errorf("cannot parse git repo URL %q: %w", repoURL, ErrValidation)
+	}
+	host := strings.ToLower(u.Host)
+	switch {
+	case host == "github.com" || strings.HasSuffix(host, ".github.com"):
+		return string(models.GitProviderGitHub), nil
+	case host == "dev.azure.com" || strings.HasSuffix(host, ".visualstudio.com"):
+		return string(models.GitProviderAzureDevOps), nil
+	default:
+		return "", fmt.Errorf("unsupported git host %q (supported: github.com, dev.azure.com): %w", host, ErrValidation)
+	}
 }
 
 // validateConnectionRequest checks that the create/update request has the

@@ -395,3 +395,271 @@ func TestMissingRequiredConnectionFields(t *testing.T) {
 		})
 	}
 }
+
+// V124-10 / BUG-028 — auto-derive git.provider from the URL host when the
+// caller didn't supply one.
+//
+// Background: V124-4.2 made git.provider required, but the FirstRunWizard's
+// payload only carries repo_url + token (no provider field). The maintainer's
+// 2026-05-08 walkthrough hit "git.provider is required" at the step 3 → 4
+// transition with a real github.com URL. The fix derives the provider from
+// the URL host before V124-4.2's required-field check runs.
+
+// TestHandleCreateConnection_AutoDeriveProvider_GitHub — wizard's exact
+// payload shape (repo_url + token, no explicit provider) must succeed for a
+// github.com URL. The stored connection should have git_provider="github".
+func TestHandleCreateConnection_AutoDeriveProvider_GitHub(t *testing.T) {
+	srv := newIsolatedTestServer(t)
+	router := NewRouter(srv, nil)
+
+	body, _ := json.Marshal(models.CreateConnectionRequest{
+		Git: models.GitRepoConfig{
+			RepoURL: "https://github.com/MoranWeissman/sharko-smoke-addons",
+			Token:   "fake-token-for-test",
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections/", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 (V124-10: auto-derive must allow no-provider payload)\nbody: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleCreateConnection_AutoDeriveProvider_GitHubSubdomain — *.github.com
+// (e.g. api.github.com) also auto-derives to "github". The maintainer's
+// repos may use enterprise subdomains.
+func TestHandleCreateConnection_AutoDeriveProvider_GitHubSubdomain(t *testing.T) {
+	srv := newIsolatedTestServer(t)
+	router := NewRouter(srv, nil)
+
+	body, _ := json.Marshal(models.CreateConnectionRequest{
+		Git: models.GitRepoConfig{
+			RepoURL: "https://api.github.com/foo/bar",
+			Token:   "fake-token",
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections/", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 for *.github.com subdomain\nbody: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleCreateConnection_AutoDeriveProvider_AzureDevOps — dev.azure.com
+// URL with full /_git/repo path auto-derives to "azuredevops".
+func TestHandleCreateConnection_AutoDeriveProvider_AzureDevOps(t *testing.T) {
+	srv := newIsolatedTestServer(t)
+	router := NewRouter(srv, nil)
+
+	body, _ := json.Marshal(models.CreateConnectionRequest{
+		Git: models.GitRepoConfig{
+			RepoURL: "https://dev.azure.com/myorg/myproj/_git/myrepo",
+			Token:   "fake-pat",
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections/", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 for dev.azure.com\nbody: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleCreateConnection_AutoDeriveProvider_LegacyVisualStudio — the
+// pre-Microsoft Azure DevOps host (org.visualstudio.com) is still in the
+// wild for older tenants. Must auto-derive to "azuredevops".
+func TestHandleCreateConnection_AutoDeriveProvider_LegacyVisualStudio(t *testing.T) {
+	srv := newIsolatedTestServer(t)
+	router := NewRouter(srv, nil)
+
+	body, _ := json.Marshal(models.CreateConnectionRequest{
+		Git: models.GitRepoConfig{
+			RepoURL: "https://myorg.visualstudio.com/myproj/_git/myrepo",
+			Token:   "fake-pat",
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections/", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 for legacy *.visualstudio.com\nbody: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleCreateConnection_AutoDeriveProvider_UnsupportedHost — gitlab.com
+// (and any other non-whitelisted host) must reject with a 400 naming the
+// host. This is the explicit acceptance path that prevents derivation from
+// silently classifying unknown hosts as GitHub Enterprise (which
+// ParseRepoURL would do — see deriveProviderFromURL doc).
+func TestHandleCreateConnection_AutoDeriveProvider_UnsupportedHost(t *testing.T) {
+	srv := newIsolatedTestServer(t)
+	router := NewRouter(srv, nil)
+
+	body, _ := json.Marshal(models.CreateConnectionRequest{
+		Git: models.GitRepoConfig{
+			RepoURL: "https://gitlab.com/foo/bar",
+			Token:   "fake",
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections/", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 for unsupported host\nbody: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]string
+	_ = json.NewDecoder(w.Body).Decode(&resp)
+	if !strings.Contains(resp["error"], "unsupported git host") {
+		t.Errorf("error body should mention 'unsupported git host', got: %q", resp["error"])
+	}
+	if !strings.Contains(resp["error"], "gitlab.com") {
+		t.Errorf("error body should echo the unsupported host, got: %q", resp["error"])
+	}
+}
+
+// TestHandleCreateConnection_AutoDeriveProvider_OperatorWins — when the
+// operator explicitly sets git.provider, derivation MUST NOT overwrite it
+// even if the URL host disagrees. This preserves the contract that
+// explicit values always take precedence.
+func TestHandleCreateConnection_AutoDeriveProvider_OperatorWins(t *testing.T) {
+	srv := newIsolatedTestServer(t)
+	router := NewRouter(srv, nil)
+
+	// Operator explicitly says "github" with a URL that the URL parser
+	// would classify as github anyway — the test value here is that the
+	// derivation code path never runs (Provider is already set).
+	body, _ := json.Marshal(models.CreateConnectionRequest{
+		Git: models.GitRepoConfig{
+			Provider: models.GitProviderAzureDevOps,
+			RepoURL:  "https://dev.azure.com/org/proj/_git/repo",
+			Token:    "fake-pat",
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections/", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 (operator-supplied provider must succeed)\nbody: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleCreateConnection_AutoDeriveProvider_ExplicitInvalidStillRejected
+// — when the operator sets an UNSUPPORTED explicit provider value, derivation
+// is skipped (operator wins) and the existing whitelist validator surfaces
+// the bad value. This locks the order: derivation does NOT mask a bad
+// explicit input by overwriting it with a derived value.
+func TestHandleCreateConnection_AutoDeriveProvider_ExplicitInvalidStillRejected(t *testing.T) {
+	srv := newIsolatedTestServer(t)
+	router := NewRouter(srv, nil)
+
+	body, _ := json.Marshal(models.CreateConnectionRequest{
+		Git: models.GitRepoConfig{
+			Provider: "gitlab", // unsupported explicit value
+			RepoURL:  "https://github.com/foo/bar",
+			Token:    "fake",
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections/", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (explicit unsupported provider must surface from validator)\nbody: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]string
+	_ = json.NewDecoder(w.Body).Decode(&resp)
+	if !strings.Contains(resp["error"], "gitlab") {
+		t.Errorf("error body should echo the bad value (validator path, not derivation path), got: %q", resp["error"])
+	}
+}
+
+// TestHandleCreateConnection_AutoDeriveProvider_NoURLNoProvider —
+// when neither an explicit provider nor a repo_url is supplied, derivation
+// is skipped (the repo_url == "" guard) and V124-4.2's required-field
+// validator surfaces "git.provider is required". This locks the contract
+// that derivation is purely additive — it cannot suppress an existing 400.
+func TestHandleCreateConnection_AutoDeriveProvider_NoURLNoProvider(t *testing.T) {
+	srv := newIsolatedTestServer(t)
+	router := NewRouter(srv, nil)
+
+	body, _ := json.Marshal(models.CreateConnectionRequest{
+		Git: models.GitRepoConfig{
+			Token: "fake",
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections/", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (no URL + no provider must still fail validation)", w.Code)
+	}
+	var resp map[string]string
+	_ = json.NewDecoder(w.Body).Decode(&resp)
+	if !strings.Contains(resp["error"], "git.provider") {
+		t.Errorf("error body should mention git.provider, got: %q", resp["error"])
+	}
+}
+
+// TestHandleCreateConnection_AutoDeriveProvider_MalformedURL —
+// a syntactically broken URL (no host) returns 400 from the URL parser
+// rather than crashing or falling through to the required-field validator.
+func TestHandleCreateConnection_AutoDeriveProvider_MalformedURL(t *testing.T) {
+	srv := newIsolatedTestServer(t)
+	router := NewRouter(srv, nil)
+
+	body, _ := json.Marshal(models.CreateConnectionRequest{
+		Git: models.GitRepoConfig{
+			RepoURL: "not-a-url",
+			Token:   "fake",
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/connections/", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 for malformed URL", w.Code)
+	}
+}
+
+// TestHandleUpdateConnection_AutoDeriveProvider_GitHub — PUT goes through
+// the same Create() service path so derivation must apply on update too.
+// (The handler overlays empty token fields from the saved connection then
+// calls Create — see handleUpdateConnection.)
+func TestHandleUpdateConnection_AutoDeriveProvider_GitHub(t *testing.T) {
+	srv := newIsolatedTestServer(t)
+	router := NewRouter(srv, nil)
+
+	body, _ := json.Marshal(models.CreateConnectionRequest{
+		Git: models.GitRepoConfig{
+			RepoURL: "https://github.com/owner/repo",
+			Token:   "fake",
+		},
+	})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/connections/owner-repo", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (PUT must auto-derive provider too)\nbody: %s", w.Code, w.Body.String())
+	}
+}
