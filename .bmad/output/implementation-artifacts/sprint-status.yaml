@@ -1,5 +1,5 @@
 # generated: 2026-04-20
-# last_updated: 2026-05-08 (latest) — V124-3 (10/11) + V124-4 (5/5) + V124-5 (2/2) + V124-6 (4/4) + V124-7 (1/1) + V124-8 (3/3) shipped on dev/v1.24-cleanup at 524eb466. PR #319 CI green. Maintainer mid-Track-B-UI hit ArgoCD apiKey gauntlet (3rd command-paste of day after Merck CA + dev-rebuild dance) and asked V124-9 to add `sharko-dev.sh argocd-token` subcommand. Single story; closes BUG-027. After V124-9: wizard step-3 unblocked → resume Track B UI → merge PR #319 → cut v1.24.0-pre.0.
+# last_updated: 2026-05-08 (later) — V124-3 (10/11) + V124-4 (5/5) + V124-5 (2/2) + V124-6 (4/4) + V124-7 (1/1) + V124-8 (3/3) + V124-9 (1/1) shipped on dev/v1.24-cleanup at 839a9e1b. PR #319 CI green. Maintainer hit BUG-028 at wizard step 3 → 4: V124-4.2 made git.provider required at backend but FirstRunWizard.buildPayload never sends it. V124-10 opened to auto-derive provider from URL host (backend) AND populate proactively (frontend). Single story. After V124-10: wizard finishes step 4 → resume Track B UI → merge PR #319 → cut v1.24.0-pre.0.
 # project: sharko
 # project_key: NOKEY
 # tracking_system: file-system
@@ -40,7 +40,7 @@
 # - Tagging: NO tags cut reflexively — merge PRs to main when green; tag only when user explicitly asks (see feedback_release_cadence.md)
 
 generated: 2026-04-20
-last_updated: 2026-05-08 (latest) (V124-3 10/11 + V124-4 5/5 + V124-5 2/2 + V124-6 4/4 + V124-7 1/1 + V124-8 3/3 shipped at 524eb466; V124-9 argocd-token subcommand opened — stacking on PR #319)
+last_updated: 2026-05-08 (later) (V124-3 10/11 + V124-4 5/5 + V124-5 2/2 + V124-6 4/4 + V124-7 1/1 + V124-8 3/3 + V124-9 1/1 shipped at 839a9e1b; V124-10 wizard provider auto-derive opened — stacking on PR #319)
 project: sharko
 project_key: NOKEY
 tracking_system: file-system
@@ -320,5 +320,14 @@ development_status:
   # Merck CA bake-in and dev-rebuild dance. V124-9 codifies the entire flow under
   # `./scripts/sharko-dev.sh argocd-token --export` for eval-via-pipe.
   epic-V124-9: backlog
-  V124-9-1-bug-027-argocd-token-subcommand-with-apikey-patch: backlog       # S — patch + login + generate, idempotent, --service-account variant
+  V124-9-1-bug-027-argocd-token-subcommand-with-apikey-patch: done          # commit 839a9e1b — 6/6 validation flows pass; idempotency 34s→1.7s
   epic-V124-9-retrospective: optional
+
+  # Epic V124-10: Wizard/V124-4.2 disagreement on git.provider (BUG-028)
+  # Maintainer BLOCKED at wizard step 3→4: V124-4.2 made git.provider required at
+  # backend but FirstRunWizard.buildPayload (FirstRunWizard.tsx:689) never sends it.
+  # Backend rejects every wizard submission with "git.provider is required". Single
+  # story: backend auto-derives from URL host + frontend populates proactively.
+  epic-V124-10: backlog
+  V124-10-1-bug-028-auto-derive-git-provider-from-url-host: backlog         # S — backend deriveProviderFromURL + UI detectGitProvider + tests
+  epic-V124-10-retrospective: optional
