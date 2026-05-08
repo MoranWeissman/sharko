@@ -1,10 +1,39 @@
 # Personal Smoke Runbook
 
-> **Verified:** The mechanical Track A + Track B B.1–B.6 portions were last executed end-to-end on 2026-05-07 by `scripts/dev-rebuild.sh` + `scripts/smoke.sh` against image `sharko:e2e` built from commit `60ed8a9d` (dev/v1.24-cleanup tip — V124-4.1/.2/.3/.4/.5 merged). 47/47 PASS in 5 s of script time. The hand-walked baseline that the scripts encode was last executed end-to-end on 2026-05-06 against image `sharko:runbook-verify` built locally from commit `95b51cad` (dev/v1.24-cleanup, V124-3.6+3.7+3.8 merged); Track B B.7 (ArgoCD UI) was walked manually then. Track B B.8 (Git connect → init → register cluster → addon → ArgoCD sync) requires a real GitHub PAT and remains script-exempt — it is marked with a warning in the section itself.
+> **Verified:** The mechanical Track A + Track B B.1–B.6 portions were last executed end-to-end on 2026-05-08 by `./scripts/sharko-dev.sh smoke` (which forwards to `scripts/smoke.sh` after auto-extracting credentials) against image `sharko:e2e` built from commit `96567f0e` (dev/v1.24-cleanup tip — V124-8.1 + V124-8.2 merged). 47/47 PASS in 14 s of script time, including the auto-extract of `$ADMIN_PW` and `$TOKEN`. The hand-walked baseline that the scripts encode was last executed end-to-end on 2026-05-06 against image `sharko:runbook-verify` built locally from commit `95b51cad` (dev/v1.24-cleanup, V124-3.6+3.7+3.8 merged); Track B B.7 (ArgoCD UI) was walked manually then. Track B B.8 (Git connect → init → register cluster → addon → ArgoCD sync) requires a real GitHub PAT and remains script-exempt — it is marked with a warning in the section itself.
 
 A hands-on, checkbox-driven smoke pass for the Sharko maintainer. This is **not** a reference doc — it's a list you literally check off, top to bottom, while running the product yourself.
 
 If you want background on the test pyramid and what each layer is for, read [Testing Guide](testing-guide.md). This runbook is the in-the-moment companion: open it in one window, terminal + browser in the others, and walk it.
+
+---
+
+## Quick reference — `sharko-dev.sh` subcommand cheatsheet
+
+The maintainer-DX automation is a single entry point with subcommand dispatch (V124-8.1). Use this as your first stop before walking the manual sections below.
+
+| Scenario | Command |
+|---|---|
+| Bring up env from nothing (kind + ArgoCD + Sharko) | `./scripts/sharko-dev.sh up` |
+| Install Sharko on existing kind cluster | `./scripts/sharko-dev.sh install` |
+| Rebuild after a code change (existing install) | `./scripts/sharko-dev.sh rebuild` |
+| Rebuild but auto-install if missing | `./scripts/sharko-dev.sh rebuild --auto-install` |
+| Cleanup helm release (preserves cluster + ArgoCD) | `./scripts/sharko-dev.sh reset --yes` |
+| Full teardown (deletes kind cluster) | `./scripts/sharko-dev.sh down --yes` |
+| Get the current admin password | `./scripts/sharko-dev.sh creds` |
+| Capture admin password into `$ADMIN_PW` | `eval "$(./scripts/sharko-dev.sh creds --export)"` |
+| Login + capture `$ADMIN_PW` and `$TOKEN` | `eval "$(./scripts/sharko-dev.sh login --export)"` |
+| Rotate admin password (verifies V124-7) | `./scripts/sharko-dev.sh rotate` |
+| Run the full smoke suite | `./scripts/sharko-dev.sh smoke` |
+| Show current env state | `./scripts/sharko-dev.sh status` |
+| Per-subcommand help | `./scripts/sharko-dev.sh <cmd> --help` |
+
+!!! tip "Sourcing model — use eval-via-pipe, not `source`"
+    `./scripts/sharko-dev.sh login --export` prints **only** `export` lines so you can run:
+    ```bash
+    eval "$(./scripts/sharko-dev.sh login --export)"
+    ```
+    This avoids any `set -e` / `set -u` leak into your interactive shell. The legacy `source scripts/dev-rebuild.sh` still works (V124-8.2 fixed the leak) but eval-via-pipe is the recommended pattern going forward.
 
 ---
 
@@ -66,8 +95,14 @@ Three steps, every time. This is the minimum payload that makes a bug actionable
 
 Self-contained, no cluster, no Helm. Boots in under 5 seconds. Use this to find the cheap bugs first.
 
-!!! tip "Now automated by `scripts/smoke.sh`"
-    The mechanical CLI + API sweep portions of Track A (A.4 API checklist + A.6 CLI sweep) are codified in `scripts/smoke.sh`. After `source scripts/dev-rebuild.sh` populates `$ADMIN_PW` and `$TOKEN`, running `./scripts/smoke.sh` walks the same set of checks against your kind cluster in ~30 seconds. The manual steps below remain for understanding/troubleshooting and for the human-only portions (A.5 UI sweep). See [Automation scripts](#automation-scripts) at the bottom of this doc.
+!!! tip "Now automated by `./scripts/sharko-dev.sh smoke`"
+    The mechanical CLI + API sweep portions of Track A (A.4 API checklist + A.6 CLI sweep) are codified into the smoke phases. The canonical entry is the subcommand dispatcher (V124-8.1):
+    ```bash
+    ./scripts/sharko-dev.sh smoke
+    ```
+    The dispatcher auto-extracts `$ADMIN_PW` and `$TOKEN` (via `creds` + `login`) if they're not already exported, then forwards to `scripts/smoke.sh` which walks the same set of checks against your kind cluster in ~30 seconds. The manual steps below remain for understanding/troubleshooting and for the human-only portions (A.5 UI sweep). See [Automation scripts](#automation-scripts) at the bottom of this doc.
+
+    The wrappers forward to `scripts/dev-rebuild.sh` and `scripts/smoke.sh` — direct invocation of those still works for back-compat.
 
 !!! warning "`admin/admin` is demo-mode only"
     Track A uses `admin/admin` because the demo container ships pre-seeded with that credential — it's a fixed-string default for friction-free local runs only. **Real Helm installs do NOT accept `admin/admin`.** They generate a random bootstrap password on first start (or accept an operator-supplied one). For real K8s installs see [Initial Credentials](../operator/installation.md#initial-credentials) in the operator install guide, and walk Track B (which uses the real bootstrap flow) instead.
@@ -449,13 +484,17 @@ The container ships the `sharko` binary; `--help` should respond on every subcom
 
 Real K8s, real ArgoCD, real Helm chart. Catches integration bugs that Track A cannot. Budget 60–90 minutes; first run pulls a few GB of images.
 
-!!! tip "Now automated by `scripts/dev-rebuild.sh` + `scripts/smoke.sh`"
-    Track B sections B.1 (prereqs check), B.2 (kind + Helm rebuild), B.3 (port-forward + health), B.4 (extract bootstrap admin credential + login), and B.5 (API sweep + V124-4 regression pins + Go E2E suite) are codified into two scripts:
+!!! tip "Now automated by `./scripts/sharko-dev.sh` (V124-8.1)"
+    Track B sections B.1 (prereqs check), B.2 (kind + Helm install/rebuild), B.3 (port-forward + health), B.4 (extract bootstrap admin credential + login), and B.5 (API sweep + V124-4 regression pins + Go E2E suite) are codified under the subcommand dispatcher:
 
-    1. `source scripts/dev-rebuild.sh` — `docker build → kind load → kubectl rollout restart` and exports `$ADMIN_PW` + `$TOKEN`.
-    2. `./scripts/smoke.sh` — runs the CLI sweep, API sweep, V124-4 regression pins (BUG-017/18/19/20), and the Go E2E suite under build tag `e2e`.
+    1. **From nothing** → `./scripts/sharko-dev.sh up` (kind cluster + ArgoCD + Sharko + port-forward + creds extraction, end-to-end).
+    2. **Existing install, code change** → `./scripts/sharko-dev.sh rebuild` (forwards to `scripts/dev-rebuild.sh` and refreshes the creds cache).
+    3. **Capture creds** → `eval "$(./scripts/sharko-dev.sh login --export)"` (no `source`, no `set -e` leak).
+    4. **Run smoke** → `./scripts/sharko-dev.sh smoke` (auto-extracts creds if missing, then forwards to `scripts/smoke.sh`).
 
     Total runtime ~30 s on a warm machine after the first build. The manual steps below remain for understanding/troubleshooting and for the human-only portions (**B.7 ArgoCD UI**, **B.8 deep flow with real GitHub PAT**) which the scripts intentionally do not automate. See [Automation scripts](#automation-scripts) at the bottom of this doc.
+
+    The wrappers forward to `scripts/dev-rebuild.sh` and `scripts/smoke.sh` — direct invocation of those still works for back-compat.
 
 !!! info "Verified by execution"
     Every command in Track B was personally executed end-to-end on **2026-05-06** against a kind cluster built from this commit, with ArgoCD `stable` manifests and a locally-built Sharko image. Outputs shown in **Observed:** lines are the actual outputs captured during that run. The previous version of this section was authored by reading code without execution and shipped four wrong commands; see [BUG-015](#bug-log-template) for the postmortem.
@@ -967,15 +1006,42 @@ Pre-seeded entries from today's pass — verify these and update status:
 
 # Automation scripts
 
-Two helper scripts codify the mechanical portions of the runbook so re-smoke takes ~30 seconds of script time + your UI sweep. They live in `scripts/` and are intentionally distinct from `scripts/upgrade.sh` (which targets the released-Helm-chart flow, not the local-build flow).
+The maintainer-DX tooling is built around a single subcommand dispatcher with two underlying helper scripts. All three live in `scripts/` and are intentionally distinct from `scripts/upgrade.sh` (which targets the released-Helm-chart flow, not the local-build flow).
 
-## `scripts/dev-rebuild.sh` — kind local-build inner-loop
+## `scripts/sharko-dev.sh` — single entry, 11 subcommands (V124-8.1, canonical)
 
-Replaces the hand sequence at the top of Track B (B.2 → B.4):
+The maintainer's primary entry point. Subcommand dispatch (like `git` / `kubectl`) so each scenario gets its own one-liner with `--help`:
 
 ```bash
-source scripts/dev-rebuild.sh    # exports $ADMIN_PW and $TOKEN into your shell
+./scripts/sharko-dev.sh help              # full subcommand list
+./scripts/sharko-dev.sh up                # bring up env from nothing
+./scripts/sharko-dev.sh install           # install on existing cluster
+./scripts/sharko-dev.sh rebuild           # rebuild after code change
+./scripts/sharko-dev.sh creds             # fetch admin password (smart fallback chain)
+./scripts/sharko-dev.sh login --export    # eval-via-pipe: ADMIN_PW + TOKEN
+./scripts/sharko-dev.sh rotate            # rotate password (verifies V124-7)
+./scripts/sharko-dev.sh smoke             # auto-extracts creds, runs smoke
+./scripts/sharko-dev.sh status            # current env state
+./scripts/sharko-dev.sh reset --yes       # uninstall (preserves cluster)
+./scripts/sharko-dev.sh down --yes        # full teardown
+```
+
+The `creds` subcommand has a five-path fallback chain (V124-6.3 secret → cache → current pod logs → previous pod logs → error with recovery hints) so the password is retrievable in every state the maintainer hits during V124-3 through V124-7. The `rotate` subcommand also asserts V124-7's secret-rotation behavior — the new password must land in `sharko-initial-admin-secret` or the command exits non-zero.
+
+Sourcing model: **eval-via-pipe**, not `source`. The `--export` flag prints ONLY export lines so:
+```bash
+eval "$(./scripts/sharko-dev.sh login --export)"
+```
+captures `$ADMIN_PW` and `$TOKEN` cleanly with no `set -e` / `set -u` leak risk. The `-q` / `--quiet` mode prints only the secret/token for piping.
+
+## `scripts/dev-rebuild.sh` — kind local-build inner-loop (V124-5.1, also forwarded)
+
+The original rebuild script. `./scripts/sharko-dev.sh rebuild` forwards to it; direct invocation also still works.
+
+```bash
+source scripts/dev-rebuild.sh    # exports $ADMIN_PW and $TOKEN into your shell (legacy — eval-via-pipe via sharko-dev.sh login is preferred)
 ./scripts/dev-rebuild.sh         # prints the export commands instead
+./scripts/dev-rebuild.sh --auto-install  # if no helm release, fall back to sharko-dev.sh install (V124-8.2)
 ./scripts/dev-rebuild.sh -h      # show built-in help
 ```
 
@@ -992,14 +1058,15 @@ The cache file is written 0600 on first successful extraction.
 
 Configurable via env: `KIND_CLUSTER_NAME` (default `sharko-e2e`), `SHARKO_NAMESPACE` (`sharko`), `SHARKO_LOCAL_PORT` (`8080`), `IMAGE_TAG` (`e2e`).
 
-## `scripts/smoke.sh` — Track A + Track B mechanical sweep
+## `scripts/smoke.sh` — Track A + Track B mechanical sweep (V124-5.2, also forwarded)
 
-Replaces Track A's A.4 + A.6 and Track B's B.5 + B.6:
+Replaces Track A's A.4 + A.6 and Track B's B.5 + B.6. `./scripts/sharko-dev.sh smoke` forwards to it after auto-extracting credentials; direct invocation also still works (with `$ADMIN_PW` and `$TOKEN` already exported).
 
 ```bash
-./scripts/smoke.sh        # concise output, exit 0 if all pass else 1
-./scripts/smoke.sh -v     # verbose: full curl bodies on failure + go test -v
-./scripts/smoke.sh -h     # show built-in help
+./scripts/sharko-dev.sh smoke    # canonical: auto-extracts creds, then forwards
+./scripts/smoke.sh               # direct: requires $ADMIN_PW + $TOKEN already set
+./scripts/smoke.sh -v            # verbose: full curl bodies on failure + go test -v
+./scripts/smoke.sh -h            # show built-in help
 ```
 
 Five sequential phases, all PASS/FAIL with an exit code:
@@ -1016,7 +1083,8 @@ The script intentionally does NOT automate B.7 (ArgoCD UI) or B.8 (the deep Git 
 
 - [Testing Guide](testing-guide.md) — the reference doc this runbook complements (test layers, patterns, command cheatsheet)
 - [Catalog Scan Runbook](catalog-scan-runbook.md) — the operational doc for the daily scanner bot
-- `scripts/dev-rebuild.sh` and `scripts/smoke.sh` — the maintainer-DX automation described above (V124-5)
+- `scripts/sharko-dev.sh` — single-entry maintainer DX dispatcher (V124-8.1, canonical)
+- `scripts/dev-rebuild.sh` and `scripts/smoke.sh` — the underlying helper scripts (V124-5; still callable directly for back-compat)
 - `scripts/upgrade.sh` — the released-Helm-chart upgrade verifier (different flow, do not confuse)
 - `tests/e2e/setup.sh` and `tests/e2e/teardown.sh` — the scripts Track B leans on for cluster bringup/teardown
 - `internal/api/router.go` — source of truth for which routes actually exist (don't guess paths from memory)
