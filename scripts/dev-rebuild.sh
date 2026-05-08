@@ -45,8 +45,18 @@
 #
 # IDEMPOTENT: rerun safely. Existing port-forwards are killed before being restarted.
 #
+# FLAGS
+#   --auto-install   if deployment/sharko is missing, fall back to running
+#                    `./scripts/sharko-dev.sh install` instead of erroring out
+#   -h | --help      show this help and exit
+#
 
-set -e
+# IMPORTANT — V124-8.2 / BUG-026 fix:
+# Do NOT `set -e` at the top level. When a user runs `source dev-rebuild.sh`,
+# `set -e` leaks errexit into their interactive shell — any subsequent
+# non-zero command (e.g. `grep` finding no match) closes the terminal.
+# Error handling is done explicitly per-command via `_exit_or_return $?` (see
+# below) so we don't need errexit at all.
 
 # ---- detect sourced vs direct invocation ----
 # When sourced, BASH_SOURCE[0] != $0. When run as ./script, they're equal.
@@ -58,27 +68,35 @@ fi
 
 # Helper: exit-or-return depending on invocation mode. Sourced scripts must
 # NOT call `exit` because that would kill the user's interactive shell.
+#
+# V124-8.2 note: an earlier version called `kill -INT $$` as a fallback when
+# `return` failed (i.e., when sourced from outside a function). That fallback
+# was removed because it's strictly more dangerous than the failure mode it
+# tried to prevent — it can SIGINT the user's interactive shell. Callers are
+# expected to chain `_exit_or_return $?` with `return $code 2>/dev/null` so
+# the sourced flow propagates the failure naturally.
 _exit_or_return() {
     local code="${1:-1}"
     if [ "$SOURCED" = "1" ]; then
         return "$code" 2>/dev/null || true
-        # If `return` failed (we're somehow not in a function context), fall through.
-        # Caller is expected to also `return` on a non-zero result. The trick below
-        # forces the sourced shell to stop further execution by setting an err state
-        # that the caller propagates.
-        kill -INT $$ 2>/dev/null
+        # If `return` failed (we're not in a function context), the caller's
+        # subsequent `return $code 2>/dev/null || exit $code` chain handles it.
     else
         exit "$code"
     fi
 }
 
 # ---- arg handling ----
+AUTO_INSTALL=0
 for arg in "$@"; do
     case "$arg" in
         -h|--help)
-            sed -n '2,46p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+            sed -n '2,52p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
             _exit_or_return 0
             return 0 2>/dev/null || true
+            ;;
+        --auto-install)
+            AUTO_INSTALL=1
             ;;
     esac
 done
@@ -125,11 +143,40 @@ if ! command -v kubectl >/dev/null 2>&1; then
     return 1 2>/dev/null || exit 1
 fi
 if ! kubectl get deployment -n "${SHARKO_NAMESPACE}" sharko >/dev/null 2>&1; then
+    if [ "$AUTO_INSTALL" = "1" ]; then
+        # V124-8.2: auto-install fallback. Forward to sharko-dev.sh install,
+        # which knows how to docker build, kind load, helm install, and start
+        # the port-forward. This makes `dev-rebuild.sh --auto-install` a
+        # one-shot "get me back to a running env" recovery command.
+        echo "[INFO] deployment/sharko missing — --auto-install requested" >&2
+        script_dir_local="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        if [ ! -x "${script_dir_local}/sharko-dev.sh" ]; then
+            echo "[FAIL] --auto-install needs ${script_dir_local}/sharko-dev.sh (not found/executable)" >&2
+            _exit_or_return 1
+            return 1 2>/dev/null || exit 1
+        fi
+        if ! "${script_dir_local}/sharko-dev.sh" install; then
+            echo "[FAIL] auto-install failed; cannot continue with rebuild" >&2
+            _exit_or_return 1
+            return 1 2>/dev/null || exit 1
+        fi
+        # After install, the deployment exists and the image was just built.
+        # We can either stop here (install already did the heavy lifting) or
+        # continue with the normal rebuild flow which would just re-do the
+        # docker build + rollout restart. Stop here to save time.
+        echo "[OK] auto-install complete; deployment/sharko is now ready."
+        echo "     For a code-change rebuild from here, re-run dev-rebuild.sh."
+        _exit_or_return 0
+        return 0 2>/dev/null || exit 0
+    fi
     echo "[FAIL] deployment/sharko not found in namespace '${SHARKO_NAMESPACE}'." >&2
-    echo "       Install first: helm install sharko charts/sharko/ \\" >&2
-    echo "         --namespace ${SHARKO_NAMESPACE} --create-namespace \\" >&2
-    echo "         --set image.repository=sharko --set image.tag=${IMAGE_TAG} \\" >&2
-    echo "         --set image.pullPolicy=Never" >&2
+    echo "       Install first: ./scripts/sharko-dev.sh install" >&2
+    echo "       Or pass --auto-install to fall back automatically." >&2
+    echo "       Manual install:" >&2
+    echo "         helm install sharko charts/sharko/ \\" >&2
+    echo "           --namespace ${SHARKO_NAMESPACE} --create-namespace \\" >&2
+    echo "           --set image.repository=sharko --set image.tag=${IMAGE_TAG} \\" >&2
+    echo "           --set image.pullPolicy=Never" >&2
     _exit_or_return 1
     return 1 2>/dev/null || exit 1
 fi
@@ -154,8 +201,13 @@ fi
 echo "      ok"
 
 # ---- 3. rollout restart ----
+# V124-8.2: explicit error check (was implicit via `set -e` before).
 echo "[3/6] kubectl rollout restart -n ${SHARKO_NAMESPACE} deployment/sharko"
-kubectl rollout restart -n "${SHARKO_NAMESPACE}" deployment/sharko >/dev/null
+if ! kubectl rollout restart -n "${SHARKO_NAMESPACE}" deployment/sharko >/dev/null 2>&1; then
+    echo "[FAIL] kubectl rollout restart failed" >&2
+    _exit_or_return 1
+    return 1 2>/dev/null || exit 1
+fi
 
 # ---- 4. wait for rollout ----
 echo "[4/6] kubectl rollout status (timeout 120s)"
