@@ -220,6 +220,19 @@ func (a *AzureDevOpsProvider) fileExists(filePath, ref string) bool {
 }
 
 // CreateBranch creates a new branch from the given source ref.
+//
+// V124-11 note: this implementation does NOT yet handle empty Azure DevOps
+// repositories (repos with zero commits). For an empty ADO repo,
+// `getRefSHA` returns "branch %q not found" because the refs endpoint
+// responds 200 with an empty `value` array — there is no source SHA to
+// branch from and no analog to GitHub's Contents API for seeding an
+// initial commit. Implementing the bootstrap path would require a
+// separate code path that uses the `/pushes` endpoint with
+// `oldObjectId: 0000…` to create the initial commit + branch atomically.
+// The maintainer-blocking V124-11 bug is GitHub-specific (smoke tests run
+// against GitHub only); the ADO empty-repo gap is tracked for V125 and
+// surfaces today as a clear "branch not found" error rather than a silent
+// failure.
 func (a *AzureDevOpsProvider) CreateBranch(_ context.Context, branchName, fromRef string) error {
 	sourceSHA, err := a.getRefSHA(fromRef)
 	if err != nil {
