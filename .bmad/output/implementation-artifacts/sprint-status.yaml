@@ -1,5 +1,5 @@
 # generated: 2026-04-20
-# last_updated: 2026-05-08 (latest) — V124-3 (10/11) + V124-4 (5/5) + V124-5 (2/2) + V124-6 (4/4) + V124-7 (1/1) shipped on dev/v1.24-cleanup at 7c4d4e4c. PR #319 CI green. Maintainer asked: "would you just make me automation for every possible scenario we encountered so far instead of me copying commands to the cli?" — V124-8 maintainer DX framework opened. Single entry `scripts/sharko-dev.sh` with 11 subcommands (up/install/rebuild/reset/creds/login/rotate/smoke/status/down/help) covering every dev-loop flow this session uncovered. Plus BUG-026 fix (dev-rebuild.sh set -e leak when sourced) and runbook update. 3 stories. After V124-8: resume Track B UI → merge PR #319 → cut v1.24.0-pre.0.
+# last_updated: 2026-05-08 (latest) — V124-3 (10/11) + V124-4 (5/5) + V124-5 (2/2) + V124-6 (4/4) + V124-7 (1/1) + V124-8 (3/3) shipped on dev/v1.24-cleanup at 524eb466. PR #319 CI green. Maintainer mid-Track-B-UI hit ArgoCD apiKey gauntlet (3rd command-paste of day after Merck CA + dev-rebuild dance) and asked V124-9 to add `sharko-dev.sh argocd-token` subcommand. Single story; closes BUG-027. After V124-9: wizard step-3 unblocked → resume Track B UI → merge PR #319 → cut v1.24.0-pre.0.
 # project: sharko
 # project_key: NOKEY
 # tracking_system: file-system
@@ -40,7 +40,7 @@
 # - Tagging: NO tags cut reflexively — merge PRs to main when green; tag only when user explicitly asks (see feedback_release_cadence.md)
 
 generated: 2026-04-20
-last_updated: 2026-05-08 (latest) (V124-3 10/11 + V124-4 5/5 + V124-5 2/2 + V124-6 4/4 + V124-7 1/1 shipped at 7c4d4e4c; V124-8 maintainer DX framework opened — stacking on PR #319)
+last_updated: 2026-05-08 (latest) (V124-3 10/11 + V124-4 5/5 + V124-5 2/2 + V124-6 4/4 + V124-7 1/1 + V124-8 3/3 shipped at 524eb466; V124-9 argocd-token subcommand opened — stacking on PR #319)
 project: sharko
 project_key: NOKEY
 tracking_system: file-system
@@ -309,7 +309,16 @@ development_status:
   # with 11 subcommands covering every dev-loop scenario this session uncovered.
   # Stacks on dev/v1.24-cleanup, extends PR #319.
   epic-V124-8: backlog
-  V124-8-1-scripts-sharko-dev-sh-entry-and-subcommands: backlog             # L (4-6h, 11 subcommands, real-cluster validation)
-  V124-8-2-bug-026-dev-rebuild-sh-set-e-leak-and-install-fallback: backlog  # S
-  V124-8-3-runbook-references-sharko-dev-sh-as-canonical: backlog           # XS-S
+  V124-8-1-scripts-sharko-dev-sh-entry-and-subcommands: done                # commit 8e0a39e3 — 1138-line script, 11 subcommands, all validated end-to-end
+  V124-8-2-bug-026-dev-rebuild-sh-set-e-leak-and-install-fallback: done     # commit 96567f0e — set -e + kill -INT $$ removed, --auto-install added
+  V124-8-3-runbook-references-sharko-dev-sh-as-canonical: done              # commit 524eb466 — quick-reference table + canonical entry note
   epic-V124-8-retrospective: optional
+
+  # Epic V124-9: argocd-token subcommand for sharko-dev.sh (BUG-027)
+  # Maintainer mid-Track-B hit ArgoCD apiKey gauntlet (8 manual commands: port-forward,
+  # patch argocd-cm, restart, re-login, generate). 3rd enterprise-paste of the day after
+  # Merck CA bake-in and dev-rebuild dance. V124-9 codifies the entire flow under
+  # `./scripts/sharko-dev.sh argocd-token --export` for eval-via-pipe.
+  epic-V124-9: backlog
+  V124-9-1-bug-027-argocd-token-subcommand-with-apikey-patch: backlog       # S — patch + login + generate, idempotent, --service-account variant
+  epic-V124-9-retrospective: optional
