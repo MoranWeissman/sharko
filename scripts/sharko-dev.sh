@@ -1112,6 +1112,13 @@ Flags:
 
 Environment:
   ARGOCD_LOCAL_PORT     Default 18080
+
+Notes:
+  Leaves the argocd-server port-forward running on localhost:${local_port}
+  for subsequent CLI/UI access (the 'ready' subcommand and Sharko wizard
+  step 3 depend on it). Clean it up explicitly with:
+    ./scripts/sharko-dev.sh down --yes        # full teardown
+    ./scripts/sharko-dev.sh reset --yes       # only Sharko, ArgoCD survives
 EOF
                 return 0
                 ;;
@@ -1339,6 +1346,10 @@ print(json.dumps({"data": {"policy.csv": os.environ["NEW_POLICY"]}}))
     fi
 
     # ---- 8. Output ----
+    # V124-12.3: leave port-forward running for ready/UI/CLI access; user
+    # explicitly cleans via 'down' or 'reset'. The kubectl port-forward
+    # was started with `&` + `disown`, so it persists after this function
+    # returns. No explicit kill at end is intentional.
     case "$mode" in
         export)
             printf 'export ARGOCD_TOKEN=%s\n' "$token"
