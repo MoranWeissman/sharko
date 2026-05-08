@@ -696,12 +696,18 @@ func writeInitialAdminSecretEnabled() bool {
 //     app.kubernetes.io/managed-by: sharko
 //     app.kubernetes.io/component:  bootstrap
 //   metadata.annotations:
-//     sharko.io/initial-secret: "delete-after-first-password-change"
+//     sharko.io/initial-secret: "rotated-on-reset-admin"
 //   data:
 //     username: <base64('admin')>
 //     password: <base64(plaintext)>
 //
-// V124-6.3 / BUG-023.
+// The annotation wording was updated in V124-7 from
+// "delete-after-first-password-change" to "rotated-on-reset-admin" to reflect
+// the actual lifecycle: the secret persists across `sharko reset-admin`
+// invocations, each rotation rewriting `data.password` to the new plaintext
+// (operators can `kubectl delete` it manually whenever they want it gone).
+//
+// V124-6.3 / BUG-023; annotation updated in V124-7.1 / BUG-025.
 func (s *Store) writeInitialAdminSecret(ctx context.Context, password string) error {
 	secret := &corev1Secret{
 		ObjectMeta: metav1.ObjectMeta{
@@ -712,7 +718,7 @@ func (s *Store) writeInitialAdminSecret(ctx context.Context, password string) er
 				"app.kubernetes.io/component":  "bootstrap",
 			},
 			Annotations: map[string]string{
-				"sharko.io/initial-secret": "delete-after-first-password-change",
+				"sharko.io/initial-secret": "rotated-on-reset-admin",
 			},
 		},
 		Type: corev1SecretTypeOpaque,
@@ -745,7 +751,7 @@ func (s *Store) writeInitialAdminSecret(ctx context.Context, password string) er
 		if existing.Annotations == nil {
 			existing.Annotations = make(map[string]string)
 		}
-		existing.Annotations["sharko.io/initial-secret"] = "delete-after-first-password-change"
+		existing.Annotations["sharko.io/initial-secret"] = "rotated-on-reset-admin"
 		if _, err := s.clientset.CoreV1().Secrets(s.namespace).Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
 			return fmt.Errorf("update %s/%s: %w", s.namespace, InitialAdminSecretName, err)
 		}

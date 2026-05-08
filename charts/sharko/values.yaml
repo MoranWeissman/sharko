@@ -97,11 +97,17 @@ bootstrapAdmin:
   #   kubectl get secret sharko-initial-admin-secret -n <release-namespace> \
   #     -o jsonpath='{.data.password}' | base64 -d
   #
-  # After rotating the password (UI / `sharko reset-admin`), Sharko deletes
-  # the secret automatically. Operators can also delete it manually:
+  # The secret persists across `sharko reset-admin` rotations: each rotation
+  # rewrites `data.password` to the new plaintext (replace, not patch — old
+  # plaintext does NOT survive). Operators can re-fetch with the same kubectl
+  # command above to read the current bootstrap password. To remove the
+  # secret permanently (e.g. once stored in a vault), delete it manually:
   #   kubectl delete secret sharko-initial-admin-secret -n <release-namespace>
+  # The next reset-admin will recreate it. To prevent recreation entirely,
+  # set this value to false — in opt-out mode reset-admin only deletes any
+  # stale secret and does NOT recreate one.
   #
-  # V124-6.3 / BUG-023.
+  # V124-6.3 / BUG-023; rotation behavior added in V124-7.1 / BUG-025.
   writeInitialSecret: true
 
 # ---------------------------------------------------------------------------

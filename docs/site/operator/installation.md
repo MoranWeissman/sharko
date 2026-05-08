@@ -79,7 +79,7 @@ If you set neither `bootstrapAdmin.password` nor `bootstrapAdmin.existingSecret.
 
 #### (a) Dedicated `sharko-initial-admin-secret` (recommended for production)
 
-Sharko writes a dedicated Secret carrying the plaintext bootstrap password — mirrors ArgoCD's `argocd-initial-admin-secret` pattern. Retrieve with:
+Sharko writes a dedicated Secret carrying the plaintext of the **current** initial admin password — mirrors ArgoCD's `argocd-initial-admin-secret` pattern. Retrieve with:
 
 ```bash
 kubectl get secret sharko-initial-admin-secret -n sharko \
@@ -92,13 +92,18 @@ The Secret is labeled `app.kubernetes.io/managed-by=sharko` and `app.kubernetes.
 kubectl get secret -n sharko -l app.kubernetes.io/component=bootstrap
 ```
 
-After you have logged in and rotated the password (UI **Settings → Users → Change Password** or `kubectl exec -n sharko deploy/sharko -- sharko reset-admin`), Sharko deletes `sharko-initial-admin-secret` automatically — the bootstrap secret is no longer the source of truth, so it is removed to prevent reuse of the stale credential. Operators can also delete it manually at any time:
+The Secret persists across `sharko reset-admin` rotations: each rotation rewrites `data.password` to the **new** plaintext, so this is a stable retrieval path you can rely on after the first install (not just before the first rotation). After rotating, re-fetch with the same `kubectl get` above to read the current value. The reset command also prints the new plaintext to stdout, so both retrieval paths are equivalent.
+
+To remove the secret permanently — for example, once you have stored the password in a vault and never want it accessible via kubectl again — delete it explicitly:
 
 ```bash
 kubectl delete secret sharko-initial-admin-secret -n sharko
 ```
 
-To opt out of the dedicated secret entirely (keep the plaintext only in transient pod logs), set `bootstrapAdmin.writeInitialSecret: false` in your values file.
+The next `sharko reset-admin` will recreate it with the new plaintext (rotation is the default). To prevent the secret from being created or recreated at all, set `bootstrapAdmin.writeInitialSecret: false` in your values file. In opt-out mode `sharko reset-admin` only deletes any stale secret left from a previous install; it does not recreate one.
+
+!!! note "Annotation wording"
+    The annotation `sharko.io/initial-secret: rotated-on-reset-admin` reflects the actual lifecycle. Earlier (V124-6.3) versions used the wording `delete-after-first-password-change`, which became misleading once V124-7 made `sharko reset-admin` rotate the secret instead of deleting it. If you see the older annotation on an existing cluster, the next reset-admin (or pod re-bootstrap) will refresh it.
 
 #### (b) Pod logs (always works as fallback)
 
@@ -130,7 +135,7 @@ kubectl get secret sharko -n sharko \
 
 #### Recovery path
 
-If you missed all three windows above (no dedicated secret because you opted out, log scrolled off, marker already deleted), run `kubectl exec -n sharko deployment/sharko -- sharko reset-admin` to mint a fresh random password. The reset command also deletes any stale `sharko-initial-admin-secret` so it doesn't outlive the rotated credential.
+If you missed all three windows above (no dedicated secret because you opted out, log scrolled off, marker already deleted), run `kubectl exec -n sharko deployment/sharko -- sharko reset-admin` to mint a fresh random password. The reset command also rotates `sharko-initial-admin-secret` to carry the new plaintext (or, in opt-out mode, deletes any stale copy). The new password is also printed to stdout so you can capture it in the same step.
 
 ### 2. Operator-supplied inline (`bootstrapAdmin.password`)
 
