@@ -64,8 +64,16 @@ function ConnectedApp() {
     return <FirstRunWizard />
   }
 
+  // V124-16 / BUG-035: dismiss-flag escape hatch. The wizard's X button writes
+  // `sharko:dismiss-wizard` into sessionStorage so a user who clicked X is
+  // not immediately re-trapped here on the next render. Session-scoped on
+  // purpose: a fresh tab / hard refresh brings the wizard back, so the user
+  // can't permanently skip setup, but they can dismiss it for the current
+  // session to look around the app, run a CLI command, etc.
+  const dismissed = sessionStorage.getItem('sharko:dismiss-wizard') === '1'
+
   // Connection exists but repo not initialized — resume wizard at Step 4 (Init)
-  if (repoStatus && !repoStatus.initialized) {
+  if (repoStatus && !repoStatus.initialized && !dismissed) {
     return <FirstRunWizard initialStep={4} />
   }
 

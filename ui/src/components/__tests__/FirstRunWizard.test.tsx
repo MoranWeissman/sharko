@@ -11,20 +11,33 @@
 // did not reach synced state: timeout: ..."), the wizard MUST render that
 // error string verbatim instead of "Repository initialized successfully."
 
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { FirstRunWizard, detectGitProvider } from '@/components/FirstRunWizard'
 import * as apiModule from '@/services/api'
 
+// V124-16: per-test override for the connections mock so the resume-mode
+// tests (BUG-037 / BUG-038) can simulate "an existing connection is loaded"
+// without rewriting the whole mock graph. vi.hoisted runs before vi.mock
+// hoisting, so the holder is safe to reference inside the mock factory.
+const mockState = vi.hoisted(() => ({
+  connections: [] as Array<Record<string, unknown>>,
+  refreshConnectionsSpy: undefined as ReturnType<typeof vi.fn> | undefined,
+}))
+
 vi.mock('@/hooks/useConnections', () => ({
   useConnections: () => ({
-    connections: [],
+    connections: mockState.connections,
     activeConnection: null,
     setActiveConnection: vi.fn(),
     loading: false,
     error: null,
-    refreshConnections: vi.fn(),
+    // Recreate the spy on first read of each test so per-test refresh-call
+    // assertions don't bleed across tests.
+    refreshConnections:
+      mockState.refreshConnectionsSpy ??
+      (mockState.refreshConnectionsSpy = vi.fn()),
   }),
 }))
 
@@ -43,6 +56,22 @@ vi.mock('@/services/api', () => {
   }
   return {
     api: {
+      // V124-16 / BUG-037+038: full surface of wizard-relevant connection
+      // calls. testCredentials drives StepGit/StepArgoCD test buttons,
+      // createConnection / updateConnection are the save paths, and
+      // deleteConnection is what the new "Clear all configuration" link
+      // hits. discoverArgocd is touched on step-3 entry.
+      testCredentials: vi.fn().mockResolvedValue({
+        git: { status: 'ok' },
+        argocd: { status: 'ok' },
+      }),
+      createConnection: vi.fn().mockResolvedValue({ status: 'created' }),
+      updateConnection: vi.fn().mockResolvedValue({ status: 'updated' }),
+      deleteConnection: vi.fn().mockResolvedValue({ status: 'deleted' }),
+      discoverArgocd: vi
+        .fn()
+        .mockResolvedValue({ server_url: '', has_env_token: false, namespace: 'argocd' }),
+      // Legacy shims kept for older tests that may still reference them.
       testGitConnection: vi.fn().mockResolvedValue({ ok: true }),
       testArgocdConnection: vi.fn().mockResolvedValue({ ok: true }),
       saveConnection: vi.fn().mockResolvedValue({ ok: true }),
@@ -67,6 +96,18 @@ vi.mock('@/services/api', () => {
       return false
     },
   }
+})
+
+// V124-16: wipe the dismiss-flag and reset the configurable connections
+// mock between tests so resume-mode setup can't leak into fresh-mode tests.
+beforeEach(() => {
+  sessionStorage.clear()
+  mockState.connections = []
+  mockState.refreshConnectionsSpy?.mockClear()
+})
+
+afterEach(() => {
+  sessionStorage.clear()
 })
 
 function renderWizard(initialStep?: number) {
@@ -308,5 +349,187 @@ describe('FirstRunWizard step 4 — 401 during polling (V124-15 / BUG-033)', () 
       })
       initRepoMock.mockResolvedValue({ operation_id: 'op-1' })
     }
+  })
+})
+
+// V124-16 / BUG-035..038 — escape hatches + back-navigation in resume mode.
+//
+// Resume mode is when App.tsx mounts <FirstRunWizard initialStep={4} />
+// because at least one connection exists but the repo is not yet
+// initialized. Pre-V124-16 the wizard had three coupled issues that turned
+// resume mode into a soft-lock:
+//   - X button navigated, but App.tsx re-rendered the wizard immediately
+//   - StepInit had no Back button (no way to revisit Git/ArgoCD config)
+//   - No way to clear Sharko state and start from scratch
+//   - The footer copy lied ("Settings" — but Settings is route-gated away)
+//
+// Each test below covers one bug.
+
+// Helper — a representative resume-mode connection. Mirrors the shape that
+// `useConnections` returns from the real ConnectionProvider.
+const resumeConnection = {
+  name: 'github-foo-bar',
+  description: '',
+  git_provider: 'github',
+  git_repo_identifier: 'foo/bar',
+  git_token_masked: '****',
+  argocd_server_url: 'https://argocd.example.com',
+  argocd_token_masked: '****',
+  argocd_namespace: 'argocd',
+  is_default: true,
+  is_active: true,
+  provider: { type: 'k8s-secrets', region: '', prefix: '' },
+}
+
+describe('FirstRunWizard — V124-16 escape hatches (BUG-035 / 036 / 037 / 038)', () => {
+  it('BUG-035: X button writes the dismiss flag so App.tsx skips the resume gate', () => {
+    mockState.connections = [resumeConnection]
+    renderWizard(4)
+
+    expect(sessionStorage.getItem('sharko:dismiss-wizard')).toBeNull()
+
+    // The X button uses title="Skip to Dashboard" and an icon child; query
+    // it by its accessible title attribute.
+    const xButton = screen.getByTitle('Skip to Dashboard')
+    fireEvent.click(xButton)
+
+    // Flag is set so App.tsx's wizard gate (which reads
+    // sessionStorage.getItem('sharko:dismiss-wizard') === '1') skips
+    // re-rendering the wizard for the rest of the session. A fresh tab
+    // clears it automatically — the dismiss is "for now", not forever.
+    expect(sessionStorage.getItem('sharko:dismiss-wizard')).toBe('1')
+  })
+
+  it('BUG-036: footer copy in resume mode points at in-wizard controls (not Settings)', () => {
+    mockState.connections = [resumeConnection]
+    renderWizard(4)
+
+    expect(
+      screen.getByText(
+        /Initialize the repository to continue, or use the controls above to edit or reset\./i,
+      ),
+    ).toBeInTheDocument()
+    // The fresh-mode copy must NOT appear in resume mode — Settings is
+    // hard-gated by App.tsx so claiming "later in Settings" is misleading.
+    expect(
+      screen.queryByText(/update connections later in Settings/i),
+    ).not.toBeInTheDocument()
+  })
+
+  it('BUG-036: footer copy in fresh mode keeps the Settings hint', () => {
+    mockState.connections = []
+    renderWizard(1)
+
+    expect(
+      screen.getByText(/You can always update connections later in Settings\./i),
+    ).toBeInTheDocument()
+  })
+
+  it('BUG-038: StepInit shows a Back button in resume mode that walks back through step 3 → step 2', async () => {
+    mockState.connections = [resumeConnection]
+    renderWizard(4)
+
+    // The wizard should render StepInit. Use the "Initialize Repository"
+    // heading inside StepInit as a step-4 sentinel — multiple "Resuming
+    // setup" strings render in resume mode (header label + StepInit
+    // banner) so a generic match is ambiguous.
+    expect(
+      screen.getByRole('heading', { name: /Initialize Repository/i }),
+    ).toBeInTheDocument()
+
+    // The Back button is the only "Back" button in StepInit's idle state.
+    const backFromStep4 = screen.getByRole('button', { name: /^Back$/ })
+    fireEvent.click(backFromStep4)
+
+    // Now on step 3 (StepArgoCD). The "Save & Continue" button is unique
+    // to StepArgoCD so use it as a step-3 sentinel.
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: /Save & Continue/i }),
+      ).toBeInTheDocument()
+    })
+
+    // StepArgoCD has its own Back button → walk back to step 2.
+    const backFromStep3 = screen.getByRole('button', { name: /^Back$/ })
+    fireEvent.click(backFromStep3)
+
+    // On step 2 (StepGit), the form should be pre-populated with the
+    // existing connection's git URL — verify by reading the input value.
+    await waitFor(() => {
+      const gitUrlInput = screen.getByPlaceholderText(
+        /https:\/\/github\.com\/your-org\/your-repo/i,
+      ) as HTMLInputElement
+      expect(gitUrlInput.value).toBe('https://github.com/foo/bar')
+    })
+  })
+
+  it('BUG-037: step 2 in resume mode shows "Clear all configuration" and DELETEs on confirm', async () => {
+    mockState.connections = [resumeConnection]
+    renderWizard(4)
+
+    // Walk back from step 4 → step 3 → step 2.
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: /Save & Continue/i }),
+      ).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+
+    // The clear-config link is rendered only when an existing connection
+    // is loaded — assert visibility.
+    const clearBtn = await screen.findByRole('button', {
+      name: /Clear all configuration and start over/i,
+    })
+    expect(clearBtn).toBeInTheDocument()
+
+    // Confirm dialog: stub window.confirm to return true and verify the
+    // DELETE call goes out for the loaded connection.
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const deleteMock = (apiModule.api as unknown as {
+      deleteConnection: ReturnType<typeof vi.fn>
+    }).deleteConnection
+    deleteMock.mockClear()
+
+    fireEvent.click(clearBtn)
+
+    await waitFor(() => {
+      expect(deleteMock).toHaveBeenCalledWith('github-foo-bar')
+    })
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+
+    confirmSpy.mockRestore()
+  })
+
+  it('BUG-037: step 2 in resume mode does NOT delete when user cancels the confirm', async () => {
+    mockState.connections = [resumeConnection]
+    renderWizard(4)
+
+    // Walk back to step 2.
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: /Save & Continue/i }),
+      ).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+
+    const clearBtn = await screen.findByRole('button', {
+      name: /Clear all configuration and start over/i,
+    })
+
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    const deleteMock = (apiModule.api as unknown as {
+      deleteConnection: ReturnType<typeof vi.fn>
+    }).deleteConnection
+    deleteMock.mockClear()
+
+    fireEvent.click(clearBtn)
+
+    // Cancellation: confirm fires, but DELETE never goes out.
+    expect(confirmSpy).toHaveBeenCalledTimes(1)
+    expect(deleteMock).not.toHaveBeenCalled()
+
+    confirmSpy.mockRestore()
   })
 })

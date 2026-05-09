@@ -146,6 +146,7 @@ function StepGit({
   onTest,
   onNext,
   onBack,
+  onClearConfig,
 }: {
   form: WizardForm
   onChange: (patch: Partial<WizardForm>) => void
@@ -153,6 +154,7 @@ function StepGit({
   onTest: () => void
   onNext: () => void
   onBack: () => void
+  onClearConfig?: () => void
 }) {
   const canNext = testStatus.git === 'ok'
 
@@ -222,6 +224,26 @@ function StepGit({
           </span>
         )}
       </div>
+
+      {/* V124-16 / BUG-037: when the wizard runs in resume mode (existing
+          connection loaded into the form), expose a "clear everything and
+          start over" escape hatch. Only rendered when the parent wires
+          onClearConfig — i.e. only for the resume-mode flow, not the
+          fresh-install flow where there's nothing to clear. */}
+      {onClearConfig && (
+        <div className="pt-2 border-t border-[#bee0ff] dark:border-gray-700">
+          <button
+            type="button"
+            onClick={onClearConfig}
+            className="text-xs font-medium text-red-600 underline-offset-2 hover:underline dark:text-red-400"
+          >
+            Clear all configuration and start over
+          </button>
+          <p className="mt-1 text-[10px] text-[#3a6a8a] dark:text-gray-500">
+            Removes the saved connection so you can configure Sharko from scratch.
+          </p>
+        </div>
+      )}
 
       <div className="flex items-center justify-between pt-2 border-t border-[#bee0ff] dark:border-gray-700">
         <button
@@ -446,7 +468,7 @@ function StepArgoCD({
 /*  Step 4: Initialize Repository                                      */
 /* ------------------------------------------------------------------ */
 
-function StepInit({ onDone, resumed }: { onDone: () => void; resumed?: boolean }) {
+function StepInit({ onDone, resumed, onBack }: { onDone: () => void; resumed?: boolean; onBack?: () => void }) {
   const [state, setState] = useState<'idle' | 'running' | 'done' | 'error'>('idle')
   const [error, setError] = useState<string | null>(null)
   const [operationId, setOperationId] = useState<string | null>(null)
@@ -708,6 +730,27 @@ function StepInit({ onDone, resumed }: { onDone: () => void; resumed?: boolean }
         </div>
       )}
 
+      {/* V124-16 / BUG-038: in resume mode the wizard hard-gates every route
+          to step 4 (App.tsx behaviour), and StepInit had no way to walk back
+          to the connection-edit screens. Render a Back button (mirroring the
+          visual style used in StepGit/StepArgoCD) so the user can revisit
+          step 3 → step 2 and either edit the existing connection or use the
+          step-2 "Clear all configuration" affordance. The button stays
+          enabled in any state — Back is non-destructive; it just rewinds the
+          wizard chrome, the in-flight init operation continues on the
+          backend regardless.
+          */}
+      {resumed && onBack && (
+        <div className="pt-2 border-t border-[#bee0ff] dark:border-gray-700">
+          <button
+            type="button"
+            onClick={onBack}
+            className="rounded-lg px-4 py-2 text-sm font-medium text-[#1a4a6a] hover:text-[#0a3a5a] dark:text-gray-400 dark:hover:text-gray-200"
+          >
+            Back
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -757,12 +800,49 @@ export function detectGitProvider(repoURL: string): 'github' | 'azuredevops' | u
 
 export function FirstRunWizard({ initialStep = 1 }: { initialStep?: number } = {}) {
   const navigate = useNavigate()
-  const { refreshConnections } = useConnections()
+  const { connections, refreshConnections } = useConnections()
   const [step, setStep] = useState(initialStep)
   const [form, setForm] = useState<WizardForm>({ ...emptyForm })
   const [testStatus, setTestStatus] = useState<TestStatus>({ git: 'idle', argocd: 'idle' })
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
+
+  // V124-16 / BUG-037 + BUG-038: in resume mode, pre-populate the form with
+  // the existing connection so the user can navigate back through step 3 →
+  // step 2 and see/edit the saved values (rather than blank fields). The
+  // first connection wins — Sharko's data model is single-connection in
+  // practice (see frontend-expert.md §"Single Connection Edit"), and the
+  // wizard's resume gate fires only when at least one connection exists.
+  // We track the loaded connection's name so the save path can hit
+  // PUT /connections/{name} instead of POST, which guarantees an update
+  // (with token-preserving merge) rather than relying on the backend's
+  // upsert-by-derived-name behavior.
+  const existingConnection = connections[0]
+  const [loadedConnectionName, setLoadedConnectionName] = useState<string | null>(null)
+  useEffect(() => {
+    if (initialStep === 4 && existingConnection && loadedConnectionName === null) {
+      let gitUrl = ''
+      if (existingConnection.git_provider === 'github') {
+        gitUrl = `https://github.com/${existingConnection.git_repo_identifier}`
+      } else if (existingConnection.git_provider === 'azuredevops') {
+        const parts = existingConnection.git_repo_identifier.split('/')
+        if (parts.length >= 3) {
+          gitUrl = `https://dev.azure.com/${parts[0]}/${parts[1]}/_git/${parts[2]}`
+        }
+      }
+      setForm((prev) => ({
+        ...prev,
+        git_url: gitUrl,
+        argocd_server_url: existingConnection.argocd_server_url,
+        argocd_namespace: existingConnection.argocd_namespace || 'argocd',
+        provider_type:
+          (existingConnection.provider?.type as '' | 'aws-sm' | 'k8s-secrets') || '',
+        provider_region: existingConnection.provider?.region || '',
+        provider_prefix: existingConnection.provider?.prefix || '',
+      }))
+      setLoadedConnectionName(existingConnection.name)
+    }
+  }, [initialStep, existingConnection, loadedConnectionName])
 
   const patchForm = (patch: Partial<WizardForm>) => {
     setForm((prev) => ({ ...prev, ...patch }))
@@ -842,7 +922,17 @@ export function FirstRunWizard({ initialStep = 1 }: { initialStep?: number } = {
     setSaving(true)
     setSaveError(null)
     try {
-      await api.createConnection(buildPayload())
+      // V124-16 / BUG-038: in resume mode the wizard already has a saved
+      // connection. Hit PUT /connections/{name} so the backend's
+      // token-preserving merge runs (empty token fields keep the saved
+      // values — the wizard's password inputs render empty even after
+      // pre-population, so a blank submit must NOT wipe the saved token).
+      // POST is left as the create path for the fresh-install flow.
+      if (loadedConnectionName) {
+        await api.updateConnection(loadedConnectionName, buildPayload())
+      } else {
+        await api.createConnection(buildPayload())
+      }
       // DON'T call refreshConnections here — it causes App.tsx to re-render,
       // unmounting the wizard before setStep(4) can execute.
       // refreshConnections is called in handleDone instead.
@@ -852,17 +942,56 @@ export function FirstRunWizard({ initialStep = 1 }: { initialStep?: number } = {
     } finally {
       setSaving(false)
     }
-  }, [form])  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [form, loadedConnectionName])  // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDone = useCallback(() => {
     refreshConnections()
     navigate('/dashboard')
   }, [navigate, refreshConnections])
 
+  // V124-16 / BUG-035: the X button used to navigate('/dashboard'), but
+  // App.tsx's wizard gate immediately re-renders FirstRunWizard whenever a
+  // connection exists with an un-initialized repo, so the navigation was a
+  // no-op. Set a session-scoped sessionStorage flag that App.tsx consults
+  // to skip the gate for the rest of this session. A fresh tab / hard
+  // refresh clears the flag automatically — this is "dismiss for now",
+  // not "permanently skip setup".
   const handleEscape = useCallback(() => {
+    sessionStorage.setItem('sharko:dismiss-wizard', '1')
     refreshConnections()
     navigate('/dashboard')
   }, [navigate, refreshConnections])
+
+  // V124-16 / BUG-037: nuclear "start over" affordance from step 2 in
+  // resume mode. Confirm, then DELETE every saved connection so App.tsx's
+  // empty-connections branch renders the wizard fresh from step 1.
+  const handleClearConfig = useCallback(async () => {
+    if (
+      !window.confirm(
+        'This will delete the connection and reset the wizard. Continue?',
+      )
+    ) {
+      return
+    }
+    try {
+      for (const c of connections) {
+        await api.deleteConnection(c.name)
+      }
+      // Clear any local state derived from the deleted connection.
+      setForm({ ...emptyForm })
+      setLoadedConnectionName(null)
+      setTestStatus({ git: 'idle', argocd: 'idle' })
+      // App.tsx watches connections.length — refresh + jump to step 1.
+      refreshConnections()
+      setStep(1)
+    } catch (err) {
+      setSaveError(
+        err instanceof Error
+          ? `Failed to clear configuration: ${err.message}`
+          : 'Failed to clear configuration',
+      )
+    }
+  }, [connections, refreshConnections])
 
   // On step 3, try to auto-discover ArgoCD URL
   const handleGoToStep3 = useCallback(async () => {
@@ -944,6 +1073,7 @@ export function FirstRunWizard({ initialStep = 1 }: { initialStep?: number } = {
                 onTest={testGit}
                 onNext={handleGoToStep3}
                 onBack={() => setStep(1)}
+                onClearConfig={loadedConnectionName ? handleClearConfig : undefined}
               />
             )}
             {step === 3 && (
@@ -958,12 +1088,24 @@ export function FirstRunWizard({ initialStep = 1 }: { initialStep?: number } = {
                 onBack={() => setStep(2)}
               />
             )}
-            {step === 4 && <StepInit onDone={handleDone} resumed={initialStep === 4} />}
+            {step === 4 && (
+              <StepInit
+                onDone={handleDone}
+                resumed={initialStep === 4}
+                onBack={initialStep === 4 ? () => setStep(3) : undefined}
+              />
+            )}
           </div>
         </div>
 
+        {/* V124-16 / BUG-036: in resume mode the wizard hard-gates Settings,
+            so claiming "you can update connections later in Settings" is a
+            lie. Point the user at the in-wizard controls instead.
+            */}
         <p className="mt-4 text-center text-xs text-[#3a6a8a] dark:text-gray-600">
-          You can always update connections later in Settings.
+          {initialStep === 4
+            ? 'Initialize the repository to continue, or use the controls above to edit or reset.'
+            : 'You can always update connections later in Settings.'}
         </p>
       </div>
     </div>
