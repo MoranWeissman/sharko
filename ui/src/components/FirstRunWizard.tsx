@@ -147,6 +147,7 @@ function StepGit({
   onNext,
   onBack,
   onClearConfig,
+  hasSavedToken,
 }: {
   form: WizardForm
   onChange: (patch: Partial<WizardForm>) => void
@@ -155,6 +156,14 @@ function StepGit({
   onNext: () => void
   onBack: () => void
   onClearConfig?: () => void
+  // V124-17 / BUG-040: when an existing connection is loaded into the form
+  // (resume mode), the password input renders empty by design — we never
+  // re-display saved secrets. The previous "Personal access token (PAT)"
+  // placeholder made it look like the user's saved credential had been
+  // wiped. Surface the saved-credential affordance instead so the user
+  // knows blank-submit preserves the saved token (PUT /connections/{name}
+  // does the merge server-side, see internal/api/connections.go).
+  hasSavedToken?: boolean
 }) {
   const canNext = testStatus.git === 'ok'
 
@@ -191,10 +200,16 @@ function StepGit({
             type="password"
             value={form.git_token}
             onChange={(e) => onChange({ git_token: e.target.value })}
-            placeholder="Personal access token (PAT)"
+            placeholder={
+              hasSavedToken
+                ? '•••••• (saved — leave blank to keep, or enter new value to replace)'
+                : 'Personal access token (PAT)'
+            }
           />
           <p className="mt-1 text-[10px] text-[#3a6a8a]">
-            Needs read/write access to the repository.
+            {hasSavedToken
+              ? 'Submitting blank keeps your saved credential. Enter a new value to replace it.'
+              : 'Needs read/write access to the repository.'}
           </p>
         </div>
       </div>
@@ -280,6 +295,7 @@ function StepArgoCD({
   saving,
   saveError,
   onBack,
+  hasSavedToken,
 }: {
   form: WizardForm
   onChange: (patch: Partial<WizardForm>) => void
@@ -289,6 +305,11 @@ function StepArgoCD({
   saving: boolean
   saveError: string | null
   onBack: () => void
+  // V124-17 / BUG-040: same saved-credential affordance as StepGit. The
+  // ArgoCD token input renders empty in resume mode by design; this
+  // placeholder + helper text make the "blank-submit preserves saved
+  // value" semantic visible to the user.
+  hasSavedToken?: boolean
 }) {
   const canSave = testStatus.argocd === 'ok'
   const [advancedOpen, setAdvancedOpen] = useState(false)
@@ -333,10 +354,16 @@ function StepArgoCD({
             type="password"
             value={form.argocd_token}
             onChange={(e) => onChange({ argocd_token: e.target.value })}
-            placeholder="ArgoCD API token (optional if in-cluster RBAC)"
+            placeholder={
+              hasSavedToken
+                ? '•••••• (saved — leave blank to keep, or enter new value to replace)'
+                : 'ArgoCD API token (optional if in-cluster RBAC)'
+            }
           />
           <p className="mt-1 text-[10px] text-[#3a6a8a]">
-            Falls back to ARGOCD_TOKEN env var if not provided.
+            {hasSavedToken
+              ? 'Submitting blank keeps your saved credential. Enter a new value to replace it.'
+              : 'Falls back to ARGOCD_TOKEN env var if not provided.'}
           </p>
         </div>
 
@@ -730,17 +757,25 @@ function StepInit({ onDone, resumed, onBack }: { onDone: () => void; resumed?: b
         </div>
       )}
 
-      {/* V124-16 / BUG-038: in resume mode the wizard hard-gates every route
-          to step 4 (App.tsx behaviour), and StepInit had no way to walk back
-          to the connection-edit screens. Render a Back button (mirroring the
-          visual style used in StepGit/StepArgoCD) so the user can revisit
-          step 3 → step 2 and either edit the existing connection or use the
-          step-2 "Clear all configuration" affordance. The button stays
-          enabled in any state — Back is non-destructive; it just rewinds the
-          wizard chrome, the in-flight init operation continues on the
-          backend regardless.
+      {/* V124-16 / BUG-038 + V124-17 / BUG-039 + BUG-042: in resume mode the
+          wizard hard-gates every route to step 4 (App.tsx behaviour), so
+          StepInit needs a Back button to walk back to the connection-edit
+          screens (step 3 → step 2). Two V124-17 refinements on top of the
+          V124-16 button:
+            - BUG-039: hide Back while state !== 'idle'. While the init
+              operation is running, clicking Back navigates to step 3 mid-
+              flight; the polling-effect cleanup runs, the operation
+              continues on the backend, and a later Initialize click hits an
+              already-init check that may detect a half-created repo state.
+              The safe rule is: Back only when the wizard is not actively
+              driving an operation. Done/error states are also non-Back: at
+              done the user clicks "Go to Dashboard"; at error the user
+              clicks Retry/Skip/"Log in again".
+            - BUG-042: match the secondary-button styling used by
+              StepGit/StepArgoCD's Back buttons exactly so the affordance
+              looks the same on every wizard step.
           */}
-      {resumed && onBack && (
+      {resumed && onBack && state === 'idle' && (
         <div className="pt-2 border-t border-[#bee0ff] dark:border-gray-700">
           <button
             type="button"
@@ -1074,6 +1109,12 @@ export function FirstRunWizard({ initialStep = 1 }: { initialStep?: number } = {
                 onNext={handleGoToStep3}
                 onBack={() => setStep(1)}
                 onClearConfig={loadedConnectionName ? handleClearConfig : undefined}
+                // V124-17 / BUG-040: signal "the backend has a saved token
+                // for this connection" so the password input renders the
+                // saved-credential placeholder + helper text. Bound to
+                // loadedConnectionName (truthy iff resume-mode pre-populate
+                // ran) — fresh-install mode has no saved token to preserve.
+                hasSavedToken={Boolean(loadedConnectionName)}
               />
             )}
             {step === 3 && (
@@ -1086,6 +1127,10 @@ export function FirstRunWizard({ initialStep = 1 }: { initialStep?: number } = {
                 saving={saving}
                 saveError={saveError}
                 onBack={() => setStep(2)}
+                // V124-17 / BUG-040: same signal as StepGit — the ArgoCD
+                // token field gets the saved-credential affordance in
+                // resume mode.
+                hasSavedToken={Boolean(loadedConnectionName)}
               />
             )}
             {step === 4 && (

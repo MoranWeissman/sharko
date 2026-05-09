@@ -1732,6 +1732,103 @@ EOF
 }
 
 # =====================================================================
+# Subcommand: do_argocd_reset (V124-17 / BUG-043)
+# Wipe the ArgoCD bootstrap state — cluster-addons-bootstrap Application +
+# cluster-addons AppProject + any AppSets the bootstrap created — without
+# tearing down the kind cluster or the Sharko helm release. Lets the
+# maintainer re-test the wizard end-to-end after wiping Sharko config +
+# repo state, where `down` is too heavy and re-running the wizard
+# otherwise hits "already exists" on the leftover ArgoCD objects.
+#
+# Names match templates/bootstrap/root-app.yaml:
+#   - Application: cluster-addons-bootstrap (namespace: argocd)
+#   - AppProject:  cluster-addons (namespace: argocd)
+# (Verified at write-time — drift in the template would break this script,
+# but templates_test.go pins the Application name, and the AppProject
+# rarely changes.)
+#
+# Idempotent: every kubectl call uses --ignore-not-found so re-running on
+# a clean cluster is a no-op. Cascade-foreground on the Application waits
+# for the resources-finalizer to clean up child AppSets before returning,
+# so subsequent `argocd-reset` invocations or wizard runs can't race the
+# finalizer.
+# =====================================================================
+do_argocd_reset() {
+    local yes_flag=0
+    local arg
+    for arg in "$@"; do
+        case "$arg" in
+            -h|--help)
+                cat <<EOF
+sharko-dev.sh argocd-reset — wipe ArgoCD bootstrap state for wizard re-test
+
+Deletes (in order):
+  1. Application/cluster-addons-bootstrap   (namespace argocd, cascade=foreground)
+  2. AppProject/cluster-addons              (namespace argocd)
+  3. ApplicationSets labelled
+       app.kubernetes.io/managed-by=cluster-addons-bootstrap
+     in any namespace (defensive — finalizer should have caught these).
+
+Use this between wizard test runs when you've wiped Sharko config + repo
+state but the kind cluster is still healthy. \`down\` is the nuclear
+alternative — tears down the whole kind cluster.
+
+Idempotent: every kubectl op is --ignore-not-found, so re-running on a
+clean cluster is a no-op.
+
+Flags:
+  -y|--yes      skip confirmation prompt
+  -h|--help     this message
+
+Usage: ./scripts/sharko-dev.sh argocd-reset [-y|--yes]
+EOF
+                return 0
+                ;;
+            -y|--yes) yes_flag=1 ;;
+            *)
+                log_fail "unknown flag: $arg"
+                echo "       Try: ./scripts/sharko-dev.sh argocd-reset --help" >&2
+                return 1
+                ;;
+        esac
+    done
+
+    log_info "This deletes the ArgoCD bootstrap state (cluster-addons-bootstrap"
+    log_info "Application + cluster-addons AppProject + any AppSets it created)."
+    confirm_or_abort "$yes_flag" "Proceed?" || return 0
+
+    # 1. Delete the root Application with cascade=foreground so the
+    #    resources-finalizer fully cleans up before we move on. The 60s
+    #    timeout is generous — finalizer cleanup of child AppSets is
+    #    usually well under 10s on a kind cluster.
+    log_info "deleting Application/cluster-addons-bootstrap (cascade=foreground)"
+    if ! kubectl -n argocd delete application cluster-addons-bootstrap \
+            --cascade=foreground --ignore-not-found --timeout=60s; then
+        log_warn "Application delete returned non-zero (may be a slow finalizer)"
+    fi
+
+    # 2. Delete the AppProject. Has no finalizer; should be instant.
+    log_info "deleting AppProject/cluster-addons"
+    if ! kubectl -n argocd delete appproject cluster-addons --ignore-not-found; then
+        log_warn "AppProject delete returned non-zero"
+    fi
+
+    # 3. Sweep any orphaned ApplicationSets the bootstrap created. Should
+    #    be empty after step 1's finalizer ran, but covers the edge case
+    #    where the finalizer was bypassed (--cascade=orphan run elsewhere,
+    #    manual kubectl edit, etc.).
+    log_info "sweeping ApplicationSets labelled managed-by=cluster-addons-bootstrap"
+    if ! kubectl delete applicationset --all-namespaces \
+            -l app.kubernetes.io/managed-by=cluster-addons-bootstrap \
+            --ignore-not-found; then
+        log_warn "ApplicationSet sweep returned non-zero"
+    fi
+
+    log_ok "ArgoCD bootstrap state cleared. Wizard step 4 will succeed on next init."
+    return 0
+}
+
+# =====================================================================
 # usage / help
 # =====================================================================
 usage() {
@@ -1758,6 +1855,7 @@ ${BOLD}Operations${RESET}
   port-forward / pf    Restart Sharko + ArgoCD port-forwards (--sharko / --argocd to scope)
   smoke         Run smoke tests (auto-extracts creds if missing)
   status        Show current env state (cluster, Sharko, creds, token)
+  argocd-reset  Wipe ArgoCD bootstrap state (Application + AppProject + AppSets) for wizard re-test
 
 ${BOLD}Help${RESET}
   help          this message
@@ -1793,6 +1891,12 @@ main() {
             shift
             preflight_tools || return 1
             do_argocd_token "$@"
+            return $?
+            ;;
+        argocd-reset)
+            shift
+            preflight_tools || return 1
+            do_argocd_reset "$@"
             return $?
             ;;
         port-forward|pf)

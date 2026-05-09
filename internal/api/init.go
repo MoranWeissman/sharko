@@ -315,13 +315,52 @@ func (s *Server) runInitOperation(
 	})
 }
 
+// pollPRMergeInterval is the cadence at which pollPRMerge probes the base
+// branch for the merged bootstrap file. V124-17 / BUG-041 tightened this from
+// 10s to 5s — the probe is a single GitHub file-read per cycle so there's no
+// rate-limit risk, and the 10s value made the manual-merge → wizard-advance
+// gap feel ~10-25s long. Exposed as a package var (not const) so tests can
+// inject a smaller value; production code never assigns to it.
+var pollPRMergeInterval = 5 * time.Second
+
+// isPRMerged returns true when bootstrap/root-app.yaml is readable from
+// `baseBranch`. We use file presence as the merge signal (rather than the
+// PR-status API) because GitHub eventually-consistent state lags PR merges
+// by 1–2s in practice, and the file-presence probe is what the next
+// orchestrator step (BootstrapArgoCD) actually depends on.
+//
+// Extracted as a helper in V124-17 / BUG-041 so pollPRMerge can run an
+// immediate first probe before entering the ticker loop. Without this, the
+// first check happened ticker-interval later (10s pre-V124-17, 5s now),
+// which made an already-merged PR look like the wizard was hanging.
+func isPRMerged(ctx context.Context, gp gitprovider.GitProvider, baseBranch string) bool {
+	_, err := gp.GetFileContent(ctx, "bootstrap/root-app.yaml", baseBranch)
+	return err == nil
+}
+
 // pollPRMerge polls for the PR to be merged by checking whether the bootstrap
 // file appears on the base branch. Returns true if merged, false if timed out
 // or the session was abandoned/cancelled.
+//
+// V124-17 / BUG-041: do an immediate file-presence check before entering the
+// ticker loop. If the user merged the PR before pollPRMerge even started —
+// or auto-merge raced ahead of the goroutine — we return true with no
+// ticker wait. The ticker (5s, see pollPRMergeInterval) drives subsequent
+// checks plus the heartbeat / cancellation / deadline guards.
 func (s *Server) pollPRMerge(ctx context.Context, sessionID string, gp gitprovider.GitProvider, baseBranch string) bool {
+	// Immediate first probe — skip the ticker wait if the file is already
+	// on the base branch. Most-common paths this protects:
+	//   - User merged the PR in their browser before the wizard's polling
+	//     UI even rendered the "Waiting for PR merge…" panel.
+	//   - A previous init crashed/restarted between PR-merge and the next
+	//     step; on retry, the file is already there.
+	if isPRMerged(ctx, gp, baseBranch) {
+		return true
+	}
+
 	// Allow up to 24 hours for a human to merge the PR.
 	deadline := time.Now().Add(24 * time.Hour)
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(pollPRMergeInterval)
 	defer ticker.Stop()
 
 	for {
@@ -345,8 +384,7 @@ func (s *Server) pollPRMerge(ctx context.Context, sessionID string, gp gitprovid
 			}
 
 			// Check if PR is merged by seeing if bootstrap/root-app.yaml exists on the base branch.
-			_, err := gp.GetFileContent(ctx, "bootstrap/root-app.yaml", baseBranch)
-			if err == nil {
+			if isPRMerged(ctx, gp, baseBranch) {
 				return true // file exists on base branch — PR was merged
 			}
 

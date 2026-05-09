@@ -25,7 +25,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
@@ -252,6 +254,138 @@ func TestRunInitOperation_AlreadyInitialized_UnhealthyArgoCDApp_Fails(t *testing
 		if !strings.Contains(sess.Error, want) {
 			t.Errorf("expected error to contain %q, got %q", want, sess.Error)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// V124-17 / BUG-041 — pollPRMerge tightened (immediate first probe + 5s ticker)
+// ---------------------------------------------------------------------------
+
+// pollFakeGit is a controllable gitprovider used by the BUG-041 tests. It
+// counts GetFileContent calls (atomically — pollPRMerge runs in the same
+// goroutine as the test in our calls below, but reads to the counter from
+// the assertion are race-friendly anyway) and returns success/error
+// according to the configured policy.
+type pollFakeGit struct {
+	initFakeGit
+	calls atomic.Int32
+	// returnSuccess: when set, every GetFileContent for bootstrap/root-app.yaml
+	// returns a non-nil byte slice with nil error. When false (default), the
+	// embedded initFakeGit.GetFileContent returns "not found".
+	returnSuccess atomic.Bool
+}
+
+func (p *pollFakeGit) GetFileContent(ctx context.Context, path, branch string) ([]byte, error) {
+	p.calls.Add(1)
+	if p.returnSuccess.Load() {
+		return []byte("apiVersion: argoproj.io/v1alpha1\n"), nil
+	}
+	return p.initFakeGit.GetFileContent(ctx, path, branch)
+}
+
+// TestPollPRMerge_ImmediateCheck_ReturnsTrueWithoutTickerWait confirms the
+// V124-17 / BUG-041 fix: when the bootstrap file is already on the base
+// branch, pollPRMerge must return true immediately without waiting for the
+// ticker to fire. Pre-V124-17, the first GetFileContent probe happened
+// 10s after entry; this test uses the production interval and a tight
+// 200ms timeout to prove the immediate path.
+func TestPollPRMerge_ImmediateCheck_ReturnsTrueWithoutTickerWait(t *testing.T) {
+	s := newInitTestServer()
+	steps := []string{"step-1"}
+	session := s.opsStore.Create("init", steps)
+	s.opsStore.Start(session.ID)
+
+	gp := &pollFakeGit{}
+	gp.returnSuccess.Store(true) // file already on base branch
+
+	// Use a short context deadline as a safety net — if the immediate-probe
+	// path were broken, the ticker (5s in production) would never fire
+	// within this window and pollPRMerge would return false on ctx.Done.
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	merged := s.pollPRMerge(ctx, session.ID, gp, "main")
+	elapsed := time.Since(start)
+
+	if !merged {
+		t.Fatalf("expected pollPRMerge to return true (file present); got false")
+	}
+	// Immediate-check must complete well under 1s. 100ms is generous given
+	// the only work is one mocked file-read.
+	if elapsed > 100*time.Millisecond {
+		t.Errorf("expected pollPRMerge to return within 100ms (immediate check); took %s", elapsed)
+	}
+	// Exactly one GetFileContent call — the immediate-probe path; the
+	// ticker loop must not have run.
+	if got := gp.calls.Load(); got != 1 {
+		t.Errorf("expected exactly 1 GetFileContent call (immediate probe); got %d", got)
+	}
+}
+
+// TestPollPRMerge_TickerInterval_Is5Seconds confirms the V124-17 / BUG-041
+// ticker tightening. We override the package-var to a tiny interval (so
+// the test runs in milliseconds rather than seconds) and assert the
+// production-default value is 5s.
+//
+// Why two assertions: the interval value is the contract (5s), but the
+// observable behaviour we care about is "ticker actually fires at the
+// configured cadence" — both protect against a regression that flips the
+// value back to 10s but leaves the ticker plumbing intact.
+func TestPollPRMerge_TickerInterval_Is5Seconds(t *testing.T) {
+	if got := pollPRMergeInterval; got != 5*time.Second {
+		t.Errorf("pollPRMergeInterval: expected 5s (V124-17 / BUG-041); got %s", got)
+	}
+
+	// Behaviour assertion: with the file NOT present, force the immediate
+	// check to fail, then count tick-driven probes within a known window.
+	// Override the interval to 10ms so we get ~10 ticks in 100ms.
+	old := pollPRMergeInterval
+	pollPRMergeInterval = 10 * time.Millisecond
+	defer func() { pollPRMergeInterval = old }()
+
+	s := newInitTestServer()
+	steps := []string{"step-1"}
+	session := s.opsStore.Create("init", steps)
+	s.opsStore.Start(session.ID)
+	// Mark the session as alive so the heartbeat guard inside pollPRMerge
+	// doesn't bail out before the deadline.
+	s.opsStore.Heartbeat(session.ID)
+
+	gp := &pollFakeGit{} // returnSuccess=false ⇒ never reports merged
+
+	// The session-alive guard inside pollPRMerge looks at the most recent
+	// heartbeat. We hold a goroutine that re-heartbeats every 20ms so the
+	// 2-minute IsAlive check never trips during the test window.
+	hbCtx, hbCancel := context.WithCancel(context.Background())
+	defer hbCancel()
+	go func() {
+		t := time.NewTicker(20 * time.Millisecond)
+		defer t.Stop()
+		for {
+			select {
+			case <-hbCtx.Done():
+				return
+			case <-t.C:
+				s.opsStore.Heartbeat(session.ID)
+			}
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	merged := s.pollPRMerge(ctx, session.ID, gp, "main")
+	if merged {
+		t.Fatalf("expected pollPRMerge to return false (file never present); got true")
+	}
+
+	// 1 (immediate) + ~9 ticks at 10ms intervals over 100ms. Allow a
+	// generous range (≥3) to keep the test tolerant of CI scheduler
+	// jitter while still proving the ticker fires more than once.
+	calls := gp.calls.Load()
+	if calls < 3 {
+		t.Errorf("expected ≥3 GetFileContent calls (1 immediate + ticker firings within 100ms at 10ms cadence); got %d", calls)
 	}
 }
 

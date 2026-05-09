@@ -533,3 +533,251 @@ describe('FirstRunWizard — V124-16 escape hatches (BUG-035 / 036 / 037 / 038)'
     confirmSpy.mockRestore()
   })
 })
+
+// V124-17 / BUG-039 + BUG-040 + BUG-042 — wizard polish for resume mode.
+//
+// Three issues from the V124-16 maintainer validation:
+//   - BUG-039: Back button on StepInit was visible during the 'running'
+//     state. Clicking it mid-flight rewound the wizard chrome but the init
+//     operation kept running on the backend; a later Initialize click then
+//     hit an already-init check and could orphan the session.
+//   - BUG-040: in resume mode, the password/token inputs render empty by
+//     design (security: never re-display saved secrets). The previous
+//     placeholder ("Personal access token (PAT)") read as "my saved
+//     credential just got wiped" — the backend's PUT /connections/{name}
+//     actually preserves saved tokens when the request omits them, so the
+//     data is safe but the UX is misleading.
+//   - BUG-042: StepInit's Back button uses the same secondary-button
+//     classes as StepGit/StepArgoCD's Back so the affordance looks the
+//     same on every step.
+describe('FirstRunWizard — V124-17 wizard polish (BUG-039 / 040 / 042)', () => {
+  it('BUG-039: Back button is hidden in StepInit while state is running', async () => {
+    mockState.connections = [resumeConnection]
+
+    // initRepo resolves with operation_id so the polling effect kicks in
+    // and state stays in 'running' until getOperation returns a terminal
+    // status. We never advance getOperation past 'running' here so we
+    // can assert the running-state UI.
+    const initRepoMock = apiModule.initRepo as ReturnType<typeof vi.fn>
+    const getOperationMock = apiModule.getOperation as ReturnType<typeof vi.fn>
+    initRepoMock.mockResolvedValueOnce({ operation_id: 'op-running-1' })
+    getOperationMock.mockResolvedValue({
+      id: 'op-running-1',
+      status: 'running',
+      steps: [{ name: 'Creating bootstrap files', status: 'running' }],
+    })
+
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      renderWizard(4)
+
+      // Idle state — Back IS present (V124-16 behaviour, baseline).
+      expect(screen.getByRole('button', { name: /^Back$/ })).toBeInTheDocument()
+
+      // Click Initialize — wizard transitions to 'running'.
+      fireEvent.click(
+        screen.getByRole('button', { name: /Initialize.*Auto-merge/i }),
+      )
+
+      // Resolve the initRepo promise so setOperationId fires and the
+      // polling effect kicks in.
+      await act(async () => {
+        await Promise.resolve()
+      })
+
+      // While the operation is running, Back must NOT be in the document.
+      // BUG-039 root cause: the V124-16 conditional was `{resumed && onBack
+      // && (<button>Back</button>)}` — no state guard.
+      await waitFor(() => {
+        expect(
+          screen.queryByRole('button', { name: /^Back$/ }),
+        ).not.toBeInTheDocument()
+      })
+
+      // Belt-and-suspenders: the running indicator IS visible.
+      expect(
+        screen.getByText(/Starting initialization|Creating bootstrap files/i),
+      ).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+      getOperationMock.mockResolvedValue({
+        id: 'op-1',
+        status: 'pending',
+        steps: [],
+      })
+      initRepoMock.mockResolvedValue({ operation_id: 'op-1' })
+    }
+  })
+
+  it('BUG-040: in resume mode, the GitHub token input shows the saved-credential placeholder + helper text', async () => {
+    mockState.connections = [resumeConnection]
+    renderWizard(4)
+
+    // Walk back to step 2 (StepGit).
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: /Save & Continue/i }),
+      ).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+
+    // The placeholder MUST advertise the saved-credential semantic. We
+    // grep on the bullet+saved phrase rather than the legacy "Personal
+    // access token (PAT)" string.
+    await waitFor(() => {
+      expect(
+        screen.getByPlaceholderText(
+          /•••••• \(saved — leave blank to keep, or enter new value to replace\)/,
+        ),
+      ).toBeInTheDocument()
+    })
+
+    // The helper text below the input also explains the merge semantic.
+    expect(
+      screen.getByText(
+        /Submitting blank keeps your saved credential\. Enter a new value to replace it\./,
+      ),
+    ).toBeInTheDocument()
+  })
+
+  it('BUG-040: in resume mode, the ArgoCD token input shows the saved-credential placeholder + helper text', async () => {
+    mockState.connections = [resumeConnection]
+    renderWizard(4)
+
+    // Walk back to step 3 (StepArgoCD).
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+
+    await waitFor(() => {
+      // ArgoCD token field has the same saved-credential placeholder.
+      const inputs = screen.getAllByPlaceholderText(
+        /•••••• \(saved — leave blank to keep, or enter new value to replace\)/,
+      )
+      // At least the ArgoCD token input is present on step 3.
+      expect(inputs.length).toBeGreaterThanOrEqual(1)
+    })
+
+    // Helper text appears for the ArgoCD token (one or both inputs may
+    // render this on step 3, depending on how the test reaches step 3 —
+    // we walked back from step 4 → step 3, so only StepArgoCD is mounted
+    // and exactly one helper-text occurrence is expected).
+    expect(
+      screen.getByText(
+        /Submitting blank keeps your saved credential\. Enter a new value to replace it\./,
+      ),
+    ).toBeInTheDocument()
+  })
+
+  it('BUG-040: blank-submit in resume mode sends an empty token (server-side PUT preserves saved value)', async () => {
+    mockState.connections = [resumeConnection]
+    renderWizard(4)
+
+    // Walk to step 3 (StepArgoCD), where Save & Continue lives.
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: /Save & Continue/i }),
+      ).toBeInTheDocument()
+    })
+
+    // Test the ArgoCD connection so canSave gates open.
+    fireEvent.click(screen.getByRole('button', { name: /Test Connection/i }))
+    await waitFor(() => {
+      expect(screen.getByText(/Connected/i)).toBeInTheDocument()
+    })
+
+    // Save without typing a token — should hit updateConnection (PUT) with
+    // an empty/undefined token field. The wizard's buildPayload coerces
+    // empty strings to undefined, which JSON.stringify drops.
+    const updateMock = (apiModule.api as unknown as {
+      updateConnection: ReturnType<typeof vi.fn>
+    }).updateConnection
+    updateMock.mockClear()
+
+    fireEvent.click(screen.getByRole('button', { name: /Save & Continue/i }))
+
+    await waitFor(() => {
+      expect(updateMock).toHaveBeenCalledTimes(1)
+    })
+
+    // First arg is the connection name, second is the payload object.
+    const [name, payload] = updateMock.mock.calls[0]
+    expect(name).toBe('github-foo-bar')
+
+    // Both tokens must be undefined-or-absent so the backend's
+    // token-preserving merge keeps the saved values.
+    expect(payload.git.token).toBeUndefined()
+    expect(payload.argocd.token).toBeUndefined()
+  })
+
+  it('BUG-040: typing a new token in resume mode sends it through to the PUT body', async () => {
+    mockState.connections = [resumeConnection]
+    renderWizard(4)
+
+    // Walk to step 2 (StepGit) so we can type into the Git token field.
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: /Save & Continue/i }),
+      ).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+
+    // Find the GitHub token field by its saved-credential placeholder
+    // and type a new value into it.
+    const tokenInput = await screen.findByPlaceholderText(
+      /•••••• \(saved — leave blank to keep, or enter new value to replace\)/,
+    )
+    fireEvent.change(tokenInput, { target: { value: 'new-pat-12345' } })
+
+    // Test git, advance to step 3, save.
+    fireEvent.click(screen.getByRole('button', { name: /Test Connection/i }))
+    await waitFor(() => {
+      expect(screen.getByText(/Connected/i)).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByRole('button', { name: /Next/i }))
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: /Save & Continue/i }),
+      ).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByRole('button', { name: /Test Connection/i }))
+    await waitFor(() => {
+      expect(screen.getByText(/Connected/i)).toBeInTheDocument()
+    })
+
+    const updateMock = (apiModule.api as unknown as {
+      updateConnection: ReturnType<typeof vi.fn>
+    }).updateConnection
+    updateMock.mockClear()
+
+    fireEvent.click(screen.getByRole('button', { name: /Save & Continue/i }))
+
+    await waitFor(() => {
+      expect(updateMock).toHaveBeenCalledTimes(1)
+    })
+
+    const [, payload] = updateMock.mock.calls[0]
+    expect(payload.git.token).toBe('new-pat-12345')
+  })
+
+  it('BUG-042: StepInit Back button uses the same secondary-button classes as StepGit/StepArgoCD Back', async () => {
+    mockState.connections = [resumeConnection]
+    renderWizard(4)
+
+    // Capture StepInit's Back classes (idle state).
+    const stepInitBack = screen.getByRole('button', { name: /^Back$/ })
+    const stepInitClasses = stepInitBack.className
+
+    // Walk back to step 3 and capture StepArgoCD's Back classes.
+    fireEvent.click(stepInitBack)
+    const stepArgoCDBack = await screen.findByRole('button', { name: /^Back$/ })
+    expect(stepArgoCDBack.className).toBe(stepInitClasses)
+
+    // Walk back to step 2 and capture StepGit's Back classes.
+    fireEvent.click(stepArgoCDBack)
+    const stepGitBack = await screen.findByRole('button', { name: /^Back$/ })
+    expect(stepGitBack.className).toBe(stepInitClasses)
+  })
+})
