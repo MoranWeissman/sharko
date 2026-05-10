@@ -61,3 +61,6 @@ coverage/
 
 # Internal planning docs (not for public repo)
 docs/superpowers/
+
+# Local maintainer scratch (kind-target kubeconfigs with bearer tokens, etc.)
+.local/

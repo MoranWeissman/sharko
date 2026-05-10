@@ -1829,6 +1829,329 @@ EOF
 }
 
 # =====================================================================
+# Subcommand: do_kind_target (V125-3.12)
+# Spin up N kind clusters as Sharko-managed-cluster targets, generate a
+# serviceaccount + 24h bearer token + Docker-network-internal kubeconfig
+# per cluster, and write each kubeconfig to ./.local/kubeconfigs/ (gitignored)
+# ready to paste into the wizard's V125-1.1 kubeconfig form.
+#
+# Three actions: create (default 1, max 5), delete, list. All scoped by
+# --prefix (default sharko-target).
+# =====================================================================
+do_kind_target() {
+    local action="${1:-}"
+    if [ -z "$action" ]; then
+        log_fail "kind-target requires an action: create | delete | list"
+        echo "       Try: ./scripts/sharko-dev.sh kind-target --help" >&2
+        return 1
+    fi
+
+    case "$action" in
+        -h|--help)
+            cat <<EOF
+sharko-dev.sh kind-target — manage kind clusters as Sharko-managed targets (V125-3.12)
+
+Wraps the multi-step flow for creating kind clusters that Sharko can
+register as managed targets via V125-1.1's kubeconfig path. Each target
+gets a serviceaccount, ClusterRoleBinding, 24h bearer token, and a
+kubeconfig file with the Docker-network-internal API server URL so the
+in-cluster sharko + argocd controllers can reach the target's API server
+over the kind Docker bridge.
+
+Usage:
+  ./scripts/sharko-dev.sh kind-target create [count] [--prefix NAME]
+  ./scripts/sharko-dev.sh kind-target delete [--prefix NAME]
+  ./scripts/sharko-dev.sh kind-target list   [--prefix NAME]
+  ./scripts/sharko-dev.sh kind-target --help
+
+Defaults:
+  count    1 (max 5)
+  --prefix sharko-target  (clusters: sharko-target-1, sharko-target-2, ...)
+
+Files:
+  ./.local/kubeconfigs/<name>.kubeconfig.yaml   (mode 0600, gitignored)
+
+Notes:
+  Token TTL is 24h. Re-run 'kind-target create' to refresh tokens
+  without recreating clusters (idempotent — existing clusters are reused).
+  Requires the main 'sharko-e2e' kind cluster to exist first (run 'up')
+  so the shared 'kind' Docker network is present.
+EOF
+            return 0
+            ;;
+        create|delete|list)
+            ;;
+        *)
+            log_fail "unknown kind-target action: $action"
+            echo "       Valid actions: create | delete | list" >&2
+            echo "       Try: ./scripts/sharko-dev.sh kind-target --help" >&2
+            return 1
+            ;;
+    esac
+    shift  # consume action
+
+    # ---- parse remaining args ----
+    local prefix="sharko-target"
+    local count=""
+    local arg
+    while [ $# -gt 0 ]; do
+        arg="$1"
+        case "$arg" in
+            --prefix)
+                shift
+                if [ -z "${1:-}" ]; then
+                    log_fail "--prefix requires a name argument"
+                    return 1
+                fi
+                prefix="$1"
+                ;;
+            -h|--help)
+                # Defer to top-level help — same content.
+                do_kind_target --help
+                return 0
+                ;;
+            -*)
+                log_fail "unknown flag: $arg"
+                echo "       Try: ./scripts/sharko-dev.sh kind-target --help" >&2
+                return 1
+                ;;
+            *)
+                # Positional — only 'create' accepts a count.
+                if [ "$action" = "create" ] && [ -z "$count" ]; then
+                    count="$arg"
+                else
+                    log_fail "unexpected positional argument: $arg"
+                    return 1
+                fi
+                ;;
+        esac
+        shift
+    done
+
+    case "$action" in
+        create)
+            # Default + range check on count.
+            if [ -z "$count" ]; then
+                count=1
+            fi
+            if ! printf '%s' "$count" | grep -qxE '[0-9]+'; then
+                log_fail "count must be a positive integer (got: $count)"
+                return 1
+            fi
+            if [ "$count" -lt 1 ]; then
+                log_fail "count must be >= 1 (got: $count)"
+                return 1
+            fi
+            if [ "$count" -gt 5 ]; then
+                log_fail "count must be <= 5 (got: $count) — refusing to spin up that many kind clusters"
+                echo "       (Maintainer guard. Edit the script if you really mean it.)" >&2
+                return 1
+            fi
+            _kind_target_create "$prefix" "$count"
+            return $?
+            ;;
+        delete)
+            _kind_target_delete "$prefix"
+            return $?
+            ;;
+        list)
+            _kind_target_list "$prefix"
+            return $?
+            ;;
+    esac
+}
+
+# Internal: create N kind clusters as Sharko-managed targets.
+_kind_target_create() {
+    local prefix="$1"
+    local count="$2"
+
+    local kc_dir="${REPO_ROOT}/.local/kubeconfigs"
+    mkdir -p "$kc_dir"
+
+    # Snapshot existing kind clusters once (avoid re-shelling per loop iter).
+    local existing
+    existing=$(kind get clusters 2>/dev/null || true)
+
+    local i
+    local name
+    local kc_path
+    local results=()
+    for i in $(seq 1 "$count"); do
+        name="${prefix}-${i}"
+        kc_path="${kc_dir}/${name}.kubeconfig.yaml"
+
+        # ---- 1. Skip cluster create if it already exists (idempotent) ----
+        if printf '%s\n' "$existing" | grep -qx "$name"; then
+            log_info "target ${name} already exists, regenerating kubeconfig..."
+        else
+            # ---- 2. Create cluster ----
+            log_info "creating kind cluster ${name}"
+            if ! kind create cluster --name "$name" --wait 60s; then
+                local rc=$?
+                log_fail "kind create cluster --name ${name} failed (rc=${rc})"
+                return 1
+            fi
+        fi
+
+        # ---- 3. Verify Docker network membership ----
+        # The 'kind' Docker network is created by the first kind cluster on the
+        # host (typically sharko-e2e via 'up'). All later clusters land on it
+        # automatically so in-cluster pods can reach each other by IP.
+        local on_network
+        on_network=$(docker network inspect kind \
+            --format '{{range .Containers}}{{.Name}} {{end}}' 2>/dev/null || true)
+        if ! printf '%s' "$on_network" | grep -q "${name}-control-plane"; then
+            log_fail "target cluster ${name} is not on the 'kind' Docker network — did you create sharko-e2e first via './scripts/sharko-dev.sh up'?"
+            return 1
+        fi
+
+        local ctx="kind-${name}"
+
+        # ---- 4. Create / re-apply serviceaccount + ClusterRoleBinding ----
+        # Pipe through 'kubectl apply -f -' so it's idempotent across reruns.
+        if ! kubectl --context "$ctx" -n default create serviceaccount sharko-target-sa \
+                --dry-run=client -o yaml | \
+                kubectl --context "$ctx" apply -f - >/dev/null; then
+            log_fail "failed to apply serviceaccount on ${name}"
+            return 1
+        fi
+        if ! kubectl --context "$ctx" create clusterrolebinding sharko-target-sa-admin \
+                --clusterrole=cluster-admin \
+                --serviceaccount=default:sharko-target-sa \
+                --dry-run=client -o yaml | \
+                kubectl --context "$ctx" apply -f - >/dev/null; then
+            log_fail "failed to apply clusterrolebinding on ${name}"
+            return 1
+        fi
+
+        # ---- 5. Generate 24h bearer token ----
+        local token
+        token=$(kubectl --context "$ctx" -n default create token sharko-target-sa --duration=24h 2>/dev/null || true)
+        if [ -z "$token" ]; then
+            log_fail "failed to generate bearer token for ${name}"
+            return 1
+        fi
+
+        # ---- 6. Get Docker-network-internal API server URL ----
+        # This is the critical bit: Sharko + ArgoCD controllers run inside the
+        # sharko-e2e kind cluster and reach the target via the shared 'kind'
+        # bridge. 127.0.0.1:<random> from `kubectl config view` would only work
+        # from the host, not from inside another container.
+        local server_ip
+        server_ip=$(docker inspect "${name}-control-plane" \
+            --format '{{ .NetworkSettings.Networks.kind.IPAddress }}' 2>/dev/null || true)
+        if [ -z "$server_ip" ]; then
+            log_fail "could not extract Docker-network IP for ${name}; is the cluster running?"
+            return 1
+        fi
+        local server="https://${server_ip}:6443"
+
+        # ---- 7. Get CA cert (raw, in-cluster form) ----
+        local ca
+        ca=$(kubectl --context "$ctx" config view --raw --minify \
+            -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' 2>/dev/null || true)
+        if [ -z "$ca" ]; then
+            log_fail "failed to extract certificate-authority-data for ${name}"
+            return 1
+        fi
+
+        # ---- 8 + 9. Build kubeconfig + write to file (mode 0600) ----
+        cat > "$kc_path" <<EOF
+apiVersion: v1
+kind: Config
+current-context: ${name}
+clusters:
+- name: ${name}
+  cluster:
+    server: ${server}
+    certificate-authority-data: ${ca}
+contexts:
+- name: ${name}
+  context:
+    cluster: ${name}
+    user: ${name}
+users:
+- name: ${name}
+  user:
+    token: ${token}
+EOF
+        chmod 600 "$kc_path"
+
+        # ---- 10. Per-cluster confirmation ----
+        log_ok "${name} → ./.local/kubeconfigs/${name}.kubeconfig.yaml"
+        results+=("${name}|./.local/kubeconfigs/${name}.kubeconfig.yaml")
+    done
+
+    # ---- Summary ----
+    echo
+    echo "Created/refreshed ${count} kind targets:"
+    local entry
+    for entry in "${results[@]}"; do
+        local n="${entry%%|*}"
+        local p="${entry##*|}"
+        printf '  %-20s %s\n' "$n" "$p"
+    done
+    echo
+    echo "Open the wizard → Register Cluster → Provider: Generic K8s (kubeconfig)"
+    echo "Paste the contents of any of the files above into the kubeconfig textarea."
+    echo
+    echo "Token TTL: 24h. Re-run \`kind-target create\` to refresh tokens without"
+    echo "recreating clusters."
+    return 0
+}
+
+# Internal: delete all kind clusters matching the prefix + their kubeconfig files.
+_kind_target_delete() {
+    local prefix="$1"
+    local kc_dir="${REPO_ROOT}/.local/kubeconfigs"
+
+    local clusters
+    clusters=$(kind get clusters 2>/dev/null | grep "^${prefix}-" || true)
+    if [ -z "$clusters" ]; then
+        echo "No kind targets matching prefix '${prefix}' found."
+        return 0
+    fi
+
+    local c
+    for c in $clusters; do
+        if ! kind delete cluster --name "$c"; then
+            log_warn "kind delete cluster --name ${c} returned non-zero"
+        fi
+        rm -f "${kc_dir}/${c}.kubeconfig.yaml"
+        log_ok "deleted ${c} + kubeconfig file"
+    done
+    return 0
+}
+
+# Internal: list kind clusters matching the prefix and their kubeconfig file
+# state (present / missing).
+_kind_target_list() {
+    local prefix="$1"
+    local kc_dir="${REPO_ROOT}/.local/kubeconfigs"
+
+    local clusters
+    clusters=$(kind get clusters 2>/dev/null | grep "^${prefix}-" || true)
+    if [ -z "$clusters" ]; then
+        echo "No kind targets matching prefix '${prefix}' found."
+        return 0
+    fi
+
+    echo "Kind targets:"
+    local c
+    local kc
+    for c in $clusters; do
+        kc="${kc_dir}/${c}.kubeconfig.yaml"
+        if [ -f "$kc" ]; then
+            printf '  %-20s %s\n' "$c" "./.local/kubeconfigs/${c}.kubeconfig.yaml"
+        else
+            printf '  %-20s %s\n' "$c" "(no kubeconfig file — token may have expired; run 'kind-target create' to regenerate)"
+        fi
+    done
+    return 0
+}
+
+# =====================================================================
 # usage / help
 # =====================================================================
 usage() {
@@ -1856,6 +2179,7 @@ ${BOLD}Operations${RESET}
   smoke         Run smoke tests (auto-extracts creds if missing)
   status        Show current env state (cluster, Sharko, creds, token)
   argocd-reset  Wipe ArgoCD bootstrap state (Application + AppProject + AppSets) for wizard re-test
+  kind-target   Create/list/delete N kind clusters as Sharko-managed targets (kubeconfig files in ./.local/)
 
 ${BOLD}Help${RESET}
   help          this message
@@ -1903,6 +2227,12 @@ main() {
             shift
             preflight_tools || return 1
             do_port_forward "$@"
+            return $?
+            ;;
+        kind-target)
+            shift
+            preflight_tools || return 1
+            do_kind_target "$@"
             return $?
             ;;
         help|--help|-h|"")
