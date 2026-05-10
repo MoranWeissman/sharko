@@ -284,6 +284,14 @@ definitions:
         $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.ProviderConfig'
       set_as_default:
         type: boolean
+      use_saved:
+        description: |-
+          UseSaved, when true on a test-credentials request, instructs the
+          handler to look up the saved connection by Name and test using its
+          stored credentials instead of the request body. Returns 400 if no
+          saved connection with the given name exists. Ignored by Create /
+          Update. V124-19 / BUG-044.
+        type: boolean
     type: object
   github_com_MoranWeissman_sharko_internal_models.GitOpsSettings:
     properties:
@@ -4577,10 +4585,12 @@ paths:
     post:
       consumes:
       - application/json
-      description: Tests Git and ArgoCD credentials from a connection request without
-        saving
+      description: Tests Git and ArgoCD credentials. With use_saved=true, fetches
+        the named saved connection's stored credentials and tests with those instead
+        of the request body
       parameters:
-      - description: Connection credentials to test
+      - description: Connection credentials to test (set use_saved=true with name
+          to test the saved credentials of an existing connection)
         in: body
         name: body
         required: true
@@ -4595,7 +4605,7 @@ paths:
             additionalProperties: true
             type: object
         "400":
-          description: Bad request
+          description: Bad request (e.g. use_saved=true but no matching saved connection)
           schema:
             additionalProperties: true
             type: object

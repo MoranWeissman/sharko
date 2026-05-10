@@ -160,6 +160,15 @@ type ConnectionsListResponse struct {
 }
 
 // CreateConnectionRequest is the API request to create a new connection.
+//
+// The `UseSaved` field is honored ONLY by the test-credentials endpoint
+// (POST /connections/test-credentials). The Create / Update handlers ignore
+// it — they always read credentials from the request body / saved store as
+// usual. See V124-19 / BUG-044 for the full contract: when `use_saved=true`
+// is sent to test-credentials, the handler fetches the named connection's
+// credentials server-side and tests with those, so the wizard can honor
+// the "leave blank to keep, or enter new value to replace" placeholder
+// (V124-17 / BUG-040) end-to-end.
 type CreateConnectionRequest struct {
 	Name         string          `json:"name"`
 	Description  string          `json:"description,omitempty"`
@@ -168,6 +177,12 @@ type CreateConnectionRequest struct {
 	Provider     *ProviderConfig `json:"provider,omitempty"`
 	GitOps       *GitOpsSettings `json:"gitops,omitempty"`
 	SetAsDefault bool            `json:"set_as_default"`
+	// UseSaved, when true on a test-credentials request, instructs the
+	// handler to look up the saved connection by Name and test using its
+	// stored credentials instead of the request body. Returns 400 if no
+	// saved connection with the given name exists. Ignored by Create /
+	// Update. V124-19 / BUG-044.
+	UseSaved bool `json:"use_saved,omitempty"`
 }
 
 // SetActiveConnectionRequest is the API request to set the active connection.

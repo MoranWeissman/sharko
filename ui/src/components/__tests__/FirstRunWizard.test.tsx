@@ -781,3 +781,160 @@ describe('FirstRunWizard — V124-17 wizard polish (BUG-039 / 040 / 042)', () =>
     expect(stepGitBack.className).toBe(stepInitClasses)
   })
 })
+
+// V124-19 / BUG-044 — Test Connection must honor use_saved for blank-keep.
+//
+// V124-17 surfaced the saved-credential placeholder ("leave blank to keep,
+// or enter new value to replace") on Step 2 + Step 3. V124-19 closes the
+// matching backend contract gap: the wizard now sends `use_saved: true`
+// (with the loaded connection name) whenever the user clicks Test
+// Connection in resume mode WITHOUT typing a fresh token. The backend
+// fetches the saved credentials server-side and tests with those, so the
+// Next gate enables on a successful test against saved creds — no
+// "argocd token not configured" rejection.
+describe('FirstRunWizard — V124-19 use_saved test-credential contract (BUG-044)', () => {
+  it('sends use_saved=true on Test Connection when in resume mode with blank git token', async () => {
+    mockState.connections = [resumeConnection]
+    renderWizard(4)
+
+    // Walk back from step 4 → step 3 → step 2 (StepGit).
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: /Save & Continue/i }),
+      ).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+
+    // Sanity: the saved-credential placeholder is showing (StepGit's git
+    // token field renders empty in resume mode by design).
+    await screen.findByPlaceholderText(
+      /•••••• \(saved — leave blank to keep, or enter new value to replace\)/,
+    )
+
+    const testCredsMock = (apiModule.api as unknown as {
+      testCredentials: ReturnType<typeof vi.fn>
+    }).testCredentials
+    testCredsMock.mockClear()
+
+    // Click Test Connection without typing anything into the token field.
+    fireEvent.click(screen.getByRole('button', { name: /Test Connection/i }))
+
+    await waitFor(() => {
+      expect(testCredsMock).toHaveBeenCalledTimes(1)
+    })
+
+    // The body sent to the backend MUST carry `use_saved: true` AND the
+    // loaded connection name so the backend can look it up. The git.token
+    // field in the body is omitted (undefined) — that's the contract:
+    // we don't ship the (empty) form value, we tell the backend to use
+    // its own.
+    const [body] = testCredsMock.mock.calls[0]
+    expect(body.use_saved).toBe(true)
+    expect(body.name).toBe('github-foo-bar')
+    expect(body.git?.token).toBeUndefined()
+  })
+
+  it('Next button enables after a successful use_saved test (no fresh-credential entry needed)', async () => {
+    mockState.connections = [resumeConnection]
+    renderWizard(4)
+
+    // Walk to StepGit.
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: /Save & Continue/i }),
+      ).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+
+    await screen.findByPlaceholderText(
+      /•••••• \(saved — leave blank to keep, or enter new value to replace\)/,
+    )
+
+    // Pre-test: Next is disabled (testStatus.git === 'idle').
+    const nextBtn = screen.getByRole('button', { name: /Next/i })
+    expect(nextBtn).toBeDisabled()
+
+    // Mock returns ok for both services (the default mock).
+    fireEvent.click(screen.getByRole('button', { name: /Test Connection/i }))
+
+    // After the use_saved test resolves, the Connected indicator + an
+    // enabled Next button confirm the gate opened on saved creds alone.
+    await waitFor(() => {
+      expect(screen.getByText(/Connected/i)).toBeInTheDocument()
+    })
+    expect(screen.getByRole('button', { name: /Next/i })).toBeEnabled()
+  })
+
+  it('does NOT send use_saved when the user has typed a fresh git token (replace path)', async () => {
+    mockState.connections = [resumeConnection]
+    renderWizard(4)
+
+    // Walk to StepGit.
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: /Save & Continue/i }),
+      ).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+
+    const tokenInput = await screen.findByPlaceholderText(
+      /•••••• \(saved — leave blank to keep, or enter new value to replace\)/,
+    )
+    // User types a replacement value.
+    fireEvent.change(tokenInput, { target: { value: 'ghp_new_value' } })
+
+    const testCredsMock = (apiModule.api as unknown as {
+      testCredentials: ReturnType<typeof vi.fn>
+    }).testCredentials
+    testCredsMock.mockClear()
+
+    fireEvent.click(screen.getByRole('button', { name: /Test Connection/i }))
+
+    await waitFor(() => {
+      expect(testCredsMock).toHaveBeenCalledTimes(1)
+    })
+
+    // Replace path: the new token MUST go through to the backend, and
+    // use_saved MUST NOT be set (we want the backend to test the new
+    // candidate, not the saved record).
+    const [body] = testCredsMock.mock.calls[0]
+    expect(body.use_saved).toBeUndefined()
+    expect(body.git?.token).toBe('ghp_new_value')
+    // The connection name is still passed through so the auto-fill path
+    // can back-fill ArgoCD token if that field was left blank — that
+    // pre-V124-19 behavior is preserved.
+    expect(body.name).toBe('github-foo-bar')
+  })
+
+  it('typing into the token field after a successful use_saved test invalidates the test status (Next disables)', async () => {
+    mockState.connections = [resumeConnection]
+    renderWizard(4)
+
+    // Walk to StepGit.
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: /Save & Continue/i }),
+      ).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }))
+
+    const tokenInput = await screen.findByPlaceholderText(
+      /•••••• \(saved — leave blank to keep, or enter new value to replace\)/,
+    )
+
+    // Run a use_saved test → Next becomes enabled.
+    fireEvent.click(screen.getByRole('button', { name: /Test Connection/i }))
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Next/i })).toBeEnabled()
+    })
+
+    // Now the user starts typing a replacement. patchForm clears
+    // testStatus on every change → Next disables until they re-test.
+    fireEvent.change(tokenInput, { target: { value: 'ghp_partial' } })
+    expect(screen.getByRole('button', { name: /Next/i })).toBeDisabled()
+  })
+})

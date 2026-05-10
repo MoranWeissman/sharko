@@ -917,10 +917,41 @@ export function FirstRunWizard({ initialStep = 1 }: { initialStep?: number } = {
     },
   })
 
+  // V124-19 / BUG-044: in resume mode the wizard renders the password
+  // inputs empty by design (we never re-display saved secrets). The
+  // V124-17 placeholder promised "leave blank to keep, or enter new value
+  // to replace", but Test Connection still rejected blank submissions
+  // because TestCredentials → buildArgocdClient surfaced "ArgoCD token
+  // not configured". The backend now accepts `use_saved: true` + the
+  // saved connection's name and tests using the stored credentials
+  // server-side. Send that combination whenever:
+  //   - a saved connection is loaded (resume mode), AND
+  //   - the relevant token field is blank (user did not opt into replace)
+  // Otherwise fall back to the regular fresh-body payload.
+  //
+  // The same flag covers Step 2 (Git) and Step 3 (ArgoCD): they share a
+  // single saved record, and the test-credentials handler tests both
+  // paths in one call. The wizard's per-step Test buttons read only the
+  // matching status off the shared response.
+  const buildTestPayload = (service: 'git' | 'argocd') => {
+    const base = buildPayload()
+    if (!loadedConnectionName) {
+      return base
+    }
+    const blank =
+      service === 'git' ? form.git_token === '' : form.argocd_token === ''
+    if (!blank) {
+      // User typed a new value — submit it verbatim so the backend tests
+      // the replacement candidate, not the stored one.
+      return { ...base, name: loadedConnectionName }
+    }
+    return { ...base, name: loadedConnectionName, use_saved: true }
+  }
+
   const testGit = useCallback(async () => {
     setTestStatus((prev) => ({ ...prev, git: 'testing', gitMessage: undefined }))
     try {
-      const res = await api.testCredentials(buildPayload())
+      const res = await api.testCredentials(buildTestPayload('git'))
       setTestStatus((prev) => ({
         ...prev,
         git: res.git.status === 'ok' ? 'ok' : 'error',
@@ -933,12 +964,12 @@ export function FirstRunWizard({ initialStep = 1 }: { initialStep?: number } = {
         gitMessage: err instanceof Error ? err.message : 'Test failed',
       }))
     }
-  }, [form])  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [form, loadedConnectionName])  // eslint-disable-line react-hooks/exhaustive-deps
 
   const testArgocd = useCallback(async () => {
     setTestStatus((prev) => ({ ...prev, argocd: 'testing', argocdMessage: undefined }))
     try {
-      const res = await api.testCredentials(buildPayload())
+      const res = await api.testCredentials(buildTestPayload('argocd'))
       setTestStatus((prev) => ({
         ...prev,
         argocd: res.argocd.status === 'ok' ? 'ok' : 'error',
@@ -951,7 +982,7 @@ export function FirstRunWizard({ initialStep = 1 }: { initialStep?: number } = {
         argocdMessage: err instanceof Error ? err.message : 'Test failed',
       }))
     }
-  }, [form])  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [form, loadedConnectionName])  // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSaveAndContinue = useCallback(async () => {
     setSaving(true)

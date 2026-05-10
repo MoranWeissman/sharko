@@ -4327,7 +4327,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Tests Git and ArgoCD credentials from a connection request without saving",
+                "description": "Tests Git and ArgoCD credentials. With use_saved=true, fetches the named saved connection's stored credentials and tests with those instead of the request body",
                 "consumes": [
                     "application/json"
                 ],
@@ -4340,7 +4340,7 @@ const docTemplate = `{
                 "summary": "Test connection credentials",
                 "parameters": [
                     {
-                        "description": "Connection credentials to test",
+                        "description": "Connection credentials to test (set use_saved=true with name to test the saved credentials of an existing connection)",
                         "name": "body",
                         "in": "body",
                         "required": true,
@@ -4358,7 +4358,7 @@ const docTemplate = `{
                         }
                     },
                     "400": {
-                        "description": "Bad request",
+                        "description": "Bad request (e.g. use_saved=true but no matching saved connection)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -6953,6 +6953,10 @@ const docTemplate = `{
                     "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.ProviderConfig"
                 },
                 "set_as_default": {
+                    "type": "boolean"
+                },
+                "use_saved": {
+                    "description": "UseSaved, when true on a test-credentials request, instructs the\nhandler to look up the saved connection by Name and test using its\nstored credentials instead of the request body. Returns 400 if no\nsaved connection with the given name exists. Ignored by Create /\nUpdate. V124-19 / BUG-044.",
                     "type": "boolean"
                 }
             }

@@ -535,6 +535,13 @@ export const api = {
   deleteConnection: (name: string) => deleteJSON(`/connections/${encodeURIComponent(name)}`),
   setActiveConnection: (name: string) => postJSON('/connections/active', { connection_name: name }),
   testConnection: () => postJSON<{ git: { status: string }; argocd: { status: string } }>('/connections/test'),
+  // V124-19 / BUG-044: `data` may include `use_saved: true` along with `name`
+  // to instruct the backend to fetch the named saved connection's stored
+  // credentials and test with those (instead of the request body's tokens).
+  // Unlocks the wizard's "leave blank to keep, or enter new value to replace"
+  // contract end-to-end — Test Connection works on a blank token field when
+  // a saved connection exists. Backend returns 400 if use_saved=true but no
+  // matching saved connection.
   testCredentials: (data: unknown) => postJSON<{ git: { status: string; message?: string; auth?: string }; argocd: { status: string; message?: string; auth?: string } }>('/connections/test-credentials', data),
   discoverArgocd: (namespace?: string) => fetchJSON<{ server_url: string; has_env_token: boolean; namespace: string }>(`/connections/discover-argocd${namespace ? `?namespace=${namespace}` : ''}`),
 

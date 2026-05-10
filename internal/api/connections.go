@@ -240,14 +240,14 @@ func (s *Server) handleSetActiveConnection(w http.ResponseWriter, r *http.Reques
 // handleTestCredentials godoc
 //
 // @Summary Test connection credentials
-// @Description Tests Git and ArgoCD credentials from a connection request without saving
+// @Description Tests Git and ArgoCD credentials. With use_saved=true, fetches the named saved connection's stored credentials and tests with those instead of the request body
 // @Tags connections
 // @Accept json
 // @Produce json
 // @Security BearerAuth
-// @Param body body models.CreateConnectionRequest true "Connection credentials to test"
+// @Param body body models.CreateConnectionRequest true "Connection credentials to test (set use_saved=true with name to test the saved credentials of an existing connection)"
 // @Success 200 {object} map[string]interface{} "Credential test result"
-// @Failure 400 {object} map[string]interface{} "Bad request"
+// @Failure 400 {object} map[string]interface{} "Bad request (e.g. use_saved=true but no matching saved connection)"
 // @Router /connections/test-credentials [post]
 func (s *Server) handleTestCredentials(w http.ResponseWriter, r *http.Request) {
 	var req models.CreateConnectionRequest
@@ -256,14 +256,55 @@ func (s *Server) handleTestCredentials(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// V124-19 / BUG-044: when the wizard renders in resume mode it shows the
+	// password fields empty by design (we never re-display saved secrets).
+	// V124-17 added a placeholder telling the user "leave blank to keep, or
+	// enter new value to replace", but the validation layer still rejected
+	// blank submissions: TestCredentials → buildArgocdClient → "ArgoCD token
+	// not configured", which kept the wizard's Next gate disabled.
+	//
+	// The fix splits the contract:
+	//   - request body credentials present → existing behavior (test as
+	//     submitted, optionally back-filling empty token fields from the
+	//     saved record by name — preserves the original "I changed only
+	//     the URL but kept the saved token" UX)
+	//   - use_saved=true → load the named saved connection's full config
+	//     server-side and test that. The user never re-types the saved
+	//     credential, and a missing saved connection surfaces as 400 with
+	//     a descriptive message (no silent "tested empty creds" failure).
+	//
+	// Both Git and ArgoCD share the same saved record, so use_saved is a
+	// single boolean rather than separate per-service flags — the wizard's
+	// blank-keep contract applies symmetrically (Step 2 Git + Step 3 ArgoCD).
 	conn := &models.Connection{
 		Name:   req.Name,
 		Git:    req.Git,
 		Argocd: req.Argocd,
 	}
 
-	// For edits: if token fields are empty, fill from saved connection
-	if conn.Name != "" {
+	usedSaved := false
+	if req.UseSaved {
+		if req.Name == "" {
+			writeError(w, http.StatusBadRequest, "use_saved=true requires connection name in request body")
+			return
+		}
+		saved, err := s.connSvc.GetConnection(req.Name)
+		if err != nil || saved == nil {
+			writeError(w, http.StatusBadRequest,
+				fmt.Sprintf("use_saved=true but no saved connection named %q found", req.Name))
+			return
+		}
+		// Replace credential-bearing fields with the saved record's values.
+		// We keep the request's Git/Argocd shape (provider, repo IDs, server
+		// URL) so the test exercises any user-edited URL alongside the saved
+		// token — but for the typical "blank keep" flow the wizard sends the
+		// same URL it loaded, so there's no divergence.
+		conn.Git = saved.Git
+		conn.Argocd = saved.Argocd
+		usedSaved = true
+	} else if conn.Name != "" {
+		// For edits: if token fields are empty, fill from saved connection.
+		// Preserves pre-V124-19 behavior for partial-body submits.
 		if saved, err := s.connSvc.GetConnection(conn.Name); err == nil && saved != nil {
 			if conn.Git.Token == "" {
 				conn.Git.Token = saved.Git.Token
@@ -294,9 +335,17 @@ func (s *Server) handleTestCredentials(w http.ResponseWriter, r *http.Request) {
 		result["argocd"] = map[string]interface{}{"status": "ok", "auth": authInfo.ArgocdSource}
 	}
 
-	audit.Enrich(r.Context(), audit.Fields{
-		Event:  "credentials_tested",
-	})
+	// V124-19: mark the audit entry when the saved-credential path ran so
+	// the test event is traceable distinctly from a fresh-body test.
+	auditEvent := "credentials_tested"
+	if usedSaved {
+		auditEvent = "credentials_tested_saved"
+	}
+	auditFields := audit.Fields{Event: auditEvent}
+	if usedSaved {
+		auditFields.Resource = fmt.Sprintf("connection:%s", req.Name)
+	}
+	audit.Enrich(r.Context(), auditFields)
 	writeJSON(w, http.StatusOK, result)
 }
 
