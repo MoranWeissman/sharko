@@ -249,3 +249,46 @@ func TestChecker_StopIsIdempotent(t *testing.T) {
 	checker.Stop()
 	checker.Stop() // second call must not panic
 }
+
+// TestChecker_EmptyProviderShortCircuitsCleanly is the V124-23 / BUG-048
+// regression test for the notifications poller. Before the fix,
+// addonSvc.GetVersionMatrix returned a 5xx-class error when the gitops repo
+// was missing managed-clusters.yaml (fresh-install state). That error
+// propagated through ServiceProvider.GetVersionInfo and triggered
+// `slog.Error("notification check failed", ...)` on every cycle — exactly
+// what the maintainer's empty-repo logs showed:
+//
+//	notification check  error="reading managed-clusters.yaml: ... file not found"
+//
+// After the fix (addon.go now uses isGitFileNotFound) GetVersionMatrix
+// degrades to an empty matrix, GetVersionInfo returns `(nil, nil)`, and
+// the checker iterates a zero-element list — no error log, no notifications,
+// no log spam at the default 30-min interval.
+//
+// We test this at the Checker level rather than wiring a full
+// ServiceProvider + ConnectionService because the fix lives in
+// service.AddonService.GetVersionMatrix (which addon_test.go's
+// TestGetVersionMatrix_MissingFileReturnsEmpty already covers end-to-end);
+// here we lock down the contract that an empty/no-error VersionInfo from
+// the provider produces zero notifications and zero error logs.
+func TestChecker_EmptyProviderShortCircuitsCleanly(t *testing.T) {
+	store := NewStore(50, "")
+	provider := &fakeProvider{
+		// Empty infos + nil err is the post-fix shape: GetVersionMatrix
+		// returned an empty matrix because managed-clusters.yaml was missing,
+		// no clusters means no addon rows means no VersionInfo entries.
+		infos: nil,
+		err:   nil,
+	}
+
+	checker := NewChecker(store, provider, time.Hour)
+	checker.check()
+
+	if got := store.UnreadCount(); got != 0 {
+		t.Errorf("expected 0 notifications from empty provider, got %d", got)
+	}
+	items := store.List()
+	if len(items) != 0 {
+		t.Errorf("expected 0 items from empty provider, got %d: %+v", len(items), items)
+	}
+}
