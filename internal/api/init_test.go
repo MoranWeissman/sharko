@@ -41,14 +41,21 @@ import (
 // ---------------------------------------------------------------------------
 
 // initFakeGit is a minimal gitprovider.GitProvider that returns the configured
-// payload for "bootstrap/root-app.yaml" on the base branch and an error for
-// every other path (mirrors the real provider's "not found" behavior).
+// payload for orchestrator.BootstrapRootAppPath on the base branch and an
+// error for every other path (mirrors the real provider's "not found"
+// behavior).
+//
+// V124-20 / BUG-045: the probe path is now sourced from the constant rather
+// than a literal "bootstrap/root-app.yaml". Pre-V124-20 these tests passed
+// because the literal matched the (then-buggy) API check; both layers
+// have been corrected to point at the actual committed path
+// ("root-app.yaml" at repo root, no bootstrap/ prefix).
 type initFakeGit struct {
 	rootAppExists bool
 }
 
 func (f *initFakeGit) GetFileContent(_ context.Context, path, _ string) ([]byte, error) {
-	if path == "bootstrap/root-app.yaml" && f.rootAppExists {
+	if path == orchestrator.BootstrapRootAppPath && f.rootAppExists {
 		return []byte("apiVersion: argoproj.io/v1alpha1\nkind: Application\n"), nil
 	}
 	return nil, errors.New("not found: " + path)

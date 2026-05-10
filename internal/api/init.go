@@ -153,11 +153,17 @@ func (s *Server) runInitOperation(
 
 	s.opsStore.Start(sessionID)
 
-	// V124-15 / BUG-034: when bootstrap/root-app.yaml is already present on
-	// the base branch, the user is retrying an already-completed init. The
+	// V124-15 / BUG-034: when the bootstrap root-app YAML is already present
+	// on the base branch, the user is retrying an already-completed init. The
 	// previous behavior — Fail with "repo already initialized" — is wrong
 	// when the cluster reality is healthy: the wizard then renders red and
 	// the user assumes setup broke, when in fact everything is fine.
+	//
+	// V124-20 / BUG-045: probe path comes from orchestrator.BootstrapRootAppPath
+	// — the same constant CollectBootstrapFiles emits to. Pre-V124-20 this
+	// hardcoded "bootstrap/root-app.yaml" while the orchestrator commits the
+	// file as "root-app.yaml" at repo root, so the check silently 404'd
+	// forever and runInitOperation never saw an already-initialized repo.
 	//
 	// Probe ArgoCD to disambiguate:
 	//   * Synced + Healthy   → idempotent success. Mark every step
@@ -171,7 +177,7 @@ func (s *Server) runInitOperation(
 	// that would re-introduce a different false-success bug if the user
 	// manually deleted the ArgoCD app and the wizard reported "all good"
 	// while their cluster has nothing running.
-	if _, checkErr := gp.GetFileContent(ctx, "bootstrap/root-app.yaml", gitopsCfg.BaseBranch); checkErr == nil {
+	if _, checkErr := gp.GetFileContent(ctx, orchestrator.BootstrapRootAppPath, gitopsCfg.BaseBranch); checkErr == nil {
 		argoStatus, argoDetail := probeBootstrapApp(ctx, ac)
 		if argoStatus == "healthy" {
 			// Advance every step as already-completed so the wizard's
@@ -323,18 +329,25 @@ func (s *Server) runInitOperation(
 // inject a smaller value; production code never assigns to it.
 var pollPRMergeInterval = 5 * time.Second
 
-// isPRMerged returns true when bootstrap/root-app.yaml is readable from
+// isPRMerged returns true when the bootstrap root-app YAML is readable from
 // `baseBranch`. We use file presence as the merge signal (rather than the
 // PR-status API) because GitHub eventually-consistent state lags PR merges
 // by 1–2s in practice, and the file-presence probe is what the next
 // orchestrator step (BootstrapArgoCD) actually depends on.
+//
+// V124-20 / BUG-045: the probe path is orchestrator.BootstrapRootAppPath —
+// the same constant CollectBootstrapFiles emits to. Pre-V124-20 this
+// hardcoded "bootstrap/root-app.yaml" while the orchestrator commits to
+// "root-app.yaml" at repo root, so the poll 404'd silently every 5s
+// (the github provider only logs on 200) and the wizard hung forever
+// on "Waiting for PR merge".
 //
 // Extracted as a helper in V124-17 / BUG-041 so pollPRMerge can run an
 // immediate first probe before entering the ticker loop. Without this, the
 // first check happened ticker-interval later (10s pre-V124-17, 5s now),
 // which made an already-merged PR look like the wizard was hanging.
 func isPRMerged(ctx context.Context, gp gitprovider.GitProvider, baseBranch string) bool {
-	_, err := gp.GetFileContent(ctx, "bootstrap/root-app.yaml", baseBranch)
+	_, err := gp.GetFileContent(ctx, orchestrator.BootstrapRootAppPath, baseBranch)
 	return err == nil
 }
 
@@ -383,7 +396,8 @@ func (s *Server) pollPRMerge(ctx context.Context, sessionID string, gp gitprovid
 				return false
 			}
 
-			// Check if PR is merged by seeing if bootstrap/root-app.yaml exists on the base branch.
+			// Check if PR is merged by seeing if the bootstrap root-app YAML
+			// (orchestrator.BootstrapRootAppPath) exists on the base branch.
 			if isPRMerged(ctx, gp, baseBranch) {
 				return true // file exists on base branch — PR was merged
 			}

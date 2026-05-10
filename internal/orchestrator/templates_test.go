@@ -2,6 +2,8 @@ package orchestrator
 
 import (
 	"bytes"
+	"context"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -68,5 +70,88 @@ func TestBootstrapRootAppName_MatchesTemplate(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("no `kind: Application` document found in templates/bootstrap/root-app.yaml")
+	}
+}
+
+// TestCollectBootstrapFiles_RootAppPath_MatchesConstant is the V124-20 /
+// BUG-045 drift guard. It runs CollectBootstrapFiles against the real
+// embedded templates.TemplateFS and asserts that the returned commit-path
+// map contains exactly one entry at orchestrator.BootstrapRootAppPath whose
+// content is the ArgoCD root Application (kind: Application + the canonical
+// BootstrapRootAppName).
+//
+// The historic bug: pollPRMerge and the V124-15 already-init check both
+// hardcoded "bootstrap/root-app.yaml" while CollectBootstrapFiles strips the
+// "bootstrap/" prefix from repo-root files and commits root-app.yaml at the
+// repo root. The github provider only logs on 200, so 404s were silent — the
+// wizard hung forever on "Waiting for PR merge" while the file sat at the
+// correct path the whole time.
+//
+// This test is the path-side complement of TestBootstrapRootAppName_MatchesTemplate
+// (which guards the *name* the API polls in ArgoCD). Together they pin both
+// values so future drift in either layer fails CI instead of silently
+// breaking first-run init.
+//
+// Why a real-templateFS test instead of a unit-test on the strip-prefix
+// helper: the bug surfaces at the layer boundary between the orchestrator's
+// commit-path computation and the API's poll path. Asserting on the actual
+// returned map proves the boundary is consistent, regardless of how the
+// orchestrator chooses to derive the path internally.
+func TestCollectBootstrapFiles_RootAppPath_MatchesConstant(t *testing.T) {
+	// Minimal-but-valid orchestrator: only templateFS + GitOpsConfig.RepoURL
+	// are required by CollectBootstrapFiles. Git/argocd/creds are nil — the
+	// helper does not touch them.
+	orch := New(
+		nil,                                                    // gitMu — CollectBootstrapFiles does not lock
+		nil,                                                    // credProvider — unused
+		nil,                                                    // argocd — unused
+		nil,                                                    // git — unused
+		GitOpsConfig{BaseBranch: "main", RepoURL: "https://github.com/example/addons"},
+		RepoPathsConfig{Bootstrap: "bootstrap"},
+		templates.TemplateFS,
+	)
+
+	files, err := orch.CollectBootstrapFiles(context.Background())
+	if err != nil {
+		t.Fatalf("CollectBootstrapFiles: %v", err)
+	}
+
+	content, ok := files[BootstrapRootAppPath]
+	if !ok {
+		paths := make([]string, 0, len(files))
+		for p := range files {
+			paths = append(paths, p)
+		}
+		t.Fatalf(
+			"CollectBootstrapFiles emitted no file at BootstrapRootAppPath = %q.\n"+
+				"This is the V124-20 / BUG-045 drift guard. The orchestrator's strip-prefix\n"+
+				"logic in CollectBootstrapFiles must produce a file at this exact path so the\n"+
+				"API layer's pollPRMerge and already-init checks (internal/api/init.go) can\n"+
+				"find it on the base branch. Either:\n"+
+				"  (a) the strip-prefix logic in init.go's CollectBootstrapFiles changed —\n"+
+				"      restore the bootstrap/ prefix-strip behavior or update the constant, OR\n"+
+				"  (b) the template was renamed/moved — restore templates/bootstrap/root-app.yaml.\n"+
+				"Got commit paths: %v",
+			BootstrapRootAppPath, paths,
+		)
+	}
+
+	// Content sanity: catch a regression that emits the file at the right
+	// path but with corrupted/wrong content (e.g. a refactor that swaps the
+	// root-app YAML for a different template).
+	contentStr := string(content)
+	if !strings.Contains(contentStr, "kind: Application") {
+		t.Errorf(
+			"file at BootstrapRootAppPath = %q does not contain `kind: Application`.\n"+
+				"Content head: %.200s",
+			BootstrapRootAppPath, contentStr,
+		)
+	}
+	if !strings.Contains(contentStr, "name: "+BootstrapRootAppName) {
+		t.Errorf(
+			"file at BootstrapRootAppPath = %q does not contain `name: %s`.\n"+
+				"Content head: %.200s",
+			BootstrapRootAppPath, BootstrapRootAppName, contentStr,
+		)
 	}
 }
