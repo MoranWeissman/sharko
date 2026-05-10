@@ -13,6 +13,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
 // ErrValidation marks an error as user-actionable input-validation failure
@@ -37,7 +38,8 @@ var ErrValidation = errors.New("validation failed")
 type ConnectionService struct {
 	store               config.Store
 	devMode             bool // when true, falls back to env vars for missing credentials
-	gitProviderOverride gitprovider.GitProvider // when set, returned by GetActiveGitProvider (demo mode)
+	gitProviderOverride gitprovider.GitProvider     // when set, returned by GetActiveGitProvider (demo mode)
+	argocdClientOverride orchestrator.ArgocdClient  // when set, returned by GetActiveOrchestratorArgocdClient (test seam — V124-22)
 }
 
 // NewConnectionService creates a new ConnectionService.
@@ -361,6 +363,31 @@ func (s *ConnectionService) GetActiveArgocdClient() (*argocd.Client, error) {
 		return nil, err
 	}
 	return s.buildArgocdClient(conn)
+}
+
+// SetArgocdClientOverride installs a fake orchestrator.ArgocdClient returned
+// by GetActiveOrchestratorArgocdClient. Used by repo-status tests (V124-22 /
+// BUG-046) to inject a mock ArgoCD probe without spinning up a real client.
+// Production code never sets this; in tests it's the analogue of
+// SetGitProviderOverride.
+func (s *ConnectionService) SetArgocdClientOverride(c orchestrator.ArgocdClient) {
+	s.argocdClientOverride = c
+}
+
+// GetActiveOrchestratorArgocdClient returns the ArgoCD client as the
+// interface the orchestrator expects. Honours SetArgocdClientOverride so
+// tests can inject a fake without going through buildArgocdClient (which
+// requires a real ArgoCD URL + token).
+//
+// V124-22 / BUG-046: separated from GetActiveArgocdClient (which returns
+// the concrete *argocd.Client used by every other handler) to avoid
+// changing every existing call site for one new caller (the
+// /repo/status handler's bootstrap-health probe).
+func (s *ConnectionService) GetActiveOrchestratorArgocdClient() (orchestrator.ArgocdClient, error) {
+	if s.argocdClientOverride != nil {
+		return s.argocdClientOverride, nil
+	}
+	return s.GetActiveArgocdClient()
 }
 
 func (s *ConnectionService) buildArgocdClient(conn *models.Connection) (*argocd.Client, error) {

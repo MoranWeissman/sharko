@@ -5535,7 +5535,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Checks whether the GitOps repository has been bootstrapped (bootstrap/Chart.yaml exists on the base branch)",
+                "description": "Checks whether the GitOps repository has been bootstrapped (bootstrap/Chart.yaml exists on the base branch) AND whether the ArgoCD bootstrap Application is Synced + Healthy. The wizard gate in the UI uses bootstrap_synced to auto-open the recovery wizard when the cluster-side bootstrap is missing or degraded even though the repo files are present.",
                 "produces": [
                     "application/json"
                 ],
@@ -5547,8 +5547,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Repo status",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/internal_api.RepoStatusResponse"
                         }
                     }
                 }
@@ -7864,6 +7863,20 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/internal_api.PRItem"
                     }
+                }
+            }
+        },
+        "internal_api.RepoStatusResponse": {
+            "type": "object",
+            "properties": {
+                "bootstrap_synced": {
+                    "type": "boolean"
+                },
+                "initialized": {
+                    "type": "boolean"
+                },
+                "reason": {
+                    "type": "string"
                 }
             }
         },

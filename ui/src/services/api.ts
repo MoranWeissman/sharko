@@ -738,8 +738,15 @@ export const api = {
   // Providers
   getProviders: () => fetchJSON<{ configured_provider: { type: string; region: string; prefix?: string; status: string; error?: string } | null; available_types: string[] }>('/providers'),
 
-  // Repo status
-  getRepoStatus: () => fetchJSON<{ initialized: boolean; reason?: string }>('/repo/status'),
+  // Repo status — V124-22 / BUG-046: `bootstrap_synced` reports whether the
+  // canonical ArgoCD application `cluster-addons-bootstrap` exists AND is
+  // Sync=Synced AND Health=Healthy. App.tsx's wizard gate combines
+  // (!initialized || !bootstrap_synced) so a missing/degraded bootstrap
+  // auto-opens the wizard instead of dropping the user on a dashboard
+  // splattered with errors. Backend returns `bootstrap_synced=false`
+  // defensively whenever the ArgoCD client is unavailable or the probe
+  // fails — the wizard exists to recover that state.
+  getRepoStatus: () => fetchJSON<{ initialized: boolean; bootstrap_synced: boolean; reason?: string }>('/repo/status'),
 
   // Cluster addons
   enableAddonOnCluster: (clusterName: string, addonName: string) =>

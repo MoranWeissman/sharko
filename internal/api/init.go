@@ -178,7 +178,7 @@ func (s *Server) runInitOperation(
 	// manually deleted the ArgoCD app and the wizard reported "all good"
 	// while their cluster has nothing running.
 	if _, checkErr := gp.GetFileContent(ctx, orchestrator.BootstrapRootAppPath, gitopsCfg.BaseBranch); checkErr == nil {
-		argoStatus, argoDetail := probeBootstrapApp(ctx, ac)
+		argoStatus, argoDetail := ProbeBootstrapApp(ctx, ac)
 		if argoStatus == "healthy" {
 			// Advance every step as already-completed so the wizard's
 			// step-list UI shows a clean checkmarked sequence. We know the
@@ -408,7 +408,7 @@ func (s *Server) pollPRMerge(ctx context.Context, sessionID string, gp gitprovid
 	}
 }
 
-// probeBootstrapApp checks whether the canonical ArgoCD root application
+// ProbeBootstrapApp checks whether the canonical ArgoCD root application
 // (orchestrator.BootstrapRootAppName) exists and is Synced + Healthy.
 //
 // Returns ("healthy", "") when the app is present, Sync=Synced, and
@@ -417,9 +417,13 @@ func (s *Server) pollPRMerge(ctx context.Context, sessionID string, gp gitprovid
 // status is anything other than "Synced", or the health status is
 // anything other than "Healthy".
 //
-// Used by V124-15 / BUG-034 to disambiguate "repo file exists" between
-// idempotent-success and partial-state on first-run init retry.
-func probeBootstrapApp(ctx context.Context, ac orchestrator.ArgocdClient) (status, detail string) {
+// Originally introduced by V124-15 / BUG-034 to disambiguate "repo file
+// exists" between idempotent-success and partial-state on first-run init
+// retry. V124-22 / BUG-046 exports it so the /repo/status handler can
+// reuse the same probe semantics — the wizard gate now reads
+// `bootstrap_synced` from /repo/status to auto-open the wizard when the
+// bootstrap is missing/degraded (closes the V124-15 asymmetry).
+func ProbeBootstrapApp(ctx context.Context, ac orchestrator.ArgocdClient) (status, detail string) {
 	if ac == nil {
 		return "unhealthy", "no ArgoCD client configured"
 	}

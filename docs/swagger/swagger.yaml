@@ -928,6 +928,15 @@ definitions:
           $ref: '#/definitions/internal_api.PRItem'
         type: array
     type: object
+  internal_api.RepoStatusResponse:
+    properties:
+      bootstrap_synced:
+        type: boolean
+      initialized:
+        type: boolean
+      reason:
+        type: string
+    type: object
   internal_api.aiAnnotateBlockedResponse:
     properties:
       code:
@@ -5306,15 +5315,17 @@ paths:
   /repo/status:
     get:
       description: Checks whether the GitOps repository has been bootstrapped (bootstrap/Chart.yaml
-        exists on the base branch)
+        exists on the base branch) AND whether the ArgoCD bootstrap Application is
+        Synced + Healthy. The wizard gate in the UI uses bootstrap_synced to auto-open
+        the recovery wizard when the cluster-side bootstrap is missing or degraded
+        even though the repo files are present.
       produces:
       - application/json
       responses:
         "200":
           description: Repo status
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/internal_api.RepoStatusResponse'
       security:
       - BearerAuth: []
       summary: Get repo initialization status
