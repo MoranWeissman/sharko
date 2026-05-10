@@ -2587,7 +2587,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Registers a new cluster in ArgoCD and creates its GitOps configuration.\nPass \"dry_run\": true to preview what would happen without making changes.",
+                "description": "Registers a new cluster in ArgoCD and creates its GitOps configuration.\nPass \"dry_run\": true to preview what would happen without making changes.\nProvider may be \"eks\" (default; uses configured secrets provider) or\n\"kubeconfig\" (V125-1.1; caller supplies kubeconfig YAML inline via the\n\"kubeconfig\" field — bearer-token auth only).",
                 "consumes": [
                     "application/json"
                 ],
@@ -2600,7 +2600,7 @@ const docTemplate = `{
                 "summary": "Register cluster",
                 "parameters": [
                     {
-                        "description": "Cluster registration request (supports dry_run field)",
+                        "description": "Cluster registration request (supports dry_run + kubeconfig fields)",
                         "name": "body",
                         "in": "body",
                         "required": true,
@@ -2660,7 +2660,7 @@ const docTemplate = `{
                         }
                     },
                     "503": {
-                        "description": "Credentials provider not configured (V124-4.1)",
+                        "description": "Credentials provider not configured (V124-4.1; eks provider only)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -7537,6 +7537,10 @@ const docTemplate = `{
                 },
                 "dry_run": {
                     "type": "boolean"
+                },
+                "kubeconfig": {
+                    "description": "Kubeconfig is the raw kubeconfig YAML supplied inline by the caller\nwhen Provider == \"kubeconfig\". Bearer-token authentication only in\nv1.25 — cert-based and exec-plugin auth return a 400 with guidance\nto generate a token via ` + "`" + `kubectl create token` + "`" + `. Ignored for any\nother provider.",
+                    "type": "string"
                 },
                 "name": {
                     "type": "string"

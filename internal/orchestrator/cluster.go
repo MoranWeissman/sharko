@@ -12,10 +12,20 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/gitops"
 	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/providers"
 	"github.com/MoranWeissman/sharko/internal/verify"
 
 	"gopkg.in/yaml.v3"
 )
+
+// supportedProviders enumerates the cluster-provider values RegisterCluster
+// accepts.  V125-1.1 adds "kubeconfig" — the inline-kubeconfig path used by
+// the wizard's "Generic K8s (kubeconfig)" option.  GKE / AKS / exec-plugin
+// auth remain V125-1.x material.
+var supportedProviders = map[string]bool{
+	"eks":        true,
+	"kubeconfig": true,
+}
 
 // ErrClusterAlreadyExists is returned when attempting to register a cluster
 // that already exists in ArgoCD.
@@ -43,9 +53,12 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		return nil, fmt.Errorf("invalid cluster name %q: must be alphanumeric with hyphens, starting with an alphanumeric character", req.Name)
 	}
 
-	// Step 1a: Validate provider — only "eks" is supported.
-	if req.Provider != "" && req.Provider != "eks" {
-		return nil, fmt.Errorf("provider %q not yet implemented; supported: eks", req.Provider)
+	// Step 1a: Validate provider against the supported set.
+	// V125-1.1 widens this to accept "kubeconfig" alongside the original
+	// "eks" path. Empty provider remains valid for backward-compat with
+	// pre-V125 callers (treated as the EKS path via credProvider).
+	if req.Provider != "" && !supportedProviders[req.Provider] {
+		return nil, fmt.Errorf("provider %q not yet implemented; supported: eks, kubeconfig", req.Provider)
 	}
 
 	// Step 1b: Merge default addons if no addons specified.
@@ -79,17 +92,37 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	}
 	var steps []string
 
-	// Step 3: Fetch credentials from provider.
-	// If an explicit secretPath is provided, use it directly (bypasses prefix logic).
-	credLookupName := req.Name
-	if req.SecretPath != "" {
-		credLookupName = req.SecretPath
+	// Step 3: Acquire credentials.
+	// V125-1.1: when Provider == "kubeconfig" the caller supplies the
+	// kubeconfig YAML inline on the request, so we parse it directly and
+	// skip o.credProvider.GetCredentials (the credProvider may legitimately
+	// be nil in this path — generic-K8s registration must not require an
+	// AWS-SM/k8s-secrets backend to be configured).  For every other
+	// provider we keep the original credProvider lookup.
+	var creds *providers.Kubeconfig
+	if req.Provider == "kubeconfig" {
+		var parseErr error
+		creds, parseErr = providers.ParseInlineKubeconfig(req.Kubeconfig)
+		if parseErr != nil {
+			return nil, fmt.Errorf("parsing inline kubeconfig for cluster %q: %w", req.Name, parseErr)
+		}
+		steps = append(steps, "parse_kubeconfig")
+	} else {
+		if o.credProvider == nil {
+			return nil, fmt.Errorf("credentials provider not configured (required for provider %q)", req.Provider)
+		}
+		// If an explicit secretPath is provided, use it directly (bypasses prefix logic).
+		credLookupName := req.Name
+		if req.SecretPath != "" {
+			credLookupName = req.SecretPath
+		}
+		var fetchErr error
+		creds, fetchErr = o.credProvider.GetCredentials(credLookupName)
+		if fetchErr != nil {
+			return nil, fmt.Errorf("fetching credentials for cluster %q: %w", req.Name, fetchErr)
+		}
+		steps = append(steps, "fetch_credentials")
 	}
-	creds, err := o.credProvider.GetCredentials(credLookupName)
-	if err != nil {
-		return nil, fmt.Errorf("fetching credentials for cluster %q: %w", req.Name, err)
-	}
-	steps = append(steps, "fetch_credentials")
 	result.Cluster.Server = creds.Server
 
 	// Step 3a: Verify connectivity via Stage 1 (secret CRUD cycle on remote cluster).

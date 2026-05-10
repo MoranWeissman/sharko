@@ -26,6 +26,12 @@ type RepoPathsConfig struct {
 }
 
 // RegisterClusterRequest is the input for cluster registration.
+//
+// V125-1.1: Kubeconfig is required when Provider == "kubeconfig" and
+// MUST be empty for any other provider. SecretPath / Region / RoleARN
+// (carried separately on the API surface) are EKS-only and MUST be
+// empty when Provider == "kubeconfig". The handler enforces those
+// cross-field exclusions and returns 400 on violation.
 type RegisterClusterRequest struct {
 	Name       string          `json:"name"`
 	Provider   string          `json:"provider,omitempty"`
@@ -33,6 +39,13 @@ type RegisterClusterRequest struct {
 	Addons     map[string]bool `json:"addons"`
 	Region     string          `json:"region"`
 	DryRun     bool            `json:"dry_run,omitempty"`
+
+	// Kubeconfig is the raw kubeconfig YAML supplied inline by the caller
+	// when Provider == "kubeconfig". Bearer-token authentication only in
+	// v1.25 — cert-based and exec-plugin auth return a 400 with guidance
+	// to generate a token via `kubectl create token`. Ignored for any
+	// other provider.
+	Kubeconfig string `json:"kubeconfig,omitempty"`
 }
 
 // RegisterClusterResult is the output of a successful cluster registration.

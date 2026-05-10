@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"strings"
 
 	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/audit"
@@ -23,11 +24,14 @@ var validClusterNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]*$`)
 // @Summary Register cluster
 // @Description Registers a new cluster in ArgoCD and creates its GitOps configuration.
 // @Description Pass "dry_run": true to preview what would happen without making changes.
+// @Description Provider may be "eks" (default; uses configured secrets provider) or
+// @Description "kubeconfig" (V125-1.1; caller supplies kubeconfig YAML inline via the
+// @Description "kubeconfig" field — bearer-token auth only).
 // @Tags clusters
 // @Accept json
 // @Produce json
 // @Security BearerAuth
-// @Param body body orchestrator.RegisterClusterRequest true "Cluster registration request (supports dry_run field)"
+// @Param body body orchestrator.RegisterClusterRequest true "Cluster registration request (supports dry_run + kubeconfig fields)"
 // @Success 200 {object} map[string]interface{} "Dry-run preview"
 // @Success 201 {object} map[string]interface{} "Cluster registered"
 // @Success 207 {object} map[string]interface{} "Partial success"
@@ -35,15 +39,11 @@ var validClusterNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]*$`)
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 409 {object} map[string]interface{} "Cluster already exists"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
-// @Failure 503 {object} map[string]interface{} "Credentials provider not configured (V124-4.1)"
+// @Failure 503 {object} map[string]interface{} "Credentials provider not configured (V124-4.1; eks provider only)"
 // @Router /clusters [post]
 // handleRegisterCluster handles POST /api/v1/clusters — register a new cluster.
 func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "cluster.register") {
-		return
-	}
-	if s.credProvider == nil {
-		writeMissingProviderError(w)
 		return
 	}
 
@@ -64,6 +64,44 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 	if !validClusterNameRe.MatchString(req.Name) {
 		writeError(w, http.StatusBadRequest, "invalid cluster name: must be alphanumeric with hyphens, starting with alphanumeric")
 		return
+	}
+
+	// V125-1.1: provider-scoped field validation.
+	//
+	// The two registration paths use disjoint sets of request fields and
+	// must reject cross-provider field bleed (a kubeconfig request that
+	// also fills in role_arn is almost certainly a UI bug; an EKS request
+	// that pastes a kubeconfig wants the kubeconfig path).  Catching this
+	// at the handler edge keeps the orchestrator branch logic
+	// straightforward and gives the caller a clear, field-specific 400.
+	switch req.Provider {
+	case "kubeconfig":
+		if strings.TrimSpace(req.Kubeconfig) == "" {
+			writeError(w, http.StatusBadRequest, "kubeconfig is required when provider is \"kubeconfig\"")
+			return
+		}
+		if req.SecretPath != "" {
+			writeError(w, http.StatusBadRequest, "field \"secret_path\" is not valid for provider \"kubeconfig\"")
+			return
+		}
+		if req.Region != "" {
+			writeError(w, http.StatusBadRequest, "field \"region\" is not valid for provider \"kubeconfig\"")
+			return
+		}
+	default:
+		// Empty provider == legacy EKS path.
+		if req.Kubeconfig != "" {
+			writeError(w, http.StatusBadRequest, "field \"kubeconfig\" is only valid when provider is \"kubeconfig\"")
+			return
+		}
+		// EKS path still needs the secrets provider configured at
+		// runtime; preserve the original V124-4.1 503 response.  The
+		// kubeconfig path explicitly does NOT require credProvider —
+		// that's the whole point of the inline path for kind users.
+		if s.credProvider == nil {
+			writeMissingProviderError(w)
+			return
+		}
 	}
 
 	ac, err := s.connSvc.GetActiveArgocdClient()
@@ -120,8 +158,15 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusMultiStatus
 	}
 
+	// V125-1.1: distinct audit event for the kubeconfig registration path
+	// so audit history can tell EKS-via-AWS-SM from inline-kubeconfig
+	// registrations without parsing the resource string.
+	auditEvent := "cluster_registered"
+	if req.Provider == "kubeconfig" {
+		auditEvent = "cluster_registered_kubeconfig"
+	}
 	audit.Enrich(ctx, audit.Fields{
-		Event:    "cluster_registered",
+		Event:    auditEvent,
 		Resource: fmt.Sprintf("cluster:%s", req.Name),
 	})
 

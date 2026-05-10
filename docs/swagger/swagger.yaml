@@ -703,6 +703,14 @@ definitions:
         type: object
       dry_run:
         type: boolean
+      kubeconfig:
+        description: |-
+          Kubeconfig is the raw kubeconfig YAML supplied inline by the caller
+          when Provider == "kubeconfig". Bearer-token authentication only in
+          v1.25 — cert-based and exec-plugin auth return a 400 with guidance
+          to generate a token via `kubectl create token`. Ignored for any
+          other provider.
+        type: string
       name:
         type: string
       provider:
@@ -3329,8 +3337,11 @@ paths:
       description: |-
         Registers a new cluster in ArgoCD and creates its GitOps configuration.
         Pass "dry_run": true to preview what would happen without making changes.
+        Provider may be "eks" (default; uses configured secrets provider) or
+        "kubeconfig" (V125-1.1; caller supplies kubeconfig YAML inline via the
+        "kubeconfig" field — bearer-token auth only).
       parameters:
-      - description: Cluster registration request (supports dry_run field)
+      - description: Cluster registration request (supports dry_run + kubeconfig fields)
         in: body
         name: body
         required: true
@@ -3375,7 +3386,8 @@ paths:
             additionalProperties: true
             type: object
         "503":
-          description: Credentials provider not configured (V124-4.1)
+          description: Credentials provider not configured (V124-4.1; eks provider
+            only)
           schema:
             additionalProperties: true
             type: object

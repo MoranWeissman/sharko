@@ -150,6 +150,9 @@ export async function registerCluster(data: {
   role_arn?: string;
   auto_merge?: boolean;
   dry_run?: boolean;
+  // V125-1.1: required when provider === 'kubeconfig'. Bearer-token
+  // authentication only — see internal/providers/kubeconfig_parser.go.
+  kubeconfig?: string;
 }) {
   return postJSON<RegisterClusterResult>('/clusters', data)
 }

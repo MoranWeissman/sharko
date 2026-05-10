@@ -129,6 +129,8 @@ export function ClustersOverview() {
   const [addClusterRegion, setAddClusterRegion] = useState('');
   const [addClusterRoleArn, setAddClusterRoleArn] = useState('');
   const [addClusterSecretPath, setAddClusterSecretPath] = useState('');
+  // V125-1.1: kubeconfig YAML pasted by the user when provider === 'kubeconfig'.
+  const [addClusterKubeconfig, setAddClusterKubeconfig] = useState('');
   const [addClusterSubmitting, setAddClusterSubmitting] = useState(false);
   const [addClusterError, setAddClusterError] = useState<string | null>(null);
   const [addClusterResult, setAddClusterResult] = useState<RegisterClusterResult | null>(null);
@@ -239,6 +241,7 @@ export function ClustersOverview() {
     setAddClusterRegion('');
     setAddClusterRoleArn('');
     setAddClusterSecretPath('');
+    setAddClusterKubeconfig('');
     setSelectedAddons({});
     setProvider('eks');
     setRegistrationMode('direct');
@@ -290,16 +293,30 @@ export function ClustersOverview() {
     setDryRunResult(null);
     setAddClusterError(null);
     try {
-      const result = await registerCluster({
-        name: clusterName || 'dry-run-preview',
-        region: addClusterRegion.trim() || undefined,
-        secret_path: addClusterSecretPath.trim() || undefined,
-        provider,
-        role_arn: addClusterRoleArn.trim() || undefined,
-        auto_merge: autoMerge,
-        addons: Object.keys(selectedAddons).length > 0 ? selectedAddons : undefined,
-        dry_run: true,
-      });
+      // V125-1.1: kubeconfig path sends a disjoint field set — server
+      // rejects AWS-shaped fields (region/secret_path/role_arn) when
+      // provider==='kubeconfig', so do NOT include them in the payload.
+      const result = await registerCluster(
+        provider === 'kubeconfig'
+          ? {
+              name: clusterName || 'dry-run-preview',
+              provider,
+              kubeconfig: addClusterKubeconfig,
+              auto_merge: autoMerge,
+              addons: Object.keys(selectedAddons).length > 0 ? selectedAddons : undefined,
+              dry_run: true,
+            }
+          : {
+              name: clusterName || 'dry-run-preview',
+              region: addClusterRegion.trim() || undefined,
+              secret_path: addClusterSecretPath.trim() || undefined,
+              provider,
+              role_arn: addClusterRoleArn.trim() || undefined,
+              auto_merge: autoMerge,
+              addons: Object.keys(selectedAddons).length > 0 ? selectedAddons : undefined,
+              dry_run: true,
+            },
+      );
       if (result?.dry_run) {
         setDryRunResult(result.dry_run);
       }
@@ -308,7 +325,7 @@ export function ClustersOverview() {
     } finally {
       setDryRunLoading(false);
     }
-  }, [registrationMode, addClusterName, addClusterRegion, addClusterRoleArn, addClusterSecretPath, provider, autoMerge, selectedAddons]);
+  }, [registrationMode, addClusterName, addClusterRegion, addClusterRoleArn, addClusterSecretPath, addClusterKubeconfig, provider, autoMerge, selectedAddons]);
 
   const handleAddCluster = useCallback(async () => {
     if (registrationMode === 'direct' && !addClusterName.trim()) return;
@@ -351,16 +368,29 @@ export function ClustersOverview() {
         setAddClusterOpen(false);
         void fetchData();
       } else {
-        // Direct registration
-        const result = await registerCluster({
-          name: addClusterName.trim(),
-          region: addClusterRegion.trim() || undefined,
-          secret_path: addClusterSecretPath.trim() || undefined,
-          provider,
-          role_arn: addClusterRoleArn.trim() || undefined,
-          auto_merge: autoMerge,
-          addons: Object.keys(selectedAddons).length > 0 ? selectedAddons : undefined,
-        });
+        // Direct registration. V125-1.1: kubeconfig path uses a disjoint
+        // payload — only `name`, `provider`, `kubeconfig`, `auto_merge`,
+        // `addons` are valid for the kubeconfig branch (server returns 400
+        // if region/secret_path/role_arn appear).
+        const result = await registerCluster(
+          provider === 'kubeconfig'
+            ? {
+                name: addClusterName.trim(),
+                provider,
+                kubeconfig: addClusterKubeconfig,
+                auto_merge: autoMerge,
+                addons: Object.keys(selectedAddons).length > 0 ? selectedAddons : undefined,
+              }
+            : {
+                name: addClusterName.trim(),
+                region: addClusterRegion.trim() || undefined,
+                secret_path: addClusterSecretPath.trim() || undefined,
+                provider,
+                role_arn: addClusterRoleArn.trim() || undefined,
+                auto_merge: autoMerge,
+                addons: Object.keys(selectedAddons).length > 0 ? selectedAddons : undefined,
+              },
+        );
         const prUrl = result?.git?.pr_url || result?.pr_url || result?.pull_request_url;
         const merged = result?.git?.merged ?? autoMerge;
         if (merged && !prUrl) {
@@ -379,7 +409,7 @@ export function ClustersOverview() {
     } finally {
       setAddClusterSubmitting(false);
     }
-  }, [addClusterName, addClusterRegion, addClusterRoleArn, addClusterSecretPath, provider, autoMerge, selectedAddons, fetchData, registrationMode, discoveredItems, selectedDiscovered]);
+  }, [addClusterName, addClusterRegion, addClusterRoleArn, addClusterSecretPath, addClusterKubeconfig, provider, autoMerge, selectedAddons, fetchData, registrationMode, discoveredItems, selectedDiscovered]);
 
   const handleTestCluster = useCallback(async (name: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -722,7 +752,7 @@ export function ClustersOverview() {
                 <option value="eks">Amazon EKS</option>
                 <option value="gke" disabled>Google GKE (coming soon)</option>
                 <option value="aks" disabled>Azure AKS (coming soon)</option>
-                <option value="generic" disabled>Generic K8s (coming soon)</option>
+                <option value="kubeconfig">Generic K8s (kubeconfig)</option>
               </select>
             </div>
 
@@ -759,7 +789,7 @@ export function ClustersOverview() {
 
             {registrationMode === 'direct' ? (
               <>
-                {/* Direct mode fields */}
+                {/* Direct mode fields — Cluster Name is required for every provider. */}
                 <div>
                   <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
                     Cluster Name <span className="text-red-500">*</span>
@@ -772,45 +802,69 @@ export function ClustersOverview() {
                     className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
                   />
                 </div>
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
-                    Region (optional)
-                  </label>
-                  <input
-                    type="text"
-                    value={addClusterRegion}
-                    onChange={(e) => setAddClusterRegion(e.target.value)}
-                    placeholder="e.g. us-east-1"
-                    className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
-                    Role ARN (optional)
-                  </label>
-                  <input
-                    type="text"
-                    value={addClusterRoleArn}
-                    onChange={(e) => setAddClusterRoleArn(e.target.value)}
-                    placeholder="e.g. arn:aws:iam::123456789012:role/sharko-access"
-                    className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
-                    Secret Path (optional)
-                  </label>
-                  <input
-                    type="text"
-                    value={addClusterSecretPath}
-                    onChange={(e) => setAddClusterSecretPath(e.target.value)}
-                    placeholder="Override AWS SM secret name (e.g., k8s-my-cluster)"
-                    className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
-                  />
-                  <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
-                    Leave empty to use cluster name as the secret key
-                  </p>
-                </div>
+                {provider === 'kubeconfig' ? (
+                  <>
+                    {/* V125-1.1: kubeconfig path — paste YAML inline. */}
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
+                        Kubeconfig <span className="text-red-500">*</span>
+                      </label>
+                      <textarea
+                        value={addClusterKubeconfig}
+                        onChange={(e) => setAddClusterKubeconfig(e.target.value)}
+                        rows={12}
+                        placeholder={'apiVersion: v1\nkind: Config\nclusters:\n- name: my-cluster\n  cluster:\n    server: https://...\n    certificate-authority-data: ...\nusers:\n- name: my-user\n  user:\n    token: ...'}
+                        className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 font-mono text-xs focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
+                      />
+                      <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
+                        Paste your kubeconfig YAML. Sharko extracts the server URL, CA certificate, and bearer token. Note: only bearer-token authentication is supported in this release. For kind: run <code className="font-mono">kubectl create token &lt;serviceaccount&gt; --duration=24h</code> to generate a token.
+                      </p>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    {/* EKS path — existing AWS-shaped fields. */}
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
+                        Region (optional)
+                      </label>
+                      <input
+                        type="text"
+                        value={addClusterRegion}
+                        onChange={(e) => setAddClusterRegion(e.target.value)}
+                        placeholder="e.g. us-east-1"
+                        className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
+                        Role ARN (optional)
+                      </label>
+                      <input
+                        type="text"
+                        value={addClusterRoleArn}
+                        onChange={(e) => setAddClusterRoleArn(e.target.value)}
+                        placeholder="e.g. arn:aws:iam::123456789012:role/sharko-access"
+                        className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
+                        Secret Path (optional)
+                      </label>
+                      <input
+                        type="text"
+                        value={addClusterSecretPath}
+                        onChange={(e) => setAddClusterSecretPath(e.target.value)}
+                        placeholder="Override AWS SM secret name (e.g., k8s-my-cluster)"
+                        className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
+                      />
+                      <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
+                        Leave empty to use cluster name as the secret key
+                      </p>
+                    </div>
+                  </>
+                )}
               </>
             ) : (
               <>
@@ -1028,6 +1082,7 @@ export function ClustersOverview() {
                 dryRunLoading ||
                 addClusterSubmitting ||
                 (registrationMode === 'direct' && !addClusterName.trim()) ||
+                (registrationMode === 'direct' && provider === 'kubeconfig' && !addClusterKubeconfig.trim()) ||
                 (registrationMode === 'discovery' && !Object.values(selectedDiscovered).some(Boolean))
               }
               className="inline-flex items-center gap-2 rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
@@ -1041,6 +1096,7 @@ export function ClustersOverview() {
               disabled={
                 addClusterSubmitting ||
                 (registrationMode === 'direct' && !addClusterName.trim()) ||
+                (registrationMode === 'direct' && provider === 'kubeconfig' && !addClusterKubeconfig.trim()) ||
                 (registrationMode === 'discovery' && !Object.values(selectedDiscovered).some(Boolean))
               }
               className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"

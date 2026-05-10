@@ -944,7 +944,12 @@ export interface DriftAlert {
   status: 'pending' | 'resolved'
 }
 
-export type ClusterProvider = 'eks' | 'gke' | 'aks' | 'generic'
+// V125-1.1: 'kubeconfig' is the inline-kubeconfig path enabled in v1.25.
+// 'gke' / 'aks' remain disabled options surfaced as "coming soon" — no
+// backend support yet (V125-1.x). The legacy 'generic' literal is kept
+// in the union for backwards compatibility with any persisted UI state
+// that might still reference it; the wizard no longer emits it.
+export type ClusterProvider = 'eks' | 'gke' | 'aks' | 'generic' | 'kubeconfig'
 
 export interface DiscoveredClusterItem {
   name: string
