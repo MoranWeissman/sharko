@@ -147,9 +147,18 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	}
 
 	// Dry-run exit point: return a preview of what would happen, with zero side effects.
+	//
+	// V125-1.4 (BUG-049): all slice fields are initialized to non-nil empty
+	// slices when there is no data, so the JSON response carries `[]` (not
+	// `null`) for every field. The ClustersOverview preview panel reads
+	// `.length` on these arrays and crashed (caught by the ErrorBoundary)
+	// when the V125-1.1 kubeconfig path with no addons selected returned
+	// nil arrays. Both providers now share the same result-construction
+	// shape — see TestRegisterCluster_DryRun_Kubeconfig_ShapeParity.
 	if req.DryRun {
-		// Compute effective addon names.
-		var addonNames []string
+		// Compute effective addon names — start from a non-nil empty slice
+		// so a request with no enabled addons still serializes as `[]`.
+		addonNames := []string{}
 		for a, enabled := range req.Addons {
 			if enabled {
 				addonNames = append(addonNames, a)
@@ -168,13 +177,30 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 			{Path: clusterAddonsPath, Action: o.fileAction(ctx, clusterAddonsPath)},
 		}
 
+		// Provider-aware PR title:
+		//   - kubeconfig path:    "<commitPrefix> register cluster <name> (kubeconfig provider)"
+		//   - eks/legacy path:    "<commitPrefix> register cluster <name>"
+		// Mirrors the audit-event split (cluster_registered vs
+		// cluster_registered_kubeconfig) so the preview tells the operator
+		// which credentials path will be used.
 		prTitle := fmt.Sprintf("%s register cluster %s", o.gitops.CommitPrefix, req.Name)
+		if req.Provider == "kubeconfig" {
+			prTitle = fmt.Sprintf("%s register cluster %s (kubeconfig provider)", o.gitops.CommitPrefix, req.Name)
+		}
+
+		// listSecretsToCreate returns nil when no secret defs are configured
+		// (typical kubeconfig / kind path) or when no enabled addon matches
+		// a known def. Coalesce to [] so the JSON response is uniform.
+		secretsToCreate := o.listSecretsToCreate(req.Addons)
+		if secretsToCreate == nil {
+			secretsToCreate = []string{}
+		}
 
 		dryResult := &DryRunResult{
 			EffectiveAddons: addonNames,
 			FilesToWrite:    filePreviews,
 			PRTitle:         prTitle,
-			SecretsToCreate: o.listSecretsToCreate(req.Addons),
+			SecretsToCreate: secretsToCreate,
 		}
 		if result.Verification != nil {
 			dryResult.Verification = result.Verification

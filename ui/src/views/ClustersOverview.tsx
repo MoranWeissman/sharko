@@ -900,6 +900,7 @@ export function ClustersOverview() {
                   type="button"
                   onClick={handleDiscoverClusters}
                   disabled={discovering || !discoveryRoleArns.trim()}
+                  title="Scan AWS for EKS clusters reachable from each Role ARN above. Found clusters appear below for selection — nothing is registered until you click Register."
                   className="inline-flex items-center gap-2 rounded-md bg-[#0a2a4a] px-4 py-2 text-sm font-medium text-white hover:bg-[#0d3558] disabled:cursor-not-allowed disabled:opacity-50 dark:bg-blue-700 dark:hover:bg-blue-600"
                 >
                   {discovering ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScanSearch className="h-4 w-4" />}
@@ -1001,7 +1002,14 @@ export function ClustersOverview() {
               </div>
             )}
 
-            {/* Auto-merge checkbox */}
+            {/* Auto-merge checkbox.
+              *
+              * V125-1.4: a `title` attribute on both the input and the label
+              * surfaces the gate criteria (admin-only, PR merges immediately
+              * vs waits for human review) without bloating the visible
+              * label. Plain HTML title — universal browser support, no JS,
+              * no portal complexity, and consistent with the other tooltip
+              * additions in this dialog. */}
             <div className="flex items-center gap-2">
               <input
                 type="checkbox"
@@ -1009,10 +1017,16 @@ export function ClustersOverview() {
                 checked={autoMerge}
                 disabled={isAutoMergeDisabled}
                 onChange={(e) => setAutoMerge(e.target.checked)}
+                title={isAutoMergeDisabled
+                  ? "Admin-only. When checked, the registration PR auto-merges as soon as required checks pass; otherwise the PR is left open for human review."
+                  : "When checked, the registration PR auto-merges as soon as required checks pass. Uncheck to leave the PR open for review before the cluster is added to managed-clusters.yaml."}
                 className="rounded border-[#5a9dd0] dark:border-gray-600 disabled:opacity-50"
               />
               <label
                 htmlFor="auto-merge-checkbox"
+                title={isAutoMergeDisabled
+                  ? "Admin-only. When checked, the registration PR auto-merges as soon as required checks pass; otherwise the PR is left open for human review."
+                  : "When checked, the registration PR auto-merges as soon as required checks pass. Uncheck to leave the PR open for review before the cluster is added to managed-clusters.yaml."}
                 className={`text-sm font-medium ${isAutoMergeDisabled ? 'text-[#5a8aaa] dark:text-gray-500' : 'text-[#0a3a5a] dark:text-gray-300'}`}
               >
                 Merge PR automatically
@@ -1022,7 +1036,17 @@ export function ClustersOverview() {
               )}
             </div>
 
-            {/* Dry-run preview panel */}
+            {/* Dry-run preview panel.
+              *
+              * V125-1.4 (BUG-049): every array read is null-safe via `?? []`
+              * so any past, present, or future provider that returns a
+              * partial DryRunResult shape (missing field, null instead of
+              * [], JSON-tag mismatch like the original `files` vs
+              * `files_to_write`) renders a sensible panel instead of
+              * crashing the page with `Cannot read properties of null
+              * (reading 'length')`. Backend now also returns [] (not null)
+              * for both EKS and kubeconfig — defense in depth at both
+              * layers. */}
             {dryRunResult && (
               <div className="rounded-md ring-2 ring-[#6aade0] bg-[#e8f4ff] p-3 dark:ring-gray-700 dark:bg-gray-900">
                 <h4 className="mb-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-200">Dry Run Preview</h4>
@@ -1031,17 +1055,17 @@ export function ClustersOverview() {
                     <span className="font-medium text-[#0a3a5a] dark:text-gray-300">PR Title:</span>{' '}
                     {dryRunResult.pr_title}
                   </div>
-                  {dryRunResult.effective_addons.length > 0 && (
+                  {(dryRunResult.effective_addons ?? []).length > 0 && (
                     <div>
                       <span className="font-medium text-[#0a3a5a] dark:text-gray-300">Effective Addons:</span>{' '}
-                      {dryRunResult.effective_addons.join(', ')}
+                      {(dryRunResult.effective_addons ?? []).join(', ')}
                     </div>
                   )}
-                  {dryRunResult.files.length > 0 && (
+                  {(dryRunResult.files_to_write ?? dryRunResult.files ?? []).length > 0 && (
                     <div>
                       <span className="font-medium text-[#0a3a5a] dark:text-gray-300">Files:</span>
                       <ul className="mt-1 space-y-0.5 font-mono">
-                        {dryRunResult.files.map((f) => (
+                        {(dryRunResult.files_to_write ?? dryRunResult.files ?? []).map((f) => (
                           <li key={f.path}>
                             <span className={f.action === 'create' ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400'}>
                               {f.action === 'create' ? '+' : '~'}
@@ -1052,10 +1076,10 @@ export function ClustersOverview() {
                       </ul>
                     </div>
                   )}
-                  {dryRunResult.secrets_to_create.length > 0 && (
+                  {(dryRunResult.secrets_to_create ?? []).length > 0 && (
                     <div>
                       <span className="font-medium text-[#0a3a5a] dark:text-gray-300">Secrets to Create:</span>{' '}
-                      {dryRunResult.secrets_to_create.join(', ')}
+                      {(dryRunResult.secrets_to_create ?? []).join(', ')}
                     </div>
                   )}
                 </div>
@@ -1066,6 +1090,15 @@ export function ClustersOverview() {
               <p className="text-sm text-red-600 dark:text-red-400">{addClusterError}</p>
             )}
           </div>
+          {/* Footer buttons.
+            *
+            * V125-1.4: native `title` tooltips on the action buttons explain
+            * what each does before the user clicks. Plain `title=` is used
+            * (not the shadcn <Tooltip>) because the rest of this dialog
+            * doesn't use the shadcn primitive — keeping it consistent and
+            * avoiding the portal/provider plumbing for a one-line hint.
+            * Cancel is left untouched (label is universally understood).
+            * A wider tooltip refactor across the app is V125+ scope. */}
           <DialogFooter className="flex-wrap gap-2">
             <button
               type="button"
@@ -1085,6 +1118,7 @@ export function ClustersOverview() {
                 (registrationMode === 'direct' && provider === 'kubeconfig' && !addClusterKubeconfig.trim()) ||
                 (registrationMode === 'discovery' && !Object.values(selectedDiscovered).some(Boolean))
               }
+              title="Dry-run: show the PR title, files that would be committed, and ArgoCD secret that would be created — without actually applying anything."
               className="inline-flex items-center gap-2 rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
             >
               {dryRunLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}
@@ -1099,6 +1133,7 @@ export function ClustersOverview() {
                 (registrationMode === 'direct' && provider === 'kubeconfig' && !addClusterKubeconfig.trim()) ||
                 (registrationMode === 'discovery' && !Object.values(selectedDiscovered).some(Boolean))
               }
+              title="Create the ArgoCD cluster Secret, add the cluster to managed-clusters.yaml, and open a PR (or auto-merge if the box above is checked)."
               className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
             >
               {addClusterSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}

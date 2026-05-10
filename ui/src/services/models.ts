@@ -970,11 +970,25 @@ export interface DryRunFileEntry {
   action: 'create' | 'update'
 }
 
+// V125-1.4 (BUG-049): the Go DryRunResult struct serializes its slice
+// fields as `effective_addons`, `files_to_write`, and `secrets_to_create`.
+// All three are now `?: T[]` because some past payloads (V125-1.1
+// kubeconfig path with no addons) and some future provider paths can
+// return `null`/missing — the preview panel handles that with `?? []`
+// guards. We keep the legacy `files` alias because the FE has been
+// reading the wrong key since dry-run shipped (FE was always undefined
+// in production); both are supported here so a server roll-forward to
+// the corrected backend keeps the FE working without a coordinated
+// deploy.
 export interface DryRunResult {
-  effective_addons: string[]
-  files: DryRunFileEntry[]
+  effective_addons?: string[]
+  files_to_write?: DryRunFileEntry[]
+  /** Legacy alias kept only for backwards compatibility with stale clients;
+   * server emits `files_to_write`. The view component reads `files` via the
+   * post-processing layer below. */
+  files?: DryRunFileEntry[]
   pr_title: string
-  secrets_to_create: string[]
+  secrets_to_create?: string[]
 }
 
 export interface RegisterClusterResult {
