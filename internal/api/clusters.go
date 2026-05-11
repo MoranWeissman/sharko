@@ -48,11 +48,39 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 	// not_in_git" surface — BUG-052.
 	pending := resolvePendingRegistrations(r.Context(), gp, s.gitopsCfg.CommitPrefix)
 	resp.PendingRegistrations = pending
-	if len(pending) > 0 {
-		pendingNames := make(map[string]struct{}, len(pending))
-		for _, p := range pending {
-			pendingNames[p.ClusterName] = struct{}{}
+	pendingNames := make(map[string]struct{}, len(pending))
+	for _, p := range pending {
+		pendingNames[p.ClusterName] = struct{}{}
+	}
+
+	// V125-1-7 / BUG-058 — resolve orphan ArgoCD cluster Secrets (in
+	// ArgoCD, not in git, no open register PR). Mirrors the V125-1.5
+	// dignified-degrade pattern: a transient ArgoCD blip returns an empty
+	// slice + warn, never a 500. We need the git-managed cluster names
+	// (resp.Clusters with Managed==true) plus the pending names; build
+	// them now and pass to the resolver. Note resp.Clusters at this point
+	// already contains both managed (Managed==true) AND not_in_git
+	// clusters — the resolver only consumes Managed entries via name
+	// match, so passing the full slice is correct.
+	gitManaged := make([]models.Cluster, 0, len(resp.Clusters))
+	for _, c := range resp.Clusters {
+		if c.Managed {
+			gitManaged = append(gitManaged, c)
 		}
+	}
+	orphans := resolveOrphanRegistrations(r.Context(), ac, gitManaged, pendingNames)
+	resp.OrphanRegistrations = orphans
+	orphanNames := make(map[string]struct{}, len(orphans))
+	for _, o := range orphans {
+		orphanNames[o.ClusterName] = struct{}{}
+	}
+
+	// Filter the `not_in_git` lane to remove BOTH pending and orphan
+	// cluster names. A pending cluster belongs in PendingRegistrations
+	// only; an orphan belongs in OrphanRegistrations only. Without this
+	// prune the same cluster could appear in two surfaces at once
+	// (BUG-052 for pending, BUG-058 for orphans).
+	if len(pendingNames) > 0 || len(orphanNames) > 0 {
 		filtered := resp.Clusters[:0]
 		for _, c := range resp.Clusters {
 			// Only prune clusters that are in the "not_in_git" lane. A
@@ -61,6 +89,9 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 			// managed list and must not disappear.
 			if !c.Managed && c.ConnectionStatus == "not_in_git" {
 				if _, hit := pendingNames[c.Name]; hit {
+					continue
+				}
+				if _, hit := orphanNames[c.Name]; hit {
 					continue
 				}
 			}

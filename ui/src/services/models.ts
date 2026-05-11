@@ -25,6 +25,19 @@ export interface PendingRegistration {
   opened_at: string
 }
 
+// V125-1-7 / BUG-058: ArgoCD cluster Secret with no managed-clusters.yaml
+// entry AND no open registration PR — typically a leftover from a manual-
+// mode register PR that was closed without merging. Surfaced in its own
+// "Cancelled / Orphan Registrations" section with a per-row Delete cluster
+// Secret button. last_seen_at is the resolver-call time on the BE (the
+// ArgoCD cluster Secret API has no stable creation timestamp); see the
+// resolver in internal/api/clusters_orphans.go for the contract.
+export interface OrphanRegistration {
+  cluster_name: string
+  server_url: string
+  last_seen_at: string
+}
+
 export interface ClustersResponse {
   clusters: Cluster[]
   health_stats?: ClusterHealthStats
@@ -33,6 +46,9 @@ export interface ClustersResponse {
   // an older server that pre-dates this field must not crash a newer FE.
   // The runtime code reads this defensively (`?? []`) at every callsite.
   pending_registrations?: PendingRegistration[]
+  // V125-1-7: ArgoCD cluster Secrets with no git entry and no open PR.
+  // Same forward-compat contract as pending_registrations — read with `?? []`.
+  orphan_registrations?: OrphanRegistration[]
 }
 
 export interface ClusterAddonInfo {

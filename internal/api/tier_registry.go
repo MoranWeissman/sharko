@@ -22,6 +22,7 @@ var HandlerTier = map[string]audit.Tier{
 	// Cluster lifecycle and operations
 	"handleRegisterCluster":            audit.Tier1,
 	"handleDeregisterCluster":          audit.Tier1,
+	"handleDeleteOrphanCluster":        audit.Tier1, // V125-1-7 / BUG-058
 	"handleUpdateClusterAddons":        audit.Tier1,
 	"handleRefreshClusterCredentials":  audit.Tier1,
 	"handleTestCluster":                audit.Tier1,

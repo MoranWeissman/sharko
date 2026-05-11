@@ -201,6 +201,84 @@ func TestClusterService_ListClusters_ParsesEmptyFile(t *testing.T) {
 	}
 }
 
+// TestClusterService_ListClusters_OrphanAndPendingDefaultNonNil locks
+// down the V125-1-7 / BUG-058 service-layer contract: every code path
+// that returns a ClustersResponse MUST set OrphanRegistrations and
+// PendingRegistrations to non-nil empty slices (not nil). The handler
+// overwrites these fields with resolver output; the service layer's job
+// is to never let a nil array reach the marshaller. V125-1.4 lesson:
+// nil arrays surface as `null` JSON which the FE then crashes on when
+// it calls `.length`.
+func TestClusterService_ListClusters_OrphanAndPendingDefaultNonNil(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"items":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+	ac := argocd.NewClient(srv.URL, "test-token", true)
+
+	svc := NewClusterService("")
+
+	t.Run("file-not-found path", func(t *testing.T) {
+		gp := &fakeGP{
+			err: map[string]error{
+				"configuration/managed-clusters.yaml": fmt.Errorf(
+					"fakeGP: %w", gitprovider.ErrFileNotFound,
+				),
+			},
+		}
+		resp, err := svc.ListClusters(context.Background(), gp, ac)
+		if err != nil {
+			t.Fatalf("unexpected err: %v", err)
+		}
+		if resp.OrphanRegistrations == nil {
+			t.Error("OrphanRegistrations is nil on file-not-found path — must be []")
+		}
+		if resp.PendingRegistrations == nil {
+			t.Error("PendingRegistrations is nil on file-not-found path — must be []")
+		}
+	})
+
+	t.Run("argocd-error degrade path", func(t *testing.T) {
+		// argocd.Client with a bogus URL → ListClusters errors → the
+		// service degrades to the early-return branch which must STILL
+		// default both arrays to non-nil empty.
+		badAC := argocd.NewClient("http://127.0.0.1:1", "token", true)
+		gp := &fakeGP{
+			files: map[string][]byte{
+				"configuration/managed-clusters.yaml": []byte("clusters: []"),
+			},
+		}
+		resp, err := svc.ListClusters(context.Background(), gp, badAC)
+		if err != nil {
+			t.Fatalf("unexpected err: %v", err)
+		}
+		if resp.OrphanRegistrations == nil {
+			t.Error("OrphanRegistrations is nil on argocd-degrade path — must be []")
+		}
+		if resp.PendingRegistrations == nil {
+			t.Error("PendingRegistrations is nil on argocd-degrade path — must be []")
+		}
+	})
+
+	t.Run("happy path", func(t *testing.T) {
+		gp := &fakeGP{
+			files: map[string][]byte{
+				"configuration/managed-clusters.yaml": []byte("clusters: []"),
+			},
+		}
+		resp, err := svc.ListClusters(context.Background(), gp, ac)
+		if err != nil {
+			t.Fatalf("unexpected err: %v", err)
+		}
+		if resp.OrphanRegistrations == nil {
+			t.Error("OrphanRegistrations is nil on happy path — must be []")
+		}
+		if resp.PendingRegistrations == nil {
+			t.Error("PendingRegistrations is nil on happy path — must be []")
+		}
+	})
+}
+
 // TestClusterService_GetClusterDetail_UnknownClusterReturnsNil ensures the
 // happy path still works — an empty managed-clusters.yaml plus a known
 // catalog yields a clean nil response (cluster not found) rather than a

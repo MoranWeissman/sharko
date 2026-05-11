@@ -3927,6 +3927,57 @@ paths:
       summary: Get cluster change history
       tags:
       - clusters
+  /clusters/{name}/orphan:
+    delete:
+      description: Deletes an ArgoCD cluster Secret for a cluster that has no managed-clusters.yaml
+        entry and no open registration PR. Refuses to delete a cluster that is genuinely
+        managed (in git) or pending (has an open register PR) — those are not orphans.
+      parameters:
+      - description: Cluster name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: Cluster Secret deleted
+        "400":
+          description: Cluster is not orphaned (managed or pending)
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Cluster Secret not found in ArgoCD
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal error
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Gateway error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete an orphan cluster
+      tags:
+      - clusters
   /clusters/{name}/refresh:
     post:
       description: Rotates and re-syncs the cluster credentials from the secrets provider

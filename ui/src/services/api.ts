@@ -210,6 +210,29 @@ export async function unadoptCluster(name: string) {
   return deleteJSON<{ status: string; pr_url?: string }>(`/clusters/${encodeURIComponent(name)}?unadopt=true`)
 }
 
+// V125-1-7 / BUG-058 — orphan cluster Secret cleanup. The BE returns
+// 204 No Content on success (no body), so we cannot use the generic
+// deleteJSON helper which assumes a JSON body. The BE refuses the
+// request with 400 if the cluster is genuinely managed (in git) or
+// pending (open register PR) — the FE caller surfaces the error message
+// in a toast.
+export async function deleteOrphanCluster(name: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/clusters/${encodeURIComponent(name)}/orphan`, {
+    method: 'DELETE',
+    headers: authHeaders(),
+  })
+  if (res.status === 401) {
+    sessionStorage.removeItem(TOKEN_KEY)
+    window.location.reload()
+    throw new Error('Session expired')
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error(err.error || res.statusText)
+  }
+  // 204 No Content — nothing to parse.
+}
+
 export async function updateClusterAddons(name: string, addons: Record<string, boolean>) {
   return patchJSON<any>(`/clusters/${encodeURIComponent(name)}`, { addons })
 }

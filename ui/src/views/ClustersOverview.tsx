@@ -22,8 +22,9 @@ import {
   ChevronDown,
   ChevronUp,
   RefreshCw,
+  Trash2,
 } from 'lucide-react';
-import { api, registerCluster, discoverEKSClusters, testClusterConnection, unadoptCluster } from '@/services/api';
+import { api, registerCluster, discoverEKSClusters, testClusterConnection, unadoptCluster, deleteOrphanCluster } from '@/services/api';
 import type {
   Cluster,
   ClusterHealthStats,
@@ -33,6 +34,7 @@ import type {
   DiscoveredClusterItem,
   DryRunResult,
   PendingRegistration,
+  OrphanRegistration,
   RegisterClusterResult,
   VerifyStep,
 } from '@/services/models';
@@ -83,6 +85,20 @@ export function ClustersOverview() {
   // cluster names out of the Managed + Discovered sections so the same
   // cluster never appears in two places (BUG-051/052).
   const [pendingRegistrations, setPendingRegistrations] = useState<PendingRegistration[]>([]);
+  // V125-1-7 / BUG-058: ArgoCD cluster Secrets with no managed-clusters.yaml
+  // entry AND no open registration PR. Typically left over from a manual-
+  // mode register PR closed without merging. Surfaced in a dedicated
+  // amber/orange "Cancelled / Orphan Registrations" section between the
+  // blue Pending Registrations section and the main cluster table, with
+  // a per-row Delete cluster Secret button.
+  const [orphanRegistrations, setOrphanRegistrations] = useState<OrphanRegistration[]>([]);
+  // Per-cluster orphan-delete state. `null` = no action; `pending` = the
+  // confirm dialog is open for this name; `deleting` = the API call is in
+  // flight. We use a single piece of state because only one orphan delete
+  // can be initiated at a time from the dialog flow.
+  const [orphanDeleteTarget, setOrphanDeleteTarget] = useState<string | null>(null);
+  const [orphanDeleteLoading, setOrphanDeleteLoading] = useState(false);
+  const [orphanDeleteResult, setOrphanDeleteResult] = useState<{ name: string; success?: string; error?: string } | null>(null);
   const [healthStats, setHealthStats] = useState<ClusterHealthStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -184,6 +200,8 @@ export function ClustersOverview() {
       // do not crash this view. Same nil-array regression guard as the
       // backend's PendingRegistrations contract.
       setPendingRegistrations(response.pending_registrations ?? []);
+      // V125-1-7: same forward-compat default for orphan_registrations.
+      setOrphanRegistrations(response.orphan_registrations ?? []);
       // Detect ArgoCD unreachable: if all clusters have failed/unknown status or response is empty
       const hasArgoError = response.clusters.length === 0 ||
         (response.clusters.length > 0 && response.clusters.every(
@@ -548,6 +566,33 @@ export function ClustersOverview() {
     }
   }, [unadoptTarget, fetchData]);
 
+  // V125-1-7 / BUG-058 — orphan cluster Secret cleanup. Confirms via
+  // ConfirmationModal (the same destructive-action pattern used by
+  // unadopt + remove cluster). On success, refetch to drop the orphan
+  // row from the surface; on failure, surface the BE error message
+  // (the BE returns 400 with a remediation hint if the cluster turns
+  // out to be managed/pending in a TOCTOU race).
+  const handleDeleteOrphan = useCallback(async () => {
+    if (!orphanDeleteTarget) return;
+    setOrphanDeleteLoading(true);
+    setOrphanDeleteResult(null);
+    const target = orphanDeleteTarget;
+    try {
+      await deleteOrphanCluster(target);
+      setOrphanDeleteResult({ name: target, success: `Orphan cluster Secret for "${target}" deleted.` });
+      setOrphanDeleteTarget(null);
+      void fetchData();
+    } catch (err) {
+      setOrphanDeleteResult({
+        name: target,
+        error: err instanceof Error ? err.message : 'Orphan delete failed',
+      });
+      setOrphanDeleteTarget(null);
+    } finally {
+      setOrphanDeleteLoading(false);
+    }
+  }, [orphanDeleteTarget, fetchData]);
+
   const toggleDiscoveredSelection = useCallback((name: string) => {
     setSelectedDiscoveredForAdopt((prev) => ({
       ...prev,
@@ -607,7 +652,7 @@ export function ClustersOverview() {
 
   // V125-1.5 / BUG-051+052: cluster names that have an open registration
   // PR but whose values-file changes have NOT yet merged. They must NEVER
-  // appear in the Managed or Discovered sections — that's what the new
+  // appear in the Managed or Discovered sections — that's what the
   // "Pending Registrations" surface is for. The BE also strips these from
   // the `not_in_git` lane (internal/api/clusters.go), but we re-apply the
   // filter here so a stale BE response or a slow refresh window still
@@ -617,19 +662,29 @@ export function ClustersOverview() {
     [pendingRegistrations],
   );
 
+  // V125-1-7 / BUG-058: same defence-in-depth for orphans. Orphan cluster
+  // names belong only in the "Cancelled / Orphan Registrations" section;
+  // the BE strips them from `not_in_git` too, but the FE re-applies the
+  // filter so a stale or in-flight refresh can never surface the same
+  // cluster in two places.
+  const orphanNames = useMemo(
+    () => new Set(orphanRegistrations.map((o) => o.cluster_name)),
+    [orphanRegistrations],
+  );
+
   // Split into managed (in git) and discovered (ArgoCD-only / unmanaged)
   const managedClusters = useMemo(
     () => filteredClusters.filter(
-      (c) => c.managed !== false && c.connection_status !== 'not_in_git' && !pendingNames.has(c.name),
+      (c) => c.managed !== false && c.connection_status !== 'not_in_git' && !pendingNames.has(c.name) && !orphanNames.has(c.name),
     ),
-    [filteredClusters, pendingNames],
+    [filteredClusters, pendingNames, orphanNames],
   );
 
   const discoveredClusters = useMemo(
     () => filteredClusters.filter(
-      (c) => (c.managed === false || c.connection_status === 'not_in_git') && !pendingNames.has(c.name),
+      (c) => (c.managed === false || c.connection_status === 'not_in_git') && !pendingNames.has(c.name) && !orphanNames.has(c.name),
     ),
-    [filteredClusters, pendingNames],
+    [filteredClusters, pendingNames, orphanNames],
   );
 
   const handleAdoptSelected = useCallback(() => {
@@ -1480,6 +1535,92 @@ export function ClustersOverview() {
         </div>
       )}
 
+      {/* V125-1-7 / BUG-058 — Cancelled / Orphan Registrations.
+          ArgoCD cluster Secrets that have NO managed-clusters.yaml entry
+          AND no open registration PR. Typically a leftover from a
+          manual-mode register PR that was closed without merging
+          (orchestrator/cluster.go:408 pre-creates the Secret before the
+          PR opens). Per-row Delete button removes the orphan Secret via
+          DELETE /api/v1/clusters/{name}/orphan. The amber/orange tint
+          signals "needs cleanup attention" — different from the blue
+          Pending Registrations and the teal Managed Clusters above. */}
+      {orphanRegistrations.length > 0 && (
+        <div className="space-y-3">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-200">
+            <AlertTriangle className="h-4 w-4 text-amber-600" />
+            Cancelled / Orphan Registrations
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+              {orphanRegistrations.length}
+            </span>
+            <span className="text-xs font-normal text-[#3a6a8a] dark:text-gray-500">
+              — ArgoCD cluster Secret exists but no Git entry and no open PR; safe to delete
+            </span>
+          </h3>
+          <div className="overflow-x-auto rounded-xl ring-2 ring-amber-200 bg-amber-50/40 shadow-sm dark:ring-amber-900/40 dark:bg-gray-800">
+            <table className="w-full text-left text-sm">
+              <thead className="border-b border-amber-200 bg-amber-100/60 text-xs uppercase text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-400">
+                <tr>
+                  <th className="px-6 py-3">Cluster Name</th>
+                  <th className="px-6 py-3">Server URL</th>
+                  <th className="px-6 py-3">Last Seen</th>
+                  <th className="px-6 py-3">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-amber-100 dark:divide-amber-900/40">
+                {orphanRegistrations.map((o) => (
+                  <tr key={`${o.cluster_name}-${o.server_url}`}>
+                    <td className="px-6 py-3 font-medium text-[#0a2a4a] dark:text-gray-100">
+                      {o.cluster_name}
+                    </td>
+                    <td className="px-6 py-3 font-mono text-xs text-[#2a5a7a] dark:text-gray-400">
+                      {o.server_url || '--'}
+                    </td>
+                    <td className="px-6 py-3 text-xs text-[#2a5a7a] dark:text-gray-400">
+                      {o.last_seen_at || '--'}
+                    </td>
+                    <td className="px-6 py-3">
+                      <RoleGuard adminOnly>
+                        <button
+                          type="button"
+                          onClick={() => setOrphanDeleteTarget(o.cluster_name)}
+                          disabled={orphanDeleteLoading && orphanDeleteTarget === o.cluster_name}
+                          className="inline-flex items-center gap-1 rounded border border-red-300 bg-white px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-700 dark:bg-gray-800 dark:text-red-300 dark:hover:bg-red-900/20"
+                          aria-label={`Delete cluster Secret for ${o.cluster_name}`}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                          Delete cluster Secret
+                        </button>
+                      </RoleGuard>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Orphan delete result banner — rendered OUTSIDE the orphan
+          section so it survives the refetch that empties the orphan list
+          on success. Without this, the success message would unmount
+          immediately when orphanRegistrations.length flips back to 0. */}
+      {orphanDeleteResult && (
+        <div className={`flex items-center justify-between rounded-md px-4 py-2 text-sm ${
+          orphanDeleteResult.error
+            ? 'border border-red-300 bg-red-50 text-red-800 dark:border-red-700 dark:bg-red-900/30 dark:text-red-300'
+            : 'border border-green-300 bg-green-50 text-green-800 dark:border-green-700 dark:bg-green-900/30 dark:text-green-300'
+        }`}>
+          <span>{orphanDeleteResult.error || orphanDeleteResult.success}</span>
+          <button
+            type="button"
+            onClick={() => setOrphanDeleteResult(null)}
+            className="ml-3 text-xs underline opacity-80 hover:opacity-100"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {/* Managed Clusters */}
       <div className="space-y-3">
         <h3 className="flex items-center gap-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-200">
@@ -1879,6 +2020,18 @@ export function ClustersOverview() {
         typeToConfirm={unadoptTarget ?? ''}
         destructive
         loading={unadoptLoading}
+      />
+
+      {/* V125-1-7 / BUG-058 — Orphan Delete Confirmation Modal */}
+      <ConfirmationModal
+        open={orphanDeleteTarget !== null}
+        onClose={() => setOrphanDeleteTarget(null)}
+        onConfirm={handleDeleteOrphan}
+        title="Delete Orphan Cluster Secret"
+        description={`Delete cluster Secret for "${orphanDeleteTarget}"? This removes the orphan ArgoCD cluster Secret. The cluster never existed in Git so no GitOps state is affected. This action cannot be undone.`}
+        confirmText="Delete cluster Secret"
+        destructive
+        loading={orphanDeleteLoading}
       />
 
       {/* Un-adopt result banner */}

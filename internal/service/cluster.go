@@ -95,6 +95,7 @@ func (s *ClusterService) ListClusters(ctx context.Context, gp gitprovider.GitPro
 			Clusters:             clusters,
 			HealthStats:          s.computeHealthStats(clusters, nil),
 			PendingRegistrations: []models.PendingRegistration{},
+			OrphanRegistrations:  []models.OrphanRegistration{},
 		}, nil
 	}
 
@@ -134,14 +135,17 @@ func (s *ClusterService) ListClusters(ctx context.Context, gp gitprovider.GitPro
 	allClusters := append(clusters, notInGitClusters...)
 
 	// PendingRegistrations is populated by the API handler from the Git
-	// provider's open-PR list (V125-1.5). The service contract guarantees a
-	// non-nil empty slice here — handler may overwrite with the resolved
-	// list. Defaulting at the service layer keeps every code path that
-	// returns ClustersResponse honest about the no-nil contract.
+	// provider's open-PR list (V125-1.5). OrphanRegistrations is populated
+	// by the API handler from the ArgoCD cluster list (V125-1-7 / BUG-058).
+	// The service contract guarantees both are non-nil empty slices here —
+	// handler may overwrite with the resolved lists. Defaulting at the
+	// service layer keeps every code path that returns ClustersResponse
+	// honest about the no-nil contract.
 	return &models.ClustersResponse{
 		Clusters:             allClusters,
 		HealthStats:          s.computeHealthStats(clusters, notInGitClusters),
 		PendingRegistrations: []models.PendingRegistration{},
+		OrphanRegistrations:  []models.OrphanRegistration{},
 	}, nil
 }
 

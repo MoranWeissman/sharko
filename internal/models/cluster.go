@@ -40,17 +40,50 @@ type PendingRegistration struct {
 	OpenedAt    string `json:"opened_at"`
 }
 
+// OrphanRegistration represents an ArgoCD cluster Secret that has NO
+// corresponding entry in managed-clusters.yaml AND no open registration PR
+// — i.e. a cluster Secret left behind in the live argocd ns after a
+// registration PR was closed without merging (or after some other
+// abandonment path). Surfaced as its own lifecycle state so the user has a
+// recovery action ("delete the orphan Secret"); see V125-1-7 / BUG-058.
+//
+// Production diagnosis: internal/orchestrator/cluster.go:408's manual-mode
+// register path falls through to a direct ArgoCD API RegisterCluster call
+// when argoSecretManager is nil + PRAutoMerge is false, which writes the
+// cluster Secret BEFORE the PR opens. Closing the PR without merging
+// leaves that Secret behind. V125-1-5's pending-PR filter masked it while
+// the PR was open; once closed, it surfaced in `not_in_git`. V125-1-8
+// closes the bug class architecturally by deferring the ArgoCD register
+// until post-PR-merge — this struct is the MVP unblock recovery surface.
+//
+// LastSeenAt is the response time of the orphan resolver call (i.e. "now"
+// at API-handler time). The ArgoCD cluster Secret API exposes no stable
+// creation timestamp, so this is a degraded approximation — it tells the
+// user "as of this refresh, this orphan exists" rather than "this orphan
+// has existed since X". Documented in the resolver in
+// internal/api/clusters_orphans.go.
+type OrphanRegistration struct {
+	ClusterName string `json:"cluster_name"`
+	ServerURL   string `json:"server_url"`
+	LastSeenAt  string `json:"last_seen_at"`
+}
+
 // ClustersResponse is the API response for listing clusters.
 //
-// PendingRegistrations is always a non-nil slice (default `[]`) — V125-1.4
-// hit a nil-array crash on the frontend's similar dry-run path; we do not
-// repeat the lesson here. An empty slice means there are no open
-// registration PRs (or the provider call degraded; see the handler for the
-// V124-22 dignified-degrade pattern).
+// PendingRegistrations and OrphanRegistrations are always non-nil slices
+// (default `[]`) — V125-1.4 hit a nil-array crash on the frontend's
+// similar dry-run path; we do not repeat the lesson here. An empty slice
+// means there are no matching items (or the underlying provider call
+// degraded; see the handler for the V124-22 dignified-degrade pattern).
 type ClustersResponse struct {
 	Clusters             []Cluster             `json:"clusters"`
 	HealthStats          *ClusterHealthStats   `json:"health_stats,omitempty"`
 	PendingRegistrations []PendingRegistration `json:"pending_registrations"`
+	// OrphanRegistrations: V125-1-7 / BUG-058. ArgoCD cluster Secrets that
+	// have no managed-clusters.yaml entry AND no open registration PR. The
+	// FE renders these in a dedicated "Cancelled / Orphan Registrations"
+	// section with a per-row Delete cluster Secret button.
+	OrphanRegistrations []OrphanRegistration `json:"orphan_registrations"`
 }
 
 // ClusterAddonInfo holds combined information about an addon in a specific cluster.
