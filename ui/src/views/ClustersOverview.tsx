@@ -32,6 +32,7 @@ import type {
   AddonCatalogResponse,
   DiscoveredClusterItem,
   DryRunResult,
+  PendingRegistration,
   RegisterClusterResult,
   VerifyStep,
 } from '@/services/models';
@@ -76,6 +77,12 @@ export function ClustersOverview() {
   // allClusters in fetchData's dep array (which would cause the fetch effect
   // to re-fire on every state update). V124-3.1.
   const allClustersRef = useRef<Cluster[]>([]);
+  // V125-1.5: cluster-registration PRs that have NOT yet merged. The BE
+  // returns these via /api/v1/clusters.pending_registrations. We surface
+  // them as a dedicated "Pending Registrations" section AND filter their
+  // cluster names out of the Managed + Discovered sections so the same
+  // cluster never appears in two places (BUG-051/052).
+  const [pendingRegistrations, setPendingRegistrations] = useState<PendingRegistration[]>([]);
   const [healthStats, setHealthStats] = useState<ClusterHealthStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -173,6 +180,10 @@ export function ClustersOverview() {
       setError(null);
       setAllClusters(response.clusters);
       setHealthStats(response.health_stats ?? null);
+      // V125-1.5: default to [] so older servers that pre-date the field
+      // do not crash this view. Same nil-array regression guard as the
+      // backend's PendingRegistrations contract.
+      setPendingRegistrations(response.pending_registrations ?? []);
       // Detect ArgoCD unreachable: if all clusters have failed/unknown status or response is empty
       const hasArgoError = response.clusters.length === 0 ||
         (response.clusters.length > 0 && response.clusters.every(
@@ -393,12 +404,29 @@ export function ClustersOverview() {
         );
         const prUrl = result?.git?.pr_url || result?.pr_url || result?.pull_request_url;
         const merged = result?.git?.merged ?? autoMerge;
-        if (merged && !prUrl) {
-          setAddClusterResultMsg('Cluster registered successfully.');
+        // V125-1.5 / BUG-050: manual-mode register opens a PR but the
+        // cluster is NOT actually registered until merge. The pre-V125-1.5
+        // toast said "Cluster registered" in both branches, which was a
+        // lie in the manual-merge case. Branch on `merged` so the message
+        // tells the user the truth.
+        if (merged) {
+          // Auto-merge succeeded (or PR-merge was implicit). Cluster is
+          // truly registered.
+          setAddClusterResultMsg(prUrl
+            ? `__merged__|${prUrl}`
+            : 'Cluster registered successfully.');
         } else if (prUrl) {
-          setAddClusterResultMsg(prUrl);
+          // Manual mode (or auto-merge requested but not yet merged):
+          // values-file PR is open. The cluster won't appear as managed
+          // until the PR is merged. We tag the message with a `__pending__`
+          // prefix so the renderer picks the "PR opened — merge to
+          // activate" wording rather than the legacy "Cluster registered"
+          // wording.
+          setAddClusterResultMsg(`__pending__|${prUrl}`);
         } else {
-          setAddClusterResultMsg('Cluster registered successfully.');
+          // Defensive: server returned no PR URL and no merge flag. Stay
+          // truthful — don't claim "registered" without evidence.
+          setAddClusterResultMsg('Cluster registration submitted. Check the open PR list for status.');
         }
         setAddClusterResult(result);
         setAddClusterOpen(false);
@@ -577,15 +605,31 @@ export function ClustersOverview() {
     [allClusters, statusFilter, filters],
   );
 
+  // V125-1.5 / BUG-051+052: cluster names that have an open registration
+  // PR but whose values-file changes have NOT yet merged. They must NEVER
+  // appear in the Managed or Discovered sections — that's what the new
+  // "Pending Registrations" surface is for. The BE also strips these from
+  // the `not_in_git` lane (internal/api/clusters.go), but we re-apply the
+  // filter here so a stale BE response or a slow refresh window still
+  // can't surface the cluster in two places at once.
+  const pendingNames = useMemo(
+    () => new Set(pendingRegistrations.map((p) => p.cluster_name)),
+    [pendingRegistrations],
+  );
+
   // Split into managed (in git) and discovered (ArgoCD-only / unmanaged)
   const managedClusters = useMemo(
-    () => filteredClusters.filter((c) => c.managed !== false && c.connection_status !== 'not_in_git'),
-    [filteredClusters],
+    () => filteredClusters.filter(
+      (c) => c.managed !== false && c.connection_status !== 'not_in_git' && !pendingNames.has(c.name),
+    ),
+    [filteredClusters, pendingNames],
   );
 
   const discoveredClusters = useMemo(
-    () => filteredClusters.filter((c) => c.managed === false || c.connection_status === 'not_in_git'),
-    [filteredClusters],
+    () => filteredClusters.filter(
+      (c) => (c.managed === false || c.connection_status === 'not_in_git') && !pendingNames.has(c.name),
+    ),
+    [filteredClusters, pendingNames],
   );
 
   const handleAdoptSelected = useCallback(() => {
@@ -1144,30 +1188,51 @@ export function ClustersOverview() {
       </Dialog>
 
       {/* Registration success banner */}
-      {addClusterResultMsg && (
+      {addClusterResultMsg && (() => {
+        // V125-1.5 / BUG-050: pick banner styling + copy based on the
+        // tagged message marker (__merged__|<url> vs __pending__|<url>).
+        // The tag is set in handleAddCluster — we strip it here for
+        // rendering so external callers never see the marker characters.
+        const isMergedTag = addClusterResultMsg.startsWith('__merged__|');
+        const isPendingTag = addClusterResultMsg.startsWith('__pending__|');
+        const taggedURL = isMergedTag
+          ? addClusterResultMsg.slice('__merged__|'.length)
+          : isPendingTag
+            ? addClusterResultMsg.slice('__pending__|'.length)
+            : '';
+        const isPartial = addClusterResult?.partial;
+        // "Pending" gets an amber/info treatment — the action isn't done
+        // yet, it's just queued behind a merge.
+        const tone: 'success' | 'warn' = isPartial || isPendingTag ? 'warn' : 'success';
+        return (
         <div className={`flex items-center justify-between rounded-md px-4 py-2 text-sm ${
-          addClusterResult?.partial
+          tone === 'warn'
             ? 'border border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
             : 'border border-green-300 bg-green-50 text-green-800 dark:border-green-700 dark:bg-green-900/30 dark:text-green-300'
         }`}>
           <span>
-            {addClusterResult?.partial
+            {isPartial
               ? addClusterResultMsg
-              : addClusterResultMsg.startsWith('http')
-                ? <>Cluster registered. PR: <a href={addClusterResultMsg} target="_blank" rel="noopener noreferrer" className="underline font-medium">{addClusterResultMsg}</a></>
-                : addClusterResultMsg
+              : isPendingTag
+                ? <>Cluster registration PR opened — merge to activate. PR: <a href={taggedURL} target="_blank" rel="noopener noreferrer" className="underline font-medium">{taggedURL}</a></>
+                : isMergedTag
+                  ? <>Cluster registered. PR: <a href={taggedURL} target="_blank" rel="noopener noreferrer" className="underline font-medium">{taggedURL}</a></>
+                  : addClusterResultMsg.startsWith('http')
+                    ? <>Cluster registered. PR: <a href={addClusterResultMsg} target="_blank" rel="noopener noreferrer" className="underline font-medium">{addClusterResultMsg}</a></>
+                    : addClusterResultMsg
             }
           </span>
           <button
             type="button"
             onClick={() => { setAddClusterResultMsg(null); setAddClusterResult(null); }}
-            className={`ml-4 rounded p-0.5 ${addClusterResult?.partial ? 'hover:bg-amber-100 dark:hover:bg-amber-800' : 'hover:bg-green-100 dark:hover:bg-green-800'}`}
+            className={`ml-4 rounded p-0.5 ${tone === 'warn' ? 'hover:bg-amber-100 dark:hover:bg-amber-800' : 'hover:bg-green-100 dark:hover:bg-green-800'}`}
             aria-label="Dismiss"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
-      )}
+        );
+      })()}
 
       {/* Health stat cards */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
@@ -1351,6 +1416,69 @@ export function ClustersOverview() {
           </div>
         )}
       </div>
+
+      {/* V125-1.5 / BUG-053 — Pending registration PRs.
+          The wizard closes after submitting and the values-file PR is
+          opened in Git but NOT merged. Without this surface, the user has
+          no way to see which clusters are mid-registration. Each row
+          links straight to the open PR. Cancel/close-PR action is
+          deferred to V125+. */}
+      {pendingRegistrations.length > 0 && (
+        <div className="space-y-3">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-200">
+            <GitMerge className="h-4 w-4 text-blue-600" />
+            Pending Registrations
+            <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
+              {pendingRegistrations.length}
+            </span>
+            <span className="text-xs font-normal text-[#3a6a8a] dark:text-gray-500">
+              — registration PR open, will appear as managed once merged
+            </span>
+          </h3>
+          <div className="overflow-x-auto rounded-xl ring-2 ring-blue-200 bg-[#f0f7ff] shadow-sm dark:ring-blue-900/40 dark:bg-gray-800">
+            <table className="w-full text-left text-sm">
+              <thead className="border-b border-blue-200 bg-blue-50 text-xs uppercase text-blue-700 dark:border-blue-900/40 dark:bg-blue-950/30 dark:text-blue-400">
+                <tr>
+                  <th className="px-6 py-3">Cluster Name</th>
+                  <th className="px-6 py-3">Branch</th>
+                  <th className="px-6 py-3">Opened</th>
+                  <th className="px-6 py-3">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-blue-100 dark:divide-blue-900/40">
+                {pendingRegistrations.map((p) => (
+                  <tr key={`${p.cluster_name}-${p.pr_url}`}>
+                    <td className="px-6 py-3 font-medium text-[#0a2a4a] dark:text-gray-100">
+                      {p.cluster_name}
+                    </td>
+                    <td className="px-6 py-3 font-mono text-xs text-[#2a5a7a] dark:text-gray-400">
+                      {p.branch || '--'}
+                    </td>
+                    <td className="px-6 py-3 text-xs text-[#2a5a7a] dark:text-gray-400">
+                      {p.opened_at || '--'}
+                    </td>
+                    <td className="px-6 py-3">
+                      {p.pr_url ? (
+                        <a
+                          href={p.pr_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 rounded border border-blue-300 px-2 py-1 text-xs font-medium text-blue-700 hover:bg-blue-50 dark:border-blue-700 dark:text-blue-300 dark:hover:bg-blue-900/20"
+                        >
+                          <Eye className="h-3 w-3" />
+                          View PR
+                        </a>
+                      ) : (
+                        <span className="text-xs text-[#3a6a8a] dark:text-gray-500">PR URL unavailable</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Managed Clusters */}
       <div className="space-y-3">

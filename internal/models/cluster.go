@@ -20,10 +20,37 @@ type ClusterHealthStats struct {
 	NotInGit           int `json:"not_in_git"`
 }
 
+// PendingRegistration represents a cluster registration PR that has been
+// opened but not yet merged. The cluster itself is NOT in
+// managed-clusters.yaml (and may or may not yet be in ArgoCD), so it must be
+// surfaced as a distinct lifecycle state — neither "managed" nor
+// "discovered/not_in_git" — to avoid the V125-1.5 family of UX bugs
+// (BUG-050..055) where a pending-PR cluster appeared as if it half-existed
+// across multiple unrelated panels.
+//
+// V125-1.5: ClusterName/PRURL/Branch are populated from the GitHub provider's
+// open-PRs list, filtered by the registration-PR title pattern emitted by
+// the orchestrator (see internal/orchestrator/git_helpers.go's
+// findOpenPRForCluster — same matching contract). OpenedAt is the upstream
+// PR's createdAt timestamp (RFC3339 string from the provider).
+type PendingRegistration struct {
+	ClusterName string `json:"cluster_name"`
+	PRURL       string `json:"pr_url"`
+	Branch      string `json:"branch"`
+	OpenedAt    string `json:"opened_at"`
+}
+
 // ClustersResponse is the API response for listing clusters.
+//
+// PendingRegistrations is always a non-nil slice (default `[]`) — V125-1.4
+// hit a nil-array crash on the frontend's similar dry-run path; we do not
+// repeat the lesson here. An empty slice means there are no open
+// registration PRs (or the provider call degraded; see the handler for the
+// V124-22 dignified-degrade pattern).
 type ClustersResponse struct {
-	Clusters    []Cluster           `json:"clusters"`
-	HealthStats *ClusterHealthStats `json:"health_stats,omitempty"`
+	Clusters             []Cluster             `json:"clusters"`
+	HealthStats          *ClusterHealthStats   `json:"health_stats,omitempty"`
+	PendingRegistrations []PendingRegistration `json:"pending_registrations"`
 }
 
 // ClusterAddonInfo holds combined information about an addon in a specific cluster.

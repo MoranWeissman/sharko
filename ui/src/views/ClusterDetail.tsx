@@ -474,7 +474,46 @@ export function ClusterDetail() {
     return <LoadingState message="Loading cluster details..." />;
   }
 
+  // V125-1.5 / BUG-055 — defensive guard for the pending-PR pseudo-row
+  // case. Pre-V125-1.5 you could click a "discovered" cluster whose
+  // registration PR hadn't merged yet; this page would 404 + render the
+  // raw error string with a Retry button that always failed. The
+  // user-facing pre-V125-1.5 wording was "Failed to load comparison for
+  // cluster: <name>" — technically true, useless to act on.
+  //
+  // We can't reliably distinguish "404 because pending PR" from "404
+  // because misspelled URL" from this component (we don't have the
+  // pending-registrations list cached). Showing a single empty state with
+  // a link back to /clusters is the right minimum: the operator gets one
+  // click to the surface that DOES know about pending PRs.
   if (error) {
+    const lower = error.toLowerCase();
+    const looksLikeNotFound =
+      lower.includes('not found') ||
+      lower.includes('404') ||
+      lower.includes('cluster not found');
+    if (looksLikeNotFound) {
+      return (
+        <EmptyState
+          title={`Cluster "${name}" not found`}
+          description={
+            'This cluster is not in managed-clusters.yaml. ' +
+            'It may have been registered via a pending PR that has not yet merged. ' +
+            'Open the Clusters page and look under "Pending Registrations" for an open PR.'
+          }
+          action={
+            <button
+              type="button"
+              onClick={() => navigate('/clusters')}
+              className="inline-flex items-center gap-2 rounded-md bg-[#0a2a4a] px-4 py-2 text-sm font-semibold text-white hover:bg-[#0d3558] dark:bg-blue-700 dark:hover:bg-blue-600"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Back to Clusters
+            </button>
+          }
+        />
+      );
+    }
     return <ErrorState message={error} onRetry={fetchData} />;
   }
 

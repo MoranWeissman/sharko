@@ -18,9 +18,21 @@ export interface ClusterHealthStats {
   not_in_git: number
 }
 
+export interface PendingRegistration {
+  cluster_name: string
+  pr_url: string
+  branch: string
+  opened_at: string
+}
+
 export interface ClustersResponse {
   clusters: Cluster[]
   health_stats?: ClusterHealthStats
+  // V125-1.5: open cluster-registration PRs whose values-file changes
+  // have NOT yet merged. Optional with `?` for defensive forward-compat —
+  // an older server that pre-dates this field must not crash a newer FE.
+  // The runtime code reads this defensively (`?? []`) at every callsite.
+  pending_registrations?: PendingRegistration[]
 }
 
 export interface ClusterAddonInfo {

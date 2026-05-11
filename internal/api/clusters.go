@@ -38,6 +38,37 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// V125-1.5 — resolve pending-registration PRs and prune any
+	// pending-cluster names from the `not_in_git` cluster set. The Sharko
+	// argosecrets reconciler can create the ArgoCD cluster secret BEFORE
+	// the values-file PR merges (see internal/orchestrator/cluster.go),
+	// which makes the pending cluster appear in ArgoCD's cluster list.
+	// Without this prune, the FE would render the same cluster in both the
+	// new "Pending registrations" surface AND the "Discovered clusters /
+	// not_in_git" surface — BUG-052.
+	pending := resolvePendingRegistrations(r.Context(), gp, s.gitopsCfg.CommitPrefix)
+	resp.PendingRegistrations = pending
+	if len(pending) > 0 {
+		pendingNames := make(map[string]struct{}, len(pending))
+		for _, p := range pending {
+			pendingNames[p.ClusterName] = struct{}{}
+		}
+		filtered := resp.Clusters[:0]
+		for _, c := range resp.Clusters {
+			// Only prune clusters that are in the "not_in_git" lane. A
+			// managed cluster that happens to share a name with an open
+			// register-PR (idempotent retry case) is legitimately on the
+			// managed list and must not disappear.
+			if !c.Managed && c.ConnectionStatus == "not_in_git" {
+				if _, hit := pendingNames[c.Name]; hit {
+					continue
+				}
+			}
+			filtered = append(filtered, c)
+		}
+		resp.Clusters = filtered
+	}
+
 	qp := parseQueryParams(r)
 
 	// Apply filter before pagination.
