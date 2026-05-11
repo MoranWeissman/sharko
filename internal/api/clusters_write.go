@@ -8,12 +8,14 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/gitops"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
+	"github.com/MoranWeissman/sharko/internal/prtracker"
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
 )
 
@@ -118,6 +120,7 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 	}
 
 	orch := orchestrator.New(&s.gitMu, s.credProvider, ac, git, s.gitopsCfg, s.repoPaths, nil)
+	s.attachPRTracker(orch)
 	orch.SetSecretManagement(s.addonSecretDefs, s.secretFetcher, remoteclient.NewClientFromKubeconfig)
 	if len(s.defaultAddons) > 0 {
 		orch.SetDefaultAddons(s.defaultAddons)
@@ -228,6 +231,7 @@ func (s *Server) handleDeregisterCluster(w http.ResponseWriter, r *http.Request)
 	req.Name = name
 
 	orch := orchestrator.New(&s.gitMu, s.credProvider, ac, git, s.gitopsCfg, s.repoPaths, nil)
+	s.attachPRTracker(orch)
 	orch.SetSecretManagement(s.addonSecretDefs, s.secretFetcher, remoteclient.NewClientFromKubeconfig)
 	if s.argoSecretManager != nil {
 		roleARN := ""
@@ -372,6 +376,30 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 			return
 		}
 
+		// V125-1-6: secret_path update bypasses orchestrator.commitChanges
+		// (it's a metadata-only change), so the dashboard PR-tracker write
+		// is performed inline. Skipped silently when no tracker is wired
+		// (test seam / no in-cluster cmstore).
+		if s.prTracker != nil && pr != nil {
+			user := r.Header.Get("X-Sharko-User")
+			if user == "" {
+				user = "system"
+			}
+			_ = s.prTracker.TrackPR(ctx, prtracker.PRInfo{
+				PRID:       pr.ID,
+				PRUrl:      pr.URL,
+				PRBranch:   branchName,
+				PRTitle:    fmt.Sprintf("Update secret_path for cluster %s", name),
+				PRBase:     s.gitopsCfg.BaseBranch,
+				Cluster:    name,
+				Operation:  "update-cluster",
+				User:       user,
+				Source:     "api",
+				CreatedAt:  time.Now(),
+				LastStatus: "open",
+			})
+		}
+
 		// Auto-merge if configured.
 		if s.gitopsCfg.PRAutoMerge && pr != nil {
 			_ = git.MergePullRequest(ctx, pr.ID)
@@ -393,6 +421,7 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 	}
 
 	orch := orchestrator.New(&s.gitMu, s.credProvider, ac, git, s.gitopsCfg, s.repoPaths, nil)
+	s.attachPRTracker(orch)
 	orch.SetSecretManagement(s.addonSecretDefs, s.secretFetcher, remoteclient.NewClientFromKubeconfig)
 	// Region is empty — PATCH only updates addon labels, not cluster metadata.
 	// Region is set during RegisterCluster and not exposed via the update API.
@@ -472,6 +501,7 @@ func (s *Server) handleRefreshClusterCredentials(w http.ResponseWriter, r *http.
 	}
 
 	orch := orchestrator.New(&s.gitMu, s.credProvider, ac, nil, s.gitopsCfg, s.repoPaths, nil)
+	s.attachPRTracker(orch)
 	if err := orch.RefreshClusterCredentials(r.Context(), name, serverURL); err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return

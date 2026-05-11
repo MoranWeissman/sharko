@@ -71,6 +71,7 @@ func (s *Server) handleEnableAddon(w http.ResponseWriter, r *http.Request) {
 	req.Addon = addonName
 
 	orch := orchestrator.New(&s.gitMu, s.credProvider, ac, git, s.gitopsCfg, s.repoPaths, nil)
+	s.attachPRTracker(orch)
 	orch.SetSecretManagement(s.addonSecretDefs, s.secretFetcher, remoteclient.NewClientFromKubeconfig)
 	if s.argoSecretManager != nil {
 		roleARN := ""
@@ -173,6 +174,7 @@ func (s *Server) handleDisableAddon(w http.ResponseWriter, r *http.Request) {
 	req.Addon = addonName
 
 	orch := orchestrator.New(&s.gitMu, s.credProvider, ac, git, s.gitopsCfg, s.repoPaths, nil)
+	s.attachPRTracker(orch)
 	orch.SetSecretManagement(s.addonSecretDefs, s.secretFetcher, remoteclient.NewClientFromKubeconfig)
 	if s.argoSecretManager != nil {
 		roleARN := ""

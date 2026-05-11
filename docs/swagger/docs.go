@@ -5252,7 +5252,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns all tracked pull requests with optional filters",
+                "description": "Returns all tracked pull requests with optional filters. Sorted by created_at descending.",
                 "produces": [
                     "application/json"
                 ],
@@ -5284,11 +5284,23 @@ const docTemplate = `{
                         "description": "Filter by user",
                         "name": "user",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated list of operation codes to include (e.g. addon-add,values-edit). Empty = all.",
+                        "name": "operation",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Maximum entries to return (default 100, hard cap 500)",
+                        "name": "limit",
+                        "in": "query"
                     }
                 ],
                 "responses": {
                     "200": {
-                        "description": "List of tracked PRs",
+                        "description": "List of tracked PRs (sorted newest-first)",
                         "schema": {
                             "$ref": "#/definitions/internal_api.PRListResponse"
                         }
@@ -7862,6 +7874,9 @@ const docTemplate = `{
         "internal_api.PRListResponse": {
             "type": "object",
             "properties": {
+                "limit": {
+                    "type": "integer"
+                },
                 "prs": {
                     "type": "array",
                     "items": {

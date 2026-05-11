@@ -27,6 +27,30 @@ type ToolFunction struct {
 	Parameters  json.RawMessage `json:"parameters"`
 }
 
+// ToolPRTracker is the subset of prtracker.Tracker that the AI write tools
+// use to surface the PRs they create on the dashboard PR panel. Defined
+// locally to avoid an import cycle (internal/ai cannot import
+// internal/prtracker because the audit dependency would close back).
+// V125-1-6.
+type ToolPRTracker interface {
+	TrackPR(ctx context.Context, pr ToolTrackedPR) error
+}
+
+// ToolTrackedPR mirrors prtracker.PRInfo for the small subset the AI write
+// tools need. The api-side adapter converts this back to prtracker.PRInfo.
+type ToolTrackedPR struct {
+	PRID      int
+	PRUrl     string
+	PRBranch  string
+	PRTitle   string
+	PRBase    string
+	Cluster   string
+	Addon     string
+	Operation string
+	User      string
+	Source    string
+}
+
 // ToolExecutor can execute tools against the platform's data sources.
 type ToolExecutor struct {
 	parser              *config.Parser
@@ -36,6 +60,7 @@ type ToolExecutor struct {
 	memory              *MemoryStore
 	connections         map[string]gitprovider.GitProvider // named connections for multi-repo operations
 	managedClustersPath string                             // path in Git repo to managed-clusters.yaml
+	prTracker           ToolPRTracker                      // optional — surface AI-tool PRs on the dashboard panel (V125-1-6)
 }
 
 // NewToolExecutor creates a new ToolExecutor with the given providers.
@@ -55,6 +80,14 @@ func NewToolExecutor(gp gitprovider.GitProvider, ac *argocd.Client, memory *Memo
 		connections:         connections,
 		managedClustersPath: managedClustersPath,
 	}
+}
+
+// SetPRTracker wires the dashboard PR tracker into the executor so PRs
+// created by the write tools (enable_addon, disable_addon,
+// update_addon_version) surface on the Pull Requests panel under the
+// "AI" filter chip. nil disables tracking (test seam).
+func (e *ToolExecutor) SetPRTracker(t ToolPRTracker) {
+	e.prTracker = t
 }
 
 // resolveProvider returns the GitProvider for the given connection name,

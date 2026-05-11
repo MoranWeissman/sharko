@@ -150,6 +150,7 @@ func (s *Server) runInitOperation(
 	templateFS fs.FS,
 ) {
 	orch := orchestrator.New(&s.gitMu, s.credProvider, ac, gp, gitopsCfg, s.repoPaths, templateFS)
+	s.attachPRTracker(orch)
 
 	s.opsStore.Start(sessionID)
 

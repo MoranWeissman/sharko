@@ -102,6 +102,23 @@ func (e *ToolExecutor) enableAddon(ctx context.Context, connectionName, clusterN
 		return "", fmt.Errorf("creating pull request: %w", err)
 	}
 
+	// V125-1-6: surface the AI assistant's PR on the dashboard panel
+	// under the "AI" filter chip.
+	if e.prTracker != nil {
+		_ = e.prTracker.TrackPR(ctx, ToolTrackedPR{
+			PRID:      pr.ID,
+			PRUrl:     pr.URL,
+			PRBranch:  branch,
+			PRTitle:   title,
+			PRBase:    "main",
+			Cluster:   clusterName,
+			Addon:     addonName,
+			Operation: "ai-tool-enable",
+			User:      "ai-agent",
+			Source:    "ai",
+		})
+	}
+
 	return fmt.Sprintf("Pull request created: %s", pr.URL), nil
 }
 
@@ -144,6 +161,22 @@ func (e *ToolExecutor) disableAddon(ctx context.Context, connectionName, cluster
 		return "", fmt.Errorf("creating pull request: %w", err)
 	}
 
+	// V125-1-6: surface AI-tool disable PR on the dashboard.
+	if e.prTracker != nil {
+		_ = e.prTracker.TrackPR(ctx, ToolTrackedPR{
+			PRID:      pr.ID,
+			PRUrl:     pr.URL,
+			PRBranch:  branch,
+			PRTitle:   title,
+			PRBase:    "main",
+			Cluster:   clusterName,
+			Addon:     addonName,
+			Operation: "ai-tool-disable",
+			User:      "ai-agent",
+			Source:    "ai",
+		})
+	}
+
 	return fmt.Sprintf("Pull request created: %s", pr.URL), nil
 }
 
@@ -184,6 +217,21 @@ func (e *ToolExecutor) updateAddonVersion(ctx context.Context, connectionName, a
 	pr, err := gp.CreatePullRequest(ctx, title, body, branch, "main")
 	if err != nil {
 		return "", fmt.Errorf("creating pull request: %w", err)
+	}
+
+	// V125-1-6: surface AI-tool catalog-version-update PR on the dashboard.
+	if e.prTracker != nil {
+		_ = e.prTracker.TrackPR(ctx, ToolTrackedPR{
+			PRID:      pr.ID,
+			PRUrl:     pr.URL,
+			PRBranch:  branch,
+			PRTitle:   title,
+			PRBase:    "main",
+			Addon:     addonName,
+			Operation: "ai-tool-update",
+			User:      "ai-agent",
+			Source:    "ai",
+		})
 	}
 
 	return fmt.Sprintf("Pull request created: %s", pr.URL), nil

@@ -34,7 +34,11 @@ func (o *Orchestrator) UpgradeAddonGlobal(ctx context.Context, addonName, newVer
 		catalogPath: updated,
 	}
 
-	gitResult, err := o.commitChanges(ctx, files, nil, fmt.Sprintf("upgrade addon %s to %s", addonName, newVersion))
+	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("upgrade addon %s to %s", addonName, newVersion), PRMetadata{
+		OperationCode: "addon-upgrade",
+		Addon:         addonName,
+		Title:         fmt.Sprintf("Upgrade %s to %s", addonName, newVersion),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("committing upgrade of addon %q to %s: %w", addonName, newVersion, err)
 	}
@@ -67,7 +71,12 @@ func (o *Orchestrator) UpgradeAddonCluster(ctx context.Context, addonName, clust
 		valuesPath: []byte(updated),
 	}
 
-	gitResult, err := o.commitChanges(ctx, files, nil, fmt.Sprintf("upgrade addon %s to %s on cluster %s", addonName, newVersion, clusterName))
+	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("upgrade addon %s to %s on cluster %s", addonName, newVersion, clusterName), PRMetadata{
+		OperationCode: "addon-upgrade",
+		Addon:         addonName,
+		Cluster:       clusterName,
+		Title:         fmt.Sprintf("Upgrade %s to %s on cluster %s", addonName, newVersion, clusterName),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("committing upgrade of addon %q to %s on cluster %q: %w", addonName, newVersion, clusterName, err)
 	}
@@ -104,7 +113,10 @@ func (o *Orchestrator) UpgradeAddons(ctx context.Context, upgrades map[string]st
 		catalogPath: content,
 	}
 
-	gitResult, err := o.commitChanges(ctx, files, nil, fmt.Sprintf("upgrade addons: %s", strings.Join(names, ", ")))
+	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("upgrade addons: %s", strings.Join(names, ", ")), PRMetadata{
+		OperationCode: "addon-upgrade",
+		Title:         fmt.Sprintf("Batch upgrade addons: %s", strings.Join(names, ", ")),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("committing batch addon upgrade: %w", err)
 	}

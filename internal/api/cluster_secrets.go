@@ -145,6 +145,7 @@ func (s *Server) handleRefreshClusterSecrets(w http.ResponseWriter, r *http.Requ
 	}
 
 	orch := orchestrator.New(&s.gitMu, s.credProvider, ac, git, s.gitopsCfg, s.repoPaths, nil)
+	s.attachPRTracker(orch)
 	orch.SetSecretManagement(s.addonSecretDefs, s.secretFetcher, remoteclient.NewClientFromKubeconfig)
 
 	created, failed, secretErr := orch.CreateAddonSecretsForCluster(r.Context(), creds.Raw, allEnabled)

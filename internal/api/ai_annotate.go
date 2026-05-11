@@ -29,13 +29,11 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/helm"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
-	"github.com/MoranWeissman/sharko/internal/prtracker"
 )
 
 // annotateAddonValuesResponse is the success body of the manual annotate
@@ -174,30 +172,17 @@ func (s *Server) handleAnnotateAddonValues(w http.ResponseWriter, r *http.Reques
 	)
 
 	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
-	result, err := orch.SetGlobalAddonValues(ctx, name, string(generated))
+	s.attachPRTracker(orch)
+	// V125-1-6: route through the WithOp variant so the resulting PR
+	// surfaces under the "AI" / Addons category on the dashboard PR
+	// panel rather than the generic "values-edit" bucket.
+	result, err := orch.SetGlobalAddonValuesWithOp(
+		ctx, name, string(generated), "ai-annotate",
+		fmt.Sprintf("AI annotate values for %s@%s", chart, version),
+	)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
-	}
-
-	if s.prTracker != nil && result != nil && result.PRID > 0 {
-		user := r.Header.Get("X-Sharko-User")
-		if user == "" {
-			user = "system"
-		}
-		_ = s.prTracker.TrackPR(ctx, prtracker.PRInfo{
-			PRID:       result.PRID,
-			PRUrl:      result.PRUrl,
-			PRBranch:   result.Branch,
-			PRTitle:    fmt.Sprintf("AI annotate values for %s@%s", chart, version),
-			PRBase:     "main",
-			Addon:      name,
-			Operation:  "values-ai-annotate",
-			User:       user,
-			Source:     "api",
-			CreatedAt:  time.Now(),
-			LastStatus: "open",
-		})
 	}
 
 	state := "ok"
@@ -295,30 +280,18 @@ func (s *Server) handleSetAddonAIOptOut(w http.ResponseWriter, r *http.Request) 
 	updated := rewriteHeaderOptOut(existing, req.OptOut)
 
 	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
-	result, err := orch.SetGlobalAddonValues(ctx, name, string(updated))
+	s.attachPRTracker(orch)
+	// V125-1-6: AI opt-out toggle is a header-only mutation but it's
+	// still an AI-annotate-related action — file it under the same
+	// "ai-annotate" bucket so the dashboard shows it next to its sibling
+	// AI annotate runs rather than buried in the generic values-edit list.
+	result, err := orch.SetGlobalAddonValuesWithOp(
+		ctx, name, string(updated), "ai-annotate",
+		fmt.Sprintf("Toggle AI opt-out for %s (%s)", name, optOutLabel(req.OptOut)),
+	)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
-	}
-
-	if s.prTracker != nil && result != nil && result.PRID > 0 {
-		user := r.Header.Get("X-Sharko-User")
-		if user == "" {
-			user = "system"
-		}
-		_ = s.prTracker.TrackPR(ctx, prtracker.PRInfo{
-			PRID:       result.PRID,
-			PRUrl:      result.PRUrl,
-			PRBranch:   result.Branch,
-			PRTitle:    fmt.Sprintf("Toggle AI opt-out for %s (%s)", name, optOutLabel(req.OptOut)),
-			PRBase:     "main",
-			Addon:      name,
-			Operation:  "values-ai-opt-out",
-			User:       user,
-			Source:     "api",
-			CreatedAt:  time.Now(),
-			LastStatus: "open",
-		})
 	}
 
 	audit.Enrich(ctx, audit.Fields{

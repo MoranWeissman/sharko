@@ -33,14 +33,12 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/helm"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
-	"github.com/MoranWeissman/sharko/internal/prtracker"
 
 	"gopkg.in/yaml.v3"
 )
@@ -226,30 +224,16 @@ func (s *Server) handleSetAddonValues(w http.ResponseWriter, r *http.Request) {
 	}
 
 	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
-	result, err := orch.SetGlobalAddonValues(ctx, name, yamlPayload)
+	s.attachPRTracker(orch)
+	// V125-1-6: route through the WithOp variant so the dashboard PR
+	// panel filter chip reflects the requested operation (manual edit vs.
+	// upstream refresh) rather than the generic values-edit default.
+	// values-refresh-upstream stays under the Addons category bucket on
+	// the FE side.
+	result, err := orch.SetGlobalAddonValuesWithOp(ctx, name, yamlPayload, prOperation, prTitle)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
-	}
-
-	if s.prTracker != nil && result != nil && result.PRID > 0 {
-		user := r.Header.Get("X-Sharko-User")
-		if user == "" {
-			user = "system"
-		}
-		_ = s.prTracker.TrackPR(ctx, prtracker.PRInfo{
-			PRID:       result.PRID,
-			PRUrl:      result.PRUrl,
-			PRBranch:   result.Branch,
-			PRTitle:    prTitle,
-			PRBase:     "main",
-			Addon:      name,
-			Operation:  prOperation,
-			User:       user,
-			Source:     "api",
-			CreatedAt:  time.Now(),
-			LastStatus: "open",
-		})
 	}
 
 	audit.Enrich(ctx, audit.Fields{
@@ -318,32 +302,15 @@ func (s *Server) handleSetClusterAddonValues(w http.ResponseWriter, r *http.Requ
 	}
 
 	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
+	s.attachPRTracker(orch)
 	result, err := orch.SetClusterAddonValues(ctx, cluster, addonName, req.Values)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 
-	if s.prTracker != nil && result != nil && result.PRID > 0 {
-		user := r.Header.Get("X-Sharko-User")
-		if user == "" {
-			user = "system"
-		}
-		_ = s.prTracker.TrackPR(ctx, prtracker.PRInfo{
-			PRID:       result.PRID,
-			PRUrl:      result.PRUrl,
-			PRBranch:   result.Branch,
-			PRTitle:    fmt.Sprintf("Update %s overrides on cluster %s", addonName, cluster),
-			PRBase:     "main",
-			Cluster:    cluster,
-			Addon:      addonName,
-			Operation:  "values-edit",
-			User:       user,
-			Source:     "api",
-			CreatedAt:  time.Now(),
-			LastStatus: "open",
-		})
-	}
+	// V125-1-6: TrackPR centralized in orchestrator.SetClusterAddonValues
+	// (operation=values-edit, addon+cluster set automatically).
 
 	audit.Enrich(ctx, audit.Fields{
 		Event:    "cluster_addon_values_edited",

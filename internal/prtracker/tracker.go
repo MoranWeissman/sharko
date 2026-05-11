@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -139,12 +140,45 @@ func (t *Tracker) GetPR(ctx context.Context, prID int) (*PRInfo, error) {
 }
 
 // ListPRs returns all tracked PRs, optionally filtered.
+//
+// V125-1-6: callers that need to filter by Operation should use
+// ListPRsFiltered, which takes an additional operations slice. ListPRs
+// is preserved for backward compatibility (no Operation filter applied).
 func (t *Tracker) ListPRs(ctx context.Context, status, cluster, addon, user string) ([]PRInfo, error) {
+	return t.ListPRsFiltered(ctx, status, cluster, addon, user, nil)
+}
+
+// ListPRsFiltered returns all tracked PRs filtered by status, cluster,
+// addon, user and (optional) operations. An empty/nil operations slice
+// means "no operation filter" (return PRs of any operation). When set,
+// only PRs whose Operation matches one of the supplied codes are
+// returned.
+func (t *Tracker) ListPRsFiltered(ctx context.Context, status, cluster, addon, user string, operations []string) ([]PRInfo, error) {
 	data, err := t.cmStore.Read(ctx)
 	if err != nil {
 		return nil, err
 	}
 	prs := t.extractPRs(data)
+
+	var opSet map[string]struct{}
+	if len(operations) > 0 {
+		built := make(map[string]struct{}, len(operations))
+		for _, op := range operations {
+			op = strings.TrimSpace(op)
+			if op == "" {
+				continue
+			}
+			built[op] = struct{}{}
+		}
+		// Only enable the filter if at least one non-empty operation
+		// survived trimming. An all-blank slice is treated as "no
+		// filter" — matches the CSV-handler intent where the user
+		// passed `?operation=` or `?operation=  ,  `.
+		if len(built) > 0 {
+			opSet = built
+		}
+	}
+
 	var result []PRInfo
 	for _, pr := range prs {
 		if status != "" && pr.LastStatus != status {
@@ -158,6 +192,11 @@ func (t *Tracker) ListPRs(ctx context.Context, status, cluster, addon, user stri
 		}
 		if user != "" && pr.User != user {
 			continue
+		}
+		if opSet != nil {
+			if _, ok := opSet[pr.Operation]; !ok {
+				continue
+			}
 		}
 		result = append(result, pr)
 	}

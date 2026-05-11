@@ -200,7 +200,11 @@ func (o *Orchestrator) adoptSingleCluster(ctx context.Context, name, serverURL s
 	if autoMerge {
 		o.gitops.PRAutoMerge = true
 	}
-	gitResult, gitErr := o.commitChanges(ctx, files, nil, fmt.Sprintf("adopt cluster %s", name))
+	gitResult, gitErr := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("adopt cluster %s", name), PRMetadata{
+		OperationCode: "adopt-cluster",
+		Cluster:       name,
+		Title:         fmt.Sprintf("Adopt cluster %s", name),
+	})
 	o.gitops.PRAutoMerge = origAutoMerge
 
 	if gitErr != nil {

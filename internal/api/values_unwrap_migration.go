@@ -41,7 +41,6 @@ import (
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
-	"github.com/MoranWeissman/sharko/internal/prtracker"
 )
 
 // unwrapGlobalsResult is the per-file outcome surfaced back to the caller.
@@ -192,8 +191,18 @@ func (s *Server) handleUnwrapGlobalValues(w http.ResponseWriter, r *http.Request
 	}
 
 	// Step 3: open ONE PR with all migrations.
+	// V125-1-6: route through CommitFilesAsPRWithMeta so the PR tracks
+	// under the values-edit dashboard bucket (it's a global-values
+	// rewrite, semantically the same family as a manual edit).
 	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
-	prResult, perr := orch.CommitFilesAsPR(ctx, files, fmt.Sprintf("unwrap legacy global values (%d file(s))", migratedCount))
+	s.attachPRTracker(orch)
+	prResult, perr := orch.CommitFilesAsPRWithMeta(ctx, files,
+		fmt.Sprintf("unwrap legacy global values (%d file(s))", migratedCount),
+		orchestrator.PRMetadata{
+			OperationCode: "values-edit",
+			Title:         fmt.Sprintf("Unwrap legacy global values (%d file(s))", migratedCount),
+		},
+	)
 	if perr != nil {
 		writeError(w, http.StatusBadGateway, "opening migration PR: "+perr.Error())
 		return
@@ -202,25 +211,6 @@ func (s *Server) handleUnwrapGlobalValues(w http.ResponseWriter, r *http.Request
 	resp.PRID = prResult.PRID
 	resp.Branch = prResult.Branch
 	resp.Merged = prResult.Merged
-
-	if s.prTracker != nil && prResult.PRID > 0 {
-		user := r.Header.Get("X-Sharko-User")
-		if user == "" {
-			user = "system"
-		}
-		_ = s.prTracker.TrackPR(ctx, prtracker.PRInfo{
-			PRID:       prResult.PRID,
-			PRUrl:      prResult.PRUrl,
-			PRBranch:   prResult.Branch,
-			PRTitle:    fmt.Sprintf("Unwrap legacy global values (%d file(s))", migratedCount),
-			PRBase:     "main",
-			Operation:  "values-unwrap-globals",
-			User:       user,
-			Source:     "api",
-			CreatedAt:  time.Now(),
-			LastStatus: "open",
-		})
-	}
 
 	writeJSON(w, http.StatusOK, withAttributionWarning(resp, tokRes))
 }

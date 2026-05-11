@@ -7,13 +7,11 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/helm"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
-	"github.com/MoranWeissman/sharko/internal/prtracker"
 )
 
 // handleAddAddon godoc
@@ -134,6 +132,7 @@ func (s *Server) handleAddAddon(w http.ResponseWriter, r *http.Request) {
 	}
 
 	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
+	s.attachPRTracker(orch)
 	result, err := orch.AddAddon(ctx, req)
 	if err != nil {
 		// Surface "already in catalog" as 409 with a structured body so the
@@ -163,25 +162,10 @@ func (s *Server) handleAddAddon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.prTracker != nil && result != nil && result.PRID > 0 {
-		user := r.Header.Get("X-Sharko-User")
-		if user == "" {
-			user = "system"
-		}
-		_ = s.prTracker.TrackPR(ctx, prtracker.PRInfo{
-			PRID:       result.PRID,
-			PRUrl:      result.PRUrl,
-			PRBranch:   result.Branch,
-			PRTitle:    "Add addon " + req.Name,
-			PRBase:     "main",
-			Addon:      req.Name,
-			Operation:  "addon-add",
-			User:       user,
-			Source:     "api",
-			CreatedAt:  time.Now(),
-			LastStatus: "open",
-		})
-	}
+	// V125-1-6: TrackPR is now centralized inside orchestrator.AddAddon
+	// via commitChangesWithMeta — the handler-level call has been removed
+	// to avoid double-tracking. Operation=addon-add and Addon=req.Name are
+	// set automatically by the orchestrator.
 
 	// Audit detail uses key=value to stay grep-friendly. `source` defaults to
 	// "manual" when the request body doesn't include it (raw Add Addon form
@@ -313,6 +297,7 @@ func (s *Server) handleRemoveAddon(w http.ResponseWriter, r *http.Request) {
 	}
 
 	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
+	s.attachPRTracker(orch)
 	result, err := orch.RemoveAddon(ctx, name)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
@@ -373,6 +358,7 @@ func (s *Server) handleConfigureAddon(w http.ResponseWriter, r *http.Request) {
 	req.Name = name
 
 	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
+	s.attachPRTracker(orch)
 	result, err := orch.ConfigureAddon(ctx, req)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {

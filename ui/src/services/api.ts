@@ -456,12 +456,27 @@ export async function operationHeartbeat(id: string): Promise<void> {
 
 // --- Tracked PRs (Story 5.3) ---
 
-export async function fetchTrackedPRs(filters?: { status?: string; cluster?: string; user?: string }) {
+// V125-1-6 extends the filter signature with `operation` (CSV string —
+// the BE accepts a comma-separated list of canonical Operation codes)
+// and `limit` (server-side cap; default 100, hard cap 500). The
+// PullRequestsPanel uses these for the new filter chips and the
+// "View all on GitHub →" escape hatch.
+export async function fetchTrackedPRs(filters?: {
+  status?: string
+  cluster?: string
+  user?: string
+  addon?: string
+  operation?: string
+  limit?: number
+}) {
   const params = new URLSearchParams()
   if (filters) {
     if (filters.status) params.set('status', filters.status)
     if (filters.cluster) params.set('cluster', filters.cluster)
     if (filters.user) params.set('user', filters.user)
+    if (filters.addon) params.set('addon', filters.addon)
+    if (filters.operation) params.set('operation', filters.operation)
+    if (filters.limit) params.set('limit', String(filters.limit))
   }
   const qs = params.toString()
   return fetchJSON<TrackedPRsResponse>(`/prs${qs ? `?${qs}` : ''}`)

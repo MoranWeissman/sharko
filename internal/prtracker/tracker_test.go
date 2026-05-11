@@ -246,6 +246,86 @@ func TestPollSinglePR(t *testing.T) {
 	}
 }
 
+// V125-1-6: ensure the new Operation enum round-trips through the
+// ConfigMap encoding without loss. Older client code that reads the
+// stored JSON must still see the canonical string verbatim.
+func TestPRInfo_OperationRoundtrip(t *testing.T) {
+	gp := &mockGitProvider{statuses: map[int]string{}}
+	tracker, _ := newTestTracker(gp)
+	ctx := context.Background()
+
+	want := PRInfo{
+		PRID:       301,
+		Cluster:    "prod-eu",
+		Operation:  OpRegisterCluster, // canonical enum string
+		User:       "admin",
+		LastStatus: "open",
+	}
+	if err := tracker.TrackPR(ctx, want); err != nil {
+		t.Fatalf("TrackPR: %v", err)
+	}
+
+	got, err := tracker.GetPR(ctx, want.PRID)
+	if err != nil {
+		t.Fatalf("GetPR: %v", err)
+	}
+	if got == nil {
+		t.Fatal("GetPR returned nil")
+	}
+	if got.Operation != "register-cluster" {
+		t.Errorf("Operation roundtrip mismatch: got %q want %q", got.Operation, "register-cluster")
+	}
+}
+
+// V125-1-6: ListPRsFiltered with ?operation=<csv>. Empty operations
+// slice means "no filter" and behaves identically to ListPRs.
+func TestListPRsFiltered_OperationCSV(t *testing.T) {
+	gp := &mockGitProvider{statuses: map[int]string{}}
+	tracker, _ := newTestTracker(gp)
+	ctx := context.Background()
+
+	mustTrack := func(id int, op string) {
+		t.Helper()
+		if err := tracker.TrackPR(ctx, PRInfo{PRID: id, Operation: op, LastStatus: "open"}); err != nil {
+			t.Fatalf("TrackPR(%d,%s): %v", id, op, err)
+		}
+	}
+	mustTrack(1, "register-cluster")
+	mustTrack(2, "addon-add")
+	mustTrack(3, "addon-upgrade")
+	mustTrack(4, "init-repo")
+
+	// No filter → all four
+	all, err := tracker.ListPRsFiltered(ctx, "", "", "", "", nil)
+	if err != nil {
+		t.Fatalf("ListPRsFiltered nil: %v", err)
+	}
+	if len(all) != 4 {
+		t.Errorf("expected 4 PRs, got %d", len(all))
+	}
+
+	// Two-element CSV → 2 matches
+	got, err := tracker.ListPRsFiltered(ctx, "", "", "", "", []string{"addon-add", "addon-upgrade"})
+	if err != nil {
+		t.Fatalf("ListPRsFiltered: %v", err)
+	}
+	if len(got) != 2 {
+		t.Errorf("expected 2 PRs, got %d", len(got))
+	}
+
+	// Empty-strings in CSV → silently dropped, behaves like nil filter
+	got, _ = tracker.ListPRsFiltered(ctx, "", "", "", "", []string{"", "   "})
+	if len(got) != 4 {
+		t.Errorf("expected 4 PRs (empty strings dropped), got %d", len(got))
+	}
+
+	// No matches → empty
+	got, _ = tracker.ListPRsFiltered(ctx, "", "", "", "", []string{"adopt-cluster"})
+	if len(got) != 0 {
+		t.Errorf("expected 0 PRs, got %d", len(got))
+	}
+}
+
 func TestReconcileOnStartup(t *testing.T) {
 	gp := &mockGitProvider{statuses: map[int]string{60: "merged"}}
 	tracker, events := newTestTracker(gp)

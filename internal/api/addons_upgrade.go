@@ -4,12 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
-	"github.com/MoranWeissman/sharko/internal/prtracker"
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
 )
 
@@ -68,6 +66,7 @@ func (s *Server) handleUpgradeAddon(w http.ResponseWriter, r *http.Request) {
 	}
 
 	orch := orchestrator.New(&s.gitMu, s.credProvider, ac, git, s.gitopsCfg, s.repoPaths, nil)
+	s.attachPRTracker(orch)
 	orch.SetSecretManagement(s.addonSecretDefs, s.secretFetcher, remoteclient.NewClientFromKubeconfig)
 
 	var result *orchestrator.GitResult
@@ -82,26 +81,7 @@ func (s *Server) handleUpgradeAddon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.prTracker != nil && result != nil && result.PRID > 0 {
-		user := r.Header.Get("X-Sharko-User")
-		if user == "" {
-			user = "system"
-		}
-		_ = s.prTracker.TrackPR(r.Context(), prtracker.PRInfo{
-			PRID:       result.PRID,
-			PRUrl:      result.PRUrl,
-			PRBranch:   result.Branch,
-			PRTitle:    "Upgrade " + addonName,
-			PRBase:     "main",
-			Cluster:    req.Cluster,
-			Addon:      addonName,
-			Operation:  "addon-upgrade",
-			User:       user,
-			Source:     "api",
-			CreatedAt:  time.Now(),
-			LastStatus: "open",
-		})
-	}
+	// V125-1-6: TrackPR centralized in orchestrator.UpgradeAddon{Global,Cluster}.
 
 	detail := fmt.Sprintf("to=%s", req.Version)
 	if req.Cluster != "" {
@@ -162,6 +142,7 @@ func (s *Server) handleUpgradeAddonsBatch(w http.ResponseWriter, r *http.Request
 	}
 
 	orch := orchestrator.New(&s.gitMu, s.credProvider, ac, git, s.gitopsCfg, s.repoPaths, nil)
+	s.attachPRTracker(orch)
 	orch.SetSecretManagement(s.addonSecretDefs, s.secretFetcher, remoteclient.NewClientFromKubeconfig)
 
 	result, err := orch.UpgradeAddons(r.Context(), req.Upgrades)
@@ -170,24 +151,7 @@ func (s *Server) handleUpgradeAddonsBatch(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if s.prTracker != nil && result != nil && result.PRID > 0 {
-		user := r.Header.Get("X-Sharko-User")
-		if user == "" {
-			user = "system"
-		}
-		_ = s.prTracker.TrackPR(r.Context(), prtracker.PRInfo{
-			PRID:       result.PRID,
-			PRUrl:      result.PRUrl,
-			PRBranch:   result.Branch,
-			PRTitle:    "Batch addon upgrade",
-			PRBase:     "main",
-			Operation:  "addon-upgrade",
-			User:       user,
-			Source:     "api",
-			CreatedAt:  time.Now(),
-			LastStatus: "open",
-		})
-	}
+	// V125-1-6: TrackPR centralized in orchestrator.UpgradeAddons (batch).
 
 	audit.Enrich(r.Context(), audit.Fields{
 		Event:    "addon_upgraded",

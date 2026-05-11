@@ -112,7 +112,11 @@ func (o *Orchestrator) AddAddon(ctx context.Context, req AddAddonRequest) (*GitR
 		}
 	}
 
-	gitResult, err := o.commitChanges(ctx, files, nil, fmt.Sprintf("add addon %s", req.Name))
+	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("add addon %s", req.Name), PRMetadata{
+		OperationCode: "addon-add",
+		Addon:         req.Name,
+		Title:         fmt.Sprintf("Add addon %s", req.Name),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("committing addon %q to Git: %w", req.Name, err)
 	}
@@ -146,7 +150,11 @@ func (o *Orchestrator) RemoveAddon(ctx context.Context, name string) (*GitResult
 	}
 	deletePaths := []string{globalValuesPath}
 
-	gitResult, err := o.commitChanges(ctx, files, deletePaths, fmt.Sprintf("remove addon %s", name))
+	gitResult, err := o.commitChangesWithMeta(ctx, files, deletePaths, fmt.Sprintf("remove addon %s", name), PRMetadata{
+		OperationCode: "addon-remove",
+		Addon:         name,
+		Title:         fmt.Sprintf("Remove addon %s", name),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("committing addon %q removal to Git: %w", name, err)
 	}

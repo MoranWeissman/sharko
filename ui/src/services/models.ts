@@ -934,6 +934,11 @@ export interface TrackedPR {
   pr_branch: string
   pr_title: string
   cluster?: string
+  // V125-1-6: addon attribution surfaced for the per-row badge.
+  addon?: string
+  // V125-1-6: canonical operation enum — see internal/prtracker/types.go
+  // for the full list. The dashboard PR-panel filter chips bucket
+  // operations into Clusters / Addons / Init / AI on the FE side.
   operation: string
   user: string
   source: string
@@ -944,6 +949,9 @@ export interface TrackedPR {
 
 export interface TrackedPRsResponse {
   prs: TrackedPR[]
+  // V125-1-6: server echoes the effective limit so the FE can render a
+  // "View all on GitHub →" escape hatch when the response is at the cap.
+  limit?: number
 }
 
 // --- Drift Alerts (Story 6.4) ---
