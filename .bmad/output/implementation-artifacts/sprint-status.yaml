@@ -107,8 +107,146 @@ development_status:
   epic-6-retrospective: optional
 
   # Epic 7: Production Readiness — V2.0.0 Release Gate
+  # Story 7-1 (e2e suite) EXPANDED 2026-05-13 — maintainer asked for "full!
+  # comprehensive! contains e2e full!" coverage in Go (rejecting bash-incremental
+  # plan + Python option). Story 7-1 now decomposes into 15 sub-stories under
+  # tests/e2e/. See `docs/design/2026-05-13-test-coverage-strategy.md` for the
+  # original gap analysis. API surface authoritative survey (2026-05-13):
+  # 128 endpoints across 95 distinct paths grouped into ~14 domains.
+  # Today's coverage: smoke.sh phases 1-7 (cluster orphan + managed lifecycles
+  # + read sweeps); rest is unit-tested only or untested. Sub-stories cover:
+  # harness foundation (kind multi-cluster create/destroy + sharko boot +
+  # in-memory git fixture + typed API client + auth helpers), per-domain
+  # lifecycle test files (cluster, catalog, addon-admin, addon-cluster,
+  # values, init, auth+RBAC, AI, dashboard, PRs+notifications), then
+  # smoke.sh phase 6+7 retirement, then Makefile/CI integration.
+  # Build tag: //go:build e2e (default `go test ./...` excludes them).
+  # Multi-cluster scenarios are first-class: harness owns kind lifecycle
+  # (no reliance on maintainer's dev clusters); sentinel labels prevent
+  # collision with sharko-target-1/2 used by smoke.sh.
+  # Branch strategy (proposed): cut `dev/v124-e2e-suite` off dev/v1.24-cleanup
+  # rather than absorb into PR #319 (already 30+ commits stale).
   epic-7: backlog
-  7-1-e2e-test-suite-kind-argocd: backlog
+  # 7-1.1 Harness — kind multi-cluster lifecycle. Provision 1 mgmt + N
+  # targets via kind config files; sentinel-label clusters as "sharko-e2e-test"
+  # so cleanup never touches non-test clusters. Implements:
+  # tests/e2e/harness/kind.go with KindCluster type + ProvisionCluster +
+  # ProvisionMultiCluster + DestroyAll + WaitReady. Per-suite shared default,
+  # per-test opt-in via flag. Hello-world: spin up 2 clusters, verify
+  # kubectl works for both, destroy both. NO sharko boot yet — pure infra.
+  7-1-1-harness-kind-multi-cluster-lifecycle: backlog
+  # 7-1.2 Harness — sharko boot + in-memory git fixture. Two sharko boot
+  # modes: (a) in-process via httptest.NewServer wrapping internal/api router
+  # for ~30s fast tests; (b) helm install for full-stack fidelity tests.
+  # Default in-process. In-memory git: tiny HTTP wrapper around go-git/go-git
+  # bare repo, served on 127.0.0.1:<random>; sharko configured to use it as
+  # GitOps backend. Live-GitHub backing as opt-in via E2E_GIT_BACKEND=github
+  # env var. Hello-world: boot sharko + git fixture, hit /health, register
+  # git as connection, verify connection appears in /connections list.
+  7-1-2-harness-sharko-boot-and-git-fixture: backlog
+  # 7-1.3 Harness — typed API client + auth + fixtures. Hand-rolled API
+  # client wrapper that imports internal/api request/response types directly
+  # (zero contract drift, no codegen tool dep). Methods: Login, RefreshToken,
+  # ListClusters, RegisterCluster, etc. Auto-retry on 401. Auth helpers
+  # bootstrap test users (admin/editor/viewer) at suite startup. Fixtures:
+  # kubeconfig builder (lift from smoke.sh Phase 6/7), Eventually(t, fn,
+  # timeout) polling helper, deterministic test-data generators with
+  # timestamp suffixes for collision-free reruns. First lifecycle test:
+  # register a kind target via the fixture flow.
+  7-1-3-harness-api-client-auth-fixtures: backlog
+  # 7-1.4 Cluster lifecycle tests. tests/e2e/lifecycle/cluster_test.go.
+  # Covers all 15 cluster endpoints: register (managed via auto-merge +
+  # orphan via close-PR), get, test, refresh, diagnose, history, comparison,
+  # config-diff, secrets, secrets/refresh, values, batch, discover, adopt,
+  # unadopt, orphan-delete. Multi-cluster scenarios: register 2 targets in
+  # parallel, batch ops across both, adopt-then-unadopt cycle. Ports +
+  # extends smoke.sh Phases 6+7 (which retire in 7-1.14).
+  7-1-4-cluster-lifecycle-tests: backlog
+  # 7-1.5 Catalog read tests. tests/e2e/lifecycle/catalog_test.go. Covers
+  # 12 catalog/marketplace endpoints: /catalog/addons (list + per-name +
+  # readme + project-readme + versions), /catalog/remote/{repo}/{name}
+  # variants, /catalog/repo-charts, /catalog/search, /catalog/sources
+  # (list + refresh), /catalog/validate, /catalog/reprobe. Marketplace
+  # add flow ends here too (validate URL → refresh sources → assert new
+  # entries appear). Pure read-heavy; minimal infra needed.
+  7-1-5-catalog-read-and-marketplace-tests: backlog
+  # 7-1.6 Custom-addon admin + addon-secrets tests.
+  # tests/e2e/lifecycle/addon_admin_test.go. Covers POST /addons (custom
+  # entry), PATCH /addons/{name}, DELETE /addons/{name}, GET /addons/list,
+  # GET /addons/catalog, GET /addons/{name}/changelog, version-matrix,
+  # unwrap-globals (POST), upgrade-batch (POST). Plus addon-secrets CRUD
+  # (GET/POST /addon-secrets, DELETE /addon-secrets/{addon}).
+  7-1-6-custom-addon-admin-and-secrets-tests: backlog
+  # 7-1.7 Per-cluster addon lifecycle tests.
+  # tests/e2e/lifecycle/addon_cluster_test.go. Register cluster (via 7-1.4
+  # fixture) → POST /clusters/{name}/addons/{addon} (enable) → wait for
+  # ArgoCD App synced → DELETE same path (disable) → verify removed.
+  # POST /addons/{name}/upgrade global flow. Per-cluster targeting with
+  # multi-cluster fixtures (verify upgrade applies to selected target only).
+  7-1-7-per-cluster-addon-lifecycle-tests: backlog
+  # 7-1.8 Values editor + AI opt-in flows.
+  # tests/e2e/lifecycle/values_test.go. Global values: GET/PUT
+  # /addons/{name}/values, GET /addons/{name}/values-schema, PUT
+  # /addons/{name}/values/ai-opt-out, POST /addons/{name}/values/annotate,
+  # POST /addons/{name}/values/preview-merge, GET .../recent-prs.
+  # Per-cluster: GET/PUT /clusters/{cluster}/addons/{name}/values,
+  # GET .../recent-prs.
+  7-1-8-values-editor-and-ai-flows-tests: backlog
+  # 7-1.9 Init + connections + operations lifecycle.
+  # tests/e2e/lifecycle/init_test.go. Connections: GET/POST /connections/,
+  # PUT/DELETE /connections/{name}, POST /connections/active,
+  # GET /connections/discover-argocd, POST /connections/test, POST
+  # /connections/test-credentials. Init: POST /init → operation_id →
+  # GET /operations/{id} polling → assert completion. Operations:
+  # POST /operations/{id}/heartbeat, POST /operations/{id}/cancel.
+  7-1-9-init-connections-operations-tests: backlog
+  # 7-1.10 Auth + tokens + RBAC tests.
+  # tests/e2e/lifecycle/auth_test.go. Auth: POST /auth/login, /auth/logout,
+  # /auth/update-password, /auth/hash. Tokens: GET/POST /tokens, DELETE
+  # /tokens/{name}. RBAC: login as viewer + try a write endpoint → expect
+  # 403. Skip user-CRUD coverage if not surfaced via API (sharko user mgmt
+  # is currently config-driven per project memory; revisit if API exists).
+  7-1-10-auth-tokens-rbac-tests: backlog
+  # 7-1.11 AI + agent + providers tests.
+  # tests/e2e/lifecycle/ai_test.go. Gated by AI configured (env var or
+  # config), SKIP cleanly if not. Covers: GET/POST /ai/config, POST
+  # /ai/provider, POST /ai/test, POST /ai/test-config, POST /agent/chat,
+  # POST /agent/reset, GET /upgrade/ai-status, POST /upgrade/ai-summary,
+  # GET /providers, POST /providers/test, POST /providers/test-config.
+  7-1-11-ai-agent-providers-tests: backlog
+  # 7-1.12 Dashboard + observability + reads sweep.
+  # tests/e2e/lifecycle/dashboard_test.go. /dashboard/{attention,
+  # pull-requests,stats}, /observability/overview, /fleet/status,
+  # /repo/status, /cluster/nodes, /argocd/resource-exclusions,
+  # /audit + /audit/stream, /docs/list + /docs/{slug},
+  # /embedded-dashboards GET+POST, /secrets/reconcile + /secrets/status,
+  # /config, /health.
+  7-1-12-dashboard-observability-reads-tests: backlog
+  # 7-1.13 PRs + notifications lifecycle.
+  # tests/e2e/lifecycle/pr_test.go. /prs (list), /prs/merged, /prs/{id}
+  # GET + DELETE, /prs/{id}/refresh. /notifications,
+  # /notifications/read-all. PR fixture seeded by 7-1.7 addon enable flow
+  # (which opens a PR via gitfake).
+  7-1-13-prs-notifications-tests: backlog
+  # 7-1.14 Smoke.sh Phase 6+7 retirement. Once 7-1.4 (cluster lifecycle)
+  # is green covering the same surface, remove Phase 6 + Phase 7 from
+  # scripts/smoke.sh. Update USAGE banner ([7/7] → [5/5]). Update
+  # docs/design/2026-05-13-test-coverage-strategy.md to reflect Go-suite-
+  # is-now-canonical. Smoke.sh keeps Phases 1-5 (lightweight pre-flight,
+  # ~20s, runs every save).
+  7-1-14-smoke-phase-6-7-retirement: backlog
+  # 7-1.15 Makefile + CI + docs. Makefile targets:
+  #   - make test-e2e         (full suite, auto-provisions kind, ~10-15 min)
+  #   - make test-e2e-fast    (in-process only, no kind, ~30s)
+  #   - make test-e2e-domain DOMAIN=cluster   (run one slice)
+  #   - make kind-up / make kind-down  (manual kind lifecycle)
+  # GH Actions workflow .github/workflows/e2e.yml — opt-in via PR label
+  # `e2e` + nightly schedule (3am UTC). docs/site/developer-guide/
+  # e2e-testing.md covers: when to run, how to write a new test, harness
+  # API reference, troubleshooting flaky tests, env-var matrix.
+  # Replaces existing `make e2e` target (the one that depends on the
+  # 3-file stub setup.sh+teardown.sh+e2e_test.go that this epic supersedes).
+  7-1-15-makefile-ci-docs-integration: backlog
   7-2-soak-test-100-clusters-15-minutes: backlog
   7-3-security-audit-and-documentation: backlog
   7-4-final-documentation-and-v2-release: backlog
