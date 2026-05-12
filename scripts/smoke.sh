@@ -7,14 +7,19 @@
 # browser pass) are out of scope and intentionally NOT automated.
 #
 # USAGE
-#   source scripts/dev-rebuild.sh   # export $ADMIN_PW + $TOKEN
-#   ./scripts/smoke.sh              # concise one-line-per-check output
+#   ./scripts/smoke.sh              # zero-setup: auto-fetches token from
+#                                   # ~/.sharko-dev-pw + /api/v1/auth/login
 #   ./scripts/smoke.sh -v           # verbose: show full curl bodies on failure + go test -v
 #   ./scripts/smoke.sh -h           # show this help
+#   TOKEN=xxx ./scripts/smoke.sh    # use a pre-supplied token (legacy)
+#
+# Self-bootstrap: if $TOKEN is unset, smoke.sh reads $ADMIN_PW from env
+# or ~/.sharko-dev-pw and POSTs /api/v1/auth/login to obtain a fresh token.
+# If both are missing, hints to run `./scripts/sharko-dev.sh ready`.
 #
 # ENV VARS
-#   ADMIN_PW          (required)               — bootstrap admin password
-#   TOKEN             (required)               — bearer token for the API sweep
+#   ADMIN_PW          (optional)               — bootstrap admin password (falls back to ~/.sharko-dev-pw)
+#   TOKEN             (optional)               — bearer token for the API sweep (auto-fetched if unset)
 #   KIND_CLUSTER_NAME (default: sharko-e2e)    — kind cluster name (informational)
 #   SHARKO_NAMESPACE  (default: sharko)         — k8s namespace
 #   SHARKO_LOCAL_PORT (default: 8080)           — host port the kubectl port-forward listens on
@@ -98,15 +103,55 @@ record_skip() {
     printf "  %s %s\n" "$SKIP_MARK" "$1"
 }
 
-# ---- env validation ----
-if [ -z "${ADMIN_PW:-}" ] || [ -z "${TOKEN:-}" ]; then
-    echo "${FAIL_MARK} \$ADMIN_PW and/or \$TOKEN are unset." >&2
-    echo "       Run 'source scripts/dev-rebuild.sh' first to populate them." >&2
-    exit 1
+# ---- auth bootstrap (V124-5.4) ----
+# Reads a fresh Sharko bearer token by POSTing /api/v1/auth/login.
+# Password source: $ADMIN_PW env var → ~/.sharko-dev-pw file → error.
+# Echoes the token to stdout; returns non-zero on failure.
+sharko_login() {
+    local pw
+    if [ -n "${ADMIN_PW:-}" ]; then
+        pw="$ADMIN_PW"
+    elif [ -f "${HOME}/.sharko-dev-pw" ]; then
+        pw="$(cat "${HOME}/.sharko-dev-pw")"
+    else
+        echo "no admin password found — set \$ADMIN_PW or run './scripts/sharko-dev.sh ready' to bootstrap" >&2
+        return 1
+    fi
+
+    local resp
+    resp=$(curl -sS --max-time 10 -X POST "${HOST}/api/v1/auth/login" \
+        -H "Content-Type: application/json" \
+        -d "{\"username\":\"admin\",\"password\":\"${pw}\"}" 2>/dev/null) || {
+        echo "login request failed (network?)" >&2
+        return 1
+    }
+
+    local token
+    token=$(printf '%s' "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["token"])' 2>/dev/null) || {
+        echo "login response malformed or auth failed: ${resp}" >&2
+        return 1
+    }
+    [ -n "$token" ] || { echo "login returned empty token" >&2; return 1; }
+    printf '%s' "$token"
+}
+
+# $TOKEN can be pre-set (legacy `source scripts/dev-rebuild.sh` workflow), but
+# if it's empty we self-fetch one from /api/v1/auth/login using $ADMIN_PW or
+# ~/.sharko-dev-pw. This prevents spurious 401s when tokens expire or when
+# the maintainer logs in via the UI (which invalidates the cached session).
+if [ -z "${TOKEN:-}" ]; then
+    if ! TOKEN=$(sharko_login); then
+        echo "${FAIL_MARK} smoke.sh: could not obtain a Sharko auth token." >&2
+        echo "       Tried env \$TOKEN (empty), \$ADMIN_PW (empty or absent)," >&2
+        echo "       and ~/.sharko-dev-pw (absent or unreadable). Run:" >&2
+        echo "         ./scripts/sharko-dev.sh ready" >&2
+        echo "       then retry." >&2
+        exit 1
+    fi
 fi
 
 # ---- header ----
-echo "${BOLD}Sharko personal smoke (V124-5.3)${RESET}"
+echo "${BOLD}Sharko personal smoke (V124-5.4)${RESET}"
 echo "================================="
 echo "  cluster:    ${KIND_CLUSTER_NAME}"
 echo "  namespace:  ${SHARKO_NAMESPACE}"
@@ -605,7 +650,7 @@ print(m.group(1) if m else '')
         ORPHAN_SKIP=1
     elif gh pr close "${ORPHAN_PR_ID}" \
             --repo "${ORPHAN_REPO}" \
-            --comment "smoke.sh orphan-cascade test (V124-5.3) — closing to trigger orphan detection" \
+            --comment "smoke.sh orphan-cascade test (V124-5.4) — closing to trigger orphan detection" \
             >/dev/null 2>&1; then
         record_pass "orphan-cascade: PR #${ORPHAN_PR_ID} closed on ${ORPHAN_REPO}"
     else
