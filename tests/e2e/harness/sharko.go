@@ -16,6 +16,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/ai"
 	"github.com/MoranWeissman/sharko/internal/api"
 	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/service"
 )
 
@@ -52,6 +53,15 @@ type SharkoConfig struct {
 	// Required — the in-process boot path stores the fake's RepoURL on
 	// the active connection so any future git operation is reproducible.
 	GitFake *GitFake
+	// GitProvider, when non-nil, is installed as the active
+	// gitprovider.GitProvider via *Server.SetDemoGitProvider, bypassing
+	// the real GitHub API. Story 7-1.3 wires this up: pass a
+	// *MockGitProvider (from ghmock.go) and every sharko write hits the
+	// in-memory fake. Optional — when nil, sharko falls back to whatever
+	// the active connection resolves to (which is no provider at all in
+	// the in-process boot path; reads will fail until a connection is
+	// configured via the API).
+	GitProvider gitprovider.GitProvider
 	// AdminUser is the bootstrap admin account name. Defaults to "admin".
 	AdminUser string
 	// AdminPass is the bootstrap admin password. Defaults to a
@@ -80,8 +90,18 @@ type Sharko struct {
 	Mode SharkoMode
 
 	server *httptest.Server // populated for in-process mode
+	apiSrv *api.Server      // populated for in-process mode; used by SeedUsers to bypass the login limiter
 	closed bool
 }
+
+// APIServer returns the underlying *api.Server for in-process boots. nil
+// for helm mode. Used by SeedUsers (7-1.3) to call AddDemoUser directly
+// without exhausting the login rate limiter (5/minute/IP) — a real test
+// suite easily seeds more users than that.
+//
+// External callers should prefer the typed API client + SeedUsers
+// helpers; this accessor is reserved for harness-internal use.
+func (s *Sharko) APIServer() *api.Server { return s.apiSrv }
 
 // StartSharko boots sharko per cfg and registers t.Cleanup teardown.
 //
@@ -162,6 +182,16 @@ func startSharkoInProcess(t *testing.T, cfg SharkoConfig, user, pass string) *Sh
 	srv := api.NewServer(connSvc, clusterSvc, addonSvc, dashboardSvc, observabilitySvc, upgradeSvc, aiClient)
 	srv.SetVersion("e2e")
 
+	// Optional GitProvider injection (V2 Epic 7-1.3). When the caller
+	// supplies a fake (typically *MockGitProvider from ghmock.go), wire
+	// it onto the connection service so every sharko handler that calls
+	// connSvc.GetActiveGitProvider() receives the fake. Without this
+	// reads against the real GitHub API would fail with "no active
+	// connection" — the in-process boot path doesn't seed a connection.
+	if cfg.GitProvider != nil {
+		srv.SetDemoGitProvider(cfg.GitProvider)
+	}
+
 	// Seed a bootstrap admin so login flows in 7-1.3 have a known credential.
 	// In local mode auth.Store accepts plaintext passwords, so this is enough
 	// to satisfy ValidateCredentials with no extra hashing dance.
@@ -178,6 +208,7 @@ func startSharkoInProcess(t *testing.T, cfg SharkoConfig, user, pass string) *Sh
 		AdminPass: pass,
 		Mode:      SharkoModeInProcess,
 		server:    httpSrv,
+		apiSrv:    srv,
 	}
 	t.Cleanup(func() { s.Stop() })
 	t.Logf("harness: sharko (in-process) ready at %s [user=%s, version=e2e]", s.URL, user)
