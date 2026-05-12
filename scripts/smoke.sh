@@ -24,7 +24,7 @@
 #   SHARKO_LOCAL_PORT (default: 8080)           — host port the kubectl port-forward listens on
 #
 # OUTPUT
-#   5 sequential phases, PASS/FAIL per check, exit 0 if all pass else 1.
+#   7 sequential phases, PASS/FAIL per check, exit 0 if all pass else 1.
 #   INFO/SKIP rows do NOT cause a non-zero exit.
 #
 
@@ -481,7 +481,7 @@ echo
 #
 # Override the target cluster name with ORPHAN_TARGET_CLUSTER env var.
 # The default matches what `sharko-dev.sh kind-target create 1` produces.
-echo "${BOLD}[6/6] Orphan-cascade E2E (V125-1-7.x)${RESET}"
+echo "${BOLD}[6/7] Orphan-cascade E2E (V125-1-7.x)${RESET}"
 
 ORPHAN_TARGET_CLUSTER="${ORPHAN_TARGET_CLUSTER:-sharko-target-1}"
 ORPHAN_CTX="kind-${ORPHAN_TARGET_CLUSTER}"
@@ -813,6 +813,397 @@ fi
 if kubectl --context "${ORPHAN_CTX}" get nodes >/dev/null 2>&1; then
     kubectl --context "${ORPHAN_CTX}" delete clusterrolebinding sharko-smoke-register-admin 2>/dev/null || true
     kubectl --context "${ORPHAN_CTX}" delete serviceaccount sharko-smoke-register -n default 2>/dev/null || true
+fi
+
+echo
+
+# =====================================================================
+# Phase 7 — Full Cluster Lifecycle E2E (V124-5.7)
+# =====================================================================
+# Exercises the full managed-cluster lifecycle (auto-merge mode contrast
+# with Phase 6's manual-mode orphan path):
+#   register → wait-for-managed → GET details → POST /test → DELETE → assert clean
+#
+# PRE-CONDITIONS (all required; any failure → SKIP group, not FAIL):
+#   1. A kind target cluster (default sharko-target-2 — separate from
+#      Phase 6's sharko-target-1 so both phases can coexist in one run)
+#   2. Sharko server reachable (Phase 1 already gates this)
+#   3. Sharko server running in auto-merge mode (PRAutoMerge: true).
+#      Auto-merge is governed by global gitops config — NOT a per-request
+#      flag — so we detect at runtime via git.merged in the registration
+#      response and SKIP gracefully if the running server is in manual mode
+#      (Phase 6 already covers the manual-mode path).
+#
+# IDEMPOTENCY: cluster name has a short timestamp suffix.
+#
+# Override the target cluster name with LIFECYCLE_TARGET_CLUSTER env var.
+# To create both phase 6 + phase 7 targets in one shot:
+#   ./scripts/sharko-dev.sh kind-target create 2
+echo "${BOLD}[7/7] Full cluster lifecycle E2E (V124-5.7)${RESET}"
+
+LIFECYCLE_TARGET_CLUSTER="${LIFECYCLE_TARGET_CLUSTER:-sharko-target-2}"
+LIFECYCLE_CTX="kind-${LIFECYCLE_TARGET_CLUSTER}"
+LIFECYCLE_SKIP=0  # 0 = run, 1 = skip/abort without failing
+
+# ---- Pre-flight: target cluster reachable? ----
+if ! kubectl --context "${LIFECYCLE_CTX}" get nodes >/dev/null 2>&1; then
+    record_skip "lifecycle: kind target '${LIFECYCLE_TARGET_CLUSTER}' not reachable — run: ./scripts/sharko-dev.sh kind-target create 2"
+    LIFECYCLE_SKIP=1
+fi
+
+if [ "$LIFECYCLE_SKIP" = "0" ]; then
+    record_pass "lifecycle pre-flight: target '${LIFECYCLE_TARGET_CLUSTER}' reachable"
+
+    # ---- Step 1: Create SA + ClusterRoleBinding (idempotent) ----
+    # Distinct SA name from Phase 6 (sharko-smoke-register) so coexistent runs
+    # don't tread on each other's RBAC.
+    kubectl --context "${LIFECYCLE_CTX}" create serviceaccount sharko-smoke-lifecycle -n default 2>/dev/null || true
+    kubectl --context "${LIFECYCLE_CTX}" create clusterrolebinding sharko-smoke-lifecycle-admin \
+        --clusterrole=cluster-admin \
+        --serviceaccount=default:sharko-smoke-lifecycle 2>/dev/null || true
+
+    # ---- Step 2: Generate 1h bearer token ----
+    LC_TOKEN=$(kubectl --context "${LIFECYCLE_CTX}" -n default create token sharko-smoke-lifecycle --duration=1h 2>/dev/null || true)
+    if [ -z "$LC_TOKEN" ]; then
+        record_fail "lifecycle: failed to generate bearer token for ${LIFECYCLE_TARGET_CLUSTER}"
+        LIFECYCLE_SKIP=1
+    fi
+fi
+
+if [ "$LIFECYCLE_SKIP" = "0" ]; then
+    # Derive the Docker-network-internal server URL — same reasoning as Phase 6.
+    LC_SERVER_IP=$(docker inspect "${LIFECYCLE_TARGET_CLUSTER}-control-plane" \
+        --format '{{ .NetworkSettings.Networks.kind.IPAddress }}' 2>/dev/null || true)
+    if [ -z "$LC_SERVER_IP" ]; then
+        record_fail "lifecycle: could not get Docker-network IP for ${LIFECYCLE_TARGET_CLUSTER}-control-plane"
+        LIFECYCLE_SKIP=1
+    fi
+fi
+
+if [ "$LIFECYCLE_SKIP" = "0" ]; then
+    LC_SERVER="https://${LC_SERVER_IP}:6443"
+    LC_CA=$(kubectl --context "${LIFECYCLE_CTX}" config view --raw --minify \
+        -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' 2>/dev/null || true)
+    if [ -z "$LC_CA" ]; then
+        record_fail "lifecycle: could not extract certificate-authority-data for ${LIFECYCLE_TARGET_CLUSTER}"
+        LIFECYCLE_SKIP=1
+    fi
+fi
+
+if [ "$LIFECYCLE_SKIP" = "0" ]; then
+    # Build the kubeconfig YAML (bearer-token auth — kubeconfig provider v1.25+).
+    LC_KUBECONFIG=$(cat <<KUBECONFIG_EOF
+apiVersion: v1
+kind: Config
+current-context: smoke-lifecycle
+clusters:
+- name: smoke-lifecycle
+  cluster:
+    server: ${LC_SERVER}
+    certificate-authority-data: ${LC_CA}
+contexts:
+- name: smoke-lifecycle
+  context:
+    cluster: smoke-lifecycle
+    user: smoke-lifecycle
+users:
+- name: smoke-lifecycle
+  user:
+    token: ${LC_TOKEN}
+KUBECONFIG_EOF
+)
+    record_pass "lifecycle: kubeconfig assembled (server=${LC_SERVER})"
+
+    # ---- Step 3: POST /api/v1/clusters — register ----
+    # Auto-merge mode is server-config (not per-request), so we register and
+    # then inspect git.merged in the response to decide whether to continue
+    # the lifecycle assertions.
+    LC_TS=$(date +%s | tail -c 7)
+    LIFECYCLE_NAME="smoke-lifecycle-${LC_TS}"
+
+    reg_body_file=$(mktemp)
+    python3 -c "
+import json, sys
+kc = sys.stdin.read()
+payload = {
+    'name': '${LIFECYCLE_NAME}',
+    'provider': 'kubeconfig',
+    'kubeconfig': kc,
+    'addons': {}
+}
+print(json.dumps(payload))
+" <<< "$LC_KUBECONFIG" > "$reg_body_file" 2>/dev/null
+
+    reg_resp_file=$(mktemp)
+    reg_code=$(curl -sS -o "$reg_resp_file" -w '%{http_code}' --max-time 60 \
+        -X POST -H "Content-Type: application/json" \
+        -H "Authorization: Bearer ${TOKEN}" \
+        -d "@${reg_body_file}" \
+        "${HOST}/api/v1/clusters" 2>/dev/null || echo "000")
+    rm -f "$reg_body_file"
+
+    case "$reg_code" in
+        201|207)
+            record_pass "lifecycle: POST /clusters → ${reg_code} (name=${LIFECYCLE_NAME})"
+            ;;
+        *)
+            record_fail "lifecycle: POST /clusters → ${reg_code} (expected 201 or 207)" \
+                "$(head -c 300 "$reg_resp_file" 2>/dev/null || true)"
+            rm -f "$reg_resp_file"
+            LIFECYCLE_SKIP=1
+            ;;
+    esac
+fi
+
+if [ "$LIFECYCLE_SKIP" = "0" ]; then
+    # ---- Step 4: Detect auto-merge vs manual-merge from response ----
+    # The orchestrator returns git.merged=true under auto-merge, leaves a
+    # git.pr_id with merged=false under manual-mode. Phase 7 only exercises
+    # the auto-merge path (Phase 6 covers manual-mode → orphan).
+    LC_MERGED=$(python3 -c "
+import json
+try:
+    d = json.load(open('${reg_resp_file}'))
+    g = d.get('git') or {}
+    print('1' if g.get('merged') else '0')
+except Exception:
+    print('0')
+" 2>/dev/null || echo "0")
+    rm -f "$reg_resp_file"
+
+    if [ "$LC_MERGED" != "1" ]; then
+        record_skip "lifecycle: registration PR not auto-merged (git.merged=false) — sharko is in manual-merge mode (PRAutoMerge: false). Phase 6 covers manual-mode flow; Phase 7 requires auto-merge."
+        LIFECYCLE_SKIP=1
+    else
+        record_pass "lifecycle: registration PR auto-merged (git.merged=true)"
+    fi
+fi
+
+if [ "$LIFECYCLE_SKIP" = "0" ]; then
+    # ---- Step 5: Poll /clusters until cluster appears with managed=true ----
+    # ArgoCD secret reconciler + cluster-addons.yaml load lag — give it ~60s.
+    record_info "lifecycle: polling for ${LIFECYCLE_NAME} as managed cluster (up to 60s)..."
+
+    LC_POLL_MAX=60
+    LC_POLL_INTERVAL=2
+    LC_POLL_ELAPSED=0
+    LC_MANAGED=0
+
+    while [ "$LC_POLL_ELAPSED" -lt "$LC_POLL_MAX" ]; do
+        poll_file=$(mktemp)
+        poll_code=$(curl -sS -o "$poll_file" -w '%{http_code}' --max-time 10 \
+            -H "Authorization: Bearer ${TOKEN}" \
+            "${HOST}/api/v1/clusters" 2>/dev/null || echo "000")
+
+        if [ "$poll_code" = "200" ]; then
+            is_managed=$(python3 -c "
+import json
+try:
+    d = json.load(open('${poll_file}'))
+    for c in d.get('clusters', []):
+        if c.get('name','') == '${LIFECYCLE_NAME}' and c.get('managed') is True:
+            print('1'); break
+    else:
+        print('0')
+except Exception:
+    print('0')
+" 2>/dev/null || echo "0")
+            rm -f "$poll_file"
+            if [ "$is_managed" = "1" ]; then
+                LC_MANAGED=1
+                break
+            fi
+        else
+            rm -f "$poll_file"
+        fi
+
+        sleep "${LC_POLL_INTERVAL}"
+        LC_POLL_ELAPSED=$((LC_POLL_ELAPSED + LC_POLL_INTERVAL))
+    done
+
+    if [ "$LC_MANAGED" = "1" ]; then
+        record_pass "lifecycle: ${LIFECYCLE_NAME} surfaced as managed (${LC_POLL_ELAPSED}s)"
+    else
+        record_fail "lifecycle: ${LIFECYCLE_NAME} did NOT appear as managed within ${LC_POLL_MAX}s — sync/reconciler lag or git-merge gap"
+        LIFECYCLE_SKIP=1
+    fi
+fi
+
+if [ "$LIFECYCLE_SKIP" = "0" ]; then
+    # ---- Step 6: GET /clusters/{name} — assert detail body shape ----
+    detail_file=$(mktemp)
+    detail_code=$(curl -sS -o "$detail_file" -w '%{http_code}' --max-time 15 \
+        -H "Authorization: Bearer ${TOKEN}" \
+        "${HOST}/api/v1/clusters/${LIFECYCLE_NAME}" 2>/dev/null || echo "000")
+
+    if [ "$detail_code" = "200" ]; then
+        # ClusterDetailResponse: {cluster: {name, server, server_version, managed, ...}, addons: [...]}
+        detail_server=$(python3 -c "
+import json
+try:
+    d = json.load(open('${detail_file}'))
+    print((d.get('cluster') or {}).get('server',''))
+except Exception:
+    print('')
+" 2>/dev/null || echo "")
+        detail_version=$(python3 -c "
+import json
+try:
+    d = json.load(open('${detail_file}'))
+    print((d.get('cluster') or {}).get('server_version',''))
+except Exception:
+    print('')
+" 2>/dev/null || echo "")
+        rm -f "$detail_file"
+
+        if [ "$detail_server" = "$LC_SERVER" ]; then
+            record_pass "lifecycle: GET /clusters/${LIFECYCLE_NAME} → cluster.server matches (${detail_server})"
+        else
+            record_fail "lifecycle: GET /clusters/${LIFECYCLE_NAME} → cluster.server='${detail_server}' (expected '${LC_SERVER}')"
+        fi
+        if [ -n "$detail_version" ]; then
+            record_pass "lifecycle: GET /clusters/${LIFECYCLE_NAME} → cluster.server_version present (${detail_version})"
+        else
+            # ServerVersion is populated from ArgoCD's view of the cluster — empty is
+            # a soft signal (timing or ArgoCD not yet synced), not a hard regression.
+            record_info "lifecycle: cluster.server_version empty — ArgoCD may not have synced cluster info yet"
+        fi
+    else
+        rm -f "$detail_file"
+        record_fail "lifecycle: GET /clusters/${LIFECYCLE_NAME} → ${detail_code} (expected 200)"
+        LIFECYCLE_SKIP=1
+    fi
+fi
+
+if [ "$LIFECYCLE_SKIP" = "0" ]; then
+    # ---- Step 7: POST /clusters/{name}/test — connectivity probe ----
+    # Returns 200 with {reachable: bool, success: bool, server_version, ...} on
+    # success, or 503 if no credProvider is configured (kubeconfig-registered
+    # clusters in dev-only mode have no AWS-SM bridge → soft-skip on 503).
+    test_file=$(mktemp)
+    test_code=$(curl -sS -o "$test_file" -w '%{http_code}' --max-time 30 \
+        -X POST -H "Content-Type: application/json" \
+        -H "Authorization: Bearer ${TOKEN}" \
+        "${HOST}/api/v1/clusters/${LIFECYCLE_NAME}/test" 2>/dev/null || echo "000")
+    test_body=$(head -c 300 "$test_file" 2>/dev/null || true)
+
+    if [ "$test_code" = "200" ]; then
+        reachable=$(python3 -c "
+import json
+try:
+    d = json.load(open('${test_file}'))
+    print('1' if d.get('reachable') else '0')
+except Exception:
+    print('0')
+" 2>/dev/null || echo "0")
+        rm -f "$test_file"
+        if [ "$reachable" = "1" ]; then
+            record_pass "lifecycle: POST /clusters/${LIFECYCLE_NAME}/test → 200 reachable=true"
+        else
+            record_fail "lifecycle: POST /clusters/${LIFECYCLE_NAME}/test → 200 but reachable=false" "$test_body"
+        fi
+    elif [ "$test_code" = "503" ]; then
+        rm -f "$test_file"
+        record_skip "lifecycle: POST /clusters/${LIFECYCLE_NAME}/test → 503 (no credentials provider configured — kubeconfig-only dev mode does not bridge to credProvider)"
+    else
+        rm -f "$test_file"
+        record_fail "lifecycle: POST /clusters/${LIFECYCLE_NAME}/test → ${test_code}" "$test_body"
+    fi
+fi
+
+if [ "$LIFECYCLE_SKIP" = "0" ]; then
+    # ---- Step 8: DELETE /clusters/{name} — full removal (cleanup=all + yes=true) ----
+    # The handler requires {"yes": true} confirmation. Default cleanup=all
+    # removes git config + ArgoCD entry + cluster Secret. Expect 200 (or 207
+    # for partial — still treated as success: the cluster was deleted, with
+    # one or more cleanup substeps degraded).
+    del_file=$(mktemp)
+    del_code=$(curl -sS -o "$del_file" -w '%{http_code}' --max-time 60 \
+        -X DELETE -H "Content-Type: application/json" \
+        -H "Authorization: Bearer ${TOKEN}" \
+        -d '{"yes":true,"cleanup":"all"}' \
+        "${HOST}/api/v1/clusters/${LIFECYCLE_NAME}" 2>/dev/null || echo "000")
+    del_body=$(head -c 300 "$del_file" 2>/dev/null || true)
+    rm -f "$del_file"
+
+    case "$del_code" in
+        200|207)
+            record_pass "lifecycle: DELETE /clusters/${LIFECYCLE_NAME} → ${del_code}"
+            ;;
+        *)
+            record_fail "lifecycle: DELETE /clusters/${LIFECYCLE_NAME} → ${del_code} (expected 200 or 207)" "$del_body"
+            LIFECYCLE_SKIP=1
+            ;;
+    esac
+fi
+
+if [ "$LIFECYCLE_SKIP" = "0" ]; then
+    # ---- Step 9: Poll /clusters until cluster disappears from managed list ----
+    # Reconciler/git-merge lag — give it ~30s.
+    record_info "lifecycle: polling for ${LIFECYCLE_NAME} removal from managed list (up to 30s)..."
+
+    LC_DEL_MAX=30
+    LC_DEL_INTERVAL=2
+    LC_DEL_ELAPSED=0
+    LC_GONE=0
+
+    while [ "$LC_DEL_ELAPSED" -lt "$LC_DEL_MAX" ]; do
+        gone_file=$(mktemp)
+        gone_code=$(curl -sS -o "$gone_file" -w '%{http_code}' --max-time 10 \
+            -H "Authorization: Bearer ${TOKEN}" \
+            "${HOST}/api/v1/clusters" 2>/dev/null || echo "000")
+
+        if [ "$gone_code" = "200" ]; then
+            still=$(python3 -c "
+import json
+try:
+    d = json.load(open('${gone_file}'))
+    names = [c.get('name','') for c in d.get('clusters', [])]
+    print('1' if '${LIFECYCLE_NAME}' in names else '0')
+except Exception:
+    print('1')
+" 2>/dev/null || echo "1")
+            rm -f "$gone_file"
+            if [ "$still" = "0" ]; then
+                LC_GONE=1
+                break
+            fi
+        else
+            rm -f "$gone_file"
+        fi
+
+        sleep "${LC_DEL_INTERVAL}"
+        LC_DEL_ELAPSED=$((LC_DEL_ELAPSED + LC_DEL_INTERVAL))
+    done
+
+    if [ "$LC_GONE" = "1" ]; then
+        record_pass "lifecycle: ${LIFECYCLE_NAME} removed from managed list (${LC_DEL_ELAPSED}s)"
+    else
+        record_fail "lifecycle: ${LIFECYCLE_NAME} still in managed list after ${LC_DEL_MAX}s — git-merge or reconciler lag?"
+    fi
+
+    # ---- Step 9b: Belt-and-suspenders — assert ArgoCD cluster Secret cleaned up ----
+    # The cluster Secret lives in the management cluster's argocd namespace
+    # (where sharko + argocd run), NOT in the target cluster. Use the
+    # KIND_CLUSTER_NAME-derived context. If the management context isn't
+    # configured locally (e.g. CI proxies to sharko via port-forward but not
+    # kubectl), this becomes a soft INFO instead of a fail.
+    MGMT_CTX="kind-${KIND_CLUSTER_NAME}"
+    if kubectl --context "${MGMT_CTX}" get nodes >/dev/null 2>&1; then
+        if kubectl --context "${MGMT_CTX}" get secret -n argocd "${LIFECYCLE_NAME}" >/dev/null 2>&1; then
+            record_fail "lifecycle: ArgoCD cluster Secret '${LIFECYCLE_NAME}' still exists in argocd namespace on ${MGMT_CTX}"
+        else
+            record_pass "lifecycle: ArgoCD cluster Secret '${LIFECYCLE_NAME}' removed from argocd namespace on ${MGMT_CTX}"
+        fi
+    else
+        record_info "lifecycle: management context '${MGMT_CTX}' not reachable — skipping ArgoCD Secret cleanup assert"
+    fi
+fi
+
+# ---- Step 10: Cleanup SA + CRB on the target (best-effort — no PASS/FAIL impact) ----
+if kubectl --context "${LIFECYCLE_CTX}" get nodes >/dev/null 2>&1; then
+    kubectl --context "${LIFECYCLE_CTX}" delete clusterrolebinding sharko-smoke-lifecycle-admin 2>/dev/null || true
+    kubectl --context "${LIFECYCLE_CTX}" delete serviceaccount sharko-smoke-lifecycle -n default 2>/dev/null || true
 fi
 
 echo
