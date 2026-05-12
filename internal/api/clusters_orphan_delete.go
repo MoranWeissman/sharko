@@ -64,10 +64,25 @@ func (s *Server) handleDeleteOrphanCluster(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadGateway, "no active ArgoCD connection: "+err.Error())
 		return
 	}
+	// Defensive: buildArgocdClient should never return (nil, nil) but guard
+	// against future refactors so this code path never reaches ac.ListClusters
+	// with a nil receiver and produces an opaque 500 instead of a clear message.
+	if ac == nil {
+		writeServerError(w, http.StatusBadGateway, "delete_orphan_cluster_no_argocd",
+			fmt.Errorf("GetActiveArgocdClient returned nil client without error"))
+		return
+	}
 
 	gp, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "no active Git connection: "+err.Error())
+		return
+	}
+	// Defensive: same guard for the Git provider — a nil provider would
+	// panic inside resolvePendingRegistrations and ListClusters.
+	if gp == nil {
+		writeServerError(w, http.StatusBadGateway, "delete_orphan_cluster_no_git",
+			fmt.Errorf("GetActiveGitProvider returned nil provider without error"))
 		return
 	}
 
@@ -79,6 +94,14 @@ func (s *Server) handleDeleteOrphanCluster(w http.ResponseWriter, r *http.Reques
 	resp, err := s.clusterSvc.ListClusters(r.Context(), gp, ac)
 	if err != nil {
 		writeUpstreamError(w, "delete_orphan_cluster_list", err)
+		return
+	}
+	// Defensive: ListClusters should always return a non-nil response on
+	// success (the service layer guarantees this), but guard against
+	// unexpected refactors so a nil deref never becomes a bare 500.
+	if resp == nil {
+		writeServerError(w, http.StatusInternalServerError, "delete_orphan_cluster_list",
+			fmt.Errorf("ListClusters returned nil response without error"))
 		return
 	}
 

@@ -5,17 +5,20 @@ import { ClustersOverview } from '@/views/ClustersOverview';
 import { AuthProvider } from '@/hooks/useAuth';
 
 // V125-1-7 / BUG-058 — orphan cluster Secret surface + cleanup.
+// V125-1-7.1 — button copy rename: "Delete cluster Secret" → "Discard cancelled registration".
 //
 // Pinned behaviours:
 //
 //   1. The "Cancelled / Orphan Registrations" section renders one row
 //      per orphan with name, server URL, last seen, and a destructive
-//      "Delete cluster Secret" button.
+//      "Discard cancelled registration" button (updated V125-1-7.1).
 //   2. Section is absent when orphan_registrations is empty/undefined.
-//   3. Click Delete → ConfirmationModal opens → confirm → deleteOrphanCluster
-//      is called with the cluster name → on success refetch fires.
+//   3. Click Discard → ConfirmationModal opens with title "Discard this
+//      cancelled registration?" → confirm with "Discard" button →
+//      deleteOrphanCluster called with cluster name → on success refetch fires.
 //   4. Orphan cluster names are filtered OUT of the Managed and
 //      Discovered sections — defence-in-depth alongside the BE filter.
+//   5. Success banner reads "Cancelled registration for ... discarded." (V125-1-7.1).
 
 const mockGetClusters = vi.fn();
 const mockGetAddonCatalog = vi.fn();
@@ -77,8 +80,10 @@ describe('ClustersOverview — V125-1-7 orphan cluster surface', () => {
     expect(screen.getByText('https://kind-orphan.local:6443')).toBeInTheDocument();
     expect(screen.getByText('2026-05-10T12:00:00Z')).toBeInTheDocument();
 
-    const deleteBtn = screen.getByRole('button', { name: /Delete cluster Secret for kind-orphan/i });
+    // V125-1-7.1: button label renamed to user mental model.
+    const deleteBtn = screen.getByRole('button', { name: /Discard cancelled registration for kind-orphan/i });
     expect(deleteBtn).toBeInTheDocument();
+    expect(deleteBtn).toHaveTextContent('Discard cancelled registration');
   });
 
   it('does not render the Orphan section when the array is empty or undefined', async () => {
@@ -192,18 +197,19 @@ describe('ClustersOverview — V125-1-7 orphan cluster surface', () => {
       expect(screen.getByText('kind-orphan')).toBeInTheDocument();
     });
 
-    // Click the Delete button — opens confirm dialog.
-    fireEvent.click(screen.getByRole('button', { name: /Delete cluster Secret for kind-orphan/i }));
+    // V125-1-7.1: Click the renamed "Discard cancelled registration" button.
+    fireEvent.click(screen.getByRole('button', { name: /Discard cancelled registration for kind-orphan/i }));
 
-    // Wait for the dialog. The dialog title from ConfirmationModal is
-    // "Delete Orphan Cluster Secret".
+    // Wait for the dialog. V125-1-7.1: new title "Discard this cancelled registration?".
     await waitFor(() => {
-      expect(screen.getByText(/Delete Orphan Cluster Secret/i)).toBeInTheDocument();
+      expect(screen.getByText(/Discard this cancelled registration\?/i)).toBeInTheDocument();
     });
 
-    // Confirm. The destructive primary action button is labelled
-    // "Delete cluster Secret" by the prop on ConfirmationModal.
-    const confirmBtns = screen.getAllByRole('button', { name: /^Delete cluster Secret$/i });
+    // V125-1-7.1: modal body explains user mental model (no "Secret" terminology).
+    expect(screen.getByText(/The Secret was created when you started registering this cluster/i)).toBeInTheDocument();
+
+    // V125-1-7.1: Confirm button is now labelled "Discard" (not "Delete cluster Secret").
+    const confirmBtns = screen.getAllByRole('button', { name: /^Discard$/i });
     // The dialog's confirm button is the one without aria-label override.
     const confirmBtn = confirmBtns.find(b => !b.getAttribute('aria-label'));
     expect(confirmBtn).toBeTruthy();
@@ -219,10 +225,56 @@ describe('ClustersOverview — V125-1-7 orphan cluster surface', () => {
       expect(getClustersCallCount).toBeGreaterThan(1);
     });
 
-    // After refetch, the orphan section is gone (orphan_registrations is
-    // now empty) and a success banner is shown.
+    // V125-1-7.1: success banner uses updated copy (no "cluster Secret" terminology).
     await waitFor(() => {
-      expect(screen.getByText(/Orphan cluster Secret for "kind-orphan" deleted/i)).toBeInTheDocument();
+      expect(screen.getByText(/Cancelled registration for "kind-orphan" discarded/i)).toBeInTheDocument();
     });
+  });
+
+  it('modal title is "Discard this cancelled registration?" (V125-1-7.1)', async () => {
+    // Pinned regression test for the V125-1-7.1 modal title rename.
+    mockGetClusters.mockResolvedValue({
+      clusters: [],
+      health_stats: { total_in_git: 0, connected: 0, failed: 0, missing_from_argocd: 0, not_in_git: 0 },
+      pending_registrations: [],
+      orphan_registrations: [
+        { cluster_name: 'kind-orphan', server_url: 'https://kind-orphan.local:6443', last_seen_at: '2026-05-10T12:00:00Z' },
+      ],
+    });
+    mockDeleteOrphanCluster.mockResolvedValue(undefined);
+
+    renderView();
+    await waitFor(() => expect(screen.getByText('kind-orphan')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /Discard cancelled registration for kind-orphan/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Discard this cancelled registration\?/i)).toBeInTheDocument();
+    });
+    // Action button must say "Discard", not "Delete" or "Delete cluster Secret".
+    const discardBtn = screen.getAllByRole('button').find(b => b.textContent?.trim() === 'Discard');
+    expect(discardBtn).toBeTruthy();
+  });
+
+  it('aria-label on delete button uses new copy (V125-1-7.1)', async () => {
+    // aria-label must match new copy for screen-reader accessibility.
+    mockGetClusters.mockResolvedValue({
+      clusters: [],
+      health_stats: { total_in_git: 0, connected: 0, failed: 0, missing_from_argocd: 0, not_in_git: 0 },
+      pending_registrations: [],
+      orphan_registrations: [
+        { cluster_name: 'kind-orphan', server_url: 'https://kind-orphan.local:6443', last_seen_at: '2026-05-10T12:00:00Z' },
+      ],
+    });
+
+    renderView();
+    await waitFor(() => expect(screen.getByText('kind-orphan')).toBeInTheDocument());
+
+    const btn = screen.getByRole('button', { name: /Discard cancelled registration for kind-orphan/i });
+    expect(btn.getAttribute('aria-label')).toBe('Discard cancelled registration for kind-orphan');
+
+    // Old aria-label must NOT exist.
+    const oldBtn = screen.queryByRole('button', { name: /Delete cluster Secret for kind-orphan/i });
+    expect(oldBtn).toBeNull();
   });
 });

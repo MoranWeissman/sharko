@@ -579,7 +579,7 @@ export function ClustersOverview() {
     const target = orphanDeleteTarget;
     try {
       await deleteOrphanCluster(target);
-      setOrphanDeleteResult({ name: target, success: `Orphan cluster Secret for "${target}" deleted.` });
+      setOrphanDeleteResult({ name: target, success: `Cancelled registration for "${target}" discarded.` });
       setOrphanDeleteTarget(null);
       void fetchData();
     } catch (err) {
@@ -1585,10 +1585,10 @@ export function ClustersOverview() {
                           onClick={() => setOrphanDeleteTarget(o.cluster_name)}
                           disabled={orphanDeleteLoading && orphanDeleteTarget === o.cluster_name}
                           className="inline-flex items-center gap-1 rounded border border-red-300 bg-white px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-700 dark:bg-gray-800 dark:text-red-300 dark:hover:bg-red-900/20"
-                          aria-label={`Delete cluster Secret for ${o.cluster_name}`}
+                          aria-label={`Discard cancelled registration for ${o.cluster_name}`}
                         >
                           <Trash2 className="h-3 w-3" />
-                          Delete cluster Secret
+                          Discard cancelled registration
                         </button>
                       </RoleGuard>
                     </td>
@@ -2027,9 +2027,9 @@ export function ClustersOverview() {
         open={orphanDeleteTarget !== null}
         onClose={() => setOrphanDeleteTarget(null)}
         onConfirm={handleDeleteOrphan}
-        title="Delete Orphan Cluster Secret"
-        description={`Delete cluster Secret for "${orphanDeleteTarget}"? This removes the orphan ArgoCD cluster Secret. The cluster never existed in Git so no GitOps state is affected. This action cannot be undone.`}
-        confirmText="Delete cluster Secret"
+        title="Discard this cancelled registration?"
+        description={`This will remove the leftover ArgoCD cluster Secret for "${orphanDeleteTarget}". The Secret was created when you started registering this cluster, but the registration PR was closed without merging — so it is not in any active Git state. Discarding it is safe and will not affect any managed cluster.`}
+        confirmText="Discard"
         destructive
         loading={orphanDeleteLoading}
       />
