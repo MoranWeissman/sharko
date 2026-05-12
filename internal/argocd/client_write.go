@@ -118,6 +118,7 @@ func (c *Client) doDelete(ctx context.Context, path string) ([]byte, error) {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
