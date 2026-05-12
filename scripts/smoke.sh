@@ -106,7 +106,7 @@ if [ -z "${ADMIN_PW:-}" ] || [ -z "${TOKEN:-}" ]; then
 fi
 
 # ---- header ----
-echo "${BOLD}Sharko personal smoke (V124-5.2)${RESET}"
+echo "${BOLD}Sharko personal smoke (V124-5.3)${RESET}"
 echo "================================="
 echo "  cluster:    ${KIND_CLUSTER_NAME}"
 echo "  namespace:  ${SHARKO_NAMESPACE}"
@@ -420,6 +420,358 @@ else
         fi
     fi
     rm -f "$go_log"
+fi
+
+echo
+
+# =====================================================================
+# Phase 6 — Orphan-cascade E2E (V124-5.3 / V125-1-7.x regression pin)
+# =====================================================================
+# Exercises the full orphan-delete recovery surface introduced in V125-1-7:
+#   register (kubeconfig) → close PR → wait for orphan surface → DELETE orphan → assert clean
+#
+# PRE-CONDITIONS (all required; any failure → SKIP group, not FAIL):
+#   1. A kind target cluster is reachable via kubectl --context kind-<TARGET>
+#   2. gh CLI is installed + authenticated
+#   3. Sharko server is already reachable (Phase 1 gated this)
+#
+# IDEMPOTENCY: cluster name includes a short timestamp suffix so repeated
+# runs in the same session cannot collide.
+#
+# Override the target cluster name with ORPHAN_TARGET_CLUSTER env var.
+# The default matches what `sharko-dev.sh kind-target create 1` produces.
+echo "${BOLD}[6/6] Orphan-cascade E2E (V125-1-7.x)${RESET}"
+
+ORPHAN_TARGET_CLUSTER="${ORPHAN_TARGET_CLUSTER:-sharko-target-1}"
+ORPHAN_CTX="kind-${ORPHAN_TARGET_CLUSTER}"
+ORPHAN_SKIP=0  # 0 = run, 1 = skip/abort without failing
+
+# ---- Pre-flight: target cluster reachable? ----
+if ! kubectl --context "${ORPHAN_CTX}" get nodes >/dev/null 2>&1; then
+    record_skip "orphan-cascade: kind target '${ORPHAN_TARGET_CLUSTER}' not reachable — run: ./scripts/sharko-dev.sh kind-target create 1"
+    ORPHAN_SKIP=1
+fi
+
+# ---- Pre-flight: gh CLI available + authenticated? ----
+if [ "$ORPHAN_SKIP" = "0" ] && ! command -v gh >/dev/null 2>&1; then
+    record_skip "orphan-cascade: gh CLI not installed — cannot close PR (install: https://cli.github.com)"
+    ORPHAN_SKIP=1
+fi
+if [ "$ORPHAN_SKIP" = "0" ] && ! gh auth status >/dev/null 2>&1; then
+    record_skip "orphan-cascade: gh CLI not authenticated — run: gh auth login"
+    ORPHAN_SKIP=1
+fi
+
+if [ "$ORPHAN_SKIP" = "0" ]; then
+    record_pass "orphan-cascade pre-flight: target '${ORPHAN_TARGET_CLUSTER}' reachable + gh authenticated"
+
+    # ---- Step 1: Create SA + ClusterRoleBinding (idempotent) ----
+    kubectl --context "${ORPHAN_CTX}" create serviceaccount sharko-smoke-register -n default 2>/dev/null || true
+    kubectl --context "${ORPHAN_CTX}" create clusterrolebinding sharko-smoke-register-admin \
+        --clusterrole=cluster-admin \
+        --serviceaccount=default:sharko-smoke-register 2>/dev/null || true
+
+    # ---- Step 2: Generate 1h bearer token ----
+    OC_TOKEN=$(kubectl --context "${ORPHAN_CTX}" -n default create token sharko-smoke-register --duration=1h 2>/dev/null || true)
+    if [ -z "$OC_TOKEN" ]; then
+        record_fail "orphan-cascade: failed to generate bearer token for ${ORPHAN_TARGET_CLUSTER}"
+        ORPHAN_SKIP=1
+    fi
+fi
+
+if [ "$ORPHAN_SKIP" = "0" ]; then
+    # Derive the Docker-network-internal server URL so in-cluster sharko + argocd
+    # can reach the target over the kind bridge (127.0.0.1:<port> is host-only).
+    OC_SERVER_IP=$(docker inspect "${ORPHAN_TARGET_CLUSTER}-control-plane" \
+        --format '{{ .NetworkSettings.Networks.kind.IPAddress }}' 2>/dev/null || true)
+    if [ -z "$OC_SERVER_IP" ]; then
+        record_fail "orphan-cascade: could not get Docker-network IP for ${ORPHAN_TARGET_CLUSTER}-control-plane"
+        ORPHAN_SKIP=1
+    fi
+fi
+
+if [ "$ORPHAN_SKIP" = "0" ]; then
+    OC_SERVER="https://${OC_SERVER_IP}:6443"
+    OC_CA=$(kubectl --context "${ORPHAN_CTX}" config view --raw --minify \
+        -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' 2>/dev/null || true)
+    if [ -z "$OC_CA" ]; then
+        record_fail "orphan-cascade: could not extract certificate-authority-data for ${ORPHAN_TARGET_CLUSTER}"
+        ORPHAN_SKIP=1
+    fi
+fi
+
+if [ "$ORPHAN_SKIP" = "0" ]; then
+    # Build the kubeconfig YAML (bearer-token auth — kubeconfig provider v1.25+).
+    OC_KUBECONFIG=$(cat <<KUBECONFIG_EOF
+apiVersion: v1
+kind: Config
+current-context: smoke-orphan
+clusters:
+- name: smoke-orphan
+  cluster:
+    server: ${OC_SERVER}
+    certificate-authority-data: ${OC_CA}
+contexts:
+- name: smoke-orphan
+  context:
+    cluster: smoke-orphan
+    user: smoke-orphan
+users:
+- name: smoke-orphan
+  user:
+    token: ${OC_TOKEN}
+KUBECONFIG_EOF
+)
+    record_pass "orphan-cascade: kubeconfig assembled (server=${OC_SERVER})"
+
+    # ---- Step 3: POST /api/v1/clusters — register in manual-merge mode ----
+    # Name uniqueness: seconds-since-epoch tail keeps names short and sortable.
+    ORPHAN_TS=$(date +%s | tail -c 7)
+    ORPHAN_NAME="smoke-orphan-${ORPHAN_TS}"
+
+    # Build JSON payload safely via python3 to handle YAML escaping.
+    reg_body_file=$(mktemp)
+    python3 -c "
+import json, sys
+kc = sys.stdin.read()
+payload = {
+    'name': '${ORPHAN_NAME}',
+    'provider': 'kubeconfig',
+    'kubeconfig': kc,
+    'addons': {}
+}
+print(json.dumps(payload))
+" <<< "$OC_KUBECONFIG" > "$reg_body_file" 2>/dev/null
+
+    reg_resp_file=$(mktemp)
+    reg_code=$(curl -sS -o "$reg_resp_file" -w '%{http_code}' --max-time 30 \
+        -X POST -H "Content-Type: application/json" \
+        -H "Authorization: Bearer ${TOKEN}" \
+        -d "@${reg_body_file}" \
+        "${HOST}/api/v1/clusters" 2>/dev/null || echo "000")
+    rm -f "$reg_body_file"
+
+    if [ "$reg_code" = "201" ]; then
+        record_pass "orphan-cascade: POST /clusters → 201 (name=${ORPHAN_NAME})"
+    else
+        record_fail "orphan-cascade: POST /clusters → ${reg_code} (expected 201)" \
+            "$(head -c 300 "$reg_resp_file" 2>/dev/null || true)"
+        rm -f "$reg_resp_file"
+        ORPHAN_SKIP=1
+    fi
+fi
+
+if [ "$ORPHAN_SKIP" = "0" ]; then
+    # ---- Step 4: Extract PR number + URL from registration response ----
+    ORPHAN_PR_ID=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open('${reg_resp_file}'))
+    print(d.get('git', {}).get('pr_id', ''))
+except Exception:
+    print('')
+" 2>/dev/null || echo "")
+
+    ORPHAN_PR_URL=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open('${reg_resp_file}'))
+    print(d.get('git', {}).get('pr_url', ''))
+except Exception:
+    print('')
+" 2>/dev/null || echo "")
+    rm -f "$reg_resp_file"
+
+    if [ -z "$ORPHAN_PR_ID" ] || [ "$ORPHAN_PR_ID" = "0" ]; then
+        record_fail "orphan-cascade: registration response missing git.pr_id (got: '${ORPHAN_PR_ID}') — is Sharko configured for manual-merge mode?"
+        ORPHAN_SKIP=1
+    else
+        record_pass "orphan-cascade: PR created (pr_id=${ORPHAN_PR_ID} url=${ORPHAN_PR_URL})"
+    fi
+fi
+
+if [ "$ORPHAN_SKIP" = "0" ]; then
+    # ---- Step 5: Close the PR via gh CLI — triggers the orphan path ----
+    # Derive OWNER/REPO from the PR URL: https://github.com/OWNER/REPO/pull/NNN
+    ORPHAN_REPO=$(python3 -c "
+import re
+url = '${ORPHAN_PR_URL}'
+m = re.search(r'github\.com/([^/]+/[^/]+)/pull/', url)
+print(m.group(1) if m else '')
+" 2>/dev/null || echo "")
+
+    if [ -z "$ORPHAN_REPO" ]; then
+        record_fail "orphan-cascade: cannot derive OWNER/REPO from PR URL '${ORPHAN_PR_URL}' — is this a GitHub connection?"
+        ORPHAN_SKIP=1
+    elif gh pr close "${ORPHAN_PR_ID}" \
+            --repo "${ORPHAN_REPO}" \
+            --comment "smoke.sh orphan-cascade test (V124-5.3) — closing to trigger orphan detection" \
+            >/dev/null 2>&1; then
+        record_pass "orphan-cascade: PR #${ORPHAN_PR_ID} closed on ${ORPHAN_REPO}"
+    else
+        record_fail "orphan-cascade: gh pr close #${ORPHAN_PR_ID} on ${ORPHAN_REPO} failed"
+        ORPHAN_SKIP=1
+    fi
+fi
+
+if [ "$ORPHAN_SKIP" = "0" ]; then
+    # ---- Step 6: Poll /clusters until cluster surfaces in orphan_registrations ----
+    # pending-PR poller default interval is 30s; poll for up to 90s (covers worst-case
+    # interval + processing lag).
+    record_info "orphan-cascade: polling for ${ORPHAN_NAME} in orphan_registrations (up to 90s)..."
+
+    ORPHAN_POLL_MAX=90
+    ORPHAN_POLL_INTERVAL=5
+    ORPHAN_POLL_ELAPSED=0
+    ORPHAN_DETECTED=0
+
+    while [ "$ORPHAN_POLL_ELAPSED" -lt "$ORPHAN_POLL_MAX" ]; do
+        poll_file=$(mktemp)
+        poll_code=$(curl -sS -o "$poll_file" -w '%{http_code}' --max-time 10 \
+            -H "Authorization: Bearer ${TOKEN}" \
+            "${HOST}/api/v1/clusters" 2>/dev/null || echo "000")
+
+        if [ "$poll_code" = "200" ]; then
+            in_orphan=$(python3 -c "
+import json
+try:
+    d = json.load(open('${poll_file}'))
+    names = [o.get('cluster_name','') for o in d.get('orphan_registrations', [])]
+    print('1' if '${ORPHAN_NAME}' in names else '0')
+except Exception:
+    print('0')
+" 2>/dev/null || echo "0")
+            rm -f "$poll_file"
+            if [ "$in_orphan" = "1" ]; then
+                ORPHAN_DETECTED=1
+                break
+            fi
+        else
+            rm -f "$poll_file"
+        fi
+
+        sleep "${ORPHAN_POLL_INTERVAL}"
+        ORPHAN_POLL_ELAPSED=$((ORPHAN_POLL_ELAPSED + ORPHAN_POLL_INTERVAL))
+    done
+
+    if [ "$ORPHAN_DETECTED" = "1" ]; then
+        record_pass "orphan-cascade: ${ORPHAN_NAME} surfaced in orphan_registrations (${ORPHAN_POLL_ELAPSED}s)"
+    else
+        record_fail "orphan-cascade: ${ORPHAN_NAME} did NOT appear in orphan_registrations within ${ORPHAN_POLL_MAX}s"
+        ORPHAN_SKIP=1
+    fi
+fi
+
+if [ "$ORPHAN_SKIP" = "0" ]; then
+    # ---- Step 7: Assert cluster placement (orphan only; not in pending or managed) ----
+    assert_file=$(mktemp)
+    assert_code=$(curl -sS -o "$assert_file" -w '%{http_code}' --max-time 10 \
+        -H "Authorization: Bearer ${TOKEN}" \
+        "${HOST}/api/v1/clusters" 2>/dev/null || echo "000")
+
+    if [ "$assert_code" = "200" ]; then
+        not_in_pending=$(python3 -c "
+import json
+try:
+    d = json.load(open('${assert_file}'))
+    names = [p.get('cluster_name','') for p in d.get('pending_registrations', [])]
+    print('0' if '${ORPHAN_NAME}' in names else '1')
+except Exception:
+    print('0')
+" 2>/dev/null || echo "0")
+
+        not_in_managed=$(python3 -c "
+import json
+try:
+    d = json.load(open('${assert_file}'))
+    names = [c.get('name','') for c in d.get('clusters', [])]
+    print('0' if '${ORPHAN_NAME}' in names else '1')
+except Exception:
+    print('0')
+" 2>/dev/null || echo "0")
+        rm -f "$assert_file"
+
+        if [ "$not_in_pending" = "1" ]; then
+            record_pass "orphan-cascade: ${ORPHAN_NAME} NOT in pending_registrations"
+        else
+            record_fail "orphan-cascade: ${ORPHAN_NAME} still in pending_registrations (should have moved to orphan)"
+        fi
+        if [ "$not_in_managed" = "1" ]; then
+            record_pass "orphan-cascade: ${ORPHAN_NAME} NOT in managed clusters"
+        else
+            record_fail "orphan-cascade: ${ORPHAN_NAME} unexpectedly in managed clusters"
+        fi
+    else
+        rm -f "$assert_file"
+        record_fail "orphan-cascade: GET /clusters → ${assert_code} during placement assert"
+        ORPHAN_SKIP=1
+    fi
+fi
+
+if [ "$ORPHAN_SKIP" = "0" ]; then
+    # ---- Step 8: DELETE /api/v1/clusters/{name}/orphan — V125-1-7.x regression pin ----
+    # V125-1-7.1 fixed 500 in the handler; V125-1-7.2 fixed 500 from missing
+    # Content-Type on ArgoCD calls; V125-1-7.3 fixed 404 from unescaped colons
+    # in server URL path segments. Any non-204 here is a regression.
+    del_file=$(mktemp)
+    del_code=$(curl -sS -o "$del_file" -w '%{http_code}' --max-time 15 \
+        -X DELETE \
+        -H "Authorization: Bearer ${TOKEN}" \
+        "${HOST}/api/v1/clusters/${ORPHAN_NAME}/orphan" 2>/dev/null || echo "000")
+    del_body=$(head -c 300 "$del_file" 2>/dev/null || true)
+    rm -f "$del_file"
+
+    if [ "$del_code" = "204" ]; then
+        record_pass "orphan-cascade: DELETE /clusters/${ORPHAN_NAME}/orphan → 204 (V125-1-7.x pin: OK)"
+    else
+        case "$del_code" in
+            500)
+                record_fail "orphan-cascade: DELETE → 500 — V125-1-7.x REGRESSED (check op tag in body)" "$del_body" ;;
+            404)
+                record_fail "orphan-cascade: DELETE → 404 — cluster not found in ArgoCD (URL escape regression? see V125-1-7.3)" "$del_body" ;;
+            400)
+                record_fail "orphan-cascade: DELETE → 400 — orphan guard rejected (cluster classified as managed or pending?)" "$del_body" ;;
+            *)
+                record_fail "orphan-cascade: DELETE → ${del_code} (unexpected)" "$del_body" ;;
+        esac
+        ORPHAN_SKIP=1
+    fi
+fi
+
+if [ "$ORPHAN_SKIP" = "0" ]; then
+    # ---- Step 9: Assert orphan_registrations no longer contains this cluster ----
+    ca_file=$(mktemp)
+    ca_code=$(curl -sS -o "$ca_file" -w '%{http_code}' --max-time 10 \
+        -H "Authorization: Bearer ${TOKEN}" \
+        "${HOST}/api/v1/clusters" 2>/dev/null || echo "000")
+
+    if [ "$ca_code" = "200" ]; then
+        still_orphan=$(python3 -c "
+import json
+try:
+    d = json.load(open('${ca_file}'))
+    names = [o.get('cluster_name','') for o in d.get('orphan_registrations', [])]
+    print('1' if '${ORPHAN_NAME}' in names else '0')
+except Exception:
+    print('1')
+" 2>/dev/null || echo "1")
+        rm -f "$ca_file"
+
+        if [ "$still_orphan" = "0" ]; then
+            record_pass "orphan-cascade: ${ORPHAN_NAME} removed from orphan_registrations — full cascade verified"
+        else
+            record_fail "orphan-cascade: ${ORPHAN_NAME} still in orphan_registrations after DELETE — ArgoCD delete may have failed silently"
+        fi
+    else
+        rm -f "$ca_file"
+        record_fail "orphan-cascade: GET /clusters → ${ca_code} during post-delete assert"
+    fi
+fi
+
+# ---- Step 10: Cleanup SA + CRB (best-effort — never affect PASS/FAIL count) ----
+if kubectl --context "${ORPHAN_CTX}" get nodes >/dev/null 2>&1; then
+    kubectl --context "${ORPHAN_CTX}" delete clusterrolebinding sharko-smoke-register-admin 2>/dev/null || true
+    kubectl --context "${ORPHAN_CTX}" delete serviceaccount sharko-smoke-register -n default 2>/dev/null || true
 fi
 
 echo
