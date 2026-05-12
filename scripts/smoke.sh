@@ -7,20 +7,18 @@
 # browser pass) are out of scope and intentionally NOT automated.
 #
 # USAGE
-#   ./scripts/smoke.sh              # zero-setup: auto-fetches token from
-#                                   # ~/.sharko-dev-pw + /api/v1/auth/login
+#   ./scripts/smoke.sh              # zero-setup: auto-fetches a fresh token
+#                                   # on every run from ~/.sharko-dev-pw
 #   ./scripts/smoke.sh -v           # verbose: show full curl bodies on failure + go test -v
 #   ./scripts/smoke.sh -h           # show this help
-#   TOKEN=xxx ./scripts/smoke.sh    # use a pre-supplied token (validated before use)
 #
-# Self-bootstrap: if $TOKEN is unset OR returns 401 on a startup probe,
-# smoke.sh reads $ADMIN_PW from env or ~/.sharko-dev-pw and POSTs
-# /api/v1/auth/login to obtain a fresh token. If both are missing, hints
-# to run `./scripts/sharko-dev.sh ready`.
+# Auth: smoke.sh always logs in fresh at startup via /api/v1/auth/login.
+# Reads admin password from $ADMIN_PW env or ~/.sharko-dev-pw file. If
+# neither is set, hints to run `./scripts/sharko-dev.sh ready` (which
+# bootstraps the dev env including the password file).
 #
 # ENV VARS
-#   ADMIN_PW          (optional)               — bootstrap admin password (falls back to ~/.sharko-dev-pw)
-#   TOKEN             (optional)               — bearer token for the API sweep (auto-fetched if unset)
+#   ADMIN_PW          (optional)               — admin password (falls back to ~/.sharko-dev-pw)
 #   KIND_CLUSTER_NAME (default: sharko-e2e)    — kind cluster name (informational)
 #   SHARKO_NAMESPACE  (default: sharko)         — k8s namespace
 #   SHARKO_LOCAL_PORT (default: 8080)           — host port the kubectl port-forward listens on
@@ -104,7 +102,7 @@ record_skip() {
     printf "  %s %s\n" "$SKIP_MARK" "$1"
 }
 
-# ---- auth bootstrap (V124-5.5) ----
+# ---- sharko_login() ----
 # Reads a fresh Sharko bearer token by POSTing /api/v1/auth/login.
 # Password source: $ADMIN_PW env var → ~/.sharko-dev-pw file → error.
 # Echoes the token to stdout; returns non-zero on failure.
@@ -136,66 +134,20 @@ sharko_login() {
     printf '%s' "$token"
 }
 
-# auth_curl: curl wrapper that retries once after refreshing the token if
-# the response is 401 Unauthorized. Use for any authed request in phases
-# 3, 4, 6. Call as: response=$(auth_curl <method> <path> [data])
-# Returns the response body; the HTTP code is set in the global $LAST_STATUS.
-auth_curl() {
-    local method="$1"
-    local path="$2"
-    local data="${3:-}"
-    local body_file
-    body_file=$(mktemp)
-    local -a curl_args=(-sS -o "$body_file" -w '%{http_code}' --max-time 10
-        -X "$method" -H "Authorization: Bearer ${TOKEN}")
-    [ -n "$data" ] && curl_args+=(-H "Content-Type: application/json" -d "$data")
-    LAST_STATUS=$(curl "${curl_args[@]}" "${HOST}${path}" 2>/dev/null || echo "000")
-
-    if [ "$LAST_STATUS" = "401" ]; then
-        # mid-run token went stale — refresh once and retry the SAME request
-        if TOKEN=$(sharko_login 2>/dev/null); then
-            curl_args=(-sS -o "$body_file" -w '%{http_code}' --max-time 10
-                -X "$method" -H "Authorization: Bearer ${TOKEN}")
-            [ -n "$data" ] && curl_args+=(-H "Content-Type: application/json" -d "$data")
-            LAST_STATUS=$(curl "${curl_args[@]}" "${HOST}${path}" 2>/dev/null || echo "000")
-        fi
-    fi
-
-    cat "$body_file"
-    rm -f "$body_file"
-}
-
-# Validate-then-fall-back: if $TOKEN is set, probe /api/v1/users/me with it.
-# If the probe returns anything but 200, the token is stale — log a brief
-# notice and fall through to sharko_login(). This means shell hygiene doesn't
-# matter: a stale `export TOKEN=...` from a prior session is caught here, not
-# 14 requests later.
-need_login=1
-if [ -n "${TOKEN:-}" ]; then
-    probe_status=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 \
-        -H "Authorization: Bearer ${TOKEN}" \
-        "${HOST}/api/v1/users/me" 2>/dev/null || echo "000")
-    if [ "$probe_status" = "200" ]; then
-        need_login=0  # provided token works, keep it
-    else
-        # $TOKEN is set but invalid — log a brief notice and refresh
-        record_info "provided \$TOKEN returned ${probe_status} on probe — refreshing via /auth/login"
-    fi
-fi
-
-if [ "$need_login" = "1" ]; then
-    if ! TOKEN=$(sharko_login); then
-        echo "${FAIL_MARK} smoke.sh: could not obtain a Sharko auth token." >&2
-        echo "       Tried env \$TOKEN (empty or stale), \$ADMIN_PW," >&2
-        echo "       and ~/.sharko-dev-pw. Run:" >&2
-        echo "         ./scripts/sharko-dev.sh ready" >&2
-        echo "       then retry." >&2
-        exit 1
-    fi
+# ---- auth bootstrap (V124-5.6: always refresh) ----
+# Smoke is a fresh test run by definition — start from a known-good auth
+# state every time. No probing, no inherited shell state. If anyone needs
+# to test smoke.sh against a specific pre-minted token, that's a different
+# script (this one always uses admin via /api/v1/auth/login).
+if ! TOKEN=$(sharko_login); then
+    echo "${FAIL_MARK} smoke.sh: could not obtain a Sharko auth token." >&2
+    echo "       Set \$ADMIN_PW or run './scripts/sharko-dev.sh ready'" >&2
+    echo "       to populate ~/.sharko-dev-pw, then retry." >&2
+    exit 1
 fi
 
 # ---- header ----
-echo "${BOLD}Sharko personal smoke (V124-5.5)${RESET}"
+echo "${BOLD}Sharko personal smoke (V124-5.6)${RESET}"
 echo "================================="
 echo "  cluster:    ${KIND_CLUSTER_NAME}"
 echo "  namespace:  ${SHARKO_NAMESPACE}"
@@ -694,7 +646,7 @@ print(m.group(1) if m else '')
         ORPHAN_SKIP=1
     elif gh pr close "${ORPHAN_PR_ID}" \
             --repo "${ORPHAN_REPO}" \
-            --comment "smoke.sh orphan-cascade test (V124-5.5) — closing to trigger orphan detection" \
+            --comment "smoke.sh orphan-cascade test (V124-5.6) — closing to trigger orphan detection" \
             >/dev/null 2>&1; then
         record_pass "orphan-cascade: PR #${ORPHAN_PR_ID} closed on ${ORPHAN_REPO}"
     else
