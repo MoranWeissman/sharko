@@ -89,9 +89,10 @@ func TestAdoptClusters_Success(t *testing.T) {
 	orch := New(nil, nil, argocd, git, autoMergeGitOps(), defaultPaths(), nil)
 	orch.SetArgoSecretManager(asm, "")
 
+	autoMerge := true
 	result, err := orch.AdoptClusters(context.Background(), AdoptClustersRequest{
 		Clusters:  []string{"cluster-a", "cluster-b"},
-		AutoMerge: true,
+		AutoMerge: &autoMerge,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

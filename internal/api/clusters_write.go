@@ -316,10 +316,10 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	var req struct {
-		Addons     map[string]bool `json:"addons"`
-		SecretPath *string         `json:"secret_path,omitempty"`
-	}
+	// BUG-031: promoted from an anonymous struct to a named type
+	// (orchestrator.UpdateClusterAddonsRequest) so the per-request
+	// auto_merge override can flow through without losing field tags.
+	var req orchestrator.UpdateClusterAddonsRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
@@ -400,9 +400,24 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 			})
 		}
 
-		// Auto-merge if configured.
-		if s.gitopsCfg.PRAutoMerge && pr != nil {
-			_ = git.MergePullRequest(ctx, pr.ID)
+		// Auto-merge if configured. BUG-031: per-request override wins
+		// over the connection-level default. BUG-032: clean up the
+		// source branch after a successful merge — best-effort, never
+		// fail the operation on DeleteBranch error.
+		if pr != nil {
+			autoMerge := req.AutoMerge
+			if autoMerge == nil {
+				v := s.gitopsCfg.PRAutoMerge
+				autoMerge = &v
+			}
+			if *autoMerge {
+				if mergeErr := git.MergePullRequest(ctx, pr.ID); mergeErr == nil {
+					if delErr := git.DeleteBranch(ctx, branchName); delErr != nil {
+						slog.Warn("failed to delete branch after secret_path merge",
+							"branch", branchName, "error", delErr)
+					}
+				}
+			}
 		}
 
 		// If no addons to update, return early with the secret_path result.
@@ -425,7 +440,10 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 	orch.SetSecretManagement(s.addonSecretDefs, s.secretFetcher, remoteclient.NewClientFromKubeconfig)
 	// Region is empty — PATCH only updates addon labels, not cluster metadata.
 	// Region is set during RegisterCluster and not exposed via the update API.
-	result, err := orch.UpdateClusterAddons(ctx, name, serverURL, "", req.Addons)
+	// BUG-031: pass per-request auto_merge override (nil = fall back to
+	// connection-level PRAutoMerge). The orchestrator forwards it to
+	// commitChangesWithMeta via PRMetadata.AutoMergeOverride.
+	result, err := orch.UpdateClusterAddons(ctx, name, serverURL, "", req.Addons, req.AutoMerge)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return

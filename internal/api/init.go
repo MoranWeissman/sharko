@@ -225,8 +225,9 @@ func (s *Server) runInitOperation(
 	s.opsStore.UpdateStep(sessionID, operations.StatusCompleted, gitResult.PRUrl)
 
 	// Step 4: Wait for PR merge.
-	// If auto_merge is set (or global PRAutoMerge is enabled), merge immediately.
-	shouldAutoMerge := req.AutoMerge || gitopsCfg.PRAutoMerge
+	// BUG-031: per-request auto_merge override (req.AutoMerge != nil) wins over
+	// the connection-level PRAutoMerge default. nil means "fall back to default".
+	shouldAutoMerge := orchestrator.ResolveAutoMerge(req.AutoMerge, gitopsCfg.PRAutoMerge)
 	if shouldAutoMerge {
 		if mergeErr := gp.MergePullRequest(ctx, gitResult.PRID); mergeErr != nil {
 			s.opsStore.UpdateStep(sessionID, operations.StatusFailed, mergeErr.Error())
@@ -234,7 +235,9 @@ func (s *Server) runInitOperation(
 			return
 		}
 		s.opsStore.UpdateStep(sessionID, operations.StatusCompleted, "PR merged (auto)")
-		// Clean up branch after merge (best-effort).
+		// BUG-032: clean up branch after merge (best-effort). DeleteBranch
+		// failures (e.g. AzureDevOps "not yet implemented", branch already
+		// deleted) are logged but never fail the operation.
 		if delErr := gp.DeleteBranch(ctx, branch); delErr != nil {
 			slog.Warn("failed to delete branch after merge", "branch", branch, "error", delErr)
 		}

@@ -149,15 +149,17 @@ func (m *mockCredProvider) HealthCheck(ctx context.Context) error {
 // ---------- mock Git provider ----------
 
 type mockGitProvider struct {
-	mu           sync.Mutex
-	files        map[string][]byte // path -> content (written files)
-	deletedFiles []string
-	branches     []string
-	prs          []*gitprovider.PullRequest
-	createErr    error
-	deleteErr    error
-	prErr        error
-	mergeErr     error
+	mu              sync.Mutex
+	files           map[string][]byte // path -> content (written files)
+	deletedFiles    []string
+	branches        []string
+	deletedBranches []string // BUG-032: track DeleteBranch calls for assertions
+	prs             []*gitprovider.PullRequest
+	createErr       error
+	deleteErr       error
+	prErr           error
+	mergeErr        error
+	deleteBranchErr error // BUG-032: simulate gitprovider.DeleteBranch failure (e.g. AzureDevOps not-yet-implemented)
 }
 
 func newMockGitProvider() *mockGitProvider {
@@ -255,7 +257,12 @@ func (m *mockGitProvider) MergePullRequest(_ context.Context, _ int) error {
 func (m *mockGitProvider) GetPullRequestStatus(_ context.Context, _ int) (string, error) {
 	return "open", nil
 }
-func (m *mockGitProvider) DeleteBranch(_ context.Context, _ string) error { return nil }
+func (m *mockGitProvider) DeleteBranch(_ context.Context, branchName string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.deletedBranches = append(m.deletedBranches, branchName)
+	return m.deleteBranchErr
+}
 
 // ---------- helpers ----------
 
@@ -700,7 +707,7 @@ func TestUpdateClusterAddons(t *testing.T) {
 	orch := New(nil, defaultCreds(), argocd, git, defaultGitOps(), defaultPaths(), nil)
 
 	result, err := orch.UpdateClusterAddons(context.Background(), "prod-eu", "https://k8s.example.com:6443", "eu-west-1",
-		map[string]bool{"monitoring": true, "logging": true})
+		map[string]bool{"monitoring": true, "logging": true}, nil)
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1009,7 +1016,7 @@ func TestUpdateClusterAddons_AutoMergeFails(t *testing.T) {
 	orch := New(nil, defaultCreds(), argocd, git, autoMergeGitOps(), defaultPaths(), nil)
 
 	result, err := orch.UpdateClusterAddons(context.Background(), "prod-eu", "https://k8s.example.com:6443", "eu-west-1",
-		map[string]bool{"monitoring": true})
+		map[string]bool{"monitoring": true}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

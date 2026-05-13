@@ -46,6 +46,25 @@ type RegisterClusterRequest struct {
 	// to generate a token via `kubectl create token`. Ignored for any
 	// other provider.
 	Kubeconfig string `json:"kubeconfig,omitempty"`
+
+	// AutoMerge is the per-request auto-merge decision (BUG-031). nil
+	// means "fall back to the connection-level PRAutoMerge default";
+	// a non-nil value overrides the default for this operation only.
+	// Resolved via resolveAutoMerge — never mutate o.gitops.PRAutoMerge.
+	AutoMerge *bool `json:"auto_merge,omitempty"`
+}
+
+// UpdateClusterAddonsRequest is the input for PATCH /clusters/{name}.
+// Promoted to a named type in BUG-031 so the per-request AutoMerge
+// override can be added without an anonymous-struct field bag at the
+// handler edge.
+type UpdateClusterAddonsRequest struct {
+	Addons     map[string]bool `json:"addons,omitempty"`
+	SecretPath *string         `json:"secret_path,omitempty"`
+
+	// AutoMerge is the per-request auto-merge decision (BUG-031). nil
+	// means "fall back to the connection-level PRAutoMerge default".
+	AutoMerge *bool `json:"auto_merge,omitempty"`
 }
 
 // RegisterClusterResult is the output of a successful cluster registration.
@@ -178,9 +197,14 @@ type ConfigureAddonRequest struct {
 }
 
 // AdoptClustersRequest is the input for adopting existing ArgoCD clusters.
+//
+// BUG-031: AutoMerge is a pointer so callers can distinguish "not set"
+// (fall back to connection-level PRAutoMerge default) from explicit
+// true/false overrides. Resolved via resolveAutoMerge — never mutate
+// o.gitops.PRAutoMerge (shared global state across concurrent requests).
 type AdoptClustersRequest struct {
 	Clusters  []string `json:"clusters"`
-	AutoMerge bool     `json:"auto_merge"` // override per-request; if false, PRs are left open
+	AutoMerge *bool    `json:"auto_merge,omitempty"`
 	DryRun    bool     `json:"dry_run,omitempty"`
 }
 
@@ -282,9 +306,14 @@ type EnableAddonResult struct {
 }
 
 // InitRepoRequest is the input for initializing the addons repository.
+//
+// BUG-031: AutoMerge is a pointer so callers can distinguish "not set"
+// (fall back to connection-level PRAutoMerge default) from explicit
+// true/false overrides. The init handler resolves it via
+// resolveAutoMerge before deciding whether to merge the bootstrap PR.
 type InitRepoRequest struct {
 	BootstrapArgoCD bool   `json:"bootstrap_argocd"`
-	AutoMerge       bool   `json:"auto_merge"`
+	AutoMerge       *bool  `json:"auto_merge,omitempty"`
 	GitUsername     string `json:"git_username,omitempty"`
 	GitToken        string `json:"git_token,omitempty"`
 }

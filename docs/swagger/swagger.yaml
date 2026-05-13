@@ -521,7 +521,6 @@ definitions:
   github_com_MoranWeissman_sharko_internal_orchestrator.AdoptClustersRequest:
     properties:
       auto_merge:
-        description: override per-request; if false, PRs are left open
         type: boolean
       clusters:
         items:
@@ -701,6 +700,13 @@ definitions:
         additionalProperties:
           type: boolean
         type: object
+      auto_merge:
+        description: |-
+          AutoMerge is the per-request auto-merge decision (BUG-031). nil
+          means "fall back to the connection-level PRAutoMerge default";
+          a non-nil value overrides the default for this operation only.
+          Resolved via resolveAutoMerge — never mutate o.gitops.PRAutoMerge.
+        type: boolean
       dry_run:
         type: boolean
       kubeconfig:

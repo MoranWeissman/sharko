@@ -235,9 +235,10 @@ func TestConnectionsCRUDAndInit(t *testing.T) {
 		// completes immediately via the mock; BootstrapArgoCD=false so we
 		// skip the ArgoCD steps (there's no reachable ArgoCD in-process —
 		// that's covered by TestConnectionsDiscoverAndTest's larger setup).
+		autoMergeTrue := true
 		req := orchestrator.InitRepoRequest{
 			BootstrapArgoCD: false,
-			AutoMerge:       true,
+			AutoMerge:       &autoMergeTrue,
 		}
 		resp := admin.Init(t, req)
 		if resp.OperationID == "" {
@@ -280,9 +281,10 @@ func TestConnectionsCRUDAndInit(t *testing.T) {
 		// initialized from the previous subtest, so the handler may hit
 		// the idempotent-already-initialized branch and Complete instead —
 		// either path produces a valid session to heartbeat against.
+		autoMergeFalse := false
 		req := orchestrator.InitRepoRequest{
 			BootstrapArgoCD: false,
-			AutoMerge:       false,
+			AutoMerge:       &autoMergeFalse,
 		}
 		resp := admin.Init(t, req)
 		if resp.OperationID == "" {
@@ -320,9 +322,10 @@ func TestConnectionsCRUDAndInit(t *testing.T) {
 		// the goroutine winds down (it does, eventually, via the ticker
 		// checking sess.Status) — just that the cancel endpoint flips the
 		// session state to StatusCancelled visible via GetOperation.
+		autoMergeFalse := false
 		req := orchestrator.InitRepoRequest{
 			BootstrapArgoCD: false,
-			AutoMerge:       false,
+			AutoMerge:       &autoMergeFalse,
 		}
 		resp := admin.Init(t, req)
 		if resp.OperationID == "" {

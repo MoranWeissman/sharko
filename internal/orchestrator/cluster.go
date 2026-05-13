@@ -213,20 +213,26 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	}
 
 	// Step 3b: Create ArgoCD cluster secret (if Manager is configured AND auto-merge is on).
-	// When PRAutoMerge is true the PR merges immediately, so the cluster will be in
+	// When auto-merge is true the PR merges immediately, so the cluster will be in
 	// managed-clusters.yaml by the time the reconciler runs — creating the secret here
 	// gives instant ArgoCD connectivity without waiting for the next reconcile cycle.
 	//
-	// When PRAutoMerge is false the PR is left open: the cluster is NOT yet in
+	// When auto-merge is false the PR is left open: the cluster is NOT yet in
 	// managed-clusters.yaml, so the reconciler would see any secret we create here as an
 	// orphan and delete it. In that case we skip this step entirely and let the reconciler
 	// create the secret after the user merges the PR.
 	//
+	// BUG-031: auto-merge resolution honors the per-request override before
+	// falling back to o.gitops.PRAutoMerge — same precedence used by
+	// commitChangesWithMeta a few steps below, so Step 3b stays in sync with
+	// whether the PR will actually merge in this operation.
+	//
 	// Non-blocking: a failure records a partial result but does not stop the remaining steps.
 	// The reconciler will retry on its next cycle, so a transient failure here is recoverable.
+	effectiveAutoMerge := resolveAutoMerge(req.AutoMerge, o.gitops.PRAutoMerge)
 	var argoSecretErr error
 	argoSecretCreated := false
-	if o.argoSecretManager != nil && o.gitops.PRAutoMerge {
+	if o.argoSecretManager != nil && effectiveAutoMerge {
 		// Use "true"/"false" to match the label format in cluster-addons.yaml.
 		// The reconciler reads labels directly from cluster-addons.yaml and writes them
 		// as-is; using the same format here prevents hash mismatches that would otherwise
@@ -365,9 +371,10 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	}
 
 	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("register cluster %s", req.Name), PRMetadata{
-		OperationCode: "register-cluster",
-		Cluster:       req.Name,
-		Title:         fmt.Sprintf("Register cluster %s", req.Name),
+		OperationCode:     "register-cluster",
+		Cluster:           req.Name,
+		Title:             fmt.Sprintf("Register cluster %s", req.Name),
+		AutoMergeOverride: req.AutoMerge, // BUG-031: per-request override
 	})
 	if err != nil {
 		if gitResult != nil {
@@ -403,9 +410,11 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	// entirely — the Manager creates the correctly named and labeled secret, and
 	// calling ArgoCD's RegisterCluster API would create a duplicate with a
 	// URL-based name (e.g. cluster-35aeed...).
-	// When PRAutoMerge is false, Step 3b was skipped; the reconciler will create the secret
+	// When auto-merge is false, Step 3b was skipped; the reconciler will create the secret
 	// after the PR merges, so we also skip the ArgoCD API call here to avoid a duplicate.
-	if argoSecretCreated || (o.argoSecretManager != nil && !o.gitops.PRAutoMerge) {
+	// BUG-031: use the resolved effectiveAutoMerge (from Step 3b above) so this gate
+	// stays in sync with the actual merge decision for this operation.
+	if argoSecretCreated || (o.argoSecretManager != nil && !effectiveAutoMerge) {
 		slog.Info("ArgoCD cluster secret managed by Sharko, skipping ArgoCD API registration", "cluster", req.Name)
 		steps = append(steps, "argocd_secret_managed")
 	} else {
@@ -567,7 +576,11 @@ func (o *Orchestrator) DeregisterCluster(ctx context.Context, name string, serve
 //  3. Delete secrets for disabled addons (best-effort: continue on failure)
 //  4. Update values file via PR
 //  5. Update ArgoCD labels (all at once — LAST, after secrets and values exist)
-func (o *Orchestrator) UpdateClusterAddons(ctx context.Context, name string, serverURL string, region string, addons map[string]bool) (*RegisterClusterResult, error) {
+//
+// BUG-031: autoMergeOverride is the per-request auto-merge decision (nil =
+// fall back to o.gitops.PRAutoMerge). Passed through to commitChangesWithMeta
+// via PRMetadata.AutoMergeOverride — never mutates o.gitops.PRAutoMerge.
+func (o *Orchestrator) UpdateClusterAddons(ctx context.Context, name string, serverURL string, region string, addons map[string]bool, autoMergeOverride *bool) (*RegisterClusterResult, error) {
 	result := &RegisterClusterResult{
 		Cluster: ClusterResult{Name: name, Server: serverURL, Addons: addons},
 	}
@@ -623,9 +636,10 @@ func (o *Orchestrator) UpdateClusterAddons(ctx context.Context, name string, ser
 	}
 
 	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("update addons for cluster %s", name), PRMetadata{
-		OperationCode: "update-cluster",
-		Cluster:       name,
-		Title:         fmt.Sprintf("Update addons for cluster %s", name),
+		OperationCode:     "update-cluster",
+		Cluster:           name,
+		Title:             fmt.Sprintf("Update addons for cluster %s", name),
+		AutoMergeOverride: autoMergeOverride, // BUG-031: per-request override
 	})
 	if err != nil {
 		if gitResult != nil {

@@ -145,21 +145,55 @@ func (o *Orchestrator) commitChangesWithMeta(ctx context.Context, files map[stri
 		})
 	}
 
-	// Auto-merge if configured.
-	if o.gitops.PRAutoMerge {
+	// Auto-merge if configured. BUG-031: a per-request AutoMergeOverride
+	// wins over the connection-level default — resolveAutoMerge centralises
+	// the precedence rule so every call site uses the same semantics.
+	autoMerge := resolveAutoMerge(meta.AutoMergeOverride, o.gitops.PRAutoMerge)
+	if autoMerge {
 		if mergeErr := o.git.MergePullRequest(ctx, pr.ID); mergeErr != nil {
 			// PR created but merge failed — partial success.
 			// Caller decides how to handle this (e.g. return 207).
 			return result, fmt.Errorf("PR created but merge failed: %w", mergeErr)
 		}
 		result.Merged = true
-		// Clean up branch after merge (best-effort).
+		// BUG-032: clean up the source branch after every Sharko-merged
+		// PR. Best-effort — a DeleteBranch failure (e.g. AzureDevOps's
+		// "not yet implemented", branch already deleted, transient API
+		// hiccup) is logged but never fails the merge operation. The
+		// branch is hygienic, not load-bearing.
 		if delErr := o.git.DeleteBranch(ctx, branchName); delErr != nil {
 			slog.Warn("failed to delete branch after merge", "branch", branchName, "error", delErr)
 		}
 	}
 
 	return result, nil
+}
+
+// ResolveAutoMerge picks the effective auto-merge decision for a single
+// operation. Per-request override (when non-nil) wins over the connection
+// default. nil means "fall back to the connection default" — preserves
+// back-compat for legacy clients that don't send the field.
+//
+// Pure function, safe to call from any handler without mutating shared
+// state. NEVER assign to o.gitops.PRAutoMerge — that's a global shared
+// across concurrent requests and would race.
+//
+// Exported so the init handler (and any other non-orchestrator callers
+// of MergePullRequest) can reuse the same precedence rule without
+// reimplementing it. See BUG-031.
+func ResolveAutoMerge(reqAutoMerge *bool, connDefault bool) bool {
+	if reqAutoMerge != nil {
+		return *reqAutoMerge
+	}
+	return connDefault
+}
+
+// resolveAutoMerge is the unexported alias used internally by the
+// orchestrator package. Kept as a thin wrapper so the package's own
+// call sites stay short and the public surface (ResolveAutoMerge) is
+// the canonical name.
+func resolveAutoMerge(reqAutoMerge *bool, connDefault bool) bool {
+	return ResolveAutoMerge(reqAutoMerge, connDefault)
 }
 
 // findOpenPRForCluster searches for an existing open PR that matches a specific

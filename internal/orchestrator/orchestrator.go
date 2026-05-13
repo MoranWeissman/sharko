@@ -85,6 +85,13 @@ type PRMetadata struct {
 	Title         string // human-readable PR title (defaults to commitMsg when empty)
 	User          string // author/actor (set by handler-derived ctx; "system" when unknown)
 	Source        string // ui, cli, api — defaults to "api" in handlers
+
+	// AutoMergeOverride lets a single operation override the connection-
+	// level PRAutoMerge default for THIS PR only (BUG-031). nil means
+	// "fall back to o.gitops.PRAutoMerge"; non-nil wins. Resolved inside
+	// commitChangesWithMeta via resolveAutoMerge — never mutate
+	// o.gitops.PRAutoMerge (shared state across concurrent requests).
+	AutoMergeOverride *bool
 }
 
 // Orchestrator coordinates multi-step operations across providers, ArgoCD,
