@@ -4009,7 +4009,7 @@ const docTemplate = `{
                         }
                     },
                     "503": {
-                        "description": "No credentials provider configured",
+                        "description": "Secrets backend not configured (error_code=no_secrets_backend)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true

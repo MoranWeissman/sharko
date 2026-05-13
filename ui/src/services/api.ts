@@ -161,8 +161,73 @@ export async function discoverEKSClusters(data: { role_arns: string[]; region?: 
   return postJSON<DiscoverClustersResponse>('/clusters/discover', data)
 }
 
-export async function testClusterConnection(name: string) {
-  return postJSON<VerifyResult & { reachable?: boolean; platform?: string; suggestions?: string[] }>(`/clusters/${encodeURIComponent(name)}/test`, {})
+/**
+ * BUG-035: structured 503 body when the active connection has no secrets
+ * backend configured. The cluster connectivity test depends on fetching the
+ * cluster kubeconfig from a secrets backend (Vault / AWS SM / file-store);
+ * with none configured, every test 503s. The backend now returns
+ * `error_code: "no_secrets_backend"` so the UI can render a dedicated
+ * "test unavailable" state instead of misleading the operator with
+ * "Unreachable".
+ */
+export interface TestClusterUnavailable {
+  unavailable: true
+  error_code: 'no_secrets_backend'
+  error: string
+  hint?: string
+}
+
+export function isTestClusterUnavailable(
+  v: unknown,
+): v is TestClusterUnavailable {
+  return (
+    typeof v === 'object' &&
+    v !== null &&
+    (v as { unavailable?: boolean }).unavailable === true &&
+    (v as { error_code?: string }).error_code === 'no_secrets_backend'
+  )
+}
+
+export async function testClusterConnection(
+  name: string,
+): Promise<
+  | (VerifyResult & { reachable?: boolean; platform?: string; suggestions?: string[] })
+  | TestClusterUnavailable
+> {
+  const res = await fetch(`${BASE_URL}/clusters/${encodeURIComponent(name)}/test`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({}),
+  })
+  if (res.status === 401) {
+    sessionStorage.removeItem(TOKEN_KEY)
+    window.location.reload()
+    throw new Error('Session expired')
+  }
+  // BUG-035: detect the structured 503 and surface it as a typed "unavailable"
+  // result instead of throwing — the UI renders it as a distinct state, not
+  // as an "Unreachable" cluster.
+  if (res.status === 503) {
+    const body = (await res.json().catch(() => ({}))) as {
+      error?: string
+      error_code?: string
+      hint?: string
+    }
+    if (body.error_code === 'no_secrets_backend') {
+      return {
+        unavailable: true,
+        error_code: 'no_secrets_backend',
+        error: body.error || 'Cluster test unavailable — no secrets backend configured.',
+        hint: body.hint,
+      }
+    }
+    throw new Error(body.error || 'Service unavailable')
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error((body as { error?: string }).error || res.statusText)
+  }
+  return res.json()
 }
 
 export async function diagnoseCluster(name: string) {
@@ -198,16 +263,51 @@ export function createAuditStream(): EventSource {
   return new EventSource(url)
 }
 
+// BUG-039: the backend handler at `orchestrator.RemoveCluster` rejects
+// confirmation-required operations with HTTP 400 "confirmation required:
+// set yes: true in request body" when the body doesn't include
+// `{"yes": true}`. The UI confirm modal previously sent an empty body so
+// the request always 400'd after the user clicked Yes. Wrap the DELETE in
+// a fetch that includes the confirmation flag in the request body.
 export async function deregisterCluster(name: string) {
-  return deleteJSON<any>(`/clusters/${encodeURIComponent(name)}`)
+  const res = await fetch(`${BASE_URL}/clusters/${encodeURIComponent(name)}`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ yes: true }),
+  })
+  if (res.status === 401) {
+    sessionStorage.removeItem(TOKEN_KEY)
+    window.location.reload()
+    throw new Error('Session expired')
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error(err.error || res.statusText)
+  }
+  return res.json()
 }
 
 export async function adoptClusters(data: { clusters: string[]; auto_merge?: boolean; dry_run?: boolean }) {
+  // BUG-039 audit note: AdoptClustersRequest on the backend does NOT have
+  // a `Yes` field — `cluster.adopt` is gated on RBAC + per-cluster Stage1
+  // verification, not on a confirmation flag. So we deliberately do NOT
+  // send `yes: true` here even though the AdoptClustersDialog is a
+  // confirmation flow from the user's perspective. Audited 2026-05-13.
   return postJSON<AdoptClustersResponse>('/clusters/adopt', data)
 }
 
+// BUG-039: the unadopt handler is `POST /clusters/{name}/unadopt` and
+// requires `yes: true` in the body. The legacy `DELETE
+// /clusters/{name}?unadopt=true` path that this function used would route
+// to `handleDeregisterCluster` (the DELETE handler) rather than to
+// `handleUnadoptCluster`, then 400 because the body lacked `yes: true`.
+// Rewrite the call to hit the canonical POST endpoint with the
+// confirmation flag included.
 export async function unadoptCluster(name: string) {
-  return deleteJSON<{ status: string; pr_url?: string }>(`/clusters/${encodeURIComponent(name)}?unadopt=true`)
+  return postJSON<{ status: string; pr_url?: string }>(
+    `/clusters/${encodeURIComponent(name)}/unadopt`,
+    { yes: true },
+  )
 }
 
 // V125-1-7 / BUG-058 — orphan cluster Secret cleanup. The BE returns

@@ -254,4 +254,65 @@ describe('ClusterDetail', () => {
 
     expect(screen.getByText('Ingress-nginx')).toBeInTheDocument();
   });
+
+  // BUG-034: the connection-status banner copy must distinguish "Unknown"
+  // (no observation yet) from an actual failure. Previously the banner
+  // showed "ArgoCD Connection Failed" whenever connection_status was
+  // anything other than "Successful" — including "Unknown", which is
+  // simply the absence of an observation.
+  describe('BUG-034: cluster status banner copy', () => {
+    it('renders "Status unknown" banner (not "Connection Failed") when argocd_connection_status is Unknown', async () => {
+      mockGetClusterComparison.mockResolvedValueOnce({
+        ...comparisonResponse,
+        argocd_connection_status: 'Unknown',
+        cluster_connection_state: '',
+      });
+      renderView();
+
+      await waitFor(() => {
+        expect(screen.getByText('prod-eu')).toBeInTheDocument();
+      });
+
+      // The neutral copy must appear …
+      expect(screen.getByText('Status unknown')).toBeInTheDocument();
+      // … and the misleading "Connection Failed" copy must NOT appear when
+      // the only signal is "Unknown".
+      expect(screen.queryByText('ArgoCD Connection Failed')).not.toBeInTheDocument();
+    });
+
+    it('renders "ArgoCD Connection Failed" banner when argocd_connection_status is a real failure', async () => {
+      mockGetClusterComparison.mockResolvedValueOnce({
+        ...comparisonResponse,
+        argocd_connection_status: 'Failed',
+        argocd_connection_message: 'unable to reach apiserver',
+        cluster_connection_state: '',
+      });
+      renderView();
+
+      await waitFor(() => {
+        expect(screen.getByText('prod-eu')).toBeInTheDocument();
+      });
+
+      // Real failures still get the red Connection Failed banner with the
+      // underlying reason.
+      expect(screen.getByText('ArgoCD Connection Failed')).toBeInTheDocument();
+      expect(screen.getByText('unable to reach apiserver')).toBeInTheDocument();
+    });
+
+    it('renders neither banner when argocd_connection_status is Successful', async () => {
+      mockGetClusterComparison.mockResolvedValueOnce({
+        ...comparisonResponse,
+        argocd_connection_status: 'Successful',
+        cluster_connection_state: 'Successful',
+      });
+      renderView();
+
+      await waitFor(() => {
+        expect(screen.getByText('prod-eu')).toBeInTheDocument();
+      });
+
+      expect(screen.queryByText('Status unknown')).not.toBeInTheDocument();
+      expect(screen.queryByText('ArgoCD Connection Failed')).not.toBeInTheDocument();
+    });
+  });
 });

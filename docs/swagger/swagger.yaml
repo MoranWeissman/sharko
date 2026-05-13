@@ -4147,7 +4147,7 @@ paths:
             additionalProperties: true
             type: object
         "503":
-          description: No credentials provider configured
+          description: Secrets backend not configured (error_code=no_secrets_backend)
           schema:
             additionalProperties: true
             type: object

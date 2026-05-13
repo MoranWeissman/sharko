@@ -14,7 +14,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog'
-import { testClusterConnection, adoptClusters } from '@/services/api'
+import { testClusterConnection, adoptClusters, isTestClusterUnavailable } from '@/services/api'
 import { AuthContext } from '@/hooks/useAuth'
 import type { Cluster, AdoptResult, VerifyResult } from '@/services/models'
 
@@ -86,6 +86,31 @@ export function AdoptClustersDialog({
         try {
           const result = await testClusterConnection(verifications[i].cluster.name)
           if (cancelled) return
+          // BUG-035: when the test feature itself is unavailable (no
+          // secrets backend configured), treat as failed for the adopt
+          // workflow but surface the underlying message so the operator
+          // understands the root cause. Adoption still requires a working
+          // test, so we can't auto-select these — but we don't want to
+          // pretend the cluster "failed to verify" with a misleading error.
+          if (isTestClusterUnavailable(result)) {
+            setVerifications((prev) => {
+              const next = [...prev]
+              next[i] = {
+                ...next[i],
+                state: 'failed',
+                result: {
+                  success: false,
+                  stage: 'unavailable',
+                  error_message: result.error,
+                  duration_ms: 0,
+                  reachable: false,
+                },
+                selected: false,
+              }
+              return next
+            })
+            continue
+          }
           const passed = result.reachable !== false && result.success !== false
           setVerifications((prev) => {
             const next = [...prev]
