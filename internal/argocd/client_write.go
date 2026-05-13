@@ -118,6 +118,7 @@ func (c *Client) doDelete(ctx context.Context, path string) ([]byte, error) {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -168,9 +169,18 @@ func (c *Client) RegisterCluster(ctx context.Context, name, server string, caDat
 	return nil
 }
 
+// escapeServerURL encodes an ArgoCD server URL for use as a path segment.
+// Go's url.PathEscape leaves ':' unescaped (it is an allowed path-segment
+// character per RFC 3986), but ArgoCD's gRPC-gateway path matcher requires
+// colons escaped. url.QueryEscape encodes the full RFC 3986 reserved set
+// including ':', producing the "https%3A%2F%2F..." form that ArgoCD expects.
+func escapeServerURL(serverURL string) string {
+	return url.QueryEscape(serverURL)
+}
+
 // DeleteCluster removes a cluster from ArgoCD by server URL.
 func (c *Client) DeleteCluster(ctx context.Context, serverURL string) error {
-	path := "/api/v1/clusters/" + url.PathEscape(serverURL)
+	path := "/api/v1/clusters/" + escapeServerURL(serverURL)
 	_, err := c.doDelete(ctx, path)
 	if err != nil {
 		return fmt.Errorf("deleting cluster %q: %w", serverURL, err)
@@ -182,7 +192,7 @@ func (c *Client) DeleteCluster(ctx context.Context, serverURL string) error {
 // It fetches the current cluster, merges the new labels, and PUTs it back.
 func (c *Client) UpdateClusterLabels(ctx context.Context, serverURL string, labels map[string]string) error {
 	// GET the current cluster.
-	getPath := "/api/v1/clusters/" + url.PathEscape(serverURL)
+	getPath := "/api/v1/clusters/" + escapeServerURL(serverURL)
 	body, err := c.doGet(ctx, getPath)
 	if err != nil {
 		return fmt.Errorf("fetching cluster %q for label update: %w", serverURL, err)
@@ -208,7 +218,7 @@ func (c *Client) UpdateClusterLabels(ctx context.Context, serverURL string, labe
 		return fmt.Errorf("marshaling updated cluster: %w", err)
 	}
 
-	putPath := "/api/v1/clusters/" + url.PathEscape(serverURL) + "?updateMask=metadata.labels"
+	putPath := "/api/v1/clusters/" + escapeServerURL(serverURL) + "?updateMask=metadata.labels"
 	_, err = c.doPut(ctx, putPath, updated)
 	if err != nil {
 		return fmt.Errorf("updating labels on cluster %q: %w", serverURL, err)

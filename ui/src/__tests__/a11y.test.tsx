@@ -17,12 +17,14 @@
  * 4.5:1 by construction and (b) the manual sweep documented in
  * docs/developer-guide/accessibility.md (Story 8.4 manual leg).
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, waitFor, screen, fireEvent } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
+import { useState, type ReactElement } from 'react'
 import axe from 'axe-core'
 import { MarketplaceTab } from '@/components/MarketplaceTab'
 import { MarketplaceSearchTab } from '@/components/MarketplaceSearchTab'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 import type { CatalogEntry } from '@/services/models'
 
 // Stub the API surface MarketplaceTab + child components touch on mount.
@@ -161,5 +163,92 @@ describe('Marketplace pages — WCAG 2.1 AA (axe-core)', () => {
       ).toBeInTheDocument(),
     )
     await expectNoSeriousViolations(container, 'MarketplaceAddonDetail')
+  })
+})
+
+/**
+ * V124-3.4 — axe-core coverage of the ErrorBoundary recovery path.
+ *
+ * V124-2.3 shipped the ErrorBoundary + ErrorFallback to keep the page from
+ * going blank when a render-phase error escapes (e.g. a transient backend
+ * failure surfaced as an unhandled throw). The original V124-2.3 spec
+ * required an axe-core check on BOTH the error fallback and the recovered
+ * state after the user clicks "Try Again", but only the unit-render test
+ * landed in V124-2.3. V124-3.4 closes that gap.
+ *
+ * What we cover:
+ *   1. ErrorFallback renders with no serious axe violations (heading,
+ *      message, recovery button, mascot decoration).
+ *   2. After clicking "Try Again", the now-non-throwing child renders and
+ *      that recovered DOM also has no serious axe violations.
+ *
+ * Harness: a stateful child that throws on the first render and a button
+ * outside the boundary that flips it to non-throwing for the next render.
+ * Mirrors the pattern in components/__tests__/ErrorBoundary.test.tsx so the
+ * a11y check runs against the same exact DOM the unit test exercises.
+ */
+function ConditionalThrower({ shouldThrow }: { shouldThrow: boolean }): ReactElement {
+  if (shouldThrow) {
+    throw new Error('Boundary smoke')
+  }
+  return (
+    <main>
+      <h1>Recovered content</h1>
+      <p>The boundary's children mounted cleanly after the reset.</p>
+    </main>
+  )
+}
+
+function RecoveryHarness(): ReactElement {
+  const [shouldThrow, setShouldThrow] = useState(true)
+  return (
+    <>
+      <button type="button" onClick={() => setShouldThrow(false)}>
+        disarm
+      </button>
+      <ErrorBoundary>
+        <ConditionalThrower shouldThrow={shouldThrow} />
+      </ErrorBoundary>
+    </>
+  )
+}
+
+describe('ErrorBoundary recovery — WCAG 2.1 AA (axe-core, V124-3.4)', () => {
+  // The boundary's componentDidCatch + React's intentional dev-mode throw log
+  // are noisy here. Suppress so test output stays readable; we do not assert
+  // on console output for this suite.
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn>
+
+  beforeEach(() => {
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    consoleErrorSpy.mockRestore()
+  })
+
+  it('ErrorFallback (thrown state) and recovered child both have no serious violations', async () => {
+    const { container } = render(<RecoveryHarness />)
+
+    // 1. Initial render: child throws → ErrorBoundary renders ErrorFallback.
+    expect(screen.getByText('Something went wrong')).toBeInTheDocument()
+    expect(screen.getByText('Boundary smoke')).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /try again/i }),
+    ).toBeInTheDocument()
+    await expectNoSeriousViolations(container, 'ErrorFallback')
+
+    // 2. Disarm the child so the next render does not throw, then click Try
+    //    Again to reset the boundary. The recovered subtree must also pass.
+    fireEvent.click(screen.getByRole('button', { name: 'disarm' }))
+    fireEvent.click(screen.getByRole('button', { name: /try again/i }))
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole('heading', { name: /Recovered content/i }),
+      ).toBeInTheDocument(),
+    )
+    expect(screen.queryByText('Something went wrong')).not.toBeInTheDocument()
+    await expectNoSeriousViolations(container, 'ErrorBoundary recovered')
   })
 })

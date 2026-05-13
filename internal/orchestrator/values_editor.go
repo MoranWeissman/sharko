@@ -28,6 +28,18 @@ import (
 // The path written is `<paths.GlobalValues>/<addonName>.yaml`. The
 // content is validated as parseable YAML before any Git activity happens.
 func (o *Orchestrator) SetGlobalAddonValues(ctx context.Context, addonName, valuesYAML string) (*GitResult, error) {
+	return o.SetGlobalAddonValuesWithOp(ctx, addonName, valuesYAML, "values-edit", "")
+}
+
+// SetGlobalAddonValuesWithOp is the V125-1-6 tracking-aware variant of
+// SetGlobalAddonValues. The opCode argument controls which dashboard
+// PR-panel filter chip the resulting PR lands under — handlers that
+// invoke the values writer for non-edit reasons (e.g. AI annotate, AI
+// opt-out toggle) should pass their own canonical code.
+//
+// titleOverride lets callers provide a more specific PR title than the
+// default "Update global values for X" — empty string keeps the default.
+func (o *Orchestrator) SetGlobalAddonValuesWithOp(ctx context.Context, addonName, valuesYAML, opCode, titleOverride string) (*GitResult, error) {
 	if addonName == "" {
 		return nil, fmt.Errorf("addon name is required")
 	}
@@ -44,7 +56,15 @@ func (o *Orchestrator) SetGlobalAddonValues(ctx context.Context, addonName, valu
 	files := map[string][]byte{filePath: []byte(valuesYAML)}
 	op := fmt.Sprintf("update global values for %s", addonName)
 
-	gitResult, err := o.commitChanges(ctx, files, nil, op)
+	title := titleOverride
+	if title == "" {
+		title = fmt.Sprintf("Update global values for %s", addonName)
+	}
+	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, op, PRMetadata{
+		OperationCode: opCode,
+		Addon:         addonName,
+		Title:         title,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("committing values for addon %q: %w", addonName, err)
 	}
@@ -90,7 +110,12 @@ func (o *Orchestrator) SetClusterAddonValues(ctx context.Context, clusterName, a
 	files := map[string][]byte{filePath: merged}
 	op := fmt.Sprintf("update %s overrides on cluster %s", addonName, clusterName)
 
-	gitResult, err := o.commitChanges(ctx, files, nil, op)
+	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, op, PRMetadata{
+		OperationCode: "values-edit",
+		Addon:         addonName,
+		Cluster:       clusterName,
+		Title:         fmt.Sprintf("Update %s overrides on cluster %s", addonName, clusterName),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("committing cluster overrides: %w", err)
 	}
@@ -105,11 +130,25 @@ func (o *Orchestrator) SetClusterAddonValues(ctx context.Context, clusterName, a
 //
 // The operation string is the human-readable PR title and audit detail —
 // it's run through the same branch-name sanitiser as commitChanges.
+//
+// Backwards-compatible variant — does NOT track the PR. New callers should
+// prefer CommitFilesAsPRWithMeta so the resulting PR appears on the
+// dashboard panel.
 func (o *Orchestrator) CommitFilesAsPR(ctx context.Context, files map[string][]byte, operation string) (*GitResult, error) {
 	if len(files) == 0 {
 		return nil, fmt.Errorf("no files to commit")
 	}
 	return o.commitChanges(ctx, files, nil, operation)
+}
+
+// CommitFilesAsPRWithMeta is the V125-1-6 tracking-aware variant of
+// CommitFilesAsPR. The supplied meta drives the dashboard PR-panel filter
+// chip + per-row badge.
+func (o *Orchestrator) CommitFilesAsPRWithMeta(ctx context.Context, files map[string][]byte, operation string, meta PRMetadata) (*GitResult, error) {
+	if len(files) == 0 {
+		return nil, fmt.Errorf("no files to commit")
+	}
+	return o.commitChangesWithMeta(ctx, files, nil, operation, meta)
 }
 
 // validateYAML returns nil if s parses as YAML (empty input is allowed).

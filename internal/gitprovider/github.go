@@ -6,10 +6,40 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/google/go-github/v68/github"
 	"golang.org/x/oauth2"
 )
+
+// isEmptyRepo returns true when err signals that the GitHub repository
+// exists but has no commits/branches yet. GitHub returns 409 Conflict with
+// the message "Git Repository is empty." for git-data API calls (refs,
+// trees, commits) on freshly-created repos that have never received a push
+// or initial commit.
+//
+// V124-11 root cause: the bootstrap flow (CreateBranch in github_write.go)
+// previously only handled 404 Not Found from GetRef as the empty-repo
+// signal. A repo created via `gh repo create` (no --add-readme) returns 409
+// instead, so the wizard's step 4 ("Initialize") would fail with the 409
+// surfaced verbatim and the maintainer was blocked on first-time setup.
+//
+// Detection strategy: GitHub does not expose a stable machine-readable
+// "code" for this scenario, so we combine (1) the type-asserted
+// *github.ErrorResponse, (2) the HTTP 409 status code and (3) a
+// case-insensitive substring match on the documented English message. The
+// substring guard prevents false positives from other 409 responses (e.g.,
+// merge conflicts) which carry distinct messages.
+func isEmptyRepo(err error) bool {
+	var ghErr *github.ErrorResponse
+	if !errors.As(err, &ghErr) {
+		return false
+	}
+	if ghErr.Response == nil || ghErr.Response.StatusCode != http.StatusConflict {
+		return false
+	}
+	return strings.Contains(strings.ToLower(ghErr.Message), "empty")
+}
 
 // GitHubProvider implements GitProvider using the GitHub API.
 type GitHubProvider struct {

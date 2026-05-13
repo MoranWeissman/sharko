@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -13,8 +14,13 @@ import (
 )
 
 // PRListResponse is the response for GET /api/v1/prs.
+//
+// V125-1-6: gains a Limit field so the FE can render a "View all on
+// GitHub →" escape hatch when the server response is at the limit cap.
+// Limit reflects the effective limit (clamped to prsMaxLimit).
 type PRListResponse struct {
-	PRs []PRItem `json:"prs"`
+	PRs   []PRItem `json:"prs"`
+	Limit int      `json:"limit,omitempty"`
 }
 
 // PRItem is a single PR in list/detail responses.
@@ -34,10 +40,20 @@ type PRItem struct {
 	LastPolled string `json:"last_polled_at"`
 }
 
+// Default and hard cap for the ?limit= query parameter on /api/v1/prs.
+// Defaults align with the FE PullRequestsPanel: small enough that an org
+// with many PRs doesn't render hundreds of rows by default, large enough
+// that the typical case never hits the cap. Hard cap protects the
+// response from runaway clients.
+const (
+	prsDefaultLimit = 100
+	prsMaxLimit     = 500
+)
+
 // handleListPRs handles GET /api/v1/prs
 //
 // @Summary List tracked pull requests
-// @Description Returns all tracked pull requests with optional filters
+// @Description Returns all tracked pull requests with optional filters. Sorted by created_at descending.
 // @Tags prs
 // @Produce json
 // @Security BearerAuth
@@ -45,7 +61,9 @@ type PRItem struct {
 // @Param cluster query string false "Filter by cluster name"
 // @Param addon query string false "Filter by addon name"
 // @Param user query string false "Filter by user"
-// @Success 200 {object} PRListResponse "List of tracked PRs"
+// @Param operation query string false "Comma-separated list of operation codes to include (e.g. addon-add,values-edit). Empty = all."
+// @Param limit query int false "Maximum entries to return (default 100, hard cap 500)"
+// @Success 200 {object} PRListResponse "List of tracked PRs (sorted newest-first)"
 // @Failure 500 {object} map[string]interface{} "Internal error"
 // @Router /prs [get]
 func (s *Server) handleListPRs(w http.ResponseWriter, r *http.Request) {
@@ -63,10 +81,36 @@ func (s *Server) handleListPRs(w http.ResponseWriter, r *http.Request) {
 	addon := r.URL.Query().Get("addon")
 	user := r.URL.Query().Get("user")
 
-	prs, err := s.prTracker.ListPRs(r.Context(), status, cluster, addon, user)
+	// V125-1-6: ?operation=<csv> filter. Empty = all. Whitespace
+	// segments are dropped silently.
+	var operations []string
+	if raw := r.URL.Query().Get("operation"); raw != "" {
+		for _, op := range strings.Split(raw, ",") {
+			op = strings.TrimSpace(op)
+			if op != "" {
+				operations = append(operations, op)
+			}
+		}
+	}
+
+	limit := parseLimit(r, prsDefaultLimit, prsMaxLimit)
+
+	prs, err := s.prTracker.ListPRsFiltered(r.Context(), status, cluster, addon, user, operations)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+
+	// Sort newest-first by CreatedAt — the dashboard renders top-down,
+	// so the freshest PRs always lead. Stable order matters for the
+	// FE's escape-hatch "view all on GitHub" link (it shows when the
+	// server response equals the limit cap).
+	sort.SliceStable(prs, func(i, j int) bool {
+		return prs[i].CreatedAt.After(prs[j].CreatedAt)
+	})
+
+	if len(prs) > limit {
+		prs = prs[:limit]
 	}
 
 	items := make([]PRItem, 0, len(prs))
@@ -88,7 +132,7 @@ func (s *Server) handleListPRs(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	writeJSON(w, http.StatusOK, PRListResponse{PRs: items})
+	writeJSON(w, http.StatusOK, PRListResponse{PRs: items, Limit: limit})
 }
 
 // handleGetPR handles GET /api/v1/prs/{id}

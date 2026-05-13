@@ -11,10 +11,60 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 	"gopkg.in/yaml.v3"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
+
+// Aliases to keep the V124-6.3 helpers readable while letting the import
+// list stay narrow. corev1Secret is the K8s Secret type; the Type field
+// uses corev1.SecretTypeOpaque (Opaque is the standard label-free type).
+type (
+	corev1Secret = corev1.Secret
+)
+
+const corev1SecretTypeOpaque = corev1.SecretTypeOpaque
+
+// apierrorsIsNotFound and apierrorsIsAlreadyExists wrap the apierrors
+// helpers so call sites in this file don't need to import the package
+// directly. Tests in bootstrap_test.go also use these.
+func apierrorsIsNotFound(err error) bool      { return apierrors.IsNotFound(err) }
+func apierrorsIsAlreadyExists(err error) bool { return apierrors.IsAlreadyExists(err) }
+
+// EnvBootstrapAdminPassword is the environment variable that, when set,
+// supplies the bootstrap admin password from an operator (Helm value or an
+// existing Secret). When this variable is non-empty, Sharko adopts that
+// password as the bcrypt-hashed `admin.password` and MUST NOT log it
+// anywhere — operator-supplied secrets are never logged. This contract is
+// enforced by MaybeLogBootstrapCredential / SeedBootstrapAdminFromEnv.
+const EnvBootstrapAdminPassword = "SHARKO_BOOTSTRAP_ADMIN_PASSWORD"
+
+// EnvWriteInitialAdminSecret toggles whether Sharko writes a dedicated
+// `sharko-initial-admin-secret` Secret on the auto-generated bootstrap path.
+// Mirrors the ArgoCD `argocd-initial-admin-secret` pattern so operators can
+// retrieve the bootstrap password via kubectl after the log line scrolls
+// off — see docs/site/operator/installation.md.
+//
+// Values:
+//   ""        — default, write the secret (recommended)
+//   "true"    — explicit opt-in, write the secret
+//   "false"   — explicit opt-out, do NOT write the secret. Operators who
+//               want the plaintext to live ONLY in transient pod logs
+//               should set this in Helm via
+//               `bootstrapAdmin.writeInitialSecret: false`.
+//
+// The toggle has NO effect on the operator-supplied paths (Helm value
+// `password` set, or `existingSecret.name` set) — Sharko NEVER writes the
+// initial-admin-secret in those cases.
+//
+// V124-6.3 / BUG-023.
+const EnvWriteInitialAdminSecret = "SHARKO_WRITE_INITIAL_ADMIN_SECRET"
+
+// InitialAdminSecretName is the canonical name of the dedicated
+// initial-admin-secret. Mirrors ArgoCD's naming.
+const InitialAdminSecretName = "sharko-initial-admin-secret"
 
 // Mode represents the auth backend mode.
 type Mode string
@@ -539,6 +589,285 @@ func getEnvDefault(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// MaybeLogBootstrapCredential logs the auto-generated bootstrap admin
+// credential exactly once on first boot, when all of the following hold:
+//
+//   - The store is running in K8s mode.
+//   - The bootstrap admin password was NOT supplied by the operator
+//     (the SHARKO_BOOTSTRAP_ADMIN_PASSWORD env var is empty).
+//   - The Sharko Secret carries an `admin.initialPassword` key, which the
+//     Helm chart writes only on first install when no operator-supplied
+//     password is configured.
+//
+// The credential is logged in a clearly-marked block so operators can
+// recover it from `kubectl logs -n sharko deployment/sharko | grep -A4 BOOTSTRAP`.
+// After logging, the `admin.initialPassword` key is removed from the Secret
+// so subsequent restarts do not re-emit the credential.
+//
+// SECURITY: this function MUST NOT log when the operator supplied a
+// password (env var path). Operator-supplied passwords are never logged
+// anywhere — see SeedBootstrapAdminFromEnv. This invariant is exercised
+// by TestMaybeLogBootstrapCredential_OperatorSuppliedNotLogged.
+func (s *Store) MaybeLogBootstrapCredential() {
+	if s.mode != ModeK8s || s.clientset == nil {
+		return
+	}
+	// CRITICAL: never log when operator supplied a password.
+	if os.Getenv(EnvBootstrapAdminPassword) != "" {
+		return
+	}
+
+	ctx := context.Background()
+	secret, err := s.clientset.CoreV1().Secrets(s.namespace).Get(ctx, s.secretName, metav1.GetOptions{})
+	if err != nil {
+		slog.Debug("bootstrap credential check skipped: cannot read secret", "error", err)
+		return
+	}
+
+	pwBytes, ok := secret.Data["admin.initialPassword"]
+	if !ok || len(pwBytes) == 0 {
+		return
+	}
+	password := string(pwBytes)
+
+	slog.Info("=== BOOTSTRAP ADMIN CREDENTIAL ===")
+	slog.Info("bootstrap admin generated", "username", "admin", "password", password)
+	slog.Info("This is the only time this credential will be shown. Store it securely.")
+	slog.Info("=== END BOOTSTRAP ADMIN CREDENTIAL ===")
+
+	// V124-6.3 / BUG-023: also write a dedicated `sharko-initial-admin-secret`
+	// for operator retrieval (mirrors ArgoCD's argocd-initial-admin-secret
+	// pattern). The log path remains the source of truth — the dedicated
+	// secret is convenience for operators who missed the log window.
+	//
+	// Skipped when SHARKO_WRITE_INITIAL_ADMIN_SECRET=false (Helm
+	// `bootstrapAdmin.writeInitialSecret: false`). NEVER written on the
+	// operator-supplied path (we already returned earlier in that case).
+	if writeInitialAdminSecretEnabled() {
+		if err := s.writeInitialAdminSecret(ctx, password); err != nil {
+			// Non-fatal: log path already emitted the credential. Operators
+			// without secret-create RBAC fall back to log scraping.
+			slog.Warn("could not write sharko-initial-admin-secret; fall back to logs",
+				"name", InitialAdminSecretName,
+				"namespace", s.namespace,
+				"error", err)
+		}
+	} else {
+		slog.Info("skipping sharko-initial-admin-secret write per SHARKO_WRITE_INITIAL_ADMIN_SECRET=false")
+	}
+
+	// Best-effort cleanup so the credential is not logged on every restart.
+	// A failure here is non-fatal — the next restart will simply re-emit.
+	delete(secret.Data, "admin.initialPassword")
+	if _, updateErr := s.clientset.CoreV1().Secrets(s.namespace).Update(ctx, secret, metav1.UpdateOptions{}); updateErr != nil {
+		slog.Warn("failed to remove admin.initialPassword from secret after bootstrap log", "error", updateErr)
+	}
+}
+
+// writeInitialAdminSecretEnabled reads SHARKO_WRITE_INITIAL_ADMIN_SECRET and
+// returns whether the dedicated initial-admin-secret should be written.
+// Default (env unset or empty) is TRUE — the secret IS written, mirroring
+// ArgoCD's behavior. Only an explicit "false" value opts out.
+func writeInitialAdminSecretEnabled() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(EnvWriteInitialAdminSecret)))
+	if v == "false" || v == "0" || v == "no" {
+		return false
+	}
+	return true
+}
+
+// writeInitialAdminSecret creates (or updates idempotently) the
+// `sharko-initial-admin-secret` Secret in the release namespace, carrying the
+// admin username and the auto-generated plaintext password. Used by the
+// bootstrap-credential flow to give operators a kubectl-friendly retrieval
+// path equivalent to ArgoCD's `argocd-initial-admin-secret`.
+//
+// SECURITY: this function is ONLY called from MaybeLogBootstrapCredential's
+// auto-generated path, AFTER the early-return for the operator-supplied case.
+// Operator-supplied passwords MUST NEVER reach this function. The
+// `secrets["admin.initialPassword"]` key — present only on auto-gen — is the
+// signal we use.
+//
+// The created Secret carries:
+//
+//   metadata.labels:
+//     app.kubernetes.io/managed-by: sharko
+//     app.kubernetes.io/component:  bootstrap
+//   metadata.annotations:
+//     sharko.io/initial-secret: "rotated-on-reset-admin"
+//   data:
+//     username: <base64('admin')>
+//     password: <base64(plaintext)>
+//
+// The annotation wording was updated in V124-7 from
+// "delete-after-first-password-change" to "rotated-on-reset-admin" to reflect
+// the actual lifecycle: the secret persists across `sharko reset-admin`
+// invocations, each rotation rewriting `data.password` to the new plaintext
+// (operators can `kubectl delete` it manually whenever they want it gone).
+//
+// V124-6.3 / BUG-023; annotation updated in V124-7.1 / BUG-025.
+func (s *Store) writeInitialAdminSecret(ctx context.Context, password string) error {
+	secret := &corev1Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      InitialAdminSecretName,
+			Namespace: s.namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/managed-by": "sharko",
+				"app.kubernetes.io/component":  "bootstrap",
+			},
+			Annotations: map[string]string{
+				"sharko.io/initial-secret": "rotated-on-reset-admin",
+			},
+		},
+		Type: corev1SecretTypeOpaque,
+		Data: map[string][]byte{
+			"username": []byte("admin"),
+			"password": []byte(password),
+		},
+	}
+
+	// Idempotent: try create, fall back to update on AlreadyExists.
+	if _, err := s.clientset.CoreV1().Secrets(s.namespace).Create(ctx, secret, metav1.CreateOptions{}); err != nil {
+		if !apierrorsIsAlreadyExists(err) {
+			return fmt.Errorf("create %s/%s: %w", s.namespace, InitialAdminSecretName, err)
+		}
+		// AlreadyExists — update to refresh password (e.g. after re-bootstrap).
+		existing, getErr := s.clientset.CoreV1().Secrets(s.namespace).Get(ctx, InitialAdminSecretName, metav1.GetOptions{})
+		if getErr != nil {
+			return fmt.Errorf("get existing %s/%s for update: %w", s.namespace, InitialAdminSecretName, getErr)
+		}
+		if existing.Data == nil {
+			existing.Data = make(map[string][]byte)
+		}
+		existing.Data["username"] = []byte("admin")
+		existing.Data["password"] = []byte(password)
+		if existing.Labels == nil {
+			existing.Labels = make(map[string]string)
+		}
+		existing.Labels["app.kubernetes.io/managed-by"] = "sharko"
+		existing.Labels["app.kubernetes.io/component"] = "bootstrap"
+		if existing.Annotations == nil {
+			existing.Annotations = make(map[string]string)
+		}
+		existing.Annotations["sharko.io/initial-secret"] = "rotated-on-reset-admin"
+		if _, err := s.clientset.CoreV1().Secrets(s.namespace).Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
+			return fmt.Errorf("update %s/%s: %w", s.namespace, InitialAdminSecretName, err)
+		}
+	}
+
+	slog.Info("wrote sharko-initial-admin-secret for operator retrieval",
+		"name", InitialAdminSecretName,
+		"namespace", s.namespace,
+		"hint", "kubectl get secret "+InitialAdminSecretName+" -n "+s.namespace+" -o jsonpath='{.data.password}' | base64 -d")
+	return nil
+}
+
+// DeleteInitialAdminSecret removes the `sharko-initial-admin-secret` if it
+// exists. Called from password-rotation flows (`sharko reset-admin`, future
+// UI password-change handlers) so the operator-friendly bootstrap secret is
+// cleaned up after the admin has rotated their password.
+//
+// Idempotent: returns nil if the secret does not exist (no error to log,
+// no error to return). If the secret exists but deletion fails for an
+// unexpected reason (RBAC, transient API error), returns the wrapped error
+// so the caller can decide whether to surface it.
+//
+// V124-6.3 / BUG-023.
+func (s *Store) DeleteInitialAdminSecret(ctx context.Context) error {
+	if s.mode != ModeK8s || s.clientset == nil {
+		return nil
+	}
+	err := s.clientset.CoreV1().Secrets(s.namespace).Delete(ctx, InitialAdminSecretName, metav1.DeleteOptions{})
+	if err == nil {
+		slog.Info("deleted sharko-initial-admin-secret after password rotation",
+			"name", InitialAdminSecretName,
+			"namespace", s.namespace)
+		return nil
+	}
+	if apierrorsIsNotFound(err) {
+		// Idempotent — no-op when the secret was never written or has
+		// already been deleted by the operator.
+		return nil
+	}
+	return fmt.Errorf("delete %s/%s: %w", s.namespace, InitialAdminSecretName, err)
+}
+
+// SeedBootstrapAdminFromEnv consumes the SHARKO_BOOTSTRAP_ADMIN_PASSWORD
+// env var and writes its bcrypt hash into the Sharko Secret as
+// `admin.password`. This is the operator-supplied credential path, used
+// when the Helm value `bootstrapAdmin.password` is set or when
+// `bootstrapAdmin.existingSecret.name` is wired into the deployment as an
+// env var via `valueFrom.secretKeyRef`.
+//
+// On every startup the env var is authoritative — Sharko overwrites
+// admin.password with the bcrypt hash of the env value. Operators rotate
+// the password by updating the source (Helm value or existing Secret) and
+// restarting the pod.
+//
+// Also clears any stale `admin.initialPassword` key so that
+// MaybeLogBootstrapCredential never emits a stale credential.
+//
+// SECURITY: the plaintext env value is NEVER logged. The function emits a
+// single info log noting that an operator-supplied password was applied,
+// without the value. This invariant is exercised by
+// TestSeedBootstrapAdminFromEnv_DoesNotLogPassword.
+func (s *Store) SeedBootstrapAdminFromEnv() error {
+	password := os.Getenv(EnvBootstrapAdminPassword)
+	if password == "" {
+		return nil
+	}
+	if s.mode != ModeK8s || s.clientset == nil {
+		// Local-mode operator-supplied passwords flow through SHARKO_AUTH_*.
+		return nil
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash bootstrap admin password: %w", err)
+	}
+
+	ctx := context.Background()
+	secret, err := s.clientset.CoreV1().Secrets(s.namespace).Get(ctx, s.secretName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("read sharko secret %s/%s: %w", s.namespace, s.secretName, err)
+	}
+	if secret.Data == nil {
+		secret.Data = make(map[string][]byte)
+	}
+	secret.Data["admin.password"] = hash
+	// Clear any stale initial-password marker so MaybeLogBootstrapCredential
+	// does not log a value that has been superseded by the operator.
+	delete(secret.Data, "admin.initialPassword")
+
+	if _, err := s.clientset.CoreV1().Secrets(s.namespace).Update(ctx, secret, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("update sharko secret with bootstrap password: %w", err)
+	}
+
+	// Refresh in-memory state so authentication works without waiting for
+	// the next reload tick.
+	s.mu.Lock()
+	if _, ok := s.users["admin"]; !ok {
+		s.users["admin"] = &UserAccount{Username: "admin", Enabled: true, Role: "admin"}
+	}
+	s.passHash["admin"] = string(hash)
+	s.mu.Unlock()
+
+	// SECURITY: do NOT log the password. Only log that an operator-supplied
+	// credential was applied.
+	slog.Info("operator-supplied bootstrap admin password applied (not logged)")
+	return nil
+}
+
+// SetClientForTest installs a fake K8s client for tests. Production code
+// must use NewStore(); this exists only so unit tests can exercise the
+// bootstrap-credential flows without a real in-cluster config.
+func (s *Store) SetClientForTest(clientset kubernetes.Interface, namespace, secretName string) {
+	s.mode = ModeK8s
+	s.clientset = clientset
+	s.namespace = namespace
+	s.secretName = secretName
 }
 
 // AddUser creates a user with a known plaintext password directly in the

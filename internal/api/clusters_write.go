@@ -7,12 +7,15 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"strings"
+	"time"
 
 	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/gitops"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
+	"github.com/MoranWeissman/sharko/internal/prtracker"
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
 )
 
@@ -23,11 +26,14 @@ var validClusterNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]*$`)
 // @Summary Register cluster
 // @Description Registers a new cluster in ArgoCD and creates its GitOps configuration.
 // @Description Pass "dry_run": true to preview what would happen without making changes.
+// @Description Provider may be "eks" (default; uses configured secrets provider) or
+// @Description "kubeconfig" (V125-1.1; caller supplies kubeconfig YAML inline via the
+// @Description "kubeconfig" field — bearer-token auth only).
 // @Tags clusters
 // @Accept json
 // @Produce json
 // @Security BearerAuth
-// @Param body body orchestrator.RegisterClusterRequest true "Cluster registration request (supports dry_run field)"
+// @Param body body orchestrator.RegisterClusterRequest true "Cluster registration request (supports dry_run + kubeconfig fields)"
 // @Success 200 {object} map[string]interface{} "Dry-run preview"
 // @Success 201 {object} map[string]interface{} "Cluster registered"
 // @Success 207 {object} map[string]interface{} "Partial success"
@@ -35,15 +41,69 @@ var validClusterNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]*$`)
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 409 {object} map[string]interface{} "Cluster already exists"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
+// @Failure 503 {object} map[string]interface{} "Credentials provider not configured (V124-4.1; eks provider only)"
 // @Router /clusters [post]
 // handleRegisterCluster handles POST /api/v1/clusters — register a new cluster.
 func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "cluster.register") {
 		return
 	}
-	if s.credProvider == nil {
-		writeError(w, http.StatusNotImplemented, "secrets provider not configured")
+
+	// V124-4.5 (BUG-019 class): decode + validate request body BEFORE any
+	// upstream call. Pre-V124-4 the handler resolved ArgoCD + Git provider
+	// connections first, so an empty body burned external API quota and
+	// returned a confusing upstream-error message instead of the field-
+	// specific validation message.
+	var req orchestrator.RegisterClusterRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
+	}
+	if req.Name == "" {
+		writeError(w, http.StatusBadRequest, "cluster name is required")
+		return
+	}
+	if !validClusterNameRe.MatchString(req.Name) {
+		writeError(w, http.StatusBadRequest, "invalid cluster name: must be alphanumeric with hyphens, starting with alphanumeric")
+		return
+	}
+
+	// V125-1.1: provider-scoped field validation.
+	//
+	// The two registration paths use disjoint sets of request fields and
+	// must reject cross-provider field bleed (a kubeconfig request that
+	// also fills in role_arn is almost certainly a UI bug; an EKS request
+	// that pastes a kubeconfig wants the kubeconfig path).  Catching this
+	// at the handler edge keeps the orchestrator branch logic
+	// straightforward and gives the caller a clear, field-specific 400.
+	switch req.Provider {
+	case "kubeconfig":
+		if strings.TrimSpace(req.Kubeconfig) == "" {
+			writeError(w, http.StatusBadRequest, "kubeconfig is required when provider is \"kubeconfig\"")
+			return
+		}
+		if req.SecretPath != "" {
+			writeError(w, http.StatusBadRequest, "field \"secret_path\" is not valid for provider \"kubeconfig\"")
+			return
+		}
+		if req.Region != "" {
+			writeError(w, http.StatusBadRequest, "field \"region\" is not valid for provider \"kubeconfig\"")
+			return
+		}
+	default:
+		// Empty provider == legacy EKS path.
+		if req.Kubeconfig != "" {
+			writeError(w, http.StatusBadRequest, "field \"kubeconfig\" is only valid when provider is \"kubeconfig\"")
+			return
+		}
+		// EKS path still needs the secrets provider configured at
+		// runtime; preserve the original V124-4.1 503 response.  The
+		// kubeconfig path explicitly does NOT require credProvider —
+		// that's the whole point of the inline path for kind users.
+		if s.credProvider == nil {
+			writeMissingProviderError(w)
+			return
+		}
 	}
 
 	ac, err := s.connSvc.GetActiveArgocdClient()
@@ -59,21 +119,8 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req orchestrator.RegisterClusterRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
-		return
-	}
-	if req.Name == "" {
-		writeError(w, http.StatusBadRequest, "cluster name is required")
-		return
-	}
-	if !validClusterNameRe.MatchString(req.Name) {
-		writeError(w, http.StatusBadRequest, "invalid cluster name: must be alphanumeric with hyphens, starting with alphanumeric")
-		return
-	}
-
 	orch := orchestrator.New(&s.gitMu, s.credProvider, ac, git, s.gitopsCfg, s.repoPaths, nil)
+	s.attachPRTracker(orch)
 	orch.SetSecretManagement(s.addonSecretDefs, s.secretFetcher, remoteclient.NewClientFromKubeconfig)
 	if len(s.defaultAddons) > 0 {
 		orch.SetDefaultAddons(s.defaultAddons)
@@ -114,8 +161,15 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusMultiStatus
 	}
 
+	// V125-1.1: distinct audit event for the kubeconfig registration path
+	// so audit history can tell EKS-via-AWS-SM from inline-kubeconfig
+	// registrations without parsing the resource string.
+	auditEvent := "cluster_registered"
+	if req.Provider == "kubeconfig" {
+		auditEvent = "cluster_registered_kubeconfig"
+	}
 	audit.Enrich(ctx, audit.Fields{
-		Event:    "cluster_registered",
+		Event:    auditEvent,
 		Resource: fmt.Sprintf("cluster:%s", req.Name),
 	})
 
@@ -177,6 +231,7 @@ func (s *Server) handleDeregisterCluster(w http.ResponseWriter, r *http.Request)
 	req.Name = name
 
 	orch := orchestrator.New(&s.gitMu, s.credProvider, ac, git, s.gitopsCfg, s.repoPaths, nil)
+	s.attachPRTracker(orch)
 	orch.SetSecretManagement(s.addonSecretDefs, s.secretFetcher, remoteclient.NewClientFromKubeconfig)
 	if s.argoSecretManager != nil {
 		roleARN := ""
@@ -321,6 +376,30 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 			return
 		}
 
+		// V125-1-6: secret_path update bypasses orchestrator.commitChanges
+		// (it's a metadata-only change), so the dashboard PR-tracker write
+		// is performed inline. Skipped silently when no tracker is wired
+		// (test seam / no in-cluster cmstore).
+		if s.prTracker != nil && pr != nil {
+			user := r.Header.Get("X-Sharko-User")
+			if user == "" {
+				user = "system"
+			}
+			_ = s.prTracker.TrackPR(ctx, prtracker.PRInfo{
+				PRID:       pr.ID,
+				PRUrl:      pr.URL,
+				PRBranch:   branchName,
+				PRTitle:    fmt.Sprintf("Update secret_path for cluster %s", name),
+				PRBase:     s.gitopsCfg.BaseBranch,
+				Cluster:    name,
+				Operation:  "update-cluster",
+				User:       user,
+				Source:     "api",
+				CreatedAt:  time.Now(),
+				LastStatus: "open",
+			})
+		}
+
 		// Auto-merge if configured.
 		if s.gitopsCfg.PRAutoMerge && pr != nil {
 			_ = git.MergePullRequest(ctx, pr.ID)
@@ -342,6 +421,7 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 	}
 
 	orch := orchestrator.New(&s.gitMu, s.credProvider, ac, git, s.gitopsCfg, s.repoPaths, nil)
+	s.attachPRTracker(orch)
 	orch.SetSecretManagement(s.addonSecretDefs, s.secretFetcher, remoteclient.NewClientFromKubeconfig)
 	// Region is empty — PATCH only updates addon labels, not cluster metadata.
 	// Region is set during RegisterCluster and not exposed via the update API.
@@ -386,6 +466,7 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 404 {object} map[string]interface{} "Cluster not found"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
+// @Failure 503 {object} map[string]interface{} "Credentials provider not configured (V124-4.1)"
 // @Router /clusters/{name}/refresh [post]
 // handleRefreshClusterCredentials handles POST /api/v1/clusters/{name}/refresh.
 func (s *Server) handleRefreshClusterCredentials(w http.ResponseWriter, r *http.Request) {
@@ -399,7 +480,7 @@ func (s *Server) handleRefreshClusterCredentials(w http.ResponseWriter, r *http.
 	}
 
 	if s.credProvider == nil {
-		writeError(w, http.StatusNotImplemented, "secrets provider not configured")
+		writeMissingProviderError(w)
 		return
 	}
 
@@ -420,6 +501,7 @@ func (s *Server) handleRefreshClusterCredentials(w http.ResponseWriter, r *http.
 	}
 
 	orch := orchestrator.New(&s.gitMu, s.credProvider, ac, nil, s.gitopsCfg, s.repoPaths, nil)
+	s.attachPRTracker(orch)
 	if err := orch.RefreshClusterCredentials(r.Context(), name, serverURL); err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return

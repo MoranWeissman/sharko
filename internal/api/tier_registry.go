@@ -22,6 +22,7 @@ var HandlerTier = map[string]audit.Tier{
 	// Cluster lifecycle and operations
 	"handleRegisterCluster":            audit.Tier1,
 	"handleDeregisterCluster":          audit.Tier1,
+	"handleDeleteOrphanCluster":        audit.Tier1, // V125-1-7 / BUG-058
 	"handleUpdateClusterAddons":        audit.Tier1,
 	"handleRefreshClusterCredentials":  audit.Tier1,
 	"handleTestCluster":                audit.Tier1,
@@ -123,6 +124,7 @@ var HandlerTier = map[string]audit.Tier{
 	"handleLogin":                      audit.TierAuth,
 	"handleLogout":                     audit.TierAuth,
 	"handleHashPassword":               audit.TierAuth,
+	"handleStaleLoginRoute":            audit.TierAuth, // V124-6.1: dead-route 404 stub
 
 	// ─── Webhook: inbound signed payload, no user identity ──────────────────
 	"handleGitWebhook":                 audit.TierWebhook,

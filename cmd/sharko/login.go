@@ -18,10 +18,10 @@ import (
 )
 
 func init() {
-	loginCmd.Flags().String("server", "", "Sharko server URL (required)")
+	// --server lives on rootCmd as a persistent flag (V124-3.5 / BUG-010);
+	// loginCmd inherits it. We only define the login-specific flags here.
 	loginCmd.Flags().String("username", "", "Username (skips interactive prompt)")
 	loginCmd.Flags().String("password", "", "Password (skips interactive prompt, use with --username)")
-	loginCmd.MarkFlagRequired("server")
 	rootCmd.AddCommand(loginCmd)
 }
 
@@ -29,8 +29,15 @@ var loginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Authenticate with a Sharko server",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		server, _ := cmd.Flags().GetString("server")
-		server = strings.TrimRight(server, "/")
+		// `sharko login` must specify --server; there is no saved config to
+		// fall back to (this command is what creates it). The check lives
+		// here rather than via cobra.MarkPersistentFlagRequired on rootCmd
+		// to avoid forcing --server on commands that have a saved-config
+		// fallback (list-clusters, status, version, etc.).
+		server := strings.TrimRight(effectiveServer(""), "/")
+		if server == "" {
+			return fmt.Errorf("required flag(s) \"server\" not set")
+		}
 
 		flagUsername, _ := cmd.Flags().GetString("username")
 		flagPassword, _ := cmd.Flags().GetString("password")
@@ -51,7 +58,13 @@ var loginCmd = &cobra.Command{
 			}
 			password = pw
 		default:
-			// Neither provided — prompt for both (original behavior)
+			// Neither provided — prompt for both (original behavior).
+			// Build ONE bufio.Reader against os.Stdin and thread it through
+			// both the username read AND the (non-terminal) password read.
+			// For piped logins like `printf "user\npass\n" | sharko login`,
+			// the first ReadString may pull more than one line into the
+			// buffer; constructing a fresh reader for the password call
+			// would discard the buffered tail and fail (review L8).
 			fmt.Print("Username: ")
 			reader := bufio.NewReader(os.Stdin)
 			line, err := reader.ReadString('\n')
@@ -60,7 +73,7 @@ var loginCmd = &cobra.Command{
 			}
 			username = strings.TrimSpace(line)
 
-			pw, err := readPasswordSafe("Password: ")
+			pw, err := readPasswordSafeWithReader(reader, "Password: ")
 			if err != nil {
 				return fmt.Errorf("failed to read password: %w", err)
 			}
@@ -148,8 +161,25 @@ func (realTerminalIO) IsTerminal(fd int) bool                 { return term.IsTe
 
 // readPasswordSafe is the production entry point — wraps
 // readPasswordSafeWith with the real golang.org/x/term implementation.
+//
+// Use readPasswordSafeWithReader instead when you have already created a
+// bufio.Reader against os.Stdin upstream (e.g. to read a username) — sharing
+// the reader prevents losing buffered bytes for piped logins where the
+// username and password arrive in a single read of stdin (review L8).
 func readPasswordSafe(prompt string) (string, error) {
 	return readPasswordSafeWith(realTerminalIO{}, prompt)
+}
+
+// readPasswordSafeWithReader is the variant that accepts an upstream
+// bufio.Reader for the non-terminal branch. When stdin is piped (e.g.
+// `printf "user\npass\n" | sharko login`) the username path can buffer
+// bytes past the first newline; constructing a fresh bufio.Reader for the
+// password read would discard them. By threading the same reader through
+// both reads we keep the buffered tail intact.
+//
+// reader may be nil; in that case we behave exactly like readPasswordSafe.
+func readPasswordSafeWithReader(reader *bufio.Reader, prompt string) (string, error) {
+	return readPasswordSafeWithAndReader(realTerminalIO{}, reader, prompt)
 }
 
 // readPasswordSafeWith prompts the user for a password and returns the
@@ -171,15 +201,32 @@ func readPasswordSafe(prompt string) (string, error) {
 // safety net should ReadPassword leave the TTY in raw mode. Better to fail
 // loudly than to leave the shell broken.
 func readPasswordSafeWith(tio terminalIO, prompt string) (string, error) {
+	return readPasswordSafeWithAndReader(tio, nil, prompt)
+}
+
+// readPasswordSafeWithAndReader is the unified implementation behind
+// readPasswordSafe / readPasswordSafeWith / readPasswordSafeWithReader.
+// It accepts an optional bufio.Reader that, when non-nil, is used for the
+// non-terminal branch instead of constructing a fresh one (review L8 — a
+// fresh reader after an upstream username read would discard buffered
+// bytes).
+func readPasswordSafeWithAndReader(tio terminalIO, reader *bufio.Reader, prompt string) (string, error) {
 	fd := int(syscall.Stdin)
 
 	// If stdin is not a terminal (e.g. piped input), fall back to a plain
 	// line read. This keeps non-interactive callers working without trying
-	// to set a terminal mode that does not exist.
+	// to set a terminal mode that does not exist. When a reader is supplied
+	// we re-use it so any bytes the upstream username read buffered (but
+	// did not consume) remain available — without this the password line
+	// from `printf "user\npass\n" | sharko login` would be silently
+	// dropped on the second NewReader's first ReadString call.
 	if !tio.IsTerminal(fd) {
 		fmt.Print(prompt)
-		reader := bufio.NewReader(os.Stdin)
-		line, err := reader.ReadString('\n')
+		r := reader
+		if r == nil {
+			r = bufio.NewReader(os.Stdin)
+		}
+		line, err := r.ReadString('\n')
 		if err != nil && err != io.EOF {
 			return "", err
 		}
@@ -272,6 +319,9 @@ func isConnectionRefused(err error) bool {
 	}
 	// Best-effort string match for environments where the syscall errno is
 	// wrapped in a non-standard way (rare, but cheaper to check than to
-	// unwrap manually).
-	return strings.Contains(err.Error(), "connection refused")
+	// unwrap manually). Lowercased to be defensive against locale/casing
+	// differences (review L4) — Windows surfaces variants like
+	// "No connection could be made because the target machine actively
+	// refused it." where the substring may appear in mixed case.
+	return strings.Contains(strings.ToLower(err.Error()), "connection refused")
 }

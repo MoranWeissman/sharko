@@ -72,7 +72,11 @@ func (o *Orchestrator) ConfigureAddon(ctx context.Context, req ConfigureAddonReq
 		}
 
 		files := map[string][]byte{catalogPath: updatedData}
-		return o.commitChanges(ctx, files, nil, fmt.Sprintf("configure addon %s", req.Name))
+		return o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("configure addon %s", req.Name), PRMetadata{
+			OperationCode: "addon-configure",
+			Addon:         req.Name,
+			Title:         fmt.Sprintf("Configure addon %s", req.Name),
+		})
 	}
 
 	// Simple fields only — use line-level mutation.
@@ -100,7 +104,11 @@ func (o *Orchestrator) ConfigureAddon(ctx context.Context, req ConfigureAddonReq
 		catalogPath: updatedData,
 	}
 
-	gitResult, err := o.commitChanges(ctx, files, nil, fmt.Sprintf("configure addon %s", req.Name))
+	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("configure addon %s", req.Name), PRMetadata{
+		OperationCode: "addon-configure",
+		Addon:         req.Name,
+		Title:         fmt.Sprintf("Configure addon %s", req.Name),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("committing addon %q configuration: %w", req.Name, err)
 	}

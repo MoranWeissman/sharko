@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 )
@@ -43,10 +44,28 @@ func (o *Orchestrator) detectConflicts(ctx context.Context, files map[string][]b
 	}
 }
 
-// commitChanges creates a PR for the given file changes.
-// Acquires the shared Git mutex to serialize all Git operations across concurrent requests.
-// If PRAutoMerge is enabled, the PR is merged immediately after creation.
+// commitChanges creates a PR for the given file changes WITHOUT tracking it
+// in the prtracker. Use commitChangesWithMeta when the call site has the
+// canonical operation code, cluster, and addon — which is the new default
+// for V125-1-6. Kept as a thin wrapper for paths that genuinely cannot
+// supply metadata (none currently expected — every commitChanges caller
+// has been migrated to commitChangesWithMeta in V125-1-6).
 func (o *Orchestrator) commitChanges(ctx context.Context, files map[string][]byte, deletePaths []string, operation string) (*GitResult, error) {
+	return o.commitChangesWithMeta(ctx, files, deletePaths, operation, PRMetadata{})
+}
+
+// commitChangesWithMeta creates a PR for the given file changes and (when
+// o.prTracker is set AND meta.OperationCode is non-empty) tracks the PR
+// in the dashboard. Acquires the shared Git mutex to serialize all Git
+// operations across concurrent requests. If PRAutoMerge is enabled, the
+// PR is merged immediately after creation.
+//
+// V125-1-6: this is the funnel that ensures every Sharko-created PR
+// surfaces on the dashboard PR panel — previously, only ad-hoc handler-
+// level TrackPR calls did, so register-cluster, adopt-cluster, init,
+// batch-register, and 5 orchestrator addon ops were silently missing
+// from the dashboard.
+func (o *Orchestrator) commitChangesWithMeta(ctx context.Context, files map[string][]byte, deletePaths []string, operation string, meta PRMetadata) (*GitResult, error) {
 	if o.gitMu != nil {
 		o.gitMu.Lock()
 		defer o.gitMu.Unlock()
@@ -91,6 +110,39 @@ func (o *Orchestrator) commitChanges(ctx context.Context, files map[string][]byt
 		PRUrl:  pr.URL,
 		PRID:   pr.ID,
 		Branch: branchName,
+	}
+
+	// Track the PR centrally (V125-1-6). Best-effort — a tracker write
+	// failure must not fail the operation; the user-visible PR has
+	// already been created at this point. nil tracker (test seam) and
+	// empty OperationCode (legacy commitChanges path) are silent skips.
+	if o.prTracker != nil && meta.OperationCode != "" {
+		title := meta.Title
+		if title == "" {
+			title = commitMsg
+		}
+		user := meta.User
+		if user == "" {
+			user = "system"
+		}
+		source := meta.Source
+		if source == "" {
+			source = "api"
+		}
+		_ = o.prTracker.TrackPR(ctx, TrackedPR{
+			PRID:       pr.ID,
+			PRUrl:      pr.URL,
+			PRBranch:   branchName,
+			PRTitle:    title,
+			PRBase:     o.gitops.BaseBranch,
+			Cluster:    meta.Cluster,
+			Addon:      meta.Addon,
+			Operation:  meta.OperationCode,
+			User:       user,
+			Source:     source,
+			CreatedAt:  time.Now(),
+			LastStatus: "open",
+		})
 	}
 
 	// Auto-merge if configured.

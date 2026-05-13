@@ -5,13 +5,17 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -153,6 +157,24 @@ func NewServer(
 
 	// Initialize auth store (auto-detects K8s vs local mode)
 	authStore := auth.NewStore()
+
+	// Bootstrap admin credential handling (V124-3.8 / BUG-013):
+	//
+	//   1. Operator-supplied path — if SHARKO_BOOTSTRAP_ADMIN_PASSWORD is
+	//      set (via Helm `bootstrapAdmin.password` or `existingSecret`),
+	//      seed admin.password from it. The plaintext is NEVER logged.
+	//   2. Auto-generated path — if no operator value was supplied, the
+	//      Helm chart wrote `admin.initialPassword` to the Sharko Secret
+	//      on first install. Log it once in a clearly-marked block so
+	//      operators can grep `kubectl logs` instead of needing
+	//      out-of-band knowledge of `sharko reset-admin`.
+	//
+	// Order matters: seed first so MaybeLogBootstrapCredential does not
+	// log a stale auto-generated value when the operator has supplied one.
+	if err := authStore.SeedBootstrapAdminFromEnv(); err != nil {
+		slog.Warn("could not apply operator-supplied bootstrap admin password", "error", err)
+	}
+	authStore.MaybeLogBootstrapCredential()
 
 	if !authStore.HasUsers() {
 		slog.Warn("WARNING: Authentication is DISABLED — all API endpoints are publicly accessible. Configure users via K8s ConfigMap or SHARKO_AUTH_USER env var.")
@@ -477,6 +499,10 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("POST /api/v1/clusters/{name}/unadopt", srv.handleUnadoptCluster)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/addons/{addon}", srv.handleEnableAddon)
 	mux.HandleFunc("DELETE /api/v1/clusters/{name}/addons/{addon}", srv.handleDisableAddon)
+	// V125-1-7 / BUG-058: orphan-cluster Secret cleanup. Refuses to delete
+	// a cluster that's actually managed (in git) or pending (open register
+	// PR) — see clusters_orphan_delete.go for the safety gates.
+	mux.HandleFunc("DELETE /api/v1/clusters/{name}/orphan", srv.handleDeleteOrphanCluster)
 
 	// Init (orchestrator-backed)
 	mux.HandleFunc("POST /api/v1/init", srv.handleInit)
@@ -666,6 +692,20 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 		}
 		srv.handleLogin(w, r)
 	})
+
+	// Stale dead-route stub (V124-6.1 / BUG-021).
+	//
+	// `/api/v1/login` was never registered, but unauthenticated POSTs to it
+	// were absorbed by basicAuthMiddleware and returned 401 — making the
+	// path look like a real auth-protected endpoint. The maintainer's
+	// 2026-05-08 walkthrough hit this and reported "401 in 146µs" which
+	// was indistinguishable from a real-route auth failure.
+	//
+	// Returning an explicit 404 with a hint pointing to /api/v1/auth/login
+	// (the actual route — see handleLogin) eliminates the false-positive.
+	// basicAuthMiddleware skips auth for this path so the 404 actually
+	// reaches the client (see /api/v1/login carve-out below).
+	mux.HandleFunc("POST /api/v1/login", srv.handleStaleLoginRoute)
 	mux.HandleFunc("POST /api/v1/auth/logout", srv.handleLogout)
 	mux.HandleFunc("POST /api/v1/auth/update-password", srv.handleUpdatePassword)
 	mux.HandleFunc("POST /api/v1/auth/hash", srv.handleHashPassword)
@@ -686,6 +726,30 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("PUT /api/v1/users/{username}", srv.handleUpdateUser)
 	mux.HandleFunc("DELETE /api/v1/users/{username}", srv.handleDeleteUser)
 	mux.HandleFunc("POST /api/v1/users/{username}/reset-password", srv.handleResetPassword)
+
+	// V124-4.4 / BUG-020: catch-all for unknown /api/v1/* paths.
+	//
+	// Pre-V124-4 the SPA catch-all below served index.html for any path not
+	// matched by a more specific route. That swallowed mistyped or removed
+	// API paths into the SPA — the symptom that surfaced as `POST
+	// /api/v1/notifications/providers → 200 OK` (HTML body) in V124 Track B
+	// re-smoke (B.4), with the smoke runner reading "200" as a passing
+	// validation case.
+	//
+	// Registering a literal `/api/v1/` prefix BEFORE the SPA catch-all
+	// (Go 1.22+ ServeMux longest-match semantics) ensures every unmatched
+	// API path returns a structured 404 JSON the smoke runner / UI / CLI
+	// can detect deterministically. Real API routes are registered above
+	// with method+path patterns that win the match by specificity.
+	mux.HandleFunc("/api/v1/", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusNotFound, map[string]string{
+			"error":  "API endpoint not found",
+			"code":   "endpoint_not_found",
+			"path":   r.URL.Path,
+			"method": r.Method,
+			"hint":   "see /swagger/index.html for the supported API surface",
+		})
+	})
 
 	// Static files (SPA)
 	if staticFS != nil {
@@ -966,6 +1030,27 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"token": token, "username": req.Username, "role": role})
 }
 
+// handleStaleLoginRoute serves the dead `/api/v1/login` path with an explicit
+// 404 + hint pointing at the real `/api/v1/auth/login` endpoint
+// (V124-6.1 / BUG-021).
+//
+// History: nothing in the codebase, scripts, CLI, UI, or docs uses
+// `/api/v1/login` — verified via repo-wide grep on 2026-05-08. The path was
+// never registered, but unauthenticated POSTs to it were absorbed by
+// basicAuthMiddleware and returned 401, which looked like a real
+// auth-protected endpoint to operators tracing through. Returning 404 with
+// a clear hint disambiguates "wrong path" from "wrong creds".
+//
+// The `/api/v1/login` path is also added to the basicAuthMiddleware skip
+// list so this handler — not the 401 response — is what the client sees.
+func (s *Server) handleStaleLoginRoute(w http.ResponseWriter, r *http.Request) {
+	slog.Warn("client hit dead /api/v1/login route — real endpoint is /api/v1/auth/login (V124-6.1 / BUG-021)",
+		"path", r.URL.Path,
+		"client_ip", clientIP(r),
+	)
+	writeError(w, http.StatusNotFound, "endpoint not found — did you mean POST /api/v1/auth/login?")
+}
+
 // handleLogout godoc
 //
 // @Summary Logout
@@ -1025,8 +1110,10 @@ func (s *Server) basicAuthMiddleware(next http.Handler) http.Handler {
 
 		path := r.URL.Path
 
-		// Skip auth for: health, login, git webhooks (signature-verified), static files
-		if path == "/api/v1/health" || path == "/api/v1/auth/login" || path == "/api/v1/webhooks/git" || !strings.HasPrefix(path, "/api/") {
+		// Skip auth for: health, login, git webhooks (signature-verified), static files.
+		// /api/v1/login is the V124-6.1 dead-route stub — it must reach handleStaleLoginRoute
+		// so we return a clean 404 instead of swallowing the request as a 401 here.
+		if path == "/api/v1/health" || path == "/api/v1/auth/login" || path == "/api/v1/login" || path == "/api/v1/webhooks/git" || !strings.HasPrefix(path, "/api/") {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -1294,4 +1381,114 @@ func writeServerError(w http.ResponseWriter, status int, op string, err error) {
 		"op":    op,
 	})
 }
+
+// classifyUpstreamError maps a Go error returned from an upstream service
+// (Git provider, ArgoCD, AWS, K8s API server, …) onto an appropriate HTTP
+// status code so that operators and clients can distinguish "the upstream
+// is unreachable" (502) from "the upstream timed out" (504), "the upstream
+// rate-limited us" (429), and "something went wrong on our end" (500).
+//
+// Branches:
+//   - errors.Is(err, syscall.ECONNREFUSED)               → 502 Bad Gateway
+//   - errors.As to *net.DNSError                         → 502 Bad Gateway
+//   - errors.As to *url.Error with Timeout()             → 504 Gateway Timeout
+//   - case-insensitive substring match for "rate limit"
+//     or "too many requests" or "429"                    → 429 Too Many Requests
+//   - default                                            → 500 Internal Server Error
+//
+// The string match is intentionally broad because Git providers
+// (GitHub/Azure DevOps) and Helm registries surface rate-limit conditions
+// through different concrete types — sometimes a wrapped *url.Error
+// carrying a JSON body, sometimes a synthesized error built from the
+// response body. Matching on the canonical phrasing keeps the classifier
+// useful without needing per-provider error types.
+//
+// Closes V124-3.2 (M2 extended).
+func classifyUpstreamError(err error) int {
+	if err == nil {
+		return http.StatusInternalServerError
+	}
+
+	// 502 — connection refused (the remote port wasn't accepting).
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return http.StatusBadGateway
+	}
+
+	// 502 — DNS resolution failed (the remote hostname doesn't resolve).
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return http.StatusBadGateway
+	}
+
+	// 504 — request timed out somewhere in the URL stack. We check this
+	// before the rate-limit string match because *url.Error wraps a
+	// concrete cause and the Timeout() helper is more precise than any
+	// substring search.
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) && urlErr.Timeout() {
+		return http.StatusGatewayTimeout
+	}
+
+	// 429 — upstream rate limit. The phrasing is normalised to lower case
+	// so we match irrespective of how the upstream surfaced it.
+	low := strings.ToLower(err.Error())
+	if strings.Contains(low, "rate limit") ||
+		strings.Contains(low, "too many requests") ||
+		strings.Contains(low, "429") {
+		return http.StatusTooManyRequests
+	}
+
+	// Default — opaque internal failure.
+	return http.StatusInternalServerError
+}
+
+// writeUpstreamError is the convenience wrapper for the V124-2.10 sweep:
+// classify the error first, then funnel through writeServerError so the
+// response body stays sanitized (no leak of upstream paths/messages) and
+// the structured log preserves the full error for debugging.
+//
+// Use this at any handler call site where the error originates from a
+// remote service (Git provider, ArgoCD, AWS API, K8s API server). For
+// genuinely internal failures (config parse, in-memory store, etc.) keep
+// using writeServerError directly with an explicit 500 — those are not
+// upstream-classifiable and pretending otherwise would mislead operators.
+func writeUpstreamError(w http.ResponseWriter, op string, err error) {
+	writeServerError(w, classifyUpstreamError(err), op, err)
+}
+
+// writeMissingProviderError is the canonical response for write/discover
+// endpoints whose backing credentials provider is not configured at runtime.
+//
+// V124-4.1 / BUG-018 fix: prior code returned `501 Not Implemented` with a
+// body of just `{"error":"secrets provider not configured"}`. That was
+// misleading on two axes:
+//
+//  1. 501 is reserved by RFC 9110 for "server does not support the
+//     functionality required to fulfil the request" — i.e. the endpoint
+//     itself is missing. Sharko's cluster CRUD endpoint IS implemented; what
+//     is missing is the operational prerequisite (credentials provider).
+//     Operators reading a 501 reasonably concluded "this endpoint is a
+//     stub, file a feature request" instead of "I need to configure a
+//     provider via Settings → Connections".
+//  2. The empty body offered no actionable next step. Operators had to
+//     grep server logs to discover that the absent piece was the secrets
+//     provider, and even then could not tell from the error whether the
+//     fix was via the UI, env vars, or a Helm value.
+//
+// 503 Service Unavailable is the correct status: the endpoint exists, the
+// resource (cluster CRUD) is temporarily unavailable because a precondition
+// is unmet, and the operator can fix it themselves. The response body
+// surfaces a structured `hint` field pointing at the standard configuration
+// flows so the UI / CLI can render an actionable message without parsing
+// English text.
+//
+// Used by every handler that calls `s.credProvider == nil` early-return.
+func writeMissingProviderError(w http.ResponseWriter) {
+	writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+		"error": "credentials provider is not configured",
+		"code":  "provider_not_configured",
+		"hint":  "configure a secrets provider via Settings → Connections (UI), or POST /api/v1/connections/ with provider config (API)",
+	})
+}
+
 // v1.39.3 route fix

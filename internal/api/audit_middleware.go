@@ -33,7 +33,8 @@ func (s *Server) auditMiddleware(next http.Handler) http.Handler {
 		// webhooks emit webhook_received with signature context.
 		path := r.URL.Path
 		if path == "/api/v1/auth/login" || path == "/api/v1/auth/logout" ||
-			path == "/api/v1/webhooks/git" || path == "/api/v1/auth/hash" {
+			path == "/api/v1/webhooks/git" || path == "/api/v1/auth/hash" ||
+			path == "/api/v1/login" /* V124-6.1: dead-route stub, no audit needed */ {
 			next.ServeHTTP(w, r)
 			return
 		}

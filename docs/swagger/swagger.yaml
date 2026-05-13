@@ -284,6 +284,14 @@ definitions:
         $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.ProviderConfig'
       set_as_default:
         type: boolean
+      use_saved:
+        description: |-
+          UseSaved, when true on a test-credentials request, instructs the
+          handler to look up the saved connection by Name and test using its
+          stored credentials instead of the request body. Returns 400 if no
+          saved connection with the given name exists. Ignored by Create /
+          Update. V124-19 / BUG-044.
+        type: boolean
     type: object
   github_com_MoranWeissman_sharko_internal_models.GitOpsSettings:
     properties:
@@ -695,6 +703,14 @@ definitions:
         type: object
       dry_run:
         type: boolean
+      kubeconfig:
+        description: |-
+          Kubeconfig is the raw kubeconfig YAML supplied inline by the caller
+          when Provider == "kubeconfig". Bearer-token authentication only in
+          v1.25 — cert-based and exec-plugin auth return a 400 with guidance
+          to generate a token via `kubectl create token`. Ignored for any
+          other provider.
+        type: string
       name:
         type: string
       provider:
@@ -915,10 +931,21 @@ definitions:
     type: object
   internal_api.PRListResponse:
     properties:
+      limit:
+        type: integer
       prs:
         items:
           $ref: '#/definitions/internal_api.PRItem'
         type: array
+    type: object
+  internal_api.RepoStatusResponse:
+    properties:
+      bootstrap_synced:
+        type: boolean
+      initialized:
+        type: boolean
+      reason:
+        type: string
     type: object
   internal_api.aiAnnotateBlockedResponse:
     properties:
@@ -3312,8 +3339,11 @@ paths:
       description: |-
         Registers a new cluster in ArgoCD and creates its GitOps configuration.
         Pass "dry_run": true to preview what would happen without making changes.
+        Provider may be "eks" (default; uses configured secrets provider) or
+        "kubeconfig" (V125-1.1; caller supplies kubeconfig YAML inline via the
+        "kubeconfig" field — bearer-token auth only).
       parameters:
-      - description: Cluster registration request (supports dry_run field)
+      - description: Cluster registration request (supports dry_run + kubeconfig fields)
         in: body
         name: body
         required: true
@@ -3354,6 +3384,12 @@ paths:
             type: object
         "502":
           description: Gateway error
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Credentials provider not configured (V124-4.1; eks provider
+            only)
           schema:
             additionalProperties: true
             type: object
@@ -3891,6 +3927,57 @@ paths:
       summary: Get cluster change history
       tags:
       - clusters
+  /clusters/{name}/orphan:
+    delete:
+      description: Deletes an ArgoCD cluster Secret for a cluster that has no managed-clusters.yaml
+        entry and no open registration PR. Refuses to delete a cluster that is genuinely
+        managed (in git) or pending (has an open register PR) — those are not orphans.
+      parameters:
+      - description: Cluster name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: Cluster Secret deleted
+        "400":
+          description: Cluster is not orphaned (managed or pending)
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Cluster Secret not found in ArgoCD
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal error
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: Gateway error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete an orphan cluster
+      tags:
+      - clusters
   /clusters/{name}/refresh:
     post:
       description: Rotates and re-syncs the cluster credentials from the secrets provider
@@ -3929,6 +4016,11 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "503":
+          description: Credentials provider not configured (V124-4.1)
+          schema:
+            additionalProperties: true
+            type: object
       security:
       - BearerAuth: []
       summary: Refresh cluster credentials
@@ -3961,13 +4053,13 @@ paths:
           schema:
             additionalProperties: true
             type: object
-        "501":
-          description: Provider not configured
+        "502":
+          description: Gateway error
           schema:
             additionalProperties: true
             type: object
-        "502":
-          description: Gateway error
+        "503":
+          description: Credentials provider not configured (V124-4.1)
           schema:
             additionalProperties: true
             type: object
@@ -4003,13 +4095,13 @@ paths:
           schema:
             additionalProperties: true
             type: object
-        "501":
-          description: Provider not configured
+        "502":
+          description: Gateway error
           schema:
             additionalProperties: true
             type: object
-        "502":
-          description: Gateway error
+        "503":
+          description: Credentials provider not configured (V124-4.1)
           schema:
             additionalProperties: true
             type: object
@@ -4217,13 +4309,13 @@ paths:
           schema:
             additionalProperties: true
             type: object
-        "501":
-          description: Provider not configured
+        "502":
+          description: Gateway error
           schema:
             additionalProperties: true
             type: object
-        "502":
-          description: Gateway error
+        "503":
+          description: Credentials provider not configured (V124-4.1)
           schema:
             additionalProperties: true
             type: object
@@ -4270,6 +4362,11 @@ paths:
             type: object
         "502":
           description: Gateway error
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Credentials provider not configured (V124-4.1)
           schema:
             additionalProperties: true
             type: object
@@ -4562,10 +4659,12 @@ paths:
     post:
       consumes:
       - application/json
-      description: Tests Git and ArgoCD credentials from a connection request without
-        saving
+      description: Tests Git and ArgoCD credentials. With use_saved=true, fetches
+        the named saved connection's stored credentials and tests with those instead
+        of the request body
       parameters:
-      - description: Connection credentials to test
+      - description: Connection credentials to test (set use_saved=true with name
+          to test the saved credentials of an existing connection)
         in: body
         name: body
         required: true
@@ -4580,7 +4679,7 @@ paths:
             additionalProperties: true
             type: object
         "400":
-          description: Bad request
+          description: Bad request (e.g. use_saved=true but no matching saved connection)
           schema:
             additionalProperties: true
             type: object
@@ -5093,7 +5192,8 @@ paths:
       - system
   /prs:
     get:
-      description: Returns all tracked pull requests with optional filters
+      description: Returns all tracked pull requests with optional filters. Sorted
+        by created_at descending.
       parameters:
       - description: Filter by status (open, merged, closed)
         in: query
@@ -5111,11 +5211,20 @@ paths:
         in: query
         name: user
         type: string
+      - description: Comma-separated list of operation codes to include (e.g. addon-add,values-edit).
+          Empty = all.
+        in: query
+        name: operation
+        type: string
+      - description: Maximum entries to return (default 100, hard cap 500)
+        in: query
+        name: limit
+        type: integer
       produces:
       - application/json
       responses:
         "200":
-          description: List of tracked PRs
+          description: List of tracked PRs (sorted newest-first)
           schema:
             $ref: '#/definitions/internal_api.PRListResponse'
         "500":
@@ -5281,15 +5390,17 @@ paths:
   /repo/status:
     get:
       description: Checks whether the GitOps repository has been bootstrapped (bootstrap/Chart.yaml
-        exists on the base branch)
+        exists on the base branch) AND whether the ArgoCD bootstrap Application is
+        Synced + Healthy. The wizard gate in the UI uses bootstrap_synced to auto-open
+        the recovery wizard when the cluster-side bootstrap is missing or degraded
+        even though the repo files are present.
       produces:
       - application/json
       responses:
         "200":
           description: Repo status
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/internal_api.RepoStatusResponse'
       security:
       - BearerAuth: []
       summary: Get repo initialization status

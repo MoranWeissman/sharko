@@ -208,21 +208,32 @@ export function Dashboard() {
       // Build cluster cards
       const typedClusters = clustersData as ClustersResponse | null
       if (typedClusters?.clusters && matrixData?.addons) {
-        const cards = typedClusters.clusters.map(c => {
-          const addons: { name: string; health: string }[] = []
-          let healthy = 0
-          let total = 0
-          for (const row of matrixData.addons) {
-            const cell = row.cells?.[c.name]
-            if (cell) {
-              total++
-              const health = cell.health || 'Unknown'
-              if (health === 'Healthy') healthy++
-              addons.push({ name: row.addon_name, health })
+        // V125-1.5 / BUG-051: a cluster whose registration PR is open
+        // (but not yet merged) must NOT appear in the "Clusters Needing
+        // Attention" panel. The cluster is mid-lifecycle, not broken.
+        // The BE already strips pending names from the `not_in_git`
+        // lane (internal/api/clusters.go) but a transient race could
+        // leak one through; defending in depth here.
+        const pendingNames = new Set(
+          (typedClusters.pending_registrations ?? []).map(p => p.cluster_name)
+        )
+        const cards = typedClusters.clusters
+          .filter(c => !pendingNames.has(c.name))
+          .map(c => {
+            const addons: { name: string; health: string }[] = []
+            let healthy = 0
+            let total = 0
+            for (const row of matrixData.addons) {
+              const cell = row.cells?.[c.name]
+              if (cell) {
+                total++
+                const health = cell.health || 'Unknown'
+                if (health === 'Healthy') healthy++
+                addons.push({ name: row.addon_name, health })
+              }
             }
-          }
-          return { name: c.name, connectionStatus: c.connection_status || 'Unknown', addons, healthy, total }
-        })
+            return { name: c.name, connectionStatus: c.connection_status || 'Unknown', addons, healthy, total }
+          })
         const problemClusters = cards.filter(c =>
           (c.connectionStatus !== 'Successful' && c.connectionStatus !== 'Connected') ||
           c.healthy < c.total

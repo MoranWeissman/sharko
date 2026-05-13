@@ -59,3 +59,12 @@ export function useConnections() {
   if (!ctx) throw new Error('useConnections must be used within ConnectionProvider')
   return ctx
 }
+
+// V125-1-6: optional variant returns null instead of throwing when the
+// caller isn't wrapped in a ConnectionProvider. Used by components that
+// want to gracefully degrade in unit tests / standalone Storybook
+// renders (e.g. PullRequestsPanel hides its "View all on GitHub →"
+// escape hatch when no connection metadata is available).
+export function useConnectionsOptional() {
+  return useContext(ConnectionContext)
+}

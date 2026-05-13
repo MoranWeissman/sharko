@@ -47,6 +47,46 @@ type ArgoSecretSpec struct {
 	Annotations map[string]string
 }
 
+// PRTracker is the subset of prtracker.Tracker needed by the orchestrator.
+// Defined locally (not in internal/prtracker) to avoid importing prtracker
+// from orchestrator — the API layer wires the concrete implementation in
+// via SetPRTracker. Following the same adapter pattern used for
+// ArgoSecretManager.
+type PRTracker interface {
+	TrackPR(ctx context.Context, pr TrackedPR) error
+}
+
+// TrackedPR is the orchestrator-side mirror of prtracker.PRInfo. We
+// declare it locally so the orchestrator stays free of an import on
+// internal/prtracker. The API-side adapter converts this to PRInfo.
+type TrackedPR struct {
+	PRID       int
+	PRUrl      string
+	PRBranch   string
+	PRTitle    string
+	PRBase     string
+	Cluster    string
+	Addon      string
+	Operation  string
+	User       string
+	Source     string
+	CreatedAt  time.Time
+	LastStatus string
+}
+
+// PRMetadata describes the PR-level metadata needed to track a PR
+// once commitChanges creates it. Filled in by the orchestrator
+// operation (RegisterCluster, AddAddon, etc.) so a single TrackPR
+// call is made centrally rather than scattered across handlers.
+type PRMetadata struct {
+	OperationCode string // canonical enum — see prtracker.Op* constants
+	Cluster       string
+	Addon         string
+	Title         string // human-readable PR title (defaults to commitMsg when empty)
+	User          string // author/actor (set by handler-derived ctx; "system" when unknown)
+	Source        string // ui, cli, api — defaults to "api" in handlers
+}
+
 // Orchestrator coordinates multi-step operations across providers, ArgoCD,
 // and Git to execute cluster and addon management workflows.
 type Orchestrator struct {
@@ -64,6 +104,7 @@ type Orchestrator struct {
 	drainSleep        time.Duration     // wait after label removal in DeregisterCluster; overridable in tests
 	argoSecretManager ArgoSecretManager // optional — creates ArgoCD cluster secrets
 	defaultRoleARN    string            // connection-level default RoleARN for ArgoCD secret creation
+	prTracker         PRTracker         // optional — tracks every commitChanges-created PR (V125-1-6)
 }
 
 // SetDefaultAddons configures the default addons applied to clusters
@@ -79,6 +120,17 @@ func (o *Orchestrator) SetDefaultAddons(defaults map[string]bool) {
 func (o *Orchestrator) SetArgoSecretManager(m ArgoSecretManager, defaultRoleARN string) {
 	o.argoSecretManager = m
 	o.defaultRoleARN = defaultRoleARN
+}
+
+// SetPRTracker wires in the PR tracker so every PR created via
+// commitChangesWithMeta is automatically registered for status polling
+// and dashboard surfacing. Pass nil (or simply skip the call) to disable
+// orchestrator-side tracking — handlers may still call the tracker
+// directly for non-orchestrator paths (init.go's CreateInitPR, the AI
+// assistant write tools, the secret_path PATCH branch in
+// clusters_write.go).
+func (o *Orchestrator) SetPRTracker(t PRTracker) {
+	o.prTracker = t
 }
 
 // New creates an Orchestrator with the given dependencies.

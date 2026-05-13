@@ -150,6 +150,9 @@ export async function registerCluster(data: {
   role_arn?: string;
   auto_merge?: boolean;
   dry_run?: boolean;
+  // V125-1.1: required when provider === 'kubeconfig'. Bearer-token
+  // authentication only — see internal/providers/kubeconfig_parser.go.
+  kubeconfig?: string;
 }) {
   return postJSON<RegisterClusterResult>('/clusters', data)
 }
@@ -205,6 +208,29 @@ export async function adoptClusters(data: { clusters: string[]; auto_merge?: boo
 
 export async function unadoptCluster(name: string) {
   return deleteJSON<{ status: string; pr_url?: string }>(`/clusters/${encodeURIComponent(name)}?unadopt=true`)
+}
+
+// V125-1-7 / BUG-058 — orphan cluster Secret cleanup. The BE returns
+// 204 No Content on success (no body), so we cannot use the generic
+// deleteJSON helper which assumes a JSON body. The BE refuses the
+// request with 400 if the cluster is genuinely managed (in git) or
+// pending (open register PR) — the FE caller surfaces the error message
+// in a toast.
+export async function deleteOrphanCluster(name: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/clusters/${encodeURIComponent(name)}/orphan`, {
+    method: 'DELETE',
+    headers: authHeaders(),
+  })
+  if (res.status === 401) {
+    sessionStorage.removeItem(TOKEN_KEY)
+    window.location.reload()
+    throw new Error('Session expired')
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error(err.error || res.statusText)
+  }
+  // 204 No Content — nothing to parse.
 }
 
 export async function updateClusterAddons(name: string, addons: Record<string, boolean>) {
@@ -393,14 +419,54 @@ export async function initRepo(data?: { bootstrap_argocd?: boolean; auto_merge?:
   return res.json()
 }
 
+/**
+ * V124-15 / BUG-033: typed error thrown by `getOperation` so the wizard can
+ * distinguish a 401 (session expired — fatal, stop polling) from transient
+ * network errors (swallow + retry).
+ *
+ * We intentionally do NOT call `window.location.reload()` from `getOperation`
+ * (unlike most other helpers in this file). The wizard polls every 2s; a
+ * silent reload mid-init would interrupt the in-progress operation display
+ * before the user understands what happened, and a queued reload during a
+ * 401 storm produces the "wizard appears frozen" symptom that BUG-033
+ * documents. The wizard owns the error UX instead.
+ *
+ * Rest of the UI keeps its existing 401 → reload behavior — this typed
+ * error is opt-in and only used by `getOperation` today. Generalizing the
+ * pattern is V125+ scope.
+ */
+export class OperationApiError extends Error {
+  status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = 'OperationApiError'
+    this.status = status
+  }
+}
+
+export function isUnauthorizedError(err: unknown): boolean {
+  if (err instanceof OperationApiError) return err.status === 401
+  if (err instanceof Error) {
+    // Defense in depth: `getOperation` always throws OperationApiError, but
+    // other layers (e.g. a fetch wrapper) might surface 401 as a plain
+    // Error with the status in the message. Match the few common shapes.
+    return /\b401\b|unauthorized|unauthenticated|session expired/i.test(
+      err.message,
+    )
+  }
+  return false
+}
+
 export async function getOperation(id: string): Promise<OperationSession> {
   const res = await fetch(`${BASE_URL}/operations/${id}`, { headers: authHeaders() })
   if (res.status === 401) {
-    sessionStorage.removeItem(TOKEN_KEY)
-    window.location.reload()
-    throw new Error('Session expired')
+    // Don't auto-reload — let the wizard surface a "Session expired"
+    // error and provide a Log in again button. See OperationApiError above.
+    throw new OperationApiError('Unauthorized: session expired', 401)
   }
-  if (!res.ok) throw new Error('Failed to get operation')
+  if (!res.ok) {
+    throw new OperationApiError(`Failed to get operation (HTTP ${res.status})`, res.status)
+  }
   return res.json()
 }
 
@@ -413,12 +479,27 @@ export async function operationHeartbeat(id: string): Promise<void> {
 
 // --- Tracked PRs (Story 5.3) ---
 
-export async function fetchTrackedPRs(filters?: { status?: string; cluster?: string; user?: string }) {
+// V125-1-6 extends the filter signature with `operation` (CSV string —
+// the BE accepts a comma-separated list of canonical Operation codes)
+// and `limit` (server-side cap; default 100, hard cap 500). The
+// PullRequestsPanel uses these for the new filter chips and the
+// "View all on GitHub →" escape hatch.
+export async function fetchTrackedPRs(filters?: {
+  status?: string
+  cluster?: string
+  user?: string
+  addon?: string
+  operation?: string
+  limit?: number
+}) {
   const params = new URLSearchParams()
   if (filters) {
     if (filters.status) params.set('status', filters.status)
     if (filters.cluster) params.set('cluster', filters.cluster)
     if (filters.user) params.set('user', filters.user)
+    if (filters.addon) params.set('addon', filters.addon)
+    if (filters.operation) params.set('operation', filters.operation)
+    if (filters.limit) params.set('limit', String(filters.limit))
   }
   const qs = params.toString()
   return fetchJSON<TrackedPRsResponse>(`/prs${qs ? `?${qs}` : ''}`)
@@ -495,6 +576,13 @@ export const api = {
   deleteConnection: (name: string) => deleteJSON(`/connections/${encodeURIComponent(name)}`),
   setActiveConnection: (name: string) => postJSON('/connections/active', { connection_name: name }),
   testConnection: () => postJSON<{ git: { status: string }; argocd: { status: string } }>('/connections/test'),
+  // V124-19 / BUG-044: `data` may include `use_saved: true` along with `name`
+  // to instruct the backend to fetch the named saved connection's stored
+  // credentials and test with those (instead of the request body's tokens).
+  // Unlocks the wizard's "leave blank to keep, or enter new value to replace"
+  // contract end-to-end — Test Connection works on a blank token field when
+  // a saved connection exists. Backend returns 400 if use_saved=true but no
+  // matching saved connection.
   testCredentials: (data: unknown) => postJSON<{ git: { status: string; message?: string; auth?: string }; argocd: { status: string; message?: string; auth?: string } }>('/connections/test-credentials', data),
   discoverArgocd: (namespace?: string) => fetchJSON<{ server_url: string; has_env_token: boolean; namespace: string }>(`/connections/discover-argocd${namespace ? `?namespace=${namespace}` : ''}`),
 
@@ -691,8 +779,15 @@ export const api = {
   // Providers
   getProviders: () => fetchJSON<{ configured_provider: { type: string; region: string; prefix?: string; status: string; error?: string } | null; available_types: string[] }>('/providers'),
 
-  // Repo status
-  getRepoStatus: () => fetchJSON<{ initialized: boolean; reason?: string }>('/repo/status'),
+  // Repo status — V124-22 / BUG-046: `bootstrap_synced` reports whether the
+  // canonical ArgoCD application `cluster-addons-bootstrap` exists AND is
+  // Sync=Synced AND Health=Healthy. App.tsx's wizard gate combines
+  // (!initialized || !bootstrap_synced) so a missing/degraded bootstrap
+  // auto-opens the wizard instead of dropping the user on a dashboard
+  // splattered with errors. Backend returns `bootstrap_synced=false`
+  // defensively whenever the ArgoCD client is unavailable or the probe
+  // fails — the wizard exists to recover that state.
+  getRepoStatus: () => fetchJSON<{ initialized: boolean; bootstrap_synced: boolean; reason?: string }>('/repo/status'),
 
   // Cluster addons
   enableAddonOnCluster: (clusterName: string, addonName: string) =>

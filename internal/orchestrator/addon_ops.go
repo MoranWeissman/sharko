@@ -125,7 +125,12 @@ func (o *Orchestrator) DisableAddon(ctx context.Context, req DisableAddonRequest
 	}
 
 	// Step 3: Create PR with combined changes.
-	gitResult, gitErr := o.commitChanges(ctx, files, nil, fmt.Sprintf("disable addon %s on cluster %s", req.Addon, req.Cluster))
+	gitResult, gitErr := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("disable addon %s on cluster %s", req.Addon, req.Cluster), PRMetadata{
+		OperationCode: "addon-disable",
+		Addon:         req.Addon,
+		Cluster:       req.Cluster,
+		Title:         fmt.Sprintf("Disable %s on cluster %s", req.Addon, req.Cluster),
+	})
 	if gitErr != nil {
 		if gitResult != nil {
 			result.Status = "partial"
@@ -268,7 +273,12 @@ func (o *Orchestrator) EnableAddon(ctx context.Context, req EnableAddonRequest) 
 	}
 
 	// Step 3: Create PR with combined changes.
-	gitResult, gitErr := o.commitChanges(ctx, files, nil, fmt.Sprintf("enable addon %s on cluster %s", req.Addon, req.Cluster))
+	gitResult, gitErr := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("enable addon %s on cluster %s", req.Addon, req.Cluster), PRMetadata{
+		OperationCode: "addon-enable",
+		Addon:         req.Addon,
+		Cluster:       req.Cluster,
+		Title:         fmt.Sprintf("Enable %s on cluster %s", req.Addon, req.Cluster),
+	})
 	if gitErr != nil {
 		if gitResult != nil {
 			result.Status = "partial"

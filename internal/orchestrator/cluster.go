@@ -12,10 +12,20 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/gitops"
 	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/providers"
 	"github.com/MoranWeissman/sharko/internal/verify"
 
 	"gopkg.in/yaml.v3"
 )
+
+// supportedProviders enumerates the cluster-provider values RegisterCluster
+// accepts.  V125-1.1 adds "kubeconfig" — the inline-kubeconfig path used by
+// the wizard's "Generic K8s (kubeconfig)" option.  GKE / AKS / exec-plugin
+// auth remain V125-1.x material.
+var supportedProviders = map[string]bool{
+	"eks":        true,
+	"kubeconfig": true,
+}
 
 // ErrClusterAlreadyExists is returned when attempting to register a cluster
 // that already exists in ArgoCD.
@@ -43,9 +53,12 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		return nil, fmt.Errorf("invalid cluster name %q: must be alphanumeric with hyphens, starting with an alphanumeric character", req.Name)
 	}
 
-	// Step 1a: Validate provider — only "eks" is supported.
-	if req.Provider != "" && req.Provider != "eks" {
-		return nil, fmt.Errorf("provider %q not yet implemented; supported: eks", req.Provider)
+	// Step 1a: Validate provider against the supported set.
+	// V125-1.1 widens this to accept "kubeconfig" alongside the original
+	// "eks" path. Empty provider remains valid for backward-compat with
+	// pre-V125 callers (treated as the EKS path via credProvider).
+	if req.Provider != "" && !supportedProviders[req.Provider] {
+		return nil, fmt.Errorf("provider %q not yet implemented; supported: eks, kubeconfig", req.Provider)
 	}
 
 	// Step 1b: Merge default addons if no addons specified.
@@ -79,17 +92,37 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	}
 	var steps []string
 
-	// Step 3: Fetch credentials from provider.
-	// If an explicit secretPath is provided, use it directly (bypasses prefix logic).
-	credLookupName := req.Name
-	if req.SecretPath != "" {
-		credLookupName = req.SecretPath
+	// Step 3: Acquire credentials.
+	// V125-1.1: when Provider == "kubeconfig" the caller supplies the
+	// kubeconfig YAML inline on the request, so we parse it directly and
+	// skip o.credProvider.GetCredentials (the credProvider may legitimately
+	// be nil in this path — generic-K8s registration must not require an
+	// AWS-SM/k8s-secrets backend to be configured).  For every other
+	// provider we keep the original credProvider lookup.
+	var creds *providers.Kubeconfig
+	if req.Provider == "kubeconfig" {
+		var parseErr error
+		creds, parseErr = providers.ParseInlineKubeconfig(req.Kubeconfig)
+		if parseErr != nil {
+			return nil, fmt.Errorf("parsing inline kubeconfig for cluster %q: %w", req.Name, parseErr)
+		}
+		steps = append(steps, "parse_kubeconfig")
+	} else {
+		if o.credProvider == nil {
+			return nil, fmt.Errorf("credentials provider not configured (required for provider %q)", req.Provider)
+		}
+		// If an explicit secretPath is provided, use it directly (bypasses prefix logic).
+		credLookupName := req.Name
+		if req.SecretPath != "" {
+			credLookupName = req.SecretPath
+		}
+		var fetchErr error
+		creds, fetchErr = o.credProvider.GetCredentials(credLookupName)
+		if fetchErr != nil {
+			return nil, fmt.Errorf("fetching credentials for cluster %q: %w", req.Name, fetchErr)
+		}
+		steps = append(steps, "fetch_credentials")
 	}
-	creds, err := o.credProvider.GetCredentials(credLookupName)
-	if err != nil {
-		return nil, fmt.Errorf("fetching credentials for cluster %q: %w", req.Name, err)
-	}
-	steps = append(steps, "fetch_credentials")
 	result.Cluster.Server = creds.Server
 
 	// Step 3a: Verify connectivity via Stage 1 (secret CRUD cycle on remote cluster).
@@ -114,9 +147,18 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	}
 
 	// Dry-run exit point: return a preview of what would happen, with zero side effects.
+	//
+	// V125-1.4 (BUG-049): all slice fields are initialized to non-nil empty
+	// slices when there is no data, so the JSON response carries `[]` (not
+	// `null`) for every field. The ClustersOverview preview panel reads
+	// `.length` on these arrays and crashed (caught by the ErrorBoundary)
+	// when the V125-1.1 kubeconfig path with no addons selected returned
+	// nil arrays. Both providers now share the same result-construction
+	// shape — see TestRegisterCluster_DryRun_Kubeconfig_ShapeParity.
 	if req.DryRun {
-		// Compute effective addon names.
-		var addonNames []string
+		// Compute effective addon names — start from a non-nil empty slice
+		// so a request with no enabled addons still serializes as `[]`.
+		addonNames := []string{}
 		for a, enabled := range req.Addons {
 			if enabled {
 				addonNames = append(addonNames, a)
@@ -135,13 +177,30 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 			{Path: clusterAddonsPath, Action: o.fileAction(ctx, clusterAddonsPath)},
 		}
 
+		// Provider-aware PR title:
+		//   - kubeconfig path:    "<commitPrefix> register cluster <name> (kubeconfig provider)"
+		//   - eks/legacy path:    "<commitPrefix> register cluster <name>"
+		// Mirrors the audit-event split (cluster_registered vs
+		// cluster_registered_kubeconfig) so the preview tells the operator
+		// which credentials path will be used.
 		prTitle := fmt.Sprintf("%s register cluster %s", o.gitops.CommitPrefix, req.Name)
+		if req.Provider == "kubeconfig" {
+			prTitle = fmt.Sprintf("%s register cluster %s (kubeconfig provider)", o.gitops.CommitPrefix, req.Name)
+		}
+
+		// listSecretsToCreate returns nil when no secret defs are configured
+		// (typical kubeconfig / kind path) or when no enabled addon matches
+		// a known def. Coalesce to [] so the JSON response is uniform.
+		secretsToCreate := o.listSecretsToCreate(req.Addons)
+		if secretsToCreate == nil {
+			secretsToCreate = []string{}
+		}
 
 		dryResult := &DryRunResult{
 			EffectiveAddons: addonNames,
 			FilesToWrite:    filePreviews,
 			PRTitle:         prTitle,
-			SecretsToCreate: o.listSecretsToCreate(req.Addons),
+			SecretsToCreate: secretsToCreate,
 		}
 		if result.Verification != nil {
 			dryResult.Verification = result.Verification
@@ -305,7 +364,11 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		files[clusterAddonsPath] = updatedClusterAddons
 	}
 
-	gitResult, err := o.commitChanges(ctx, files, nil, fmt.Sprintf("register cluster %s", req.Name))
+	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("register cluster %s", req.Name), PRMetadata{
+		OperationCode: "register-cluster",
+		Cluster:       req.Name,
+		Title:         fmt.Sprintf("Register cluster %s", req.Name),
+	})
 	if err != nil {
 		if gitResult != nil {
 			// PR created but merge failed — partial success with PR info.
@@ -466,7 +529,11 @@ func (o *Orchestrator) DeregisterCluster(ctx context.Context, name string, serve
 
 	// Step 5: Delete values file from Git.
 	valuesPath := path.Join(o.paths.ClusterValues, name+".yaml")
-	gitResult, err := o.commitChanges(ctx, nil, []string{valuesPath}, fmt.Sprintf("deregister cluster %s", name))
+	gitResult, err := o.commitChangesWithMeta(ctx, nil, []string{valuesPath}, fmt.Sprintf("deregister cluster %s", name), PRMetadata{
+		OperationCode: "remove-cluster",
+		Cluster:       name,
+		Title:         fmt.Sprintf("Deregister cluster %s", name),
+	})
 	if err != nil {
 		if gitResult != nil {
 			// PR created but merge failed — partial success with PR info.
@@ -555,7 +622,11 @@ func (o *Orchestrator) UpdateClusterAddons(ctx context.Context, name string, ser
 		valuesPath: valuesContent,
 	}
 
-	gitResult, err := o.commitChanges(ctx, files, nil, fmt.Sprintf("update addons for cluster %s", name))
+	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("update addons for cluster %s", name), PRMetadata{
+		OperationCode: "update-cluster",
+		Cluster:       name,
+		Title:         fmt.Sprintf("Update addons for cluster %s", name),
+	})
 	if err != nil {
 		if gitResult != nil {
 			// PR created but merge failed — partial success with PR info.

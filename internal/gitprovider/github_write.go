@@ -2,6 +2,7 @@ package gitprovider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -31,13 +32,34 @@ func (g *GitHubProvider) getContentsRaw(ctx context.Context, path, ref string) (
 // CreateBranch creates a new branch from the given ref (branch name or SHA).
 // If the repository is empty (no commits yet), it initialises the repo with an
 // initial commit on fromRef before creating the target branch.
+//
+// Empty-repo detection covers two distinct GitHub responses:
+//   - 404 Not Found  — the requested ref does not exist (e.g., default branch
+//     differs from the configured base branch on a populated repo).
+//   - 409 Conflict with "Git Repository is empty." — the repo exists but has
+//     never received a commit (V124-11 — the wizard step 4 / Initialize bug
+//     where freshly-created GitHub repos blocked first-run setup).
+//
+// Both are routed through initEmptyRepo, which seeds an initial README
+// commit on fromRef via the Contents API; the new commit's SHA is then used
+// to create the target branch. The fallback preserves the standard
+// branch-then-PR flow downstream — BatchCreateFiles writes the bootstrap
+// files to the new branch, CreatePullRequest opens a PR, and the user (or
+// auto-merge) lands the PR onto the now-populated base branch.
 func (g *GitHubProvider) CreateBranch(ctx context.Context, branchName, fromRef string) error {
 	// Resolve fromRef to a SHA.
 	ref, _, err := g.client.Git.GetRef(ctx, g.owner, g.repo, "refs/heads/"+fromRef)
 	if err != nil {
-		// If the base branch doesn't exist the repo is empty — bootstrap it.
-		if ghErr, ok := err.(*github.ErrorResponse); ok && ghErr.Response.StatusCode == http.StatusNotFound {
-			slog.Info("base branch not found, initializing empty repo", "branch", fromRef)
+		// Empty-repo bootstrap path: the repo has no commits OR the requested
+		// ref is missing on a populated repo. Both lead to the same recovery
+		// — seed an initial commit on fromRef, then create the target branch
+		// from that commit. Use errors.As (not bare type assertion) so the
+		// detection survives any future error wrapping inside go-github and
+		// is robust against a nil Response on the underlying *ErrorResponse.
+		var ghErr *github.ErrorResponse
+		isNotFound := errors.As(err, &ghErr) && ghErr.Response != nil && ghErr.Response.StatusCode == http.StatusNotFound
+		if isNotFound || isEmptyRepo(err) {
+			slog.Info("github base branch unavailable, initializing empty repo", "branch", fromRef, "reason_404", isNotFound, "reason_empty_repo", isEmptyRepo(err))
 			sha, initErr := g.initEmptyRepo(ctx, fromRef)
 			if initErr != nil {
 				return fmt.Errorf("create branch: init empty repo: %w", initErr)
@@ -120,7 +142,8 @@ func (g *GitHubProvider) CreateOrUpdateFile(ctx context.Context, path string, co
 	_, _, err = g.client.Repositories.CreateFile(ctx, g.owner, g.repo, path, opts)
 	if err != nil {
 		// On 422 SHA mismatch, retry once by re-fetching the SHA.
-		if ghErr, ok := err.(*github.ErrorResponse); ok && ghErr.Response.StatusCode == http.StatusUnprocessableEntity {
+		var ghErr *github.ErrorResponse
+		if errors.As(err, &ghErr) && ghErr.Response != nil && ghErr.Response.StatusCode == http.StatusUnprocessableEntity {
 			slog.Warn("github SHA mismatch, retrying", "path", path, "branch", branch)
 			existing, fetchErr := g.getContentsRaw(ctx, path, branch)
 			if fetchErr != nil {

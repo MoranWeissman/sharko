@@ -53,13 +53,62 @@ config:
 # - ConfigMap (sharko-users): user accounts (auto-created by Helm)
 # - Secret: bcrypt password hashes (auto-generated on first install)
 #
-# On first install, an admin account is created with a random password.
-# Retrieve it with: kubectl get secret <release-name> -o jsonpath='{.data.admin\.initialPassword}' | base64 -d
+# Bootstrap admin credential. If both bootstrapAdmin fields are empty,
+# Sharko generates a random password on first boot and logs it ONCE to
+# stdout. To capture:
+#   kubectl logs -n sharko deployment/sharko | grep -A4 "BOOTSTRAP ADMIN"
+# (You can also still retrieve the same value while it is in the Secret:
+#   kubectl get secret <release-name> -o jsonpath='{.data.admin\.initialPassword}' | base64 -d
+#  Sharko removes that key after logging it once, so subsequent restarts
+#  do not re-emit the credential.)
+#
+# To set the bootstrap password explicitly, populate either:
+#   - bootstrapAdmin.password: inline value (insecure for production —
+#     the plaintext lives in your values file / Helm release)
+#   - bootstrapAdmin.existingSecret.name: name of a Secret in the same
+#     namespace with a key holding the plaintext password (recommended
+#     for production; rotate by updating the Secret + restarting the pod)
+#
+# Operator-supplied passwords are NEVER logged — see
+# internal/auth/store.go SeedBootstrapAdminFromEnv.
 #
 # For local development (outside K8s), set these env vars:
 # auth:
 #   username: ""   # maps to SHARKO_AUTH_USER env var
 #   password: ""   # maps to SHARKO_AUTH_PASSWORD env var
+bootstrapAdmin:
+  # Inline plaintext password. Insecure for production — prefer existingSecret.
+  password: ""
+  # Reference an existing Secret holding the bootstrap password.
+  existingSecret:
+    name: ""        # Secret name in the release namespace
+    key: "password" # Key within the Secret holding the plaintext password
+  # When auto-generating the bootstrap admin password (no `password` and no
+  # `existingSecret` supplied), also write a dedicated
+  # `sharko-initial-admin-secret` Secret carrying the plaintext for kubectl
+  # retrieval — mirrors ArgoCD's `argocd-initial-admin-secret` pattern.
+  #
+  # Set to false to keep the plaintext only in the transient pod log line
+  # ("BOOTSTRAP ADMIN CREDENTIAL"). The dedicated secret has NO effect when
+  # `password` or `existingSecret.name` is set — Sharko never writes it on
+  # the operator-supplied paths.
+  #
+  # Retrieve with:
+  #   kubectl get secret sharko-initial-admin-secret -n <release-namespace> \
+  #     -o jsonpath='{.data.password}' | base64 -d
+  #
+  # The secret persists across `sharko reset-admin` rotations: each rotation
+  # rewrites `data.password` to the new plaintext (replace, not patch — old
+  # plaintext does NOT survive). Operators can re-fetch with the same kubectl
+  # command above to read the current bootstrap password. To remove the
+  # secret permanently (e.g. once stored in a vault), delete it manually:
+  #   kubectl delete secret sharko-initial-admin-secret -n <release-namespace>
+  # The next reset-admin will recreate it. To prevent recreation entirely,
+  # set this value to false — in opt-out mode reset-admin only deletes any
+  # stale secret and does NOT recreate one.
+  #
+  # V124-6.3 / BUG-023; rotation behavior added in V124-7.1 / BUG-025.
+  writeInitialSecret: true
 
 # ---------------------------------------------------------------------------
 # GitOps Actions (v2 — PR creation from UI/AI)

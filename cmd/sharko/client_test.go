@@ -98,6 +98,57 @@ func TestConfigDir_OverrideHonored(t *testing.T) {
 	}
 }
 
+// L11 — SHARKO_CONFIG_DIR with a leading "~/" must expand to the user's
+// home directory. The previous behaviour passed "~/sharko-test" through
+// verbatim, which is a surprising UX failure: shells expand ~ before
+// invoking the binary, but env-var values set via `export
+// SHARKO_CONFIG_DIR=~/sharko-test` in some configurations (or set
+// programmatically) preserve the literal tilde. configDir now applies
+// standard tilde expansion to match what users expect.
+func TestConfigDir_OverrideExpandsTilde(t *testing.T) {
+	home := t.TempDir()
+	withTempEnv(t, home, "~/sharko-test")
+	got := configDir()
+	want := filepath.Join(home, "sharko-test")
+	if got != want {
+		t.Errorf("configDir() = %q, want %q (tilde must expand to $HOME)", got, want)
+	}
+}
+
+// L11 — bare "~" alone (no trailing slash) expands to $HOME with no
+// suffix appended. Mirrors shell semantics.
+func TestConfigDir_OverrideBareTilde(t *testing.T) {
+	home := t.TempDir()
+	withTempEnv(t, home, "~")
+	got := configDir()
+	if got != home {
+		t.Errorf("configDir() = %q, want %q (bare ~ must expand to $HOME)", got, home)
+	}
+}
+
+// L11 — an embedded tilde (not at the start) must be left alone. Standard
+// shells only expand the leading ~ of a word; we mirror that.
+func TestConfigDir_OverrideEmbeddedTildeUntouched(t *testing.T) {
+	home := t.TempDir()
+	embedded := "/var/run/~not-home/sharko"
+	withTempEnv(t, home, embedded)
+	got := configDir()
+	if got != embedded {
+		t.Errorf("configDir() = %q, want %q (embedded ~ must not be expanded)", got, embedded)
+	}
+}
+
+// L11 — when $HOME cannot be resolved, expansion is a no-op rather than
+// silently rewriting to the empty string. Better to surface the literal
+// path so the operator sees what they configured.
+func TestConfigDir_OverrideTildeWithNoHome(t *testing.T) {
+	withTempEnv(t, "", "~/sharko-test")
+	got := configDir()
+	if got != "~/sharko-test" {
+		t.Errorf("configDir() = %q, want %q (no $HOME → leave tilde literal)", got, "~/sharko-test")
+	}
+}
+
 func TestSaveAndLoadConfig_RoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	withTempEnv(t, "/", dir)

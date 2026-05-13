@@ -64,7 +64,10 @@ func (o *Orchestrator) InitRepo(ctx context.Context, req InitRepoRequest) (*Init
 	}
 
 	// Step 3 — Commit all files via PR (using commitChanges with shared mutex).
-	gitResult, err := o.commitChanges(ctx, files, nil, "initialize repository")
+	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, "initialize repository", PRMetadata{
+		OperationCode: "init-repo",
+		Title:         "Initialize repository",
+	})
 	if err != nil {
 		return nil, fmt.Errorf("committing init files: %w", err)
 	}
@@ -123,15 +126,27 @@ func (o *Orchestrator) InitRepo(ctx context.Context, req InitRepoRequest) (*Init
 
 		result.ArgoCD = &InitArgocdInfo{
 			Bootstrapped: true,
-			RootApp:      "addons-bootstrap",
+			RootApp:      BootstrapRootAppName,
 		}
 
 		// Step 7 — Poll for sync verification (up to 2 minutes).
-		syncStatus, syncErr := o.waitForSync(ctx, "addons-bootstrap", 2*time.Minute)
+		syncStatus, syncErr := o.waitForSync(ctx, BootstrapRootAppName, 2*time.Minute)
 		result.ArgoCD.SyncStatus = syncStatus
 		result.ArgoCD.SyncError = syncErr
 		if syncStatus != "synced" {
+			// V124-14 / BUG-032: a sync timeout/failure must surface as a
+			// non-nil error so the operations framework marks the operation
+			// as `failed` and the first-run wizard renders the actual cause
+			// instead of "Repository initialized successfully." The caller
+			// may still inspect `result` for partial info — the error
+			// message itself carries enough detail for the wizard.
 			result.Status = "syncing"
+			detail := syncStatus
+			if syncErr != "" {
+				detail = syncStatus + ": " + syncErr
+			}
+			return result, fmt.Errorf("argocd application %q did not reach synced state: %s",
+				BootstrapRootAppName, detail)
 		}
 	}
 
@@ -290,12 +305,33 @@ func (o *Orchestrator) CommitBootstrapFiles(ctx context.Context, files map[strin
 
 // CreateInitPR opens a pull request for the given branch against the base branch.
 // The caller is responsible for merging (or waiting for a human to merge).
+//
+// V125-1-6: this path does NOT go through commitChanges (the bootstrap
+// branch was already created by CommitBootstrapFiles), so the dashboard
+// PR-tracker write is performed inline. Skipped silently when no tracker
+// is wired (test seam).
 func (o *Orchestrator) CreateInitPR(ctx context.Context, branch string) (*GitResult, error) {
 	title := fmt.Sprintf("%s initialize repository", o.gitops.CommitPrefix)
 	pr, err := o.git.CreatePullRequest(ctx, title, "initialize repository", branch, o.gitops.BaseBranch)
 	if err != nil {
 		return nil, fmt.Errorf("creating pull request: %w", err)
 	}
+
+	if o.prTracker != nil {
+		_ = o.prTracker.TrackPR(ctx, TrackedPR{
+			PRID:       pr.ID,
+			PRUrl:      pr.URL,
+			PRBranch:   branch,
+			PRTitle:    "Initialize repository",
+			PRBase:     o.gitops.BaseBranch,
+			Operation:  "init-repo",
+			User:       "system",
+			Source:     "api",
+			CreatedAt:  time.Now(),
+			LastStatus: "open",
+		})
+	}
+
 	return &GitResult{
 		PRUrl:  pr.URL,
 		PRID:   pr.ID,

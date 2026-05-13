@@ -66,8 +66,14 @@ alertmanager:
   collectEvents: true
 `)
 
-	// Bootstrap root-app (marks repo as initialised)
-	p.files["bootstrap/root-app.yaml"] = []byte(`apiVersion: argoproj.io/v1alpha1
+	// Bootstrap root-app (marks repo as initialised). Path matches
+	// orchestrator.BootstrapRootAppPath — the demo simulates a repo that
+	// has already been through init, so the file lives at repo root, not
+	// under bootstrap/ (the orchestrator's CollectBootstrapFiles strips
+	// the bootstrap/ prefix from this and other repo-root files). Pre-V124-20
+	// this was seeded at "bootstrap/root-app.yaml" to match the (then-buggy)
+	// API check; both have been corrected.
+	p.files["root-app.yaml"] = []byte(`apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: sharko-root

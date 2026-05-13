@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 
 	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/config"
@@ -45,10 +44,19 @@ func (s *DashboardService) GetStats(ctx context.Context, gp gitprovider.GitProvi
 		Active: connList.ActiveConnection,
 	}
 
-	// Parse Git config
+	// Parse Git config.
+	//
+	// V124-23 / BUG-048: missing file (fresh-install gitops repo) degrades
+	// to empty stats rather than propagating a 500 with the raw filesystem
+	// error string. Same isGitFileNotFound (errors.Is) pattern as
+	// ClusterService.ListClusters (V124-2.2). The previous 404-substring
+	// check matched the H2 anti-pattern that V124-2.12 already fixed for
+	// /clusters and never actually fired against real providers — the
+	// maintainer's empty-repo logs ("op=dashboard_stats status=500
+	// error=reading managed-clusters.yaml: ... file not found") confirmed.
 	clusterData, err := gp.GetFileContent(ctx, s.managedClustersPath, "main")
 	if err != nil {
-		if strings.Contains(err.Error(), "404") {
+		if isGitFileNotFound(err) {
 			clusterData = []byte("clusters: []")
 		} else {
 			return nil, fmt.Errorf("reading managed-clusters.yaml: %w", err)
@@ -57,7 +65,7 @@ func (s *DashboardService) GetStats(ctx context.Context, gp gitprovider.GitProvi
 
 	catalogData, err := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", "main")
 	if err != nil {
-		if strings.Contains(err.Error(), "404") {
+		if isGitFileNotFound(err) {
 			catalogData = []byte("applicationsets: []")
 		} else {
 			return nil, fmt.Errorf("reading addons-catalog.yaml: %w", err)

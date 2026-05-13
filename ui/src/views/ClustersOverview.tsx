@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useContext } from 'react';
+import { useState, useEffect, useMemo, useCallback, useContext, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Server,
@@ -22,8 +22,9 @@ import {
   ChevronDown,
   ChevronUp,
   RefreshCw,
+  Trash2,
 } from 'lucide-react';
-import { api, registerCluster, discoverEKSClusters, testClusterConnection, unadoptCluster } from '@/services/api';
+import { api, registerCluster, discoverEKSClusters, testClusterConnection, unadoptCluster, deleteOrphanCluster } from '@/services/api';
 import type {
   Cluster,
   ClusterHealthStats,
@@ -32,6 +33,8 @@ import type {
   AddonCatalogResponse,
   DiscoveredClusterItem,
   DryRunResult,
+  PendingRegistration,
+  OrphanRegistration,
   RegisterClusterResult,
   VerifyStep,
 } from '@/services/models';
@@ -71,6 +74,31 @@ interface Filters {
 
 export function ClustersOverview() {
   const [allClusters, setAllClusters] = useState<Cluster[]>([]);
+  // Mirror the latest allClusters in a ref so fetchData's catch block can read
+  // the current length without (a) closing over stale state and (b) putting
+  // allClusters in fetchData's dep array (which would cause the fetch effect
+  // to re-fire on every state update). V124-3.1.
+  const allClustersRef = useRef<Cluster[]>([]);
+  // V125-1.5: cluster-registration PRs that have NOT yet merged. The BE
+  // returns these via /api/v1/clusters.pending_registrations. We surface
+  // them as a dedicated "Pending Registrations" section AND filter their
+  // cluster names out of the Managed + Discovered sections so the same
+  // cluster never appears in two places (BUG-051/052).
+  const [pendingRegistrations, setPendingRegistrations] = useState<PendingRegistration[]>([]);
+  // V125-1-7 / BUG-058: ArgoCD cluster Secrets with no managed-clusters.yaml
+  // entry AND no open registration PR. Typically left over from a manual-
+  // mode register PR closed without merging. Surfaced in a dedicated
+  // amber/orange "Cancelled / Orphan Registrations" section between the
+  // blue Pending Registrations section and the main cluster table, with
+  // a per-row Delete cluster Secret button.
+  const [orphanRegistrations, setOrphanRegistrations] = useState<OrphanRegistration[]>([]);
+  // Per-cluster orphan-delete state. `null` = no action; `pending` = the
+  // confirm dialog is open for this name; `deleting` = the API call is in
+  // flight. We use a single piece of state because only one orphan delete
+  // can be initiated at a time from the dialog flow.
+  const [orphanDeleteTarget, setOrphanDeleteTarget] = useState<string | null>(null);
+  const [orphanDeleteLoading, setOrphanDeleteLoading] = useState(false);
+  const [orphanDeleteResult, setOrphanDeleteResult] = useState<{ name: string; success?: string; error?: string } | null>(null);
   const [healthStats, setHealthStats] = useState<ClusterHealthStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -124,6 +152,8 @@ export function ClustersOverview() {
   const [addClusterRegion, setAddClusterRegion] = useState('');
   const [addClusterRoleArn, setAddClusterRoleArn] = useState('');
   const [addClusterSecretPath, setAddClusterSecretPath] = useState('');
+  // V125-1.1: kubeconfig YAML pasted by the user when provider === 'kubeconfig'.
+  const [addClusterKubeconfig, setAddClusterKubeconfig] = useState('');
   const [addClusterSubmitting, setAddClusterSubmitting] = useState(false);
   const [addClusterError, setAddClusterError] = useState<string | null>(null);
   const [addClusterResult, setAddClusterResult] = useState<RegisterClusterResult | null>(null);
@@ -166,6 +196,12 @@ export function ClustersOverview() {
       setError(null);
       setAllClusters(response.clusters);
       setHealthStats(response.health_stats ?? null);
+      // V125-1.5: default to [] so older servers that pre-date the field
+      // do not crash this view. Same nil-array regression guard as the
+      // backend's PendingRegistrations contract.
+      setPendingRegistrations(response.pending_registrations ?? []);
+      // V125-1-7: same forward-compat default for orphan_registrations.
+      setOrphanRegistrations(response.orphan_registrations ?? []);
       // Detect ArgoCD unreachable: if all clusters have failed/unknown status or response is empty
       const hasArgoError = response.clusters.length === 0 ||
         (response.clusters.length > 0 && response.clusters.every(
@@ -184,13 +220,17 @@ export function ClustersOverview() {
         // render an empty stat grid with no indication anything went wrong.
         // If we already have data, keep it on screen and let the next refresh
         // try to recover — the user still sees the last-good state.
-        setAllClusters((prev) => {
-          if (prev.length === 0) {
-            setError(message);
-            setHealthStats(null);
-          }
-          return prev;
-        });
+        //
+        // V124-3.1: read the prior length OUTSIDE any state updater. The
+        // previous code called setError/setHealthStats inside a setAllClusters
+        // updater function — a React anti-pattern that fires twice in
+        // StrictMode (updaters must be pure). Read via the ref so we see the
+        // current value without putting allClusters in fetchData's deps.
+        if (allClustersRef.current.length === 0) {
+          setError(message);
+          setHealthStats(null);
+        }
+        // Intentionally do NOT call setAllClusters — prior data stays on screen.
       }
     } finally {
       setLoading(false);
@@ -201,6 +241,13 @@ export function ClustersOverview() {
   const handleRefresh = useCallback(() => {
     void fetchData(true);
   }, [fetchData]);
+
+  // Keep allClustersRef in sync with allClusters so fetchData's catch block
+  // can check "did we have prior data on screen?" without depending on
+  // allClusters in its dep array (V124-3.1).
+  useEffect(() => {
+    allClustersRef.current = allClusters;
+  }, [allClusters]);
 
   useEffect(() => {
     void fetchData();
@@ -223,6 +270,7 @@ export function ClustersOverview() {
     setAddClusterRegion('');
     setAddClusterRoleArn('');
     setAddClusterSecretPath('');
+    setAddClusterKubeconfig('');
     setSelectedAddons({});
     setProvider('eks');
     setRegistrationMode('direct');
@@ -274,16 +322,30 @@ export function ClustersOverview() {
     setDryRunResult(null);
     setAddClusterError(null);
     try {
-      const result = await registerCluster({
-        name: clusterName || 'dry-run-preview',
-        region: addClusterRegion.trim() || undefined,
-        secret_path: addClusterSecretPath.trim() || undefined,
-        provider,
-        role_arn: addClusterRoleArn.trim() || undefined,
-        auto_merge: autoMerge,
-        addons: Object.keys(selectedAddons).length > 0 ? selectedAddons : undefined,
-        dry_run: true,
-      });
+      // V125-1.1: kubeconfig path sends a disjoint field set — server
+      // rejects AWS-shaped fields (region/secret_path/role_arn) when
+      // provider==='kubeconfig', so do NOT include them in the payload.
+      const result = await registerCluster(
+        provider === 'kubeconfig'
+          ? {
+              name: clusterName || 'dry-run-preview',
+              provider,
+              kubeconfig: addClusterKubeconfig,
+              auto_merge: autoMerge,
+              addons: Object.keys(selectedAddons).length > 0 ? selectedAddons : undefined,
+              dry_run: true,
+            }
+          : {
+              name: clusterName || 'dry-run-preview',
+              region: addClusterRegion.trim() || undefined,
+              secret_path: addClusterSecretPath.trim() || undefined,
+              provider,
+              role_arn: addClusterRoleArn.trim() || undefined,
+              auto_merge: autoMerge,
+              addons: Object.keys(selectedAddons).length > 0 ? selectedAddons : undefined,
+              dry_run: true,
+            },
+      );
       if (result?.dry_run) {
         setDryRunResult(result.dry_run);
       }
@@ -292,7 +354,7 @@ export function ClustersOverview() {
     } finally {
       setDryRunLoading(false);
     }
-  }, [registrationMode, addClusterName, addClusterRegion, addClusterRoleArn, addClusterSecretPath, provider, autoMerge, selectedAddons]);
+  }, [registrationMode, addClusterName, addClusterRegion, addClusterRoleArn, addClusterSecretPath, addClusterKubeconfig, provider, autoMerge, selectedAddons]);
 
   const handleAddCluster = useCallback(async () => {
     if (registrationMode === 'direct' && !addClusterName.trim()) return;
@@ -335,24 +397,54 @@ export function ClustersOverview() {
         setAddClusterOpen(false);
         void fetchData();
       } else {
-        // Direct registration
-        const result = await registerCluster({
-          name: addClusterName.trim(),
-          region: addClusterRegion.trim() || undefined,
-          secret_path: addClusterSecretPath.trim() || undefined,
-          provider,
-          role_arn: addClusterRoleArn.trim() || undefined,
-          auto_merge: autoMerge,
-          addons: Object.keys(selectedAddons).length > 0 ? selectedAddons : undefined,
-        });
+        // Direct registration. V125-1.1: kubeconfig path uses a disjoint
+        // payload — only `name`, `provider`, `kubeconfig`, `auto_merge`,
+        // `addons` are valid for the kubeconfig branch (server returns 400
+        // if region/secret_path/role_arn appear).
+        const result = await registerCluster(
+          provider === 'kubeconfig'
+            ? {
+                name: addClusterName.trim(),
+                provider,
+                kubeconfig: addClusterKubeconfig,
+                auto_merge: autoMerge,
+                addons: Object.keys(selectedAddons).length > 0 ? selectedAddons : undefined,
+              }
+            : {
+                name: addClusterName.trim(),
+                region: addClusterRegion.trim() || undefined,
+                secret_path: addClusterSecretPath.trim() || undefined,
+                provider,
+                role_arn: addClusterRoleArn.trim() || undefined,
+                auto_merge: autoMerge,
+                addons: Object.keys(selectedAddons).length > 0 ? selectedAddons : undefined,
+              },
+        );
         const prUrl = result?.git?.pr_url || result?.pr_url || result?.pull_request_url;
         const merged = result?.git?.merged ?? autoMerge;
-        if (merged && !prUrl) {
-          setAddClusterResultMsg('Cluster registered successfully.');
+        // V125-1.5 / BUG-050: manual-mode register opens a PR but the
+        // cluster is NOT actually registered until merge. The pre-V125-1.5
+        // toast said "Cluster registered" in both branches, which was a
+        // lie in the manual-merge case. Branch on `merged` so the message
+        // tells the user the truth.
+        if (merged) {
+          // Auto-merge succeeded (or PR-merge was implicit). Cluster is
+          // truly registered.
+          setAddClusterResultMsg(prUrl
+            ? `__merged__|${prUrl}`
+            : 'Cluster registered successfully.');
         } else if (prUrl) {
-          setAddClusterResultMsg(prUrl);
+          // Manual mode (or auto-merge requested but not yet merged):
+          // values-file PR is open. The cluster won't appear as managed
+          // until the PR is merged. We tag the message with a `__pending__`
+          // prefix so the renderer picks the "PR opened — merge to
+          // activate" wording rather than the legacy "Cluster registered"
+          // wording.
+          setAddClusterResultMsg(`__pending__|${prUrl}`);
         } else {
-          setAddClusterResultMsg('Cluster registered successfully.');
+          // Defensive: server returned no PR URL and no merge flag. Stay
+          // truthful — don't claim "registered" without evidence.
+          setAddClusterResultMsg('Cluster registration submitted. Check the open PR list for status.');
         }
         setAddClusterResult(result);
         setAddClusterOpen(false);
@@ -363,7 +455,7 @@ export function ClustersOverview() {
     } finally {
       setAddClusterSubmitting(false);
     }
-  }, [addClusterName, addClusterRegion, addClusterRoleArn, addClusterSecretPath, provider, autoMerge, selectedAddons, fetchData, registrationMode, discoveredItems, selectedDiscovered]);
+  }, [addClusterName, addClusterRegion, addClusterRoleArn, addClusterSecretPath, addClusterKubeconfig, provider, autoMerge, selectedAddons, fetchData, registrationMode, discoveredItems, selectedDiscovered]);
 
   const handleTestCluster = useCallback(async (name: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -474,6 +566,33 @@ export function ClustersOverview() {
     }
   }, [unadoptTarget, fetchData]);
 
+  // V125-1-7 / BUG-058 — orphan cluster Secret cleanup. Confirms via
+  // ConfirmationModal (the same destructive-action pattern used by
+  // unadopt + remove cluster). On success, refetch to drop the orphan
+  // row from the surface; on failure, surface the BE error message
+  // (the BE returns 400 with a remediation hint if the cluster turns
+  // out to be managed/pending in a TOCTOU race).
+  const handleDeleteOrphan = useCallback(async () => {
+    if (!orphanDeleteTarget) return;
+    setOrphanDeleteLoading(true);
+    setOrphanDeleteResult(null);
+    const target = orphanDeleteTarget;
+    try {
+      await deleteOrphanCluster(target);
+      setOrphanDeleteResult({ name: target, success: `Cancelled registration for "${target}" discarded.` });
+      setOrphanDeleteTarget(null);
+      void fetchData();
+    } catch (err) {
+      setOrphanDeleteResult({
+        name: target,
+        error: err instanceof Error ? err.message : 'Orphan delete failed',
+      });
+      setOrphanDeleteTarget(null);
+    } finally {
+      setOrphanDeleteLoading(false);
+    }
+  }, [orphanDeleteTarget, fetchData]);
+
   const toggleDiscoveredSelection = useCallback((name: string) => {
     setSelectedDiscoveredForAdopt((prev) => ({
       ...prev,
@@ -531,15 +650,41 @@ export function ClustersOverview() {
     [allClusters, statusFilter, filters],
   );
 
+  // V125-1.5 / BUG-051+052: cluster names that have an open registration
+  // PR but whose values-file changes have NOT yet merged. They must NEVER
+  // appear in the Managed or Discovered sections — that's what the
+  // "Pending Registrations" surface is for. The BE also strips these from
+  // the `not_in_git` lane (internal/api/clusters.go), but we re-apply the
+  // filter here so a stale BE response or a slow refresh window still
+  // can't surface the cluster in two places at once.
+  const pendingNames = useMemo(
+    () => new Set(pendingRegistrations.map((p) => p.cluster_name)),
+    [pendingRegistrations],
+  );
+
+  // V125-1-7 / BUG-058: same defence-in-depth for orphans. Orphan cluster
+  // names belong only in the "Cancelled / Orphan Registrations" section;
+  // the BE strips them from `not_in_git` too, but the FE re-applies the
+  // filter so a stale or in-flight refresh can never surface the same
+  // cluster in two places.
+  const orphanNames = useMemo(
+    () => new Set(orphanRegistrations.map((o) => o.cluster_name)),
+    [orphanRegistrations],
+  );
+
   // Split into managed (in git) and discovered (ArgoCD-only / unmanaged)
   const managedClusters = useMemo(
-    () => filteredClusters.filter((c) => c.managed !== false && c.connection_status !== 'not_in_git'),
-    [filteredClusters],
+    () => filteredClusters.filter(
+      (c) => c.managed !== false && c.connection_status !== 'not_in_git' && !pendingNames.has(c.name) && !orphanNames.has(c.name),
+    ),
+    [filteredClusters, pendingNames, orphanNames],
   );
 
   const discoveredClusters = useMemo(
-    () => filteredClusters.filter((c) => c.managed === false || c.connection_status === 'not_in_git'),
-    [filteredClusters],
+    () => filteredClusters.filter(
+      (c) => (c.managed === false || c.connection_status === 'not_in_git') && !pendingNames.has(c.name) && !orphanNames.has(c.name),
+    ),
+    [filteredClusters, pendingNames, orphanNames],
   );
 
   const handleAdoptSelected = useCallback(() => {
@@ -706,7 +851,7 @@ export function ClustersOverview() {
                 <option value="eks">Amazon EKS</option>
                 <option value="gke" disabled>Google GKE (coming soon)</option>
                 <option value="aks" disabled>Azure AKS (coming soon)</option>
-                <option value="generic" disabled>Generic K8s (coming soon)</option>
+                <option value="kubeconfig">Generic K8s (kubeconfig)</option>
               </select>
             </div>
 
@@ -743,7 +888,7 @@ export function ClustersOverview() {
 
             {registrationMode === 'direct' ? (
               <>
-                {/* Direct mode fields */}
+                {/* Direct mode fields — Cluster Name is required for every provider. */}
                 <div>
                   <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
                     Cluster Name <span className="text-red-500">*</span>
@@ -756,45 +901,69 @@ export function ClustersOverview() {
                     className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
                   />
                 </div>
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
-                    Region (optional)
-                  </label>
-                  <input
-                    type="text"
-                    value={addClusterRegion}
-                    onChange={(e) => setAddClusterRegion(e.target.value)}
-                    placeholder="e.g. us-east-1"
-                    className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
-                    Role ARN (optional)
-                  </label>
-                  <input
-                    type="text"
-                    value={addClusterRoleArn}
-                    onChange={(e) => setAddClusterRoleArn(e.target.value)}
-                    placeholder="e.g. arn:aws:iam::123456789012:role/sharko-access"
-                    className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
-                    Secret Path (optional)
-                  </label>
-                  <input
-                    type="text"
-                    value={addClusterSecretPath}
-                    onChange={(e) => setAddClusterSecretPath(e.target.value)}
-                    placeholder="Override AWS SM secret name (e.g., k8s-my-cluster)"
-                    className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
-                  />
-                  <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
-                    Leave empty to use cluster name as the secret key
-                  </p>
-                </div>
+                {provider === 'kubeconfig' ? (
+                  <>
+                    {/* V125-1.1: kubeconfig path — paste YAML inline. */}
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
+                        Kubeconfig <span className="text-red-500">*</span>
+                      </label>
+                      <textarea
+                        value={addClusterKubeconfig}
+                        onChange={(e) => setAddClusterKubeconfig(e.target.value)}
+                        rows={12}
+                        placeholder={'apiVersion: v1\nkind: Config\nclusters:\n- name: my-cluster\n  cluster:\n    server: https://...\n    certificate-authority-data: ...\nusers:\n- name: my-user\n  user:\n    token: ...'}
+                        className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 font-mono text-xs focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
+                      />
+                      <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
+                        Paste your kubeconfig YAML. Sharko extracts the server URL, CA certificate, and bearer token. Note: only bearer-token authentication is supported in this release. For kind: run <code className="font-mono">kubectl create token &lt;serviceaccount&gt; --duration=24h</code> to generate a token.
+                      </p>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    {/* EKS path — existing AWS-shaped fields. */}
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
+                        Region (optional)
+                      </label>
+                      <input
+                        type="text"
+                        value={addClusterRegion}
+                        onChange={(e) => setAddClusterRegion(e.target.value)}
+                        placeholder="e.g. us-east-1"
+                        className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
+                        Role ARN (optional)
+                      </label>
+                      <input
+                        type="text"
+                        value={addClusterRoleArn}
+                        onChange={(e) => setAddClusterRoleArn(e.target.value)}
+                        placeholder="e.g. arn:aws:iam::123456789012:role/sharko-access"
+                        className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
+                        Secret Path (optional)
+                      </label>
+                      <input
+                        type="text"
+                        value={addClusterSecretPath}
+                        onChange={(e) => setAddClusterSecretPath(e.target.value)}
+                        placeholder="Override AWS SM secret name (e.g., k8s-my-cluster)"
+                        className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
+                      />
+                      <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
+                        Leave empty to use cluster name as the secret key
+                      </p>
+                    </div>
+                  </>
+                )}
               </>
             ) : (
               <>
@@ -830,6 +999,7 @@ export function ClustersOverview() {
                   type="button"
                   onClick={handleDiscoverClusters}
                   disabled={discovering || !discoveryRoleArns.trim()}
+                  title="Scan AWS for EKS clusters reachable from each Role ARN above. Found clusters appear below for selection — nothing is registered until you click Register."
                   className="inline-flex items-center gap-2 rounded-md bg-[#0a2a4a] px-4 py-2 text-sm font-medium text-white hover:bg-[#0d3558] disabled:cursor-not-allowed disabled:opacity-50 dark:bg-blue-700 dark:hover:bg-blue-600"
                 >
                   {discovering ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScanSearch className="h-4 w-4" />}
@@ -931,7 +1101,14 @@ export function ClustersOverview() {
               </div>
             )}
 
-            {/* Auto-merge checkbox */}
+            {/* Auto-merge checkbox.
+              *
+              * V125-1.4: a `title` attribute on both the input and the label
+              * surfaces the gate criteria (admin-only, PR merges immediately
+              * vs waits for human review) without bloating the visible
+              * label. Plain HTML title — universal browser support, no JS,
+              * no portal complexity, and consistent with the other tooltip
+              * additions in this dialog. */}
             <div className="flex items-center gap-2">
               <input
                 type="checkbox"
@@ -939,10 +1116,16 @@ export function ClustersOverview() {
                 checked={autoMerge}
                 disabled={isAutoMergeDisabled}
                 onChange={(e) => setAutoMerge(e.target.checked)}
+                title={isAutoMergeDisabled
+                  ? "Admin-only. When checked, the registration PR auto-merges as soon as required checks pass; otherwise the PR is left open for human review."
+                  : "When checked, the registration PR auto-merges as soon as required checks pass. Uncheck to leave the PR open for review before the cluster is added to managed-clusters.yaml."}
                 className="rounded border-[#5a9dd0] dark:border-gray-600 disabled:opacity-50"
               />
               <label
                 htmlFor="auto-merge-checkbox"
+                title={isAutoMergeDisabled
+                  ? "Admin-only. When checked, the registration PR auto-merges as soon as required checks pass; otherwise the PR is left open for human review."
+                  : "When checked, the registration PR auto-merges as soon as required checks pass. Uncheck to leave the PR open for review before the cluster is added to managed-clusters.yaml."}
                 className={`text-sm font-medium ${isAutoMergeDisabled ? 'text-[#5a8aaa] dark:text-gray-500' : 'text-[#0a3a5a] dark:text-gray-300'}`}
               >
                 Merge PR automatically
@@ -952,7 +1135,17 @@ export function ClustersOverview() {
               )}
             </div>
 
-            {/* Dry-run preview panel */}
+            {/* Dry-run preview panel.
+              *
+              * V125-1.4 (BUG-049): every array read is null-safe via `?? []`
+              * so any past, present, or future provider that returns a
+              * partial DryRunResult shape (missing field, null instead of
+              * [], JSON-tag mismatch like the original `files` vs
+              * `files_to_write`) renders a sensible panel instead of
+              * crashing the page with `Cannot read properties of null
+              * (reading 'length')`. Backend now also returns [] (not null)
+              * for both EKS and kubeconfig — defense in depth at both
+              * layers. */}
             {dryRunResult && (
               <div className="rounded-md ring-2 ring-[#6aade0] bg-[#e8f4ff] p-3 dark:ring-gray-700 dark:bg-gray-900">
                 <h4 className="mb-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-200">Dry Run Preview</h4>
@@ -961,17 +1154,17 @@ export function ClustersOverview() {
                     <span className="font-medium text-[#0a3a5a] dark:text-gray-300">PR Title:</span>{' '}
                     {dryRunResult.pr_title}
                   </div>
-                  {dryRunResult.effective_addons.length > 0 && (
+                  {(dryRunResult.effective_addons ?? []).length > 0 && (
                     <div>
                       <span className="font-medium text-[#0a3a5a] dark:text-gray-300">Effective Addons:</span>{' '}
-                      {dryRunResult.effective_addons.join(', ')}
+                      {(dryRunResult.effective_addons ?? []).join(', ')}
                     </div>
                   )}
-                  {dryRunResult.files.length > 0 && (
+                  {(dryRunResult.files_to_write ?? dryRunResult.files ?? []).length > 0 && (
                     <div>
                       <span className="font-medium text-[#0a3a5a] dark:text-gray-300">Files:</span>
                       <ul className="mt-1 space-y-0.5 font-mono">
-                        {dryRunResult.files.map((f) => (
+                        {(dryRunResult.files_to_write ?? dryRunResult.files ?? []).map((f) => (
                           <li key={f.path}>
                             <span className={f.action === 'create' ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400'}>
                               {f.action === 'create' ? '+' : '~'}
@@ -982,10 +1175,10 @@ export function ClustersOverview() {
                       </ul>
                     </div>
                   )}
-                  {dryRunResult.secrets_to_create.length > 0 && (
+                  {(dryRunResult.secrets_to_create ?? []).length > 0 && (
                     <div>
                       <span className="font-medium text-[#0a3a5a] dark:text-gray-300">Secrets to Create:</span>{' '}
-                      {dryRunResult.secrets_to_create.join(', ')}
+                      {(dryRunResult.secrets_to_create ?? []).join(', ')}
                     </div>
                   )}
                 </div>
@@ -996,6 +1189,15 @@ export function ClustersOverview() {
               <p className="text-sm text-red-600 dark:text-red-400">{addClusterError}</p>
             )}
           </div>
+          {/* Footer buttons.
+            *
+            * V125-1.4: native `title` tooltips on the action buttons explain
+            * what each does before the user clicks. Plain `title=` is used
+            * (not the shadcn <Tooltip>) because the rest of this dialog
+            * doesn't use the shadcn primitive — keeping it consistent and
+            * avoiding the portal/provider plumbing for a one-line hint.
+            * Cancel is left untouched (label is universally understood).
+            * A wider tooltip refactor across the app is V125+ scope. */}
           <DialogFooter className="flex-wrap gap-2">
             <button
               type="button"
@@ -1012,8 +1214,10 @@ export function ClustersOverview() {
                 dryRunLoading ||
                 addClusterSubmitting ||
                 (registrationMode === 'direct' && !addClusterName.trim()) ||
+                (registrationMode === 'direct' && provider === 'kubeconfig' && !addClusterKubeconfig.trim()) ||
                 (registrationMode === 'discovery' && !Object.values(selectedDiscovered).some(Boolean))
               }
+              title="Dry-run: show the PR title, files that would be committed, and ArgoCD secret that would be created — without actually applying anything."
               className="inline-flex items-center gap-2 rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
             >
               {dryRunLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}
@@ -1025,8 +1229,10 @@ export function ClustersOverview() {
               disabled={
                 addClusterSubmitting ||
                 (registrationMode === 'direct' && !addClusterName.trim()) ||
+                (registrationMode === 'direct' && provider === 'kubeconfig' && !addClusterKubeconfig.trim()) ||
                 (registrationMode === 'discovery' && !Object.values(selectedDiscovered).some(Boolean))
               }
+              title="Create the ArgoCD cluster Secret, add the cluster to managed-clusters.yaml, and open a PR (or auto-merge if the box above is checked)."
               className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
             >
               {addClusterSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
@@ -1037,30 +1243,51 @@ export function ClustersOverview() {
       </Dialog>
 
       {/* Registration success banner */}
-      {addClusterResultMsg && (
+      {addClusterResultMsg && (() => {
+        // V125-1.5 / BUG-050: pick banner styling + copy based on the
+        // tagged message marker (__merged__|<url> vs __pending__|<url>).
+        // The tag is set in handleAddCluster — we strip it here for
+        // rendering so external callers never see the marker characters.
+        const isMergedTag = addClusterResultMsg.startsWith('__merged__|');
+        const isPendingTag = addClusterResultMsg.startsWith('__pending__|');
+        const taggedURL = isMergedTag
+          ? addClusterResultMsg.slice('__merged__|'.length)
+          : isPendingTag
+            ? addClusterResultMsg.slice('__pending__|'.length)
+            : '';
+        const isPartial = addClusterResult?.partial;
+        // "Pending" gets an amber/info treatment — the action isn't done
+        // yet, it's just queued behind a merge.
+        const tone: 'success' | 'warn' = isPartial || isPendingTag ? 'warn' : 'success';
+        return (
         <div className={`flex items-center justify-between rounded-md px-4 py-2 text-sm ${
-          addClusterResult?.partial
+          tone === 'warn'
             ? 'border border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
             : 'border border-green-300 bg-green-50 text-green-800 dark:border-green-700 dark:bg-green-900/30 dark:text-green-300'
         }`}>
           <span>
-            {addClusterResult?.partial
+            {isPartial
               ? addClusterResultMsg
-              : addClusterResultMsg.startsWith('http')
-                ? <>Cluster registered. PR: <a href={addClusterResultMsg} target="_blank" rel="noopener noreferrer" className="underline font-medium">{addClusterResultMsg}</a></>
-                : addClusterResultMsg
+              : isPendingTag
+                ? <>Cluster registration PR opened — merge to activate. PR: <a href={taggedURL} target="_blank" rel="noopener noreferrer" className="underline font-medium">{taggedURL}</a></>
+                : isMergedTag
+                  ? <>Cluster registered. PR: <a href={taggedURL} target="_blank" rel="noopener noreferrer" className="underline font-medium">{taggedURL}</a></>
+                  : addClusterResultMsg.startsWith('http')
+                    ? <>Cluster registered. PR: <a href={addClusterResultMsg} target="_blank" rel="noopener noreferrer" className="underline font-medium">{addClusterResultMsg}</a></>
+                    : addClusterResultMsg
             }
           </span>
           <button
             type="button"
             onClick={() => { setAddClusterResultMsg(null); setAddClusterResult(null); }}
-            className={`ml-4 rounded p-0.5 ${addClusterResult?.partial ? 'hover:bg-amber-100 dark:hover:bg-amber-800' : 'hover:bg-green-100 dark:hover:bg-green-800'}`}
+            className={`ml-4 rounded p-0.5 ${tone === 'warn' ? 'hover:bg-amber-100 dark:hover:bg-amber-800' : 'hover:bg-green-100 dark:hover:bg-green-800'}`}
             aria-label="Dismiss"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
-      )}
+        );
+      })()}
 
       {/* Health stat cards */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
@@ -1244,6 +1471,155 @@ export function ClustersOverview() {
           </div>
         )}
       </div>
+
+      {/* V125-1.5 / BUG-053 — Pending registration PRs.
+          The wizard closes after submitting and the values-file PR is
+          opened in Git but NOT merged. Without this surface, the user has
+          no way to see which clusters are mid-registration. Each row
+          links straight to the open PR. Cancel/close-PR action is
+          deferred to V125+. */}
+      {pendingRegistrations.length > 0 && (
+        <div className="space-y-3">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-200">
+            <GitMerge className="h-4 w-4 text-blue-600" />
+            Pending Registrations
+            <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
+              {pendingRegistrations.length}
+            </span>
+            <span className="text-xs font-normal text-[#3a6a8a] dark:text-gray-500">
+              — registration PR open, will appear as managed once merged
+            </span>
+          </h3>
+          <div className="overflow-x-auto rounded-xl ring-2 ring-blue-200 bg-[#f0f7ff] shadow-sm dark:ring-blue-900/40 dark:bg-gray-800">
+            <table className="w-full text-left text-sm">
+              <thead className="border-b border-blue-200 bg-blue-50 text-xs uppercase text-blue-700 dark:border-blue-900/40 dark:bg-blue-950/30 dark:text-blue-400">
+                <tr>
+                  <th className="px-6 py-3">Cluster Name</th>
+                  <th className="px-6 py-3">Branch</th>
+                  <th className="px-6 py-3">Opened</th>
+                  <th className="px-6 py-3">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-blue-100 dark:divide-blue-900/40">
+                {pendingRegistrations.map((p) => (
+                  <tr key={`${p.cluster_name}-${p.pr_url}`}>
+                    <td className="px-6 py-3 font-medium text-[#0a2a4a] dark:text-gray-100">
+                      {p.cluster_name}
+                    </td>
+                    <td className="px-6 py-3 font-mono text-xs text-[#2a5a7a] dark:text-gray-400">
+                      {p.branch || '--'}
+                    </td>
+                    <td className="px-6 py-3 text-xs text-[#2a5a7a] dark:text-gray-400">
+                      {p.opened_at || '--'}
+                    </td>
+                    <td className="px-6 py-3">
+                      {p.pr_url ? (
+                        <a
+                          href={p.pr_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 rounded border border-blue-300 px-2 py-1 text-xs font-medium text-blue-700 hover:bg-blue-50 dark:border-blue-700 dark:text-blue-300 dark:hover:bg-blue-900/20"
+                        >
+                          <Eye className="h-3 w-3" />
+                          View PR
+                        </a>
+                      ) : (
+                        <span className="text-xs text-[#3a6a8a] dark:text-gray-500">PR URL unavailable</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* V125-1-7 / BUG-058 — Cancelled / Orphan Registrations.
+          ArgoCD cluster Secrets that have NO managed-clusters.yaml entry
+          AND no open registration PR. Typically a leftover from a
+          manual-mode register PR that was closed without merging
+          (orchestrator/cluster.go:408 pre-creates the Secret before the
+          PR opens). Per-row Delete button removes the orphan Secret via
+          DELETE /api/v1/clusters/{name}/orphan. The amber/orange tint
+          signals "needs cleanup attention" — different from the blue
+          Pending Registrations and the teal Managed Clusters above. */}
+      {orphanRegistrations.length > 0 && (
+        <div className="space-y-3">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-200">
+            <AlertTriangle className="h-4 w-4 text-amber-600" />
+            Cancelled / Orphan Registrations
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+              {orphanRegistrations.length}
+            </span>
+            <span className="text-xs font-normal text-[#3a6a8a] dark:text-gray-500">
+              — ArgoCD cluster Secret exists but no Git entry and no open PR; safe to delete
+            </span>
+          </h3>
+          <div className="overflow-x-auto rounded-xl ring-2 ring-amber-200 bg-amber-50/40 shadow-sm dark:ring-amber-900/40 dark:bg-gray-800">
+            <table className="w-full text-left text-sm">
+              <thead className="border-b border-amber-200 bg-amber-100/60 text-xs uppercase text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-400">
+                <tr>
+                  <th className="px-6 py-3">Cluster Name</th>
+                  <th className="px-6 py-3">Server URL</th>
+                  <th className="px-6 py-3">Last Seen</th>
+                  <th className="px-6 py-3">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-amber-100 dark:divide-amber-900/40">
+                {orphanRegistrations.map((o) => (
+                  <tr key={`${o.cluster_name}-${o.server_url}`}>
+                    <td className="px-6 py-3 font-medium text-[#0a2a4a] dark:text-gray-100">
+                      {o.cluster_name}
+                    </td>
+                    <td className="px-6 py-3 font-mono text-xs text-[#2a5a7a] dark:text-gray-400">
+                      {o.server_url || '--'}
+                    </td>
+                    <td className="px-6 py-3 text-xs text-[#2a5a7a] dark:text-gray-400">
+                      {o.last_seen_at || '--'}
+                    </td>
+                    <td className="px-6 py-3">
+                      <RoleGuard adminOnly>
+                        <button
+                          type="button"
+                          onClick={() => setOrphanDeleteTarget(o.cluster_name)}
+                          disabled={orphanDeleteLoading && orphanDeleteTarget === o.cluster_name}
+                          className="inline-flex items-center gap-1 rounded border border-red-300 bg-white px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-700 dark:bg-gray-800 dark:text-red-300 dark:hover:bg-red-900/20"
+                          aria-label={`Discard cancelled registration for ${o.cluster_name}`}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                          Discard cancelled registration
+                        </button>
+                      </RoleGuard>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Orphan delete result banner — rendered OUTSIDE the orphan
+          section so it survives the refetch that empties the orphan list
+          on success. Without this, the success message would unmount
+          immediately when orphanRegistrations.length flips back to 0. */}
+      {orphanDeleteResult && (
+        <div className={`flex items-center justify-between rounded-md px-4 py-2 text-sm ${
+          orphanDeleteResult.error
+            ? 'border border-red-300 bg-red-50 text-red-800 dark:border-red-700 dark:bg-red-900/30 dark:text-red-300'
+            : 'border border-green-300 bg-green-50 text-green-800 dark:border-green-700 dark:bg-green-900/30 dark:text-green-300'
+        }`}>
+          <span>{orphanDeleteResult.error || orphanDeleteResult.success}</span>
+          <button
+            type="button"
+            onClick={() => setOrphanDeleteResult(null)}
+            className="ml-3 text-xs underline opacity-80 hover:opacity-100"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* Managed Clusters */}
       <div className="space-y-3">
@@ -1644,6 +2020,18 @@ export function ClustersOverview() {
         typeToConfirm={unadoptTarget ?? ''}
         destructive
         loading={unadoptLoading}
+      />
+
+      {/* V125-1-7 / BUG-058 — Orphan Delete Confirmation Modal */}
+      <ConfirmationModal
+        open={orphanDeleteTarget !== null}
+        onClose={() => setOrphanDeleteTarget(null)}
+        onConfirm={handleDeleteOrphan}
+        title="Discard this cancelled registration?"
+        description={`This will remove the leftover ArgoCD cluster Secret for "${orphanDeleteTarget}". The Secret was created when you started registering this cluster, but the registration PR was closed without merging — so it is not in any active Git state. Discarding it is safe and will not affect any managed cluster.`}
+        confirmText="Discard"
+        destructive
+        loading={orphanDeleteLoading}
       />
 
       {/* Un-adopt result banner */}

@@ -2581,7 +2581,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Registers a new cluster in ArgoCD and creates its GitOps configuration.\nPass \"dry_run\": true to preview what would happen without making changes.",
+                "description": "Registers a new cluster in ArgoCD and creates its GitOps configuration.\nPass \"dry_run\": true to preview what would happen without making changes.\nProvider may be \"eks\" (default; uses configured secrets provider) or\n\"kubeconfig\" (V125-1.1; caller supplies kubeconfig YAML inline via the\n\"kubeconfig\" field — bearer-token auth only).",
                 "consumes": [
                     "application/json"
                 ],
@@ -2594,7 +2594,7 @@
                 "summary": "Register cluster",
                 "parameters": [
                     {
-                        "description": "Cluster registration request (supports dry_run field)",
+                        "description": "Cluster registration request (supports dry_run + kubeconfig fields)",
                         "name": "body",
                         "in": "body",
                         "required": true,
@@ -2648,6 +2648,13 @@
                     },
                     "502": {
                         "description": "Gateway error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "Credentials provider not configured (V124-4.1; eks provider only)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -2759,15 +2766,15 @@
                             "additionalProperties": true
                         }
                     },
-                    "501": {
-                        "description": "Provider not configured",
+                    "502": {
+                        "description": "Gateway error",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
                     },
-                    "502": {
-                        "description": "Gateway error",
+                    "503": {
+                        "description": "Credentials provider not configured (V124-4.1)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -2837,6 +2844,13 @@
                     },
                     "502": {
                         "description": "Gateway error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "Credentials provider not configured (V124-4.1)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -3670,6 +3684,79 @@
                 }
             }
         },
+        "/clusters/{name}/orphan": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Deletes an ArgoCD cluster Secret for a cluster that has no managed-clusters.yaml entry and no open registration PR. Refuses to delete a cluster that is genuinely managed (in git) or pending (has an open register PR) — those are not orphans.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "clusters"
+                ],
+                "summary": "Delete an orphan cluster",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Cluster name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Cluster Secret deleted"
+                    },
+                    "400": {
+                        "description": "Cluster is not orphaned (managed or pending)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Cluster Secret not found in ArgoCD",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "Gateway error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/clusters/{name}/refresh": {
             "post": {
                 "security": [
@@ -3729,6 +3816,13 @@
                             "type": "object",
                             "additionalProperties": true
                         }
+                    },
+                    "503": {
+                        "description": "Credentials provider not configured (V124-4.1)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
                     }
                 }
             }
@@ -3779,15 +3873,15 @@
                             "additionalProperties": true
                         }
                     },
-                    "501": {
-                        "description": "Provider not configured",
+                    "502": {
+                        "description": "Gateway error",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
                     },
-                    "502": {
-                        "description": "Gateway error",
+                    "503": {
+                        "description": "Credentials provider not configured (V124-4.1)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -3842,15 +3936,15 @@
                             "additionalProperties": true
                         }
                     },
-                    "501": {
-                        "description": "Provider not configured",
+                    "502": {
+                        "description": "Gateway error",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
                         }
                     },
-                    "502": {
-                        "description": "Gateway error",
+                    "503": {
+                        "description": "Credentials provider not configured (V124-4.1)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -4300,7 +4394,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Tests Git and ArgoCD credentials from a connection request without saving",
+                "description": "Tests Git and ArgoCD credentials. With use_saved=true, fetches the named saved connection's stored credentials and tests with those instead of the request body",
                 "consumes": [
                     "application/json"
                 ],
@@ -4313,7 +4407,7 @@
                 "summary": "Test connection credentials",
                 "parameters": [
                     {
-                        "description": "Connection credentials to test",
+                        "description": "Connection credentials to test (set use_saved=true with name to test the saved credentials of an existing connection)",
                         "name": "body",
                         "in": "body",
                         "required": true,
@@ -4331,7 +4425,7 @@
                         }
                     },
                     "400": {
-                        "description": "Bad request",
+                        "description": "Bad request (e.g. use_saved=true but no matching saved connection)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -5225,7 +5319,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns all tracked pull requests with optional filters",
+                "description": "Returns all tracked pull requests with optional filters. Sorted by created_at descending.",
                 "produces": [
                     "application/json"
                 ],
@@ -5257,11 +5351,23 @@
                         "description": "Filter by user",
                         "name": "user",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated list of operation codes to include (e.g. addon-add,values-edit). Empty = all.",
+                        "name": "operation",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Maximum entries to return (default 100, hard cap 500)",
+                        "name": "limit",
+                        "in": "query"
                     }
                 ],
                 "responses": {
                     "200": {
-                        "description": "List of tracked PRs",
+                        "description": "List of tracked PRs (sorted newest-first)",
                         "schema": {
                             "$ref": "#/definitions/internal_api.PRListResponse"
                         }
@@ -5508,7 +5614,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Checks whether the GitOps repository has been bootstrapped (bootstrap/Chart.yaml exists on the base branch)",
+                "description": "Checks whether the GitOps repository has been bootstrapped (bootstrap/Chart.yaml exists on the base branch) AND whether the ArgoCD bootstrap Application is Synced + Healthy. The wizard gate in the UI uses bootstrap_synced to auto-open the recovery wizard when the cluster-side bootstrap is missing or degraded even though the repo files are present.",
                 "produces": [
                     "application/json"
                 ],
@@ -5520,8 +5626,7 @@
                     "200": {
                         "description": "Repo status",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/internal_api.RepoStatusResponse"
                         }
                     }
                 }
@@ -6927,6 +7032,10 @@
                 },
                 "set_as_default": {
                     "type": "boolean"
+                },
+                "use_saved": {
+                    "description": "UseSaved, when true on a test-credentials request, instructs the\nhandler to look up the saved connection by Name and test using its\nstored credentials instead of the request body. Returns 400 if no\nsaved connection with the given name exists. Ignored by Create /\nUpdate. V124-19 / BUG-044.",
+                    "type": "boolean"
                 }
             }
         },
@@ -7508,6 +7617,10 @@
                 "dry_run": {
                     "type": "boolean"
                 },
+                "kubeconfig": {
+                    "description": "Kubeconfig is the raw kubeconfig YAML supplied inline by the caller\nwhen Provider == \"kubeconfig\". Bearer-token authentication only in\nv1.25 — cert-based and exec-plugin auth return a 400 with guidance\nto generate a token via `kubectl create token`. Ignored for any\nother provider.",
+                    "type": "string"
+                },
                 "name": {
                     "type": "string"
                 },
@@ -7828,11 +7941,28 @@
         "internal_api.PRListResponse": {
             "type": "object",
             "properties": {
+                "limit": {
+                    "type": "integer"
+                },
                 "prs": {
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/internal_api.PRItem"
                     }
+                }
+            }
+        },
+        "internal_api.RepoStatusResponse": {
+            "type": "object",
+            "properties": {
+                "bootstrap_synced": {
+                    "type": "boolean"
+                },
+                "initialized": {
+                    "type": "boolean"
+                },
+                "reason": {
+                    "type": "string"
                 }
             }
         },

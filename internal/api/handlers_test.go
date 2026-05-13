@@ -112,6 +112,12 @@ func TestHandleRepoStatus_NotInitialized_NoConnection(t *testing.T) {
 	if body["reason"] != "no_connection" {
 		t.Errorf("expected reason=no_connection, got %v", body["reason"])
 	}
+	// V124-22 / BUG-046: bootstrap_synced is always present in the body.
+	// When the repo isn't initialized, bootstrap_synced must be false —
+	// the wizard gate combines (!initialized || !bootstrap_synced).
+	if body["bootstrap_synced"] != false {
+		t.Errorf("expected bootstrap_synced=false, got %v", body["bootstrap_synced"])
+	}
 }
 
 func TestHandleRepoStatus_NotInitialized_NotBootstrapped(t *testing.T) {
@@ -140,16 +146,26 @@ func TestHandleRepoStatus_NotInitialized_NotBootstrapped(t *testing.T) {
 	if body["reason"] != "not_bootstrapped" {
 		t.Errorf("expected reason=not_bootstrapped, got %v", body["reason"])
 	}
+	if body["bootstrap_synced"] != false {
+		t.Errorf("expected bootstrap_synced=false, got %v", body["bootstrap_synced"])
+	}
 }
 
-func TestHandleRepoStatus_Initialized(t *testing.T) {
-	// Connection present and bootstrap/Chart.yaml exists.
+// repoStatusInitializedTestSetup wires up a server with the bootstrap file
+// present on the base branch and the supplied ArgocdClient override. It
+// returns the body decoded from a GET /api/v1/repo/status — the four
+// V124-22 cases below differ only in the override behaviour.
+func repoStatusInitializedTestSetup(t *testing.T, ac orchestrator.ArgocdClient) map[string]interface{} {
+	t.Helper()
 	srv := newTestServer()
 	srv.gitopsCfg = orchestrator.GitOpsConfig{BaseBranch: "main"}
 	gp := &handlerFakeGitProvider{files: map[string][]byte{
 		"bootstrap/Chart.yaml": []byte("apiVersion: v2\nname: bootstrap\n"),
 	}}
 	srv.connSvc.SetGitProviderOverride(gp)
+	if ac != nil {
+		srv.connSvc.SetArgocdClientOverride(ac)
+	}
 
 	router := NewRouter(srv, nil)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/repo/status", nil)
@@ -159,13 +175,80 @@ func TestHandleRepoStatus_Initialized(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
-
 	var body map[string]interface{}
 	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
-		t.Fatal(err)
+		t.Fatalf("decode body: %v", err)
 	}
 	if body["initialized"] != true {
 		t.Errorf("expected initialized=true, got %v", body["initialized"])
+	}
+	return body
+}
+
+// V124-22 / BUG-046 — repo initialized + bootstrap Synced + Healthy →
+// bootstrap_synced=true. Wizard stays out of the way, dashboard renders.
+func TestHandleRepoStatus_Initialized_BootstrapHealthy(t *testing.T) {
+	ac := &initFakeArgocd{
+		app: &models.ArgocdApplication{
+			Name:         orchestrator.BootstrapRootAppName,
+			SyncStatus:   "Synced",
+			HealthStatus: "Healthy",
+		},
+	}
+	body := repoStatusInitializedTestSetup(t, ac)
+	if body["bootstrap_synced"] != true {
+		t.Errorf("expected bootstrap_synced=true (Synced+Healthy app), got %v",
+			body["bootstrap_synced"])
+	}
+}
+
+// V124-22 / BUG-046 — repo initialized + bootstrap missing → bootstrap_synced=false.
+// This is the BUG-046 reproducer: user wiped the GitHub repo + ran
+// `sharko-dev.sh argocd-reset`, then visited the UI. Without this fix,
+// the dashboard renders with errors instead of the wizard.
+func TestHandleRepoStatus_Initialized_BootstrapMissing(t *testing.T) {
+	ac := &initFakeArgocd{
+		getErr: errors.New("application not found: cluster-addons-bootstrap"),
+	}
+	body := repoStatusInitializedTestSetup(t, ac)
+	if body["bootstrap_synced"] != false {
+		t.Errorf("expected bootstrap_synced=false (app missing), got %v",
+			body["bootstrap_synced"])
+	}
+}
+
+// V124-22 / BUG-046 — repo initialized + bootstrap exists but degraded
+// (OutOfSync / Degraded) → bootstrap_synced=false. Protects against the
+// "user manually deleted the deployment" partial-state case so the wizard
+// is the recovery surface, not a broken dashboard.
+func TestHandleRepoStatus_Initialized_BootstrapDegraded(t *testing.T) {
+	ac := &initFakeArgocd{
+		app: &models.ArgocdApplication{
+			Name:         orchestrator.BootstrapRootAppName,
+			SyncStatus:   "OutOfSync",
+			HealthStatus: "Degraded",
+		},
+	}
+	body := repoStatusInitializedTestSetup(t, ac)
+	if body["bootstrap_synced"] != false {
+		t.Errorf("expected bootstrap_synced=false (OutOfSync+Degraded), got %v",
+			body["bootstrap_synced"])
+	}
+}
+
+// V124-22 / BUG-046 — repo initialized + ArgoCD client unavailable →
+// bootstrap_synced=false (defensive). When we can't probe the cluster,
+// the safe answer for the wizard gate is "treat as degraded" so the
+// recovery surface is the wizard, not a dashboard that's silently
+// missing the bootstrap. Achieved here by NOT installing an override
+// AND keeping the ConnectionService without a configured connection
+// (no test override → GetActiveOrchestratorArgocdClient returns an error,
+// which the handler treats as "no probe possible" → bootstrap_synced=false).
+func TestHandleRepoStatus_Initialized_ArgocdUnavailable(t *testing.T) {
+	body := repoStatusInitializedTestSetup(t, nil)
+	if body["bootstrap_synced"] != false {
+		t.Errorf("expected bootstrap_synced=false (no ArgoCD client), got %v",
+			body["bootstrap_synced"])
 	}
 }
 

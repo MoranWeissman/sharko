@@ -3,8 +3,11 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/MoranWeissman/sharko/internal/argocd"
@@ -228,5 +231,133 @@ applicationsets:
 	inB := resp.Addons[2].Cells["cluster-b"]
 	if inB.Health != "missing" {
 		t.Errorf("ingress-nginx cluster-b health: expected missing, got %s", inB.Health)
+	}
+}
+
+// TestGetVersionMatrix_MissingFileReturnsEmpty is the V124-23 / BUG-048
+// regression test. When managed-clusters.yaml (or addons-catalog.yaml) is
+// missing — the natural state of a freshly-installed Sharko whose gitops
+// repo has not been bootstrapped yet — GetVersionMatrix MUST degrade to an
+// empty matrix rather than propagate a 500-class error. This locks down
+// the parity fix that brings the addons handler onto the same isGitFileNotFound
+// contract as ClusterService.ListClusters (V124-2.2).
+//
+// Backs the test with the shared fakeGP (cluster_test.go) because it returns
+// a wrapped gitprovider.ErrFileNotFound on missing keys, exactly the shape
+// the production providers honour after V124-2.12.
+func TestGetVersionMatrix_MissingFileReturnsEmpty(t *testing.T) {
+	// Stub ArgoCD with an empty applications list — there are no apps to
+	// enrich since there are no clusters.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"items":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	ac := argocd.NewClient(srv.URL, "test-token", true)
+	svc := NewAddonService("")
+	gp := &fakeGP{} // empty maps — every lookup returns ErrFileNotFound
+
+	resp, err := svc.GetVersionMatrix(context.Background(), gp, ac)
+	if err != nil {
+		t.Fatalf("GetVersionMatrix returned err on missing-file path: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected non-nil response on missing-file path")
+	}
+	if len(resp.Clusters) != 0 {
+		t.Errorf("expected 0 clusters from missing-file path, got %d: %+v", len(resp.Clusters), resp.Clusters)
+	}
+	if len(resp.Addons) != 0 {
+		t.Errorf("expected 0 addons from missing-file path, got %d: %+v", len(resp.Addons), resp.Addons)
+	}
+}
+
+// TestGetVersionMatrix_RealErrorPropagates locks down the other half of
+// the V124-23 contract: a non-file-not-found error from the git provider
+// MUST propagate (5xx) rather than silently degrade to an empty matrix.
+// The pre-fix strings.Contains(err.Error(), "404") matcher would have
+// silently masked any of these error shapes — same H2 anti-pattern that
+// V124-2.12 fixed for /clusters.
+func TestGetVersionMatrix_RealErrorPropagates(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{"github auth-or-perm error", errors.New("GitHub repository not found — check the URL and credentials")},
+		{"wrong branch", errors.New("branch 'main' not found")},
+		{"rate limit with 404 in body", errors.New("rate limited; body: {\"status\":404,\"reason\":\"abuse\"}")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := NewAddonService("")
+			gp := &fakeGP{
+				err: map[string]error{
+					"configuration/managed-clusters.yaml": tc.err,
+				},
+			}
+			// nil ac is fine because the call MUST fail before reaching
+			// the ArgoCD step. If a regression re-introduces the substring
+			// matcher, GetVersionMatrix would proceed past the err check
+			// and eventually nil-deref on ac.ListApplications.
+			if _, err := svc.GetVersionMatrix(context.Background(), gp, nil); err == nil {
+				t.Fatalf("expected error to propagate from %q, got nil", tc.err)
+			} else if !strings.Contains(err.Error(), "managed-clusters.yaml") {
+				t.Errorf("expected error to mention managed-clusters.yaml, got %q", err.Error())
+			}
+		})
+	}
+}
+
+// TestGetVersionMatrix_EmptyResponseHasNoLeakedError is the over-the-wire
+// shape contract for BUG-048: the missing-file path must not surface raw
+// filesystem error strings to the caller. Combined with the handler's
+// writeJSON wrapper this guarantees a clean 200 + `{clusters:[],addons:[]}`
+// payload — no `"reading managed-clusters.yaml: ... file not found"` leak.
+//
+// We assert this at the service-shape level rather than serializing through
+// the handler, because the handler test suite already covers writeJSON's
+// behaviour and the service contract is what's load-bearing here.
+func TestGetVersionMatrix_EmptyResponseHasNoLeakedError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"items":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	ac := argocd.NewClient(srv.URL, "test-token", true)
+	svc := NewAddonService("")
+	gp := &fakeGP{
+		err: map[string]error{
+			"configuration/managed-clusters.yaml": fmt.Errorf(
+				"fakeGP: configuration/managed-clusters.yaml: %w",
+				gitprovider.ErrFileNotFound,
+			),
+			"configuration/addons-catalog.yaml": fmt.Errorf(
+				"fakeGP: configuration/addons-catalog.yaml: %w",
+				gitprovider.ErrFileNotFound,
+			),
+		},
+	}
+
+	resp, err := svc.GetVersionMatrix(context.Background(), gp, ac)
+	if err != nil {
+		t.Fatalf("expected nil err on missing-file path, got %v", err)
+	}
+	// Confirm the response body would serialise cleanly — no nil maps that
+	// would render as JSON nulls and confuse the UI.
+	if resp.Clusters == nil {
+		t.Error("expected resp.Clusters to be non-nil empty slice (got nil)")
+	}
+	if resp.Addons == nil {
+		t.Error("expected resp.Addons to be non-nil empty slice (got nil)")
+	}
+	body, mErr := json.Marshal(resp)
+	if mErr != nil {
+		t.Fatalf("response did not serialise: %v", mErr)
+	}
+	if strings.Contains(string(body), "managed-clusters.yaml") {
+		t.Errorf("response body leaked filesystem path: %s", string(body))
+	}
+	if strings.Contains(string(body), "file not found") {
+		t.Errorf("response body leaked error string: %s", string(body))
 	}
 }

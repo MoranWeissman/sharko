@@ -18,9 +18,37 @@ export interface ClusterHealthStats {
   not_in_git: number
 }
 
+export interface PendingRegistration {
+  cluster_name: string
+  pr_url: string
+  branch: string
+  opened_at: string
+}
+
+// V125-1-7 / BUG-058: ArgoCD cluster Secret with no managed-clusters.yaml
+// entry AND no open registration PR — typically a leftover from a manual-
+// mode register PR that was closed without merging. Surfaced in its own
+// "Cancelled / Orphan Registrations" section with a per-row Delete cluster
+// Secret button. last_seen_at is the resolver-call time on the BE (the
+// ArgoCD cluster Secret API has no stable creation timestamp); see the
+// resolver in internal/api/clusters_orphans.go for the contract.
+export interface OrphanRegistration {
+  cluster_name: string
+  server_url: string
+  last_seen_at: string
+}
+
 export interface ClustersResponse {
   clusters: Cluster[]
   health_stats?: ClusterHealthStats
+  // V125-1.5: open cluster-registration PRs whose values-file changes
+  // have NOT yet merged. Optional with `?` for defensive forward-compat —
+  // an older server that pre-dates this field must not crash a newer FE.
+  // The runtime code reads this defensively (`?? []`) at every callsite.
+  pending_registrations?: PendingRegistration[]
+  // V125-1-7: ArgoCD cluster Secrets with no git entry and no open PR.
+  // Same forward-compat contract as pending_registrations — read with `?? []`.
+  orphan_registrations?: OrphanRegistration[]
 }
 
 export interface ClusterAddonInfo {
@@ -922,6 +950,11 @@ export interface TrackedPR {
   pr_branch: string
   pr_title: string
   cluster?: string
+  // V125-1-6: addon attribution surfaced for the per-row badge.
+  addon?: string
+  // V125-1-6: canonical operation enum — see internal/prtracker/types.go
+  // for the full list. The dashboard PR-panel filter chips bucket
+  // operations into Clusters / Addons / Init / AI on the FE side.
   operation: string
   user: string
   source: string
@@ -932,6 +965,9 @@ export interface TrackedPR {
 
 export interface TrackedPRsResponse {
   prs: TrackedPR[]
+  // V125-1-6: server echoes the effective limit so the FE can render a
+  // "View all on GitHub →" escape hatch when the response is at the cap.
+  limit?: number
 }
 
 // --- Drift Alerts (Story 6.4) ---
@@ -944,7 +980,12 @@ export interface DriftAlert {
   status: 'pending' | 'resolved'
 }
 
-export type ClusterProvider = 'eks' | 'gke' | 'aks' | 'generic'
+// V125-1.1: 'kubeconfig' is the inline-kubeconfig path enabled in v1.25.
+// 'gke' / 'aks' remain disabled options surfaced as "coming soon" — no
+// backend support yet (V125-1.x). The legacy 'generic' literal is kept
+// in the union for backwards compatibility with any persisted UI state
+// that might still reference it; the wizard no longer emits it.
+export type ClusterProvider = 'eks' | 'gke' | 'aks' | 'generic' | 'kubeconfig'
 
 export interface DiscoveredClusterItem {
   name: string
@@ -965,11 +1006,25 @@ export interface DryRunFileEntry {
   action: 'create' | 'update'
 }
 
+// V125-1.4 (BUG-049): the Go DryRunResult struct serializes its slice
+// fields as `effective_addons`, `files_to_write`, and `secrets_to_create`.
+// All three are now `?: T[]` because some past payloads (V125-1.1
+// kubeconfig path with no addons) and some future provider paths can
+// return `null`/missing — the preview panel handles that with `?? []`
+// guards. We keep the legacy `files` alias because the FE has been
+// reading the wrong key since dry-run shipped (FE was always undefined
+// in production); both are supported here so a server roll-forward to
+// the corrected backend keeps the FE working without a coordinated
+// deploy.
 export interface DryRunResult {
-  effective_addons: string[]
-  files: DryRunFileEntry[]
+  effective_addons?: string[]
+  files_to_write?: DryRunFileEntry[]
+  /** Legacy alias kept only for backwards compatibility with stale clients;
+   * server emits `files_to_write`. The view component reads `files` via the
+   * post-processing layer below. */
+  files?: DryRunFileEntry[]
   pr_title: string
-  secrets_to_create: string[]
+  secrets_to_create?: string[]
 }
 
 export interface RegisterClusterResult {

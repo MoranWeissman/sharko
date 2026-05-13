@@ -28,6 +28,10 @@ var auditAllowlist = map[string]string{
 	"handleLogin":  "emits login / login_failed directly; middleware skips /auth/login",
 	"handleLogout": "emits logout directly; middleware skips /auth/logout",
 
+	// Stale dead-route stub (V124-6.1 / BUG-021) — returns 404 with a hint
+	// pointing at /auth/login. Not a real action; middleware skips /api/v1/login.
+	"handleStaleLoginRoute": "stale-route 404 stub; middleware skips /api/v1/login",
+
 	// Hash — utility endpoint, only available when auth is disabled; not a meaningful audit event.
 	"handleHashPassword": "utility endpoint, no meaningful audit event",
 

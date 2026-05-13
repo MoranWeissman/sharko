@@ -88,10 +88,14 @@ func (s *ClusterService) ListClusters(ctx context.Context, gp gitprovider.GitPro
 	argocdClusters, err := ac.ListClusters(ctx)
 	if err != nil {
 		slog.Warn("could not fetch argocd clusters", "error", err)
-		// Continue without ArgoCD data
+		// Continue without ArgoCD data. PendingRegistrations default to a
+		// non-nil empty slice — V125-1.4 lesson: never let a nil array
+		// reach the FE.
 		return &models.ClustersResponse{
-			Clusters:    clusters,
-			HealthStats: s.computeHealthStats(clusters, nil),
+			Clusters:             clusters,
+			HealthStats:          s.computeHealthStats(clusters, nil),
+			PendingRegistrations: []models.PendingRegistration{},
+			OrphanRegistrations:  []models.OrphanRegistration{},
 		}, nil
 	}
 
@@ -130,9 +134,18 @@ func (s *ClusterService) ListClusters(ctx context.Context, gp gitprovider.GitPro
 
 	allClusters := append(clusters, notInGitClusters...)
 
+	// PendingRegistrations is populated by the API handler from the Git
+	// provider's open-PR list (V125-1.5). OrphanRegistrations is populated
+	// by the API handler from the ArgoCD cluster list (V125-1-7 / BUG-058).
+	// The service contract guarantees both are non-nil empty slices here —
+	// handler may overwrite with the resolved lists. Defaulting at the
+	// service layer keeps every code path that returns ClustersResponse
+	// honest about the no-nil contract.
 	return &models.ClustersResponse{
-		Clusters:    allClusters,
-		HealthStats: s.computeHealthStats(clusters, notInGitClusters),
+		Clusters:             allClusters,
+		HealthStats:          s.computeHealthStats(clusters, notInGitClusters),
+		PendingRegistrations: []models.PendingRegistration{},
+		OrphanRegistrations:  []models.OrphanRegistration{},
 	}, nil
 }
 

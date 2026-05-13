@@ -1,5 +1,5 @@
 # generated: 2026-04-20
-# last_updated: 2026-05-02 — v1.24 hotfix bundle planned (V124-2 epic, 9 stories backlog) from Track A personal smoke pass against v1.23.0-pre.0 demo image. PR-A (3 highs) → PR-B (UX) → PR-C (docs) on dev/v1.24-hotfix.
+# last_updated: 2026-05-12 — Bug-sweep sprint planning: maintainer asked "just start fixing all known bugs" before kicking off V125-1-9 (schema envelope) + V125-1-8 (cluster reconciler) architectural work captured in docs/design/2026-05-12-v125-architectural-todos.md. Sprint-status reconciled: V124-15 through V125-1-7 (14 stories spanning V124-15..V124-23 + V125-1.1 + V125-1.4 + V125-1-5/6/7 + V125-3.12) all shipped on dev/v1.24-cleanup but were never marked done in this file. V125-1-7-fix opened: 1 story (V125-1-7.1) covering the 500 error on DELETE /clusters/{name}/orphan + UI button rename "Delete cluster Secret" → "Discard cancelled registration", surfaced during maintainer's live Track B kind-target test. V124-3.5 (BUG-010 --server persistent flag) remains backlog — Track A finding, low priority, optional include in this sprint per maintainer's call. Branch stays on dev/v1.24-cleanup; PR #319 description is severely stale (30+ commits beyond original V124-3 scope) but that's a separate housekeeping concern.
 # project: sharko
 # project_key: NOKEY
 # tracking_system: file-system
@@ -40,7 +40,7 @@
 # - Tagging: NO tags cut reflexively — merge PRs to main when green; tag only when user explicitly asks (see feedback_release_cadence.md)
 
 generated: 2026-04-20
-last_updated: 2026-04-27 (Epic V123-3 CLOSED 5/5 — V123-3.5 in review)
+last_updated: 2026-05-12 (bug-sweep sprint opened pre-V125-1-9; V124-15..V125-1-7 reconciled to done after sprint-status drift detected)
 project: sharko
 project_key: NOKEY
 tracking_system: file-system
@@ -206,19 +206,365 @@ development_status:
   epic-V124-1-retrospective: optional
 
   # Epic V124-2: Personal smoke-pass hotfix bundle — 7 bugs + 2 doc fixes
-  # Discovered during Track A demo-mode smoke pass on 2026-05-01/02 against
-  # ghcr.io/moranweissman/sharko:1.23.0-pre.0. PR-bundle plan: PR-A (highs:
-  # 2.2+2.5+2.6) → PR-B (UX: 2.1+2.3+2.4) → PR-C (docs: 2.7+2.8+2.9). All
-  # target dev/v1.24-hotfix branch off main. After merge: re-run Track A to
-  # verify, then proceed to Track B (kind+ArgoCD).
-  epic-V124-2: backlog
-  V124-2-1-login-footer-hardcoded-version: backlog
-  V124-2-2-clusters-500-on-missing-managed-clusters-yaml: backlog
-  V124-2-3-cluster-page-blank-after-error-transient: backlog
-  V124-2-4-cli-connection-error-no-server-hint: backlog
-  V124-2-5-cli-docker-image-mkdir-sharko-permission-denied: backlog
-  V124-2-6-sharko-login-leaks-raw-tty-mode-on-error-path: backlog
-  V124-2-7-personal-smoke-runbook-cli-command-list-wrong: backlog
-  V124-2-8-testing-guide-missing-hurl-install-instructions: backlog
-  V124-2-9-personal-smoke-runbook-host-vs-container-localhost-gotcha: backlog
+  # SHIPPED 2026-05-05 via PR #318 squash-merged to main. Two passes:
+  #   Pass 1 (V124-2.1..2.9): Track A discovery fixes — committed via PR-A/B/C
+  #   Pass 2 (V124-2.10..2.15): adversarial code-review follow-ups — 1B+3H+1M+1doc
+  # Track A re-smoke against pr-318 image confirmed all 7 user-facing bugs closed.
+  epic-V124-2: done
+  V124-2-1-login-footer-hardcoded-version: done
+  V124-2-2-clusters-500-on-missing-managed-clusters-yaml: done
+  V124-2-3-cluster-page-blank-after-error-transient: done
+  V124-2-4-cli-connection-error-no-server-hint: done
+  V124-2-5-cli-docker-image-mkdir-sharko-permission-denied: done
+  V124-2-6-sharko-login-leaks-raw-tty-mode-on-error-path: done
+  V124-2-7-personal-smoke-runbook-cli-command-list-wrong: done
+  V124-2-8-testing-guide-missing-hurl-install-instructions: done
+  V124-2-9-personal-smoke-runbook-host-vs-container-localhost-gotcha: done
+  # V124-2-FIX: review-driven follow-up addressing 1B+3H+1M+1doc from PR#318 adversarial code review
+  V124-2-10-generalize-writeservererror-sweep-503-sites: done
+  V124-2-11-toctou-symlink-guard-on-tmp-sharko-fallback: done
+  V124-2-12-isgitfilenotfound-error-type-matching: done
+  V124-2-13-tty-restore-behavioral-test: done
+  V124-2-14-bail-on-term-getstate-failure: done
+  V124-2-15-prune-stale-doc-admonitions: done
   epic-V124-2-retrospective: optional
+
+  # Epic V124-3: Cleanup epic — deferred mediums + Track A bug + Track B test-infra + UX rot
+  # SHIPPED 10/11 stories on dev/v1.24-cleanup (PR #319 open against main, CI green).
+  # Only V124-3.5 (--server persistent flag, BUG-010) deferred — Track A finding, not blocker.
+  # Track B re-smoke (B.1-B.4) on 2026-05-06 surfaced V124-4 bugs → stacking V124-4 on same branch.
+  epic-V124-3: in-progress
+  # PR-A — test infrastructure (CRITICAL PATH for Track B re-run)
+  V124-3-6-setup-sh-server-side-apply-for-argocd-crds: done                 # BUG-011 — commit 95b51cad
+  V124-3-7-e2e-suite-env-var-credentials: done                              # BUG-014 — commit 95b51cad
+  # PR-B — operator UX (HIGH severity, biggest user-visible bug from Track B)
+  V124-3-8-bootstrap-admin-credential-visibility-and-helm-value: done       # BUG-013 — commit 2c745fff + 09a838ae
+  # PR-C — runbook honesty (HIGH for new operators)
+  V124-3-9-rewrite-track-b-runbook-by-execution: done                       # BUG-015 — commit 20a88633
+  V124-3-10-runbook-admin-admin-only-in-demo-mode-callout: done             # BUG-012 — commit 3461f037
+  V124-3-11-verified-by-execution-header-on-all-runbooks: done              # BUG-016 — commit df10af80
+  # PR-D — CLI + API correctness (MED severity)
+  V124-3-5-cli-server-flag-promote-to-persistent-rootcmd: backlog           # BUG-010 — DEFERRED (Track A finding, not blocker; revisit post-V124-4)
+  V124-3-2-writeservererror-upstream-error-classification-502-504-429: done # M2 extended — commit 55748a71
+  V124-3-3-connections-validation-errors-classified-as-400-not-500: done    # M4 — commit fc1b9b5e (established ErrValidation pattern that V124-4 extends)
+  # PR-E — UI polish (MED severity)
+  V124-3-1-react-setstate-updater-anti-pattern-clustersoverview: done       # M1 — commit 69337754
+  V124-3-4-axe-core-test-for-errorboundary-recovery-path: done              # M5 — commit 0e016b7f
+  # PR-F — Lows bundle (LOW priority)
+  V124-3-99-low-bundle: done                                                # commits fda16340 (L8) + a6e6bbeb (L11) + 8b1d3b27 (L4+L5)
+  epic-V124-3-retrospective: optional
+
+  # Epic V124-4: Write-endpoint validation hotfix bundle
+  # Track B re-smoke (B.1-B.4) on 2026-05-06 surfaced 4 new validation bugs + class-of-bug pattern.
+  # Only POST /users today returns 400 on empty body (gold standard); all other write endpoints
+  # either persist garbage (BUG-017), call upstream-before-validation (BUG-019), silent-success
+  # (BUG-020), or stub-501 (BUG-018). V124-4 reifies the V124-3.3 ErrValidation pattern across
+  # the entire write-endpoint surface. Single PR-bundle, stacked on dev/v1.24-cleanup (extends
+  # PR #319 — does NOT open new PR). After V124-4 lands: resume Track B B.5-B.9 → merge PR #319.
+  epic-V124-4: backlog
+  V124-4-1-investigate-bug-018-clusters-post-501-intent: done               # BUG-018 → Outcome C (503 + provider_not_configured) — commit 6d09a939
+  V124-4-2-bug-017-connections-required-field-validation: done              # BUG-017 — commit 1b5c0257
+  V124-4-3-bug-019-addons-validate-before-upstream-call: done               # BUG-019 — commit 3a5e504f
+  V124-4-4-bug-020-notifications-providers-validation: done                 # BUG-020 + bonus /api/v1/* catch-all — commit 2e1a6ad9
+  V124-4-5-class-of-bug-sweep-all-write-endpoints: done                     # ~60 endpoints audited, ~12 fixed — commit b618eba4
+  epic-V124-4-retrospective: optional
+
+  # Epic V124-5: Maintainer DX tooling bundle
+  # Cut Track A/B re-smoke time from ~30 min orchestrator-runs-each-command to
+  # ~30 sec script + maintainer-runs-UI. Two scripts: dev-rebuild.sh (build+restart+
+  # auto-extract creds) and smoke.sh (Track A + B.1-B.5 automated). UI portion stays
+  # human per maintainer's explicit ask. Stacks on dev/v1.24-cleanup, extends PR #319.
+  epic-V124-5: in-progress
+  V124-5-1-scripts-dev-rebuild-sh-build-restart-extract-creds: done         # commit 1db05f84
+  V124-5-2-scripts-smoke-sh-cli-api-e2e-automation: done                    # commit ce7185ba — agent ran 47/47 PASS in maintainer's live cluster
+  # V124-5.3 — extend smoke.sh with orphan-cascade test group covering the full
+  # V125-1-7.x recovery surface (register kubeconfig → close PR → orphan →
+  # DELETE /orphan → 204). Maintainer framing: "if our product is API-first,
+  # automated E2E IS legitimate verification, not a bypass of manual UI clicking
+  # — and arguably better because it's reproducible and CI-runnable." Replaces
+  # the manual kubeconfig-paste dance with one smoke.sh invocation.
+  V124-5-3-smoke-sh-orphan-cascade-coverage: done                           # commit 26833fcd — Phase 6 orphan-cascade group with 9 assertions + skip-when-not-applicable; merged to dev/v1.24-cleanup
+  # V124-5.4 — smoke.sh auth self-bootstrap. Currently requires the user to
+  # `source scripts/dev-rebuild.sh` first to populate $TOKEN + $ADMIN_PW; tokens
+  # expire / get invalidated on re-login, leading to phase 3/4/6 401-storms.
+  # Maintainer pushback 2026-05-13: "half-automation is just remembering setup
+  # manually first." Real automation = smoke.sh fetches its own creds:
+  #   - if $TOKEN missing OR /api/v1/auth/login returns 401 on first try →
+  #     read ~/.sharko-dev-pw + POST /api/v1/auth/login → cache token for the run
+  #   - if mid-run a 401 surfaces → re-auth once and retry that one request
+  #   - if nothing works → fail with hint pointing at `./scripts/sharko-dev.sh ready`
+  V124-5-4-smoke-sh-auth-self-bootstrap: done                               # commit 75f99980 — sharko_login() helper + USAGE rewrite + auto-fetch when $TOKEN unset; partial fix only
+  # V124-5.5 — V124-5.4 missed the case where $TOKEN is set to a STALE value (user
+  # had it exported from a previous session; auto-fetch only fires when $TOKEN is
+  # empty). Live smoke 2026-05-13 still showed 14× 401 failures in phases 3/4/6
+  # despite V124-5.4 shipping. Real fix: validate $TOKEN with a 1-request probe
+  # against /api/v1/users/me (or /api/v1/health doesn't need auth); if it returns
+  # 401, fall through to sharko_login() refresh and use the fresh token. Same
+  # mid-run guard for any phase request that returns 401 mid-flight (was deferred
+  # from V124-5.4 — now needed).
+  V124-5-5-smoke-sh-validate-before-trusting-token: done                    # commit 12ca11f2 — probe /api/v1/users/me with $TOKEN; on non-200 → record_info + sharko_login() refresh; auth_curl helper added but not yet wired to existing call sites
+  # V124-5.6 — Maintainer pushback 2026-05-13: "why not always reset tokens to
+  # avoid cases like these?" V124-5.5 added validate-then-fallback; the simpler
+  # design is always-refresh (one code path, same HTTP cost, zero stale-token
+  # bugs forever). Strip the probe + auth_curl helper, just unconditionally call
+  # sharko_login() at startup. Net: less code, identical functional outcome.
+  V124-5-6-smoke-sh-always-refresh-token-simplify: done                     # commit c27cde6e — always-refresh at startup; -48/+20 lines; auth_curl helper removed (was dead); USAGE banner simplified; agent stayed on worktree branch (Layer 1 dispatch hardening from feedback_agent_dispatch_worktree_isolation memory worked)
+  # V124-5.7 — Test-coverage strategy doc (docs/design/2026-05-13-test-coverage-strategy.md)
+  # surfaced ~30 untested endpoints / ~12 lifecycle flows. Recommendation: incremental
+  # smoke phases now (cheap, ships in days), Epic 7-1 Go suite in parallel (long-term home).
+  # Maintainer green-lit "go." 2026-05-13 post-compact. V124-5.7 = Phase 7 cluster lifecycle:
+  # POST /clusters (auto-merge) → GET /clusters/{name} → POST /clusters/{name}/test → DELETE
+  # /clusters/{name} + assert cleanup. Mirrors V124-5.3 (Phase 6 orphan-cascade) pattern:
+  # idempotent, skip-when-prereq-missing, ~8 assertions. Pre-req: kind cluster reachable
+  # from sharko (uses same KIND_KUBECONFIG/KIND_TARGET_CTX env contract as Phase 6).
+  V124-5-7-smoke-sh-cluster-lifecycle-coverage: done                        # commit 9ab7f5dc — Phase 7 full cluster lifecycle (register-auto-merge → wait-managed → GET → POST /test → DELETE + cleanup); 8 PASS-class assertions mirroring Phase 6 pattern; defaults to sharko-target-2 (separate from Phase 6's sharko-target-1, both can coexist); auto-merge detected via git.merged response field (graceful SKIP if PRAutoMerge=false). +393/-2 lines smoke.sh. bash -n clean; live-run pending maintainer (no sharko-target-2 + no sharko on :8080 from worktree)
+  epic-V124-5-retrospective: optional
+
+  # Epic V124-6: Cleanup bundle from Track B UI smoke (2026-05-08)
+  # Maintainer's UI walkthrough surfaced 4 issues:
+  #   - BUG-021 dead /api/v1/login route (returns 401 instead of 404)
+  #   - BUG-022 V124-4.2 skip-on-load guard incomplete (caught empty-name only)
+  #   - BUG-023 ArgoCD-style sharko-initial-admin-secret missing (gap from V124-3.8)
+  #   - BUG-024 wizard "Step 4 of 4" header misleading in resume mode
+  # Stacks on dev/v1.24-cleanup, extends PR #319.
+  epic-V124-6: backlog
+  V124-6-1-bug-021-clean-up-dead-login-route: done                          # commit 152090c4 (handleStaleLoginRoute 404 + middleware skip)
+  V124-6-2-bug-022-extend-skip-on-load-guard-required-fields: done          # commit e5378da2 (missingRequiredConnectionFields helper)
+  V124-6-3-bug-023-sharko-initial-admin-secret-argocd-style: done           # commit e48e96c0 (writeInitialAdminSecret + Helm value + docs)
+  V124-6-4-bug-024-wizard-resume-mode-header-label: done                    # commit 08411e41 ("Resuming setup — Initialize")
+  epic-V124-6-retrospective: optional
+
+  # Epic V124-7: Close reset-admin rotation gap left by V124-6.3
+  # Maintainer pushed back: "fetching from a pod log sounds right to you? honestly?"
+  # V124-6.3 writes sharko-initial-admin-secret on FRESH bootstrap, but reset-admin
+  # only DELETES it. So once you rotate, kubectl-get-secret access disappears
+  # forever — log-grep becomes the only path. Wrong. Single story to fix.
+  epic-V124-7: backlog
+  V124-7-1-reset-admin-rotates-initial-admin-secret-not-deletes: done       # commit 7c4d4e4c — annotation updated to "rotated-on-reset-admin"; +7 tests in cmd/sharko (new file) + 1 updated in internal/auth
+  epic-V124-7-retrospective: optional
+
+  # Epic V124-8: Maintainer DX automation framework
+  # Maintainer pushback: "would you just make me automation for every possible scenario
+  # we encountered so far instead of me copying commands to the cli?" — direct frustration
+  # with the per-session command-paste burden. Goal: single entry scripts/sharko-dev.sh
+  # with 11 subcommands covering every dev-loop scenario this session uncovered.
+  # Stacks on dev/v1.24-cleanup, extends PR #319.
+  epic-V124-8: backlog
+  V124-8-1-scripts-sharko-dev-sh-entry-and-subcommands: done                # commit 8e0a39e3 — 1138-line script, 11 subcommands, all validated end-to-end
+  V124-8-2-bug-026-dev-rebuild-sh-set-e-leak-and-install-fallback: done     # commit 96567f0e — set -e + kill -INT $$ removed, --auto-install added
+  V124-8-3-runbook-references-sharko-dev-sh-as-canonical: done              # commit 524eb466 — quick-reference table + canonical entry note
+  epic-V124-8-retrospective: optional
+
+  # Epic V124-9: argocd-token subcommand for sharko-dev.sh (BUG-027)
+  # Maintainer mid-Track-B hit ArgoCD apiKey gauntlet (8 manual commands: port-forward,
+  # patch argocd-cm, restart, re-login, generate). 3rd enterprise-paste of the day after
+  # Merck CA bake-in and dev-rebuild dance. V124-9 codifies the entire flow under
+  # `./scripts/sharko-dev.sh argocd-token --export` for eval-via-pipe.
+  epic-V124-9: backlog
+  V124-9-1-bug-027-argocd-token-subcommand-with-apikey-patch: done          # commit 839a9e1b — 6/6 validation flows pass; idempotency 34s→1.7s
+  epic-V124-9-retrospective: optional
+
+  # Epic V124-10: Wizard/V124-4.2 disagreement on git.provider (BUG-028)
+  # Maintainer BLOCKED at wizard step 3→4: V124-4.2 made git.provider required at
+  # backend but FirstRunWizard.buildPayload (FirstRunWizard.tsx:689) never sends it.
+  # Backend rejects every wizard submission with "git.provider is required". Single
+  # story: backend auto-derives from URL host + frontend populates proactively.
+  epic-V124-10: backlog
+  V124-10-1-bug-028-auto-derive-git-provider-from-url-host: done            # commit cf49e0d9 — strict whitelist (github / azuredevops); 9 backend + 9 frontend tests; 5/5 real-cluster validation
+  epic-V124-10-retrospective: optional
+
+  # Epic V124-11: Wizard step 4 handles empty repos (BUG-029)
+  # Maintainer hit at wizard final step (Initialize): GitHub provider does
+  # `get ref heads/main` first, gets 409 "Git Repository is empty" on truly-empty
+  # repo, fails to push bootstrap files. Wizard literally unfinishable on the
+  # fresh-repo flow. Single story: detect 409-empty + first-commit-direct-to-main.
+  epic-V124-11: backlog
+  V124-11-1-bug-029-empty-repo-first-commit-direct-to-main: done            # commit 9809efb9 — isEmptyRepo detector via errors.As + 409 + "empty"; route through existing initEmptyRepo+PR flow; ADO same gotcha deferred to V125; real-cluster validated against MoranWeissman/sharko-smoke-addons
+  epic-V124-11-retrospective: optional
+
+  # Epic V124-12: One-command end-to-end dev environment + unified credential summary
+  # Maintainer demanded: "I want end to end makefile or whatever that is doing
+  # everything for me, identifying whats needed or not and at the end gives me —
+  # local argocd url, local argocd admin pass, local argocd admin token, sharko
+  # admin pass, sharko local url, and all port forwards running!!!! GO!"
+  # Three stories: argocd-token leaves port-forward running (XS); standalone
+  # port-forward subcommand (S); ready subcommand orchestration + summary (M).
+  epic-V124-12: backlog
+  V124-12-1-ready-subcommand-state-detect-bring-up-credential-summary: done     # commit 899953a5 — TTY-color box + ASCII fallback; idempotent <2s; smoke 47/47 PASS post-reset
+  V124-12-2-port-forward-standalone-subcommand: done                             # commit 392ef73f — port-forward + pf alias; --sharko / --argocd scope
+  V124-12-3-argocd-token-leaves-port-forward-running: done                       # commit 909b67fe — was already surviving (kubectl port-forward + disown); doc-only fix
+  epic-V124-12-retrospective: optional
+
+  # Epic V124-13: Show full token + password values in ready summary (BUG-030)
+  # Maintainer called out V124-12.1's truncation: "you're trimming token and long
+  # strings....! Bearer token: 15975ea5f8fc8623c9d2b19b2129f3..." — wants full
+  # copy-pasteable values. Tiny fix: remove the ${var:0:30}... patterns in the
+  # default-mode summary box (and --quiet mode if applicable). No security ask
+  # here — local kind cluster on maintainer's laptop, no over-the-shoulder threat.
+  epic-V124-13: done
+  V124-13-1-bug-030-show-full-credential-values-in-ready-summary: done           # commit 10309ad9 — full token + password values in ready summary
+  epic-V124-13-retrospective: optional
+
+  # Epic V124-14: Wizard step 4 false-success on bootstrap sync timeout (BUG-031 + BUG-032)
+  # Maintainer hit during real-cluster wizard test against MoranWeissman/sharko-smoke-addons:
+  # wizard claimed "Repository initialized successfully" but ArgoCD app was actually fine
+  # (cluster-addons-bootstrap Synced+Healthy) — Sharko was polling the WRONG app name
+  # ("addons-bootstrap" hardcoded in init.go:126,130) for 2 full minutes, hitting 403
+  # (ArgoCD's gRPC code 7 conflates unauth+notfound), then orchestrator silently set
+  # result.Status = "syncing" but returned nil error → operation marked completed →
+  # wizard shows success. Two bugs, same file, single coupled story:
+  #   BUG-031: hardcoded app name vs templates/bootstrap/{Chart,root-app}.yaml mismatch
+  #   BUG-032: sync timeout / non-synced returns nil error → false-success in wizard
+  # Fix (A): extract BootstrapRootAppName constant + drift-guard test reading templates
+  # Fix (B): return non-nil error from Init when syncStatus != "synced" (op contract:
+  #          "completed" = the thing fully worked); wizard surfaces SyncError in error UI
+  # Single agent dispatch, stacked on dev/v1.24-cleanup, extends PR #319.
+  # LAST HARDSTOP before merge + tag v1.24.0-pre.0.
+  epic-V124-14: done
+  V124-14-1-wizard-step-4-bootstrap-app-name-and-sync-timeout: done               # commit 03893ecf — BootstrapRootAppName constant + drift-guard test + Init returns non-nil err on sync timeout + api/init.go runInitOperation Fail-on-non-synced + wizard test surfacing error verbatim; CI green on PR #319
+  epic-V124-14-retrospective: optional
+
+  # Epic V124-15: Wizard error-handling + idempotent retry (BUG-033 + BUG-034)
+  epic-V124-15: done
+  V124-15-1-wizard-401-handling-and-idempotent-retry-success: done                 # commit 36ba6f5b — surface 401 + idempotent retry as success
+  epic-V124-15-retrospective: optional
+
+  # Epic V124-16: Wizard escape hatches + back-navigation in resume mode (BUG-035..038)
+  epic-V124-16: done
+  V124-16-1-wizard-escape-hatches-and-back-navigation-in-resume-mode: done         # commit 8b1ff54d
+  epic-V124-16-retrospective: optional
+
+  # Epic V124-17: Wizard polish + tighter PR-merge poll + argocd-reset (BUG-039..043)
+  epic-V124-17: done
+  V124-17-1-wizard-polish-pr-merge-poll-argocd-reset: done                         # commit e5a171fb
+  epic-V124-17-retrospective: optional
+
+  # Epic V124-18: Wizard Back button styling (BUG-042)
+  epic-V124-18: done
+  V124-18-1-back-button-secondary-outlined-pill: done                              # commit 9342d44f
+  epic-V124-18-retrospective: optional
+
+  # Epic V124-19: test-connection honors use_saved blank-keep contract (BUG-044)
+  epic-V124-19: done
+  V124-19-1-connections-test-honors-use-saved: done                                # commit 6207b38f
+  epic-V124-19-retrospective: optional
+
+  # Epic V124-20: Bootstrap root-app path constant + drift guard (BUG-045)
+  epic-V124-20: done
+  V124-20-1-bootstrap-root-app-path-constant-drift-guard: done                     # commit d40bb20b
+  epic-V124-20-retrospective: optional
+
+  # Epic V124-21: v1.24.0-pre.0 release entry
+  epic-V124-21: done
+  V124-21-1-changelog-v1-24-0-pre-0: done                                          # commit 4bdcf511
+  epic-V124-21-retrospective: optional
+
+  # Epic V124-22: /repo/status reports bootstrap_synced; App.tsx wizard guard (BUG-046)
+  epic-V124-22: done
+  V124-22-1-repo-status-bootstrap-synced-and-wizard-guard: done                    # commit 1101c386
+  epic-V124-22-retrospective: optional
+
+  # Epic V124-23: Dismiss-flag lifecycle + 3-handler missing-file 500-leak sweep (BUG-047, BUG-048)
+  epic-V124-23: done
+  V124-23-1-dismiss-flag-lifecycle-and-missing-file-500-sweep: done                # commit d418184d
+  epic-V124-23-retrospective: optional
+
+  # ============================================================
+  # V1.25 — Cluster registration polish + architectural cleanup
+  # (V125-1.1, V125-1.4, V125-1-5/6/7 already shipped on dev/v1.24-cleanup
+  #  alongside V124-15..23 — versioning boundary is fluid; treating V125-1*
+  #  as natural continuation of the dev/v1.24-cleanup branch per maintainer's
+  #  "I dont care about releases, it's all under heavy development still")
+  # ============================================================
+
+  # Epic V125-1: Cluster registration polish + orphan recovery surface
+  epic-V125-1: in-progress
+  V125-1-1-kubeconfig-based-generic-cluster-registration: done                     # commit adc89dc7
+  V125-1-4-kubeconfig-dry-run-shape-parity-and-form-tooltips: done                 # commit 8f9f7209 / BUG-049
+  V125-1-5-pending-pr-registration-ux-hole: done                                   # commit bcdc4cdf / BUG-050..055
+  V125-1-6-universal-pending-pr-surface-filterable-panel: done                     # commit 375154f2 / BUG-056/057
+  V125-1-7-orphan-cluster-surface-and-cleanup: done                                # commit 08d9ec68 / BUG-058
+  # V125-1-7.1: bug-fix sprint follow-up — see epic-V125-1-7-fix below
+  # V125-1-8: deferred — architectural close (cluster reconciler + ownership label
+  #            + retire pre-merge orchestrator paths). Blocked on V125-1-9.
+  #            See docs/design/2026-05-12-v125-architectural-todos.md §5.
+  V125-1-8-cluster-reconciler-and-retire-pre-merge-paths: backlog
+  # V125-1-9: NEW — schema envelope (apiVersion/kind/spec) + JSON Schema for
+  #            managed-clusters.yaml + addons-catalog.yaml. Prerequisite for
+  #            V125-1-8 reconciler operational safety.
+  #            See docs/design/2026-05-12-v125-architectural-todos.md §4.
+  V125-1-9-schema-envelope-and-json-schema: backlog
+  epic-V125-1-retrospective: optional
+
+  # Epic V125-3: Maintainer DX — kind-target subcommand
+  epic-V125-3: in-progress
+  V125-3-12-sharko-dev-sh-kind-target-subcommand: done                             # commit 56e499b9
+  epic-V125-3-retrospective: optional
+
+  # ============================================================
+  # BUG-SWEEP SPRINT (2026-05-12) — clear known-bug queue before V125-1-9/V125-1-8
+  # Maintainer: "just start fixing all known bugs"
+  # Pre-prod posture; no release/tag; stays on dev/v1.24-cleanup; extends PR #319.
+  # ============================================================
+
+  # Epic V125-1-7-fix: V125-1-7 follow-up bundle
+  # Bug surface from maintainer's live Track B test (kind-target with N=1, register
+  # via kubeconfig, close PR without merging, observe orphan surface):
+  #   500 error on DELETE /api/v1/clusters/{name}/orphan — root cause TBD.
+  #     Three operation tags exist for log filtering in the handler at
+  #     internal/api/clusters_orphan_delete.go (delete_orphan_cluster_list,
+  #     delete_orphan_cluster_argocd_list, delete_orphan_cluster_argocd_delete).
+  #     Without server logs the agent does best-effort diagnosis: defensive
+  #     nil-check pass on each upstream call + verify writeUpstreamError doesn't
+  #     panic on nil err. If maintainer provides log line during dispatch, the
+  #     agent narrows to the exact failure step.
+  #   "Delete cluster Secret" button label is technical / confusing. Rename to
+  #     "Discard cancelled registration" + matching modal copy.
+  #   Defensive label-presence check on DELETE handler IS NOT in this sprint —
+  #     it requires the V125-1-8 ownership label first (chicken/egg). Tightening
+  #     deferred to V125-1-7-tighten epic, post-V125-1-8.
+  # Single bundle, single agent: frontend-expert + go-expert + test-engineer +
+  # tech-lead role files embedded. ~half-day. Stacks on dev/v1.24-cleanup.
+  # Epic closes 2026-05-12 — full cascade verified live with HTTP 204 on real orphan.
+  # The three-story sequence is the BMAD small-commits pattern paying off: V125-1-7.1's
+  # op-tag hardening made V125-1-7.2's 415 diagnosable, V125-1-7.2's Content-Type fix
+  # made V125-1-7.3's 404 diagnosable, V125-1-7.3's URL-encoding fix closes the loop.
+  epic-V125-1-7-fix: done
+  V125-1-7-1-orphan-delete-500-fix-and-button-rename: done                         # commit 07945096 — defensive guards + button rename; shipped on dev/v1.24-cleanup at 51c4eafa head
+  # V125-1-7.2 — discovered during live validation on 2026-05-12 (the V125-1-7.1
+  # op-tagging revealed the true root cause). ArgoCD API returns 415 "Invalid
+  # content type" on DELETE /api/v1/clusters/{server} because
+  # internal/argocd/client_write.go::doDelete (line 113) sets only the
+  # Authorization header — it's missing the Content-Type: application/json that
+  # doPost (line 51-59) correctly sets. Same gap in doPut (line 81+). ArgoCD
+  # enforces Content-Type even on bodyless DELETEs. Affects every Sharko
+  # DELETE/PUT to ArgoCD, not just orphan-delete; orphan-delete is just the
+  # first path that was exercised after a recent ArgoCD version started
+  # enforcing it. One-line addition per helper.
+  V125-1-7-2-argocd-client-content-type-on-delete-and-put: done                    # commit 171fd9b7 (cherry-picked from worktree commit 569fdbab); doPut already had it, only doDelete fixed; +3 tests; live-verified the 415 is gone
+  # V125-1-7.3 — discovered via direct ArgoCD API testing on 2026-05-12 after
+  # V125-1-7.2 deployed and the 415 was gone but the DELETE still returned 404.
+  # Root cause: Go's url.PathEscape does NOT escape ':' (allowed in path
+  # segments per RFC 3986) but ArgoCD's gRPC-gateway path matcher is stricter
+  # and requires colons escaped too. Verified live:
+  #   url.PathEscape("https://172.18.0.3:6443") = "https:%2F%2F172.18.0.3:6443"
+  #     → ArgoCD returns 404
+  #   url.QueryEscape("https://172.18.0.3:6443") = "https%3A%2F%2F172.18.0.3%3A6443"
+  #     → ArgoCD returns 200 ✓
+  # Same bug affects internal/argocd/client_write.go DeleteCluster (line 173)
+  # and UpdateClusterLabels (lines 185 GET + later PUT path). Fix: switch to
+  # url.QueryEscape OR url.PathEscape + strings.ReplaceAll(":", "%3A"). Agent
+  # picks the cleaner of the two patterns.
+  V125-1-7-3-argocd-client-url-encoding-fix-colons: done                           # commit 99399387 — escapeServerURL helper using url.QueryEscape; applied at DeleteCluster + UpdateClusterLabels GET + PUT; +3 tests; live-verified with HTTP 204 on real kind-orphan-1 orphan after closing PR #3
+  epic-V125-1-7-fix-retrospective: optional
+
+  # ============================================================
+  # OPTIONAL INCLUDE in this bug-sweep sprint (maintainer to confirm)
+  # ============================================================
+  # V124-3.5 (BUG-010 --server persistent flag promotion to root command) is
+  # explicitly backlog'd as "Track A finding, not blocker; revisit post-V124-4."
+  # Per maintainer's "all known bugs" framing this could pull in. If included it
+  # becomes Bundle B in the sprint. ~2-3 hour story. The flag is currently a
+  # subcommand-level flag; promoting to persistent root means every subcommand
+  # (login, ready, port-forward, etc.) inherits it consistently. Low risk.
+  # Listed as a question to maintainer in the planning summary.
