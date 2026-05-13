@@ -231,7 +231,16 @@ the e2e tests are always 100% covered by definition). With it, the
 report shows which lines of sharko's actual production code got
 executed by the suite.
 
-After running, open the HTML in a browser:
+After running, the targets print absolute `file://` URLs that iTerm2,
+Terminal.app, and the VSCode integrated terminal auto-linkify — Cmd+click
+opens the report in your browser. Sample tail of `make test-e2e-report`:
+
+```
+==> JUnit XML:        file:///Users/you/code/sharko/_dist/e2e-junit.xml
+==> Coverage HTML:    file:///Users/you/code/sharko/_dist/e2e-coverage.html
+```
+
+If your terminal doesn't linkify, fall back to `open` / `xdg-open`:
 
 ```bash
 open _dist/e2e-coverage.html      # macOS

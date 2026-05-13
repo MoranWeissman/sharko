@@ -159,7 +159,7 @@ test-e2e-coverage: ## Run E2E suite with coverage of internal/* and produce _dis
 		-coverpkg=./internal/...,./cmd/... \
 		./tests/e2e/...
 	@go tool cover -html=_dist/e2e-coverage.out -o _dist/e2e-coverage.html
-	@echo "==> Coverage HTML: _dist/e2e-coverage.html"
+	@echo "==> Coverage HTML:    file://$$(pwd)/_dist/e2e-coverage.html"
 	@go tool cover -func=_dist/e2e-coverage.out | tail -1
 
 test-e2e-fast-coverage: ## Fast in-process E2E with coverage of internal/* (~30s)
@@ -170,7 +170,7 @@ test-e2e-fast-coverage: ## Fast in-process E2E with coverage of internal/* (~30s
 		-run '^(TestHarnessGitFakeStandalone|TestHarnessSharkoInProcess|TestFoundationStack|TestAuthFlow|TestAuthUpdatePassword|TestRBACEnforcement|TestTokensCRUD|TestCatalogReads|TestMarketplaceAddFlow|TestAddonAdmin|TestAddonSecretsLifecycle|TestAIConfig|TestAIInvocation|TestGlobalValuesEditor|TestPerClusterValuesOverride|TestPRTracking|TestNotificationsLifecycle|TestConnectionsCRUDAndInit|TestDashboardAndReadsInProcess)$$' \
 		./tests/e2e/...
 	@go tool cover -html=_dist/e2e-coverage.out -o _dist/e2e-coverage.html
-	@echo "==> Coverage HTML: _dist/e2e-coverage.html"
+	@echo "==> Coverage HTML:    file://$$(pwd)/_dist/e2e-coverage.html"
 	@go tool cover -func=_dist/e2e-coverage.out | tail -1
 
 test-e2e-junit: ## Run E2E suite with gotestsum + produce _dist/e2e-junit.xml
@@ -180,7 +180,7 @@ test-e2e-junit: ## Run E2E suite with gotestsum + produce _dist/e2e-junit.xml
 		--junitfile=_dist/e2e-junit.xml \
 		--format=testname \
 		-- -tags=e2e -timeout=30m ./tests/e2e/...
-	@echo "==> JUnit XML: _dist/e2e-junit.xml"
+	@echo "==> JUnit XML:        file://$$(pwd)/_dist/e2e-junit.xml"
 
 test-e2e-report: ## Run E2E suite producing BOTH coverage HTML + JUnit XML in _dist/
 	@mkdir -p _dist
@@ -194,9 +194,8 @@ test-e2e-report: ## Run E2E suite producing BOTH coverage HTML + JUnit XML in _d
 		./tests/e2e/...
 	@go tool cover -html=_dist/e2e-coverage.out -o _dist/e2e-coverage.html
 	@go tool cover -func=_dist/e2e-coverage.out | tail -1
-	@echo "==> JUnit XML:        _dist/e2e-junit.xml"
-	@echo "==> Coverage HTML:    _dist/e2e-coverage.html"
-	@echo "==> Open coverage in browser: open _dist/e2e-coverage.html  (macOS)"
+	@echo "==> JUnit XML:        file://$$(pwd)/_dist/e2e-junit.xml"
+	@echo "==> Coverage HTML:    file://$$(pwd)/_dist/e2e-coverage.html"
 
 kind-up: ## Provision a sharko-e2e kind topology (1 mgmt + 1 target).
 	@echo "==> Provisioning sharko-e2e kind topology..."
