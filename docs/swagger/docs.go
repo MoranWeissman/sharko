@@ -7348,7 +7348,6 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "auto_merge": {
-                    "description": "override per-request; if false, PRs are left open",
                     "type": "boolean"
                 },
                 "clusters": {
@@ -7619,6 +7618,10 @@ const docTemplate = `{
                     "additionalProperties": {
                         "type": "boolean"
                     }
+                },
+                "auto_merge": {
+                    "description": "AutoMerge is the per-request auto-merge decision (BUG-031). nil\nmeans \"fall back to the connection-level PRAutoMerge default\";\na non-nil value overrides the default for this operation only.\nResolved via resolveAutoMerge — never mutate o.gitops.PRAutoMerge.",
+                    "type": "boolean"
                 },
                 "dry_run": {
                     "type": "boolean"

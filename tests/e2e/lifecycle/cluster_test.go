@@ -318,9 +318,10 @@ func TestClusterLifecycle(t *testing.T) {
 	})
 
 	t.Run("AdoptClusters", func(t *testing.T) {
+		autoMerge := false
 		req := orchestrator.AdoptClustersRequest{
 			Clusters:  []string{"some-cluster"},
-			AutoMerge: false,
+			AutoMerge: &autoMerge,
 			DryRun:    true,
 		}
 		status, body := admin.AdoptClusters(t, req)

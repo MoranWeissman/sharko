@@ -12,7 +12,9 @@ import (
 
 // mockGitProvider implements GitProvider for testing.
 type mockGitProvider struct {
-	statuses map[int]string
+	statuses        map[int]string
+	deletedBranches []string
+	deleteBranchErr error
 }
 
 func (m *mockGitProvider) GetPullRequestStatus(_ context.Context, prNumber int) (string, error) {
@@ -21,6 +23,15 @@ func (m *mockGitProvider) GetPullRequestStatus(_ context.Context, prNumber int) 
 		return "open", nil
 	}
 	return s, nil
+}
+
+// DeleteBranch records the branch name and returns the configured error
+// (if any). BUG-032: prtracker now invokes DeleteBranch on observed-merge
+// for hygiene; tests use this to assert the call happened (or didn't, when
+// PRBranch is empty) and to exercise the best-effort error path.
+func (m *mockGitProvider) DeleteBranch(_ context.Context, branchName string) error {
+	m.deletedBranches = append(m.deletedBranches, branchName)
+	return m.deleteBranchErr
 }
 
 func newTestTracker(gp GitProvider) (*Tracker, *[]audit.Entry) {
@@ -353,3 +364,110 @@ func TestReconcileOnStartup(t *testing.T) {
 		t.Errorf("expected pr_merged event, got %s", (*events)[0].Event)
 	}
 }
+
+// TestPollOnce_MergedPR_DeletesBranch — BUG-032: when prtracker observes
+// a tracked PR flip to merged (e.g. external user merged via the GitHub
+// UI) it must call DeleteBranch on the source branch as a hygiene step.
+func TestPollOnce_MergedPR_DeletesBranch(t *testing.T) {
+	gp := &mockGitProvider{statuses: map[int]string{42: "merged"}}
+	tracker, _ := newTestTracker(gp)
+	ctx := context.Background()
+
+	if err := tracker.TrackPR(ctx, PRInfo{
+		PRID:       42,
+		PRBranch:   "sharko/register-prod-abcd1234",
+		Cluster:    "prod",
+		Operation:  "register",
+		User:       "admin",
+		LastStatus: "open",
+	}); err != nil {
+		t.Fatalf("TrackPR: %v", err)
+	}
+
+	tracker.PollOnce(ctx)
+
+	if len(gp.deletedBranches) != 1 {
+		t.Fatalf("expected 1 DeleteBranch call, got %d (%v)",
+			len(gp.deletedBranches), gp.deletedBranches)
+	}
+	if gp.deletedBranches[0] != "sharko/register-prod-abcd1234" {
+		t.Errorf("DeleteBranch(%q), want %q",
+			gp.deletedBranches[0], "sharko/register-prod-abcd1234")
+	}
+}
+
+// TestPollOnce_MergedPR_DeleteBranchBestEffort — BUG-032 best-effort
+// guarantee: a DeleteBranch failure (AzureDevOps not-yet-implemented,
+// branch already deleted, transient API hiccup) is logged but never
+// blocks the tracker loop. The PR must still be removed from tracking.
+func TestPollOnce_MergedPR_DeleteBranchBestEffort(t *testing.T) {
+	gp := &mockGitProvider{
+		statuses:        map[int]string{42: "merged"},
+		deleteBranchErr: errBranchGone,
+	}
+	tracker, events := newTestTracker(gp)
+	ctx := context.Background()
+
+	if err := tracker.TrackPR(ctx, PRInfo{
+		PRID:       42,
+		PRBranch:   "sharko/already-deleted",
+		Cluster:    "prod",
+		Operation:  "register",
+		User:       "admin",
+		LastStatus: "open",
+	}); err != nil {
+		t.Fatalf("TrackPR: %v", err)
+	}
+
+	tracker.PollOnce(ctx)
+
+	// Audit event must still fire and the PR must be removed from tracking.
+	if len(*events) != 1 {
+		t.Fatalf("expected 1 audit event, got %d", len(*events))
+	}
+	if (*events)[0].Event != "pr_merged" {
+		t.Errorf("expected pr_merged, got %s", (*events)[0].Event)
+	}
+	prs, _ := tracker.ListPRs(ctx, "", "", "", "")
+	if len(prs) != 0 {
+		t.Errorf("expected PR removed after merge despite DeleteBranch failure, got %d", len(prs))
+	}
+}
+
+// TestPollOnce_MergedPR_NoBranch — old state-store entries from before
+// V125-1-6 may have empty PRBranch; the tracker must skip DeleteBranch
+// silently rather than calling DeleteBranch("") and producing a confusing
+// 404 in the provider logs.
+func TestPollOnce_MergedPR_NoBranch(t *testing.T) {
+	gp := &mockGitProvider{statuses: map[int]string{42: "merged"}}
+	tracker, _ := newTestTracker(gp)
+	ctx := context.Background()
+
+	if err := tracker.TrackPR(ctx, PRInfo{
+		PRID:       42,
+		PRBranch:   "", // legacy entry — no branch on file
+		Cluster:    "prod",
+		Operation:  "register",
+		User:       "admin",
+		LastStatus: "open",
+	}); err != nil {
+		t.Fatalf("TrackPR: %v", err)
+	}
+
+	tracker.PollOnce(ctx)
+
+	if len(gp.deletedBranches) != 0 {
+		t.Errorf("expected no DeleteBranch when PRBranch is empty, got %v",
+			gp.deletedBranches)
+	}
+}
+
+// errBranchGone simulates the family of "branch is already gone or the
+// provider can't delete it" errors (AzureDevOps "not yet implemented",
+// GitHub 422 when the branch was already deleted, etc.).
+var errBranchGone = stringErr("branch already deleted")
+
+type stringErr string
+
+func (e stringErr) Error() string { return string(e) }
+
