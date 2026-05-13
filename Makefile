@@ -1,6 +1,6 @@
 # Sharko — Makefile
 
-.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e catalog-scan catalog-scan-pr
+.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e test-e2e test-e2e-fast test-e2e-domain kind-up kind-down catalog-scan catalog-scan-pr
 
 PORT ?= 8080
 
@@ -9,13 +9,20 @@ help: ## Show available targets
 	@echo "  🦈 Sharko"
 	@echo ""
 	@echo "  Quick Start:"
-	@echo "    make demo         Build UI + start with mock backends (http://localhost:$(PORT))"
-	@echo "    make dev          Hot-reload dev mode (http://localhost:5173)"
+	@echo "    make demo             Build UI + start with mock backends (http://localhost:$(PORT))"
+	@echo "    make dev              Hot-reload dev mode (http://localhost:5173)"
 	@echo ""
 	@echo "  Build & Test:"
-	@echo "    make build        Build Go binary + UI"
-	@echo "    make test         Run all tests (Go + UI)"
-	@echo "    make lint         Go vet + UI build check"
+	@echo "    make build            Build Go binary + UI"
+	@echo "    make test             Run all tests (Go + UI)"
+	@echo "    make lint             Go vet + UI build check"
+	@echo ""
+	@echo "  E2E (V2 Epic 7-1):"
+	@echo "    make test-e2e-fast    In-process e2e suite (~30s, no kind/docker)"
+	@echo "    make test-e2e         Full e2e suite (kind + real argocd, ~10-15 min)"
+	@echo "    make test-e2e-domain  Run a single domain (DOMAIN=Cluster|Catalog|...)"
+	@echo "    make kind-up          Provision a sharko-e2e kind topology"
+	@echo "    make kind-down        Destroy stale sharko-e2e-* kind clusters"
 	@echo ""
 
 demo: ## Build UI + start server in demo mode
@@ -83,12 +90,56 @@ catalog-scan-pr: ## Preview the catalog-scan PR body (V123-3.4) — runs scanner
 	@npm install --prefix scripts --silent
 	@node scripts/catalog-scan/pr-open.mjs --dry-run
 
-e2e: ## Run E2E tests against a Kind cluster (requires docker + kind)
-	bash tests/e2e/setup.sh
-	kubectl port-forward svc/sharko 8080:80 -n sharko &
-	sleep 5
-	go test -tags e2e ./tests/e2e/... -v -timeout 5m
-	bash tests/e2e/teardown.sh
+# E2E test suite (V2 Epic 7-1).
+#
+# The Go-native harness under tests/e2e/ replaced the legacy
+# setup.sh/teardown.sh + port-forward shell flow in story 7-1.15. Two
+# entry points: test-e2e-fast (in-process, ~30s, no kind required) and
+# test-e2e (full suite, ~10-15 min, requires docker + kind). The
+# in-process boot path uses httptest + an in-memory git server so the
+# fast lane needs no external services. See
+# docs/site/developer-guide/e2e-testing.md for the full reference.
+#
+# All targets set GOTMPDIR=/tmp because go-test writes large temp dirs
+# under /var/folders on macOS by default and that path can run out of
+# space during a full run.
+
+test-e2e: ## Run the full E2E suite (kind + real argocd; ~10-15 min). Requires docker.
+	@echo "==> Running comprehensive E2E suite (kind + real argocd)..."
+	GOTMPDIR=/tmp go test -tags=e2e -timeout=30m -v ./tests/e2e/...
+
+# test-e2e-fast: only top-level test functions that boot in-process
+# (httptest + GitFake + GitMock). The five kind-required tests are
+# excluded explicitly so this lane stays under ~2 min on a laptop
+# without docker:
+#   - TestHarnessKindMultiCluster   (kind harness smoke)
+#   - TestPerClusterAddonLifecycle  (full cluster register + addon)
+#   - TestClusterLifecycle          (cluster CRUD against argocd)
+#   - TestConnectionsDiscoverAndTest (live kubeconfig probe)
+#   - TestFleetStatusWithArgocd     (dashboard fleet status)
+test-e2e-fast: ## Run only the in-process E2E tests (~30s, no kind needed).
+	@echo "==> Running fast in-process E2E tests..."
+	GOTMPDIR=/tmp go test -tags=e2e -timeout=2m -v -run '^(TestHarnessGitFakeStandalone|TestHarnessSharkoInProcess|TestFoundationStack|TestAuthFlow|TestAuthUpdatePassword|TestRBACEnforcement|TestTokensCRUD|TestCatalogReads|TestMarketplaceAddFlow|TestAddonAdmin|TestAddonSecretsLifecycle|TestAIConfig|TestAIInvocation|TestGlobalValuesEditor|TestPerClusterValuesOverride|TestPRTracking|TestNotificationsLifecycle|TestConnectionsCRUDAndInit|TestDashboardAndReadsInProcess)$$' ./tests/e2e/...
+
+test-e2e-domain: ## Run a single domain (e.g. make test-e2e-domain DOMAIN=Cluster).
+	@if [ -z "$(DOMAIN)" ]; then \
+		echo "ERROR: usage: make test-e2e-domain DOMAIN=<Cluster|Catalog|Auth|RBAC|Tokens|Addon|AI|Values|PR|Notifications|Dashboard|Connections|Foundation|Harness>"; \
+		exit 1; \
+	fi
+	GOTMPDIR=/tmp go test -tags=e2e -timeout=30m -v -run "$(DOMAIN)" ./tests/e2e/...
+
+kind-up: ## Provision a sharko-e2e kind topology (1 mgmt + 1 target).
+	@echo "==> Provisioning sharko-e2e kind topology..."
+	GOTMPDIR=/tmp go test -tags=e2e -timeout=10m -v -run TestHarnessKindMultiCluster ./tests/e2e/harness/...
+
+kind-down: ## Destroy all sharko-e2e-* kind clusters (sentinel-labeled only).
+	@echo "==> Destroying stale sharko-e2e kind clusters..."
+	@kind get clusters 2>/dev/null | grep "^sharko-e2e-" | xargs -I{} kind delete cluster --name {} || echo "(none)"
+
+# Legacy alias — `make e2e` previously bash-scripted setup.sh +
+# port-forward + teardown.sh. The Go harness replaces all of that;
+# keep the alias so existing muscle memory still works.
+e2e: test-e2e ## Alias for `make test-e2e` (legacy name).
 
 release: ## Tag and push a release (usage: make release VERSION=1.0.0)
 	@if [ -z "$(VERSION)" ]; then echo "Usage: make release VERSION=1.0.0"; exit 1; fi

@@ -1,13 +1,48 @@
-name: E2E Tests
+---
+name: E2E
+
+# V2 Epic 7-1.15 — comprehensive Go-native e2e suite. Runs the kind +
+# real-argocd lane (~10-15 min) on three triggers:
+#
+#   1. workflow_dispatch — ad-hoc runs from the Actions tab.
+#   2. pull_request labelled `e2e` — opt-in per-PR validation. Cheap PRs
+#      stay on the unit/UI matrix in ci.yml; only label-tagged PRs pay
+#      the e2e tax.
+#   3. nightly schedule (3am UTC) — catches drift in the kind / argocd /
+#      helm chart triplet between PRs.
+#
+# The fast in-process lane (`make test-e2e-fast`, no kind) is exercised
+# implicitly by ci.yml's go test invocation only when the e2e tag is on
+# — it's not part of the default unit pipeline. The intentional split:
+# unit + UI on every PR; full e2e on opt-in/nightly.
 
 on:
-  workflow_dispatch: # manual trigger only for now
-  # pull_request:     # enable later when stable
-  #   branches: [main]
+  workflow_dispatch:
+  pull_request:
+    types: [labeled, opened, synchronize]
+  schedule:
+    - cron: '0 3 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   e2e:
+    name: Go E2E (kind + argocd)
+    # Skip the heavy lane unless the trigger is one we care about. The
+    # `labeled` event fires for every label, but contains() narrows it
+    # to PRs that actually carry the `e2e` label — so adding any other
+    # label is a no-op for this workflow.
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule' ||
+      contains(github.event.pull_request.labels.*.name, 'e2e')
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -15,56 +50,27 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          cache: true
 
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Install Kind
+      - name: Install kind + kubectl
         run: |
           curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-amd64
           chmod +x ./kind
           sudo mv ./kind /usr/local/bin/kind
+          curl -Lo ./kubectl "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x ./kubectl
+          sudo mv ./kubectl /usr/local/bin/kubectl
+          kind --version
+          kubectl version --client=true
 
-      - name: Install Helm
-        uses: azure/setup-helm@v4
-
-      - name: Setup E2E
-        run: bash tests/e2e/setup.sh
-
-      - name: Port forward
-        run: |
-          kubectl port-forward svc/sharko 8080:80 -n sharko &
-          sleep 5
-
-      - name: Reset admin password and capture
-        id: reset-admin
-        run: |
-          # Reset the admin password via the in-cluster `sharko reset-admin`
-          # command so the e2e test step can authenticate with deterministic
-          # credentials. The command prints `New password: <pw>` to stdout;
-          # we extract it and surface it as a step output.
-          POD=$(kubectl get pods -n sharko -l app.kubernetes.io/name=sharko -o jsonpath='{.items[0].metadata.name}')
-          OUTPUT=$(kubectl exec -n sharko "$POD" -- sharko reset-admin)
-          echo "$OUTPUT"
-          PASSWORD=$(echo "$OUTPUT" | grep '^New password:' | awk '{print $3}')
-          if [ -z "$PASSWORD" ]; then
-            echo "ERROR: failed to extract password from reset-admin output" >&2
-            exit 1
-          fi
-          # Mask the password in subsequent log lines and pass it to the next
-          # step via the masked outputs mechanism.
-          echo "::add-mask::$PASSWORD"
-          echo "password=$PASSWORD" >> "$GITHUB_OUTPUT"
-
-      - name: Run E2E tests
-        run: go test -tags e2e ./tests/e2e/... -v -timeout 5m
+      - name: Run E2E suite
         env:
-          SHARKO_E2E_URL: http://localhost:8080
-          SHARKO_E2E_USERNAME: admin
-          SHARKO_E2E_PASSWORD: ${{ steps.reset-admin.outputs.password }}
+          GOTMPDIR: /tmp
+          E2E_OFFLINE: "0"
+        run: make test-e2e
 
-      - name: Teardown
+      - name: Cleanup stale kind clusters
         if: always()
-        run: bash tests/e2e/teardown.sh
+        run: |
+          kind get clusters 2>/dev/null | grep "^sharko-e2e-" | \
+            xargs -I{} kind delete cluster --name {} || true
