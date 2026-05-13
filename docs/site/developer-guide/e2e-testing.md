@@ -206,7 +206,15 @@ make install-test-tools
 ```
 
 Installs `gotest.tools/gotestsum` (Go's standard JUnit-emitting test
-runner) into `$GOBIN`. Only needed once per machine.
+runner) via `go install`, which writes the binary to
+`$(go env GOPATH)/bin/gotestsum` (typically `~/go/bin/gotestsum`). Only
+needed once per machine.
+
+You do **not** need to add `$(go env GOPATH)/bin` to your `$PATH` — the
+report targets resolve `gotestsum` from that location automatically
+(falling back to whatever `PATH` provides if you've already wired it up
+yourself). So `make install-test-tools && make test-e2e-report` works
+out of the box on a fresh checkout.
 
 ### Local report targets
 

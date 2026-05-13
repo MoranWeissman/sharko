@@ -137,9 +137,20 @@ test-e2e-domain: ## Run a single domain (e.g. make test-e2e-domain DOMAIN=Cluste
 # -coverpkg=./internal/...,./cmd/... — without it, the coverage profile
 # only measures tests/e2e/* itself (useless). With it, the report shows
 # which lines of sharko's actual code got executed by the e2e suite.
+#
+# gotestsum resolution (V2 Epic 7-1.17): `go install` writes binaries to
+# $(go env GOPATH)/bin which most users do NOT have on their PATH.
+# Resolve gotestsum in this order:
+#   1. PATH (if user added GOPATH/bin themselves)
+#   2. $(go env GOPATH)/bin/gotestsum (the standard install location)
+# This way `make install-test-tools && make test-e2e-report` Just Works
+# without forcing the user to fix their shell rc.
+GOTESTSUM := $(shell command -v gotestsum 2>/dev/null || echo "$(shell go env GOPATH)/bin/gotestsum")
 
 install-test-tools: ## Install test tooling (gotestsum)
 	go install gotest.tools/gotestsum@latest
+	@echo "==> Installed gotestsum to $(shell go env GOPATH)/bin/gotestsum"
+	@echo "==> Makefile auto-resolves it from there — no PATH edit needed."
 
 test-e2e-coverage: ## Run E2E suite with coverage of internal/* and produce _dist/e2e-coverage.html
 	@mkdir -p _dist
@@ -164,8 +175,8 @@ test-e2e-fast-coverage: ## Fast in-process E2E with coverage of internal/* (~30s
 
 test-e2e-junit: ## Run E2E suite with gotestsum + produce _dist/e2e-junit.xml
 	@mkdir -p _dist
-	@command -v gotestsum >/dev/null || { echo "ERROR: gotestsum not installed. Run: make install-test-tools"; exit 1; }
-	GOTMPDIR=/tmp gotestsum \
+	@test -x "$(GOTESTSUM)" || { echo "ERROR: gotestsum not found at $(GOTESTSUM). Run: make install-test-tools"; exit 1; }
+	GOTMPDIR=/tmp $(GOTESTSUM) \
 		--junitfile=_dist/e2e-junit.xml \
 		--format=testname \
 		-- -tags=e2e -timeout=30m ./tests/e2e/...
@@ -173,8 +184,8 @@ test-e2e-junit: ## Run E2E suite with gotestsum + produce _dist/e2e-junit.xml
 
 test-e2e-report: ## Run E2E suite producing BOTH coverage HTML + JUnit XML in _dist/
 	@mkdir -p _dist
-	@command -v gotestsum >/dev/null || { echo "ERROR: gotestsum not installed. Run: make install-test-tools"; exit 1; }
-	GOTMPDIR=/tmp gotestsum \
+	@test -x "$(GOTESTSUM)" || { echo "ERROR: gotestsum not found at $(GOTESTSUM). Run: make install-test-tools"; exit 1; }
+	GOTMPDIR=/tmp $(GOTESTSUM) \
 		--junitfile=_dist/e2e-junit.xml \
 		--format=testname \
 		-- -tags=e2e -timeout=30m \
