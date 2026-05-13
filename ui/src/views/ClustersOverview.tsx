@@ -24,7 +24,8 @@ import {
   RefreshCw,
   Trash2,
 } from 'lucide-react';
-import { api, registerCluster, discoverEKSClusters, testClusterConnection, unadoptCluster, deleteOrphanCluster } from '@/services/api';
+import { api, registerCluster, discoverEKSClusters, testClusterConnection, unadoptCluster, deleteOrphanCluster, isTestClusterUnavailable } from '@/services/api';
+import type { TestClusterUnavailable } from '@/services/api';
 import type {
   Cluster,
   ClusterHealthStats,
@@ -119,7 +120,7 @@ export function ClustersOverview() {
   const navigate = useNavigate();
 
   // Test connection state per cluster
-  const [testResults, setTestResults] = useState<Record<string, { reachable?: boolean; success?: boolean; server_version?: string; platform?: string; error?: string; error_message?: string; suggestions?: string[]; steps?: VerifyStep[] } | 'testing'>>({});
+  const [testResults, setTestResults] = useState<Record<string, { reachable?: boolean; success?: boolean; server_version?: string; platform?: string; error?: string; error_message?: string; suggestions?: string[]; steps?: VerifyStep[] } | TestClusterUnavailable | 'testing'>>({});
 
   // Expanded test steps per cluster
   const [expandedTestSteps, setExpandedTestSteps] = useState<Record<string, boolean>>({});
@@ -476,6 +477,16 @@ export function ClustersOverview() {
   /** Compact test result summary with expandable steps */
   const renderTestResult = useCallback((clusterName: string, testResult: typeof testResults[string], opts?: { showSuggestions?: boolean }) => {
     if (!testResult || testResult === 'testing') return null;
+    // BUG-035: render the "test unavailable" state distinctly — do NOT show
+    // the cluster as "Unreachable" when the test feature itself is unavailable.
+    if (isTestClusterUnavailable(testResult)) {
+      return (
+        <span className="inline-flex items-center gap-1 text-xs text-amber-700 dark:text-amber-300" title={testResult.error}>
+          <AlertTriangle className="h-3 w-3" />
+          Test unavailable
+        </span>
+      );
+    }
     const isSuccess = testResult.reachable !== false && testResult.success !== false;
     const steps = testResult.steps;
     const passedCount = steps?.filter((s) => s.status === 'pass').length ?? 0;

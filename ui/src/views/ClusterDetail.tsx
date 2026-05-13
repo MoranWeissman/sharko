@@ -38,7 +38,8 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import type { AddonCatalogItem } from '@/services/models';
-import { api, deregisterCluster, updateClusterAddons, updateClusterSettings, testClusterConnection } from '@/services/api';
+import { api, deregisterCluster, updateClusterAddons, updateClusterSettings, testClusterConnection, isTestClusterUnavailable } from '@/services/api';
+import type { TestClusterUnavailable } from '@/services/api';
 import type { ClusterComparisonResponse, AddonComparisonStatus, ConfigDiffResponse, SyncActivityEntry, VerifyStep } from '@/services/models';
 import { StatCard } from '@/components/StatCard';
 import { StatusBadge } from '@/components/StatusBadge';
@@ -182,7 +183,12 @@ export function ClusterDetail() {
   const [removeError, setRemoveError] = useState<string | null>(null);
 
   // Test connection
-  const [testResult, setTestResult] = useState<{ reachable?: boolean; success?: boolean; server_version?: string; error?: string; error_message?: string; suggestions?: string[]; steps?: VerifyStep[] } | 'testing' | null>(null);
+  const [testResult, setTestResult] = useState<
+    | { reachable?: boolean; success?: boolean; server_version?: string; error?: string; error_message?: string; suggestions?: string[]; steps?: VerifyStep[] }
+    | TestClusterUnavailable
+    | 'testing'
+    | null
+  >(null);
   const [diagnoseOpen, setDiagnoseOpen] = useState(false);
 
   // Secret path editing
@@ -205,13 +211,23 @@ export function ClusterDetail() {
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [selectedAddon, setSelectedAddon] = useState<AddonCatalogItem | null>(null);
   const [deploying, setDeploying] = useState(false);
-  const [deployResult, setDeployResult] = useState<{ prUrl?: string; error?: string } | null>(null);
+  // BUG-036: track whether the PR auto-merged so the success toast can
+  // accurately tell the operator what just happened (PR opened → still
+  // requires merge; PR merged → ArgoCD reconcile pending), rather than
+  // claiming "deploy requested successfully" regardless of merge state.
+  const [deployResult, setDeployResult] = useState<{ prUrl?: string; prId?: number; merged?: boolean; error?: string } | null>(null);
 
   // Compute display status from test result + server state
   const computedStatus = useMemo((): string => {
     if (testResult && testResult !== 'testing') {
-      if (testResult.reachable || testResult.success) return 'connected';
-      return 'unreachable';
+      // BUG-035: a "test unavailable" result (no secrets backend on the
+      // active connection) does NOT mean the cluster is unreachable — it
+      // means the test feature itself is unavailable. Fall through to the
+      // server-reported state instead of marking the cluster red.
+      if (!isTestClusterUnavailable(testResult)) {
+        if (testResult.reachable || testResult.success) return 'connected';
+        return 'unreachable';
+      }
     }
     if (data?.cluster_connection_state) {
       const state = data.cluster_connection_state.toLowerCase();
@@ -327,6 +343,11 @@ export function ClusterDetail() {
     try {
       const result = await testClusterConnection(name);
       setTestResult(result);
+      // BUG-035: skip the refetch when the test came back as "unavailable" —
+      // there's no new server-side state to observe; the call was a no-op.
+      if (isTestClusterUnavailable(result)) {
+        return;
+      }
       // Refetch cluster data so server-side computed status is up to date
       if (result.reachable || result.success) {
         void fetchData();
@@ -364,8 +385,16 @@ export function ClusterDetail() {
     setDeployResult(null);
     try {
       const result = await api.enableAddonOnCluster(name, selectedAddon.addon_name);
-      const prUrl = result?.pr_url || result?.pull_request_url;
-      setDeployResult({ prUrl });
+      // BUG-036: capture pr_url, pr_id, AND merged from `git` so the toast
+      // can branch on auto-merge state. The response shape is the orchestrator
+      // EnableAddonResult: `{ status, git: { pr_url, pr_id, merged, ... } }`.
+      // Defensive ?. chains because the wire shape might not include `git`
+      // for legacy or partial-failure responses; the UI then falls back to
+      // the generic "Request submitted" copy.
+      const prUrl = result?.git?.pr_url || result?.pr_url || result?.pull_request_url;
+      const prId = result?.git?.pr_id || result?.pr_id;
+      const merged = result?.git?.merged ?? result?.merged;
+      setDeployResult({ prUrl, prId, merged });
       void fetchData();
     } catch (e: unknown) {
       setDeployResult({ error: e instanceof Error ? e.message : 'Failed to deploy addon' });
@@ -616,7 +645,24 @@ export function ClusterDetail() {
           <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
             Kubernetes cluster managed by ArgoCD — deployed addons, health, and configuration overrides.
           </p>
-          {testResult && testResult !== 'testing' && (
+          {testResult && testResult !== 'testing' && isTestClusterUnavailable(testResult) && (
+            // BUG-035: the test feature is unavailable because no secrets
+            // backend is configured. Render a distinct, neutral state with
+            // a path to the Settings → Connections fix — do NOT classify
+            // the cluster as "Unreachable" (that misleads operators into
+            // thinking the cluster itself is broken).
+            <div className="mt-2 rounded-lg ring-2 ring-amber-300 bg-amber-50 px-3 py-2 dark:ring-amber-700 dark:bg-amber-950/30">
+              <p className="text-xs font-semibold text-amber-800 dark:text-amber-300">Cluster test unavailable</p>
+              <p className="mt-0.5 text-xs text-amber-700 dark:text-amber-300">{testResult.error}</p>
+              <Link
+                to="/settings?section=connections"
+                className="mt-1 inline-block text-xs font-medium text-amber-800 underline hover:text-amber-900 dark:text-amber-300 dark:hover:text-amber-200"
+              >
+                Open Settings → Connections
+              </Link>
+            </div>
+          )}
+          {testResult && testResult !== 'testing' && !isTestClusterUnavailable(testResult) && (
             <div className="mt-2">
               {/* Step-by-step test results */}
               {testResult.steps && testResult.steps.length > 0 && (
@@ -932,34 +978,72 @@ export function ClusterDetail() {
                   <Wifi className="h-5 w-5 shrink-0 text-green-600 dark:text-green-400" />
                   <div>
                     <span className="text-sm font-semibold text-green-700 dark:text-green-400">Cluster connected</span>
-                    {testResult && testResult !== 'testing' && (testResult.server_version) && (
+                    {testResult && testResult !== 'testing' && !isTestClusterUnavailable(testResult) && testResult.server_version && (
                       <span className="ml-2 text-xs text-green-600 dark:text-green-400">({testResult.server_version})</span>
                     )}
                   </div>
                 </div>
               )}
 
-              {/* ArgoCD connection error banner — only shown when cluster is NOT unreachable (edge case: connected but ArgoCD error) */}
-              {computedStatus !== 'unreachable' && data.argocd_connection_status && data.argocd_connection_status !== 'Successful' && (
-                <div className="flex items-start justify-between gap-3 rounded-xl ring-2 ring-red-300 bg-red-50 px-5 py-4 dark:ring-red-700 dark:bg-red-950/30">
-                  <div className="flex items-start gap-3">
-                    <AlertTriangle className="h-5 w-5 shrink-0 text-red-600 dark:text-red-400 mt-0.5" />
-                    <div>
-                      <p className="text-sm font-semibold text-red-700 dark:text-red-400">ArgoCD Connection Failed</p>
-                      {data.argocd_connection_message && (
-                        <p className="mt-0.5 text-xs text-red-600 dark:text-red-400">{data.argocd_connection_message}</p>
-                      )}
+              {/* ArgoCD connection error banner — only shown when ArgoCD has reported
+                * an actual failure state (not the neutral "Unknown" state which Sharko
+                * uses when it hasn't yet observed an ArgoCD response).
+                *
+                * BUG-034: the previous predicate (`argocd_connection_status !== 'Successful'`)
+                * incorrectly classified the "Unknown" state as a failure. That ran the
+                * "ArgoCD Connection Failed" copy on a cluster Sharko had just learned
+                * about and not yet probed, misleading operators into thinking their
+                * cluster was broken when in fact Sharko simply hadn't observed
+                * anything yet. The fix is to distinguish three states:
+                *
+                *   - argocd_connection_status missing / "Unknown" → neutral banner below
+                *   - argocd_connection_status === "Successful"    → no banner (happy path)
+                *   - anything else                                 → red "Connection Failed" banner
+                *
+                * Keep the !== 'unreachable' guard so we don't double-render the banner
+                * when the consolidated "Cluster Unreachable" banner is already shown.
+                */}
+              {(() => {
+                if (computedStatus === 'unreachable') return null;
+                const argoStatus = data.argocd_connection_status;
+                if (!argoStatus) return null;
+                if (argoStatus === 'Successful') return null;
+                const lowered = argoStatus.toLowerCase();
+                // BUG-034: "Unknown" is not a failure — it's the absence of an observation.
+                // Treat it as the neutral state and render a calm "status unknown" banner
+                // instead of the red Connection Failed copy.
+                if (lowered === 'unknown' || lowered === '') {
+                  return (
+                    <div className="flex items-start gap-3 rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] px-5 py-3 dark:ring-gray-700 dark:bg-gray-800">
+                      <AlertTriangle className="h-5 w-5 shrink-0 text-[#3a6a8a] dark:text-gray-300 mt-0.5" />
+                      <div>
+                        <p className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Status unknown</p>
+                        <p className="mt-0.5 text-xs text-[#3a6a8a] dark:text-gray-400">Sharko has not yet observed an ArgoCD response for this cluster.</p>
+                      </div>
                     </div>
+                  );
+                }
+                return (
+                  <div className="flex items-start justify-between gap-3 rounded-xl ring-2 ring-red-300 bg-red-50 px-5 py-4 dark:ring-red-700 dark:bg-red-950/30">
+                    <div className="flex items-start gap-3">
+                      <AlertTriangle className="h-5 w-5 shrink-0 text-red-600 dark:text-red-400 mt-0.5" />
+                      <div>
+                        <p className="text-sm font-semibold text-red-700 dark:text-red-400">ArgoCD Connection Failed</p>
+                        {data.argocd_connection_message && (
+                          <p className="mt-0.5 text-xs text-red-600 dark:text-red-400">{data.argocd_connection_message}</p>
+                        )}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => window.dispatchEvent(new CustomEvent('open-assistant', { detail: `ArgoCD cannot connect to cluster ${name}. Error: ${data.argocd_connection_message}. What could cause this and how do I fix it?` }))}
+                      className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-800 dark:text-red-400"
+                    >
+                      <MessageSquare className="h-3.5 w-3.5" />
+                      Ask AI
+                    </button>
                   </div>
-                  <button
-                    onClick={() => window.dispatchEvent(new CustomEvent('open-assistant', { detail: `ArgoCD cannot connect to cluster ${name}. Error: ${data.argocd_connection_message}. What could cause this and how do I fix it?` }))}
-                    className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-800 dark:text-red-400"
-                  >
-                    <MessageSquare className="h-3.5 w-3.5" />
-                    Ask AI
-                  </button>
-                </div>
-              )}
+                );
+              })()}
             </>
           )}
 
@@ -1036,8 +1120,35 @@ export function ClusterDetail() {
                       {deployResult.error ? (
                         <p>{deployResult.error}</p>
                       ) : (
+                        // BUG-036: accurately describe what happened based on
+                        // git.merged. Previously this said "Addon deploy
+                        // requested successfully." regardless of whether the
+                        // PR auto-merged — operators saw success then watched
+                        // nothing arrive on the cluster (because the PR was
+                        // still open) and lost trust in the success toast.
                         <div>
-                          <p className="font-medium">Addon deploy requested successfully.</p>
+                          {deployResult.merged === true && (
+                            <>
+                              <p className="font-medium">
+                                {deployResult.prId ? `PR #${deployResult.prId} merged.` : 'PR merged.'} Addon will appear on the cluster within ~1 minute as ArgoCD reconciles.
+                              </p>
+                            </>
+                          )}
+                          {deployResult.merged === false && (
+                            <>
+                              <p className="font-medium">
+                                {deployResult.prId ? `PR #${deployResult.prId} opened.` : 'PR opened.'} Addon will deploy after the PR is merged.
+                              </p>
+                              <p className="mt-0.5 text-xs">Merge the PR to start the rollout.</p>
+                            </>
+                          )}
+                          {deployResult.merged === undefined && (
+                            // Defensive fallback: legacy shape without `git`,
+                            // or a response that doesn't carry the merged
+                            // flag. Tell the operator the request was
+                            // submitted but stop short of claiming success.
+                            <p className="font-medium">Addon deploy request submitted.</p>
+                          )}
                           {deployResult.prUrl && (
                             <a
                               href={deployResult.prUrl}

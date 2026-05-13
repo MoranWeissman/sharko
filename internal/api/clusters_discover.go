@@ -138,7 +138,7 @@ func newTestClusterResponse(name string, result verify.Result) testClusterRespon
 // @Param body body testClusterRequest false "Optional test options"
 // @Success 200 {object} testClusterResponse "Connectivity result"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
-// @Failure 503 {object} map[string]interface{} "No credentials provider configured"
+// @Failure 503 {object} map[string]interface{} "Secrets backend not configured (error_code=no_secrets_backend)"
 // @Router /clusters/{name}/test [post]
 // handleTestCluster handles POST /api/v1/clusters/{name}/test — test connectivity to a cluster.
 func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
@@ -156,7 +156,19 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.credProvider == nil {
-		writeError(w, http.StatusServiceUnavailable, "no credentials provider configured")
+		// BUG-035: the bare "no credentials provider configured" message
+		// was surfaced by the UI as "Unreachable" — but the cluster isn't
+		// unreachable, the *test feature* is unavailable because no
+		// secrets backend (Vault / AWS Secrets Manager / file-store) is
+		// wired up on the active connection. Return a structured payload
+		// so the UI can render a dedicated "test unavailable" state with
+		// a path to Settings → Connections, instead of misleading the
+		// operator into thinking the cluster itself is broken.
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+			"error":      "Cluster connectivity test requires a secrets backend (Vault / AWS Secrets Manager / file-store) on the active connection. Configure one in Settings → Connections to enable testing.",
+			"error_code": "no_secrets_backend",
+			"hint":       "configure a secrets backend on the active connection via Settings → Connections",
+		})
 		return
 	}
 

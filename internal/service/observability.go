@@ -32,10 +32,15 @@ func (s *ObservabilityService) GetOverview(ctx context.Context, ac *argocd.Clien
 	}
 
 	// 2. List clusters
-	clusters, err := ac.ListClusters(ctx)
+	rawClusters, err := ac.ListClusters(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("listing clusters: %w", err)
 	}
+	// BUG-038: filter out the host/management cluster (in-cluster) from
+	// observability. Sharko itself runs there; it is the control plane,
+	// not a workload target. Listing it as a "monitored cluster" misled
+	// operators into thinking the host was being managed by Sharko.
+	clusters := filterInClusterEntries(rawClusters)
 
 	clusterNames := make(map[string]bool)
 	connectedClusters := 0
@@ -437,6 +442,41 @@ func parseDuration(start, end string) time.Duration {
 		return 0
 	}
 	return d
+}
+
+// isInClusterEntry reports whether an ArgoCD cluster entry represents the
+// host/management cluster (the one running Sharko + ArgoCD themselves). The
+// host cluster is identified either by the conventional ArgoCD name
+// "in-cluster" OR by the in-cluster API server URL "https://kubernetes.default.svc".
+// Matching both axes keeps the filter robust against installations that
+// rename the in-cluster secret. Exported intentionally — the observability
+// service is the only consumer today (BUG-038), but the dashboard service
+// and any future "monitored clusters" listing should reuse this helper
+// rather than re-inventing the predicate.
+func isInClusterEntry(c models.ArgocdCluster) bool {
+	if c.Name == "in-cluster" {
+		return true
+	}
+	if strings.HasPrefix(c.Server, "https://kubernetes.default") {
+		return true
+	}
+	return false
+}
+
+// filterInClusterEntries returns a copy of the slice with any host/management
+// cluster entries removed. See isInClusterEntry for the predicate definition.
+// Pure function — exposes the filter at the data-source boundary so every
+// downstream computation (cluster names map, total counts, addon-app
+// cluster extraction) inherits the fix without per-call-site sprinkling.
+func filterInClusterEntries(clusters []models.ArgocdCluster) []models.ArgocdCluster {
+	filtered := make([]models.ArgocdCluster, 0, len(clusters))
+	for _, c := range clusters {
+		if isInClusterEntry(c) {
+			continue
+		}
+		filtered = append(filtered, c)
+	}
+	return filtered
 }
 
 // formatDuration formats a duration in a human-readable way.
