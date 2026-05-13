@@ -25,6 +25,10 @@ on:
 
 permissions:
   contents: read
+  # dorny/test-reporter posts a check-run with inline test results;
+  # without these the action errors out on PRs.
+  checks: write
+  pull-requests: write
 
 concurrency:
   group: e2e-${{ github.ref }}
@@ -63,11 +67,41 @@ jobs:
           kind --version
           kubectl version --client=true
 
-      - name: Run E2E suite
+      - name: Install gotestsum
+        run: go install gotest.tools/gotestsum@latest
+
+      - name: Run E2E suite (with coverage HTML + JUnit XML)
         env:
           GOTMPDIR: /tmp
           E2E_OFFLINE: "0"
-        run: make test-e2e
+        run: make test-e2e-report
+
+      - name: Upload coverage HTML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-coverage-${{ github.run_number }}
+          path: _dist/e2e-coverage.html
+          retention-days: 30
+
+      - name: Upload JUnit XML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-junit-${{ github.run_number }}
+          path: _dist/e2e-junit.xml
+          retention-days: 30
+
+      - name: Publish test results
+        if: always()
+        uses: dorny/test-reporter@v1
+        with:
+          name: E2E Test Results
+          path: _dist/e2e-junit.xml
+          # Go's gotestsum-emitted JUnit shape is compatible with the
+          # java-junit reporter; there is no first-class go reporter.
+          reporter: java-junit
+          fail-on-error: false
 
       - name: Cleanup stale kind clusters
         if: always()

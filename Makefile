@@ -1,6 +1,6 @@
 # Sharko — Makefile
 
-.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e test-e2e test-e2e-fast test-e2e-domain kind-up kind-down catalog-scan catalog-scan-pr
+.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e test-e2e test-e2e-fast test-e2e-domain test-e2e-coverage test-e2e-fast-coverage test-e2e-junit test-e2e-report install-test-tools kind-up kind-down catalog-scan catalog-scan-pr
 
 PORT ?= 8080
 
@@ -18,11 +18,16 @@ help: ## Show available targets
 	@echo "    make lint             Go vet + UI build check"
 	@echo ""
 	@echo "  E2E (V2 Epic 7-1):"
-	@echo "    make test-e2e-fast    In-process e2e suite (~30s, no kind/docker)"
-	@echo "    make test-e2e         Full e2e suite (kind + real argocd, ~10-15 min)"
-	@echo "    make test-e2e-domain  Run a single domain (DOMAIN=Cluster|Catalog|...)"
-	@echo "    make kind-up          Provision a sharko-e2e kind topology"
-	@echo "    make kind-down        Destroy stale sharko-e2e-* kind clusters"
+	@echo "    make test-e2e-fast         In-process e2e suite (~30s, no kind/docker)"
+	@echo "    make test-e2e              Full e2e suite (kind + real argocd, ~10-15 min)"
+	@echo "    make test-e2e-domain       Run a single domain (DOMAIN=Cluster|Catalog|...)"
+	@echo "    make test-e2e-coverage     Full e2e + coverage HTML in _dist/"
+	@echo "    make test-e2e-fast-coverage  Fast e2e + coverage HTML in _dist/"
+	@echo "    make test-e2e-junit        Full e2e + JUnit XML in _dist/"
+	@echo "    make test-e2e-report       Full e2e + coverage HTML + JUnit XML"
+	@echo "    make install-test-tools    Install test tooling (gotestsum)"
+	@echo "    make kind-up               Provision a sharko-e2e kind topology"
+	@echo "    make kind-down             Destroy stale sharko-e2e-* kind clusters"
 	@echo ""
 
 demo: ## Build UI + start server in demo mode
@@ -80,7 +85,7 @@ lint: ## Go vet + UI build check
 	cd ui && npm run build
 
 clean: ## Remove build artifacts
-	rm -rf bin/ ui/dist/
+	rm -rf bin/ ui/dist/ _dist/
 
 catalog-scan: ## Run the catalog-scan bot in --dry-run mode (V123-3.1 skeleton)
 	@npm install --prefix scripts --silent
@@ -127,6 +132,60 @@ test-e2e-domain: ## Run a single domain (e.g. make test-e2e-domain DOMAIN=Cluste
 		exit 1; \
 	fi
 	GOTMPDIR=/tmp go test -tags=e2e -timeout=30m -v -run "$(DOMAIN)" ./tests/e2e/...
+
+# Test reports (V2 Epic 7-1.16). The KEY flag is
+# -coverpkg=./internal/...,./cmd/... — without it, the coverage profile
+# only measures tests/e2e/* itself (useless). With it, the report shows
+# which lines of sharko's actual code got executed by the e2e suite.
+
+install-test-tools: ## Install test tooling (gotestsum)
+	go install gotest.tools/gotestsum@latest
+
+test-e2e-coverage: ## Run E2E suite with coverage of internal/* and produce _dist/e2e-coverage.html
+	@mkdir -p _dist
+	GOTMPDIR=/tmp go test -tags=e2e -timeout=30m \
+		-coverprofile=_dist/e2e-coverage.out \
+		-coverpkg=./internal/...,./cmd/... \
+		./tests/e2e/...
+	@go tool cover -html=_dist/e2e-coverage.out -o _dist/e2e-coverage.html
+	@echo "==> Coverage HTML: _dist/e2e-coverage.html"
+	@go tool cover -func=_dist/e2e-coverage.out | tail -1
+
+test-e2e-fast-coverage: ## Fast in-process E2E with coverage of internal/* (~30s)
+	@mkdir -p _dist
+	GOTMPDIR=/tmp go test -tags=e2e -timeout=2m \
+		-coverprofile=_dist/e2e-coverage.out \
+		-coverpkg=./internal/...,./cmd/... \
+		-run '^(TestHarnessGitFakeStandalone|TestHarnessSharkoInProcess|TestFoundationStack|TestAuthFlow|TestAuthUpdatePassword|TestRBACEnforcement|TestTokensCRUD|TestCatalogReads|TestMarketplaceAddFlow|TestAddonAdmin|TestAddonSecretsLifecycle|TestAIConfig|TestAIInvocation|TestGlobalValuesEditor|TestPerClusterValuesOverride|TestPRTracking|TestNotificationsLifecycle|TestConnectionsCRUDAndInit|TestDashboardAndReadsInProcess)$$' \
+		./tests/e2e/...
+	@go tool cover -html=_dist/e2e-coverage.out -o _dist/e2e-coverage.html
+	@echo "==> Coverage HTML: _dist/e2e-coverage.html"
+	@go tool cover -func=_dist/e2e-coverage.out | tail -1
+
+test-e2e-junit: ## Run E2E suite with gotestsum + produce _dist/e2e-junit.xml
+	@mkdir -p _dist
+	@command -v gotestsum >/dev/null || { echo "ERROR: gotestsum not installed. Run: make install-test-tools"; exit 1; }
+	GOTMPDIR=/tmp gotestsum \
+		--junitfile=_dist/e2e-junit.xml \
+		--format=testname \
+		-- -tags=e2e -timeout=30m ./tests/e2e/...
+	@echo "==> JUnit XML: _dist/e2e-junit.xml"
+
+test-e2e-report: ## Run E2E suite producing BOTH coverage HTML + JUnit XML in _dist/
+	@mkdir -p _dist
+	@command -v gotestsum >/dev/null || { echo "ERROR: gotestsum not installed. Run: make install-test-tools"; exit 1; }
+	GOTMPDIR=/tmp gotestsum \
+		--junitfile=_dist/e2e-junit.xml \
+		--format=testname \
+		-- -tags=e2e -timeout=30m \
+		-coverprofile=_dist/e2e-coverage.out \
+		-coverpkg=./internal/...,./cmd/... \
+		./tests/e2e/...
+	@go tool cover -html=_dist/e2e-coverage.out -o _dist/e2e-coverage.html
+	@go tool cover -func=_dist/e2e-coverage.out | tail -1
+	@echo "==> JUnit XML:        _dist/e2e-junit.xml"
+	@echo "==> Coverage HTML:    _dist/e2e-coverage.html"
+	@echo "==> Open coverage in browser: open _dist/e2e-coverage.html  (macOS)"
 
 kind-up: ## Provision a sharko-e2e kind topology (1 mgmt + 1 target).
 	@echo "==> Provisioning sharko-e2e kind topology..."

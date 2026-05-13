@@ -192,6 +192,66 @@ The fast in-process lane is **not** wired into `ci.yml` today — it runs
 locally via `make test-e2e-fast`. Wiring it into the unit pipeline once
 the suite stabilises is a follow-up.
 
+## Reports
+
+The e2e suite emits two machine-readable reports — coverage HTML and
+JUnit XML — both written to `_dist/` (gitignored). Locally they're an
+opt-in convenience target; in CI they're uploaded as artifacts and
+surfaced inline as PR check-run summaries.
+
+### First-time setup
+
+```bash
+make install-test-tools
+```
+
+Installs `gotest.tools/gotestsum` (Go's standard JUnit-emitting test
+runner) into `$GOBIN`. Only needed once per machine.
+
+### Local report targets
+
+| Target | Output | When to use |
+|---|---|---|
+| `make test-e2e-coverage` | `_dist/e2e-coverage.html` | Full suite + see which `internal/*` lines the e2e tests hit |
+| `make test-e2e-fast-coverage` | `_dist/e2e-coverage.html` | Same, fast lane only (~30 s) |
+| `make test-e2e-junit` | `_dist/e2e-junit.xml` | JUnit XML for CI tooling / IDE test panels |
+| `make test-e2e-report` | both at once | One-shot for CI parity locally |
+
+The key flag in every coverage target is `-coverpkg=./internal/...,./cmd/...`.
+Without it, the profile only measures `tests/e2e/*` itself (useless —
+the e2e tests are always 100% covered by definition). With it, the
+report shows which lines of sharko's actual production code got
+executed by the suite.
+
+After running, open the HTML in a browser:
+
+```bash
+open _dist/e2e-coverage.html      # macOS
+xdg-open _dist/e2e-coverage.html  # Linux
+```
+
+The bottom of the test output also prints a one-line summary like
+`total: (statements) 42.7%` from `go tool cover -func | tail -1`.
+
+### CI integration
+
+`.github/workflows/e2e.yml` runs `make test-e2e-report` instead of
+`make test-e2e`, so every triggered run produces both reports. Two
+artifacts and one check-run drop out of each run:
+
+- **`e2e-coverage-<run>`** — `e2e-coverage.html`, downloadable from
+  the run's Summary page (Artifacts section). 30-day retention.
+- **`e2e-junit-<run>`** — `e2e-junit.xml`, ditto. 30-day retention.
+- **`E2E Test Results`** check-run — published by
+  [`dorny/test-reporter`](https://github.com/dorny/test-reporter)
+  using the `java-junit` reporter (Go's gotestsum-emitted JUnit shape
+  is compatible). Renders inline on the PR's Checks tab with
+  per-test pass/fail and stack traces. `fail-on-error: false` so a
+  reporting hiccup never masks the underlying suite result.
+
+The `dorny` step needs `checks: write` and `pull-requests: write` on
+the job; both are declared at the top of `e2e.yml`.
+
 ## Env-var matrix
 
 | Variable | Default | What it does |
