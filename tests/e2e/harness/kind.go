@@ -472,9 +472,14 @@ func defaultKubectlBinFromEnv() string {
 // WriteKindConfig generates a kind cluster config YAML for a given role and
 // writes it to a tempfile under t.TempDir(). Returns the absolute path.
 //
-// Mgmt clusters get extraPortMappings for ports 8080 (sharko HTTP) and
-// 30000-30099 (NodePort range for fixtures). Targets get a minimal config
-// with one control-plane node.
+// No host port bindings are emitted for ANY role. The Go e2e harness boots
+// sharko in-process via httptest.NewServer (random localhost port) and reaches
+// each kind cluster's K8s API via the Docker-network container IP captured
+// from `docker inspect`. Nothing in the test path ever talks to the kind node
+// container over a published host port, so emitting extraPortMappings is at
+// best dead weight and at worst causes :8080 collisions when multiple
+// kind-touching tests run sequentially in a single `go test` invocation (or
+// when the maintainer already has `sharko-dev.sh ready` listening on :8080).
 //
 // The config is hand-written YAML rather than gopkg.in/yaml.v3 marshaling
 // to keep the output stable + readable in test logs.
@@ -486,21 +491,6 @@ func WriteKindConfig(t *testing.T, cluster KindCluster) string {
 	b.WriteString("name: " + cluster.Name + "\n")
 	b.WriteString("nodes:\n")
 	b.WriteString("- role: control-plane\n")
-
-	if cluster.Role == "mgmt" {
-		b.WriteString("  extraPortMappings:\n")
-		// Sharko HTTP port — used in story 7-1.2 to reach sharko via host.
-		b.WriteString("  - containerPort: 8080\n")
-		b.WriteString("    hostPort: 8080\n")
-		b.WriteString("    protocol: TCP\n")
-		// NodePort range for fixtures (e.g. fake git server, mock providers).
-		// Range is small (100 ports) to keep kind happy on Docker Desktop.
-		for port := 30000; port <= 30099; port++ {
-			fmt.Fprintf(&b, "  - containerPort: %d\n", port)
-			fmt.Fprintf(&b, "    hostPort: %d\n", port)
-			b.WriteString("    protocol: TCP\n")
-		}
-	}
 
 	path := filepath.Join(t.TempDir(), "kind-"+cluster.Name+".yaml")
 	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
