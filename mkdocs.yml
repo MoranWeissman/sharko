@@ -80,6 +80,7 @@ nav:
     - Overview: developer-guide.md
     - Catalog Scan Runbook: developer-guide/catalog-scan-runbook.md
     - Testing Guide: developer-guide/testing-guide.md
+    - End-to-End Testing: developer-guide/e2e-testing.md
     - Personal Smoke Runbook: developer-guide/personal-smoke-runbook.md
 
 markdown_extensions:

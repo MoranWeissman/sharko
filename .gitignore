@@ -64,3 +64,11 @@ docs/superpowers/
 
 # Local maintainer scratch (kind-target kubeconfigs with bearer tokens, etc.)
 .local/
+
+# Go build/test caches (local only)
+.gocache/
+.gotmp/
+
+# Agent worktree dirs (used by code-agent dispatch)
+.claire/
+.clone/

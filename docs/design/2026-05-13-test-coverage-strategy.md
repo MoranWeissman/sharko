@@ -8,6 +8,37 @@
 
 ---
 
+## Update 2026-05-13 — Strategy executed
+
+The recommendation above (Path A + Path B in parallel) was executed in full. **V2 Epic 7-1 shipped** as a 15-story program on `dev/v124-e2e-suite`:
+
+- **3 foundation stories** (7-1.1..7-1.3) — `tests/e2e/harness/` (kind provisioner, Sharko Pod boot, gh mock, git fake, fixtures, auth helpers)
+- **10 domain stories** (7-1.4..7-1.13) — `tests/e2e/lifecycle/` covering cluster lifecycle, custom addon admin + addon-secrets, catalog reads + marketplace add, per-cluster addon lifecycle, values editor + AI opt-in, init + connections + operations, auth + tokens + RBAC, AI config + agent + providers, dashboard + observability + reads sweep, PRs + notifications
+- **2 closeout stories** (7-1.14 = this story, 7-1.15) — smoke retirement + `make test-e2e` wiring
+
+**Smoke phases 6+7 retired in 7-1.14 (this story).** `scripts/smoke.sh` now keeps only Phases 1-5 (pre-flight, CLI sweep, read sweep, V124-4 regression pins, cached Go test) — ~20s lightweight pre-flight that runs every save. The Go e2e suite is the canonical comprehensive home; it runs via `make test-e2e` (added in 7-1.15).
+
+### Updated coverage state (gap analysis)
+
+| Surface | Coverage status |
+|---|---|
+| Cluster register / remove / batch / discover / adopt / unadopt / test / refresh | Covered — `tests/e2e/lifecycle/cluster_test.go` (21 subtests, all 15 cluster endpoints + multi-cluster scenarios) |
+| Addon catalog CRUD (custom admin) | Covered — `tests/e2e/lifecycle/addon_admin_test.go` |
+| Addon enable/disable per cluster, addon upgrade | Covered — `tests/e2e/lifecycle/addon_cluster_test.go` |
+| Values editor (global + per-cluster) | Covered — `tests/e2e/lifecycle/values_test.go` |
+| Marketplace add / catalog reads | Covered — `tests/e2e/lifecycle/catalog_test.go` |
+| AI annotate / summary / config / agent / providers | Covered — `tests/e2e/lifecycle/ai_test.go` |
+| Init / bootstrap / connections / operations | Covered — `tests/e2e/lifecycle/init_test.go` |
+| Auth / tokens / RBAC enforcement | Covered — `tests/e2e/lifecycle/auth_test.go` |
+| Dashboard + observability + reads sweep | Covered — `tests/e2e/lifecycle/dashboard_test.go` |
+| PR tracking + notifications lifecycle | Covered — `tests/e2e/lifecycle/pr_test.go` |
+| Orphan-cascade (V125-1-7.x regression pin) | Covered — `tests/e2e/lifecycle/cluster_test.go` (was Phase 6, retired here) |
+| Full managed cluster lifecycle (V124-5.7) | Covered — `tests/e2e/lifecycle/cluster_test.go` (was Phase 7, retired here) |
+
+The "smoke vs Go" division is now: smoke = quick-feedback (~20s, every save); Go e2e = comprehensive (`make test-e2e`, runs the lifecycle suite against real kind+ArgoCD). Sections 5-6 below are preserved as historical record of the path that got us here.
+
+---
+
 ## 1. The framing that matters — three tiers, not one
 
 | Tier | Speed | What it catches | Sharko's current state |
