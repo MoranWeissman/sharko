@@ -706,3 +706,83 @@ development_status:
   # subcommand-level flag; promoting to persistent root means every subcommand
   # (login, ready, port-forward, etc.) inherits it consistently. Low risk.
   # Listed as a question to maintainer in the planning summary.
+
+  # ============================================================
+  # V125-1-9 — Schema envelope + JSON Schema (architectural epic)
+  # ============================================================
+  # Planned 2026-05-13. Source: docs/design/2026-05-12-v125-architectural-todos.md §4
+  # (lines 144-191), cross-referenced with docs/design/2026-05-11-cluster-secret-
+  # reconciler-and-gitops-stance.md §11. Planning artifact:
+  # .bmad/output/planning-artifacts/epics-v125-1-9.md.
+  # Companion design doc (locked 2026-05-13): docs/design/2026-05-13-cluster-
+  # connectivity-test-redesign.md (V125-1-10 follow-up — depends on V125-1-9 +
+  # V125-1-8 + V125-1-7 tightening landing first).
+  #
+  # Why this sprint NOW: V125-1-9 hard-blocks V125-1-8 (cluster reconciler).
+  # Per architectural-todos.md line 137: "V125-1-9 first: V125-1-8's reconciler
+  # MUST read against a stable, validated contract; bad YAML → silent reconcile
+  # failures." Per gitops-stance §11 line 384: "bad YAML = silent reconcile
+  # failures = potential incidents." This is operational safety prep, not a
+  # feature.
+  #
+  # Scope: wrap managed-clusters.yaml + addons-catalog.yaml in apiVersion/kind/
+  # spec envelope; generate JSON Schema from Go types; validate on PR + on read;
+  # add `sharko validate-config` CLI; reader stays back-compatible with legacy
+  # bare YAML; writer always emits enveloped shape. Filename rename
+  # addons-catalog.yaml → addon-catalog.yaml with alias. Legacy reader removed
+  # in V126.
+  #
+  # Six stories. Wave A (9.1, 9.2) parallel; B/C/D/E serial. ~3-5 dev days
+  # (mechanical work per design doc). Single PR dev/v125-1-9-schema-envelope →
+  # main. NO release / NO tag — V125 architectural epics ship together (with
+  # V125-1-8) on a future version bump, not now.
+  #
+  # Maintainer-signoff resolutions (2026-05-13) — all six open questions closed:
+  #   1. JSON Schema generator: invopop/jsonschema
+  #   2. Validator: santhosh-tekuri/jsonschema v5
+  #   3. Drop un-enveloped (legacy bare-YAML) reader in V126
+  #   4. Schema URL hosting: sharko.io
+  #   5. CI validation file-match: by apiVersion: sharko.io/*
+  #   6. Coordinate with PR #319: proceed in parallel + rebase if needed
+  # No further blocking decisions — dispatch can begin once the worktree branch
+  # for V125-1-9 is cut from main.
+  #
+  # Lean workflow + role files: every dispatch embeds .claude/team/architect.md
+  # (architectural epic) + .claude/team/go-expert.md + .claude/team/test-engineer.md.
+  # Story 9.6 adds .claude/team/docs-writer.md. Worktree-isolated per
+  # feedback_agent_dispatch_worktree_isolation memory. Single commit per story,
+  # commit prefix feat(schema): / refactor(schema): / docs(schema):.
+  epic-V125-1-9-schema-envelope: backlog
+  # 9.1 Envelope types + managed-clusters reader/writer compat. New
+  # internal/schema/ package with shared envelope helpers; ManagedClustersDoc
+  # apiVersion/kind/metadata/spec wrapper applied to internal/models/cluster.go;
+  # reader accepts legacy bare-YAML AND enveloped; writer always emits enveloped;
+  # bootstrap template + demo seed updated.
+  V125-1-9-1-envelope-types-and-managed-clusters-reader-writer-compat: backlog
+  # 9.2 Addon-catalog envelope + filename rename (alias preserved). Mirrors 9.1
+  # for internal/catalog/loader.go; AddonCatalogDoc envelope; reader accepts
+  # both addons-catalog.yaml (legacy) AND addon-catalog.yaml (new singular);
+  # writer always emits new filename + envelope; demo seed updated.
+  V125-1-9-2-addon-catalog-envelope-and-filename-rename-alias-preserved: backlog
+  # 9.3 JSON Schema generator (cmd/schema-gen/). New binary introspects 9.1+9.2
+  # types via invopop/jsonschema; emits docs/schemas/managed-clusters.v1.json +
+  # docs/schemas/addon-catalog.v1.json; Makefile target + CI drift-guard mirror
+  # the existing "Swagger Up To Date" check pattern.
+  V125-1-9-3-json-schema-generator-cmd-schema-gen: backlog
+  # 9.4 Read-time validation in reader paths. internal/schema/validator.go using
+  # santhosh-tekuri/jsonschema v5; reader code in cluster.go + catalog/loader.go
+  # validates BEFORE returning parsed doc; failure = audit-logged error, no
+  # silent swallowing; legacy bare-YAML routes past validation per 9.1 detection.
+  V125-1-9-4-read-time-validation-in-reader-paths: backlog
+  # 9.5 sharko validate-config CLI + CI/PR hook. cmd/sharko/validate.go subcommand
+  # auto-detects schema by kind; user-friendly errors with line numbers when
+  # the YAML lib supports them; exits 0/1. CI step matches files by
+  # apiVersion: sharko.io/* (per maintainer signoff #5) — catches user-renamed
+  # files too.
+  V125-1-9-5-sharko-validate-config-cli-and-ci-pr-hook: backlog
+  # 9.6 Documentation + migration runbook. Annotates architectural-todos doc §4
+  # with shipped state; new docs/site/operator/yaml-schema-migration.md covers
+  # what changed / why / user impact / V126 deprecation timeline / editor setup
+  # via yaml-language-server schema header. mkdocs --strict passes.
+  V125-1-9-6-documentation-and-migration-runbook: backlog
+  epic-V125-1-9-schema-envelope-retrospective: optional
