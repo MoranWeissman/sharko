@@ -24,7 +24,6 @@ package lifecycle
 
 import (
 	"context"
-	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -299,35 +298,18 @@ func TestDashboardAndReadsInProcess(t *testing.T) {
 	})
 
 	t.Run("AuditStream", func(t *testing.T) {
-		// Known limitation: handleAuditStream requires the
-		// http.ResponseWriter to implement http.Flusher, but the
-		// loggingMiddleware in internal/api/router.go wraps every
-		// response writer in a *statusRecorder that does NOT pass
-		// through the Flusher interface. Result: GET /audit/stream
-		// returns 500 {"error":"streaming not supported"} on every
-		// request. This bug ships in production today — the SSE-based
-		// audit dashboard pane will never receive events until the
-		// statusRecorder is taught to pass-through optional interfaces
-		// (http.Flusher, http.Hijacker, http.CloseNotifier). Filed as
-		// a follow-up against the e2e suite — the test harness must
-		// not modify product code (per dispatch isolation rules), so
-		// this subtest probes the contract and skips when the bug is
-		// present, asserting the SSE flow only when (eventually) fixed.
-		probeResp := admin.Do(t, http.MethodGet, "/api/v1/audit/stream", nil,
-			harness.WithTimeout(2*time.Second))
-		body, _ := io.ReadAll(probeResp.Body)
-		probeResp.Body.Close()
-		if probeResp.StatusCode == http.StatusInternalServerError &&
-			strings.Contains(string(body), "streaming not supported") {
-			t.Skipf("audit/stream: handler rejects loggingMiddleware-wrapped writer (status=%d body=%s); skipping until statusRecorder forwards http.Flusher",
-				probeResp.StatusCode, body)
-		}
-		if probeResp.StatusCode != http.StatusOK {
-			t.Fatalf("audit/stream: probe status=%d body=%s want 200", probeResp.StatusCode, body)
-		}
-
-		// Stream is alive (future state). Re-open and exercise the
-		// subscribe → fire → receive cycle.
+		// SSE end-to-end: subscribe to /api/v1/audit/stream, fire a
+		// mutating call from another goroutine, and assert that at
+		// least one audit entry is delivered before the deadline.
+		//
+		// This covers the BUG-SSE regression: the loggingMiddleware
+		// wraps every response writer in *statusRecorder; if the
+		// wrapper omits Flush(), this stream returns 500
+		// "streaming not supported" on every request because the
+		// `w.(http.Flusher)` type assertion in handleAuditStream fails.
+		// internal/api/router.go now forwards Flush/Hijack/CloseNotify
+		// through to the underlying writer; this test is the e2e
+		// guard that the wiring works end-to-end.
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
@@ -340,6 +322,8 @@ func TestDashboardAndReadsInProcess(t *testing.T) {
 			defer wg.Done()
 			entries = admin.AuditStream(t, ctx, 1)
 		}()
+		// Give the subscribe call enough lead time to register before
+		// we fire the audit-emitting write.
 		time.Sleep(200 * time.Millisecond)
 
 		probe := "stream-probe-" + harness.RandSuffix()
@@ -347,7 +331,9 @@ func TestDashboardAndReadsInProcess(t *testing.T) {
 
 		wg.Wait()
 		if len(entries) == 0 {
-			t.Fatalf("audit/stream: no entries received within %s", 5*time.Second)
+			t.Fatalf("audit/stream: no entries received within %s — "+
+				"this usually means the loggingMiddleware response "+
+				"wrapper no longer forwards http.Flusher", 5*time.Second)
 		}
 		t.Logf("audit/stream: received %d entry/entries; first event=%q user=%q action=%q",
 			len(entries), entries[0].Event, entries[0].User, entries[0].Action)
