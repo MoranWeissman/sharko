@@ -2,6 +2,25 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ClusterDetail } from '@/views/ClusterDetail';
+import { AuthContext } from '@/hooks/useAuth';
+import type { TestClusterUnavailable } from '@/services/api';
+
+// V125-1-10.5: render the view inside a fake admin AuthContext so admin-only
+// actions (Test, Diagnose, Remove) are visible. The Test button lives behind
+// `<RoleGuard roles={['admin', 'operator']}>` and is hidden by default in a
+// raw render — without this provider the button-driven test cases fail to
+// find the click target.
+const adminAuth = {
+  token: 'test-token',
+  username: 'admin',
+  role: 'admin',
+  login: vi.fn(),
+  logout: vi.fn(),
+  isAuthenticated: true,
+  isAdmin: true,
+  loading: false,
+  error: null,
+};
 
 const mockNavigate = vi.fn();
 vi.mock('react-router-dom', async () => {
@@ -13,15 +32,27 @@ vi.mock('react-router-dom', async () => {
 });
 
 const mockGetClusterComparison = vi.fn();
-vi.mock('@/services/api', () => ({
-  api: {
-    getClusterComparison: (...args: unknown[]) => mockGetClusterComparison(...args),
-    getConnections: vi.fn().mockResolvedValue({ connections: [], active_connection: '' }),
-    getNodeInfo: vi.fn().mockResolvedValue(null),
-    enableAddonOnCluster: vi.fn().mockResolvedValue({}),
-    getAddonCatalog: vi.fn().mockResolvedValue({ addons: [] }),
-  },
-}));
+const mockTestClusterConnection = vi.fn();
+vi.mock('@/services/api', async () => {
+  // V125-1-10.5: keep `isTestClusterUnavailable` real so the view's
+  // discriminator stays in sync with the API contract; only stub the
+  // network call and the write helpers used by other actions on this page.
+  const actual = await vi.importActual<typeof import('@/services/api')>('@/services/api');
+  return {
+    ...actual,
+    api: {
+      getClusterComparison: (...args: unknown[]) => mockGetClusterComparison(...args),
+      getConnections: vi.fn().mockResolvedValue({ connections: [], active_connection: '' }),
+      getNodeInfo: vi.fn().mockResolvedValue(null),
+      enableAddonOnCluster: vi.fn().mockResolvedValue({}),
+      getAddonCatalog: vi.fn().mockResolvedValue({ addons: [] }),
+    },
+    testClusterConnection: (...args: unknown[]) => mockTestClusterConnection(...args),
+    deregisterCluster: vi.fn().mockResolvedValue({}),
+    updateClusterAddons: vi.fn().mockResolvedValue({}),
+    updateClusterSettings: vi.fn().mockResolvedValue({}),
+  };
+});
 
 const comparisonResponse = {
   cluster: {
@@ -94,12 +125,18 @@ function renderView(section?: string) {
   const initialEntry = section
     ? `/clusters/prod-eu?section=${section}`
     : '/clusters/prod-eu';
+  // Wrap in a fake admin AuthContext so RoleGuard-protected actions
+  // (Test, Diagnose, Remove) render. Existing tests that assert on
+  // role-agnostic content keep working — RoleGuard only ever gates UI
+  // additively.
   return render(
-    <MemoryRouter initialEntries={[initialEntry]}>
-      <Routes>
-        <Route path="/clusters/:name" element={<ClusterDetail />} />
-      </Routes>
-    </MemoryRouter>,
+    <AuthContext.Provider value={adminAuth}>
+      <MemoryRouter initialEntries={[initialEntry]}>
+        <Routes>
+          <Route path="/clusters/:name" element={<ClusterDetail />} />
+        </Routes>
+      </MemoryRouter>
+    </AuthContext.Provider>,
   );
 }
 
@@ -313,6 +350,168 @@ describe('ClusterDetail', () => {
 
       expect(screen.queryByText('Status unknown')).not.toBeInTheDocument();
       expect(screen.queryByText('ArgoCD Connection Failed')).not.toBeInTheDocument();
+    });
+  });
+
+  // V125-1-10.5: per-error-code Test failure rendering. Story 10.3 added
+  // typed `error_code` values to the structured 503 envelope returned by
+  // POST /api/v1/clusters/{name}/test. The UI must render branch-specific
+  // copy + an action link per code instead of a generic "Test failed".
+  //
+  // Cases:
+  //   1. no_secrets_backend                 — REGRESSION GUARD for BUG-035
+  //   2. argocd_provider_iam_required       — Story 10.3 new code
+  //   3. argocd_provider_exec_unsupported   — Story 10.3 new code
+  //   4. argocd_provider_unsupported_auth   — Story 10.3 new code
+  //   5. NO error_code on 503               — REGRESSION GUARD for pre-Story-10.3 servers
+  //   6. 200 success                        — REGRESSION GUARD for happy path
+  describe('V125-1-10.5: per-error-code Test failure banner', () => {
+    function unavailable(
+      error_code: TestClusterUnavailable['error_code'],
+      error: string,
+    ): TestClusterUnavailable {
+      return { unavailable: true, error_code, error };
+    }
+
+    async function clickTestAndWaitForBanner(testid?: string) {
+      // Switch to Overview (default) and click Test.
+      renderView();
+      await waitFor(() => {
+        expect(screen.getByText('prod-eu')).toBeInTheDocument();
+      });
+      const testBtn = screen.getByRole('button', { name: /^test$/i });
+      fireEvent.click(testBtn);
+      if (testid) {
+        await waitFor(() => {
+          expect(screen.getByTestId(testid)).toBeInTheDocument();
+        });
+      }
+    }
+
+    it('renders no_secrets_backend banner with Settings link (BUG-035 regression)', async () => {
+      mockTestClusterConnection.mockResolvedValueOnce(
+        unavailable(
+          'no_secrets_backend',
+          'Cluster connectivity test requires a secrets backend (Vault / AWS Secrets Manager / file-store) on the active connection. Configure one in Settings → Connections to enable testing.',
+        ),
+      );
+      await clickTestAndWaitForBanner('test-unavailable-banner');
+
+      const banner = screen.getByTestId('test-unavailable-banner');
+      expect(banner).toHaveAttribute('data-error-code', 'no_secrets_backend');
+      expect(banner).toHaveTextContent('Cluster test unavailable');
+      expect(banner).toHaveTextContent(/secrets backend/i);
+
+      const link = screen.getByRole('link', { name: /Open Settings → Connections/i });
+      expect(link).toHaveAttribute('href', '/settings?section=connections');
+    });
+
+    it('renders argocd_provider_iam_required banner with IAM setup guide link', async () => {
+      mockTestClusterConnection.mockResolvedValueOnce(
+        unavailable(
+          'argocd_provider_iam_required',
+          'cluster Secret references AWS IAM authentication; configure AWS credentials for the Sharko pod role',
+        ),
+      );
+      await clickTestAndWaitForBanner('test-unavailable-banner');
+
+      const banner = screen.getByTestId('test-unavailable-banner');
+      expect(banner).toHaveAttribute('data-error-code', 'argocd_provider_iam_required');
+      expect(banner).toHaveTextContent(/AWS IAM authentication/i);
+      // Production framing — speaks to AWS-managed clusters generally, not
+      // EKS-specific copy and never anchors on kind/minikube.
+      expect(banner).toHaveTextContent(/AWS-managed clusters/i);
+      expect(banner).not.toHaveTextContent(/kind|minikube/i);
+
+      const link = screen.getByRole('link', { name: /Open IAM setup guide/i });
+      expect(link).toHaveAttribute('href', '/docs/operator/aws-iam-cluster-auth');
+    });
+
+    it('renders argocd_provider_exec_unsupported banner with NO action link', async () => {
+      mockTestClusterConnection.mockResolvedValueOnce(
+        unavailable(
+          'argocd_provider_exec_unsupported',
+          'cluster Secret uses execProviderConfig; exec-plugin auth is not supported in v1.x',
+        ),
+      );
+      await clickTestAndWaitForBanner('test-unavailable-banner');
+
+      const banner = screen.getByTestId('test-unavailable-banner');
+      expect(banner).toHaveAttribute(
+        'data-error-code',
+        'argocd_provider_exec_unsupported',
+      );
+      expect(banner).toHaveTextContent(/exec-plugin auth/i);
+      // The cloud-managed examples (gcloud / azure-cli / aws-iam-authenticator)
+      // anchor the production concern.
+      expect(banner).toHaveTextContent(/gcloud|azure-cli|aws-iam-authenticator/i);
+      expect(banner).toHaveTextContent(/v1\.x/);
+      expect(banner).not.toHaveTextContent(/kind|minikube/i);
+
+      // No action link inside the banner.
+      const linksInBanner = banner.querySelectorAll('a');
+      expect(linksInBanner.length).toBe(0);
+    });
+
+    it('renders argocd_provider_unsupported_auth banner with NO action link', async () => {
+      mockTestClusterConnection.mockResolvedValueOnce(
+        unavailable(
+          'argocd_provider_unsupported_auth',
+          'cluster Secret has unrecognized auth shape',
+        ),
+      );
+      await clickTestAndWaitForBanner('test-unavailable-banner');
+
+      const banner = screen.getByTestId('test-unavailable-banner');
+      expect(banner).toHaveAttribute(
+        'data-error-code',
+        'argocd_provider_unsupported_auth',
+      );
+      expect(banner).toHaveTextContent(/Unrecognized/i);
+      expect(banner).toHaveTextContent(/argocd namespace/i);
+
+      const linksInBanner = banner.querySelectorAll('a');
+      expect(linksInBanner.length).toBe(0);
+    });
+
+    it('falls back to generic test-failure rendering when 503 envelope has no error_code (pre-Story-10.3 server)', async () => {
+      // testClusterConnection's 503 path with no/unknown error_code throws
+      // a plain Error today (legacy behaviour). The view renders that as a
+      // generic Unreachable badge — it must NOT crash and must NOT show the
+      // typed banner.
+      mockTestClusterConnection.mockRejectedValueOnce(new Error('Service unavailable'));
+      renderView();
+      await waitFor(() => {
+        expect(screen.getByText('prod-eu')).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByRole('button', { name: /^test$/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText('Service unavailable')).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId('test-unavailable-banner')).not.toBeInTheDocument();
+    });
+
+    it('renders happy-path Connected badge when test succeeds (200 regression guard)', async () => {
+      mockTestClusterConnection.mockResolvedValueOnce({
+        reachable: true,
+        success: true,
+        server_version: 'v1.29.3',
+        steps: [
+          { name: 'Fetch credentials', status: 'pass' },
+          { name: 'Fetch server version', status: 'pass' },
+        ],
+      });
+      renderView();
+      await waitFor(() => {
+        expect(screen.getByText('prod-eu')).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByRole('button', { name: /^test$/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/Connected.*v1\.29\.3/)).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId('test-unavailable-banner')).not.toBeInTheDocument();
     });
   });
 });

@@ -116,6 +116,72 @@ function capitalizeAddonName(name: string): string {
   return name.charAt(0).toUpperCase() + name.slice(1);
 }
 
+// V125-1-10.5: per-error-code copy + optional action link for the
+// Test-unavailable banner. Story 10.3 added three argocd_provider_* codes
+// alongside the existing BUG-035 `no_secrets_backend` code; framing per
+// design doc 2026-05-13 §2.2 and maintainer 2026-05-14 — production targets
+// are self-hosted K8s + AWS-managed clusters; kind/minikube are dev-only and
+// must not anchor production-facing copy.
+//
+// Note: Story 10.6 will create the actual `/docs/operator/aws-iam-cluster-auth`
+// page; we use the in-app placeholder route today so the link is wired and
+// will resolve once the docs page lands.
+function TestUnavailableBanner({ result }: { result: TestClusterUnavailable }) {
+  let title: string;
+  let body: string;
+  let actionTo: string | null = null;
+  let actionLabel: string | null = null;
+
+  switch (result.error_code) {
+    case 'no_secrets_backend':
+      // BUG-035 / PR #323 — preserve existing copy and Settings link.
+      title = 'Cluster test unavailable';
+      body = result.error;
+      actionTo = '/settings?section=connections';
+      actionLabel = 'Open Settings → Connections';
+      break;
+    case 'argocd_provider_iam_required':
+      title = 'AWS IAM authentication required';
+      body =
+        "This cluster uses AWS IAM authentication. Configure AWS credentials for the Sharko pod's role (IRSA, EC2 instance profile, or Pod Identity) to enable Test for AWS-managed clusters.";
+      actionTo = '/docs/operator/aws-iam-cluster-auth';
+      actionLabel = 'Open IAM setup guide';
+      break;
+    case 'argocd_provider_exec_unsupported':
+      title = 'Exec-plugin authentication not supported';
+      body =
+        'This cluster uses exec-plugin auth (e.g. gcloud, azure-cli, aws-iam-authenticator). Exec plugins are not supported in Sharko v1.x — tracked for v2.';
+      // No action link — surface the limitation; there is no in-app fix path.
+      break;
+    case 'argocd_provider_unsupported_auth':
+      title = 'Unrecognized cluster authentication';
+      body =
+        "Unrecognized authentication shape in this cluster's ArgoCD Secret. Inspect the Secret manually in the argocd namespace (kubectl -n argocd get secret <name> -o yaml).";
+      // No action link — manual inspection is the only path.
+      break;
+  }
+
+  return (
+    <div
+      role="alert"
+      data-testid="test-unavailable-banner"
+      data-error-code={result.error_code}
+      className="mt-2 rounded-lg ring-2 ring-amber-300 bg-amber-50 px-3 py-2 dark:ring-amber-700 dark:bg-amber-950/30"
+    >
+      <p className="text-xs font-semibold text-amber-800 dark:text-amber-300">{title}</p>
+      <p className="mt-0.5 text-xs text-amber-700 dark:text-amber-300">{body}</p>
+      {actionTo && actionLabel && (
+        <Link
+          to={actionTo}
+          className="mt-1 inline-block text-xs font-medium text-amber-800 underline hover:text-amber-900 dark:text-amber-300 dark:hover:text-amber-200"
+        >
+          {actionLabel}
+        </Link>
+      )}
+    </div>
+  );
+}
+
 function shouldTruncateIssues(issues: string[]): boolean {
   return issues.join(' ').length > 100;
 }
@@ -649,21 +715,14 @@ export function ClusterDetail() {
             Kubernetes cluster managed by ArgoCD — deployed addons, health, and configuration overrides.
           </p>
           {testResult && testResult !== 'testing' && isTestClusterUnavailable(testResult) && (
-            // BUG-035: the test feature is unavailable because no secrets
-            // backend is configured. Render a distinct, neutral state with
-            // a path to the Settings → Connections fix — do NOT classify
-            // the cluster as "Unreachable" (that misleads operators into
-            // thinking the cluster itself is broken).
-            <div className="mt-2 rounded-lg ring-2 ring-amber-300 bg-amber-50 px-3 py-2 dark:ring-amber-700 dark:bg-amber-950/30">
-              <p className="text-xs font-semibold text-amber-800 dark:text-amber-300">Cluster test unavailable</p>
-              <p className="mt-0.5 text-xs text-amber-700 dark:text-amber-300">{testResult.error}</p>
-              <Link
-                to="/settings?section=connections"
-                className="mt-1 inline-block text-xs font-medium text-amber-800 underline hover:text-amber-900 dark:text-amber-300 dark:hover:text-amber-200"
-              >
-                Open Settings → Connections
-              </Link>
-            </div>
+            // V125-1-10.5: the Test endpoint can be unavailable for several
+            // reasons — Story 10.3 extended the structured 503 envelope with
+            // typed `error_code` values. Render branch-specific copy + an
+            // action link per code so the operator gets a clear next step
+            // instead of a generic "test failed" message. The cluster itself
+            // is NOT classified as "Unreachable" in any of these branches —
+            // only the test feature is unavailable. See computedStatus above.
+            <TestUnavailableBanner result={testResult} />
           )}
           {testResult && testResult !== 'testing' && !isTestClusterUnavailable(testResult) && (
             <div className="mt-2">
