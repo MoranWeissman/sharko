@@ -4009,7 +4009,7 @@ const docTemplate = `{
                         }
                     },
                     "503": {
-                        "description": "Secrets backend not configured (error_code=no_secrets_backend)",
+                        "description": "Service unavailable. error_code one of: no_secrets_backend, argocd_provider_iam_required, argocd_provider_exec_unsupported, argocd_provider_unsupported_auth",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true

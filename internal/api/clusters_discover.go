@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -138,7 +139,7 @@ func newTestClusterResponse(name string, result verify.Result) testClusterRespon
 // @Param body body testClusterRequest false "Optional test options"
 // @Success 200 {object} testClusterResponse "Connectivity result"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
-// @Failure 503 {object} map[string]interface{} "Secrets backend not configured (error_code=no_secrets_backend)"
+// @Failure 503 {object} map[string]interface{} "Service unavailable. error_code one of: no_secrets_backend, argocd_provider_iam_required, argocd_provider_exec_unsupported, argocd_provider_unsupported_auth"
 // @Router /clusters/{name}/test [post]
 // handleTestCluster handles POST /api/v1/clusters/{name}/test — test connectivity to a cluster.
 func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
@@ -190,6 +191,22 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 	slog.Info("[cluster-test] fetching credentials", "name", name, "lookupName", credLookupName)
 	creds, err := s.credProvider.GetCredentials(credLookupName)
 	if err != nil {
+		// V125-1-10.3: when the active credentials provider is the
+		// ArgoCDProvider (built-in default for in-cluster installs), it
+		// returns a typed *ArgoCDProviderError for any cluster Secret whose
+		// auth shape is not the bearerToken happy-path (awsAuthConfig →
+		// IAM required; execProviderConfig → exec-plugin auth not
+		// supported in v1.x; unknown shape). Surface those via the same
+		// structured-503 envelope BUG-035 introduced for the missing-
+		// backend case so the UI (Story 10.5) can render branch-specific
+		// copy off the stable error_code field.
+		var argoErr *providers.ArgoCDProviderError
+		if errors.As(err, &argoErr) {
+			slog.Warn("[cluster-test] argocd provider unavailable shape",
+				"name", name, "code", argoErr.Code, "cluster", argoErr.ClusterName, "server", argoErr.Server)
+			writeStructuredError(w, http.StatusServiceUnavailable, argoErr.Code, argoErr.Detail)
+			return
+		}
 		slog.Error("[cluster-test] failed", "name", name, "step", "fetch-credentials", "error", err)
 		result := verify.Result{
 			Success:      false,
@@ -288,6 +305,27 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 	})
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// writeStructuredError emits the {"error", "error_code"} envelope used by
+// callers (UI, CLI) that dispatch on a stable machine-readable code instead
+// of parsing the human-readable error string.
+//
+// The shape mirrors the existing BUG-035 no_secrets_backend response so the
+// UI does not have to handle two envelope variants. V125-1-10.3 (Story 10.3)
+// extended this to carry argocd_provider_* codes for the ArgoCDProvider's
+// IAM / exec-plugin / unknown-auth branches.
+//
+// Note: writeMissingProviderError in router.go uses a parallel envelope with
+// a "code"+"hint" pair (V124-4.1 contract for write/discover endpoints whose
+// provider is unset). The cluster-test endpoint deliberately uses the
+// "error_code" key — that is what the UI keys off for this surface, so a
+// rename would silently break the UI dispatch.
+func writeStructuredError(w http.ResponseWriter, status int, code, message string) {
+	writeJSON(w, status, map[string]string{
+		"error":      message,
+		"error_code": code,
+	})
 }
 
 // discoverEKSRequest is the request body for POST /api/v1/clusters/discover.

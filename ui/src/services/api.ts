@@ -162,30 +162,65 @@ export async function discoverEKSClusters(data: { role_arns: string[]; region?: 
 }
 
 /**
- * BUG-035: structured 503 body when the active connection has no secrets
- * backend configured. The cluster connectivity test depends on fetching the
- * cluster kubeconfig from a secrets backend (Vault / AWS SM / file-store);
- * with none configured, every test 503s. The backend now returns
- * `error_code: "no_secrets_backend"` so the UI can render a dedicated
- * "test unavailable" state instead of misleading the operator with
- * "Unreachable".
+ * Structured 503 body returned by `POST /api/v1/clusters/{name}/test` when
+ * the test feature is unavailable for a known reason. The UI renders
+ * branch-specific copy off the stable `error_code` field so each scenario
+ * gets a clear, action-oriented message instead of a generic "test failed".
+ *
+ * Codes:
+ *  - `no_secrets_backend` (BUG-035 / PR #323): the active connection has no
+ *    secrets backend configured (Vault / AWS Secrets Manager / file-store /
+ *    ArgoCDProvider). Configure one in Settings → Connections.
+ *
+ *  - `argocd_provider_iam_required` (V125-1-10.3): the active backend is the
+ *    built-in ArgoCDProvider, the cluster's ArgoCD Secret has the AWS-IAM
+ *    `awsAuthConfig` shape, and the Sharko pod has no AWS credentials. The
+ *    test cannot exec aws-iam-authenticator from inside the pod. Production
+ *    target is self-hosted K8s + AWS-managed clusters that authenticate via
+ *    AWS IAM — the fix is to grant the Sharko pod's role the right
+ *    permissions (IRSA / EC2 instance profile / Pod Identity).
+ *
+ *  - `argocd_provider_exec_unsupported` (V125-1-10.3): the cluster's ArgoCD
+ *    Secret has an `execProviderConfig` shape — auth is provided by an
+ *    external exec plugin (gcloud, azure-cli, aws-iam-authenticator, etc.).
+ *    Sharko v1.x does not ship those plugins inside the pod and does not
+ *    support exec-plugin auth. Tracked for v2.
+ *
+ *  - `argocd_provider_unsupported_auth` (V125-1-10.3): the cluster's ArgoCD
+ *    Secret has an unrecognized auth shape. Surface as "inspect the Secret
+ *    manually in the argocd namespace" — there is no automatic remediation.
+ *
+ * The backend may also return 503 with NO `error_code` for unexpected
+ * failures; those are surfaced as a thrown Error (legacy behaviour) so the
+ * UI's existing generic-error path renders them.
  */
+export type TestClusterErrorCode =
+  | 'no_secrets_backend'
+  | 'argocd_provider_iam_required'
+  | 'argocd_provider_exec_unsupported'
+  | 'argocd_provider_unsupported_auth'
+
 export interface TestClusterUnavailable {
   unavailable: true
-  error_code: 'no_secrets_backend'
+  error_code: TestClusterErrorCode
   error: string
   hint?: string
 }
 
+const KNOWN_TEST_ERROR_CODES: ReadonlySet<TestClusterErrorCode> = new Set<TestClusterErrorCode>([
+  'no_secrets_backend',
+  'argocd_provider_iam_required',
+  'argocd_provider_exec_unsupported',
+  'argocd_provider_unsupported_auth',
+])
+
 export function isTestClusterUnavailable(
   v: unknown,
 ): v is TestClusterUnavailable {
-  return (
-    typeof v === 'object' &&
-    v !== null &&
-    (v as { unavailable?: boolean }).unavailable === true &&
-    (v as { error_code?: string }).error_code === 'no_secrets_backend'
-  )
+  if (typeof v !== 'object' || v === null) return false
+  if ((v as { unavailable?: boolean }).unavailable !== true) return false
+  const code = (v as { error_code?: string }).error_code
+  return typeof code === 'string' && KNOWN_TEST_ERROR_CODES.has(code as TestClusterErrorCode)
 }
 
 export async function testClusterConnection(
@@ -204,20 +239,27 @@ export async function testClusterConnection(
     window.location.reload()
     throw new Error('Session expired')
   }
-  // BUG-035: detect the structured 503 and surface it as a typed "unavailable"
-  // result instead of throwing — the UI renders it as a distinct state, not
-  // as an "Unreachable" cluster.
+  // V125-1-10.5: detect the structured 503 envelope and surface it as a typed
+  // "unavailable" result instead of throwing. Story 10.3 extended the codes
+  // beyond BUG-035's `no_secrets_backend` with three argocd_provider_* codes.
+  // Unknown / absent error_code on a 503 falls through to the generic
+  // throw-Error path so the UI shows whatever message the backend sent —
+  // this keeps pre-Story-10.3 servers (which only ever sent
+  // `no_secrets_backend`) and any future codes safe.
   if (res.status === 503) {
     const body = (await res.json().catch(() => ({}))) as {
       error?: string
       error_code?: string
       hint?: string
     }
-    if (body.error_code === 'no_secrets_backend') {
+    if (
+      typeof body.error_code === 'string' &&
+      KNOWN_TEST_ERROR_CODES.has(body.error_code as TestClusterErrorCode)
+    ) {
       return {
         unavailable: true,
-        error_code: 'no_secrets_backend',
-        error: body.error || 'Cluster test unavailable — no secrets backend configured.',
+        error_code: body.error_code as TestClusterErrorCode,
+        error: body.error || 'Cluster test unavailable.',
         hint: body.hint,
       }
     }

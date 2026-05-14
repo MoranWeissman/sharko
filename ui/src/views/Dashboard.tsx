@@ -154,7 +154,7 @@ export function Dashboard() {
   const { byApp: addonStateMap, refresh: refreshAddonStates } = useAddonStates();
   const [showAttention, setShowAttention] = useState(false);
   const [showProgressing, setShowProgressing] = useState(false);
-  const [clusters, setClusters] = useState<{ name: string; connectionStatus: string; addons: { name: string; health: string }[]; healthy: number; total: number }[]>([]);
+  const [clusters, setClusters] = useState<{ name: string; serverUrl?: string; connectionStatus: string; addons: { name: string; health: string }[]; healthy: number; total: number }[]>([]);
   const [argoCDUnreachable, setArgoCDUnreachable] = useState(false);
 
   const fetchData = useCallback(async (background = false) => {
@@ -232,7 +232,7 @@ export function Dashboard() {
                 addons.push({ name: row.addon_name, health })
               }
             }
-            return { name: c.name, connectionStatus: c.connection_status || 'Unknown', addons, healthy, total }
+            return { name: c.name, serverUrl: c.server_url, connectionStatus: c.connection_status || 'Unknown', addons, healthy, total }
           })
         const problemClusters = cards.filter(c =>
           (c.connectionStatus !== 'Successful' && c.connectionStatus !== 'Connected') ||
@@ -500,6 +500,7 @@ export function Dashboard() {
               <ClusterCard
                 key={cluster.name}
                 name={cluster.name}
+                serverUrl={cluster.serverUrl}
                 connectionStatus={cluster.connectionStatus}
                 addonSummary={cluster.addons}
                 healthyCount={cluster.healthy}

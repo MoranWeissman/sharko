@@ -124,20 +124,23 @@ Drop the legacy `cluster-addons.yaml` alias when convenient. The current name co
 Sequence matters. Each story builds on the prior:
 
 ```
+V125-1-10 (ArgoCDProvider + per-type Test routing + UI badge) — ✅ shipped 2026-05-14
+    ↓
 V125-1-9 (schema envelope + validation)
     ↓
 V125-1-8 (reconciler + ownership label + retire pre-merge orchestrator paths)
     ↓
 V125-1-7 tightening (label-aware orphan filter)
     ↓
-V125-2 cleanup (delete adopt.go dead code; close backlog entry)
+V125-2 cleanup (delete adopt.go dead code; deprecate `KubernetesSecretProvider.GetCredentials`; close backlog entry)
 ```
 
-Why this order:
-- V125-1-9 first: V125-1-8's reconciler MUST read against a stable, validated contract; bad YAML → silent reconcile failures. The schema work makes the reconciler operationally safe.
-- V125-1-8 second: the core architectural change. Ownership label introduced here.
-- V125-1-7 tightening third: now that ownership label exists, V125-1-7 can refuse to delete unlabeled Secrets.
-- V125-2 cleanup last: dead-code removal once the reconciler proves out.
+Why this order (revised 2026-05-14):
+- **V125-1-10 first** (out-of-original-sequence pull-forward): Test cluster was broken on every fresh self-hosted/dev install in v1.24. `ArgoCDProvider` is read-only of the ArgoCD Secret, so the V125-1-8 ownership-label dependency doesn't apply for a read-only consumer. Maintainer 2026-05-14: ship the working Test path first; ownership-label tightening of `ArgoCDProvider` reads becomes a V125-1-8 follow-up. See `docs/design/2026-05-13-cluster-connectivity-test-redesign.md` §2.4 + §4 for the full rationale.
+- V125-1-9 second: V125-1-8's reconciler MUST read against a stable, validated contract; bad YAML → silent reconcile failures. The schema work makes the reconciler operationally safe.
+- V125-1-8 third: the core architectural change. Ownership label introduced here. After V125-1-8 lands, `ArgoCDProvider` reads gain label-gating as a defense-in-depth follow-up.
+- V125-1-7 tightening fourth: now that ownership label exists, V125-1-7 can refuse to delete unlabeled Secrets.
+- V125-2 cleanup last: dead-code removal once the reconciler proves out; `KubernetesSecretProvider.GetCredentials` real-removal happens here (it stays in v1.25 with docs-only deprecation note because operators with corporate Vault adopt-flow installs depend on it).
 
 ---
 
@@ -484,15 +487,16 @@ From V125-1-7 validation that was in flight when this design conversation began:
 
 ## 11. Sequence of dispatches (when ready)
 
-In dependency order:
+In dependency order (revised 2026-05-14):
 
-1. **V125-1-7.1** — small fix bundle: 500 error on orphan delete + button rename. Independent of V125-1-9/8. Can ship anytime.
-2. **V125-1-9** — schema envelope + JSON Schema + validation. ~3-5 days. Must land before V125-1-8.
-3. **V125-1-8** — reconciler + ownership label + retire pre-merge paths. ~1 week (was previously estimated as ~3 days; the strip-old-code work expands it). The big one.
-4. **V125-1-7 tightening** — label-aware orphan filter. ~half-day. Trivial after V125-1-8 lands.
-5. **V125-2 cleanup** — delete adopt.go + related code. ~half-day.
+1. **V125-1-7.1** — small fix bundle: 500 error on orphan delete + button rename. Independent of V125-1-9/8. Can ship anytime. **[Shipped — V125-1-7-fix epic done.]**
+2. **V125-1-10** — `ArgoCDProvider` + per-type Test routing + UI badge. ~2-3 days. Pulled forward from "after V125-1-8" because Test was broken on every fresh self-hosted/dev install in v1.24 and `ArgoCDProvider` is read-only of the ArgoCD Secret (ownership-label dependency doesn't apply). **[Shipped 2026-05-14 — see `docs/design/2026-05-13-cluster-connectivity-test-redesign.md`.]**
+3. **V125-1-9** — schema envelope + JSON Schema + validation. ~3-5 days. Must land before V125-1-8.
+4. **V125-1-8** — reconciler + ownership label + retire pre-merge paths. ~1 week. The big one. After V125-1-8 lands, `ArgoCDProvider` reads gain label-gating as a defense-in-depth follow-up.
+5. **V125-1-7 tightening** — label-aware orphan filter. ~half-day. Trivial after V125-1-8 lands.
+6. **V125-2 cleanup** — delete adopt.go + related code; remove deprecated `KubernetesSecretProvider.GetCredentials`. ~half-day.
 
-Total: ~2 weeks of focused work for the architectural cleanup.
+Total: ~2 weeks of focused work for the architectural cleanup, plus the ~2-3 days V125-1-10 already absorbed.
 
 After all of this lands:
 - v1.24 / v1.25 boundary becomes meaningful (the architectural shift is significant)
