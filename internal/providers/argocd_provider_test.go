@@ -338,3 +338,88 @@ func TestArgoCD_HealthCheck_FailsOnPermissionError(t *testing.T) {
 		t.Errorf("expected wrapped Forbidden error, got: %v", err)
 	}
 }
+
+// TestResolveArgoCDNamespace covers V125-1-10.8: ArgoCDProvider must IGNORE
+// cfg.Namespace (which is for the orthogonal k8s-secrets backend) and resolve
+// its own namespace from SHARKO_ARGOCD_NAMESPACE env var with a hardcoded
+// "argocd" fallback. Cross-contamination (cfg.Namespace set to a non-matching
+// value) must not change the resolved namespace.
+func TestResolveArgoCDNamespace(t *testing.T) {
+	tests := []struct {
+		name        string
+		cfg         Config
+		envValue    string // empty string → unset
+		setEnv      bool   // true → call t.Setenv even if envValue is ""
+		wantNS      string
+		description string
+	}{
+		{
+			name:        "default_when_cfg_empty_and_no_env",
+			cfg:         Config{Type: "argocd"},
+			wantNS:      "argocd",
+			description: "no inputs → hardcoded argocd default",
+		},
+		{
+			name:        "cross_contamination_ignored_sharko",
+			cfg:         Config{Type: "argocd", Namespace: "sharko"},
+			wantNS:      "argocd",
+			description: "leftover sharko value from prior k8s-secrets config must be ignored",
+		},
+		{
+			name:        "cross_contamination_ignored_arbitrary",
+			cfg:         Config{Type: "argocd", Namespace: "some-other-ns"},
+			wantNS:      "argocd",
+			description: "any non-argocd cfg.Namespace must be ignored",
+		},
+		{
+			name:        "explicit_match_no_warning",
+			cfg:         Config{Type: "argocd", Namespace: "argocd"},
+			wantNS:      "argocd",
+			description: "cfg.Namespace matches the resolved ns → still resolves to argocd, no warning",
+		},
+		{
+			name:        "env_var_override",
+			cfg:         Config{Type: "argocd"},
+			envValue:    "custom-argocd-ns",
+			setEnv:      true,
+			wantNS:      "custom-argocd-ns",
+			description: "SHARKO_ARGOCD_NAMESPACE overrides the hardcoded default",
+		},
+		{
+			name:        "env_var_overrides_cross_contamination",
+			cfg:         Config{Type: "argocd", Namespace: "sharko"},
+			envValue:    "custom-argocd-ns",
+			setEnv:      true,
+			wantNS:      "custom-argocd-ns",
+			description: "env var wins; cfg.Namespace cross-contamination still ignored",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.setEnv {
+				t.Setenv("SHARKO_ARGOCD_NAMESPACE", tt.envValue)
+			} else {
+				// Defensive: if a parent process has SHARKO_ARGOCD_NAMESPACE set,
+				// neutralise it for tests that expect the hardcoded default.
+				t.Setenv("SHARKO_ARGOCD_NAMESPACE", "")
+			}
+
+			got := resolveArgoCDNamespace(tt.cfg)
+			if got != tt.wantNS {
+				t.Errorf("resolveArgoCDNamespace(%+v) = %q, want %q (%s)",
+					tt.cfg, got, tt.wantNS, tt.description)
+			}
+		})
+	}
+}
+
+// TestResolveArgoCDNamespace_RegressionExistingTestsStillPass confirms the
+// previously-tested behaviour is preserved: an empty cfg yields "argocd" so
+// the existing newArgoCDProviderWithClient(client, "") path is unchanged.
+func TestResolveArgoCDNamespace_RegressionExistingTestsStillPass(t *testing.T) {
+	t.Setenv("SHARKO_ARGOCD_NAMESPACE", "")
+	if got := resolveArgoCDNamespace(Config{}); got != "argocd" {
+		t.Errorf("resolveArgoCDNamespace(empty cfg) = %q, want %q", got, "argocd")
+	}
+}
