@@ -442,26 +442,55 @@ var serveCmd = &cobra.Command{
 			namespace = "sharko"
 		}
 
+		// V125-1-10.7: Always resolve a provider config and call providers.New(),
+		// even when the active connection's provider.type is empty. The auto-default
+		// path added in V125-1-10.2 only fires inside providers.New() — gating
+		// the call on Type != "" silently bypasses the default and leaves
+		// credProvider nil, which then trips the BUG-035 "no_secrets_backend"
+		// surface in the Test handler instead of the intended argocd auto-default.
+		//
+		// When in-cluster + Type == "":  providers.New() returns ArgoCDProvider.
+		// When Type == "argocd":          providers.New() returns ArgoCDProvider.
+		// When out-of-cluster + Type=="": providers.New() returns the legacy
+		//                                 "no provider configured" error → log
+		//                                 + leave credProvider nil → existing
+		//                                 BUG-035 surface (unchanged).
 		var resolvedProvCfg *providers.Config
-		if connProv := connSvc.GetProviderConfig(); connProv != nil && connProv.Type != "" {
-			ns := connProv.Namespace
-			if ns == "" {
-				ns = namespace
+		{
+			connProv := connSvc.GetProviderConfig()
+			ns := namespace
+			cfg := &providers.Config{Namespace: ns}
+			if connProv != nil {
+				if connProv.Namespace != "" {
+					ns = connProv.Namespace
+				}
+				cfg = &providers.Config{
+					Type:      connProv.Type,
+					Region:    connProv.Region,
+					Prefix:    connProv.Prefix,
+					Namespace: ns,
+					RoleARN:   connProv.RoleARN,
+				}
+				if connProv.Type != "" {
+					slog.Info("secrets provider configured from connection", "type", connProv.Type)
+				} else {
+					slog.Info("no explicit provider type in connection — providers.New will auto-default")
+				}
+			} else {
+				slog.Info("no provider config in connection — providers.New will auto-default")
 			}
-			resolvedProvCfg = &providers.Config{
-				Type:      connProv.Type,
-				Region:    connProv.Region,
-				Prefix:    connProv.Prefix,
-				Namespace: ns,
-				RoleARN:   connProv.RoleARN,
-			}
-			slog.Info("secrets provider configured from connection", "type", connProv.Type)
+			resolvedProvCfg = cfg
 		}
 
-		if resolvedProvCfg != nil {
+		{
 			cp, err := providers.New(*resolvedProvCfg)
 			if err != nil {
-				slog.Warn("could not create secrets provider", "error", err)
+				// Out-of-cluster + no explicit type lands here (legacy
+				// "no provider configured" error preserved verbatim by
+				// providers.New). credProvider stays nil and the existing
+				// BUG-035 path in the Test handler surfaces the structured
+				// 503 with no_secrets_backend — unchanged behavior.
+				slog.Info("[serve] no credentials provider configured", "reason", err)
 			} else {
 				credProvider = cp
 				provCfgPtr = resolvedProvCfg

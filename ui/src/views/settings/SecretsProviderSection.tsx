@@ -5,11 +5,18 @@ import { api } from '@/services/api'
 import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
 
+// V125-1-10.7: widened to include 'argocd' so admins can pick the
+// ArgoCD provider in the Settings dropdown. The 'argocd' type means
+// "read cluster credentials from ArgoCD's cluster Secret in the argocd
+// namespace" and requires no extra Region/Prefix/Namespace inputs —
+// it always uses the in-cluster argocd namespace.
 interface ProviderFormData {
-  provider_type: '' | 'aws-sm' | 'k8s-secrets'
+  provider_type: '' | 'argocd' | 'aws-sm' | 'k8s-secrets'
   provider_region: string
   provider_prefix: string
 }
+
+type ProviderType = ProviderFormData['provider_type']
 
 interface ProviderInfo {
   type: string
@@ -49,7 +56,7 @@ export function SecretsProviderSection() {
           setProviderInfo(data.configured_provider as ProviderInfo)
           const p = data.configured_provider as ProviderInfo
           setForm({
-            provider_type: (p.type as '' | 'aws-sm' | 'k8s-secrets') || '',
+            provider_type: (p.type as ProviderType) || '',
             provider_region: p.region || '',
             provider_prefix: p.prefix || '',
           })
@@ -146,13 +153,20 @@ export function SecretsProviderSection() {
               <select
                 className={selectCls}
                 value={form.provider_type}
-                onChange={(e) => setForm(prev => ({ ...prev, provider_type: e.target.value as '' | 'aws-sm' | 'k8s-secrets' }))}
+                onChange={(e) => setForm(prev => ({ ...prev, provider_type: e.target.value as ProviderType }))}
               >
                 <option value="">None</option>
+                <option value="argocd">ArgoCD (auto — reads cluster credentials from the ArgoCD Secret)</option>
                 <option value="aws-sm">AWS Secrets Manager (aws-sm)</option>
                 <option value="k8s-secrets">Kubernetes Secrets (k8s-secrets)</option>
               </select>
-              <p className="mt-1 text-[10px] text-[#3a6a8a]">How Sharko retrieves cluster credentials for secret-based providers.</p>
+              {form.provider_type === 'argocd' ? (
+                <p className="mt-1 text-[10px] text-[#3a6a8a]">
+                  Sharko reads credentials from the ArgoCD cluster Secret it creates during register-cluster. No additional setup required when Sharko runs in-cluster.
+                </p>
+              ) : (
+                <p className="mt-1 text-[10px] text-[#3a6a8a]">How Sharko retrieves cluster credentials for secret-based providers.</p>
+              )}
             </div>
             {form.provider_type === 'aws-sm' && (
               <div>
@@ -165,7 +179,7 @@ export function SecretsProviderSection() {
                 />
               </div>
             )}
-            {form.provider_type && (
+            {(form.provider_type === 'aws-sm' || form.provider_type === 'k8s-secrets') && (
               <div>
                 <label className={labelCls}>Prefix <span className="text-[#3a6a8a] font-normal">(optional)</span></label>
                 <input
