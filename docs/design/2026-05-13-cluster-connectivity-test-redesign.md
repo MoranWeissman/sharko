@@ -17,7 +17,16 @@
 
 ## 1. Problem
 
-Today's "Test cluster" feature requires a separate **secrets backend** (Vault / AWS-SM / file-store) on the active connection to fetch cluster credentials. On dev installs (kind/minikube) there is no such backend → the feature is permanently unavailable, users hit a confusing dead end. The deeper insight is that the ArgoCD cluster Secret Sharko already owns *contains the same connection credentials Test needs* — the "secrets backend" requirement for non-cloud K8s clusters is artificial. After V125-1-8 (Sharko owns the cluster Secret end-to-end via the reconciler + `app.kubernetes.io/managed-by: sharko` label), the cleanest way to power Test is to read straight from that Secret, with auth-method routing driven by what's actually inside it — no stored type field, no extra credentials-provider config.
+Pre-V125-1-10, the "Test cluster" feature required a separate **secrets backend** (Vault / AWS-SM / file-store) on the active connection to fetch cluster credentials. On self-hosted K8s production installs and dev installs (kind/minikube) where no such backend was configured, the feature was permanently unavailable — users hit a confusing dead end. The deeper insight: the ArgoCD cluster Secret Sharko already creates during `register-cluster` *contains the same connection credentials Test needs*. The separate-secrets-backend requirement for non-cloud K8s clusters was artificial.
+
+V125-1-10 (shipped 2026-05-14) addresses this by introducing a built-in `ArgoCDProvider` that reads cluster credentials directly from the ArgoCD cluster Secret in the `argocd` namespace. Auth-method routing is driven by the Secret's `config` JSON shape — no stored type field, no extra credentials-provider config. What V125-1-10 actually shipped:
+
+- **`ArgoCDProvider` reads cluster credentials from the ArgoCD Secret in the `argocd` namespace.** Becomes the auto-default when Sharko runs in-cluster and no provider is explicitly configured.
+- **Test routes per Secret config shape** — `bearerToken` (happy path → 12-step Test runs end-to-end), `awsAuthConfig` (specific error pointing at IAM setup runbook), `execProviderConfig` (specific "not supported in v1.x" error), unrecognized (generic actionable error). Each branch carries a stable `error_code` so the UI renders type-specific copy + a deep link.
+- **UI hostname-derived `<ClusterTypeBadge>`** ships in v1.25 — recognition-aid only, never stored.
+- **`argocd` is the auto-default `provider.type`** when Sharko runs in-cluster.
+
+The original §2.4 design preference was to ship V125-1-10 *after* V125-1-8 (cluster reconciler + ownership label) for cleanest ownership semantics. Maintainer reordered on 2026-05-14 because Test was broken on every fresh self-hosted/dev install and `ArgoCDProvider` is read-only of the ArgoCD Secret — the V125-1-8 ownership label does not affect a read-only consumer. See §2.4 + §4 for the locked sequence.
 
 ---
 
@@ -66,16 +75,21 @@ The pill is a small React component that takes the `server` URL string and retur
 
 ### 2.4 `argocdProvider` as a new built-in `CredentialsProvider`
 
-**Decision:** Add `argocdProvider` as a new built-in implementation of the existing `CredentialsProvider` interface. It reads cluster credentials from the ArgoCD cluster Secret in the `argocd` namespace (the same Secret Sharko's reconciler maintains after V125-1-8). Becomes the **default** provider for non-cloud auth methods (`bearerToken` shape from §2.2). Ships **after V125-1-8** so ownership semantics are clean — Sharko reads back state Sharko itself wrote, no read-from-someone-else's-Secret ambiguity.
+**Decision:** Add `argocdProvider` as a new built-in implementation of the existing `CredentialsProvider` interface. It reads cluster credentials from the ArgoCD cluster Secret in the `argocd` namespace (the same Secret Sharko's reconciler will maintain after V125-1-8). Becomes the **auto-default** provider when Sharko runs in-cluster and no provider is explicitly configured.
+
+**Sequence: ships first per maintainer 2026-05-14 reorder; ownership-label tightening deferred to V125-1-8 follow-up.** The original ordering preference ("after V125-1-8") was based on cleanest ownership semantics — Sharko reads only state Sharko provably wrote. Maintainer reversed this 2026-05-14 because:
+
+- `argocdProvider` is **read-only** of the ArgoCD Secret. The ownership label V125-1-8 introduces does not affect a read-only consumer — the label gates *write/delete* operations, not *reads*.
+- Today's `register-cluster` flow already creates the ArgoCD cluster Secret on every dev install, so V125-1-10 has valid data to read against immediately. There is no "pre-V125-1-8 data won't exist" problem.
+- Test is broken on every fresh self-hosted/dev install in v1.24. Architectural ordering preference loses to "broken UX in production-class installs."
+- Pre-V125-1-8 risk: `argocdProvider` may read a Secret Sharko didn't create (e.g., in adopt scenarios) — mitigated because today's behavior with un-bridged stores is no different. The `argocdProvider` returns "not found" for missing Secrets and falls back gracefully. Post-V125-1-8 the ownership label tightens this so the provider only reads Sharko-managed Secrets.
 
 **Why this slots cleanly in:**
 
 - The `CredentialsProvider` interface already exists for vault / AWS-SM / file-store. `argocdProvider` is one more implementation, no architectural shift.
-- Sharko already has RBAC to read the `argocd` ns Secret (gets it as part of V125-1-8).
-- Test no longer requires a separate secrets backend on the active connection — the connection's "credentials store" defaults to "the ArgoCD cluster Secret you already wrote." Dev installs (kind/minikube) just work with no extra config.
+- Sharko already has (or will have) RBAC to read the `argocd` ns Secret.
+- Test no longer requires a separate secrets backend on the active connection — the connection's "credentials store" defaults to "the ArgoCD cluster Secret you already wrote." Self-hosted K8s production installs (and dev installs like kind/minikube) just work with no extra config.
 - For cloud-auth clusters (`awsAuthConfig` / `execProviderConfig` shapes), `argocdProvider` returns the same actionable error as §2.2 routing — those paths still need their type-specific provider work, scoped out of v1.x.
-
-**Why after V125-1-8 specifically:** before V125-1-8, ArgoCD cluster Secrets were created via the orchestrator's pre-merge code paths (decisions varied by provider). The "Sharko owns this Secret" assertion is post-V125-1-8 only. Reading-from-Secret semantics are clean iff we wrote it; otherwise we'd be effectively adopting whatever's there, which decision C in the gitops-stance doc explicitly forbids.
 
 ---
 
@@ -91,15 +105,26 @@ The pill is a small React component that takes the `server` URL string and retur
 
 ## 4. Sequence and hard dependencies
 
+**Updated 2026-05-14:** maintainer reordered V125-1-10 to ship first — see §2.4 for the rationale.
+
 ```
-V125-1-9 (schema envelope)  →  V125-1-8 (reconciler + ownership label)  →  V125-1-7 tightening (label-aware orphan filter)  →  V125-1-10 (this work)
+V125-1-10 (this work — UNBLOCKED Test in self-hosted/dev installs; shipped first)
+   ↓
+V125-1-9  (schema envelope + JSON Schema)
+   ↓
+V125-1-8  (cluster reconciler + ownership label)
+   ↓
+V125-1-7 tightening (label-aware orphan filter)
+   ↓
+V125-2    (cleanup: deprecate KubernetesSecretProvider.GetCredentials, retire dead adopt code)
 ```
 
+- **V125-1-10 first:** read-only of the ArgoCD Secret; ownership-label dependency on V125-1-8 doesn't apply for a read-only consumer. Pre-V125-1-8 risk is that `ArgoCDProvider` might read a Secret Sharko didn't create in adopt scenarios — mitigated because today's behavior with un-bridged stores is no different (returns "not found" and falls back gracefully).
 - **V125-1-9 → V125-1-8:** the reconciler must read against a stable validated contract; bad YAML = silent reconcile failures (per gitops-stance §11). Already the locked V125 sequence.
-- **V125-1-8 → V125-1-7 tightening:** the orphan filter can only tighten to "Sharko-labeled only" once V125-1-8 has placed the ownership label.
-- **V125-1-7 tightening → V125-1-10:** `argocdProvider` reads from Secrets whose lifecycle is now fully under Sharko's reconciler — no race against orphan cleanup, no risk of reading half-managed state.
+- **V125-1-8 → V125-1-7 tightening:** the orphan filter can only tighten to "Sharko-labeled only" once V125-1-8 has placed the ownership label. After V125-1-8, `ArgoCDProvider` also gains label-gated reads as a defense-in-depth follow-up.
+- **V125-1-7 tightening → V125-2:** `KubernetesSecretProvider.GetCredentials` is deprecated docs-only in v1.25 (operators with corporate Vault adopt-flow installs depend on it); real removal happens in V125-2 cleanup alongside dead adopt code.
 
-V125-1-10 is the new epic ID for this work (Test redesign + `argocdProvider` + UI badge bundled). To be planned via BMAD after V125-1-7 tightening lands.
+V125-1-10 is the epic ID for this work (Test redesign + `argocdProvider` + UI badge bundled). Planning artifact at `.bmad/output/planning-artifacts/epics-v125-1-10.md`.
 
 ---
 

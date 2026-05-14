@@ -65,6 +65,8 @@ nav:
     - Supply Chain: operator/supply-chain.md
     - Catalog Sources: operator/catalog-sources.md
     - Catalog Trust Policy: operator/catalog-trust-policy.md
+    - Cluster Connectivity Model: operator/cluster-connectivity-model.md
+    - AWS IAM Cluster Auth: operator/aws-iam-cluster-auth.md
     - Audit Log: operator/audit-log.md
     - Troubleshooting: operator/troubleshooting.md
   - CLI Reference:
