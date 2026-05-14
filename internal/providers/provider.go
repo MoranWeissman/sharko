@@ -2,7 +2,11 @@ package providers
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
+
+	"k8s.io/client-go/rest"
 )
 
 // SecretProvider abstracts fetching raw secret values from an external backend
@@ -45,15 +49,35 @@ type ClusterInfo struct {
 }
 
 // Config holds provider configuration, read from server-side env vars / Helm values.
+//
+// Type values (case-sensitive):
+//   - "argocd"                                 — default in v1.25+ when in-cluster; reads from ArgoCD cluster Secrets in argocd namespace
+//   - "k8s-secrets" / "kubernetes"             — reads kubeconfigs from K8s Secrets (deprecated for cluster creds in v1.25; remove in V125-2)
+//   - "aws-sm" / "aws-secrets-manager"         — AWS Secrets Manager
+//   - "gcp" / "gcp-sm" / "google-secret-manager" — GCP Secret Manager
+//   - "azure" / "azure-kv" / "azure-key-vault" — Azure Key Vault
+//   - ""                                       — auto-default: returns "argocd" when running in-cluster (rest.InClusterConfig succeeds), else returns the legacy "no provider configured" error so out-of-cluster dev installs still surface the existing actionable message
 type Config struct {
-	Type      string // "aws-sm" or "k8s-secrets"
+	Type      string // see doc comment for valid values
 	Region    string // AWS region (for aws-sm)
 	Prefix    string // Secret name prefix, e.g. "clusters/" (for aws-sm)
-	Namespace string // K8s namespace holding secrets (for k8s-secrets)
+	Namespace string // K8s namespace holding secrets (for k8s-secrets / argocd)
 	RoleARN   string // default IAM role to assume for EKS token generation (aws-sm only)
 }
 
+// inClusterConfigFn is indirection over rest.InClusterConfig so tests can
+// simulate "running in-cluster" / "running outside" without mutating the
+// KUBERNETES_SERVICE_HOST env var (which would race other tests in the same
+// binary). The auto-default branch in New() reads through this var.
+var inClusterConfigFn = rest.InClusterConfig
+
 // NewSecretProvider creates the appropriate SecretProvider for the given config.
+//
+// Note: Type "argocd" is REJECTED here on purpose. ArgoCDProvider is a
+// cluster-credentials-only provider (it supplies kubeconfigs from ArgoCD
+// cluster Secrets); it does NOT serve addon secret VALUES. Per the V125-1-10
+// design (OQ #2), addon secret values must continue to come from a real
+// secrets backend (vault / aws-sm / k8s-secrets / gcp-sm / azure-kv).
 func NewSecretProvider(cfg Config) (SecretProvider, error) {
 	switch cfg.Type {
 	case "k8s-secrets", "kubernetes":
@@ -64,6 +88,8 @@ func NewSecretProvider(cfg Config) (SecretProvider, error) {
 		return NewGCPSecretManagerProvider(cfg)
 	case "azure", "azure-kv", "azure-key-vault":
 		return NewAzureKeyVaultProvider(cfg)
+	case "argocd":
+		return nil, fmt.Errorf("argocd provider is cluster-credentials-only; configure a separate SecretProvider (vault, aws-sm, k8s-secrets, gcp-sm, azure-kv) for addon secret values")
 	case "":
 		return nil, fmt.Errorf("no secrets provider configured")
 	default:
@@ -72,6 +98,15 @@ func NewSecretProvider(cfg Config) (SecretProvider, error) {
 }
 
 // New creates the appropriate ClusterCredentialsProvider for the given config.
+//
+// Auto-default behavior (V125-1-10.2): when cfg.Type is empty, New() probes for
+// in-cluster K8s access via inClusterConfigFn (rest.InClusterConfig). On
+// success, it returns an ArgoCDProvider so dev installs work out of the box
+// without an explicit provider configured. When the probe returns
+// rest.ErrNotInCluster (running outside K8s), the legacy "no secrets provider
+// configured" error is preserved verbatim so existing out-of-cluster callers
+// still get an actionable message. Other probe errors (malformed in-cluster
+// config) are surfaced as today.
 func New(cfg Config) (ClusterCredentialsProvider, error) {
 	switch cfg.Type {
 	case "k8s-secrets", "kubernetes":
@@ -82,9 +117,22 @@ func New(cfg Config) (ClusterCredentialsProvider, error) {
 		return NewGCPSecretManagerProvider(cfg)
 	case "azure", "azure-kv", "azure-key-vault":
 		return NewAzureKeyVaultProvider(cfg)
+	case "argocd":
+		return NewArgoCDProvider(cfg)
 	case "":
+		// Auto-default: argocd when in-cluster, legacy error otherwise.
+		if _, err := inClusterConfigFn(); err == nil {
+			slog.Info("[provider] auto-defaulting to argocd (no provider configured + in-cluster K8s detected)", "namespace", "argocd")
+			return NewArgoCDProvider(cfg)
+		} else if !errors.Is(err, rest.ErrNotInCluster) {
+			// Distinguishable from "not in cluster": the in-cluster probe
+			// failed for some other reason (bad SA token, malformed config).
+			// Surface it so operators can fix it instead of silently falling
+			// back to the legacy error.
+			return nil, fmt.Errorf("auto-default provider probe failed: %w", err)
+		}
 		return nil, fmt.Errorf("no secrets provider configured — configure provider in Settings or via API")
 	default:
-		return nil, fmt.Errorf("unknown provider type %q — valid options: aws-sm, k8s-secrets, gcp-sm, azure-kv", cfg.Type)
+		return nil, fmt.Errorf("unknown provider type %q — valid options: argocd, aws-sm, k8s-secrets, gcp-sm, azure-kv", cfg.Type)
 	}
 }
