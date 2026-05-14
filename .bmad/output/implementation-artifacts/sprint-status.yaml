@@ -40,7 +40,7 @@
 # - Tagging: NO tags cut reflexively — merge PRs to main when green; tag only when user explicitly asks (see feedback_release_cadence.md)
 
 generated: 2026-04-20
-last_updated: 2026-05-12 (bug-sweep sprint opened pre-V125-1-9; V124-15..V125-1-7 reconciled to done after sprint-status drift detected)
+last_updated: 2026-05-14 (V125-1-10 epic inserted BEFORE V125-1-9 — Test cluster broken on dev installs forced ArgoCDProvider sprint forward; sequence flip per maintainer; 6 OQs block dispatch until resolved)
 project: sharko
 project_key: NOKEY
 tracking_system: file-system
@@ -632,6 +632,15 @@ development_status:
   #            V125-1-8 reconciler operational safety.
   #            See docs/design/2026-05-12-v125-architectural-todos.md §4.
   V125-1-9-schema-envelope-and-json-schema: backlog
+  # V125-1-10: NEW (planned 2026-05-14) — ArgoCDProvider + per-type Test
+  #            routing + UI badge. Pulled FORWARD per maintainer 2026-05-14
+  #            ahead of V125-1-9 / V125-1-8 because Test cluster is broken
+  #            on every fresh dev install. Read-only of ArgoCD Secret →
+  #            ownership-label dependency on V125-1-8 doesn't apply for
+  #            read-only consumer. Full epic at epic-V125-1-10-argocd-
+  #            provider below. See docs/design/2026-05-13-cluster-
+  #            connectivity-test-redesign.md.
+  V125-1-10-argocd-provider-and-test-redesign: backlog
   epic-V125-1-retrospective: optional
 
   # Epic V125-3: Maintainer DX — kind-target subcommand
@@ -706,6 +715,113 @@ development_status:
   # subcommand-level flag; promoting to persistent root means every subcommand
   # (login, ready, port-forward, etc.) inherits it consistently. Low risk.
   # Listed as a question to maintainer in the planning summary.
+
+  # ============================================================
+  # V125-1-10 — ArgoCDProvider + per-type Test routing + UI badge
+  # ============================================================
+  # Planned 2026-05-14. Source: docs/design/2026-05-13-cluster-connectivity-
+  # test-redesign.md (the canonical V125-1-10 design contract — APPROVED
+  # 2026-05-13). Planning artifact: .bmad/output/planning-artifacts/epics-
+  # v125-1-10.md. Cross-references: docs/design/2026-04-07-secrets-provider-
+  # design.md (existing two-interface architecture this epic extends).
+  #
+  # Why this sprint NOW (and BEFORE V125-1-9): maintainer hit Test cluster
+  # broken on a fresh dev install 2026-05-14 ("i think test on the cluster
+  # is not working again"). Root cause: internal/providers/k8s_secrets.go
+  # GetCredentials looks for a Secret in `sharko` namespace named after the
+  # cluster, but register-cluster only creates the ArgoCD-format Secret in
+  # `argocd` namespace. Two stores, never bridged.
+  #
+  # Sequence flip rationale (was locked "after V125-1-8" per design doc
+  # §2.4 + §4): V125-1-10 is READ-ONLY of the ArgoCD Secret. The ownership
+  # label V125-1-8 introduces does not affect a read-only consumer.
+  # register-cluster already creates the ArgoCD Secret on every dev install
+  # — V125-1-10 has valid data to read against today. Maintainer's de-facto
+  # reorder ("i want you to fix it of course" 2026-05-14) trumps the
+  # original ordering preference because Test being broken UX in production-
+  # class dev installs > architectural-cleanliness ordering. Pre-V125-1-8
+  # risk: ArgoCDProvider may read a Secret Sharko didn't create (adopt
+  # scenarios) — mitigated because today's behavior with un-bridged stores
+  # is no different. V125-1-8 later tightens this to label-gated.
+  #
+  # New sequence (effective 2026-05-14):
+  #   V125-1-10 → V125-1-9 → V125-1-8 → V125-1-7 tightening → V125-2 cleanup
+  #
+  # Scope: new ArgoCDProvider implementing providers.ClusterCredentialsProvider;
+  # reads from argocd namespace; routes Test per ArgoCD Secret config JSON
+  # shape (bearerToken / awsAuthConfig / execProviderConfig) with stable
+  # error codes; UI hostname-derived type-badge component (render-time,
+  # never stored); UI per-error-type rendering for Test failures.
+  #
+  # Six stories. Wave A (10.1 + 10.4) parallel; B/C/D/E serial. ~2-3 dev
+  # days. Single PR dev/v125-1-10-argocd-provider → main. NO release / NO
+  # tag — V125 architectural epics ship to dev builds.
+  #
+  # SIX OPEN QUESTIONS — RESOLVED 2026-05-14 (maintainer: "I would go with your
+  # recommendations"). Locked answers:
+  #   1. Default provider for fresh installs: argocd when in-cluster + no
+  #      provider configured; 503 fallback otherwise
+  #   2. ArgoCDProvider implements SecretProvider too: NO, cluster-creds-only.
+  #      Addon secrets stay on existing Vault/AWS-SM/k8s/gcp-sm/azure-kv
+  #      providers (2026-04-07 two-interface architecture preserved end-to-end)
+  #   3. KubernetesSecretProvider.GetCredentials backward compat: STAYS with
+  #      docs-only deprecation note; real removal V125-2
+  #   4. Naming: ArgoCDProvider in internal/providers/argocd_provider.go
+  #   5. Test retry on missing Secret: DEFER to V125-1-10.x follow-up
+  #   6. UI badge in-scope: SAME PR, parallel-dispatch with 10.1 in Wave A
+  # Dispatch UNBLOCKED — proceed to Wave A.
+  #
+  # Lean workflow + role files: every dispatch embeds .claude/team/architect.md
+  # (10.1/10.2/10.3) + .claude/team/go-expert.md (10.1-10.3) + .claude/team/
+  # k8s-expert.md (10.1/10.2 — ArgoCD Secret structure) + .claude/team/
+  # frontend-expert.md (10.4/10.5) + .claude/team/test-engineer.md (every) +
+  # .claude/team/docs-writer.md (10.6) + .claude/team/code-reviewer.md (final
+  # merge — high blast radius, touches every dev install's Test path).
+  # Worktree-isolated per feedback_agent_dispatch_worktree_isolation memory.
+  # Single commit per story; commit prefix feat(providers): / feat(ui): /
+  # docs(design):.
+  epic-V125-1-10-argocd-provider: backlog
+  # 10.1 ArgoCDProvider implementation + auth-method detection. New
+  # internal/providers/argocd_provider.go implementing ClusterCredentialsProvider;
+  # reads argocd namespace cluster Secrets; parses config JSON; routes by
+  # bearerToken (return *Kubeconfig) / awsAuthConfig (ErrIAMRequired) /
+  # execProviderConfig (ErrExecUnsupported) with stable error codes. Unit
+  # tests via fake.NewSimpleClientset.
+  V125-1-10-1-argocd-provider-implementation-and-auth-detection: backlog
+  # 10.2 Provider factory wiring + auto-default for fresh installs. Update
+  # internal/providers/provider.go New switch to accept cfg.Type == "argocd";
+  # per maintainer OQ #1, default to argocd when in-cluster + no provider
+  # configured. Env var SHARKO_SECRETS_PROVIDER=argocd / Helm value
+  # provider.type: argocd. Settings UI picker shows ArgoCD (default) option.
+  V125-1-10-2-provider-factory-wiring-and-auto-default: backlog
+  # 10.3 Test endpoint integration + per-error-type routing + e2e tests.
+  # internal/api/clusters_discover.go:158 extended to surface new error_codes
+  # (argocd_provider_iam_required / argocd_provider_exec_unsupported /
+  # argocd_provider_unsupported_auth) via existing structured 503 envelope
+  # (BUG-035 fix from PR #323). e2e coverage in internal/e2e/
+  # cluster_lifecycle_test.go using existing kind harness. Swagger regen if
+  # @Failure annotation changed.
+  V125-1-10-3-test-endpoint-integration-and-e2e: backlog
+  # 10.4 UI ClusterTypeBadge component. Standalone ui/src/components/
+  # ClusterTypeBadge.tsx; props: server string; returns styled span per
+  # hostname → pill mapping (§2.3 of design doc). Renders in ClustersOverview,
+  # ClusterDetail, Dashboard. Tailwind theming; unit tests covering all 6
+  # hostname cases. INDEPENDENT of backend — parallel-dispatchable with 10.1.
+  V125-1-10-4-ui-cluster-type-badge-component: backlog
+  # 10.5 UI per-error-type rendering for Test failures. ui/src/services/
+  # api.ts type union extended for new error_codes from 10.3; toast renders
+  # branch-specific copy + action link (IAM setup guide deep-link for
+  # iam_required; "not supported in v1.x" for exec_unsupported; etc.).
+  # Build on BUG-035 toast pattern from PR #323. Existing no_secrets_backend
+  # path unchanged.
+  V125-1-10-5-ui-per-error-type-rendering-for-test-failures: backlog
+  # 10.6 Docs + sequence updates. Update design doc §4 sequence + §2.4
+  # "ships after V125-1-8" reflecting 2026-05-14 reorder. Update V125
+  # architectural-todos doc if it restates the sequence. Sync project_sharko_
+  # roadmap memory. Either new docs/site/operator/cluster-connectivity-model.md
+  # or extend secrets-backends.md. mkdocs --strict passes.
+  V125-1-10-6-docs-and-sequence-updates: backlog
+  epic-V125-1-10-argocd-provider-retrospective: optional
 
   # ============================================================
   # V125-1-9 — Schema envelope + JSON Schema (architectural epic)
