@@ -43,6 +43,7 @@ import type { TestClusterUnavailable } from '@/services/api';
 import type { ClusterComparisonResponse, AddonComparisonStatus, ConfigDiffResponse, SyncActivityEntry, VerifyStep } from '@/services/models';
 import { StatCard } from '@/components/StatCard';
 import { StatusBadge } from '@/components/StatusBadge';
+import { ClusterTypeBadge } from '@/components/ClusterTypeBadge';
 import { LoadingState } from '@/components/LoadingState';
 import { ErrorState } from '@/components/ErrorState';
 import { EmptyState } from '@/components/EmptyState';
@@ -638,9 +639,11 @@ export function ClusterDetail() {
       {/* Heading + cluster meta + actions */}
       <div className="flex items-start justify-between">
         <div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <h2 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">{data.cluster.name}</h2>
             <StatusBadge status={computedStatus} size="sm" />
+            {/* V125-1-10.4: cosmetic type pill derived from server hostname. */}
+            <ClusterTypeBadge server={data.cluster.server_url} />
           </div>
           <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
             Kubernetes cluster managed by ArgoCD — deployed addons, health, and configuration overrides.

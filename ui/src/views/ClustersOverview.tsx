@@ -46,6 +46,7 @@ import { LoadingState } from '@/components/LoadingState';
 import { ErrorState } from '@/components/ErrorState';
 import { RoleGuard } from '@/components/RoleGuard';
 import { StatusBadge, isClusterStatus } from '@/components/StatusBadge';
+import { ClusterTypeBadge } from '@/components/ClusterTypeBadge';
 import { ClusterStatusLegend } from '@/components/ClusterStatusLegend';
 import { DiagnoseModal } from '@/components/DiagnoseModal';
 import { ArgoCDStatusBanner } from '@/components/ArgoCDStatusBanner';
@@ -1671,6 +1672,8 @@ export function ClustersOverview() {
                         <span className="inline-flex items-center gap-1.5">
                           {cluster.name}
                           {isInCluster && <Info className="h-4 w-4 text-blue-400" />}
+                          {/* V125-1-10.4: cosmetic type pill derived from server hostname. */}
+                          <ClusterTypeBadge server={cluster.server_url} compact />
                         </span>
                       </td>
                       <td className="px-6 py-3">
@@ -1750,9 +1753,11 @@ export function ClustersOverview() {
                 >
                   <div className="mb-3 flex items-start justify-between">
                     <h3 className="text-sm font-bold text-[#0a2a4a] dark:text-gray-100">
-                      <span className="inline-flex items-center gap-1.5">
+                      <span className="inline-flex flex-wrap items-center gap-1.5">
                         {cluster.name}
                         {isInCluster && <Info className="h-4 w-4 text-blue-400" />}
+                        {/* V125-1-10.4: cosmetic type pill derived from server hostname. */}
+                        <ClusterTypeBadge server={cluster.server_url} compact />
                       </span>
                     </h3>
                     <div className="flex items-center gap-1">
