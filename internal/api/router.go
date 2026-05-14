@@ -314,34 +314,50 @@ func (s *Server) ReinitializeFromConnection() {
 	slog.Info("[startup] active connection found", "name", conn.Name, "has_provider", conn.Provider != nil)
 
 	// Reinit secrets provider from connection.
-	if pc := conn.Provider; pc != nil && pc.Type != "" {
-		slog.Info("[startup] initializing provider", "type", pc.Type, "region", pc.Region)
-		namespace := pc.Namespace
+	//
+	// V125-1-10.7: gating providers.New on pc.Type != "" silently bypassed
+	// the V125-1-10.2 auto-default (in-cluster + empty type → ArgoCDProvider),
+	// which left credProvider nil after a connection update where the user
+	// picked "None" in the Settings dropdown. We now ALWAYS call providers.New
+	// when there is an active connection so the auto-default path can fire.
+	// providers.New itself returns the legacy "no provider configured" error
+	// out-of-cluster — that path leaves credProvider unchanged (logged at info)
+	// and the existing BUG-035 surface still applies in the Test handler.
+	pc := conn.Provider
+	{
+		namespace := os.Getenv("SHARKO_NAMESPACE")
 		if namespace == "" {
-			namespace = os.Getenv("SHARKO_NAMESPACE")
-			if namespace == "" {
-				namespace = "sharko"
-			}
+			namespace = "sharko"
 		}
-
-		cfg := providers.Config{
-			Type:      pc.Type,
-			Region:    pc.Region,
-			Prefix:    pc.Prefix,
-			Namespace: namespace,
-			RoleARN:   pc.RoleARN,
+		cfg := providers.Config{Namespace: namespace}
+		if pc != nil {
+			if pc.Namespace != "" {
+				namespace = pc.Namespace
+			}
+			cfg = providers.Config{
+				Type:      pc.Type,
+				Region:    pc.Region,
+				Prefix:    pc.Prefix,
+				Namespace: namespace,
+				RoleARN:   pc.RoleARN,
+			}
+			if pc.Type != "" {
+				slog.Info("[startup] initializing provider", "type", pc.Type, "region", pc.Region)
+			} else {
+				slog.Info("[startup] no explicit provider type — providers.New will auto-default")
+			}
+		} else {
+			slog.Info("[startup] no provider config in connection — providers.New will auto-default")
 		}
 
 		p, err := providers.New(cfg)
 		if err != nil {
-			slog.Warn("[startup] failed to create provider from connection", "error", err)
+			slog.Info("[startup] no credentials provider configured", "reason", err)
 		} else {
 			s.credProvider = p
 			s.providerCfg = &cfg
 			slog.Info("[startup] provider reinitialized from connection", "type", cfg.Type, "region", cfg.Region, "prefix", cfg.Prefix)
 		}
-	} else {
-		slog.Info("[startup] no provider config in connection")
 	}
 
 	// Reinit GitOps config from connection.
