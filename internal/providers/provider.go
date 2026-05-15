@@ -121,9 +121,13 @@ func New(cfg Config) (ClusterCredentialsProvider, error) {
 		return NewArgoCDProvider(cfg)
 	case "":
 		// Auto-default: argocd when in-cluster, legacy error otherwise.
-		if _, err := inClusterConfigFn(); err == nil {
+		// We capture the *rest.Config returned by the probe and pass it through
+		// to NewArgoCDProviderWithRESTConfig so the test seam (inClusterConfigFn)
+		// flows end-to-end. Calling NewArgoCDProvider here would re-probe
+		// rest.InClusterConfig directly and bypass the seam (V125-1-10.9).
+		if restCfg, err := inClusterConfigFn(); err == nil {
 			slog.Info("[provider] auto-defaulting to argocd (no provider configured + in-cluster K8s detected)", "namespace", "argocd")
-			return NewArgoCDProvider(cfg)
+			return NewArgoCDProviderWithRESTConfig(cfg, restCfg)
 		} else if !errors.Is(err, rest.ErrNotInCluster) {
 			// Distinguishable from "not in cluster": the in-cluster probe
 			// failed for some other reason (bad SA token, malformed config).

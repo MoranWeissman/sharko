@@ -58,8 +58,6 @@ const argoCDClusterTypeSelector = "argocd.argoproj.io/secret-type=cluster"
 //  1. SHARKO_ARGOCD_NAMESPACE env var (for non-standard ArgoCD installs)
 //  2. hardcoded "argocd" (the standard install location)
 func NewArgoCDProvider(cfg Config) (*ArgoCDProvider, error) {
-	namespace := resolveArgoCDNamespace(cfg)
-
 	restCfg, err := rest.InClusterConfig()
 	if err != nil {
 		// Fall back to default kubeconfig (local dev).
@@ -68,6 +66,21 @@ func NewArgoCDProvider(cfg Config) (*ArgoCDProvider, error) {
 			return nil, fmt.Errorf("creating k8s config for argocd provider: %w", err)
 		}
 	}
+
+	return NewArgoCDProviderWithRESTConfig(cfg, restCfg)
+}
+
+// NewArgoCDProviderWithRESTConfig creates a provider from an already-resolved
+// *rest.Config. This is the seam used by the auto-default path in New() (see
+// provider.go), which probes for in-cluster config via the mockable
+// inClusterConfigFn — without this constructor, NewArgoCDProvider would
+// re-probe rest.InClusterConfig directly, bypassing the test seam and forcing
+// a ~/.kube/config fallback that doesn't exist in CI runners (V125-1-10.9).
+//
+// Callers that have NOT already obtained a *rest.Config should use
+// NewArgoCDProvider, which retains the probe + kubeconfig-fallback behavior.
+func NewArgoCDProviderWithRESTConfig(cfg Config, restCfg *rest.Config) (*ArgoCDProvider, error) {
+	namespace := resolveArgoCDNamespace(cfg)
 
 	client, err := kubernetes.NewForConfig(restCfg)
 	if err != nil {
