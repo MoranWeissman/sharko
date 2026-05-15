@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -37,14 +38,26 @@ type ArgoCDProvider struct {
 const argoCDClusterTypeSelector = "argocd.argoproj.io/secret-type=cluster"
 
 // NewArgoCDProvider creates a provider that reads ArgoCD cluster Secrets from
-// cfg.Namespace (default "argocd"). Mirrors NewKubernetesSecretProvider: prefers
-// in-cluster config, falls back to ~/.kube/config for local dev.
+// the namespace where ArgoCD itself is installed. Mirrors NewKubernetesSecretProvider:
+// prefers in-cluster config, falls back to ~/.kube/config for local dev.
+//
+// IMPORTANT: cfg.Namespace is intentionally IGNORED here (V125-1-10.8). The
+// ProviderConfig.Namespace field is shared by two orthogonal concerns:
+//
+//   - For the "k8s-secrets" backend it means "the K8s namespace where the
+//     operator pre-populates kubeconfig Secrets" (default "sharko").
+//   - For the "argocd" backend it would mean "the K8s namespace where ArgoCD
+//     itself runs" (always "argocd" on standard installs).
+//
+// Reusing the same field for both leads to cross-contamination: a user who
+// switches the UI dropdown from k8s-secrets to argocd ends up with a stale
+// "sharko" value carried over, and ArgoCDProvider then looks in the wrong
+// namespace. Until ProviderConfig is split into per-concern fields (scheduled
+// for V125-1-11+), this constructor resolves the namespace independently:
+//
+//  1. SHARKO_ARGOCD_NAMESPACE env var (for non-standard ArgoCD installs)
+//  2. hardcoded "argocd" (the standard install location)
 func NewArgoCDProvider(cfg Config) (*ArgoCDProvider, error) {
-	namespace := cfg.Namespace
-	if namespace == "" {
-		namespace = "argocd"
-	}
-
 	restCfg, err := rest.InClusterConfig()
 	if err != nil {
 		// Fall back to default kubeconfig (local dev).
@@ -53,6 +66,21 @@ func NewArgoCDProvider(cfg Config) (*ArgoCDProvider, error) {
 			return nil, fmt.Errorf("creating k8s config for argocd provider: %w", err)
 		}
 	}
+
+	return NewArgoCDProviderWithRESTConfig(cfg, restCfg)
+}
+
+// NewArgoCDProviderWithRESTConfig creates a provider from an already-resolved
+// *rest.Config. This is the seam used by the auto-default path in New() (see
+// provider.go), which probes for in-cluster config via the mockable
+// inClusterConfigFn — without this constructor, NewArgoCDProvider would
+// re-probe rest.InClusterConfig directly, bypassing the test seam and forcing
+// a ~/.kube/config fallback that doesn't exist in CI runners (V125-1-10.9).
+//
+// Callers that have NOT already obtained a *rest.Config should use
+// NewArgoCDProvider, which retains the probe + kubeconfig-fallback behavior.
+func NewArgoCDProviderWithRESTConfig(cfg Config, restCfg *rest.Config) (*ArgoCDProvider, error) {
+	namespace := resolveArgoCDNamespace(cfg)
 
 	client, err := kubernetes.NewForConfig(restCfg)
 	if err != nil {
@@ -69,6 +97,32 @@ func newArgoCDProviderWithClient(client kubernetes.Interface, namespace string) 
 		namespace = "argocd"
 	}
 	return &ArgoCDProvider{client: client, namespace: namespace}
+}
+
+// resolveArgoCDNamespace decides which K8s namespace the ArgoCDProvider should
+// query, ignoring cfg.Namespace (see NewArgoCDProvider's docstring for why).
+// Resolution order:
+//
+//  1. SHARKO_ARGOCD_NAMESPACE env var (for non-standard ArgoCD installs)
+//  2. hardcoded "argocd" (the standard install location)
+//
+// Emits a one-shot WARN log when cross-contamination is detected
+// (cfg.Namespace is non-empty AND not equal to the resolved namespace) so a
+// future operator hitting the same gotcha sees exactly what happened.
+func resolveArgoCDNamespace(cfg Config) string {
+	resolved := os.Getenv("SHARKO_ARGOCD_NAMESPACE")
+	if resolved == "" {
+		resolved = "argocd"
+	}
+
+	if cfg.Namespace != "" && cfg.Namespace != resolved {
+		slog.Warn("[provider] cfg.Namespace ignored for argocd type — argocd reads from resolved namespace (cross-contamination from prior k8s-secrets config; will be resolved when ProviderConfig is split in V125-1-11+)",
+			"cfg_namespace", cfg.Namespace,
+			"resolved_namespace", resolved,
+		)
+	}
+
+	return resolved
 }
 
 // Stable wire-error codes returned in API responses (Story 10.3 will lift these
