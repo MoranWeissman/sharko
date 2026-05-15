@@ -26,6 +26,7 @@ Three-tier framing:
 |---|---|---|---|
 | **Unit / component** | `internal/**/*_test.go`, `ui/src/**/__tests__/` | every PR (`ci.yml`) | seconds |
 | **In-process e2e** | `tests/e2e/` with `make test-e2e-fast` | local + opt-in | ~30 s |
+| **Helm-mode e2e (V125-1-13)** | Wave-D `cluster_test_*` files with `make test-e2e-helm` | every PR (`e2e.yml::helm-mode-e2e`) | ~5–8 min |
 | **Full e2e (kind + argocd)** | `tests/e2e/` with `make test-e2e` | label `e2e`, nightly, manual | ~10–15 min |
 
 Every file in `tests/e2e/` carries the `//go:build e2e` build tag, so the
@@ -72,7 +73,7 @@ The harness exposes a small set of primitives. Tests compose them as needed:
 |---|---|
 | `harness.ProvisionTopology(t, req)` | Provision a kind topology (1 mgmt + N targets). Sentinel-labelled for safe destroy. |
 | `harness.InstallArgoCD(t, c)` | Install ArgoCD's stable release into a kind cluster. |
-| `harness.StartSharko(t, cfg)` | Boot Sharko in-process (default) via `httptest.NewServer`, or in helm mode (deferred — see Known limitations). |
+| `harness.StartSharko(t, cfg)` | Boot Sharko in-process (default) via `httptest.NewServer`, or via `helm install` into a kind cluster (`SharkoModeHelm` / `E2E_SHARKO_MODE=helm`; see [Full-fidelity Helm mode](#full-fidelity-helm-mode-v125-1-13)). |
 | `harness.StartGitFake(t)` | In-memory `go-git` HTTP smart-protocol server hosting one repo. The URL fed into Sharko's git config. |
 | `harness.StartGitMock(t)` | In-memory `gitprovider.GitProvider` mock — overrides the real GitHub API for read/write paths. |
 | `harness.NewClient(t, sharko, user, pass)` | Typed HTTP client that owns auth state (login + retry-on-401). |
@@ -171,6 +172,261 @@ carries `e2e.sharko.io/test=true` plus run-id and role labels.
 ONLY those carrying the sentinel — your dev cluster from
 `scripts/sharko-dev.sh` is never touched. Don't broaden the destroy
 criteria; the sentinel is the safety contract.
+
+## Full-fidelity Helm mode (V125-1-13)
+
+Helm mode boots a real Sharko Docker image into a kind cluster via
+`helm install` and talks to it through a `kubectl port-forward`. It catches
+integration bugs that in-process mode cannot — UI dropdown ↔ backend factory
+drift, server-startup gating, ProviderConfig field reuse across ReinitializeFromConnection,
+ArgoCD secret reconciliation timing — at the cost of ~3–5 min per test
+(docker build dominates, ~1–3 min cold; ~20s warm via the
+`SHARKO_E2E_IMAGE_TAG` cache).
+
+Three primitives carry the mode end-to-end:
+
+| Primitive | File | Role |
+|---|---|---|
+| `installSharkoHelm(t, kindCluster, cfg)` | `tests/e2e/harness/sharko_helm.go` | docker build → kind load → `helm upgrade --install` → `kubectl rollout status`. Returns `*HelmHandle`. |
+| `bootstrapHelmSharkoAuth(t, helmHandle)` | `tests/e2e/harness/sharko_helm_auth.go` | Reads `sharko-initial-admin-secret` via client-go → spawns `kubectl port-forward svc/sharko -n <ns> :80` (random local port) → polls `/api/v1/health` → POSTs `/api/v1/auth/login` for a JWT. Returns `*AuthBundle`. |
+| `StartSharko(t, cfg)` with `cfg.Mode = SharkoModeHelm` | `tests/e2e/harness/sharko.go` | Wires the two primitives above into the same `*Sharko` shape the in-process path returns, so the typed API client (`apiclient.go`) is mode-agnostic. |
+
+### When to use Helm mode
+
+- Testing the **auto-default provider path** — `rest.InClusterConfig()` only
+  succeeds inside a real pod, so the V125-1-10.7 ungate fix is invisible to
+  in-process tests.
+- Testing **UI ↔ backend contract end-to-end** — provider-type dropdown
+  changes, registration wizard flows that hit the live router stack.
+- Reproducing **operator-flow bugs** — port-forward, admin-secret bootstrap,
+  ArgoCD reconciliation timing, RBAC against a real ServiceAccount.
+- **Regression-pinning** a fix that came out of a live dev install — the
+  three Wave-D tests (`TestClusterTest_*`) are exactly this: each pins a
+  V125-1-10.x bug that the in-process suite missed.
+
+### When NOT to use Helm mode
+
+- Pure in-process logic tests — use the default `SharkoModeInProcess`.
+- Anything that doesn't need the real K8s API surface.
+- Any test where in-process can prove the same invariant in 30s vs Helm
+  mode's 5 min — Helm mode is for things in-process *cannot* prove.
+
+### Running locally
+
+Prerequisites (all on `PATH`):
+
+- `docker` — daemon must be reachable (the test skips with a clear message
+  if `docker info` fails).
+- `kind` — install via `brew install kind` or
+  [kind.sigs.k8s.io](https://kind.sigs.k8s.io/).
+- `helm` — install via `brew install helm`.
+- `kubectl` — install via `brew install kubectl` or your distro's package.
+
+Then:
+
+```bash
+make test-e2e-helm
+```
+
+This runs the three Wave-D Helm-mode tests
+(`TestClusterTest_ArgoCDProvider`,
+`TestClusterTest_ProviderAutoDefault_HappyPath`,
+`TestClusterTest_ProviderCrossContamination_NamespaceSwitch`) with
+`E2E_SHARKO_MODE=helm` and a `SHARKO_E2E_IMAGE_TAG` pinned to your current
+short SHA, so back-to-back runs at the same commit reuse the previously-built
+image (the harness probes containerd via `docker exec <kind>-control-plane
+crictl images`).
+
+To re-target a single Helm-mode test:
+
+```bash
+SHARKO_E2E_IMAGE_TAG=e2e-$(git rev-parse --short HEAD) \
+  E2E_SHARKO_MODE=helm \
+  GOTMPDIR=/tmp \
+  go test -tags=e2e -timeout=20m -v \
+  -run '^TestClusterTest_ProviderAutoDefault_HappyPath$' \
+  ./tests/e2e/lifecycle/...
+```
+
+### Writing a Helm-mode test
+
+The minimum shape (lifted from
+`tests/e2e/lifecycle/cluster_test_provider_autodefault_test.go` —
+the V125-1-13.5 regression pin for V125-1-10.7's `serve.go` ungate):
+
+```go
+//go:build e2e
+
+package lifecycle
+
+import (
+    "os/exec"
+    "testing"
+    "time"
+
+    "github.com/MoranWeissman/sharko/tests/e2e/harness"
+)
+
+func TestMyHelmModeRegression(t *testing.T) {
+    // ---- prereq guards: skip cleanly when host can't run kind+helm ----
+    if _, err := exec.LookPath("kind"); err != nil {
+        t.Skip("kind not installed; install via `brew install kind`")
+    }
+    if _, err := exec.LookPath("kubectl"); err != nil {
+        t.Skip("kubectl not installed")
+    }
+    if _, err := exec.LookPath("docker"); err != nil {
+        t.Skip("docker not installed (required by kind)")
+    }
+    if _, err := exec.LookPath("helm"); err != nil {
+        t.Skip("helm not installed; install via `brew install helm`")
+    }
+    if out, err := exec.Command("docker", "info").CombinedOutput(); err != nil {
+        t.Skipf("docker daemon not reachable: %v\noutput: %s", err, out)
+    }
+
+    // ---- safety: clean up stale e2e clusters from prior failed runs ----
+    harness.DestroyAllStaleE2EClusters(t)
+
+    // ---- provision topology + install ArgoCD ----
+    clusters := harness.ProvisionTopology(t, harness.ProvisionRequest{NumTargets: 0})
+    t.Cleanup(func() { harness.DestroyTopology(t, clusters) })
+    mgmt := clusters[0]
+    harness.WaitClusterReady(t, mgmt, 90*time.Second)
+    harness.InstallArgoCD(t, mgmt)
+
+    // ---- start Sharko via Helm — the load-bearing line is Mode + MgmtCluster ----
+    gitfake := harness.StartGitFake(t)
+    sharko := harness.StartSharko(t, harness.SharkoConfig{
+        Mode:        harness.SharkoModeHelm,
+        MgmtCluster: &mgmt,
+        GitFake:     gitfake,
+        // HelmOverrides: extra `--set key=value` pairs; nil keeps chart defaults.
+    })
+    sharko.WaitHealthy(t, 60*time.Second)
+    admin := harness.NewClient(t, sharko)
+
+    // ---- assert against the live HTTP surface ----
+    var resp map[string]any
+    admin.GetJSON(t, "/api/v1/providers", &resp)
+    // ...
+}
+```
+
+Conventions:
+
+- Always include the **prereq + skip block** above. CI provisions all four
+  binaries; local laptops may not. An explicit `t.Skip` is the contract.
+- Always call **`harness.DestroyAllStaleE2EClusters(t)`** before
+  `ProvisionTopology` — a panicked previous run can leave kind clusters
+  behind that will starve docker of memory.
+- Use **`harness.SharkoModeHelm` explicitly** rather than relying on
+  `E2E_SHARKO_MODE=helm`. The env-var override is for `make test-e2e-helm`'s
+  blanket re-routing; per-test code should be unambiguous.
+- The typed API client (`apiclient.go`) is **mode-agnostic** — `admin.GetJSON`,
+  `admin.PostJSON`, `admin.Do` all work identically against the
+  port-forwarded URL.
+- Document **why** the test needs Helm mode in a comment near the top — the
+  in-process boot path is faster and reviewers will ask. The Wave-D files
+  are the canonical examples ("Why SharkoModeHelm is required" subsections).
+
+### Troubleshooting
+
+**Test hangs on `helm upgrade --install` for 5 minutes then fails with
+rollout timeout.** The Sharko pod failed to become Ready. The harness
+auto-dumps `kubectl describe deployment/sharko` + `kubectl logs --tail=30`
+on rollout-wait failure (see `dumpDeploymentState` in
+`tests/e2e/harness/sharko_helm.go`); read those lines in the failed test
+output. Most common cause: the Docker image build smuggled a config error
+(env var or flag) that the binary rejects on boot.
+
+**`docker build` runs every single test on a stable SHA.** The image cache
+key is `SHARKO_E2E_IMAGE_TAG`. `make test-e2e-helm` defaults it to
+`e2e-$(git rev-parse --short HEAD)`. If you're running `go test` directly
+without setting it, the harness generates a fresh `e2e-<8-hex>` tag per
+invocation — you pay the full build every time. Export
+`SHARKO_E2E_IMAGE_TAG=e2e-$(git rev-parse --short HEAD)` once in your shell
+and back-to-back runs hit the cache.
+
+**`port-forward never printed Forwarding line within 30s`.** Either the
+Sharko pod isn't actually Ready (rare — `helm --wait` + `kubectl rollout
+status` gate this) or another `kubectl port-forward` is fighting for the
+target svc. The harness uses the `:<svcPort>` random-local-port form
+(`startSharkoPortForward` in `sharko_helm_auth.go`) so the host-side bind
+should not collide; if it does, run `lsof -i -P | grep kubectl` to find
+the offender.
+
+**`secret <ns>/sharko-initial-admin-secret not found within 60s`.** The
+auth-store writes that Secret during boot, but the write can race a few
+hundred ms behind the readiness probe in practice. The harness already
+polls for 60s; if you're hitting this, the auth-store is wedged — check
+`kubectl logs -n sharko deployment/sharko` for an init failure (e.g.
+panic in `cmd/sharko/serve.go` writeInitialAdminSecretCLI path).
+
+**Test passes in `make test-e2e-helm` but the cluster `test` flow fails
+with "git unreachable".** Host ↔ pod network gotcha. The in-cluster Sharko
+pod cannot reach a `127.0.0.1:NNNN` URL on your laptop — that loopback
+address means localhost *inside the pod*. Tests that drive a register or
+sync flow through the real git path either (a) skip the assertion (the
+Wave-D `_HappyPath` test does this — it asserts on `/providers`
+introspection instead of round-tripping through git) or (b) front the
+GitFake with a routable address (an open follow-up; see Known
+limitations).
+
+**`make test-e2e-helm` fails clean on the first run, passes on the
+second.** Stale image in containerd from a previous SHA. `make kind-down`
+clears every `sharko-e2e-*` kind cluster (and with it the containerd
+storage). The cleanup hook runs on `t.Cleanup` so a panicked test or
+`^C` is the usual cause.
+
+### CI wiring
+
+`.github/workflows/e2e.yml` declares two jobs:
+
+| Job | Trigger | Runtime | What it runs |
+|---|---|---|---|
+| `e2e` | label `e2e`, nightly, manual | ~10–15 min | `make test-e2e-report` — full suite. |
+| `helm-mode-e2e` (V125-1-13.8) | **every** PR push | ~5–8 min | `make test-e2e-helm` — Wave-D subset. |
+
+The split is deliberate. `helm-mode-e2e` is unlabelled and PR-blocking
+because the maintainer chose runtime-honesty over speed: the real Helm
+boot path is the path that ships, so a PR that breaks it should not be
+mergeable. The `e2e` lane stays label-gated because its 15-min cost would
+make every PR slower without a proportional bug-catch payoff over the
+unit/UI matrix.
+
+`helm-mode-e2e` installs `kind` + `kubectl` + `helm` (via
+`azure/setup-helm@v4`) on top of the ubuntu-latest runner's pre-installed
+`docker`, sets `SHARKO_E2E_IMAGE_TAG=e2e-${{ github.sha }}` so the
+docker-build cache hits on workflow re-runs of the same commit, and uploads
+deployment + ArgoCD diagnostics on failure (see the `Diagnostics on
+failure` step in `e2e.yml`).
+
+### Provider-types contract (V125-1-13.7)
+
+A separate guard catches a class of UI ↔ backend drift that even Helm
+mode would miss without explicit assertions: the Settings →
+SecretsProviderSection dropdown is generated from the backend factory at
+build time, not hardcoded.
+
+| Concern | Location |
+|---|---|
+| Source of truth | `internal/providers/provider.go::New` switch |
+| Generator | `cmd/gen-provider-types` (parses the AST, emits TS) |
+| Generated artifact | `ui/src/generated/provider-types.ts` (gitignored? **No** — checked in) |
+| CI guard | `Provider Types Up To Date` job in `.github/workflows/ci.yml` |
+| Local regenerate | `make generate-provider-types` |
+
+When you add a new provider arm to the `New()` switch, also run
+`make generate-provider-types` and commit the regenerated TS file. CI's
+`provider-types-up-to-date` job runs the generator and `git diff
+--exit-code` — a stale TS file fails the PR with a one-line remediation
+hint pointing at this same command.
+
+The pattern mirrors the swagger-docs-up-to-date check
+(`make` runs `swag init`, CI diffs the result). Both are zero-runtime
+contracts — the generator is invoked at build/CI time, never at server
+start.
 
 ## CI integration
 
@@ -276,7 +532,10 @@ the job; both are declared at the top of `e2e.yml`.
 | `E2E_KIND_IMAGE` | `kindest/node:v1.31.0` | kindest/node image used by `ProvisionTopology`. Override to test against a different K8s minor. |
 | `E2E_KIND_BIN` | `kind` | Path to the `kind` binary. |
 | `E2E_KUBECTL_BIN` | `kubectl` | Path to the `kubectl` binary. |
-| `E2E_SHARKO_MODE` | `in-process` | `helm` switches `StartSharko` to the helm-install path (currently deferred — see Known limitations). |
+| `E2E_SHARKO_MODE` | `in-process` | `helm` switches `StartSharko` to the real `helm install` path (V125-1-13). See [Full-fidelity Helm mode](#full-fidelity-helm-mode-v125-1-13). |
+| `SHARKO_E2E_IMAGE_TAG` | unset (fresh `e2e-<8-hex>` per call) | When set AND the tagged image is already in the kind node's containerd, skip the docker build + kind load roundtrip. `make test-e2e-helm` defaults this to `e2e-<short-sha>`. |
+| `E2E_HELM_BIN` | `helm` | Path to the `helm` binary. |
+| `E2E_DOCKER_BIN` | `docker` | Path to the `docker` binary. |
 | `E2E_OFFLINE` | `0` | When `1`, tests skip live network catalog reads (ArtifactHub, GitHub raw fetches). Useful in air-gapped CI runners. |
 | `E2E_SKIP_KIND` | unset | When set, kind-required tests skip themselves regardless of binary availability. Use on saturated dev hosts where Docker Desktop is at capacity. |
 | `E2E_AI_API_KEY` | unset | When set, `TestAIInvocation` actually invokes the AI provider; otherwise it skips. |
@@ -321,10 +580,14 @@ behind. `make kind-down` enumerates `sharko-e2e-*` and destroys them all.
 - **No demo argocd in the harness yet.** Tests that need argocd call
   `harness.InstallArgoCD(t, c)` against a real kind cluster. A faster
   in-process argocd shim is on the V2.x backlog.
-- **Helm-mode `StartSharko` is deferred.** `SharkoModeHelm` and
-  `E2E_SHARKO_MODE=helm` currently `t.Skip()` with a clear diagnostic.
-  Story 7-1.10 is the placeholder; until it lands, every test runs
-  in-process.
+- **Helm-mode tests cannot reach the host's GitFake from inside the pod.**
+  The `harness.GitFake` listens on `127.0.0.1:NNNN` on the host machine;
+  inside the in-cluster Sharko pod that loopback address points at the
+  pod itself, not the host. Wave-D Helm-mode tests sidestep this by
+  asserting on read-only introspection endpoints
+  (`GET /api/v1/providers`) rather than driving register/sync flows that
+  would round-trip through git. A routable host-network mode (or moving
+  GitFake into the cluster as a Service) is a follow-up.
 - **Helm `Fetcher` has no test seam.** Preview-merge and annotate paths
   reach the network for chart pulls. Tests that hit those paths skip
   when the network is unavailable; a `Fetcher` interface + mock is the
