@@ -1,6 +1,6 @@
 # Sharko — Makefile
 
-.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e test-e2e test-e2e-fast test-e2e-domain test-e2e-coverage test-e2e-fast-coverage test-e2e-junit test-e2e-report install-test-tools kind-up kind-down catalog-scan catalog-scan-pr
+.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e test-e2e test-e2e-fast test-e2e-domain test-e2e-coverage test-e2e-fast-coverage test-e2e-junit test-e2e-report install-test-tools kind-up kind-down catalog-scan catalog-scan-pr generate-provider-types
 
 PORT ?= 8080
 
@@ -83,6 +83,19 @@ test-ui: ## Run UI tests
 lint: ## Go vet + UI build check
 	go vet ./...
 	cd ui && npm run build
+
+# V125-1-13.7 — code generator: parses internal/providers/provider.go's
+# New() switch via go/ast and emits ui/src/generated/provider-types.ts as
+# a frozen `as const` literal. The Settings dropdown imports
+# VALID_PROVIDER_TYPES from that file so it cannot drift from the
+# backend factory. CI's "Provider Types Up To Date" check runs this
+# target then `git diff --exit-code` on the output to catch stale files.
+#
+# Coordination note: V125-1-13.8 adds a `test-e2e-helm` target — a
+# different concern (e2e Helm install harness). Keep these two targets
+# textually adjacent in the file but logically independent.
+generate-provider-types: ## Regenerate ui/src/generated/provider-types.ts from internal/providers/provider.go
+	go run ./cmd/gen-provider-types
 
 clean: ## Remove build artifacts
 	rm -rf bin/ ui/dist/ _dist/

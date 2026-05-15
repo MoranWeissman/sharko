@@ -2,21 +2,22 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { SecretsProviderSection } from '@/views/settings/SecretsProviderSection'
+import { VALID_PROVIDER_TYPES } from '@/generated/provider-types'
 
 /*
- * V125-1-10.7 — Settings → SecretsProviderSection dropdown widening.
- *
- * Story 10.7 added 'argocd' as a fourth option in the provider dropdown so
- * admins can flip from k8s-secrets / aws-sm to argocd via the UI without
- * editing a stored connection by hand. The argocd type carries no extra
- * inputs (no Region, no Prefix, no Namespace, no RoleARN) — the backend
- * uses the in-cluster argocd namespace verbatim.
+ * V125-1-13.7 — Settings → SecretsProviderSection dropdown is now driven
+ * by ui/src/generated/provider-types.ts (auto-generated from
+ * internal/providers/provider.go::New). The "argocd missing from dropdown"
+ * regression that V125-1-10.7 hand-fixed cannot recur: the dropdown
+ * literally cannot drift from the backend factory now, and a CI check
+ * ("Provider Types Up To Date") fails if the generator output is stale.
  *
  * Cases covered (in order of acceptance criteria):
- *   1. Dropdown renders 4 options: None, ArgoCD, AWS Secrets Manager, Kubernetes Secrets
- *   2. Selecting "ArgoCD" sets provider_type=argocd in the form
- *   3. Selecting "ArgoCD" hides the AWS-only Region field and the
- *      shared Prefix field
+ *   1. Dropdown renders one option per VALID_PROVIDER_TYPES entry plus
+ *      a leading "None" — the count regression test for V125-1-13.7
+ *   2. Each generated provider type appears as an <option value="...">
+ *   3. Selecting "argocd" sets provider_type=argocd and hides the AWS
+ *      Region + shared Prefix inputs
  *   4. Save flow sends {provider: {type: "argocd"}} via api.updateConnection
  *   5. Regression: existing None / aws-sm / k8s-secrets cases still work
  */
@@ -77,7 +78,7 @@ describe('SecretsProviderSection', () => {
     updateConnectionMock.mockResolvedValue({})
   })
 
-  it('renders 4 dropdown options including the new argocd entry', async () => {
+  it('renders one dropdown option per VALID_PROVIDER_TYPES entry plus None', async () => {
     setupHook()
     render(<SecretsProviderSection />)
 
@@ -88,13 +89,25 @@ describe('SecretsProviderSection', () => {
       label: o.textContent ?? '',
     }))
 
-    expect(options).toHaveLength(4)
+    // The dropdown is driven by the generated const — its length is the
+    // generated set + the leading "None" option. This is the count
+    // regression that would have CAUGHT V125-1-10.7's missing 'argocd':
+    // any new arm in providers.New()'s switch that's regenerated will
+    // automatically be reflected here, and any stale generated file is
+    // caught by the "Provider Types Up To Date" CI check.
+    expect(options).toHaveLength(VALID_PROVIDER_TYPES.length + 1)
     expect(options[0]).toEqual({ value: '', label: 'None' })
-    // argocd appears second so it is the visually obvious default for fresh installs.
-    expect(options[1].value).toBe('argocd')
-    expect(options[1].label).toContain('ArgoCD')
-    expect(options[2].value).toBe('aws-sm')
-    expect(options[3].value).toBe('k8s-secrets')
+
+    // Every generated type must appear as an <option value="...">.
+    const renderedValues = options.slice(1).map(o => o.value)
+    for (const t of VALID_PROVIDER_TYPES) {
+      expect(renderedValues).toContain(t)
+    }
+
+    // Backwards-compat sanity: the well-known stable types are present.
+    expect(renderedValues).toContain('argocd')
+    expect(renderedValues).toContain('aws-sm')
+    expect(renderedValues).toContain('k8s-secrets')
   })
 
   it('selecting ArgoCD sets provider_type=argocd and hides AWS-only + Prefix fields', async () => {

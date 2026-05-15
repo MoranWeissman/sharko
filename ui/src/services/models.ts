@@ -1,3 +1,10 @@
+// V125-1-13.7 — ProviderType is generated from the backend factory in
+// internal/providers/provider.go via cmd/gen-provider-types. Re-exported
+// here so non-UI consumers (api.ts, ConnectionResponse, etc.) can refer
+// to it without reaching across the @/generated/* path.
+export type { ProviderType } from '@/generated/provider-types'
+import type { ProviderType as _ProviderType } from '@/generated/provider-types'
+
 export interface Cluster {
   name: string
   labels: Record<string, string>
@@ -178,7 +185,11 @@ export interface ConnectionResponse {
   is_default: boolean
   is_active: boolean
   provider?: {
-    type: string
+    // V125-1-13.7 — ProviderType is the generated union of accepted
+    // provider Type strings (mirrors providers.New()'s switch arms).
+    // Typed instead of `string` so a future hand-edit can't accidentally
+    // ship a value the backend factory rejects.
+    type: _ProviderType
     region?: string
     prefix?: string
   }
