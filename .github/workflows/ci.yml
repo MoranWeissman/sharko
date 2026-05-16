@@ -94,6 +94,35 @@ jobs:
             exit 1
           fi
 
+  # V125-1-13.7 — drift gate for the Go-generated TypeScript provider-type
+  # union. The generator (cmd/gen-provider-types) parses
+  # internal/providers/provider.go's New() switch and writes
+  # ui/src/generated/provider-types.ts. If any contributor edits the
+  # backend factory without regenerating, this job fails the PR with a
+  # clear remediation hint. Mirrors the swagger-check shape.
+  provider-types-up-to-date:
+    name: Provider Types Up To Date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: Regenerate provider types
+        run: make generate-provider-types
+
+      - name: Check for diff
+        run: |
+          if ! git diff --exit-code -- ui/src/generated/provider-types.ts; then
+            echo "ui/src/generated/provider-types.ts is out of date."
+            echo "Run 'make generate-provider-types' and commit the result."
+            exit 1
+          fi
+
   helm-validate:
     name: Helm Lint & Template
     runs-on: ubuntu-latest

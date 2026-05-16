@@ -4,19 +4,67 @@ import { useConnections } from '@/hooks/useConnections'
 import { api } from '@/services/api'
 import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
+import {
+  VALID_PROVIDER_TYPES,
+  type ProviderType as GeneratedProviderType,
+} from '@/generated/provider-types'
 
-// V125-1-10.7: widened to include 'argocd' so admins can pick the
-// ArgoCD provider in the Settings dropdown. The 'argocd' type means
-// "read cluster credentials from ArgoCD's cluster Secret in the argocd
-// namespace" and requires no extra Region/Prefix/Namespace inputs —
-// it always uses the in-cluster argocd namespace.
+// V125-1-13.7: the dropdown options are now generated from the backend
+// factory in internal/providers/provider.go via cmd/gen-provider-types.
+// The Settings dropdown can no longer drift from the set of accepted
+// provider Type strings — see ui/src/generated/provider-types.ts and
+// the "Provider Types Up To Date" CI check. A new arm in providers.New()'s
+// switch + `make generate-provider-types` is the only edit required to
+// surface a new provider in the UI.
+//
+// `'' | GeneratedProviderType` because the form's empty value represents
+// "no provider configured", which corresponds to providers.New()'s
+// auto-default arm — that arm is intentionally filtered out of the
+// generated const because it isn't a user-selectable type.
+type ProviderType = '' | GeneratedProviderType
+
 interface ProviderFormData {
-  provider_type: '' | 'argocd' | 'aws-sm' | 'k8s-secrets'
+  provider_type: ProviderType
   provider_region: string
   provider_prefix: string
 }
 
-type ProviderType = ProviderFormData['provider_type']
+// Per-option display labels. Centralised here (not in the generator) because
+// labels are UI copy, not backend contract. The keys are typed against the
+// generated `GeneratedProviderType` so adding a new arm to providers.New()
+// will produce a TypeScript compile error here — forcing the implementer
+// to author a friendly label before the dropdown can ship.
+const PROVIDER_LABELS: Record<GeneratedProviderType, string> = {
+  argocd: 'ArgoCD (auto — reads cluster credentials from the ArgoCD Secret)',
+  'aws-sm': 'AWS Secrets Manager (aws-sm)',
+  'aws-secrets-manager': 'AWS Secrets Manager (aws-secrets-manager alias)',
+  azure: 'Azure Key Vault (azure)',
+  'azure-kv': 'Azure Key Vault (azure-kv alias)',
+  'azure-key-vault': 'Azure Key Vault (azure-key-vault alias)',
+  gcp: 'GCP Secret Manager (gcp)',
+  'gcp-sm': 'GCP Secret Manager (gcp-sm alias)',
+  'google-secret-manager': 'GCP Secret Manager (google-secret-manager alias)',
+  'k8s-secrets': 'Kubernetes Secrets (k8s-secrets)',
+  kubernetes: 'Kubernetes Secrets (kubernetes alias)',
+}
+
+// Provider types that surface the AWS-style Region input. AWS Secrets
+// Manager is the only provider that requires a region today; this set
+// stays a hand-curated UI affordance because the backend has no
+// per-provider input-shape metadata to derive from.
+const REGION_PROVIDERS: ReadonlySet<GeneratedProviderType> = new Set<GeneratedProviderType>([
+  'aws-sm',
+  'aws-secrets-manager',
+])
+
+// Provider types that surface the Prefix input. Both AWS Secrets Manager
+// and the Kubernetes-Secrets backend honour a name prefix.
+const PREFIX_PROVIDERS: ReadonlySet<GeneratedProviderType> = new Set<GeneratedProviderType>([
+  'aws-sm',
+  'aws-secrets-manager',
+  'k8s-secrets',
+  'kubernetes',
+])
 
 interface ProviderInfo {
   type: string
@@ -156,9 +204,11 @@ export function SecretsProviderSection() {
                 onChange={(e) => setForm(prev => ({ ...prev, provider_type: e.target.value as ProviderType }))}
               >
                 <option value="">None</option>
-                <option value="argocd">ArgoCD (auto — reads cluster credentials from the ArgoCD Secret)</option>
-                <option value="aws-sm">AWS Secrets Manager (aws-sm)</option>
-                <option value="k8s-secrets">Kubernetes Secrets (k8s-secrets)</option>
+                {VALID_PROVIDER_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {PROVIDER_LABELS[t]}
+                  </option>
+                ))}
               </select>
               {form.provider_type === 'argocd' ? (
                 <p className="mt-1 text-[10px] text-[#3a6a8a]">
@@ -168,7 +218,7 @@ export function SecretsProviderSection() {
                 <p className="mt-1 text-[10px] text-[#3a6a8a]">How Sharko retrieves cluster credentials for secret-based providers.</p>
               )}
             </div>
-            {form.provider_type === 'aws-sm' && (
+            {form.provider_type !== '' && REGION_PROVIDERS.has(form.provider_type) && (
               <div>
                 <label className={labelCls}>Region</label>
                 <input
@@ -179,7 +229,7 @@ export function SecretsProviderSection() {
                 />
               </div>
             )}
-            {(form.provider_type === 'aws-sm' || form.provider_type === 'k8s-secrets') && (
+            {form.provider_type !== '' && PREFIX_PROVIDERS.has(form.provider_type) && (
               <div>
                 <label className={labelCls}>Prefix <span className="text-[#3a6a8a] font-normal">(optional)</span></label>
                 <input

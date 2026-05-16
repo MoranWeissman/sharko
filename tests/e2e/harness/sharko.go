@@ -29,10 +29,11 @@ const (
 	// process via httptest.NewServer. Fast (~50ms boot) but does not
 	// exercise containerised paths (Helm chart, image, K8s wiring).
 	SharkoModeInProcess SharkoMode = iota
-	// SharkoModeHelm helm-installs sharko into a kind mgmt cluster.
-	// Slow (~30s boot) but full-stack fidelity. Currently a TODO —
-	// StartSharko skips the test with a clear diagnostic until 7-1.10
-	// lands the helm path.
+	// SharkoModeHelm helm-installs sharko into a kind mgmt cluster via
+	// installSharkoHelm + bootstrapHelmSharkoAuth (V125-1-13.1/13.2/13.3).
+	// Slow (~30-90s boot depending on image build cache) but full-stack
+	// fidelity. Requires SharkoConfig.MgmtCluster to point at a provisioned
+	// kind cluster.
 	SharkoModeHelm
 )
 
@@ -71,6 +72,15 @@ type SharkoConfig struct {
 	// to true in StartSharko regardless of zero-value semantics — there
 	// is no scenario in 7-1.2 that needs AI on.
 	AIDisabled bool
+
+	// HelmOverrides are extra `--set key=value` overrides forwarded to
+	// installSharkoHelm (V125-1-13.1's HelmInstallConfig.SetValues).
+	// Optional; ignored for SharkoModeInProcess.
+	HelmOverrides map[string]string
+
+	// HelmTimeout caps the rollout wait for the Helm install (V125-1-13.1).
+	// Defaults to 180s when zero. Ignored for SharkoModeInProcess.
+	HelmTimeout time.Duration
 }
 
 // Sharko is a running sharko instance reachable over HTTP at URL.
@@ -88,6 +98,11 @@ type Sharko struct {
 	AdminPass string
 	// Mode is the boot mode actually selected (after env-var resolution).
 	Mode SharkoMode
+	// Token is a pre-minted JWT for SharkoModeHelm callers who need to
+	// skip the login flow (apiclient.Client.SetToken accepts it directly).
+	// Empty for SharkoModeInProcess — that path uses HTTP Basic via
+	// AdminUser/AdminPass.
+	Token string
 
 	server *httptest.Server // populated for in-process mode
 	apiSrv *api.Server      // populated for in-process mode; used by SeedUsers to bypass the login limiter
@@ -114,10 +129,11 @@ func (s *Sharko) APIServer() *api.Server { return s.apiSrv }
 // way cmd/sharko/serve.go does in --demo mode (no provider, no reconcilers,
 // no K8s client) and wraps the resulting http.Handler in httptest.NewServer.
 //
-// Helm mode is currently deferred — it calls t.Skip with a clear diagnostic
-// pointing at story 7-1.10 where the helm wiring lands.
+// Helm mode installs Sharko via Helm into cfg.MgmtCluster (V125-1-13.3) and
+// returns a *Sharko whose URL points at the port-forwarded Helm-installed
+// instance. cfg.MgmtCluster is required for SharkoModeHelm.
 //
-// Calls t.Fatalf on setup failure (in-process) — does not return on error.
+// Calls t.Fatalf on setup failure — does not return on error.
 func StartSharko(t *testing.T, cfg SharkoConfig) *Sharko {
 	t.Helper()
 	if cfg.GitFake == nil {
@@ -145,16 +161,61 @@ func StartSharko(t *testing.T, cfg SharkoConfig) *Sharko {
 	case SharkoModeInProcess:
 		return startSharkoInProcess(t, cfg, user, pass)
 	case SharkoModeHelm:
-		// TODO(7-1.10): implement helm-install + image build + kind
-		// load + port-forward. Until then, skip with the precise
-		// reason so CI logs are actionable.
-		t.Skip("StartSharko: SharkoModeHelm is not yet implemented (deferred to story 7-1.10); " +
-			"set E2E_SHARKO_MODE=in-process or omit the env var to use the default in-process path")
-		return nil // unreachable
+		return startSharkoHelm(t, cfg)
 	default:
 		t.Fatalf("StartSharko: unknown mode %d", mode)
 		return nil
 	}
+}
+
+// startSharkoHelm bridges StartSharko's mode selector to V125-1-13.1's
+// installSharkoHelm + V125-1-13.2's bootstrapHelmSharkoAuth, returning a
+// *Sharko whose URL is host-reachable via a port-forward and whose
+// AdminUser/AdminPass/Token come from the in-cluster bootstrap admin secret.
+//
+// cfg.MgmtCluster must be non-nil — every Helm-mode test owns at least one
+// kind cluster (the management cluster), provisioned via ProvisionTopology
+// before StartSharko is called.
+//
+// The returned *Sharko's APIServer() returns nil for Helm mode (the in-
+// process api.Server is not constructed); callers that need to seed users
+// or bypass rate limiters must drive Sharko via the typed API client.
+func startSharkoHelm(t *testing.T, cfg SharkoConfig) *Sharko {
+	t.Helper()
+	if cfg.MgmtCluster == nil {
+		t.Fatalf("StartSharko[helm]: cfg.MgmtCluster is required for SharkoModeHelm")
+	}
+
+	helmCfg := HelmInstallConfig{
+		KindClusterName: cfg.MgmtCluster.Name,
+		Namespace:       defaultHelmNamespace,
+		Timeout:         cfg.HelmTimeout,
+		SetValues:       cfg.HelmOverrides,
+	}
+
+	helmHandle, err := installSharkoHelm(t, cfg.MgmtCluster, helmCfg)
+	if err != nil {
+		t.Fatalf("StartSharko[helm]: installSharkoHelm: %v", err)
+	}
+
+	authBundle, err := bootstrapHelmSharkoAuth(t, helmHandle)
+	if err != nil {
+		t.Fatalf("StartSharko[helm]: bootstrapHelmSharkoAuth: %v", err)
+	}
+
+	s := &Sharko{
+		URL:       authBundle.BaseURL,
+		AdminUser: authBundle.AdminUser,
+		AdminPass: authBundle.AdminPass,
+		Mode:      SharkoModeHelm,
+		Token:     authBundle.Token,
+		// server, apiSrv left nil — APIServer() returns nil for helm
+		// mode per the doc comment on (*Sharko).APIServer.
+	}
+	t.Cleanup(func() { s.Stop() })
+	t.Logf("harness: sharko (helm) ready at %s [user=%s, ns=%s, cluster=%s, token-len=%d]",
+		s.URL, s.AdminUser, helmHandle.Namespace, helmHandle.KindClusterName, len(s.Token))
+	return s
 }
 
 // startSharkoInProcess wires up sharko the same way cmd/sharko/serve.go does

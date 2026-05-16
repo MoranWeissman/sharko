@@ -919,7 +919,26 @@ export const api = {
   docsGet: (slug: string) => fetchJSON<{ slug: string; content: string }>(`/docs/${encodeURIComponent(slug)}`),
 
   // Providers
-  getProviders: () => fetchJSON<{ configured_provider: { type: string; region: string; prefix?: string; status: string; error?: string } | null; available_types: string[] }>('/providers'),
+  // V125-1-13.7 — `type` is narrowed to the generated `ProviderType` union
+  // (sourced from internal/providers/provider.go via cmd/gen-provider-types)
+  // so callers see a compile error if they accept a value the backend
+  // factory would reject. The backend may legally surface other values
+  // here (e.g. a third-party deployment that monkey-patched providers.New),
+  // so consumers that need to handle unknowns should narrow with a type
+  // guard rather than upcasting.
+  getProviders: () =>
+    fetchJSON<{
+      configured_provider:
+        | {
+            type: import('./models').ProviderType
+            region: string
+            prefix?: string
+            status: string
+            error?: string
+          }
+        | null
+      available_types: import('./models').ProviderType[]
+    }>('/providers'),
 
   // Repo status — V124-22 / BUG-046: `bootstrap_synced` reports whether the
   // canonical ArgoCD application `cluster-addons-bootstrap` exists AND is

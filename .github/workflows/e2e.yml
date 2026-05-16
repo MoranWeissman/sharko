@@ -108,3 +108,86 @@ jobs:
         run: |
           kind get clusters 2>/dev/null | grep "^sharko-e2e-" | \
             xargs -I{} kind delete cluster --name {} || true
+
+  # V125-1-13.8 — Helm-mode E2E subset. Unlike the heavyweight `e2e`
+  # job above (label-gated, ~10-15 min, full suite), this lane runs the
+  # three Wave-D Helm-install tests on EVERY pull_request push so the
+  # real boot path (docker build → kind load → helm upgrade --install →
+  # bootstrap admin secret → port-forward) gets exercised before merge.
+  # OQ #1 resolution (maintainer 2026-05-15: "don't save runtime") —
+  # PR-blocking, no opt-in label.
+  #
+  # The kind+ArgoCD provisioning is owned by the test harness itself
+  # (tests/e2e/harness/kind.go + tests/e2e/lifecycle/*); CI just installs
+  # the binaries the harness shells out to (kind, kubectl, helm, docker).
+  # docker is preinstalled on ubuntu-latest.
+  helm-mode-e2e:
+    name: Go E2E (helm + kind + argocd)
+    # Same opt-in label gate as the existing e2e lane above. Helm-mode runs
+    # ~14 min and only matters when a PR touches cluster-test / provider /
+    # auth wiring. Add the `e2e` label to a PR to run this job; otherwise
+    # rely on unit + in-process integration tests (which run on every PR).
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule' ||
+      contains(github.event.pull_request.labels.*.name, 'e2e')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install kind + kubectl
+        run: |
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+          curl -Lo ./kubectl "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x ./kubectl
+          sudo mv ./kubectl /usr/local/bin/kubectl
+          kind --version
+          kubectl version --client=true
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: "latest"
+
+      # SHARKO_E2E_IMAGE_TAG defaults to e2e-<short-sha> so a re-run of
+      # the same workflow (e.g. retry after a flake) skips the docker
+      # build + kind load on cache hit. Each PR push gets a fresh tag
+      # because the SHA changes.
+      - name: Run Helm-mode E2E subset
+        env:
+          GOTMPDIR: /tmp
+          E2E_SHARKO_MODE: helm
+          SHARKO_E2E_IMAGE_TAG: e2e-${{ github.sha }}
+        run: make test-e2e-helm
+
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          echo "=== kind clusters ==="
+          kind get clusters || true
+          echo "=== nodes (all clusters) ==="
+          for c in $(kind get clusters 2>/dev/null); do
+            echo "--- cluster: $c ---"
+            kubectl --context "kind-$c" describe nodes || true
+            echo "--- helm releases in $c ---"
+            helm --kube-context "kind-$c" list -A || true
+            echo "--- sharko deployment logs in $c ---"
+            kubectl --context "kind-$c" logs -n sharko deployment/sharko --tail=200 --all-containers=true || true
+            echo "--- argocd pods in $c ---"
+            kubectl --context "kind-$c" get pods -n argocd -o wide || true
+          done
+
+      - name: Cleanup stale kind clusters
+        if: always()
+        run: |
+          kind get clusters 2>/dev/null | grep "^sharko-e2e-" | \
+            xargs -I{} kind delete cluster --name {} || true

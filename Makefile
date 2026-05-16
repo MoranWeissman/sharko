@@ -1,6 +1,6 @@
 # Sharko — Makefile
 
-.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e test-e2e test-e2e-fast test-e2e-domain test-e2e-coverage test-e2e-fast-coverage test-e2e-junit test-e2e-report install-test-tools kind-up kind-down catalog-scan catalog-scan-pr
+.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e test-e2e test-e2e-fast test-e2e-domain test-e2e-helm test-e2e-coverage test-e2e-fast-coverage test-e2e-junit test-e2e-report install-test-tools kind-up kind-down catalog-scan catalog-scan-pr generate-provider-types
 
 PORT ?= 8080
 
@@ -21,6 +21,7 @@ help: ## Show available targets
 	@echo "    make test-e2e-fast         In-process e2e suite (~30s, no kind/docker)"
 	@echo "    make test-e2e              Full e2e suite (kind + real argocd, ~10-15 min)"
 	@echo "    make test-e2e-domain       Run a single domain (DOMAIN=Cluster|Catalog|...)"
+	@echo "    make test-e2e-helm         Wave-D Helm-mode subset (~5-8 min, requires docker+kind+helm)"
 	@echo "    make test-e2e-coverage     Full e2e + coverage HTML in _dist/"
 	@echo "    make test-e2e-fast-coverage  Fast e2e + coverage HTML in _dist/"
 	@echo "    make test-e2e-junit        Full e2e + JUnit XML in _dist/"
@@ -84,6 +85,19 @@ lint: ## Go vet + UI build check
 	go vet ./...
 	cd ui && npm run build
 
+# V125-1-13.7 — code generator: parses internal/providers/provider.go's
+# New() switch via go/ast and emits ui/src/generated/provider-types.ts as
+# a frozen `as const` literal. The Settings dropdown imports
+# VALID_PROVIDER_TYPES from that file so it cannot drift from the
+# backend factory. CI's "Provider Types Up To Date" check runs this
+# target then `git diff --exit-code` on the output to catch stale files.
+#
+# Coordination note: V125-1-13.8 adds a `test-e2e-helm` target — a
+# different concern (e2e Helm install harness). Keep these two targets
+# textually adjacent in the file but logically independent.
+generate-provider-types: ## Regenerate ui/src/generated/provider-types.ts from internal/providers/provider.go
+	go run ./cmd/gen-provider-types
+
 clean: ## Remove build artifacts
 	rm -rf bin/ ui/dist/ _dist/
 
@@ -132,6 +146,31 @@ test-e2e-domain: ## Run a single domain (e.g. make test-e2e-domain DOMAIN=Cluste
 		exit 1; \
 	fi
 	GOTMPDIR=/tmp go test -tags=e2e -timeout=30m -v -run "$(DOMAIN)" ./tests/e2e/...
+
+# V125-1-13.8 — Helm-mode E2E subset. Runs Wave D's three lifecycle
+# tests through the real Helm-installed Sharko boot path
+# (E2E_SHARKO_MODE=helm) instead of the in-process httptest server.
+# Requires docker + kind + helm + kubectl on PATH; CI provisions all
+# four. The harness (V125-1-13.1) honours SHARKO_E2E_IMAGE_TAG to skip
+# the docker-build + kind-load roundtrip on cache hit, so re-runs of
+# the same git SHA reuse a previously-built image. The default tag
+# pins to the current commit's short SHA so back-to-back local runs
+# share a build but a fresh commit forces a rebuild.
+#
+# Test selection covers Wave D's three top-level functions:
+#   - TestClusterTest_ArgoCDProvider                       (V125-1-13.4)
+#   - TestClusterTest_ProviderAutoDefault_HappyPath        (V125-1-13.5)
+#   - TestClusterTest_ProviderCrossContamination_NamespaceSwitch (V125-1-13.6)
+# These are the only suites that exercise the real Helm install path
+# end-to-end; the rest of the e2e tree stays on the in-process boot.
+test-e2e-helm: ## Run the Wave-D Helm-mode E2E subset (~5-8 min, requires docker + kind + helm + kubectl).
+	@echo "==> Running Helm-mode E2E tests against kind + ArgoCD + Helm-installed Sharko"
+	@SHARKO_E2E_IMAGE_TAG=$${SHARKO_E2E_IMAGE_TAG:-e2e-$$(git rev-parse --short HEAD)} \
+	 E2E_SHARKO_MODE=helm \
+	 GOTMPDIR=/tmp \
+	 go test -tags=e2e -timeout=20m -v \
+	 -run '^(TestClusterTest_ArgoCDProvider|TestClusterTest_ProviderAutoDefault_HappyPath|TestClusterTest_ProviderCrossContamination_NamespaceSwitch)$$' \
+	 ./tests/e2e/lifecycle/...
 
 # Test reports (V2 Epic 7-1.16). The KEY flag is
 # -coverpkg=./internal/...,./cmd/... — without it, the coverage profile
