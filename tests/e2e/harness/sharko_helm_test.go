@@ -3,11 +3,17 @@
 package harness
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+// errProbeBroken is the sentinel returned by the probe-failure subtest of
+// TestResolveImageTagEnvVarSet. Declared at package scope so the stub
+// closure stays a one-liner.
+var errProbeBroken = errors.New("synthetic docker probe failure")
 
 // TestHelmInstallConfigResolved exercises HelmInstallConfig.resolved() —
 // the pure-defaulting layer underneath installSharkoHelm. We test this in
@@ -172,20 +178,18 @@ func TestWorktreeRootFromCallerFile(t *testing.T) {
 }
 
 // TestResolveImageTagFreshGeneration covers the no-env-var path of
-// resolveImageTag — must return a fresh "e2e-<8hex>" tag with cached=false.
-// We do NOT cover the cache-hit path here because it requires a live kind
-// cluster + docker; that path is covered indirectly by Story 13.4's e2e
-// test which sets SHARKO_E2E_IMAGE_TAG and verifies a re-run skips the
-// rebuild.
+// resolveImageTag — must return a fresh "e2e-<8hex>" tag with
+// skipBuild=false. The local-Docker probe seam is irrelevant on this
+// path (we never look at the env var), so no stub is installed.
 func TestResolveImageTagFreshGeneration(t *testing.T) {
-	// Note: NOT t.Parallel because we depend on os.Unsetenv.
+	// Note: NOT t.Parallel because we depend on env var state.
 	t.Setenv("SHARKO_E2E_IMAGE_TAG", "")
-	tag, cached, err := resolveImageTag(t, "any-cluster-name", HelmInstallConfig{}.resolved())
+	tag, skipBuild, err := resolveImageTag(t, HelmInstallConfig{}.resolved())
 	if err != nil {
 		t.Fatalf("resolveImageTag: %v", err)
 	}
-	if cached {
-		t.Errorf("cached: got true, want false on env-unset path")
+	if skipBuild {
+		t.Errorf("skipBuild: got true, want false on env-unset path")
 	}
 	if !strings.HasPrefix(tag, "e2e-") {
 		t.Errorf("tag prefix: got %q, want e2e- prefix", tag)
@@ -193,6 +197,76 @@ func TestResolveImageTagFreshGeneration(t *testing.T) {
 	if len(tag) != len("e2e-")+8 {
 		t.Errorf("tag length: got %d (%q), want %d", len(tag), tag, len("e2e-")+8)
 	}
+}
+
+// TestResolveImageTagEnvVarSet covers the SHARKO_E2E_IMAGE_TAG path of
+// resolveImageTag by stubbing the local-Docker probe seam. The two
+// branches exercised here are the heart of the V125-1-13.1 hotfix —
+// previously the probe checked the wrong cluster (kind containerd via
+// crictl, which doesn't filter by ref) and the cache always reported a
+// hit, producing ImagePullBackOff. The fix routes the probe to the
+// local Docker host (which is what the env var actually certifies)
+// and only skips the docker build — never the kind load.
+func TestResolveImageTagEnvVarSet(t *testing.T) {
+	// Restore the production probe after the suite finishes; subtests
+	// that need a different stub install their own per-subtest stub.
+	prev := imageExistsLocallyFn
+	t.Cleanup(func() { imageExistsLocallyFn = prev })
+
+	t.Run("env set + image present in local docker -> skipBuild=true, tag preserved", func(t *testing.T) {
+		t.Setenv("SHARKO_E2E_IMAGE_TAG", "debug")
+		var gotRef string
+		imageExistsLocallyFn = func(_ /*dockerBin*/, ref string) (bool, error) {
+			gotRef = ref
+			return true, nil
+		}
+		tag, skipBuild, err := resolveImageTag(t, HelmInstallConfig{}.resolved())
+		if err != nil {
+			t.Fatalf("resolveImageTag: %v", err)
+		}
+		if tag != "debug" {
+			t.Errorf("tag: got %q, want %q (env var must be preserved verbatim)", tag, "debug")
+		}
+		if !skipBuild {
+			t.Errorf("skipBuild: got false, want true on cache hit")
+		}
+		if gotRef != "sharko:debug" {
+			t.Errorf("probe ref: got %q, want %q (must probe sharko:<env-tag>)", gotRef, "sharko:debug")
+		}
+	})
+
+	t.Run("env set + image absent from local docker -> skipBuild=false, tag preserved", func(t *testing.T) {
+		t.Setenv("SHARKO_E2E_IMAGE_TAG", "missing-tag")
+		imageExistsLocallyFn = func(_, _ string) (bool, error) { return false, nil }
+		tag, skipBuild, err := resolveImageTag(t, HelmInstallConfig{}.resolved())
+		if err != nil {
+			t.Fatalf("resolveImageTag: %v", err)
+		}
+		if tag != "missing-tag" {
+			t.Errorf("tag: got %q, want %q (env var preserved even on miss for stable PR builds)",
+				tag, "missing-tag")
+		}
+		if skipBuild {
+			t.Errorf("skipBuild: got true, want false on cache miss — build must run")
+		}
+	})
+
+	t.Run("env set + probe error -> skipBuild=false, fall back to rebuild", func(t *testing.T) {
+		t.Setenv("SHARKO_E2E_IMAGE_TAG", "probe-error-tag")
+		imageExistsLocallyFn = func(_, _ string) (bool, error) {
+			return false, errProbeBroken
+		}
+		tag, skipBuild, err := resolveImageTag(t, HelmInstallConfig{}.resolved())
+		if err != nil {
+			t.Fatalf("resolveImageTag should swallow probe errors (got %v) — rebuild is the safe fallback", err)
+		}
+		if tag != "probe-error-tag" {
+			t.Errorf("tag: got %q, want %q", tag, "probe-error-tag")
+		}
+		if skipBuild {
+			t.Errorf("skipBuild: got true, want false — probe-error path must rebuild defensively")
+		}
+	})
 }
 
 // TestHelmHandleZeroValueIsSafe confirms a nil-receiver uninstall is a

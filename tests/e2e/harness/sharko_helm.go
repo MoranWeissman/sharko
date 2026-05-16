@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,11 +32,15 @@ import (
 // exec.CommandContext is acceptable (matches existing harness patterns —
 // verify against kind.go)."
 //
-// Caching: when SHARKO_E2E_IMAGE_TAG is set AND the image already exists in
-// the kind cluster's containerd, the image build + load steps are skipped.
-// This is the load-bearing optimisation for `make test-e2e-helm` — the image
-// build dominates total test time (~60-90s on a warm Docker cache, several
-// minutes cold).
+// Caching: when SHARKO_E2E_IMAGE_TAG is set AND `docker image inspect
+// sharko:<tag>` succeeds, the docker build step is skipped — the env var
+// certifies the image is already present in the local Docker host. The
+// kind load step ALWAYS runs unconditionally: each kind cluster has its
+// own containerd image store and starts empty per fresh provision, and
+// `kind load docker-image` is fast (~5-10s) and idempotent. Skipping the
+// build is the load-bearing optimisation for `make test-e2e-helm` — the
+// build dominates total test time (~60-90s on a warm Docker cache,
+// several minutes cold), whereas the load is negligible.
 //
 // Cleanup: helm uninstall + kubectl delete ns are registered via t.Cleanup
 // at the end of the install path. Both are best-effort — failures are logged
@@ -223,27 +228,36 @@ func installSharkoHelm(t *testing.T, kindCluster *KindCluster, cfg HelmInstallCo
 	}
 
 	// 1. Resolve the image tag.
-	tag, cached, err := resolveImageTag(t, kindCluster.Name, cfg)
+	tag, skipBuild, err := resolveImageTag(t, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("installSharkoHelm: resolve image tag: %w", err)
 	}
 	imageRef := "sharko:" + tag
 
-	// 2 + 3. Build + load the image (skipped on cache hit).
-	if cached {
-		t.Logf("harness: helm install skipping docker build + kind load (SHARKO_E2E_IMAGE_TAG=%s already loaded into %s)",
-			tag, kindCluster.Name)
+	// 2. Build the image (skipped only when SHARKO_E2E_IMAGE_TAG is set
+	// AND the image already exists in the local Docker host).
+	if skipBuild {
+		t.Logf("harness: skipping docker build (SHARKO_E2E_IMAGE_TAG=%s already in local Docker)", tag)
 	} else {
+		t.Logf("harness: docker build sharko:%s from worktree root", tag)
 		buildCtx, buildCancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer buildCancel()
 		if err := dockerBuild(buildCtx, t, cfg.DockerBin, worktreeRoot, imageRef, tag); err != nil {
 			return nil, fmt.Errorf("installSharkoHelm: docker build: %w", err)
 		}
-		loadCtx, loadCancel := context.WithTimeout(context.Background(), 3*time.Minute)
-		defer loadCancel()
-		if err := kindLoadImage(loadCtx, t, kindCluster.Name, imageRef); err != nil {
-			return nil, fmt.Errorf("installSharkoHelm: kind load docker-image: %w", err)
-		}
+	}
+
+	// 3. ALWAYS load into kind — fresh per-test clusters start with an
+	// empty containerd image store. `kind load docker-image` is fast
+	// (~5-10s) and idempotent, so unconditional loading is the safe
+	// default; conditional skipping was the source of V125-1-13.1's
+	// ImagePullBackOff bug (the probe checked the wrong containerd and
+	// the cache always reported a false hit).
+	t.Logf("harness: kind load docker-image sharko:%s into %s", tag, kindCluster.Name)
+	loadCtx, loadCancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer loadCancel()
+	if err := kindLoadImage(loadCtx, t, kindCluster.Name, imageRef); err != nil {
+		return nil, fmt.Errorf("installSharkoHelm: kind load docker-image: %w", err)
 	}
 
 	// 4. helm upgrade --install. We always run with --create-namespace and
@@ -330,30 +344,39 @@ func uninstallSharkoHelm(t *testing.T, h *HelmHandle) {
 // internal helpers
 // ---------------------------------------------------------------------------
 
-// resolveImageTag returns the (tag, cached) pair to use for this install.
-// Cache hit semantics: SHARKO_E2E_IMAGE_TAG is set AND `docker exec` reports
-// the image is already loaded inside the kind control-plane container.
+// resolveImageTag returns (tag, skipBuild) for this install.
 //
-// On cache miss a fresh "e2e-<8-hex-chars>" tag is generated. The 8-hex
-// suffix is sufficient entropy for one test run — collisions across parallel
-// runs would only matter if two tests targeted the same kind cluster, which
-// is already disallowed by ProvisionTopology's per-run RunID scheme.
-func resolveImageTag(t *testing.T, kindClusterName string, cfg HelmInstallConfig) (string, bool, error) {
+// When SHARKO_E2E_IMAGE_TAG is set AND `docker image inspect sharko:<tag>`
+// exits 0, we know the image already exists in the local Docker host and
+// can skip the (slow) docker build. The kind load step still happens
+// unconditionally — each kind cluster has its own containerd image store
+// and starts empty.
+//
+// When SHARKO_E2E_IMAGE_TAG is unset OR the image is missing from the
+// local Docker host, we generate a fresh e2e-<sha> tag (or reuse the env
+// tag) and rebuild.
+//
+// Predecessor bug (V125-1-13.1): the probe shelled into the kind node and
+// ran `crictl images -q <ref>` — but the positional ref arg to that
+// command does NOT filter (it returns every image in the cluster). The
+// cache always reported a hit, the load step was skipped, and pods sat
+// in ImagePullBackOff until helm --wait timed out at 180s. Fixed by
+// probing the local Docker host (which is what the env var actually
+// certifies) and by always loading into kind regardless of cache state.
+func resolveImageTag(t *testing.T, cfg HelmInstallConfig) (string, bool, error) {
 	t.Helper()
 	if v := strings.TrimSpace(os.Getenv("SHARKO_E2E_IMAGE_TAG")); v != "" {
-		// Cache lookup — does the image already exist in the kind
-		// node container? If yes, skip the rebuild.
-		exists, err := imageExistsInKind(cfg.DockerBin, kindClusterName, "sharko:"+v)
+		exists, err := imageExistsLocallyFn(cfg.DockerBin, "sharko:"+v)
 		if err != nil {
-			t.Logf("harness: image cache probe for %s in %s failed (%v); will rebuild", v, kindClusterName, err)
-		} else if exists {
-			return v, true, nil
-		} else {
-			t.Logf("harness: SHARKO_E2E_IMAGE_TAG=%s but image not present in %s; rebuilding under same tag", v, kindClusterName)
+			t.Logf("harness: docker image inspect for sharko:%s failed (%v); will rebuild", v, err)
+			return v, false, nil
 		}
+		if exists {
+			return v, true, nil
+		}
+		t.Logf("harness: SHARKO_E2E_IMAGE_TAG=%s but image not present in local Docker; rebuilding under same tag", v)
 		return v, false, nil
 	}
-	// No env override — generate a fresh tag.
 	suffix, err := randHex8()
 	if err != nil {
 		return "", false, fmt.Errorf("generate image tag suffix: %w", err)
@@ -361,38 +384,38 @@ func resolveImageTag(t *testing.T, kindClusterName string, cfg HelmInstallConfig
 	return "e2e-" + suffix, false, nil
 }
 
-// imageExistsInKind probes the kind cluster's control-plane container to
-// see whether sharko:<tag> is already present in containerd. Uses
-// `docker exec <kind-control-plane> crictl images` since kind ships crictl
-// inside the node image.
+// imageExistsLocallyFn is the seam resolveImageTag uses to probe the local
+// Docker host. Production code points it at imageExistsLocally; tests
+// override it to exercise the env-var-set / image-present / image-absent
+// branches without requiring a real Docker daemon. Same pattern as
+// inClusterConfigFn in internal/providers/provider.go.
+var imageExistsLocallyFn = imageExistsLocally
+
+// imageExistsLocally returns true when the local Docker daemon has an
+// image with the given ref. Used by resolveImageTag to decide whether
+// SHARKO_E2E_IMAGE_TAG can skip the rebuild step.
 //
-// Returns (false, nil) when the probe runs cleanly but the image is absent.
-// Returns (false, err) when the probe itself fails (e.g. docker absent,
-// container missing) — the caller logs and proceeds to rebuild.
-func imageExistsInKind(dockerBin, kindClusterName, imageRef string) (bool, error) {
-	containerName := kindClusterName + "-control-plane"
+// Probes via `docker image inspect <ref>` — exits 0 on hit, non-zero on
+// miss. Stdout + stderr are suppressed to avoid log noise on the miss
+// path; only genuine probe errors (docker binary absent, daemon down)
+// bubble up via the non-ExitError branch.
+func imageExistsLocally(dockerBin, imageRef string) (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, dockerBin,
-		"exec", containerName,
-		"crictl", "images", "-q", "docker.io/library/"+imageRef,
-	)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		// Try the bare ref too — some kind versions normalise differently.
-		ctx2, cancel2 := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel2()
-		cmd2 := exec.CommandContext(ctx2, dockerBin,
-			"exec", containerName,
-			"crictl", "images", "-q", imageRef,
-		)
-		out2, err2 := cmd2.CombinedOutput()
-		if err2 != nil {
-			return false, fmt.Errorf("crictl images probe: %w (out=%s)", err, out)
+	cmd := exec.CommandContext(ctx, dockerBin, "image", "inspect", imageRef)
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	if err := cmd.Run(); err != nil {
+		// ExitError with non-zero exit code means "image missing" —
+		// the standard signal from `docker image inspect`. Differentiate
+		// from "docker not found" / "daemon unreachable" by checking
+		// err type so genuine probe failures surface as errors.
+		if _, ok := err.(*exec.ExitError); ok {
+			return false, nil
 		}
-		return strings.TrimSpace(string(out2)) != "", nil
+		return false, fmt.Errorf("docker image inspect: %w", err)
 	}
-	return strings.TrimSpace(string(out)) != "", nil
+	return true, nil
 }
 
 // dockerBuild runs `docker build -t <ref> --build-arg CACHE_BUST=<tag> .`
