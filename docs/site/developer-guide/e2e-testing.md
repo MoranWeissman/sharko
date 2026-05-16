@@ -370,8 +370,21 @@ address means localhost *inside the pod*. Tests that drive a register or
 sync flow through the real git path either (a) skip the assertion (the
 Wave-D `_HappyPath` test does this — it asserts on `/providers`
 introspection instead of round-tripping through git) or (b) front the
-GitFake with a routable address (an open follow-up; see Known
-limitations).
+GitFake with a routable address via `harness.RewriteHostLoopbackForPod`,
+which rewrites `127.0.0.1` / `localhost` / `[::1]` to
+`host.docker.internal`.
+
+**Platform notes for `host.docker.internal`:**
+
+- **macOS / Windows (Docker Desktop):** works out-of-the-box — Docker
+  Desktop pre-resolves `host.docker.internal` from inside kind pods to
+  the host's gateway. No extra setup.
+- **Linux:** kind clusters need
+  `extraHosts: ["host.docker.internal:host-gateway"]` in the kind config
+  (or an equivalent network setup). The harness assumes Docker Desktop
+  semantics; Linux users running locally may need to extend
+  `tests/e2e/harness/kind.go::WriteKindConfig` to inject the extraHost
+  entry into the kind cluster definition.
 
 **`make test-e2e-helm` fails clean on the first run, passes on the
 second.** Stale image in containerd from a previous SHA. `make kind-down`

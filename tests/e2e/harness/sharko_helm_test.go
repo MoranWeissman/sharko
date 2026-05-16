@@ -276,3 +276,78 @@ func TestHelmHandleZeroValueIsSafe(t *testing.T) {
 	t.Parallel()
 	uninstallSharkoHelm(t, nil) // must not panic / fail
 }
+
+// TestRewriteHostLoopbackForPod covers the V125-1-13 hotfix helper that
+// makes host-loopback URLs (gitfake, port-forwarded ArgoCD) reachable from
+// inside a kind Pod by rewriting "127.0.0.1" / "localhost" / "::1" to
+// "host.docker.internal". Non-loopback hosts, in-cluster DNS, non-http(s)
+// schemes, and malformed inputs all pass through unchanged.
+func TestRewriteHostLoopbackForPod(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "127.0.0.1 with port and path -> host.docker.internal",
+			in:   "http://127.0.0.1:1234/foo",
+			want: "http://host.docker.internal:1234/foo",
+		},
+		{
+			name: "localhost https with port -> host.docker.internal",
+			in:   "https://localhost:8443",
+			want: "https://host.docker.internal:8443",
+		},
+		{
+			name: "IPv6 loopback [::1] with port -> host.docker.internal",
+			in:   "https://[::1]:8080/api",
+			want: "https://host.docker.internal:8080/api",
+		},
+		{
+			name: "in-cluster service DNS passes through unchanged",
+			in:   "https://argocd-server.argocd.svc.cluster.local",
+			want: "https://argocd-server.argocd.svc.cluster.local",
+		},
+		{
+			name: "real DNS host passes through unchanged",
+			in:   "http://github.com/foo/bar",
+			want: "http://github.com/foo/bar",
+		},
+		{
+			name: "non-loopback IP passes through unchanged",
+			in:   "http://192.168.1.50:9000/path",
+			want: "http://192.168.1.50:9000/path",
+		},
+		{
+			name: "non-http scheme passes through unchanged",
+			in:   "git://127.0.0.1:9418/repo.git",
+			want: "git://127.0.0.1:9418/repo.git",
+		},
+		{
+			name: "query + fragment preserved through rewrite",
+			in:   "http://127.0.0.1:5000/x?y=1&z=2#frag",
+			want: "http://host.docker.internal:5000/x?y=1&z=2#frag",
+		},
+		{
+			name: "malformed URL returns input unchanged",
+			in:   "http://[not-an-ip:bad",
+			want: "http://[not-an-ip:bad",
+		},
+		{
+			name: "empty string returns empty string",
+			in:   "",
+			want: "",
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := RewriteHostLoopbackForPod(tc.in)
+			if got != tc.want {
+				t.Errorf("RewriteHostLoopbackForPod(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}

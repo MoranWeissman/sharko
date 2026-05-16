@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -637,4 +638,64 @@ func randHex8() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(buf), nil
+}
+
+// ---------------------------------------------------------------------------
+// V125-1-13 hotfix — host-loopback URL rewrite for Pod-reachability
+// ---------------------------------------------------------------------------
+
+// hostLoopbackNames is the set of hostnames that mean "localhost on the test
+// host" — addresses that are reachable from the test process but NOT from
+// inside a kind Pod (where the same names resolve to the Pod itself).
+var hostLoopbackNames = map[string]struct{}{
+	"127.0.0.1": {},
+	"localhost": {},
+	"::1":       {},
+}
+
+// RewriteHostLoopbackForPod takes a URL whose host is "127.0.0.1", "localhost",
+// or "[::1]" (i.e. reachable from the test process on the host) and rewrites
+// the host portion to "host.docker.internal" — the conventional DNS name that
+// resolves to the host's gateway from inside a kind Pod on Docker Desktop.
+// Other host shapes (in-cluster DNS, real DNS, non-loopback IPs) pass through
+// unchanged. Non-http/https schemes also pass through.
+//
+// Use this when a URL produced by the test (gitfake, port-forwarded ArgoCD,
+// etc.) must be reachable from a Helm-mode Sharko Pod, not just from the
+// test process.
+//
+// Platform notes:
+//   - macOS / Windows (Docker Desktop): host.docker.internal works
+//     out-of-the-box.
+//   - Linux: kind clusters need extraHosts:["host.docker.internal:host-gateway"]
+//     in the kind config (or equivalent network setup). See
+//     docs/site/developer-guide/e2e-testing.md.
+//
+// If url.Parse fails, the original string is returned unchanged (callers may
+// pass non-URL values defensively).
+func RewriteHostLoopbackForPod(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	// Only operate on http/https URLs — other schemes (git://, ssh://, etc.)
+	// have their own host-reachability semantics and are out of scope here.
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return rawURL
+	}
+	host := u.Hostname()
+	if host == "" {
+		return rawURL
+	}
+	if _, ok := hostLoopbackNames[host]; !ok {
+		return rawURL
+	}
+	// Reassemble the Host portion preserving the port (if any).
+	newHost := "host.docker.internal"
+	if port := u.Port(); port != "" {
+		newHost = newHost + ":" + port
+	}
+	u.Host = newHost
+	return u.String()
 }
