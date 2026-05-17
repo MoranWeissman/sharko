@@ -144,7 +144,15 @@ func TestClusterTest_ProviderCrossContamination_NamespaceSwitch(t *testing.T) {
 			Token:    "ghmock-test-token", // not used by the test — connection validation only
 		},
 		Argocd: models.ArgocdConfig{
-			ServerURL: argoAccess.URL,
+			// Helm-mode Sharko runs INSIDE the kind cluster, so the
+			// connection's argocd.server_url must be the in-cluster
+			// service DNS — NOT argoAccess.URL which is the host-side
+			// port-forwarded URL only useful for the test process.
+			// Mirrors helmModeArgocdServerURL in
+			// cluster_test_argocd_provider_test.go (sibling file in the
+			// same package — the const is reused as-is below to keep
+			// the two tests in lockstep).
+			ServerURL: helmModeArgocdServerURL,
 			Token:     argoAccess.Token,
 			Namespace: argoNamespace,
 			Insecure:  true,

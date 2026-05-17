@@ -147,7 +147,15 @@ func TestClusterTest_ArgoCDProvider(t *testing.T) {
 	// connection's argocd.server_url MUST be the in-cluster service DNS
 	// (helmModeArgocdServerURL above) — NOT argoAccess.URL which is the
 	// host-side port-forwarded URL useful only for the test process.
-	seedHelmActiveConnection(t, admin, gitfake.RepoURL, helmModeArgocdServerURL, argoAccess.Token)
+	//
+	// Same constraint applies to the gitfake URL: gitfake.RepoURL is a
+	// 127.0.0.1:<port> address on the test host. From inside the Sharko
+	// Pod that loopback resolves to the Pod itself, not the host. Rewrite
+	// it via harness.RewriteHostLoopbackForPod so the Pod reaches the
+	// host's gitfake via host.docker.internal (Docker Desktop) or the
+	// host-gateway extraHost on Linux kind.
+	podReachableGitfakeURL := harness.RewriteHostLoopbackForPod(gitfake.RepoURL)
+	seedHelmActiveConnection(t, admin, podReachableGitfakeURL, helmModeArgocdServerURL, argoAccess.Token)
 
 	// ---- register the target via the kubeconfig flow ----
 	// internal/orchestrator/cluster.go's kubeconfig branch parses the
