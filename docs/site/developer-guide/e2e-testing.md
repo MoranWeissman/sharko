@@ -441,6 +441,112 @@ The pattern mirrors the swagger-docs-up-to-date check
 contracts — the generator is invoked at build/CI time, never at server
 start.
 
+### In-cluster gitfake (V125-1-13.x)
+
+Helm-mode tests historically could not drive register / sync flows that
+round-trip through git: the in-pod Sharko couldn't reach a host-side
+`harness.GitFake` listener (loopback semantics, see Known limitations),
+and the production git-host whitelist in
+`internal/service/connection.go::deriveProviderFromURL` accepts only
+`github.com` and `dev.azure.com`. The V125-1-13.x sprint closes both
+gaps with a Pod-deployed gitfake + an opt-in env var.
+
+**What it is.** A small Go HTTP server (built from
+`tests/e2e/harness/gitfake/cmd/gitfake-server/`, image defined by
+`tests/e2e/harness/gitfake/Dockerfile`) packaged as the
+`sharko-gitfake:<tag>` image. The harness primitive
+`installGitfakeIntoKind` in `tests/e2e/harness/gitfake_helm.go` builds
+or reuses the image (same `SHARKO_E2E_IMAGE_TAG` cache pattern as
+`installSharkoHelm`), `kind load`s it, and applies a Deployment + Service.
+`installSharkoHelm` invokes it automatically, so every Helm-mode test
+gets a reachable gitfake at `http://gitfake.default.svc.cluster.local`
+for free — no per-test boilerplate.
+
+**Why it exists.** Helm-mode tests need a git URL that is (a) reachable
+from inside a kind pod and (b) accepted by Sharko's connection validator.
+Pinning the GitFake on the host is incompatible with (a); pointing at
+the in-cluster gitfake URL is incompatible with (b) under production
+defaults. The combination of an in-cluster Pod plus a test-only env var
+solves both without weakening production semantics — the production
+whitelist is unchanged and the env var is empty by default.
+
+**The opt-in env var.** `SHARKO_E2E_GIT_HOSTS_ALLOWLIST` —
+comma-separated additional hosts the connection validator accepts in
+addition to the built-in `github.com` and `dev.azure.com`. Empty/unset
+(the production default) = zero behavior change. `installSharkoHelm`
+sets it via `--set e2e.gitHostsAllowlist=gitfake.default.svc.cluster.local`
+on the Helm install. The chart guards the env entry behind a non-empty
+check (see `charts/sharko/templates/deployment.yaml` around the
+`SHARKO_E2E_GIT_HOSTS_ALLOWLIST` block), so production manifests rendered
+from default values never surface the variable.
+
+**Writing a Helm-mode test that uses gitfake.** The `*Sharko` returned
+by `harness.StartSharko(t, cfg)` in Helm mode exposes
+`sharko.GitfakeRepoURL` — the full git remote URL on the in-cluster
+service (e.g. `http://gitfake.default.svc.cluster.local/sharko-e2e.git`).
+Point a Sharko connection at it; the URL passes the validator because
+the host is on the allowlist.
+
+```go
+sharko := harness.StartSharko(t, harness.SharkoConfig{
+    Mode:        harness.SharkoModeHelm,
+    MgmtCluster: &mgmt,
+    GitFake:     harness.StartGitFake(t),
+})
+sharko.WaitHealthy(t, 60*time.Second)
+admin := harness.NewClient(t, sharko)
+
+// sharko.GitfakeRepoURL is reachable from inside the Sharko pod.
+admin.PostConnection(t, models.Connection{
+    Name: "active", Provider: "github",
+    Git: models.GitConfig{RepoURL: sharko.GitfakeRepoURL, ...},
+})
+```
+
+**IMPORTANT — structural limitation discovered in V125-1-13.x.6.**
+Sharko's `GitHubProvider` uses the go-github REST client hardwired to
+`api.github.com`. Pointing a Sharko connection at the gitfake URL passes
+URL validation, and gitfake speaks git-protocol (clone / push) faithfully,
+but Sharko's GitHub-provider operations (`BatchCreateFiles`,
+`CreatePullRequest`, …) still hit `api.github.com`. So gitfake is not
+yet a complete drop-in for tests that exercise the full Sharko-driven
+git flow in Helm mode. Two workarounds today:
+
+- **Test-cluster-style tests** (the V125-1-13.x.6 pattern, e.g.
+  `TestClusterTest_ArgoCDProvider`): bypass Sharko's git flow entirely
+  by registering the target cluster directly via ArgoCD's REST API. The
+  test exercises `ArgoCDProvider` against a real cluster Secret without
+  depending on Sharko's git side.
+- **Tests that need full git interception**: deferred to a future
+  follow-up (tracked as V125-1-13.y). Either a ghmock sidecar Pod that
+  intercepts `api.github.com` traffic from inside the cluster, or making
+  `GitHubProvider`'s base URL configurable. Out of scope for V125-1-13.x.
+
+**Troubleshooting.**
+
+- **Pod not Ready.** Check `kubectl describe pod -n default -l app=gitfake`
+  + `kubectl logs -n default -l app=gitfake`. The most common cause is
+  the image not being loaded into kind — re-run `make build-gitfake-image`
+  then re-trigger the test.
+- **Allowlist env not set.** Confirm `helm get values sharko -n sharko`
+  shows `e2e.gitHostsAllowlist` populated, and
+  `kubectl exec -n sharko deploy/sharko -- env | grep SHARKO_E2E_GIT_HOSTS_ALLOWLIST`
+  prints the expected value. If empty, the chart-side conditional in
+  `charts/sharko/templates/deployment.yaml` suppressed the entry.
+- **Connection-create still 400s.** Sharko's URL parser also rejects
+  paths without `owner/repo` shape. Either use a 2-segment path in the
+  gitfake repo name, or feed `owner` + `repo` fields directly on the
+  connection payload instead of `RepoURL`.
+- **Allowlist works but git operations still hit github.com.** That's
+  the `GitHubProvider` limitation above — gitfake is not yet a full git
+  mock from Sharko's REST perspective.
+
+**CI integration.** Same `helm-mode-e2e` GH Actions job that already
+runs the Wave-D Helm-mode tests; the gitfake Pod is installed
+transparently as part of `installSharkoHelm`. No new label, no new job —
+the env-gated allowlist is the only production-touching surface and it
+stays off unless the chart values opt in.
+
 ## CI integration
 
 `.github/workflows/e2e.yml` runs the full lane on three triggers:
