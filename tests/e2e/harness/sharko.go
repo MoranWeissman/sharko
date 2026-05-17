@@ -103,6 +103,16 @@ type Sharko struct {
 	// Empty for SharkoModeInProcess — that path uses HTTP Basic via
 	// AdminUser/AdminPass.
 	Token string
+	// GitfakeInClusterURL is the in-cluster Service URL of the gitfake
+	// Pod that startSharkoHelm provisions alongside Sharko (V125-1-13.x.5).
+	// Populated only in SharkoModeHelm — empty in SharkoModeInProcess.
+	// Tests that need gitfake-backed clones from within the Sharko Pod
+	// should declare SharkoModeHelm and read this URL.
+	GitfakeInClusterURL string
+	// GitfakeRepoURL is the full git remote URL on the in-cluster gitfake
+	// (InClusterURL + "/<repo>.git"). Populated only in SharkoModeHelm —
+	// empty in SharkoModeInProcess.
+	GitfakeRepoURL string
 
 	server *httptest.Server // populated for in-process mode
 	apiSrv *api.Server      // populated for in-process mode; used by SeedUsers to bypass the login limiter
@@ -204,17 +214,19 @@ func startSharkoHelm(t *testing.T, cfg SharkoConfig) *Sharko {
 	}
 
 	s := &Sharko{
-		URL:       authBundle.BaseURL,
-		AdminUser: authBundle.AdminUser,
-		AdminPass: authBundle.AdminPass,
-		Mode:      SharkoModeHelm,
-		Token:     authBundle.Token,
+		URL:                 authBundle.BaseURL,
+		AdminUser:           authBundle.AdminUser,
+		AdminPass:           authBundle.AdminPass,
+		Mode:                SharkoModeHelm,
+		Token:               authBundle.Token,
+		GitfakeInClusterURL: helmHandle.GitfakeInClusterURL,
+		GitfakeRepoURL:      helmHandle.GitfakeRepoURL,
 		// server, apiSrv left nil — APIServer() returns nil for helm
 		// mode per the doc comment on (*Sharko).APIServer.
 	}
 	t.Cleanup(func() { s.Stop() })
-	t.Logf("harness: sharko (helm) ready at %s [user=%s, ns=%s, cluster=%s, token-len=%d]",
-		s.URL, s.AdminUser, helmHandle.Namespace, helmHandle.KindClusterName, len(s.Token))
+	t.Logf("harness: sharko (helm) ready at %s [user=%s, ns=%s, cluster=%s, token-len=%d, gitfake=%s]",
+		s.URL, s.AdminUser, helmHandle.Namespace, helmHandle.KindClusterName, len(s.Token), s.GitfakeRepoURL)
 	return s
 }
 

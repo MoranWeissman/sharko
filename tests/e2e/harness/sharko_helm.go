@@ -94,6 +94,18 @@ type HelmHandle struct {
 	// against the kind cluster. Captured for the cleanup hook so
 	// deletion does not depend on the test's kubeconfig environment.
 	Kubeconfig string
+	// GitfakeInClusterURL is the in-cluster Service URL of the gitfake
+	// Pod that installSharkoHelm provisions alongside Sharko (Story
+	// V125-1-13.x.5). Sharko's git-host allowlist is set to the gitfake
+	// hostname via --set e2e.gitHostsAllowlist=... so the Pod can clone
+	// the gitfake repo without a real-world git host. Mirrors
+	// GitfakeHandle.InClusterURL.
+	GitfakeInClusterURL string
+	// GitfakeRepoURL is the full git remote URL on the in-cluster
+	// gitfake — InClusterURL + "/<repo>.git". Tests hand this to Sharko
+	// (or whatever wants to clone the seeded e2e repo). Mirrors
+	// GitfakeHandle.RepoURL.
+	GitfakeRepoURL string
 }
 
 // HelmInstallConfig declares knobs for installSharkoHelm.
@@ -261,14 +273,35 @@ func installSharkoHelm(t *testing.T, kindCluster *KindCluster, cfg HelmInstallCo
 		return nil, fmt.Errorf("installSharkoHelm: kind load docker-image: %w", err)
 	}
 
+	// 3b. Install the in-cluster gitfake Pod (V125-1-13.x.5). Done BEFORE
+	// the Sharko helm install so:
+	//   - gitfake's t.Cleanup registers BEFORE Sharko's → LIFO runs
+	//     Sharko's uninstall first (consumer), then gitfake's (producer),
+	//     which is the correct teardown order.
+	//   - We know the gitfake Service DNS name in time to pass it to Sharko
+	//     via --set e2e.gitHostsAllowlist=...
+	// installGitfakeIntoKind registers its own t.Cleanup, so we don't
+	// double-register here.
+	gitfakeHandle, err := installGitfakeIntoKind(t, kindCluster, GitfakeInstallConfig{})
+	if err != nil {
+		return nil, fmt.Errorf("installSharkoHelm: installGitfakeIntoKind: %w", err)
+	}
+	gitfakeAllowlistHost := fmt.Sprintf("%s.%s.svc.cluster.local",
+		gitfakeHandle.ServiceName, gitfakeHandle.Namespace)
+
 	// 4. helm upgrade --install. We always run with --create-namespace and
 	// rely on `upgrade --install` for idempotency. The chart's default
 	// values + the harness overrides keep optional subsystems off (AI,
 	// Ollama, ingress, persistence) so install completes deterministically
 	// in CI without external dependencies.
+	//
+	// e2e.gitHostsAllowlist is set to the gitfake in-cluster DNS name so
+	// the Sharko Pod's git-host whitelist (internal/service/connection.go,
+	// honouring SHARKO_E2E_GIT_HOSTS_ALLOWLIST per V125-1-13.x.3 +
+	// V125-1-13.x.4) permits clones from the test gitfake.
 	helmCtx, helmCancel := context.WithTimeout(context.Background(), defaultHelmInstallWait)
 	defer helmCancel()
-	if err := helmUpgradeInstall(helmCtx, t, cfg, kindCluster.Kubeconfig, chartPath, ns, tag); err != nil {
+	if err := helmUpgradeInstall(helmCtx, t, cfg, kindCluster.Kubeconfig, chartPath, ns, tag, gitfakeAllowlistHost); err != nil {
 		return nil, fmt.Errorf("installSharkoHelm: helm upgrade --install: %w", err)
 	}
 
@@ -284,14 +317,16 @@ func installSharkoHelm(t *testing.T, kindCluster *KindCluster, cfg HelmInstallCo
 	}
 
 	handle := &HelmHandle{
-		Namespace:       ns,
-		Deployment:      defaultHelmReleaseName,
-		Service:         defaultHelmReleaseName,
-		BaseURL:         fmt.Sprintf("http://%s.%s.svc.cluster.local:80", defaultHelmReleaseName, ns),
-		ImageTag:        tag,
-		ReleaseName:     defaultHelmReleaseName,
-		KindClusterName: kindCluster.Name,
-		Kubeconfig:      kindCluster.Kubeconfig,
+		Namespace:           ns,
+		Deployment:          defaultHelmReleaseName,
+		Service:             defaultHelmReleaseName,
+		BaseURL:             fmt.Sprintf("http://%s.%s.svc.cluster.local:80", defaultHelmReleaseName, ns),
+		ImageTag:            tag,
+		ReleaseName:         defaultHelmReleaseName,
+		KindClusterName:     kindCluster.Name,
+		Kubeconfig:          kindCluster.Kubeconfig,
+		GitfakeInClusterURL: gitfakeHandle.InClusterURL,
+		GitfakeRepoURL:      gitfakeHandle.RepoURL,
 	}
 
 	// 6. Cleanup hook — best-effort; cleanup failures must never mask
@@ -471,14 +506,19 @@ func kindLoadImage(ctx context.Context, t *testing.T, kindClusterName, imageRef 
 // re-runs it reconciles to the new desired state.
 //
 // The harness always sets:
-//   - image.repository=sharko    (matches the locally-built image)
+//   - image.repository=sharko       (matches the locally-built image)
 //   - image.tag=<resolved tag>
 //   - image.pullPolicy=IfNotPresent (the image is in containerd, never pull)
+//   - e2e.gitHostsAllowlist=<gitfakeAllowlistHost> (V125-1-13.x.5 — allows
+//     Sharko to clone from the in-cluster gitfake whose hostname is not in
+//     the default git-host whitelist)
 //
 // Caller overrides via cfg.SetValues are appended AFTER the always-on
-// flags, so they win on conflict (helm honours last --set wins).
+// flags, so they win on conflict (helm honours last --set wins). A caller
+// that wants to override the gitfake allowlist host (e.g. to test the
+// rejection path) can do so via cfg.SetValues["e2e.gitHostsAllowlist"].
 func helmUpgradeInstall(ctx context.Context, t *testing.T, cfg HelmInstallConfig,
-	kubeconfig, chartPath, ns, tag string) error {
+	kubeconfig, chartPath, ns, tag, gitfakeAllowlistHost string) error {
 	t.Helper()
 
 	args := []string{
@@ -491,6 +531,7 @@ func helmUpgradeInstall(ctx context.Context, t *testing.T, cfg HelmInstallConfig
 		"--set", "image.repository=sharko",
 		"--set", "image.tag=" + tag,
 		"--set", "image.pullPolicy=IfNotPresent",
+		"--set", "e2e.gitHostsAllowlist=" + gitfakeAllowlistHost,
 	}
 	for k, v := range cfg.SetValues {
 		args = append(args, "--set", k+"="+v)
