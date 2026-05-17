@@ -120,6 +120,17 @@ spec:
             - name: GITOPS_ACTIONS_ENABLED
               value: "true"
             {{- end }}
+            {{- /*
+              E2E TEST HARNESS ONLY (V125-1-13.x.4). When .Values.e2e.gitHostsAllowlist
+              is non-empty, surface it as SHARKO_E2E_GIT_HOSTS_ALLOWLIST so the
+              connection validator (internal/service/connection.go::deriveProviderFromURL)
+              accepts the in-cluster gitfake service hostname during helm-mode e2e tests.
+              MUST remain empty for production — no env entry is emitted in that case.
+            */}}
+            {{- if and .Values.e2e .Values.e2e.gitHostsAllowlist }}
+            - name: SHARKO_E2E_GIT_HOSTS_ALLOWLIST
+              value: {{ .Values.e2e.gitHostsAllowlist | quote }}
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

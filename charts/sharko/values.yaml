@@ -258,3 +258,17 @@ affinity: {}
 extraEnv: []
 #  - name: MY_VAR
 #    value: "my-value"
+
+# ---------------------------------------------------------------------------
+# E2E TEST HARNESS ONLY — DO NOT SET IN PRODUCTION DEPLOYMENTS.
+#
+# These keys exist to wire test-only behavior. They MUST remain empty/default
+# in any non-test installation. Setting them in production is unsupported and
+# may expose internal test surfaces.
+# ---------------------------------------------------------------------------
+e2e:
+  # SHARKO_E2E_GIT_HOSTS_ALLOWLIST — comma-separated list of additional git
+  # hosts that Sharko's connection validator accepts. Used by helm-mode e2e
+  # tests to allowlist the in-cluster gitfake service hostname (e.g.
+  # gitfake.default.svc.cluster.local). Leave empty for production.
+  gitHostsAllowlist: ""
