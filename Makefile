@@ -1,6 +1,6 @@
 # Sharko — Makefile
 
-.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e test-e2e test-e2e-fast test-e2e-domain test-e2e-helm test-e2e-coverage test-e2e-fast-coverage test-e2e-junit test-e2e-report install-test-tools kind-up kind-down catalog-scan catalog-scan-pr generate-provider-types
+.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e test-e2e test-e2e-fast test-e2e-domain test-e2e-helm test-e2e-coverage test-e2e-fast-coverage test-e2e-junit test-e2e-report install-test-tools kind-up kind-down catalog-scan catalog-scan-pr generate-provider-types build-gitfake-image
 
 PORT ?= 8080
 
@@ -171,6 +171,29 @@ test-e2e-helm: ## Run the Wave-D Helm-mode E2E subset (~5-8 min, requires docker
 	 go test -tags=e2e -timeout=20m -v \
 	 -run '^(TestClusterTest_ArgoCDProvider|TestClusterTest_ProviderAutoDefault_HappyPath|TestClusterTest_ProviderCrossContamination_NamespaceSwitch)$$' \
 	 ./tests/e2e/lifecycle/...
+
+# V125-1-13.x.1 — Build the gitfake-server image.
+#
+# Mirrors the Sharko image-cache probe pattern used by test-e2e-helm:
+# `docker image inspect` is the cheapest cache hit (exits 0 / non-zero).
+# On a cache hit we skip the (~30s) docker build entirely; back-to-back
+# local runs of downstream stories (13.x.2+) that re-deploy the same SHA
+# pay zero rebuild cost.
+#
+# SHARKO_GITFAKE_IMAGE_TAG defaults to e2e-<short-sha> so a fresh commit
+# forces a rebuild and a re-run on the same commit reuses the cached
+# image. Build context is the repo root because the Dockerfile copies
+# go.mod + the harness package from there.
+SHARKO_GITFAKE_IMAGE_TAG ?= e2e-$(shell git rev-parse --short HEAD)
+SHARKO_GITFAKE_IMAGE ?= sharko-gitfake:$(SHARKO_GITFAKE_IMAGE_TAG)
+
+build-gitfake-image: ## Build the gitfake-server image (skips on docker-image cache hit).
+	@if docker image inspect $(SHARKO_GITFAKE_IMAGE) >/dev/null 2>&1; then \
+		echo "==> gitfake image $(SHARKO_GITFAKE_IMAGE) already present locally — skipping build"; \
+	else \
+		echo "==> Building $(SHARKO_GITFAKE_IMAGE) from tests/e2e/harness/gitfake/Dockerfile"; \
+		docker build -f tests/e2e/harness/gitfake/Dockerfile -t $(SHARKO_GITFAKE_IMAGE) .; \
+	fi
 
 # Test reports (V2 Epic 7-1.16). The KEY flag is
 # -coverpkg=./internal/...,./cmd/... — without it, the coverage profile
