@@ -98,7 +98,7 @@ func TestClusterLifecycle(t *testing.T) {
 	// The git provider is overridden by SharkoConfig.GitProvider, so
 	// the git config is only required to satisfy create-time validation;
 	// the argocd config is real and load-bearing.
-	seedActiveConnection(t, admin, argoAccess.URL, argoAccess.Token)
+	seedActiveConnection(t, admin, gitfake.RepoURL, argoAccess.URL, argoAccess.Token)
 
 	// ---------------------------------------------------------------
 	// subtests

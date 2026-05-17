@@ -274,10 +274,9 @@ func insecureTransport() *http.Transport {
 // The Git side is irrelevant for read-time GetActiveConnection() because
 // SharkoConfig.GitProvider already installed an in-memory MockGitProvider
 // override on the connection service — but the connection still needs a
-// valid Git config to pass create-time validation. We supply Owner+Repo
-// only; sharko's validator accepts that shape and the runtime git side
-// is mocked separately via SharkoConfig.GitProvider override.
-func seedActiveConnection(t *testing.T, admin *harness.Client, argoURL, argoToken string) {
+// valid Git config to pass create-time validation. We supply the
+// gitfake's repo URL.
+func seedActiveConnection(t *testing.T, admin *harness.Client, gitfakeRepoURL, argoURL, argoToken string) {
 	t.Helper()
 
 	// Validate the URL parses — surfaces config typos earlier than
@@ -292,6 +291,7 @@ func seedActiveConnection(t *testing.T, admin *harness.Client, argoURL, argoToke
 			Provider: models.GitProviderGitHub,
 			Owner:    "sharko-e2e",
 			Repo:     "sharko-addons",
+			RepoURL:  gitfakeRepoURL,
 			Token:    "ghmock-test-token", // unused (gitprovider override is wired)
 		},
 		"argocd": models.ArgocdConfig{
