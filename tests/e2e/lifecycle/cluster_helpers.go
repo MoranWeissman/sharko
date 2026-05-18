@@ -278,6 +278,22 @@ func insecureTransport() *http.Transport {
 // only; sharko's validator accepts that shape and the runtime git side
 // is mocked separately via SharkoConfig.GitProvider override (see
 // V125-1-13.y for the override-wiring fix).
+//
+// V125-1-13.y.3 / BUG-189-final: seeding the GitOps block is mandatory.
+// The in-process harness leaves Server.gitopsCfg zero-valued (empty
+// BaseBranch / BranchPrefix / CommitPrefix), and the only path that
+// populates it is connections.go → ReinitializeFromConnection, which
+// only copies fields from a non-nil conn.GitOps. Without an explicit
+// gitops block the orchestrator commits with branchName="" and base=""
+// → ghmock CreatePR returns 'base branch "" not found' → registration
+// returns 207/partial with no PR, no managed-cluster entry → every
+// downstream subtest fails with "cluster not found". Defaults match
+// the GitOpsSettings doc comments.
+//
+// pr_auto_merge=true closes Sharko's auto-merge loop in-process so the
+// register flow lands the values + managed-clusters.yaml on main
+// synchronously — the test's ListClusters Eventually-poll then sees
+// the managed cluster within one polling iteration.
 func seedActiveConnection(t *testing.T, admin *harness.Client, argoURL, argoToken string) {
 	t.Helper()
 
@@ -287,6 +303,7 @@ func seedActiveConnection(t *testing.T, admin *harness.Client, argoURL, argoToke
 		t.Fatalf("seedActiveConnection: invalid argoURL %q: %v", argoURL, err)
 	}
 
+	autoMerge := true
 	body := map[string]any{
 		"name": "e2e-cluster-lifecycle",
 		"git": models.GitRepoConfig{
@@ -300,6 +317,12 @@ func seedActiveConnection(t *testing.T, admin *harness.Client, argoURL, argoToke
 			Token:     argoToken,
 			Namespace: "argocd",
 			Insecure:  true,
+		},
+		"gitops": &models.GitOpsSettings{
+			BaseBranch:   "main",     // ghmock pre-seeds branch "main" with README.md
+			BranchPrefix: "sharko/",  // matches production default
+			CommitPrefix: "sharko:",  // matches production default
+			PRAutoMerge:  &autoMerge, // squash-merges land the managed-clusters update on main synchronously
 		},
 		"set_as_default": true,
 	}
@@ -331,21 +354,30 @@ func seedActiveConnection(t *testing.T, admin *harness.Client, argoURL, argoToke
 // kubeconfig fixture for kubeconfig-provider register
 // ---------------------------------------------------------------------------
 
-// makeRegisterRequest assembles a RegisterClusterRequest using the
-// inline-kubeconfig provider against the supplied target kind cluster.
-// Creates the SA + ClusterRoleBinding + bearer-token via
-// harness.CreateServiceAccountToken and assembles the kubeconfig with
-// the Docker-network-internal IP via harness.BuildKubeconfig.
+// makeKubeconfigRegisterBody assembles a kubeconfig-provider register
+// payload for the in-process Sharko in TestClusterLifecycle.
 //
-// Bypasses the EKS credentials-provider path entirely — sharko v1.25.x's
-// kubeconfig provider accepts the inline kubeconfig YAML in the request
-// body, satisfies the cluster register without an external secret store,
-// and registers the cluster directly in ArgoCD.
+// Why BuildHostReachableKubeconfig and not BuildKubeconfig:
+// In-process Sharko runs on the HOST (httptest.NewServer on
+// 127.0.0.1:<random>). Sharko's RegisterCluster orchestrator calls
+// verify.Stage1 → Discovery().ServerVersion() against the kubeconfig's
+// server URL. BuildKubeconfig points at the Docker bridge IP
+// (172.18.0.x:6443) which is unreachable from the macOS host (Docker
+// Desktop runs containers in a Linux VM behind a non-routable bridge),
+// so the request hangs ~10s then returns 502 "context deadline exceeded".
+// BuildHostReachableKubeconfig points at the host-bound 127.0.0.1:<port>
+// that kind already exposes, so the host-process verify completes in ms.
+//
+// ArgoCD-direct callers (registerClusterInArgoCDDirect / V125-1-13.x.6
+// tests) still use BuildKubeconfig because the consuming process is the
+// ArgoCD Pod inside the kind cluster, where the Docker bridge IP IS
+// reachable. See harness.BuildHostReachableKubeconfig doc for the full
+// contrast (V125-1-13.y.3 / BUG-189-final).
 func makeKubeconfigRegisterBody(t *testing.T, target harness.KindCluster, name string) map[string]any {
 	t.Helper()
 	saName := "sharko-e2e-sa"
 	_ = harness.CreateServiceAccountToken(t, target, saName)
-	kubeconfig := harness.BuildKubeconfig(t, target, saName)
+	kubeconfig := harness.BuildHostReachableKubeconfig(t, target, saName)
 	return map[string]any{
 		"name":       name,
 		"provider":   "kubeconfig",

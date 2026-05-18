@@ -379,6 +379,8 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	if err != nil {
 		if gitResult != nil {
 			// PR created but merge failed — partial success with PR info.
+			slog.Error("RegisterCluster: PR opened but auto-merge failed",
+				"cluster", req.Name, "pr_url", gitResult.PRUrl, "error", err)
 			result.Status = "partial"
 			result.CompletedSteps = steps
 			result.FailedStep = "pr_merge"
@@ -388,6 +390,13 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 			return result, nil
 		}
 		// Complete Git failure (couldn't even create PR).
+		// V125-1-13.y.3: surface the underlying error so operators can
+		// distinguish branch-create / batch-write / PR-create failures
+		// without a full debug build. Previously the failure mode was
+		// invisible — the response carries it in result.Error but the
+		// server logs were silent, masking diagnosis during e2e triage.
+		slog.Error("RegisterCluster: git commit failed",
+			"cluster", req.Name, "error", err)
 		result.Status = "partial"
 		result.CompletedSteps = steps
 		result.FailedStep = "git_commit"

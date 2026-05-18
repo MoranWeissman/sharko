@@ -17,6 +17,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/api"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/service"
 )
 
@@ -254,6 +255,51 @@ func startSharkoInProcess(t *testing.T, cfg SharkoConfig, user, pass string) *Sh
 
 	srv := api.NewServer(connSvc, clusterSvc, addonSvc, dashboardSvc, observabilitySvc, upgradeSvc, aiClient)
 	srv.SetVersion("e2e")
+
+	// V125-1-13.y.3: align the in-process boot path with production
+	// defaults for the orchestrator's repo-paths + GitOps config.
+	//
+	// Pre-V125-1-13.y.3 the harness left Server.repoPaths and
+	// Server.gitopsCfg zero-valued, so the orchestrator wrote cluster
+	// values to "<empty>/<name>.yaml" while every reader (ConfigDiff,
+	// Values, ListClusters, ai/tools) looked under
+	// "configuration/addons-clusters-values/<name>.yaml" — every
+	// downstream subtest 500'd "file not found". CreatePR also failed
+	// with 'base branch "" not found' until the seeded connection
+	// included a GitOps block that ReinitializeFromConnection could
+	// pick up.
+	//
+	// We mirror cmd/sharko/serve.go's defaults exactly so the
+	// in-process boot behaves like a real Sharko start with no
+	// operator overrides — production parity matters for the e2e
+	// suite's job of catching path/config drift.
+	//
+	// PRAutoMerge is intentionally LEFT FALSE here. Several existing
+	// in-process tests (TestGlobalValuesEditor, TestPerClusterValuesOverride)
+	// rely on the orchestrator opening PRs in the OPEN state so the
+	// test can call MockGitProvider.MergePR(t, prID) explicitly to
+	// simulate human approval. Tests that need auto-merge (e.g.
+	// TestClusterLifecycle's register flow) must set pr_auto_merge=true
+	// on the seeded connection — ReinitializeFromConnection then
+	// promotes it onto Server.gitopsCfg.
+	srv.SetWriteAPIDeps(
+		nil, // no credentials provider — kubeconfig path bypasses it; EKS-only tests skip-graceful
+		nil, // no provider config — system info endpoint reports "not configured"
+		orchestrator.RepoPathsConfig{
+			ClusterValues:   "configuration/addons-clusters-values",
+			GlobalValues:    "configuration/addons-global-values",
+			Catalog:         "configuration/addons-catalog.yaml",
+			Charts:          "charts/",
+			Bootstrap:       "bootstrap/",
+			ManagedClusters: "configuration/managed-clusters.yaml",
+		},
+		orchestrator.GitOpsConfig{
+			BranchPrefix: "sharko/",
+			CommitPrefix: "sharko:",
+			BaseBranch:   "main",
+			// PRAutoMerge intentionally false — see comment above.
+		},
+	)
 
 	// Optional GitProvider injection (V2 Epic 7-1.3). When the caller
 	// supplies a fake (typically *MockGitProvider from ghmock.go), wire
