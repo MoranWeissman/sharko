@@ -130,7 +130,26 @@ func (s *Server) serviceTokenForConnection(conn *models.Connection) string {
 // connection but with an explicit token. Used by GitProviderForTier when the
 // resolved token differs from the connection's service token (Tier 2 happy
 // path with per-user PAT).
+//
+// V125-1-13.y.2 / BUG-189-real: honour the ConnectionService.GitProviderOverride()
+// before constructing a concrete per-request provider. SharkoConfig.GitProvider
+// (test/demo mode) installs that hook via ConnectionService.SetGitProviderOverride.
+// Without the short-circuit here, the override is only consulted on the
+// no-token fallback paths below (which delegate to GetActiveGitProvider) —
+// every Tier 2 happy path that arrives with a non-empty token (per-user PAT
+// or service token) constructs gitprovider.NewGitHubProvider / NewAzureDevOpsProvider
+// directly and bypasses the mock, causing tests to hit real api.github.com.
+// Production never installs an override; this is a no-op for prod.
+//
+// Attribution semantics: callers (GitProviderForTier) compute TokenResolution
+// (including AttributionFallback / AttributionMode) BEFORE calling this
+// function, then attach the attribution to the ctx AFTER this function
+// returns. The choice of provider object does not influence attribution, so
+// returning the override here preserves the full Tier 2 warning flow.
 func (s *Server) providerFromConnectionWithToken(conn *models.Connection, token string) (gitprovider.GitProvider, error) {
+	if p := s.connSvc.GitProviderOverride(); p != nil {
+		return p, nil
+	}
 	switch conn.Git.Provider {
 	case models.GitProviderGitHub:
 		if token == "" {

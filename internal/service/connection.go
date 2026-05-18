@@ -364,6 +364,20 @@ func (s *ConnectionService) SetGitProviderOverride(p gitprovider.GitProvider) {
 	s.gitProviderOverride = p
 }
 
+// GitProviderOverride returns the installed GitProvider override, or nil
+// if none is set. Used by per-request resolvers (e.g. internal/api/
+// tiered_git.go::providerFromConnectionWithToken) so they consult the
+// override before constructing a concrete provider — otherwise the
+// demo/test mock-provider gets bypassed on every code path that
+// constructs a provider directly with a token.
+//
+// Production code never installs an override; this returns nil and
+// callers fall through to their normal construction logic. Zero
+// behavior change for production deployments.
+func (s *ConnectionService) GitProviderOverride() gitprovider.GitProvider {
+	return s.gitProviderOverride
+}
+
 // GetActiveGitProvider returns a GitProvider for the currently active connection.
 func (s *ConnectionService) GetActiveGitProvider() (gitprovider.GitProvider, error) {
 	if s.gitProviderOverride != nil {
