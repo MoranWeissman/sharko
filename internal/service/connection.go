@@ -175,6 +175,15 @@ func (s *ConnectionService) Create(req models.CreateConnectionRequest) error {
 //   - GitHub:      github.com, *.github.com (GitHub Enterprise w/ subdomain)
 //   - Azure DevOps: dev.azure.com, *.visualstudio.com (legacy ADO host)
 //
+// V125-1-13.x.3 — test-only escape hatch:
+// Hosts listed in the SHARKO_E2E_GIT_HOSTS_ALLOWLIST env var (comma-separated,
+// whitespace-trimmed, case-insensitive, exact match — no wildcards) are
+// accepted and resolved to GitProviderGitHub. This unblocks helm-mode e2e
+// tests that need to point at an in-cluster gitfake URL (e.g.
+// gitfake.default.svc.cluster.local) without hardcoding that hostname into
+// the production whitelist. Empty/unset env = zero behavior change: the
+// codepath short-circuits before any string ops.
+//
 // All errors wrap ErrValidation so the API handler returns 400.
 func deriveProviderFromURL(repoURL string) (string, error) {
 	u, err := url.Parse(repoURL)
@@ -187,9 +196,21 @@ func deriveProviderFromURL(repoURL string) (string, error) {
 		return string(models.GitProviderGitHub), nil
 	case host == "dev.azure.com" || strings.HasSuffix(host, ".visualstudio.com"):
 		return string(models.GitProviderAzureDevOps), nil
-	default:
-		return "", fmt.Errorf("unsupported git host %q (supported: github.com, dev.azure.com): %w", host, ErrValidation)
 	}
+
+	// V125-1-13.x.3 — test-only opt-in env-var allowlist. Short-circuit on
+	// empty/unset so the steady-state (production) path does zero work.
+	if extra := os.Getenv("SHARKO_E2E_GIT_HOSTS_ALLOWLIST"); extra != "" {
+		for _, h := range strings.Split(extra, ",") {
+			h = strings.TrimSpace(strings.ToLower(h))
+			if h != "" && h == host {
+				slog.Debug("connection: git host accepted via SHARKO_E2E_GIT_HOSTS_ALLOWLIST", "host", host)
+				return string(models.GitProviderGitHub), nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("unsupported git host %q (supported: github.com, dev.azure.com): %w", host, ErrValidation)
 }
 
 // validateConnectionRequest checks that the create/update request has the

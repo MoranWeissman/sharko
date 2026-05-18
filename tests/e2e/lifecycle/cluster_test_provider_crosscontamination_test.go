@@ -134,13 +134,24 @@ func TestClusterTest_ProviderCrossContamination_NamespaceSwitch(t *testing.T) {
 	const argoNamespace = "argocd"
 	const stalePreSwitchNamespace = "sharko" // the namespace value that pre-10.8 leaked through
 
+	// V125-1-13.x.6: connection validation only — git ops are NEVER
+	// exercised by this test (see "Step 3" below for the direct ArgoCD
+	// registration that bypasses Sharko's git flow). The connection still
+	// must pass validateConnectionRequest, which accepts (owner + repo)
+	// without an explicit repo_url. Omitting repo_url avoids two pitfalls:
+	//   - gitfake URL has only 1 path segment (`/sharko-e2e.git`) →
+	//     models.GitRepoConfig.ParseRepoURL would 400 with "must contain
+	//     owner/repo"
+	//   - a fake github.com URL would let the connection create succeed but
+	//     would then cause downstream git operations to hit api.github.com
+	//     and 404 (irrelevant for this test, but fragile if the test ever
+	//     touches a git-side handler).
 	createReq := models.CreateConnectionRequest{
 		Name: connName,
 		Git: models.GitRepoConfig{
 			Provider: models.GitProviderGitHub,
 			Owner:    "sharko-e2e",
 			Repo:     "sharko-addons",
-			RepoURL:  "https://github.com/sharko-e2e/sharko-addons",
 			Token:    "ghmock-test-token", // not used by the test — connection validation only
 		},
 		Argocd: models.ArgocdConfig{
@@ -238,32 +249,36 @@ func TestClusterTest_ProviderCrossContamination_NamespaceSwitch(t *testing.T) {
 			got.Provider.Namespace)
 	}
 
-	// ---- Step 3: Register the target via the kubeconfig flow ----
+	// ---- Step 3: Register the target directly in ArgoCD (bypass Sharko) ----
 	//
-	// Same shape as the sibling cluster_test_argocd_provider_test.go: the
-	// kubeconfig register flow inside Sharko reaches ArgoCD, ArgoCD writes
-	// a bearerToken-shape cluster Secret into the argocd namespace.
+	// V125-1-13.x.6 — Sharko's POST /api/v1/clusters path goes through git
+	// (commitChangesWithMeta → GitHubProvider → api.github.com). In helm
+	// mode the in-pod Sharko cannot reach the in-cluster gitfake via its
+	// GitHubProvider (the latter is hard-wired to api.github.com REST API;
+	// gitfake speaks git smart-HTTP wire protocol), so the register would
+	// 207 partial at the git step and never write the ArgoCD cluster Secret.
+	//
+	// Direct ArgoCD REST API registration lands the SAME bearerToken-shape
+	// cluster Secret in the argocd namespace that Sharko's Step 6 would have
+	// produced. The cross-contamination scenario this test pins is the
+	// post-switch Provider.Type=argocd + Provider.Namespace=sharko config —
+	// that's resolved on the next ArgoCDProvider.GetCredentials call inside
+	// Sharko's Test endpoint, REGARDLESS of how the cluster Secret got
+	// written. The git-side coverage of Sharko's register flow lives in the
+	// in-process e2e suite (cluster_test.go::RegisterManagedCluster) where
+	// ghmock intercepts api.github.com.
 	const clusterName = "ns-cross-target"
-	t.Logf("registering target cluster %q via kubeconfig flow", clusterName)
-	registerBody := makeKubeconfigRegisterBody(t, target, clusterName)
-	resp := admin.Do(t, http.MethodPost, "/api/v1/clusters", registerBody)
-	resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		t.Fatalf("RegisterCluster: status=%d (kubeconfig register flow against helm-installed sharko failed)",
-			resp.StatusCode)
-	}
+	t.Logf("registering target cluster %q directly in ArgoCD (bypassing Sharko git flow)", clusterName)
+	registerClusterInArgoCDDirect(t, argoAccess, target, clusterName)
 
-	// Wait for ListClusters to surface the new cluster (proves Sharko's
-	// cluster-service view is consistent with what ArgoCD wrote).
-	harness.Eventually(t, 30*time.Second, func() bool {
-		lr := admin.ListClusters(t)
-		for _, c := range lr.Clusters {
-			if c.Name == clusterName && c.Managed {
-				return true
-			}
-		}
-		return false
-	}, "registered cluster %q never appeared in list", clusterName)
+	// Wait for the cluster to appear in ArgoCD's cluster list as seen
+	// through Sharko's view. Because the cluster was NOT registered via
+	// Sharko (no entry in managed-clusters.yaml), it appears as "discovered"
+	// (Managed=false) — not "managed". That is fine for this test: the
+	// Test endpoint's ArgoCDProvider lookup doesn't care about the managed
+	// flag, it just needs the cluster Secret in argocd ns.
+	mgmtK8s := buildK8sClient(t, mgmt.Kubeconfig)
+	waitForArgoCDClusterSecret(t, mgmtK8s, clusterName, 60*time.Second)
 
 	// ---- Step 4: The assertion — POST /clusters/{name}/test must 200 ----
 	//

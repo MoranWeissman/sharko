@@ -34,6 +34,7 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/tests/e2e/harness"
+	"gopkg.in/yaml.v3"
 )
 
 // argocdAccess captures the host-reachable URL + admin bearer token for
@@ -358,4 +359,137 @@ func makeKubeconfigRegisterBody(t *testing.T, target harness.KindCluster, name s
 func fileExists(p string) bool {
 	_, err := os.Stat(p)
 	return err == nil
+}
+
+// ---------------------------------------------------------------------------
+// V125-1-13.x.6 — direct ArgoCD cluster registration helper
+// ---------------------------------------------------------------------------
+
+// registerClusterInArgoCDDirect registers a target kind cluster directly in
+// ArgoCD via ArgoCD's REST API, bypassing Sharko's POST /api/v1/clusters
+// flow entirely.
+//
+// Why this exists: Sharko's RegisterCluster path goes through Git
+// (commitChangesWithMeta → CreateBranch / BatchCreateFiles / CreatePullRequest /
+// MergePullRequest). Sharko's GitHubProvider uses the go-github REST client
+// hard-wired to api.github.com — the in-cluster gitfake Service speaks the
+// git smart-HTTP wire protocol, NOT GitHub's REST API, so an in-pod Sharko
+// can never satisfy its own git operations against the gitfake. Registering
+// the cluster directly via ArgoCD's REST API lands a bearerToken-shape
+// cluster Secret in the argocd namespace — the same end-state Sharko's flow
+// would have produced — and lets the helm-mode Test endpoint subtests exercise
+// the ArgoCDProvider GetCredentials path against a real cluster Secret without
+// any git involvement.
+//
+// Mirrors internal/argocd/client_write.go::RegisterCluster: POST to
+// /api/v1/clusters on the host-port-forwarded ArgoCD URL with a JSON payload
+// {name, server, config: {bearerToken, tlsClientConfig: {caData, insecure}}}.
+//
+// Returns the parsed kubeconfig fields (server, token, ca) for the caller's
+// diagnostic logging. t.Fatalf on any failure.
+func registerClusterInArgoCDDirect(t *testing.T, argoAccess *argocdAccess, target harness.KindCluster, clusterName string) {
+	t.Helper()
+
+	// 1. Build kubeconfig for the target via the existing harness helper —
+	//    this creates an SA + ClusterRoleBinding on the target and assembles
+	//    a kubeconfig with the Docker-network-internal IP (reachable from
+	//    inside the kind cluster's ArgoCD pod).
+	saName := "sharko-e2e-direct-sa"
+	_ = harness.CreateServiceAccountToken(t, target, saName)
+	kubeconfigYAML := harness.BuildKubeconfig(t, target, saName)
+
+	// 2. Parse the kubeconfig to extract Server, CAData (base64), Token.
+	//    Mirrors providers.ParseInlineKubeconfig — but inlined here so the
+	//    test doesn't depend on production package internals.
+	server, caDataB64, token, err := parseKubeconfigForArgoCDRegister(kubeconfigYAML)
+	if err != nil {
+		t.Fatalf("registerClusterInArgoCDDirect(%s): parse kubeconfig: %v", clusterName, err)
+	}
+
+	// 3. Build the ArgoCD POST /api/v1/clusters payload. The shape matches
+	//    internal/argocd/client_write.go::RegisterCluster exactly so the
+	//    resulting cluster Secret carries the same auth shape Sharko would
+	//    have produced. insecure=true matches the in-process e2e baseline.
+	payload := map[string]any{
+		"name":   clusterName,
+		"server": server,
+		"config": map[string]any{
+			"bearerToken": token,
+			"tlsClientConfig": map[string]any{
+				"caData":   caDataB64, // already base64; Sharko also passes base64 here
+				"insecure": false,
+			},
+		},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("registerClusterInArgoCDDirect(%s): marshal payload: %v", clusterName, err)
+	}
+
+	// 4. POST to ArgoCD via the test's existing port-forward + admin JWT.
+	url := argoAccess.URL + "/api/v1/clusters"
+	httpClient := &http.Client{Timeout: 30 * time.Second, Transport: insecureTransport()}
+	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(string(body)))
+	if err != nil {
+		t.Fatalf("registerClusterInArgoCDDirect(%s): build request: %v", clusterName, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+argoAccess.Token)
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		t.Fatalf("registerClusterInArgoCDDirect(%s): POST %s: %v", clusterName, url, err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		t.Fatalf("registerClusterInArgoCDDirect(%s): POST %s status=%d body=%s",
+			clusterName, url, resp.StatusCode, respBody)
+	}
+	t.Logf("harness/lifecycle: registered cluster %q directly in ArgoCD [server=%s]", clusterName, server)
+}
+
+// parseKubeconfigForArgoCDRegister extracts (server, base64CAData, token) from
+// a single-cluster, single-user kubeconfig YAML. Used by
+// registerClusterInArgoCDDirect to convert the kubeconfig produced by
+// harness.BuildKubeconfig into the fields ArgoCD's POST /api/v1/clusters
+// payload requires.
+//
+// We can't use clientcmd.RESTConfigFromKubeConfig directly because that
+// returns *rest.Config with CAData as raw bytes; ArgoCD's payload wants
+// base64-encoded CAData. The kubeconfig harness.BuildKubeconfig produces
+// already has the CA in base64 form (the YAML key
+// "certificate-authority-data"), so we parse the YAML directly to preserve
+// that encoding without a base64 round-trip.
+func parseKubeconfigForArgoCDRegister(kubeconfigYAML string) (server, caDataB64, token string, err error) {
+	var kc struct {
+		Clusters []struct {
+			Cluster struct {
+				Server                   string `yaml:"server"`
+				CertificateAuthorityData string `yaml:"certificate-authority-data"`
+			} `yaml:"cluster"`
+		} `yaml:"clusters"`
+		Users []struct {
+			User struct {
+				Token string `yaml:"token"`
+			} `yaml:"user"`
+		} `yaml:"users"`
+	}
+	if err := yaml.Unmarshal([]byte(kubeconfigYAML), &kc); err != nil {
+		return "", "", "", fmt.Errorf("yaml.Unmarshal: %w", err)
+	}
+	if len(kc.Clusters) == 0 {
+		return "", "", "", fmt.Errorf("no clusters in kubeconfig")
+	}
+	if len(kc.Users) == 0 {
+		return "", "", "", fmt.Errorf("no users in kubeconfig")
+	}
+	server = kc.Clusters[0].Cluster.Server
+	caDataB64 = kc.Clusters[0].Cluster.CertificateAuthorityData
+	token = kc.Users[0].User.Token
+	if server == "" || caDataB64 == "" || token == "" {
+		return "", "", "", fmt.Errorf("missing required kubeconfig fields (server=%v ca=%v token=%v)",
+			server != "", caDataB64 != "", token != "")
+	}
+	return server, caDataB64, token, nil
 }

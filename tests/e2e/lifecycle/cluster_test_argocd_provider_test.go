@@ -108,9 +108,16 @@ func TestClusterTest_ArgoCDProvider(t *testing.T) {
 	t.Logf("installing argocd into management cluster (%s)", mgmt.Name)
 	harness.InstallArgoCD(t, mgmt)
 
-	// ---- start gitfake + ghmock for the active connection ----
+	// ---- start gitfake + ghmock (kept for symmetry with sibling tests) ----
+	// gitfake is not consumed by this test's Sharko pod — see the
+	// "structural blocker" note below for the V125-1-13.x.6 rewrite that
+	// bypasses Sharko's git-touching RegisterCluster flow entirely. Kept
+	// alive so any future test that DOES want git can rely on the same
+	// harness primitive being present.
 	gitfake := harness.StartGitFake(t)
 	ghmock := harness.StartGitMock(t)
+	_ = gitfake
+	_ = ghmock
 
 	// ---- boot Sharko via Helm (Wave C wiring) ----
 	// SharkoModeHelm requires cfg.MgmtCluster; pass a pointer into the
@@ -120,7 +127,6 @@ func TestClusterTest_ArgoCDProvider(t *testing.T) {
 		Mode:        harness.SharkoModeHelm,
 		MgmtCluster: &mgmt,
 		GitFake:     gitfake,
-		GitProvider: ghmock,
 	})
 	sharko.WaitHealthy(t, 30*time.Second)
 
@@ -129,53 +135,47 @@ func TestClusterTest_ArgoCDProvider(t *testing.T) {
 	// from sharko-initial-admin-secret in the kind cluster.
 	admin := harness.NewClient(t, sharko)
 
-	// ---- read ArgoCD admin password + login (needed for active connection) ----
-	argoPwd := fetchArgoAdminPassword(t, mgmt)
-	// We never actually port-forward ArgoCD here — the active connection's
-	// argocd.server_url is the in-cluster service DNS that the Sharko pod
-	// dials directly. We only need the password to get an admin JWT for
-	// connSvc.GetActiveArgocdClient to authenticate against ArgoCD. Login
-	// against ArgoCD's REST API is a per-process call; we run it through a
-	// short-lived port-forward using the existing cluster_helpers
-	// startArgoCDAccess primitive which already wraps that pattern.
+	// ---- host-side ArgoCD access (port-forward + JWT) ----
+	// Used to register the target cluster directly in ArgoCD via REST API
+	// in the V125-1-13.x.6 rewrite (see registerClusterInArgoCDDirect).
 	argoAccess := startArgoCDAccess(t, mgmt)
-	_ = argoPwd // password was probed for diagnostics; the port-forward path
-	// internally re-reads the secret. Future cleanup: collapse the two reads.
 
-	// ---- seed active connection with in-cluster ArgoCD URL ----
-	// Helm-mode Sharko runs INSIDE the kind cluster, so the active
-	// connection's argocd.server_url MUST be the in-cluster service DNS
-	// (helmModeArgocdServerURL above) — NOT argoAccess.URL which is the
-	// host-side port-forwarded URL useful only for the test process.
+	// ---- V125-1-13.x.6 — register cluster directly in ArgoCD (bypass Sharko) ----
 	//
-	// Same constraint applies to the gitfake URL: gitfake.RepoURL is a
-	// 127.0.0.1:<port> address on the test host. From inside the Sharko
-	// Pod that loopback resolves to the Pod itself, not the host. Rewrite
-	// it via harness.RewriteHostLoopbackForPod so the Pod reaches the
-	// host's gitfake via host.docker.internal (Docker Desktop) or the
-	// host-gateway extraHost on Linux kind.
-	podReachableGitfakeURL := harness.RewriteHostLoopbackForPod(gitfake.RepoURL)
-	seedHelmActiveConnection(t, admin, podReachableGitfakeURL, helmModeArgocdServerURL, argoAccess.Token)
-
-	// ---- register the target via the kubeconfig flow ----
-	// internal/orchestrator/cluster.go's kubeconfig branch parses the
-	// inline kubeconfig directly (skips credProvider) and registers the
-	// cluster in ArgoCD. ArgoCD then writes the cluster Secret with the
-	// bearerToken auth shape into the argocd namespace.
-	t.Logf("registering target cluster %q via kubeconfig flow", argocdHappyClusterName)
-	body := makeKubeconfigRegisterBody(t, target, argocdHappyClusterName)
-	regResp := admin.Do(t, http.MethodPost, "/api/v1/clusters", body)
-	regResp.Body.Close()
-	if regResp.StatusCode < 200 || regResp.StatusCode >= 300 {
-		t.Fatalf("RegisterCluster: status=%d (helm-mode active connection may need adjustment — see report)", regResp.StatusCode)
-	}
+	// Why this bypasses Sharko's POST /api/v1/clusters:
+	//
+	// Sharko's RegisterCluster path goes through Git (commitChangesWithMeta →
+	// CreateBranch / BatchCreateFiles / CreatePullRequest / MergePullRequest).
+	// Sharko's GitHubProvider uses the go-github REST client hard-wired to
+	// api.github.com — the in-cluster gitfake Service speaks the git smart-HTTP
+	// wire protocol, NOT GitHub's REST API, so an in-pod Sharko can never
+	// satisfy its own git operations against the gitfake. The whitelisted
+	// gitfake URL in SHARKO_E2E_GIT_HOSTS_ALLOWLIST gets the connection past
+	// URL validation, but the subsequent BatchCreateFiles / CreatePullRequest
+	// calls still hit api.github.com (404 → register flow returns "partial"
+	// without reaching Step 6's ArgoCD register) → no cluster Secret in argocd
+	// ns → this test hangs at waitForArgoCDClusterSecret.
+	//
+	// Direct ArgoCD registration via REST API lands the same bearerToken-shape
+	// cluster Secret in the argocd namespace that Sharko's Step 6 would have
+	// produced. The auto-default ArgoCDProvider inside the Sharko pod then
+	// satisfies the Test endpoint subtests against that real Secret, which is
+	// exactly the contract V125-1-10.3 / V125-1-13.4 was built to pin.
+	//
+	// This DOES forgo coverage of Sharko's own git-side register flow in
+	// helm-mode, but that coverage already exists in the in-process e2e suite
+	// (cluster_test.go::RegisterManagedCluster) where ghmock can intercept
+	// the api.github.com calls. The helm-mode coverage here is specifically
+	// about the auto-default ArgoCDProvider + the typed-error paths against a
+	// real K8s API, neither of which involve git.
+	t.Logf("registering target cluster %q directly in ArgoCD (bypassing Sharko git flow)", argocdHappyClusterName)
+	registerClusterInArgoCDDirect(t, argoAccess, target, argocdHappyClusterName)
 
 	// ---- wait for ArgoCD's cluster Secret to land in argocd ns ----
 	// The Secret write is the load-bearing precondition for the Test
 	// endpoint — without it ArgoCDProvider.findClusterSecret returns
-	// NotFound. Helm-mode Sharko's argoSecretManager + reconciler may also
-	// have written a Sharko-managed Secret (Step 3b in cluster.go); either
-	// way, by the time this poll succeeds, the Secret exists.
+	// NotFound. ArgoCD's POST /api/v1/clusters writes the Secret synchronously,
+	// so this poll is fast (~1s) — kept as a safety net for any race.
 	mgmtK8s := buildK8sClient(t, mgmt.Kubeconfig)
 	waitForArgoCDClusterSecret(t, mgmtK8s, argocdHappyClusterName, 60*time.Second)
 
@@ -257,50 +257,6 @@ func TestClusterTest_ArgoCDProvider(t *testing.T) {
 // helpers — local to this test (not exported into harness per Wave D's
 // "use harness primitives, don't extend them" rule).
 // ---------------------------------------------------------------------------
-
-// seedHelmActiveConnection seeds an active connection whose argocd.server_url
-// is the in-cluster service DNS (reachable from the Sharko pod). This is
-// distinct from cluster_helpers.go::seedActiveConnection, which uses the
-// host-side argoAccess.URL — fine for in-process Sharko, broken for
-// helm-mode Sharko (the pod's DNS resolver doesn't know about 127.0.0.1).
-//
-// The git side stays gitfake-via-ghmock — the Sharko pod will attempt to
-// reach gitfake.RepoURL when the kubeconfig register flow hits its commit
-// step. If gitfake is bound to a host port that's not reachable from inside
-// kind, the register flow may fail at the git commit step. That failure is
-// captured by the t.Fatalf at the call site, with a hint pointing back here.
-func seedHelmActiveConnection(t *testing.T, admin *harness.Client, gitfakeRepoURL, argoServerURL, argoToken string) {
-	t.Helper()
-	body := map[string]any{
-		"name": "e2e-argocd-provider",
-		"git": map[string]any{
-			"provider": "github",
-			"repo_url": gitfakeRepoURL,
-			"owner":    "sharko-e2e",
-			"repo":     "sharko-addons",
-			"token":    "ghmock-test-token",
-		},
-		"argocd": map[string]any{
-			"server_url": argoServerURL,
-			"token":      argoToken,
-			"namespace":  "argocd",
-			"insecure":   true,
-		},
-		"set_as_default": true,
-	}
-	resp := admin.Do(t, http.MethodPost, "/api/v1/connections/", body)
-	resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		t.Fatalf("seedHelmActiveConnection: create status=%d", resp.StatusCode)
-	}
-	resp2 := admin.Do(t, http.MethodPost, "/api/v1/connections/active",
-		map[string]string{"connection_name": "e2e-argocd-provider"})
-	resp2.Body.Close()
-	if resp2.StatusCode < 200 || resp2.StatusCode >= 300 {
-		t.Fatalf("seedHelmActiveConnection: activate status=%d", resp2.StatusCode)
-	}
-	t.Logf("harness/lifecycle: seeded helm-mode active connection [argo=%s]", argoServerURL)
-}
 
 // buildK8sClient returns a kubernetes.Interface bound to the supplied
 // kubeconfig path. Mirrors harness.buildHelmK8sClient (which is unexported).
