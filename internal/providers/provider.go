@@ -164,16 +164,22 @@ func New(cfg Config) (ClusterCredentialsProvider, error) {
 	case "azure", "azure-kv", "azure-key-vault":
 		return NewAzureKeyVaultProvider(cfg)
 	case "argocd":
-		return NewArgoCDProvider(cfg)
+		// V125-1-11.4: route through the typed-config constructor. The compat
+		// shim translates Config → ClusterTestProviderConfig (discarding
+		// cfg.Namespace per the canonical fix). Direct callers should switch to
+		// NewArgoCDProviderFromConfig with a ClusterTestProviderConfig — this
+		// shim is removed when providers.Config is retired in V125-1-11.6.
+		return NewArgoCDProviderFromConfig(configToClusterTest(cfg))
 	case "":
 		// Auto-default: argocd when in-cluster, legacy error otherwise.
 		// We capture the *rest.Config returned by the probe and pass it through
-		// to NewArgoCDProviderWithRESTConfig so the test seam (inClusterConfigFn)
-		// flows end-to-end. Calling NewArgoCDProvider here would re-probe
-		// rest.InClusterConfig directly and bypass the seam (V125-1-10.9).
+		// to NewArgoCDProviderWithRESTConfigFromConfig so the test seam
+		// (inClusterConfigFn) flows end-to-end. Calling NewArgoCDProviderFromConfig
+		// here would re-probe rest.InClusterConfig directly and bypass the seam
+		// (V125-1-10.9). V125-1-11.4: routed through the typed-config constructor.
 		if restCfg, err := inClusterConfigFn(); err == nil {
 			slog.Info("[provider] auto-defaulting to argocd (no provider configured + in-cluster K8s detected)", "namespace", "argocd")
-			return NewArgoCDProviderWithRESTConfig(cfg, restCfg)
+			return NewArgoCDProviderWithRESTConfigFromConfig(configToClusterTest(cfg), restCfg)
 		} else if !errors.Is(err, rest.ErrNotInCluster) {
 			// Distinguishable from "not in cluster": the in-cluster probe
 			// failed for some other reason (bad SA token, malformed config).

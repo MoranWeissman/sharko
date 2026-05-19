@@ -27,6 +27,35 @@ rbac:
   argocdNamespace: argocd
 
 # ---------------------------------------------------------------------------
+# Cluster-Test Provider (V125-1-11.4)
+# ---------------------------------------------------------------------------
+# Configures the backend Sharko uses to fetch CONNECTIVITY credentials for a
+# target cluster — i.e. the kubeconfig used to verify a cluster is reachable
+# and auth works (POST /api/v1/clusters/{name}/test, the dashboard "Verified"
+# state). Today only the "argocd" backend is supported: it reads ArgoCD's
+# cluster Secret from the namespace where ArgoCD is installed.
+#
+# clusterTest.argocdNamespace is the CANONICAL replacement for the V125-1-10.8
+# SHARKO_ARGOCD_NAMESPACE env-var workaround. When set, it is the single
+# authoritative source for the ArgoCD namespace ArgoCDProvider reads from.
+#
+# Precedence (matches resolveArgoCDNamespaceTyped in internal/providers/argocd_provider.go):
+#   1. clusterTest.argocdNamespace (this value, when non-empty)
+#   2. SHARKO_ARGOCD_NAMESPACE env var — DEPRECATED, emits slog.Warn at startup;
+#      removal slated for v1.26 per V125-1-11 planning doc OQ #4
+#   3. hardcoded "argocd" default (matches the standard ArgoCD install location)
+#
+# NOTE: rbac.argocdNamespace below is a SEPARATE knob — it controls the
+# Role/RoleBinding the chart creates in the ArgoCD namespace so Sharko's
+# in-cluster service account can read ArgoCD Secrets. The two namespaces are
+# almost always the same value on standard installs; leaving clusterTest.argocdNamespace
+# empty falls back to env/default and continues to work as before.
+clusterTest:
+  # K8s namespace where ArgoCD stores its cluster Secrets. Leave empty to fall
+  # back to SHARKO_ARGOCD_NAMESPACE env var (deprecated) or the "argocd" default.
+  argocdNamespace: ""
+
+# ---------------------------------------------------------------------------
 # Connection Configuration
 # ---------------------------------------------------------------------------
 config:
