@@ -132,6 +132,92 @@ func BuildKubeconfig(t *testing.T, cluster KindCluster, saName string) string {
 	return yaml
 }
 
+// BuildHostReachableKubeconfig is the sibling of BuildKubeconfig used by
+// in-process Sharko tests where the Sharko process runs on the HOST and
+// must reach the kind cluster's API server via the host-published port
+// (NOT the Docker bridge IP).
+//
+// Why this exists (V125-1-13.y.3 / BUG-189-final):
+//
+//   - BuildKubeconfig produces a kubeconfig pointing at the kind control-
+//     plane container's Docker-network IP (e.g. https://172.18.0.x:6443).
+//     That IP is reachable from inside Docker — perfect for ArgoCD-pod-
+//     internal consumption (registerClusterInArgoCDDirect) and for the
+//     helm-mode Sharko Pod's view of the target.
+//   - On macOS / Docker Desktop, the Docker bridge network is NOT
+//     routable from the host (containers live inside a Linux VM). When
+//     the in-process Sharko on the host hands this kubeconfig to
+//     verify.Stage1, the K8s client's Discovery().ServerVersion() call
+//     TCP-connects to 172.18.0.x:6443, hangs ~10s, and returns 502
+//     "context deadline exceeded". That cascades to every downstream
+//     subtest (RegisterManagedCluster fails → Get/Patch/Values/etc. all
+//     fail because the managed cluster never lands in the list).
+//
+// The fix is to use the SAME control-plane API server but via the host-
+// reachable URL that `kind create cluster` already bound to a random
+// 127.0.0.1:<port> on the host. That URL lives in the standard
+// kubeconfig kind writes to cluster.Kubeconfig — we just need to swap
+// the SA user/token in instead of the embedded admin client cert.
+//
+// Returns the kubeconfig as a YAML string ready to paste into the
+// register-cluster API. The CA is reused from the kind kubeconfig
+// (same control plane), the SA token from kubectl create token.
+//
+// Callers: tests/e2e/lifecycle/cluster_helpers.go::makeKubeconfigRegisterBody
+// (in-process Sharko consumption). DO NOT switch ArgoCD-direct callers
+// (registerClusterInArgoCDDirect / V125-1-13.x.6 tests) to this — they
+// need the Docker-bridge IP for in-pod reachability.
+func BuildHostReachableKubeconfig(t *testing.T, cluster KindCluster, saName string) string {
+	t.Helper()
+
+	// 1. Read the host-reachable server URL straight from the kind-written
+	//    kubeconfig. kind binds the API server to a random 127.0.0.1:<port>
+	//    on the host and writes that URL into the kubeconfig at
+	//    cluster.Kubeconfig — use it directly so we always match whatever
+	//    port kind chose.
+	server, err := kubectlConfigView(cluster.Kubeconfig, cluster.Context, "{.clusters[0].cluster.server}")
+	if err != nil {
+		t.Fatalf("BuildHostReachableKubeconfig(%s): read server URL: %v", cluster.Name, err)
+	}
+	if server == "" {
+		t.Fatalf("BuildHostReachableKubeconfig(%s): empty server URL in kubeconfig %s", cluster.Name, cluster.Kubeconfig)
+	}
+
+	// 2. Pull the CA cert (base64) from the same kubeconfig so the
+	//    assembled kubeconfig validates the API server's TLS.
+	caData, err := kubectlConfigView(cluster.Kubeconfig, cluster.Context, "{.clusters[0].cluster.certificate-authority-data}")
+	if err != nil {
+		t.Fatalf("BuildHostReachableKubeconfig(%s): read CA: %v", cluster.Name, err)
+	}
+
+	// 3. Fetch the SA token (CreateServiceAccountToken must have run).
+	token, err := kubectlCreateToken(cluster.Kubeconfig, saName, "1h")
+	if err != nil {
+		t.Fatalf("BuildHostReachableKubeconfig(%s): create token: %v", cluster.Name, err)
+	}
+
+	// 4. Assemble the kubeconfig YAML. Same shape as BuildKubeconfig —
+	//    only the server URL changes.
+	yaml := "apiVersion: v1\n" +
+		"kind: Config\n" +
+		"clusters:\n" +
+		"- name: " + cluster.Name + "\n" +
+		"  cluster:\n" +
+		"    server: " + server + "\n" +
+		"    certificate-authority-data: " + caData + "\n" +
+		"contexts:\n" +
+		"- name: " + cluster.Context + "\n" +
+		"  context:\n" +
+		"    cluster: " + cluster.Name + "\n" +
+		"    user: " + saName + "\n" +
+		"current-context: " + cluster.Context + "\n" +
+		"users:\n" +
+		"- name: " + saName + "\n" +
+		"  user:\n" +
+		"    token: " + token + "\n"
+	return yaml
+}
+
 // CreateServiceAccountToken creates a ServiceAccount + cluster-admin
 // ClusterRoleBinding in cluster's default namespace and returns a
 // 1-hour bearer token for that SA.
