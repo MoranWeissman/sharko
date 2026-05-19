@@ -147,6 +147,18 @@ gitops:
     enabled: false  # Set to true to enable write operations (PR creation)
 
 # ---------------------------------------------------------------------------
+# Cluster Registration Source (V125-1-11.5 pre-wire)
+# ---------------------------------------------------------------------------
+# Pre-wire for the V125-1-8 cluster reconciler. No consumer today; safe
+# defaults. When V125-1-8 ships, setting `type: argocd` will cause Sharko to
+# write ArgoCD cluster Secrets into `argocdNamespace` based on the contents
+# of managed-clusters.yaml. Leaving both empty preserves today's behavior
+# (operators register clusters via ArgoCD UI or `kubectl apply` directly).
+clusterRegSource:
+  type: ""              # "" → no reconciler; "argocd" → V125-1-8 writes to ArgoCD cluster Secrets
+  argocdNamespace: ""   # "" → defaults to "argocd" when V125-1-8 ships
+
+# ---------------------------------------------------------------------------
 # AI Provider (optional)
 # ---------------------------------------------------------------------------
 ai:

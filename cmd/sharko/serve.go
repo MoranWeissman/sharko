@@ -514,6 +514,27 @@ var serveCmd = &cobra.Command{
 			}
 		}
 
+		// V125-1-11.5: Pre-wire ClusterRegistrationSourceConfig for V125-1-8 reconciler.
+		// No consumer today — the future V125-1-8 cluster reconciler will read this off
+		// the application context (or wherever the orchestrator stashes provider configs
+		// at startup) and use it to write ArgoCD cluster Secrets to the configured
+		// namespace based on managed-clusters.yaml content. Until then this block just
+		// surfaces the config knob: env vars are new (default empty) so existing
+		// deployments are unaffected. See BUG-OVERLOAD-DIAGNOSIS.md §4 + §6.
+		clusterRegCfg := providers.ClusterRegistrationSourceConfig{
+			// SHARKO_CLUSTER_REG_TYPE — "" → no reconciler (today's behavior);
+			// "argocd" → V125-1-8 writes to ArgoCD cluster Secrets.
+			Type: os.Getenv("SHARKO_CLUSTER_REG_TYPE"),
+			// SHARKO_CLUSTER_REG_ARGOCD_NAMESPACE — "" → V125-1-8 will default to
+			// "argocd" (the standard ArgoCD install namespace).
+			ArgoCDNamespace: os.Getenv("SHARKO_CLUSTER_REG_ARGOCD_NAMESPACE"),
+		}
+		slog.Info("cluster registration source config parsed (pre-wire — no consumer until V125-1-8)",
+			"type", clusterRegCfg.Type,
+			"argocdNamespace", clusterRegCfg.ArgoCDNamespace,
+		)
+		_ = clusterRegCfg // intentionally unused — V125-1-8 reconciler will consume
+
 		// Always wire write-API deps — credProvider may be nil if no provider is configured.
 		srv.SetWriteAPIDeps(credProvider, provCfgPtr, repoPaths, gitopsCfg)
 
