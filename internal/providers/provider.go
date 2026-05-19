@@ -48,6 +48,11 @@ type ClusterInfo struct {
 	Tags   map[string]string
 }
 
+// Deprecated: replaced by AddonSecretProviderConfig, ClusterTestProviderConfig,
+// and ClusterRegistrationSourceConfig (see config_types.go). The compat shim
+// for providers.New() + providers.NewSecretProvider() that consume this type
+// is retired in V125-1-11.6.
+//
 // Config holds provider configuration, read from server-side env vars / Helm values.
 //
 // Type values (case-sensitive):
