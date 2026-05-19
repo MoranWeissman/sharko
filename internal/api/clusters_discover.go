@@ -376,8 +376,8 @@ func (s *Server) handleDiscoverEKS(w http.ResponseWriter, r *http.Request) {
 
 	// Default region from provider config if not specified in request.
 	region := req.Region
-	if region == "" && s.providerCfg != nil {
-		region = s.providerCfg.Region
+	if region == "" && s.addonSecretCfg != nil {
+		region = s.addonSecretCfg.Region
 	}
 
 	slog.Info("[discover-eks] starting EKS discovery", "roleARNs", req.RoleARNs, "region", region)

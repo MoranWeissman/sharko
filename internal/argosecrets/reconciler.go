@@ -50,7 +50,7 @@ type Reconciler struct {
 	gitReader            func() GitReader // lazy — resolved from active connection
 	parser               *config.Parser
 	baseBranch           string
-	defaultRoleARN       string // connection-level default from providers.Config.RoleARN
+	defaultRoleARN       string // connection-level default from providers.AddonSecretProviderConfig.RoleARN (V125-1-11.6)
 	managedClustersPath  string // path to managed-clusters.yaml in the Git repo
 	interval             time.Duration
 	triggerCh            chan struct{}

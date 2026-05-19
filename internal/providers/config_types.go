@@ -1,18 +1,20 @@
 package providers
 
 // This file holds the three sibling ProviderConfig types introduced by the
-// V125-1-11 sprint (BUG-OVERLOAD-DIAGNOSIS.md Section 4). They replace the
-// field-overloaded providers.Config struct (provider.go) that V125-1-10.8 had
-// to work around with the SHARKO_ARGOCD_NAMESPACE env hack. Each new type
-// addresses exactly one mechanism — addon-secret material, cluster-test
-// connectivity, or cluster-registration sink — so the compiler enforces the
-// separation that field-level overload could not.
+// V125-1-11 sprint (BUG-OVERLOAD-DIAGNOSIS.md Section 4). They replaced the
+// field-overloaded providers.Config struct that V125-1-10.8 had to work
+// around with the SHARKO_ARGOCD_NAMESPACE env hack. Each type addresses
+// exactly one mechanism — addon-secret material, cluster-test connectivity,
+// or cluster-registration sink — so the compiler enforces the separation
+// that field-level overload could not.
 //
-// Story 11.2 scope is TYPES ONLY. No factory functions, no consumer wiring,
-// no behavior change. The old providers.Config + providers.New +
-// providers.NewSecretProvider remain intact as a compat shim through Wave C
-// (Stories 11.3/11.4/11.5 migrate consumers in parallel) and are retired in
-// Story 11.6.
+// V125-1-11.6 retired the old providers.Config struct + the providers.New /
+// providers.NewSecretProvider compat dispatchers. These three types are now
+// the only ProviderConfig shapes in the codebase. The canonical factories
+// are: NewAddonSecretProvider(AddonSecretProviderConfig) and
+// NewClusterTestProvider(ClusterTestProviderConfig). The
+// ClusterRegistrationSourceConfig is still consumer-less in v1.25 — V125-1-8
+// reconciler will materialize it.
 
 // AddonSecretProviderConfig configures the backend that supplies addon-secret
 // material for credential rotation + tiered git flow. ONE OF the configured

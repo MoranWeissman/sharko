@@ -176,12 +176,15 @@ func TestPerClusterAddonLifecycle(t *testing.T) {
 
 	// Wire repo paths + gitops config so the orchestrator's path joins
 	// hit the canonical sharko layout. SetWriteAPIDeps is the same hook
-	// cmd/sharko/serve.go uses; we pass nil credProvider/providerCfg
-	// because the dry_run + catalog-only paths do not need cluster
-	// credentials.
+	// cmd/sharko/serve.go uses; we pass nil credProvider + nil typed
+	// configs because the dry_run + catalog-only paths do not need
+	// cluster credentials. V125-1-11.6: the second + third args are the
+	// typed addon-secret / cluster-test configs that replaced the legacy
+	// *providers.Config.
 	sharko.APIServer().SetWriteAPIDeps(
 		providers.ClusterCredentialsProvider(nil),
-		(*providers.Config)(nil),
+		(*providers.AddonSecretProviderConfig)(nil),
+		(*providers.ClusterTestProviderConfig)(nil),
 		orchestrator.RepoPathsConfig{
 			ClusterValues:   pathClusterValues,
 			GlobalValues:    "configuration/addons-global-values",

@@ -83,41 +83,6 @@ func NewArgoCDProviderWithRESTConfigFromConfig(cfg ClusterTestProviderConfig, re
 	return &ArgoCDProvider{client: client, namespace: namespace}, nil
 }
 
-// NewArgoCDProvider is a compat shim around NewArgoCDProviderFromConfig that
-// accepts the deprecated providers.Config struct (V125-1-10.8 era). It
-// translates Config → ClusterTestProviderConfig by DISCARDING cfg.Namespace
-// entirely — that field was already ignored by ArgoCDProvider per V125-1-10.8
-// and carrying it forward would re-introduce the cross-contamination smell the
-// V125-1-11.4 split exists to remove.
-//
-// Deprecated: use NewArgoCDProviderFromConfig with a ClusterTestProviderConfig.
-// Removed when the providers.Config compat shim is retired in V125-1-11.6.
-func NewArgoCDProvider(cfg Config) (*ArgoCDProvider, error) {
-	return NewArgoCDProviderFromConfig(configToClusterTest(cfg))
-}
-
-// NewArgoCDProviderWithRESTConfig is a compat shim around
-// NewArgoCDProviderWithRESTConfigFromConfig that accepts the deprecated
-// providers.Config struct. Translates cfg via configToClusterTest (cfg.Namespace
-// is intentionally DISCARDED — see NewArgoCDProvider for rationale).
-//
-// Deprecated: use NewArgoCDProviderWithRESTConfigFromConfig with a
-// ClusterTestProviderConfig. Removed when the providers.Config compat shim is
-// retired in V125-1-11.6.
-func NewArgoCDProviderWithRESTConfig(cfg Config, restCfg *rest.Config) (*ArgoCDProvider, error) {
-	return NewArgoCDProviderWithRESTConfigFromConfig(configToClusterTest(cfg), restCfg)
-}
-
-// configToClusterTest translates the deprecated providers.Config to a typed
-// ClusterTestProviderConfig. cfg.Namespace is INTENTIONALLY discarded — the
-// V125-1-10.8 hack ignored it at runtime; the canonical V125-1-11.4 split
-// discards it at translation time so the cross-contamination smell cannot
-// re-enter the type system. cfg.Region / cfg.Prefix / cfg.RoleARN are not used
-// by ArgoCDProvider and so are also dropped.
-func configToClusterTest(cfg Config) ClusterTestProviderConfig {
-	return ClusterTestProviderConfig{Type: cfg.Type}
-}
-
 // newArgoCDProviderWithClient creates a provider with an injected client (for testing).
 // Mirrors the newKubernetesSecretProviderWithClient pattern.
 func newArgoCDProviderWithClient(client kubernetes.Interface, namespace string) *ArgoCDProvider {

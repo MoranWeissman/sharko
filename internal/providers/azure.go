@@ -20,16 +20,6 @@ import (
 //     (e.g. "clusters-{cluster-name}") using client.NewListSecretPropertiesPager.
 type AzureKeyVaultProvider struct{}
 
-// NewAzureKeyVaultProvider creates a provider backed by Azure Key Vault from
-// the deprecated providers.Config. This signature is the V125-1-11.3 compat
-// shim — it forwards to NewAzureKeyVaultProviderFromAddonConfig. Retired in
-// V125-1-11.6.
-//
-// Deprecated: use NewAzureKeyVaultProviderFromAddonConfig instead.
-func NewAzureKeyVaultProvider(cfg Config) (*AzureKeyVaultProvider, error) {
-	return NewAzureKeyVaultProviderFromAddonConfig(addonSecretConfigFromLegacy(cfg))
-}
-
 // NewAzureKeyVaultProviderFromAddonConfig creates a provider backed by Azure
 // Key Vault from the canonical AddonSecretProviderConfig (V125-1-11.3+).
 // This function always returns an error — the provider is not yet implemented.

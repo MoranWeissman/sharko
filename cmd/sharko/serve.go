@@ -434,66 +434,93 @@ var serveCmd = &cobra.Command{
 		}
 
 		// Provider + Orchestrator write-API deps (optional — only if provider is configured).
+		//
+		// V125-1-11.6: the single field-overloaded *providers.Config is retired.
+		// The connection-level Provider block fans out at parse time into TWO
+		// typed configs — AddonSecretProviderConfig (rich addon-secret fields)
+		// and ClusterTestProviderConfig (cluster-test, argocd-only) — that
+		// downstream consumers (the Server struct, the secrets reconciler, the
+		// argosecrets reconciler) read independently per mechanism.
 		var credProvider providers.ClusterCredentialsProvider
-		var provCfgPtr *providers.Config
+		var addonCfgPtr *providers.AddonSecretProviderConfig
+		var clusterTestCfgPtr *providers.ClusterTestProviderConfig
 
 		namespace := os.Getenv("SHARKO_NAMESPACE")
 		if namespace == "" {
 			namespace = "sharko"
 		}
 
-		// V125-1-10.7: Always resolve a provider config and call providers.New(),
-		// even when the active connection's provider.type is empty. The auto-default
-		// path added in V125-1-10.2 only fires inside providers.New() — gating
-		// the call on Type != "" silently bypasses the default and leaves
-		// credProvider nil, which then trips the BUG-035 "no_secrets_backend"
-		// surface in the Test handler instead of the intended argocd auto-default.
+		// V125-1-10.7 / V125-1-11.6: Always resolve a provider config and call
+		// the cluster-test factory, even when the active connection's
+		// provider.type is empty. The auto-default path added in V125-1-10.2
+		// only fires inside the factory — gating the call on Type != ""
+		// silently bypasses the default and leaves credProvider nil, which
+		// then trips the BUG-035 "no_secrets_backend" surface in the Test
+		// handler instead of the intended argocd auto-default.
 		//
-		// When in-cluster + Type == "":  providers.New() returns ArgoCDProvider.
-		// When Type == "argocd":          providers.New() returns ArgoCDProvider.
-		// When out-of-cluster + Type=="": providers.New() returns the legacy
-		//                                 "no provider configured" error → log
-		//                                 + leave credProvider nil → existing
-		//                                 BUG-035 surface (unchanged).
-		var resolvedProvCfg *providers.Config
+		// When in-cluster + Type == "":  NewClusterTestProvider returns ArgoCDProvider.
+		// When Type == "argocd":          NewClusterTestProvider returns ArgoCDProvider.
+		// When out-of-cluster + Type=="": NewClusterTestProvider returns the
+		//                                 legacy "no provider configured" error
+		//                                 → log + leave credProvider nil →
+		//                                 existing BUG-035 surface (unchanged).
+		// When Type ∈ {aws-sm, k8s-secrets, ...}: cluster-test rejects the type
+		//                                          (legacy cluster-creds arms
+		//                                          retired in V125-1-11.6); the
+		//                                          addon-secret reconciler still
+		//                                          wires those backends via
+		//                                          NewAddonSecretProvider.
+		var resolvedAddonCfg providers.AddonSecretProviderConfig
+		var resolvedTestCfg providers.ClusterTestProviderConfig
 		{
 			connProv := connSvc.GetProviderConfig()
 			ns := namespace
-			cfg := &providers.Config{Namespace: ns}
+			resolvedAddonCfg = providers.AddonSecretProviderConfig{Namespace: ns}
+			resolvedTestCfg = providers.ClusterTestProviderConfig{}
 			if connProv != nil {
 				if connProv.Namespace != "" {
 					ns = connProv.Namespace
 				}
-				cfg = &providers.Config{
+				resolvedAddonCfg = providers.AddonSecretProviderConfig{
 					Type:      connProv.Type,
 					Region:    connProv.Region,
 					Prefix:    connProv.Prefix,
 					Namespace: ns,
 					RoleARN:   connProv.RoleARN,
 				}
+				// Cluster-test fans the connection-level Type into the typed
+				// config ONLY when it's argocd. Other types route to the
+				// auto-default path (in-cluster argocd) at NewClusterTestProvider
+				// time, matching the V125-1-10.2 + V125-1-11.6 behaviour.
+				if connProv.Type == "argocd" {
+					resolvedTestCfg = providers.ClusterTestProviderConfig{
+						Type:            "argocd",
+						ArgoCDNamespace: connProv.Namespace,
+					}
+				}
 				if connProv.Type != "" {
 					slog.Info("secrets provider configured from connection", "type", connProv.Type)
 				} else {
-					slog.Info("no explicit provider type in connection — providers.New will auto-default")
+					slog.Info("no explicit provider type in connection — cluster-test will auto-default")
 				}
 			} else {
-				slog.Info("no provider config in connection — providers.New will auto-default")
+				slog.Info("no provider config in connection — cluster-test will auto-default")
 			}
-			resolvedProvCfg = cfg
 		}
 
 		{
-			cp, err := providers.New(*resolvedProvCfg)
+			cp, err := providers.NewClusterTestProvider(resolvedTestCfg)
 			if err != nil {
-				// Out-of-cluster + no explicit type lands here (legacy
-				// "no provider configured" error preserved verbatim by
-				// providers.New). credProvider stays nil and the existing
-				// BUG-035 path in the Test handler surfaces the structured
-				// 503 with no_secrets_backend — unchanged behavior.
+				// Out-of-cluster + no explicit type lands here (legacy "no
+				// provider configured" error preserved verbatim by
+				// NewClusterTestProvider). credProvider stays nil and the
+				// existing BUG-035 path in the Test handler surfaces the
+				// structured 503 with no_secrets_backend — unchanged behavior.
 				slog.Info("[serve] no credentials provider configured", "reason", err)
 			} else {
 				credProvider = cp
-				provCfgPtr = resolvedProvCfg
+				addonCfgPtr = &resolvedAddonCfg
+				clusterTestCfgPtr = &resolvedTestCfg
 
 				// Default addons (applied to clusters registered without explicit addons).
 				if connGitOps := getConnectionGitOps(connSvc); connGitOps != nil && connGitOps.DefaultAddons != "" {
@@ -510,7 +537,7 @@ var serveCmd = &cobra.Command{
 					}
 				}
 
-				slog.Info("secrets provider enabled", "type", resolvedProvCfg.Type)
+				slog.Info("secrets provider enabled", "type", resolvedAddonCfg.Type)
 			}
 		}
 
@@ -536,23 +563,13 @@ var serveCmd = &cobra.Command{
 		_ = clusterRegCfg // intentionally unused — V125-1-8 reconciler will consume
 
 		// Always wire write-API deps — credProvider may be nil if no provider is configured.
-		srv.SetWriteAPIDeps(credProvider, provCfgPtr, repoPaths, gitopsCfg)
+		srv.SetWriteAPIDeps(credProvider, addonCfgPtr, clusterTestCfgPtr, repoPaths, gitopsCfg)
 
 		// Secret reconciler — reconciles addon secrets on remote clusters.
-		if credProvider != nil && provCfgPtr != nil {
-			// V125-1-11.3: construct the canonical AddonSecretProviderConfig
-			// directly from the resolved provCfgPtr fields (single-mechanism
-			// scope — replaces the field-overloaded providers.Config).
-			// Story 11.6 retires provCfgPtr in favor of an addonCfg threaded
-			// from the connection-parsing layer; until then the bridge stays.
-			addonCfg := providers.AddonSecretProviderConfig{
-				Type:      provCfgPtr.Type,
-				Namespace: provCfgPtr.Namespace,
-				Region:    provCfgPtr.Region,
-				Prefix:    provCfgPtr.Prefix,
-				RoleARN:   provCfgPtr.RoleARN,
-			}
-			secretProvider, spErr := providers.NewAddonSecretProvider(addonCfg)
+		// V125-1-11.6: consumes the canonical AddonSecretProviderConfig that
+		// the connection-parsing layer fanned out into above; no translation.
+		if credProvider != nil && addonCfgPtr != nil {
+			secretProvider, spErr := providers.NewAddonSecretProvider(*addonCfgPtr)
 			if spErr != nil {
 				slog.Warn("could not create secret provider for reconciler", "error", spErr)
 			} else {
@@ -621,7 +638,18 @@ var serveCmd = &cobra.Command{
 				if k8sErr != nil {
 					slog.Warn("could not create in-cluster k8s client, skipping argocd secrets reconciler", "error", k8sErr)
 				} else {
-					argocdNamespace := getEnvDefault("SHARKO_ARGOCD_NAMESPACE", "argocd")
+					// V125-1-11.4 / V125-1-11.6: the canonical source for the
+				// argocd namespace is the typed ClusterTestProviderConfig
+				// (when populated from the connection). The
+				// SHARKO_ARGOCD_NAMESPACE env var remains a deprecated
+				// compat alias for one release (slated for removal in v1.26).
+				argocdNamespace := ""
+				if clusterTestCfgPtr != nil && clusterTestCfgPtr.ArgoCDNamespace != "" {
+					argocdNamespace = clusterTestCfgPtr.ArgoCDNamespace
+				}
+				if argocdNamespace == "" {
+					argocdNamespace = getEnvDefault("SHARKO_ARGOCD_NAMESPACE", "argocd")
+				}
 
 					argoIntervalStr := getEnvDefault("SHARKO_ARGOCD_RECONCILE_INTERVAL", "3m")
 					argoDur, argoParseErr := time.ParseDuration(argoIntervalStr)
@@ -645,8 +673,8 @@ var serveCmd = &cobra.Command{
 					}
 
 					argoDefaultRoleARN := ""
-					if provCfgPtr != nil {
-						argoDefaultRoleARN = provCfgPtr.RoleARN
+					if addonCfgPtr != nil {
+						argoDefaultRoleARN = addonCfgPtr.RoleARN
 					}
 
 					argoManager := argosecrets.NewManager(k8sClient, argocdNamespace)

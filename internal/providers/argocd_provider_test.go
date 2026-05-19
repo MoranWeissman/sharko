@@ -453,45 +453,18 @@ func TestResolveArgoCDNamespaceTyped_NoWarnWhenCanonicalFieldUsed(t *testing.T) 
 	}
 }
 
-// TestConfigToClusterTest_DropsNamespace confirms the V125-1-11.4 compat shim
-// translation discards Config.Namespace entirely — the cross-contamination
-// smell from V125-1-10.8 cannot re-enter via the compat path. Even when a
-// caller supplies a non-empty Namespace on the deprecated Config, the resulting
-// typed ClusterTestProviderConfig has ArgoCDNamespace="" so resolution falls
-// back to env/default (matching V125-1-10.8 runtime behaviour but now enforced
-// in the type system).
-func TestConfigToClusterTest_DropsNamespace(t *testing.T) {
-	cases := []struct {
-		name string
-		cfg  Config
-	}{
-		{"sharko_leak", Config{Type: "argocd", Namespace: "sharko"}},
-		{"arbitrary_leak", Config{Type: "argocd", Namespace: "some-other-ns"}},
-		{"argocd_matching", Config{Type: "argocd", Namespace: "argocd"}},
-		{"empty", Config{Type: "argocd"}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := configToClusterTest(tc.cfg)
-			if got.Type != tc.cfg.Type {
-				t.Errorf("Type = %q, want %q", got.Type, tc.cfg.Type)
-			}
-			if got.ArgoCDNamespace != "" {
-				t.Errorf("ArgoCDNamespace = %q, want empty (Config.Namespace must be discarded by the compat shim)", got.ArgoCDNamespace)
-			}
-		})
-	}
-}
-
-// TestResolveArgoCDNamespaceTyped_CompatShimRegression confirms the V125-1-10.8
-// cross-contamination regression stays closed via the typed split: a caller
-// using the deprecated Config{Namespace: "sharko"} through the compat shim
-// (NewArgoCDProvider → configToClusterTest → resolveArgoCDNamespaceTyped) still
-// resolves to "argocd" (or env override) — not "sharko".
-func TestResolveArgoCDNamespaceTyped_CompatShimRegression(t *testing.T) {
+// TestResolveArgoCDNamespaceTyped_CrossContaminationStaysClosed is the
+// V125-1-11.6 successor to the V125-1-10.8 compat-shim regression check.
+// With providers.Config retired, the cross-contamination from k8s-secrets
+// addon-secret config into ArgoCD namespace resolution is now structurally
+// impossible — there's no shared field to leak through. This test pins the
+// canonical resolution behaviour: empty ClusterTestProviderConfig.ArgoCDNamespace
+// + unset SHARKO_ARGOCD_NAMESPACE → defaults to "argocd", regardless of any
+// other config in the program.
+func TestResolveArgoCDNamespaceTyped_CrossContaminationStaysClosed(t *testing.T) {
 	t.Setenv("SHARKO_ARGOCD_NAMESPACE", "")
-	translated := configToClusterTest(Config{Type: "argocd", Namespace: "sharko"})
-	if got := resolveArgoCDNamespaceTyped(translated); got != "argocd" {
-		t.Errorf("compat shim leaked Config.Namespace into resolution: got %q, want %q", got, "argocd")
+	cfg := ClusterTestProviderConfig{Type: "argocd"} // no ArgoCDNamespace
+	if got := resolveArgoCDNamespaceTyped(cfg); got != "argocd" {
+		t.Errorf("unset typed namespace + unset env should resolve to default %q, got %q", "argocd", got)
 	}
 }

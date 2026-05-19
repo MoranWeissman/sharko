@@ -59,10 +59,19 @@ func SetupDemoServer(srv *api.Server, _ int) (cleanup func(), err error) {
 	srv.SetDemoGitProvider(mockGit)
 
 	// 5. Configure the secrets provider for cluster registration.
+	//
+	// V125-1-11.6: the legacy *providers.Config is gone. Demo mode constructs
+	// a MockClusterCredentialsProvider directly (no real backend); the two
+	// typed configs are stashed with the demo Type so /providers + /config
+	// surface a recognizable placeholder. addonSecretCfg.RoleARN stays empty
+	// — demo orchestrator paths handle that via the nil-guards in handlers.
 	credProvider := &MockClusterCredentialsProvider{}
-	provCfg := &providers.Config{
+	addonCfg := &providers.AddonSecretProviderConfig{
 		Type:   "demo",
 		Region: "demo",
+	}
+	testCfg := &providers.ClusterTestProviderConfig{
+		Type: "demo",
 	}
 	repoPaths := orchestrator.RepoPathsConfig{
 		ClusterValues: "configuration/addons-clusters-values",
@@ -78,7 +87,7 @@ func SetupDemoServer(srv *api.Server, _ int) (cleanup func(), err error) {
 		BaseBranch:   "main",
 		RepoURL:      "https://github.com/demo/sharko-addons",
 	}
-	srv.SetWriteAPIDeps(credProvider, provCfg, repoPaths, gitopsCfg)
+	srv.SetWriteAPIDeps(credProvider, addonCfg, testCfg, repoPaths, gitopsCfg)
 
 	// 6. Addon secret definitions — 2 demo definitions.
 	addonSecretDefs := map[string]orchestrator.AddonSecretDefinition{

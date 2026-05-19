@@ -48,73 +48,12 @@ type ClusterInfo struct {
 	Tags   map[string]string
 }
 
-// Deprecated: replaced by AddonSecretProviderConfig, ClusterTestProviderConfig,
-// and ClusterRegistrationSourceConfig (see config_types.go). The compat shim
-// for providers.New() + providers.NewSecretProvider() that consume this type
-// is retired in V125-1-11.6.
-//
-// Config holds provider configuration, read from server-side env vars / Helm values.
-//
-// Type values (case-sensitive):
-//   - "argocd"                                 — default in v1.25+ when in-cluster; reads from ArgoCD cluster Secrets in argocd namespace
-//   - "k8s-secrets" / "kubernetes"             — reads kubeconfigs from K8s Secrets (deprecated for cluster creds in v1.25; remove in V125-2)
-//   - "aws-sm" / "aws-secrets-manager"         — AWS Secrets Manager
-//   - "gcp" / "gcp-sm" / "google-secret-manager" — GCP Secret Manager
-//   - "azure" / "azure-kv" / "azure-key-vault" — Azure Key Vault
-//   - ""                                       — auto-default: returns "argocd" when running in-cluster (rest.InClusterConfig succeeds), else returns the legacy "no provider configured" error so out-of-cluster dev installs still surface the existing actionable message
-type Config struct {
-	Type      string // see doc comment for valid values
-	Region    string // AWS region (for aws-sm)
-	Prefix    string // Secret name prefix, e.g. "clusters/" (for aws-sm)
-	Namespace string // K8s namespace holding secrets (for k8s-secrets / argocd)
-	RoleARN   string // default IAM role to assume for EKS token generation (aws-sm only)
-}
-
 // inClusterConfigFn is indirection over rest.InClusterConfig so tests can
 // simulate "running in-cluster" / "running outside" without mutating the
 // KUBERNETES_SERVICE_HOST env var (which would race other tests in the same
-// binary). The auto-default branch in New() reads through this var.
+// binary). The auto-default branch in NewClusterTestProvider reads through
+// this var.
 var inClusterConfigFn = rest.InClusterConfig
-
-// addonSecretConfigFromLegacy translates the deprecated providers.Config struct
-// to the new AddonSecretProviderConfig. Used by the compat-shim entry points
-// (NewSecretProvider + the per-backend NewXxxProvider(Config) wrappers) so the
-// per-backend factories only have to consume the typed config.
-//
-// All five legacy fields carry over verbatim — the field semantics in the
-// addon-secret slice of the old Config struct already matched the new typed
-// shape exactly. The shim exists only to bridge the old call signature; it does
-// not mutate any value.
-//
-// Retired in V125-1-11.6 along with the parent providers.Config struct.
-func addonSecretConfigFromLegacy(cfg Config) AddonSecretProviderConfig {
-	return AddonSecretProviderConfig{
-		Type:      cfg.Type,
-		Namespace: cfg.Namespace,
-		Region:    cfg.Region,
-		Prefix:    cfg.Prefix,
-		RoleARN:   cfg.RoleARN,
-	}
-}
-
-// NewSecretProvider creates the appropriate SecretProvider for the given
-// AddonSecretProviderConfig.
-//
-// This signature is the V125-1-11.3 compat shim: it accepts the deprecated
-// providers.Config and translates it to AddonSecretProviderConfig internally
-// before dispatching. New callers should use NewAddonSecretProvider directly.
-//
-// Note: Type "argocd" is REJECTED here on purpose. ArgoCDProvider is a
-// cluster-credentials-only provider (it supplies kubeconfigs from ArgoCD
-// cluster Secrets); it does NOT serve addon secret VALUES. Per the V125-1-10
-// design (OQ #2), addon secret values must continue to come from a real
-// secrets backend (vault / aws-sm / k8s-secrets / gcp-sm / azure-kv).
-//
-// Deprecated: use NewAddonSecretProvider(AddonSecretProviderConfig) instead.
-// Retired in V125-1-11.6 along with providers.Config.
-func NewSecretProvider(cfg Config) (SecretProvider, error) {
-	return NewAddonSecretProvider(addonSecretConfigFromLegacy(cfg))
-}
 
 // NewAddonSecretProvider creates the appropriate SecretProvider for the given
 // AddonSecretProviderConfig. This is the canonical (V125-1-11+) factory for
@@ -124,6 +63,7 @@ func NewSecretProvider(cfg Config) (SecretProvider, error) {
 //
 // Note: Type "argocd" is REJECTED on purpose. ArgoCDProvider is a
 // cluster-credentials-only provider; it does NOT serve addon-secret VALUES.
+// For cluster-credentials (cluster-test), use NewClusterTestProvider.
 func NewAddonSecretProvider(cfg AddonSecretProviderConfig) (SecretProvider, error) {
 	switch cfg.Type {
 	case "k8s-secrets", "kubernetes":
@@ -143,43 +83,44 @@ func NewAddonSecretProvider(cfg AddonSecretProviderConfig) (SecretProvider, erro
 	}
 }
 
-// New creates the appropriate ClusterCredentialsProvider for the given config.
+// NewClusterTestProvider creates the appropriate ClusterCredentialsProvider
+// for the given ClusterTestProviderConfig. This is the canonical (V125-1-11+)
+// factory for cluster-connectivity-test backends — it consumes the typed
+// config introduced in Story 11.2 so the compiler enforces single-mechanism
+// scope (closes the V125-1-10.8 ProviderConfig.Namespace cross-contamination
+// smell).
 //
-// Auto-default behavior (V125-1-10.2): when cfg.Type is empty, New() probes for
-// in-cluster K8s access via inClusterConfigFn (rest.InClusterConfig). On
-// success, it returns an ArgoCDProvider so dev installs work out of the box
-// without an explicit provider configured. When the probe returns
-// rest.ErrNotInCluster (running outside K8s), the legacy "no secrets provider
-// configured" error is preserved verbatim so existing out-of-cluster callers
-// still get an actionable message. Other probe errors (malformed in-cluster
-// config) are surfaced as today.
-func New(cfg Config) (ClusterCredentialsProvider, error) {
+// Auto-default behavior (V125-1-10.2, retained): when cfg.Type is empty,
+// NewClusterTestProvider probes for in-cluster K8s access via inClusterConfigFn
+// (rest.InClusterConfig). On success, it returns an ArgoCDProvider so dev
+// installs work out of the box without an explicit provider configured. When
+// the probe returns rest.ErrNotInCluster (running outside K8s), the legacy
+// "no secrets provider configured" error is preserved verbatim so existing
+// out-of-cluster callers still get an actionable message. Other probe errors
+// (malformed in-cluster config) are surfaced as today.
+//
+// V125-1-11.6: the legacy aws-sm / k8s-secrets / gcp-sm / azure-kv cluster-
+// credentials switch arms are RETIRED — one cycle earlier than the doc-comment
+// promise of "remove in V125-2" — per BUG-OVERLOAD-DIAGNOSIS.md §6 verdict.
+// Existing deployments that had explicitly configured one of those backends
+// for cluster-creds must migrate to "argocd" (the auto-default since
+// V125-1-10.2). Addon-secret consumers of those backends remain fully
+// functional via NewAddonSecretProvider — only the legacy cluster-creds usage
+// is killed.
+func NewClusterTestProvider(cfg ClusterTestProviderConfig) (ClusterCredentialsProvider, error) {
 	switch cfg.Type {
-	case "k8s-secrets", "kubernetes":
-		return NewKubernetesSecretProvider(cfg)
-	case "aws-sm", "aws-secrets-manager":
-		return NewAWSSecretsManagerProvider(cfg)
-	case "gcp", "gcp-sm", "google-secret-manager":
-		return NewGCPSecretManagerProvider(cfg)
-	case "azure", "azure-kv", "azure-key-vault":
-		return NewAzureKeyVaultProvider(cfg)
 	case "argocd":
-		// V125-1-11.4: route through the typed-config constructor. The compat
-		// shim translates Config → ClusterTestProviderConfig (discarding
-		// cfg.Namespace per the canonical fix). Direct callers should switch to
-		// NewArgoCDProviderFromConfig with a ClusterTestProviderConfig — this
-		// shim is removed when providers.Config is retired in V125-1-11.6.
-		return NewArgoCDProviderFromConfig(configToClusterTest(cfg))
+		return NewArgoCDProviderFromConfig(cfg)
 	case "":
 		// Auto-default: argocd when in-cluster, legacy error otherwise.
 		// We capture the *rest.Config returned by the probe and pass it through
 		// to NewArgoCDProviderWithRESTConfigFromConfig so the test seam
 		// (inClusterConfigFn) flows end-to-end. Calling NewArgoCDProviderFromConfig
 		// here would re-probe rest.InClusterConfig directly and bypass the seam
-		// (V125-1-10.9). V125-1-11.4: routed through the typed-config constructor.
+		// (V125-1-10.9).
 		if restCfg, err := inClusterConfigFn(); err == nil {
 			slog.Info("[provider] auto-defaulting to argocd (no provider configured + in-cluster K8s detected)", "namespace", "argocd")
-			return NewArgoCDProviderWithRESTConfigFromConfig(configToClusterTest(cfg), restCfg)
+			return NewArgoCDProviderWithRESTConfigFromConfig(cfg, restCfg)
 		} else if !errors.Is(err, rest.ErrNotInCluster) {
 			// Distinguishable from "not in cluster": the in-cluster probe
 			// failed for some other reason (bad SA token, malformed config).
@@ -189,6 +130,6 @@ func New(cfg Config) (ClusterCredentialsProvider, error) {
 		}
 		return nil, fmt.Errorf("no secrets provider configured — configure provider in Settings or via API")
 	default:
-		return nil, fmt.Errorf("unknown provider type %q — valid options: argocd, aws-sm, k8s-secrets, gcp-sm, azure-kv", cfg.Type)
+		return nil, fmt.Errorf("unknown cluster-test provider type %q — valid options: argocd, \"\" (auto-default)", cfg.Type)
 	}
 }

@@ -1,7 +1,7 @@
-// Command gen-provider-types reads the cluster-credentials provider factory
-// switch in internal/providers/provider.go and emits a TypeScript `as const`
-// literal at ui/src/generated/provider-types.ts so the UI cannot drift out of
-// sync with the backend's accepted Type strings.
+// Command gen-provider-types reads the provider factory switches in
+// internal/providers/provider.go and emits a TypeScript `as const` literal at
+// ui/src/generated/provider-types.ts so the UI cannot drift out of sync with
+// the backend's accepted Type strings.
 //
 // Background — V125-1-13.7 / OQ #6:
 //
@@ -9,17 +9,31 @@
 //	after `argocd` was added to the backend factory but never propagated to
 //	the UI's hardcoded option list. This generator + the matching CI check
 //	("Provider Types Up To Date") makes that class of drift impossible:
-//	any new arm in providers.New()'s switch + a regenerate run + the CI
-//	gate catch stale generated files before they ship.
+//	any new arm in the factory switches + a regenerate run + the CI gate
+//	catch stale generated files before they ship.
 //
-// Approach: parse provider.go via go/parser + walk the AST. Locate the
-// FuncDecl named "New", find the *ast.SwitchStmt whose tag is the
-// `cfg.Type` selector, and collect the string-literal value of every
-// `case` clause. Skip the empty-string auto-default arm and the `default`
-// arm. Sort + dedupe deterministically and emit the TS file.
+// V125-1-11.6 update: the legacy providers.New(Config) dispatcher was
+// retired and the factory split into two canonical entry points:
 //
-// AST is preferred over regex because the switch lives inside a real Go
-// program — comments, line breaks, formatting, or future moves of the
+//   - NewAddonSecretProvider(AddonSecretProviderConfig) — addon-secret
+//     backends (vault / aws-sm / k8s-secrets / gcp-sm / azure-kv).
+//   - NewClusterTestProvider(ClusterTestProviderConfig) — cluster-test
+//     backend (argocd only post-V125-1-11.6).
+//
+// The UI dropdown today is a single select that maps to the connection-
+// level Provider block, which still drives both mechanisms (per the
+// 11.6 compat-shim parsing at startup). So this generator emits the
+// UNION of both factory switches' arms — keeping the dropdown experience
+// unchanged while the typed configs split happens behind it.
+//
+// Approach: parse provider.go via go/parser + walk the AST. For each
+// target FuncDecl, find the *ast.SwitchStmt whose tag is the `cfg.Type`
+// selector, and collect the string-literal value of every `case` clause.
+// Skip the empty-string auto-default arm and the `default` arm. Union,
+// sort + dedupe deterministically and emit the TS file.
+//
+// AST is preferred over regex because the switches live inside real Go
+// programs — comments, line breaks, formatting, or future moves of the
 // switch body would break a regex but not an AST walker keyed on the
 // FuncDecl name + tag selector.
 //
@@ -48,8 +62,16 @@ import (
 const (
 	defaultSourcePath = "internal/providers/provider.go"
 	defaultOutputPath = "ui/src/generated/provider-types.ts"
-	targetFuncName    = "New"
 )
+
+// targetFuncNames is the ordered list of top-level factory functions whose
+// switch arms feed into VALID_PROVIDER_TYPES. The order is informational only
+// (output is sorted+deduped); ordering matches the canonical mechanism order
+// from BUG-OVERLOAD-DIAGNOSIS.md §4 (addon-secret first, cluster-test second).
+var targetFuncNames = []string{
+	"NewAddonSecretProvider",
+	"NewClusterTestProvider",
+}
 
 func main() {
 	var (
@@ -57,7 +79,7 @@ func main() {
 		outputPath string
 	)
 	flag.StringVar(&sourcePath, "source", defaultSourcePath,
-		"path to the Go file containing the provider factory")
+		"path to the Go file containing the provider factories")
 	flag.StringVar(&outputPath, "output", defaultOutputPath,
 		"path to the TypeScript file to (over)write")
 	flag.Parse()
@@ -93,8 +115,8 @@ func run(sourcePath, outputPath string) error {
 }
 
 // extractProviderTypesFromFile parses `sourcePath` and returns the sorted,
-// deduped list of valid provider Type strings extracted from the
-// `New(cfg Config)` switch.
+// deduped union of valid provider Type strings extracted from each of the
+// target factory functions' switches.
 func extractProviderTypesFromFile(sourcePath string) ([]string, error) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, sourcePath, nil, parser.ParseComments)
@@ -104,29 +126,57 @@ func extractProviderTypesFromFile(sourcePath string) ([]string, error) {
 	return extractProviderTypes(file)
 }
 
-// extractProviderTypes walks `file`'s top-level declarations, finds the
-// FuncDecl named `New`, locates the switch on `cfg.Type`, and returns the
-// sorted/deduped string-literal case values, with the empty-string
-// auto-default arm filtered out.
+// extractProviderTypes walks `file`'s top-level declarations, locates each of
+// the target FuncDecls, extracts the switch on `cfg.Type` inside each, and
+// returns the sorted/deduped UNION of string-literal case values, with the
+// empty-string auto-default arm filtered out.
 //
-// Returns an error if the func or switch can't be located — the generator
-// fails loudly rather than silently emitting an empty list (CI would catch
-// the empty diff anyway, but a clear error is better than a silent regression).
+// Returns an error if none of the target funcs can be located (the generator
+// fails loudly rather than silently emitting an empty list). At least one
+// target must be found; if a single named target is missing it is logged via
+// the error message so future renames surface immediately.
 func extractProviderTypes(file *ast.File) ([]string, error) {
-	fn := findFuncDecl(file, targetFuncName)
-	if fn == nil {
-		return nil, fmt.Errorf("could not find FuncDecl %q at top level", targetFuncName)
-	}
-	if fn.Body == nil {
-		return nil, fmt.Errorf("FuncDecl %q has no body", targetFuncName)
-	}
-
-	sw := findSwitchOnCfgType(fn.Body)
-	if sw == nil {
-		return nil, fmt.Errorf("could not find switch on cfg.Type inside %q", targetFuncName)
-	}
-
 	seen := make(map[string]struct{})
+	var foundAny bool
+	var missing []string
+
+	for _, name := range targetFuncNames {
+		fn := findFuncDecl(file, name)
+		if fn == nil {
+			missing = append(missing, name)
+			continue
+		}
+		if fn.Body == nil {
+			return nil, fmt.Errorf("FuncDecl %q has no body", name)
+		}
+		sw := findSwitchOnCfgType(fn.Body)
+		if sw == nil {
+			return nil, fmt.Errorf("could not find switch on cfg.Type inside %q", name)
+		}
+		foundAny = true
+		collectCaseLiterals(sw, seen)
+	}
+
+	if !foundAny {
+		return nil, fmt.Errorf("could not find any of target FuncDecls %v at top level", targetFuncNames)
+	}
+	if len(missing) > 0 {
+		// Strict: every named target must exist. A single missing target is
+		// likely a rename that needs to be reflected here and in CI.
+		return nil, fmt.Errorf("missing target FuncDecls: %v (rename detected? update targetFuncNames)", missing)
+	}
+
+	out := make([]string, 0, len(seen))
+	for v := range seen {
+		out = append(out, v)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// collectCaseLiterals scans the case clauses of sw and adds every string-
+// literal value (except the empty-string auto-default arm) to seen.
+func collectCaseLiterals(sw *ast.SwitchStmt, seen map[string]struct{}) {
 	for _, stmt := range sw.Body.List {
 		clause, ok := stmt.(*ast.CaseClause)
 		if !ok {
@@ -142,7 +192,8 @@ func extractProviderTypes(file *ast.File) ([]string, error) {
 			}
 			val, err := strconv.Unquote(lit.Value)
 			if err != nil {
-				return nil, fmt.Errorf("unquote case literal %q: %w", lit.Value, err)
+				// Skip unquotable literals — caller already validated grammar.
+				continue
 			}
 			if val == "" {
 				// The empty-string auto-default arm — not a user-selectable
@@ -152,17 +203,11 @@ func extractProviderTypes(file *ast.File) ([]string, error) {
 			seen[val] = struct{}{}
 		}
 	}
-
-	out := make([]string, 0, len(seen))
-	for v := range seen {
-		out = append(out, v)
-	}
-	sort.Strings(out)
-	return out, nil
 }
 
 // findFuncDecl returns the top-level *ast.FuncDecl named `name`, or nil.
-// Receiver methods are ignored (the factory we care about is a free function).
+// Receiver methods are ignored (the factories we care about are free
+// functions).
 func findFuncDecl(file *ast.File, name string) *ast.FuncDecl {
 	for _, decl := range file.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
@@ -223,13 +268,13 @@ func renderTypeScript(types []string, sourcePath string) string {
 	b.WriteString("// Code generated by cmd/gen-provider-types. DO NOT EDIT.\n")
 	b.WriteString("// Source: ")
 	b.WriteString(source)
-	b.WriteString("::New\n")
+	b.WriteString(" :: NewAddonSecretProvider + NewClusterTestProvider\n")
 	b.WriteString("// Run `make generate-provider-types` to refresh.\n")
 	b.WriteString("//\n")
 	b.WriteString("// This file is the single source of truth for the set of provider Type\n")
-	b.WriteString("// strings the backend factory accepts. The Settings → SecretsProviderSection\n")
-	b.WriteString("// dropdown imports VALID_PROVIDER_TYPES so it cannot drift from\n")
-	b.WriteString("// internal/providers/provider.go's New() switch — see V125-1-13.7.\n")
+	b.WriteString("// strings the backend factories accept. The Settings → SecretsProviderSection\n")
+	b.WriteString("// dropdown imports VALID_PROVIDER_TYPES so it cannot drift from the two\n")
+	b.WriteString("// canonical factories — see V125-1-13.7 + V125-1-11.6.\n")
 	b.WriteString("\n")
 	b.WriteString("export const VALID_PROVIDER_TYPES = [\n")
 	for _, t := range types {
