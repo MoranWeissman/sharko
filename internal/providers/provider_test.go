@@ -220,3 +220,152 @@ func TestNew_AzureAliases(t *testing.T) {
 		}
 	}
 }
+
+// --- V125-1-11.3: NewAddonSecretProvider (canonical) regression sweep ------
+//
+// These tests exercise the new AddonSecretProviderConfig-consuming dispatcher
+// directly (the compat-shim NewSecretProvider(Config) translates to this and
+// is covered by the older tests above).
+
+// NewAddonSecretProvider rejects argocd type the same way the legacy
+// NewSecretProvider does — argocd is not a SecretProvider backend.
+func TestNewAddonSecretProvider_ArgoCDRefused(t *testing.T) {
+	_, err := NewAddonSecretProvider(AddonSecretProviderConfig{Type: "argocd"})
+	if err == nil {
+		t.Fatal("expected error for argocd type on NewAddonSecretProvider, got nil")
+	}
+	if !strings.Contains(err.Error(), "cluster-credentials-only") {
+		t.Errorf("expected explicit cluster-credentials-only refusal, got: %v", err)
+	}
+}
+
+// NewAddonSecretProvider returns the legacy "no provider configured" error
+// when Type is empty — matches the existing NewSecretProvider contract.
+func TestNewAddonSecretProvider_EmptyType(t *testing.T) {
+	_, err := NewAddonSecretProvider(AddonSecretProviderConfig{Type: ""})
+	if err == nil {
+		t.Fatal("expected error for empty type on NewAddonSecretProvider, got nil")
+	}
+	if !strings.Contains(err.Error(), "no secrets provider configured") {
+		t.Errorf("expected 'no secrets provider configured' error, got: %v", err)
+	}
+}
+
+// NewAddonSecretProvider returns "unknown provider type" for an unmapped type.
+func TestNewAddonSecretProvider_UnknownType(t *testing.T) {
+	_, err := NewAddonSecretProvider(AddonSecretProviderConfig{Type: "not-a-real-backend"})
+	if err == nil {
+		t.Fatal("expected error for unknown type, got nil")
+	}
+	if !strings.Contains(err.Error(), "unknown provider type") {
+		t.Errorf("expected 'unknown provider type' error, got: %v", err)
+	}
+}
+
+// NewAddonSecretProvider routes aws-sm + alias to the AWS factory. We assert
+// only that we didn't fall through to "unknown provider type" — actually
+// loading AWS creds may fail in CI without IAM/IRSA.
+func TestNewAddonSecretProvider_AWSAliases(t *testing.T) {
+	for _, typ := range []string{"aws-sm", "aws-secrets-manager"} {
+		_, err := NewAddonSecretProvider(AddonSecretProviderConfig{Type: typ, Region: "us-east-1"})
+		if err == nil {
+			continue
+		}
+		if strings.Contains(err.Error(), "unknown provider type") {
+			t.Errorf("factory should have routed to AWS provider for %q alias, got: %v", typ, err)
+		}
+	}
+}
+
+// NewAddonSecretProvider routes k8s-secrets + alias to the K8s factory. Same
+// "didn't fall through to unknown" guard — fully constructing the client
+// requires an in-cluster config or ~/.kube/config.
+func TestNewAddonSecretProvider_K8sAliases(t *testing.T) {
+	for _, typ := range []string{"k8s-secrets", "kubernetes"} {
+		_, err := NewAddonSecretProvider(AddonSecretProviderConfig{Type: typ, Namespace: "sharko"})
+		if err == nil {
+			continue
+		}
+		if strings.Contains(err.Error(), "unknown provider type") {
+			t.Errorf("factory should have routed to K8s provider for %q alias, got: %v", typ, err)
+		}
+	}
+}
+
+// NewAddonSecretProvider routes GCP aliases to the (stub) GCP factory. The
+// stub always returns "not yet implemented" — we assert that error surfaces
+// instead of "unknown provider type", which would mean we mis-routed.
+func TestNewAddonSecretProvider_GCPAliases(t *testing.T) {
+	for _, typ := range []string{"gcp", "gcp-sm", "google-secret-manager"} {
+		_, err := NewAddonSecretProvider(AddonSecretProviderConfig{Type: typ})
+		if err == nil {
+			t.Errorf("expected stub error for GCP type %q, got nil", typ)
+			continue
+		}
+		if strings.Contains(err.Error(), "unknown provider type") {
+			t.Errorf("factory should have routed to GCP provider for %q alias, got: %v", typ, err)
+		}
+		if !strings.Contains(err.Error(), "not yet implemented") {
+			t.Errorf("expected stub 'not yet implemented' error for %q, got: %v", typ, err)
+		}
+	}
+}
+
+// NewAddonSecretProvider routes Azure aliases to the (stub) Azure factory.
+func TestNewAddonSecretProvider_AzureAliases(t *testing.T) {
+	for _, typ := range []string{"azure", "azure-kv", "azure-key-vault"} {
+		_, err := NewAddonSecretProvider(AddonSecretProviderConfig{Type: typ})
+		if err == nil {
+			t.Errorf("expected stub error for Azure type %q, got nil", typ)
+			continue
+		}
+		if strings.Contains(err.Error(), "unknown provider type") {
+			t.Errorf("factory should have routed to Azure provider for %q alias, got: %v", typ, err)
+		}
+		if !strings.Contains(err.Error(), "not yet implemented") {
+			t.Errorf("expected stub 'not yet implemented' error for %q, got: %v", typ, err)
+		}
+	}
+}
+
+// addonSecretConfigFromLegacy copies all five fields verbatim from the old
+// Config to the new AddonSecretProviderConfig. The compat-shim chain depends
+// on this being a pure no-op translation — if a future refactor introduces
+// any field transformation, this test catches it.
+func TestAddonSecretConfigFromLegacy_IdentityTranslation(t *testing.T) {
+	legacy := Config{
+		Type:      "aws-sm",
+		Region:    "us-west-2",
+		Prefix:    "clusters/",
+		Namespace: "sharko",
+		RoleARN:   "arn:aws:iam::123456789012:role/EKSReadRole",
+	}
+	got := addonSecretConfigFromLegacy(legacy)
+	want := AddonSecretProviderConfig{
+		Type:      "aws-sm",
+		Region:    "us-west-2",
+		Prefix:    "clusters/",
+		Namespace: "sharko",
+		RoleARN:   "arn:aws:iam::123456789012:role/EKSReadRole",
+	}
+	if got != want {
+		t.Errorf("addonSecretConfigFromLegacy mistranslated: got %+v, want %+v", got, want)
+	}
+}
+
+// NewSecretProvider (compat shim) and NewAddonSecretProvider must produce the
+// same outcome for equivalent inputs — the shim is a pure bridge. We pick a
+// rejection case (argocd) because it has a deterministic outcome that doesn't
+// depend on the runtime environment.
+func TestNewSecretProvider_CompatShimMatchesCanonical(t *testing.T) {
+	_, legacyErr := NewSecretProvider(Config{Type: "argocd"})
+	_, canonicalErr := NewAddonSecretProvider(AddonSecretProviderConfig{Type: "argocd"})
+	if (legacyErr == nil) != (canonicalErr == nil) {
+		t.Fatalf("compat shim disagrees with canonical: legacy=%v canonical=%v", legacyErr, canonicalErr)
+	}
+	if legacyErr != nil && canonicalErr != nil {
+		if legacyErr.Error() != canonicalErr.Error() {
+			t.Errorf("compat shim and canonical produced different error messages:\n  legacy:    %v\n  canonical: %v", legacyErr, canonicalErr)
+		}
+	}
+}

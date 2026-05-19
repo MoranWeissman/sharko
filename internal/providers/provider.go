@@ -76,23 +76,64 @@ type Config struct {
 // binary). The auto-default branch in New() reads through this var.
 var inClusterConfigFn = rest.InClusterConfig
 
-// NewSecretProvider creates the appropriate SecretProvider for the given config.
+// addonSecretConfigFromLegacy translates the deprecated providers.Config struct
+// to the new AddonSecretProviderConfig. Used by the compat-shim entry points
+// (NewSecretProvider + the per-backend NewXxxProvider(Config) wrappers) so the
+// per-backend factories only have to consume the typed config.
+//
+// All five legacy fields carry over verbatim — the field semantics in the
+// addon-secret slice of the old Config struct already matched the new typed
+// shape exactly. The shim exists only to bridge the old call signature; it does
+// not mutate any value.
+//
+// Retired in V125-1-11.6 along with the parent providers.Config struct.
+func addonSecretConfigFromLegacy(cfg Config) AddonSecretProviderConfig {
+	return AddonSecretProviderConfig{
+		Type:      cfg.Type,
+		Namespace: cfg.Namespace,
+		Region:    cfg.Region,
+		Prefix:    cfg.Prefix,
+		RoleARN:   cfg.RoleARN,
+	}
+}
+
+// NewSecretProvider creates the appropriate SecretProvider for the given
+// AddonSecretProviderConfig.
+//
+// This signature is the V125-1-11.3 compat shim: it accepts the deprecated
+// providers.Config and translates it to AddonSecretProviderConfig internally
+// before dispatching. New callers should use NewAddonSecretProvider directly.
 //
 // Note: Type "argocd" is REJECTED here on purpose. ArgoCDProvider is a
 // cluster-credentials-only provider (it supplies kubeconfigs from ArgoCD
 // cluster Secrets); it does NOT serve addon secret VALUES. Per the V125-1-10
 // design (OQ #2), addon secret values must continue to come from a real
 // secrets backend (vault / aws-sm / k8s-secrets / gcp-sm / azure-kv).
+//
+// Deprecated: use NewAddonSecretProvider(AddonSecretProviderConfig) instead.
+// Retired in V125-1-11.6 along with providers.Config.
 func NewSecretProvider(cfg Config) (SecretProvider, error) {
+	return NewAddonSecretProvider(addonSecretConfigFromLegacy(cfg))
+}
+
+// NewAddonSecretProvider creates the appropriate SecretProvider for the given
+// AddonSecretProviderConfig. This is the canonical (V125-1-11+) factory for
+// addon-secret backends — it consumes the typed config introduced in Story
+// 11.2 so the compiler enforces single-mechanism scope (closes the V125-1-10.8
+// ProviderConfig.Namespace cross-contamination smell).
+//
+// Note: Type "argocd" is REJECTED on purpose. ArgoCDProvider is a
+// cluster-credentials-only provider; it does NOT serve addon-secret VALUES.
+func NewAddonSecretProvider(cfg AddonSecretProviderConfig) (SecretProvider, error) {
 	switch cfg.Type {
 	case "k8s-secrets", "kubernetes":
-		return NewKubernetesSecretProvider(cfg)
+		return NewKubernetesSecretProviderFromAddonConfig(cfg)
 	case "aws-sm", "aws-secrets-manager":
-		return NewAWSSecretsManagerProvider(cfg)
+		return NewAWSSecretsManagerProviderFromAddonConfig(cfg)
 	case "gcp", "gcp-sm", "google-secret-manager":
-		return NewGCPSecretManagerProvider(cfg)
+		return NewGCPSecretManagerProviderFromAddonConfig(cfg)
 	case "azure", "azure-kv", "azure-key-vault":
-		return NewAzureKeyVaultProvider(cfg)
+		return NewAzureKeyVaultProviderFromAddonConfig(cfg)
 	case "argocd":
 		return nil, fmt.Errorf("argocd provider is cluster-credentials-only; configure a separate SecretProvider (vault, aws-sm, k8s-secrets, gcp-sm, azure-kv) for addon secret values")
 	case "":

@@ -519,7 +519,19 @@ var serveCmd = &cobra.Command{
 
 		// Secret reconciler — reconciles addon secrets on remote clusters.
 		if credProvider != nil && provCfgPtr != nil {
-			secretProvider, spErr := providers.NewSecretProvider(*provCfgPtr)
+			// V125-1-11.3: construct the canonical AddonSecretProviderConfig
+			// directly from the resolved provCfgPtr fields (single-mechanism
+			// scope — replaces the field-overloaded providers.Config).
+			// Story 11.6 retires provCfgPtr in favor of an addonCfg threaded
+			// from the connection-parsing layer; until then the bridge stays.
+			addonCfg := providers.AddonSecretProviderConfig{
+				Type:      provCfgPtr.Type,
+				Namespace: provCfgPtr.Namespace,
+				Region:    provCfgPtr.Region,
+				Prefix:    provCfgPtr.Prefix,
+				RoleARN:   provCfgPtr.RoleARN,
+			}
+			secretProvider, spErr := providers.NewAddonSecretProvider(addonCfg)
 			if spErr != nil {
 				slog.Warn("could not create secret provider for reconciler", "error", spErr)
 			} else {

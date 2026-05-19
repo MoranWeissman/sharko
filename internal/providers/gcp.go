@@ -20,10 +20,21 @@ import (
 //     a configured prefix convention (e.g. "clusters/{cluster-name}").
 type GCPSecretManagerProvider struct{}
 
-// NewGCPSecretManagerProvider creates a provider backed by Google Cloud Secret Manager.
+// NewGCPSecretManagerProvider creates a provider backed by Google Cloud Secret
+// Manager from the deprecated providers.Config. This signature is the
+// V125-1-11.3 compat shim — it forwards to NewGCPSecretManagerProviderFromAddonConfig.
+// Retired in V125-1-11.6.
+//
+// Deprecated: use NewGCPSecretManagerProviderFromAddonConfig instead.
+func NewGCPSecretManagerProvider(cfg Config) (*GCPSecretManagerProvider, error) {
+	return NewGCPSecretManagerProviderFromAddonConfig(addonSecretConfigFromLegacy(cfg))
+}
+
+// NewGCPSecretManagerProviderFromAddonConfig creates a provider backed by GCP
+// Secret Manager from the canonical AddonSecretProviderConfig (V125-1-11.3+).
 // This function always returns an error — the provider is not yet implemented.
 // Community contributions welcome at https://github.com/MoranWeissman/sharko
-func NewGCPSecretManagerProvider(cfg Config) (*GCPSecretManagerProvider, error) {
+func NewGCPSecretManagerProviderFromAddonConfig(cfg AddonSecretProviderConfig) (*GCPSecretManagerProvider, error) {
 	return nil, fmt.Errorf("GCP Secret Manager provider is not yet implemented — community contributions welcome at https://github.com/MoranWeissman/sharko")
 }
 
