@@ -488,14 +488,21 @@ var serveCmd = &cobra.Command{
 					Namespace: ns,
 					RoleARN:   connProv.RoleARN,
 				}
-				// Cluster-test fans the connection-level Type into the typed
-				// config ONLY when it's argocd. Other types route to the
-				// auto-default path (in-cluster argocd) at NewClusterTestProvider
-				// time, matching the V125-1-10.2 + V125-1-11.6 behaviour.
+				// V125-1-11.7-fix: cluster-test fans only the connection-level
+				// Type into the typed config when it's argocd — NEVER
+				// connProv.Namespace, which is the addon-secrets-shaped slot.
+				// Copying connProv.Namespace into ArgoCDNamespace recreates
+				// the V125-1-10.8 cross-contamination via a different code
+				// path (e.g. connProv.Namespace="sharko" leftover from a prior
+				// k8s-secrets selection would make ArgoCDProvider look for
+				// cluster Secrets in "sharko" instead of "argocd"). Empty
+				// ArgoCDNamespace lets resolveArgoCDNamespaceTyped fall back
+				// through cfg.ArgoCDNamespace → SHARKO_ARGOCD_NAMESPACE env →
+				// "argocd" default — the canonical correct behavior.
 				if connProv.Type == "argocd" {
 					resolvedTestCfg = providers.ClusterTestProviderConfig{
 						Type:            "argocd",
-						ArgoCDNamespace: connProv.Namespace,
+						ArgoCDNamespace: "",
 					}
 				}
 				if connProv.Type != "" {

@@ -373,14 +373,26 @@ func (s *Server) ReinitializeFromConnection() {
 				Namespace: namespace,
 				RoleARN:   pc.RoleARN,
 			}
-			// Cluster-test fans the connection-level Type/Namespace into the
-			// typed cluster-test config. ArgoCDNamespace ONLY gets populated
-			// when the connection explicitly targets argocd (otherwise we let
-			// the resolver fall back to SHARKO_ARGOCD_NAMESPACE env / default).
+			// V125-1-11.7-fix: cluster-test fans only the connection-level
+			// Type — NEVER pc.Namespace — into the typed cluster-test config.
+			// The addon-secrets-shaped pc.Namespace value (default "sharko",
+			// or whatever the operator picked while the dropdown was on
+			// k8s-secrets) MUST NOT bleed into ArgoCDNamespace (the slot for
+			// the argocd-install-namespace, semantically different — typically
+			// "argocd"). Story 11.6 had copied pc.Namespace through here,
+			// recreating the V125-1-10.8 cross-contamination via a different
+			// code path. Leaving ArgoCDNamespace empty lets the canonical
+			// resolveArgoCDNamespaceTyped precedence take over:
+			//   1. cfg.ArgoCDNamespace (empty here, by design)
+			//   2. SHARKO_ARGOCD_NAMESPACE env (deprecated compat alias)
+			//   3. "argocd" hardcoded default
+			// — which is the correct cluster-test behavior for any connection
+			// whose Provider block has no dedicated cluster-test ns knob (i.e.
+			// every connection today; a future enhancement could add one).
 			if pc.Type == "argocd" {
 				testCfg = providers.ClusterTestProviderConfig{
 					Type:            pc.Type,
-					ArgoCDNamespace: pc.Namespace,
+					ArgoCDNamespace: "",
 				}
 			} else {
 				// Non-argocd Type values are addon-secret backends; cluster-
