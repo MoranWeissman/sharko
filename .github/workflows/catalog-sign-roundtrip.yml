@@ -20,6 +20,11 @@
 #          signing.Verifier;
 #        - asserts verified=true. A divergence between writer and reader
 #          byte formats fails the job with a loud, unambiguous message.
+#   5. V124-1.4 extension: the roundtrip's TrustPolicy now ALSO populates
+#      .WorkflowRef so the full verify pipeline (SAN regex + cert-claim
+#      assertion) is exercised. A regression that breaks claim extraction
+#      (e.g. a future sigstore-go refactor renaming GithubWorkflowRef)
+#      surfaces here alongside the byte-format regressions.
 #
 # Why a dedicated workflow file (not an addition to ci.yml):
 #   - Clearer failure attribution — a red "Catalog Sign Roundtrip" check
@@ -125,6 +130,16 @@ jobs:
           # happy on self-hosted runners that may not propagate the
           # standard env (some old runner setups don't).
           CI: "true"
+          # V124-1.4 — exercise the cert-claim assertion path in the
+          # roundtrip. The production default is ^refs/tags/v.*$, but
+          # this workflow runs on pull_request / push (not tags), so we
+          # widen the policy to match the actual workflow_ref shape that
+          # Fulcio mints for those triggers. Leaving the test to fall
+          # back to its in-test default (defaultWorkflowRefRegex)
+          # achieves the same outcome — pinning here makes the
+          # assertion shape explicit in the workflow log for whoever
+          # debugs a future failure.
+          SHARKO_ROUNDTRIP_WORKFLOW_REF_REGEX: '^refs/(heads/.*|pull/.*|tags/.*)$'
         run: |
           go test -tags=roundtrip -race -count=1 -v -timeout=5m \
             -run TestRoundtrip_RealCosignAndVerifier \

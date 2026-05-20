@@ -101,6 +101,27 @@ const (
 	//   https://github.com/MoranWeissman/sharko/.github/workflows/catalog-sign-roundtrip.yml@refs/pull/<n>/merge
 	// — both match this anchored pattern.
 	defaultTrustRegex = `^https://github\.com/MoranWeissman/sharko/\.github/workflows/.*$`
+
+	// V124-1.4 — cert-claim assertion regex. Roundtrip CI runs against
+	// pull_request / push events on this repo, NOT against tag refs, so
+	// the production default (`^refs/tags/v.*$`) would reject the test
+	// bundle. The roundtrip overrides this with a permissive pattern
+	// that accepts any `refs/heads/...` or `refs/pull/...` ref — which
+	// is the actual workflow_ref shape minted by Fulcio for the
+	// pull_request and push triggers in catalog-sign-roundtrip.yml.
+	//
+	// Overridable via SHARKO_ROUNDTRIP_WORKFLOW_REF_REGEX so an operator
+	// running this test from a different trigger (e.g. tag) can tighten
+	// or relax the pattern without code changes.
+	workflowRefRegexEnvVar = "SHARKO_ROUNDTRIP_WORKFLOW_REF_REGEX"
+
+	// defaultWorkflowRefRegex matches the workflow_ref shape minted for
+	// pull_request (`refs/pull/<n>/merge`), push to a branch
+	// (`refs/heads/<branch>`), and tag pushes (`refs/tags/<tag>`). The
+	// pattern is permissive on purpose — the roundtrip test asserts
+	// byte-format and trust-pipeline correctness, NOT that the policy
+	// shipped to production matches every possible CI trigger.
+	defaultWorkflowRefRegex = `^refs/(heads/.*|pull/.*|tags/.*)$`
 )
 
 // TestRoundtrip_RealCosignAndVerifier is the only test in this file. It
@@ -218,7 +239,21 @@ func TestRoundtrip_RealCosignAndVerifier(t *testing.T) {
 	if _, err := regexp.Compile(trustRegex); err != nil {
 		t.Fatalf("invalid %s=%q: %v", trustRegexEnvVar, trustRegex, err)
 	}
-	policy := sources.TrustPolicy{Identities: []string{trustRegex}}
+	// V124-1.4 — cert-claim assertion. Configured separately from the
+	// SAN regex so the roundtrip exercises the full production verify
+	// pipeline (SAN check + workflow_ref check), pinning a regression
+	// in either layer.
+	workflowRefRegex := os.Getenv(workflowRefRegexEnvVar)
+	if workflowRefRegex == "" {
+		workflowRefRegex = defaultWorkflowRefRegex
+	}
+	if _, err := regexp.Compile(workflowRefRegex); err != nil {
+		t.Fatalf("invalid %s=%q: %v", workflowRefRegexEnvVar, workflowRefRegex, err)
+	}
+	policy := sources.TrustPolicy{
+		Identities:  []string{trustRegex},
+		WorkflowRef: workflowRefRegex,
+	}
 
 	// Use the in-process verifyBundleBytes path via the per-entry HTTP
 	// wrapper — host the bundle on a local httptest server so the test
@@ -263,11 +298,14 @@ Common root causes:
     signing.CanonicalEntryBytes accessor no longer mirrors.
   - sigstore-go major-version bump that changed the bundle parser
     contract without a writer-side counterpart.
-  - Trust policy regex (%s=%q) doesn't match the cert SAN the
+  - Trust policy SAN regex (%s=%q) doesn't match the cert SAN the
     workflow's OIDC token produces.
+  - V124-1.4 cert-claim assertion (%s=%q) doesn't match the cert's
+    workflow_ref claim — check the workflow trigger (pull_request vs
+    push vs tag) and the policy regex shape.
 
 Verifier log:
-%s`, trustRegexEnvVar, trustRegex, logBuf.String())
+%s`, trustRegexEnvVar, trustRegex, workflowRefRegexEnvVar, workflowRefRegex, logBuf.String())
 	}
 	if issuer == "" {
 		t.Fatalf("verified=true but issuer is empty — verifier contract violation\nverifier log:\n%s", logBuf.String())

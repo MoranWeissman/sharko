@@ -330,6 +330,20 @@ func (v *Verifier) verifyEntity(
 		return false, "", nil
 	}
 
+	// Step 8b (V124-1.4): cert-claim assertion. Defense-in-depth layered
+	// on top of the SAN regex above — even an attacker whose SAN matches
+	// the trust policy must ALSO have come from a workflow ref the
+	// operator allows. Default-secure: production wiring (serve.go via
+	// signing.LoadTrustPolicyFromEnv) populates trustPolicy.WorkflowRef
+	// with ^refs/tags/v.*$ when the env var is unset, so the assertion
+	// is on by default. Empty WorkflowRef in a TrustPolicy means SKIP
+	// (backward-compat for callers that construct TrustPolicy directly,
+	// e.g. unit tests that pre-date V124-1.4).
+	if reason, ok := assertWorkflowRef(cert, trustPolicy.WorkflowRef); !ok {
+		v.logFailure(urlForFingerprint, reason)
+		return false, "", nil
+	}
+
 	// Step 9: success. Log the subject (which IS in the cert and is not
 	// URL-related, so logging it is fine — it's the operator's whole
 	// point in configuring the trust policy).
@@ -435,4 +449,58 @@ func extractSubject(cert *x509.Certificate) (string, error) {
 		return "", errors.New("certificate has empty SAN")
 	}
 	return summary.SubjectAlternativeName, nil
+}
+
+// assertWorkflowRef (V124-1.4) enforces the optional cert-claim
+// assertion on a Fulcio leaf cert's GitHub workflow_ref extension.
+//
+// Contract:
+//   - policy == "" → returns ("", true). The assertion is opt-in at the
+//     TrustPolicy level; an empty policy means "skip" so callers that
+//     construct TrustPolicy directly (older unit tests, fixtures) are
+//     not silently broken when the WorkflowRef field is added.
+//   - policy != "" → extracts the cert's GithubWorkflowRef claim and
+//     matches it against the compiled policy regex. Match → ("", true).
+//     Non-match → (reason, false) where `reason` is a clear log line
+//     naming the actual claim value and the policy.
+//   - Empty claim (cert lacks the workflow_ref extension entirely, e.g.
+//     a non-GitHub-Actions issuer minted the cert) with a non-empty
+//     policy → rejected: an empty claim cannot satisfy a policy the
+//     operator explicitly configured. An operator wanting to also
+//     accept non-GHA-issued certs sets the policy to ".*" which
+//     matches the empty string.
+//   - Regex compile failure on a non-empty policy → ("policy compile
+//     failed", false). Validated at startup by LoadTrustPolicyFromEnv,
+//     but kept defensive here in case a future caller wires a raw
+//     policy that wasn't pre-validated.
+//
+// We use ParseExtensions (not SummarizeCertificate) because the latter
+// returns an error when the cert has no SAN — and we want to reject
+// gracefully on a cert-claim mismatch even when the SAN check already
+// passed via SummarizeCertificate moments ago in the caller. The
+// extensions parse is cheap and side-effect-free.
+func assertWorkflowRef(cert *x509.Certificate, policy string) (reason string, ok bool) {
+	if policy == "" {
+		// Assertion disabled — backward-compat path for direct
+		// TrustPolicy construction without going through the env loader.
+		return "", true
+	}
+	re, err := regexp.Compile(policy)
+	if err != nil {
+		return fmt.Sprintf(
+			"cert-claim assertion failed: workflow_ref policy %q does not compile: %v",
+			policy, err), false
+	}
+	ext, err := certificate.ParseExtensions(cert.Extensions)
+	if err != nil {
+		return fmt.Sprintf(
+			"cert-claim assertion failed: parse cert extensions: %v", err), false
+	}
+	claim := ext.GithubWorkflowRef
+	if !re.MatchString(claim) {
+		return fmt.Sprintf(
+			"cert-claim assertion failed: workflow_ref %q does not match policy %q",
+			claim, policy), false
+	}
+	return "", true
 }

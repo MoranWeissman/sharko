@@ -556,3 +556,168 @@ func TestLoadTrustPolicy_PartiallyAnchored(t *testing.T) {
 		})
 	}
 }
+
+// --- V124-1.4: SHARKO_CATALOG_TRUSTED_WORKFLOW_REF parser tests -----------
+//
+// Defense-in-depth env var that layers a cert-claim assertion on top of
+// the SAN regex check from PR-E. Unset / empty → DefaultTrustedWorkflowRef
+// (^refs/tags/v.*$). Operator overrides via the env var. Malformed regex
+// is a fatal startup error (same posture as Identities).
+
+// unsetWorkflowRefEnv removes the workflow-ref env var for the duration of
+// the test and restores it on cleanup. Mirrors the pattern used in the
+// Identities unset tests to avoid leaking environment between tests when
+// the host machine happens to have the var set.
+func unsetWorkflowRefEnv(t *testing.T) {
+	t.Helper()
+	if v, ok := os.LookupEnv(EnvTrustedWorkflowRef); ok {
+		if err := os.Unsetenv(EnvTrustedWorkflowRef); err != nil {
+			t.Fatalf("unsetenv: %v", err)
+		}
+		t.Cleanup(func() { _ = os.Setenv(EnvTrustedWorkflowRef, v) })
+	}
+}
+
+// TestLoadTrustPolicy_WorkflowRefUnsetUsesDefault — env var truly unset
+// → DefaultTrustedWorkflowRef is applied. Secure-default check: an
+// operator who never sets this env still gets the cert-claim assertion
+// pinning trust to tag refs.
+func TestLoadTrustPolicy_WorkflowRefUnsetUsesDefault(t *testing.T) {
+	unsetWorkflowRefEnv(t)
+	pol, err := LoadTrustPolicyFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if pol.WorkflowRef != DefaultTrustedWorkflowRef {
+		t.Errorf("WorkflowRef = %q, want default %q",
+			pol.WorkflowRef, DefaultTrustedWorkflowRef)
+	}
+}
+
+// TestLoadTrustPolicy_WorkflowRefEmptyUsesDefault — env var set to empty
+// string → same as unset. Both paths fall back to the secure default.
+// An operator wanting to disable the assertion sets the var to ".*"
+// explicitly (not the empty string).
+func TestLoadTrustPolicy_WorkflowRefEmptyUsesDefault(t *testing.T) {
+	t.Setenv(EnvTrustedWorkflowRef, "")
+	pol, err := LoadTrustPolicyFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if pol.WorkflowRef != DefaultTrustedWorkflowRef {
+		t.Errorf("WorkflowRef = %q, want default %q",
+			pol.WorkflowRef, DefaultTrustedWorkflowRef)
+	}
+}
+
+// TestLoadTrustPolicy_WorkflowRefCustomOverride — operator's regex
+// replaces the default verbatim. No merging or wrapping.
+func TestLoadTrustPolicy_WorkflowRefCustomOverride(t *testing.T) {
+	const custom = `^refs/heads/(main|release-.*)$`
+	t.Setenv(EnvTrustedWorkflowRef, custom)
+	pol, err := LoadTrustPolicyFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if pol.WorkflowRef != custom {
+		t.Errorf("WorkflowRef = %q, want %q", pol.WorkflowRef, custom)
+	}
+	// Defaults for Identities still apply when SHARKO_CATALOG_TRUSTED_IDENTITIES
+	// is unset — workflow_ref override does not interact with identity-list defaults.
+	unsetIdentities(t)
+	pol2, err := LoadTrustPolicyFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if pol2.WorkflowRef != custom {
+		t.Errorf("WorkflowRef = %q, want %q", pol2.WorkflowRef, custom)
+	}
+	if got := len(pol2.Identities); got != len(DefaultTrustedIdentities) {
+		t.Errorf("Identities len = %d, want %d (defaults unaffected by workflow_ref override)",
+			got, len(DefaultTrustedIdentities))
+	}
+}
+
+// TestLoadTrustPolicy_WorkflowRefTrimsWhitespace — operators copy-paste
+// from YAML / shell heredocs; trim leading/trailing whitespace before
+// validation.
+func TestLoadTrustPolicy_WorkflowRefTrimsWhitespace(t *testing.T) {
+	const custom = `^refs/tags/v.*$`
+	t.Setenv(EnvTrustedWorkflowRef, "  "+custom+"  ")
+	pol, err := LoadTrustPolicyFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if pol.WorkflowRef != custom {
+		t.Errorf("WorkflowRef = %q, want %q (whitespace must be trimmed)",
+			pol.WorkflowRef, custom)
+	}
+}
+
+// TestLoadTrustPolicy_WorkflowRefInvalidRegexErrors — malformed pattern
+// is fatal at startup. Mirrors the Identities validation posture. The
+// error must mention the env var name AND the offending pattern so the
+// operator can fix without grepping logs.
+func TestLoadTrustPolicy_WorkflowRefInvalidRegexErrors(t *testing.T) {
+	const bad = "[unbalanced"
+	t.Setenv(EnvTrustedWorkflowRef, bad)
+	pol, err := LoadTrustPolicyFromEnv()
+	if err == nil {
+		t.Fatalf("expected error for bad regex, got nil (policy %+v)", pol)
+	}
+	if !strings.Contains(err.Error(), bad) {
+		t.Errorf("error %q does not mention offending pattern %q",
+			err.Error(), bad)
+	}
+	if !strings.Contains(err.Error(), EnvTrustedWorkflowRef) {
+		t.Errorf("error %q does not mention env var name %q",
+			err.Error(), EnvTrustedWorkflowRef)
+	}
+}
+
+// TestDefaultTrustedWorkflowRef_MatchesTagRefs — the default regex
+// matches exactly the shape of refs that Sharko's release.yml signs
+// against (workflow_ref claim = `refs/tags/v...`) and rejects branch
+// refs (`refs/heads/...`). This is the cryptographic counterpart to
+// release.yml's `startsWith(workflow_run.head_branch, 'v')` trigger
+// guard — pinning it as a regex test means an accidental "fix" that
+// loosens the default fails immediately.
+func TestDefaultTrustedWorkflowRef_MatchesTagRefs(t *testing.T) {
+	re := regexp.MustCompile(DefaultTrustedWorkflowRef)
+	wantMatch := []string{
+		"refs/tags/v1.24.0",
+		"refs/tags/v1.24.0-pre.0",
+		"refs/tags/v2.0.0",
+	}
+	for _, ref := range wantMatch {
+		if !re.MatchString(ref) {
+			t.Errorf("default %q did not match expected tag ref %q",
+				DefaultTrustedWorkflowRef, ref)
+		}
+	}
+	wantReject := []string{
+		"refs/heads/main",
+		"refs/heads/feature-branch",
+		"refs/pull/123/merge",
+		"",
+	}
+	for _, ref := range wantReject {
+		if re.MatchString(ref) {
+			t.Errorf("default %q unexpectedly matched non-tag ref %q",
+				DefaultTrustedWorkflowRef, ref)
+		}
+	}
+}
+
+// unsetIdentities is a focused helper for tests that want to verify that
+// the workflow_ref env var change does NOT regress the identities
+// defaults path. Mirrors unsetWorkflowRefEnv.
+func unsetIdentities(t *testing.T) {
+	t.Helper()
+	if v, ok := os.LookupEnv(EnvTrustedIdentities); ok {
+		if err := os.Unsetenv(EnvTrustedIdentities); err != nil {
+			t.Fatalf("unsetenv: %v", err)
+		}
+		t.Cleanup(func() { _ = os.Setenv(EnvTrustedIdentities, v) })
+	}
+}
