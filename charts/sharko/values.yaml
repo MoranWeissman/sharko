@@ -35,6 +35,13 @@ rbac:
 # state). Today only the "argocd" backend is supported: it reads ArgoCD's
 # cluster Secret from the namespace where ArgoCD is installed.
 #
+# For the end-to-end story on Sharko's 3-mechanism provider split (this knob
+# is part of the v1.25 split that replaced the field-overloaded
+# providers.Config struct), see:
+#   docs/site/operator/configuration.md#provider-3mech
+#   docs/site/operator/cluster-connectivity-model.md
+#   docs/site/release-notes.md (v1.25 section)
+#
 # clusterTest.argocdNamespace is the CANONICAL replacement for the V125-1-10.8
 # SHARKO_ARGOCD_NAMESPACE env-var workaround. When set, it is the single
 # authoritative source for the ArgoCD namespace ArgoCDProvider reads from.
@@ -154,6 +161,12 @@ gitops:
 # write ArgoCD cluster Secrets into `argocdNamespace` based on the contents
 # of managed-clusters.yaml. Leaving both empty preserves today's behavior
 # (operators register clusters via ArgoCD UI or `kubectl apply` directly).
+#
+# Conceptually distinct from clusterTest.argocdNamespace above: clusterTest
+# READS from the ArgoCD namespace (where ArgoCD's own cluster Secrets live);
+# clusterRegSource WRITES to it (where Sharko's future reconciler will create
+# registration Secrets). On standard installs both values point at "argocd".
+# See docs/site/operator/configuration.md#provider-3mech for details.
 clusterRegSource:
   type: ""              # "" → no reconciler; "argocd" → V125-1-8 writes to ArgoCD cluster Secrets
   argocdNamespace: ""   # "" → defaults to "argocd" when V125-1-8 ships
