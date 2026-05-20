@@ -28,6 +28,35 @@ type TrustPolicy struct {
 	// regex patterns. An empty slice means "trust nothing" — verifiers
 	// should reject every signature rather than fall back to a default.
 	Identities []string
+
+	// WorkflowRef (V124-1.4) is an OPTIONAL second-layer assertion that
+	// the verifier applies to the cert's GitHub workflow_ref claim
+	// (Fulcio extension OID 1.3.6.1.4.1.57264.1.6, mapped to
+	// fulcio/certificate.Extensions.GithubWorkflowRef in sigstore-go).
+	// It narrows trust BEYOND the SAN regex in Identities: even an
+	// attacker whose SAN matches Identities must also have come from a
+	// workflow running against a matching ref to be accepted.
+	//
+	// Semantics:
+	//   - Empty string ("") means SKIP the assertion (backward-compat
+	//     for callers that construct TrustPolicy directly without going
+	//     through the env-var loader). Production wiring goes through
+	//     signing.LoadTrustPolicyFromEnv which substitutes a secure
+	//     default (^refs/tags/v.*$) when the env var is unset.
+	//   - Non-empty string is compiled as a Go regexp and matched
+	//     (substring; explicit ^...$ anchors are the operator's
+	//     responsibility, same convention as Identities). A cert whose
+	//     workflow_ref claim does NOT match → (verified=false, "", nil)
+	//     even when the SAN regex passed.
+	//   - A cert with NO workflow_ref extension at all (e.g. signed
+	//     outside a GitHub Actions context) AND a non-empty WorkflowRef
+	//     policy → rejected. The empty claim cannot satisfy a policy
+	//     the operator went out of their way to configure.
+	//
+	// The string carries the raw pattern (validated for compile-ability
+	// at load time). The verifier compiles it once per call — cheap and
+	// keeps a single source of truth for the pattern shape.
+	WorkflowRef string
 }
 
 // SidecarVerifier is the narrow contract that Subsystem A calls into

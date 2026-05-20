@@ -45,6 +45,28 @@ func SetTrustLoggerForTest(l *slog.Logger) func() {
 // the default trusted-identity regex list.
 const EnvTrustedIdentities = "SHARKO_CATALOG_TRUSTED_IDENTITIES"
 
+// EnvTrustedWorkflowRef is the env var operators set to override the
+// default workflow_ref claim assertion (V124-1.4 — defense-in-depth
+// layered on top of EnvTrustedIdentities). The verifier compares the
+// configured regex against the cert's GitHub workflow_ref claim AFTER
+// the SAN regex check passes. Unset / empty falls back to
+// DefaultTrustedWorkflowRef.
+const EnvTrustedWorkflowRef = "SHARKO_CATALOG_TRUSTED_WORKFLOW_REF"
+
+// DefaultTrustedWorkflowRef (V124-1.4) is the conservative default
+// regex applied to the cert's GitHub workflow_ref claim. Sharko's own
+// release.yml is gated to only sign on tag refs (the
+// `if: startsWith(workflow_run.head_branch, 'v')` guard), and Fulcio
+// records that ref as the cert's workflow_ref extension. Anchoring the
+// default to `^refs/tags/v.*$` cryptographically asserts the
+// already-policy behaviour: an attacker who matched the SAN regex must
+// ALSO have come from a tag-built workflow, not a feature-branch CI run
+// whose trigger guard was bypassed.
+//
+// Operators with non-tag-driven release pipelines override via
+// EnvTrustedWorkflowRef.
+const DefaultTrustedWorkflowRef = `^refs/tags/v.*$`
+
 // DefaultsToken is the literal placeholder operators include in the env
 // var to expand to DefaultTrustedIdentities at the matching position.
 // Case-sensitive: `<defaults>` matches; `<DEFAULTS>` does not.
@@ -163,5 +185,29 @@ func LoadTrustPolicyFromEnv() (sources.TrustPolicy, error) {
 		}
 	}
 
-	return sources.TrustPolicy{Identities: patterns}, nil
+	// V124-1.4: load the workflow_ref claim assertion. Unset / empty
+	// falls back to DefaultTrustedWorkflowRef — secure default. An
+	// operator who explicitly wants to disable the claim assertion (e.g.
+	// to verify entries signed by a non-GitHub-Actions issuer that
+	// doesn't mint a workflow_ref extension at all) sets the env var to
+	// ".*" — a regex that matches everything, INCLUDING the empty claim
+	// extracted from a non-GHA cert.
+	//
+	// Validation parity with Identities: the regex is compiled here so
+	// a malformed pattern fails at startup, not later inside the
+	// verifier. The verifier compiles it again per-call (matches the
+	// Identities posture).
+	workflowRef := strings.TrimSpace(os.Getenv(EnvTrustedWorkflowRef))
+	if workflowRef == "" {
+		workflowRef = DefaultTrustedWorkflowRef
+	}
+	if _, err := regexp.Compile(workflowRef); err != nil {
+		return sources.TrustPolicy{}, fmt.Errorf(
+			"%s: invalid regex %q: %w", EnvTrustedWorkflowRef, workflowRef, err)
+	}
+
+	return sources.TrustPolicy{
+		Identities:  patterns,
+		WorkflowRef: workflowRef,
+	}, nil
 }

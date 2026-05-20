@@ -2,12 +2,20 @@ package signing
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/asn1"
 	"log/slog"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/sigstore/sigstore-go/pkg/testing/ca"
 	"github.com/sigstore/sigstore-go/pkg/verify"
@@ -747,5 +755,312 @@ func TestVerifyEntryFunc_ClosesOverPolicy(t *testing.T) {
 	}
 	if issuer != "" {
 		t.Errorf("expected empty issuer, got %q", issuer)
+	}
+}
+
+// --- V124-1.4: workflow_ref cert-claim assertion ---------------------------
+//
+// The assertion narrows trust BEYOND the SAN regex (PR-E from v1.23): even
+// an attacker whose SAN matches the trust policy must also have come from
+// a workflow ref the operator allows. Tests below cover:
+//
+//   - The pure-function assertWorkflowRef helper across the four-case
+//     matrix (claim present + match, claim present + mismatch, claim
+//     absent + non-empty policy, empty policy → skip).
+//   - End-to-end via verifyEntity: an existing test cert (vs.Sign mints a
+//     cert WITHOUT a workflow_ref extension) under a non-empty policy →
+//     rejected with cert-claim error.
+//   - End-to-end backward compat: existing tests construct TrustPolicy
+//     with WorkflowRef == "" — the assertion is skipped, happy path still
+//     verifies. (Implicit in the matrix-test wave above continuing to
+//     pass.)
+
+// certWithWorkflowRef builds a minimal in-memory x509 cert that carries
+// the Fulcio GithubWorkflowRef extension (OID 1.3.6.1.4.1.57264.1.6).
+// The cert is self-signed — that's fine because assertWorkflowRef ONLY
+// inspects the cert's Extensions slice; it never validates the chain.
+// The chain has already been validated upstream by sigstore-go's verifier
+// before we ever reach the assertion in production.
+//
+// Returns the cert and the workflow_ref value embedded so the caller can
+// assert on the round-trip without re-typing the string.
+func certWithWorkflowRef(t *testing.T, workflowRef string) *x509.Certificate {
+	t.Helper()
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("ecdsa.GenerateKey: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "test"},
+		NotBefore:    time.Now().Add(-time.Minute),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	if workflowRef != "" {
+		tmpl.ExtraExtensions = []pkix.Extension{{
+			// OID 1.3.6.1.4.1.57264.1.6 — Fulcio GithubWorkflowRef
+			// extension. ParseExtensions decodes the raw bytes as a Go
+			// string (no DER wrapping for this older "1.x" extension
+			// family — see sigstore-go/pkg/fulcio/certificate/extensions.go
+			// case OIDGitHubWorkflowRef).
+			Id:    asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 57264, 1, 6},
+			Value: []byte(workflowRef),
+		}}
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
+	if err != nil {
+		t.Fatalf("x509.CreateCertificate: %v", err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("x509.ParseCertificate: %v", err)
+	}
+	return cert
+}
+
+// TestAssertWorkflowRef_Matrix is the single source of truth for the
+// pure-function assertion contract. Each case routes through one of the
+// four branches in assertWorkflowRef.
+func TestAssertWorkflowRef_Matrix(t *testing.T) {
+	cases := []struct {
+		name             string
+		certWorkflowRef  string // "" means cert has no workflow_ref extension
+		policy           string
+		wantOK           bool
+		wantReasonSubstr string // empty when wantOK is true
+	}{
+		{
+			name:             "empty_policy_skips_assertion",
+			certWorkflowRef:  "refs/heads/main", // anything; ignored
+			policy:           "",
+			wantOK:           true,
+			wantReasonSubstr: "",
+		},
+		{
+			name:             "empty_policy_skips_even_for_absent_claim",
+			certWorkflowRef:  "", // cert has no extension
+			policy:           "",
+			wantOK:           true,
+			wantReasonSubstr: "",
+		},
+		{
+			name:             "matching_claim",
+			certWorkflowRef:  "refs/tags/v1.24.0",
+			policy:           `^refs/tags/v.*$`,
+			wantOK:           true,
+			wantReasonSubstr: "",
+		},
+		{
+			name:             "mismatched_claim_branch_vs_tag",
+			certWorkflowRef:  "refs/heads/feature-branch",
+			policy:           `^refs/tags/v.*$`,
+			wantOK:           false,
+			wantReasonSubstr: "workflow_ref",
+		},
+		{
+			name:             "absent_claim_with_nonempty_policy_rejects",
+			certWorkflowRef:  "", // cert lacks the extension entirely
+			policy:           `^refs/tags/v.*$`,
+			wantOK:           false,
+			wantReasonSubstr: `workflow_ref ""`,
+		},
+		{
+			name:             "wildcard_policy_accepts_empty_claim",
+			certWorkflowRef:  "",
+			policy:           `.*`, // operator opted into accepting non-GHA certs
+			wantOK:           true,
+			wantReasonSubstr: "",
+		},
+		{
+			name:             "wildcard_policy_accepts_any_ref",
+			certWorkflowRef:  "refs/heads/main",
+			policy:           `.*`,
+			wantOK:           true,
+			wantReasonSubstr: "",
+		},
+		{
+			name:             "main_only_rejects_tag",
+			certWorkflowRef:  "refs/tags/v1.24.0",
+			policy:           `^refs/heads/main$`,
+			wantOK:           false,
+			wantReasonSubstr: "does not match policy",
+		},
+		{
+			name:             "policy_mentions_self_in_reason",
+			certWorkflowRef:  "refs/heads/foo",
+			policy:           `^refs/tags/v.*$`,
+			wantOK:           false,
+			wantReasonSubstr: `^refs/tags/v.*$`,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			cert := certWithWorkflowRef(t, tc.certWorkflowRef)
+			reason, ok := assertWorkflowRef(cert, tc.policy)
+			if ok != tc.wantOK {
+				t.Errorf("ok = %v, want %v (reason=%q)", ok, tc.wantOK, reason)
+			}
+			if tc.wantReasonSubstr == "" {
+				if reason != "" {
+					t.Errorf("expected empty reason on success/skip, got %q", reason)
+				}
+				return
+			}
+			if !strings.Contains(reason, tc.wantReasonSubstr) {
+				t.Errorf("reason = %q, want substring %q", reason, tc.wantReasonSubstr)
+			}
+		})
+	}
+}
+
+// TestAssertWorkflowRef_InvalidPolicyCompile is a defensive-branch test:
+// LoadTrustPolicyFromEnv validates the regex at startup, but if a future
+// caller wires a raw policy that wasn't pre-validated, the assertion
+// helper rejects gracefully rather than panicking on regexp.Compile.
+func TestAssertWorkflowRef_InvalidPolicyCompile(t *testing.T) {
+	cert := certWithWorkflowRef(t, "refs/tags/v1.24.0")
+	reason, ok := assertWorkflowRef(cert, "[unbalanced")
+	if ok {
+		t.Errorf("expected ok=false on malformed policy regex")
+	}
+	if !strings.Contains(reason, "does not compile") {
+		t.Errorf("reason = %q, want substring %q", reason, "does not compile")
+	}
+}
+
+// TestVerifyEntity_WorkflowRefPolicyRejects (V124-1.4) end-to-end: when
+// the trust policy includes a non-empty WorkflowRef AND the cert lacks a
+// matching workflow_ref claim, verifyEntity rejects via the cert-claim
+// branch with the expected log reason. The SAN check still passes — only
+// the new layered assertion fails.
+//
+// VirtualSigstore's Sign() mints a cert WITHOUT a GithubWorkflowRef
+// extension (the test CA only sets SAN + OIDC issuer), so any non-empty
+// WorkflowRef policy must reject. That's exactly the assertion: the
+// production wiring's default policy `^refs/tags/v.*$` would reject a
+// cert that has no workflow_ref claim at all.
+func TestVerifyEntity_WorkflowRefPolicyRejects(t *testing.T) {
+	vs, err := ca.NewVirtualSigstore()
+	if err != nil {
+		t.Fatalf("NewVirtualSigstore: %v", err)
+	}
+	payload := []byte("payload signed but cert lacks workflow_ref claim")
+	entity, err := vs.Sign(testIdentity, testIssuer, payload)
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+
+	policy := sources.TrustPolicy{
+		Identities:  []string{`^test@example\.com$`}, // SAN matches
+		WorkflowRef: DefaultTrustedWorkflowRef,       // claim assertion is on
+	}
+
+	v, rec := withRecordedLogger(t, vs)
+	verified, issuer, verr := v.verifyEntity(
+		context.Background(),
+		entity,
+		payload,
+		policy,
+		"https://example.invalid/x.bundle",
+	)
+	if verr != nil {
+		t.Fatalf("verifyEntity: unexpected err: %v (cert-claim mismatch must NOT be err)", verr)
+	}
+	if verified {
+		t.Errorf("expected verified=false on cert-claim mismatch")
+	}
+	if issuer != "" {
+		t.Errorf("expected empty issuer on cert-claim mismatch, got %q", issuer)
+	}
+	if got := rec.LastReason(); !strings.Contains(got, "cert-claim assertion failed") {
+		t.Errorf("expected log reason to contain %q (cert-claim branch); got %q",
+			"cert-claim assertion failed", got)
+	}
+	if got := rec.LastReason(); !strings.Contains(got, DefaultTrustedWorkflowRef) {
+		t.Errorf("expected log reason to include policy %q; got %q",
+			DefaultTrustedWorkflowRef, got)
+	}
+}
+
+// TestVerifyEntity_WorkflowRefEmptyPolicySkips (V124-1.4) — when
+// TrustPolicy.WorkflowRef is empty (the backward-compat path), the
+// assertion is skipped entirely. Proves that callers who construct
+// TrustPolicy directly (older unit tests, integration fixtures) are not
+// silently regressed by adding the new field.
+func TestVerifyEntity_WorkflowRefEmptyPolicySkips(t *testing.T) {
+	vs, err := ca.NewVirtualSigstore()
+	if err != nil {
+		t.Fatalf("NewVirtualSigstore: %v", err)
+	}
+	payload := []byte("happy-path payload")
+	entity, err := vs.Sign(testIdentity, testIssuer, payload)
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+
+	// Explicit zero-value WorkflowRef — assertion disabled.
+	policy := sources.TrustPolicy{
+		Identities: []string{`^test@example\.com$`},
+		// WorkflowRef: "" — backward-compat skip
+	}
+
+	v := newTestVerifier(t, vs)
+	verified, issuer, verr := v.verifyEntity(
+		context.Background(),
+		entity,
+		payload,
+		policy,
+		"https://example.invalid/x.bundle",
+	)
+	if verr != nil {
+		t.Fatalf("verifyEntity: unexpected err: %v", verr)
+	}
+	if !verified {
+		t.Errorf("expected verified=true with empty WorkflowRef policy (backward-compat)")
+	}
+	if issuer != testIdentity {
+		t.Errorf("expected issuer %q, got %q", testIdentity, issuer)
+	}
+}
+
+// TestVerifyEntity_WorkflowRefWildcardAccepts (V124-1.4) — the operator
+// escape hatch: setting WorkflowRef to ".*" accepts ANY workflow_ref
+// claim, INCLUDING the empty claim minted by VirtualSigstore's Sign().
+// This is the path for operators who want to verify entries signed by
+// non-GitHub-Actions issuers that don't mint a workflow_ref extension.
+func TestVerifyEntity_WorkflowRefWildcardAccepts(t *testing.T) {
+	vs, err := ca.NewVirtualSigstore()
+	if err != nil {
+		t.Fatalf("NewVirtualSigstore: %v", err)
+	}
+	payload := []byte("payload signed by non-GHA issuer")
+	entity, err := vs.Sign(testIdentity, testIssuer, payload)
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+
+	policy := sources.TrustPolicy{
+		Identities:  []string{`^test@example\.com$`},
+		WorkflowRef: `.*`, // operator opted into accepting non-GHA certs
+	}
+
+	v := newTestVerifier(t, vs)
+	verified, issuer, verr := v.verifyEntity(
+		context.Background(),
+		entity,
+		payload,
+		policy,
+		"https://example.invalid/x.bundle",
+	)
+	if verr != nil {
+		t.Fatalf("verifyEntity: unexpected err: %v", verr)
+	}
+	if !verified {
+		t.Errorf("expected verified=true with wildcard WorkflowRef policy")
+	}
+	if issuer != testIdentity {
+		t.Errorf("expected issuer %q, got %q", testIdentity, issuer)
 	}
 }

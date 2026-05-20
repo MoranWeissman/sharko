@@ -122,7 +122,7 @@ func newTestReconciler(
 	gitReaderFn func() GitReader,
 	credProvider ClusterCredentialsProvider,
 ) (*Reconciler, *Manager, *fake.Clientset) {
-	client := fake.NewSimpleClientset()
+	client := fake.NewClientset()
 	mgr := NewManager(client, testNamespace)
 	parser := config.NewParser()
 
@@ -210,7 +210,7 @@ func TestReconcileOnce_OrphanCleanup(t *testing.T) {
 		Type: corev1.SecretTypeOpaque,
 	}
 
-	client := fake.NewSimpleClientset(orphan)
+	client := fake.NewClientset(orphan)
 	mgr := NewManager(client, testNamespace)
 	parser := config.NewParser()
 
@@ -441,7 +441,7 @@ func TestReconcileOnce_Trigger(t *testing.T) {
 		},
 	}
 
-	client := fake.NewSimpleClientset()
+	client := fake.NewClientset()
 	mgr := NewManager(client, testNamespace)
 	parser := config.NewParser()
 
@@ -503,7 +503,7 @@ clusters:
 		},
 	}
 
-	client := fake.NewSimpleClientset()
+	client := fake.NewClientset()
 	mgr := NewManager(client, testNamespace)
 	parser := config.NewParser()
 
