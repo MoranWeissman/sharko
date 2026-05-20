@@ -1,0 +1,131 @@
+# V124-1.3 — catalog signing roundtrip test.
+#
+# Closes the validation gap that necessitated four throwaway -rc tags
+# during the v1.23 ship: every rc surfaced a production-only bug because
+# no CI test exercised the actual byte-format flowing from
+# `cmd/catalog-sign` (the writer) into `internal/catalog/signing.Verifier`
+# (the reader). The unit suite stubs the cosign binary with a fakeSigner —
+# fast and hermetic but blind to writer/reader byte-format drift.
+#
+# What this job does:
+#   1. Checks out the PR branch (or main on push).
+#   2. Installs Go (matching go.mod) and cosign v2.4.1 (pinned — matches
+#      the version sigstore/cosign-installer wires up in release.yml).
+#   3. Builds the tree to surface compile errors fast.
+#   4. Runs `go test -tags=roundtrip ./cmd/catalog-sign/...` which
+#      executes TestRoundtrip_RealCosignAndVerifier. That test:
+#        - signs a synthetic fixture entry via the PRODUCTION cosignCLI
+#          (same code path, same argv, same --new-bundle-format flag);
+#        - reads back the bundle bytes and hands them to the PRODUCTION
+#          signing.Verifier;
+#        - asserts verified=true. A divergence between writer and reader
+#          byte formats fails the job with a loud, unambiguous message.
+#
+# Why a dedicated workflow file (not an addition to ci.yml):
+#   - Clearer failure attribution — a red "Catalog Sign Roundtrip" check
+#     immediately tells the operator the failure is in the signing path.
+#   - Isolated cache strategy — this job needs cosign + Sigstore TUF
+#     cache, neither of which the rest of CI uses.
+#   - The job has unique permission needs (id-token: write for keyless
+#     signing) that the broader CI doesn't.
+#
+# Triggers:
+#   - pull_request to main — so a regression is caught BEFORE merge.
+#     This is the lesson from v1.23: regressions discovered post-tag are
+#     four times more expensive to ship around.
+#   - push to main — samples the main-branch lineage so a merge-time
+#     regression (e.g. from a no-rebase merge) doesn't sit undetected
+#     until the next tag.
+#
+# Network egress required:
+#   - Fulcio (https://fulcio.sigstore.dev) — cert minting from the GHA
+#     OIDC token.
+#   - Rekor (https://rekor.sigstore.dev) — signature transparency log.
+#   - TUF mirror (https://tuf-repo-cdn.sigstore.dev) — trust root metadata.
+#   GitHub-hosted runners can reach all three. A self-hosted runner would
+#   need outbound access; the test honors SHARKO_SKIP_TUF_NETWORK as an
+#   air-gap escape hatch (skipping the test, not failing it).
+name: Catalog Sign Roundtrip
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Cancel in-flight runs when a branch gets a new push — saves runner
+# minutes and avoids racing two runs that would each try to mint a Fulcio
+# cert for the same workflow ref.
+concurrency:
+  group: catalog-sign-roundtrip-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  roundtrip:
+    name: Sign → Verify Roundtrip
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      # id-token: write enables OIDC keyless signing — Fulcio reads the
+      # GitHub Actions OIDC token from this permission and mints a
+      # short-lived cert whose SAN encodes the workflow ref. Without this,
+      # `cosign sign-blob` fails with "no auth token available."
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Pin cosign to the same v2.4.1 that release.yml uses. The
+      # --new-bundle-format flag (load-bearing for sigstore-go's bundle
+      # parser) is stable in 2.4.x; pinning the patch version means a
+      # surprise upstream change can't silently break the writer-side
+      # contract this test guards.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: 'v2.4.1'
+
+      # Build the whole tree first so a compile failure surfaces here
+      # (with a clear "Build" step name) rather than confusingly inside
+      # the test runner.
+      - name: Build
+        run: go build ./...
+
+      # Vet the roundtrip-tagged source as well — default `go vet ./...`
+      # skips files behind a build tag, so a syntax error in
+      # roundtrip_test.go could otherwise sneak in.
+      - name: Vet (roundtrip tag)
+        run: go vet -tags=roundtrip ./cmd/catalog-sign/...
+
+      # The roundtrip test itself. Verbose so the workflow log shows the
+      # canonical-payload size, bundle size, and the issuer SAN that the
+      # verifier extracted on success — useful breadcrumbs when someone
+      # is debugging a future failure.
+      - name: Run roundtrip test
+        env:
+          # COSIGN_YES suppresses the interactive prompt in non-TTY
+          # contexts. Matches release.yml's signing step.
+          COSIGN_YES: "true"
+          # SHARKO_SKIP_TUF_NETWORK is the documented escape hatch (see
+          # tufroot_test.go). Empty here — GitHub-hosted runners can
+          # reach the Sigstore mirror, so the test runs end-to-end. An
+          # operator forking this workflow into an air-gapped runner can
+          # set the env var to skip the test cleanly.
+          SHARKO_SKIP_TUF_NETWORK: ""
+          # CI=true is already set by GitHub-hosted runners; pinning it
+          # explicitly keeps the test's "skip when not in CI" guard
+          # happy on self-hosted runners that may not propagate the
+          # standard env (some old runner setups don't).
+          CI: "true"
+        run: |
+          go test -tags=roundtrip -race -count=1 -v -timeout=5m \
+            -run TestRoundtrip_RealCosignAndVerifier \
+            ./cmd/catalog-sign/...
