@@ -86,8 +86,8 @@ func (s *Server) handleBatchRegisterClusters(w http.ResponseWriter, r *http.Requ
 	}
 	if s.argoSecretManager != nil {
 		roleARN := ""
-		if s.providerCfg != nil {
-			roleARN = s.providerCfg.RoleARN
+		if s.addonSecretCfg != nil {
+			roleARN = s.addonSecretCfg.RoleARN
 		}
 		orch.SetArgoSecretManager(&argoManagerAdapter{mgr: s.argoSecretManager}, roleARN)
 	}

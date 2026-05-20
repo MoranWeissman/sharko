@@ -1,9 +1,12 @@
 package providers
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -339,15 +342,14 @@ func TestArgoCD_HealthCheck_FailsOnPermissionError(t *testing.T) {
 	}
 }
 
-// TestResolveArgoCDNamespace covers V125-1-10.8: ArgoCDProvider must IGNORE
-// cfg.Namespace (which is for the orthogonal k8s-secrets backend) and resolve
-// its own namespace from SHARKO_ARGOCD_NAMESPACE env var with a hardcoded
-// "argocd" fallback. Cross-contamination (cfg.Namespace set to a non-matching
-// value) must not change the resolved namespace.
-func TestResolveArgoCDNamespace(t *testing.T) {
+// TestResolveArgoCDNamespaceTyped covers the V125-1-11.4 canonical behaviour:
+// the typed ClusterTestProviderConfig.ArgoCDNamespace field is the single
+// authoritative source. SHARKO_ARGOCD_NAMESPACE env var remains a deprecated
+// compat alias (slog.Warn). The hardcoded "argocd" default applies last.
+func TestResolveArgoCDNamespaceTyped(t *testing.T) {
 	tests := []struct {
 		name        string
-		cfg         Config
+		cfg         ClusterTestProviderConfig
 		envValue    string // empty string → unset
 		setEnv      bool   // true → call t.Setenv even if envValue is ""
 		wantNS      string
@@ -355,43 +357,31 @@ func TestResolveArgoCDNamespace(t *testing.T) {
 	}{
 		{
 			name:        "default_when_cfg_empty_and_no_env",
-			cfg:         Config{Type: "argocd"},
+			cfg:         ClusterTestProviderConfig{Type: "argocd"},
 			wantNS:      "argocd",
 			description: "no inputs → hardcoded argocd default",
 		},
 		{
-			name:        "cross_contamination_ignored_sharko",
-			cfg:         Config{Type: "argocd", Namespace: "sharko"},
-			wantNS:      "argocd",
-			description: "leftover sharko value from prior k8s-secrets config must be ignored",
+			name:        "canonical_field_used",
+			cfg:         ClusterTestProviderConfig{Type: "argocd", ArgoCDNamespace: "custom"},
+			wantNS:      "custom",
+			description: "ClusterTestProviderConfig.ArgoCDNamespace is the canonical source",
 		},
 		{
-			name:        "cross_contamination_ignored_arbitrary",
-			cfg:         Config{Type: "argocd", Namespace: "some-other-ns"},
-			wantNS:      "argocd",
-			description: "any non-argocd cfg.Namespace must be ignored",
-		},
-		{
-			name:        "explicit_match_no_warning",
-			cfg:         Config{Type: "argocd", Namespace: "argocd"},
-			wantNS:      "argocd",
-			description: "cfg.Namespace matches the resolved ns → still resolves to argocd, no warning",
-		},
-		{
-			name:        "env_var_override",
-			cfg:         Config{Type: "argocd"},
-			envValue:    "custom-argocd-ns",
+			name:        "canonical_field_wins_over_env",
+			cfg:         ClusterTestProviderConfig{Type: "argocd", ArgoCDNamespace: "from-config"},
+			envValue:    "from-env",
 			setEnv:      true,
-			wantNS:      "custom-argocd-ns",
-			description: "SHARKO_ARGOCD_NAMESPACE overrides the hardcoded default",
+			wantNS:      "from-config",
+			description: "typed config field takes precedence over the deprecated env var",
 		},
 		{
-			name:        "env_var_overrides_cross_contamination",
-			cfg:         Config{Type: "argocd", Namespace: "sharko"},
-			envValue:    "custom-argocd-ns",
+			name:        "env_var_used_when_field_empty",
+			cfg:         ClusterTestProviderConfig{Type: "argocd"},
+			envValue:    "legacy-ns",
 			setEnv:      true,
-			wantNS:      "custom-argocd-ns",
-			description: "env var wins; cfg.Namespace cross-contamination still ignored",
+			wantNS:      "legacy-ns",
+			description: "SHARKO_ARGOCD_NAMESPACE deprecated compat alias still works",
 		},
 	}
 
@@ -405,21 +395,76 @@ func TestResolveArgoCDNamespace(t *testing.T) {
 				t.Setenv("SHARKO_ARGOCD_NAMESPACE", "")
 			}
 
-			got := resolveArgoCDNamespace(tt.cfg)
+			got := resolveArgoCDNamespaceTyped(tt.cfg)
 			if got != tt.wantNS {
-				t.Errorf("resolveArgoCDNamespace(%+v) = %q, want %q (%s)",
+				t.Errorf("resolveArgoCDNamespaceTyped(%+v) = %q, want %q (%s)",
 					tt.cfg, got, tt.wantNS, tt.description)
 			}
 		})
 	}
 }
 
-// TestResolveArgoCDNamespace_RegressionExistingTestsStillPass confirms the
-// previously-tested behaviour is preserved: an empty cfg yields "argocd" so
-// the existing newArgoCDProviderWithClient(client, "") path is unchanged.
-func TestResolveArgoCDNamespace_RegressionExistingTestsStillPass(t *testing.T) {
+// TestResolveArgoCDNamespaceTyped_DeprecationWarnEmitted confirms the
+// SHARKO_ARGOCD_NAMESPACE compat alias emits a slog.Warn so operators see they
+// are on the legacy path. The warn is the deprecation signal; removed in v1.26
+// per V125-1-11 planning doc OQ #4.
+func TestResolveArgoCDNamespaceTyped_DeprecationWarnEmitted(t *testing.T) {
+	t.Setenv("SHARKO_ARGOCD_NAMESPACE", "legacy-ns")
+
+	// Capture slog output through a buffer + JSON handler, restoring the
+	// default at test end so other tests aren't affected.
+	var buf bytes.Buffer
+	prevDefault := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(prevDefault) })
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+
+	got := resolveArgoCDNamespaceTyped(ClusterTestProviderConfig{Type: "argocd"})
+	if got != "legacy-ns" {
+		t.Fatalf("resolveArgoCDNamespaceTyped(empty field, env=legacy-ns) = %q, want %q", got, "legacy-ns")
+	}
+	out := buf.String()
+	if !strings.Contains(out, "SHARKO_ARGOCD_NAMESPACE") || !strings.Contains(out, "deprecated") {
+		t.Errorf("expected deprecation slog.Warn mentioning SHARKO_ARGOCD_NAMESPACE + deprecated, got: %q", out)
+	}
+	if !strings.Contains(out, "legacy-ns") {
+		t.Errorf("expected warn payload to include the env value %q, got: %q", "legacy-ns", out)
+	}
+}
+
+// TestResolveArgoCDNamespaceTyped_NoWarnWhenCanonicalFieldUsed confirms the
+// happy path is silent — operators on the canonical typed config do NOT see
+// the deprecation warn.
+func TestResolveArgoCDNamespaceTyped_NoWarnWhenCanonicalFieldUsed(t *testing.T) {
+	// Set env var so we can prove the canonical field's precedence suppresses
+	// the warn (env wouldn't be consulted at all).
+	t.Setenv("SHARKO_ARGOCD_NAMESPACE", "should-be-ignored")
+
+	var buf bytes.Buffer
+	prevDefault := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(prevDefault) })
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+
+	got := resolveArgoCDNamespaceTyped(ClusterTestProviderConfig{Type: "argocd", ArgoCDNamespace: "from-config"})
+	if got != "from-config" {
+		t.Fatalf("resolveArgoCDNamespaceTyped(canonical field) = %q, want %q", got, "from-config")
+	}
+	if strings.Contains(buf.String(), "deprecated") {
+		t.Errorf("did not expect deprecation warn when canonical field is set, got: %q", buf.String())
+	}
+}
+
+// TestResolveArgoCDNamespaceTyped_CrossContaminationStaysClosed is the
+// V125-1-11.6 successor to the V125-1-10.8 compat-shim regression check.
+// With providers.Config retired, the cross-contamination from k8s-secrets
+// addon-secret config into ArgoCD namespace resolution is now structurally
+// impossible — there's no shared field to leak through. This test pins the
+// canonical resolution behaviour: empty ClusterTestProviderConfig.ArgoCDNamespace
+// + unset SHARKO_ARGOCD_NAMESPACE → defaults to "argocd", regardless of any
+// other config in the program.
+func TestResolveArgoCDNamespaceTyped_CrossContaminationStaysClosed(t *testing.T) {
 	t.Setenv("SHARKO_ARGOCD_NAMESPACE", "")
-	if got := resolveArgoCDNamespace(Config{}); got != "argocd" {
-		t.Errorf("resolveArgoCDNamespace(empty cfg) = %q, want %q", got, "argocd")
+	cfg := ClusterTestProviderConfig{Type: "argocd"} // no ArgoCDNamespace
+	if got := resolveArgoCDNamespaceTyped(cfg); got != "argocd" {
+		t.Errorf("unset typed namespace + unset env should resolve to default %q, got %q", "argocd", got)
 	}
 }

@@ -79,6 +79,16 @@ spec:
             - name: SHARKO_WRITE_INITIAL_ADMIN_SECRET
               value: {{ ternary "true" "false" $bootstrap.writeInitialSecret | quote }}
             {{- end }}
+            {{- /*
+              V125-1-11.5: Pre-wire ClusterRegistrationSourceConfig env vars for the
+              future V125-1-8 cluster reconciler. Always rendered with safe defaults
+              (empty strings) so existing deployments are unaffected. Consumed in
+              cmd/sharko/serve.go via providers.ClusterRegistrationSourceConfig.
+            */}}
+            - name: SHARKO_CLUSTER_REG_TYPE
+              value: {{ .Values.clusterRegSource.type | default "" | quote }}
+            - name: SHARKO_CLUSTER_REG_ARGOCD_NAMESPACE
+              value: {{ .Values.clusterRegSource.argocdNamespace | default "" | quote }}
             {{- if .Values.ai.enabled }}
             - name: AI_PROVIDER
               value: {{ .Values.ai.provider | quote }}

@@ -208,21 +208,29 @@ func TestAIConfig(t *testing.T) {
 	})
 
 	t.Run("ProvidersTestConfig", func(t *testing.T) {
-		// handleTestProviderConfig validates Type via providers.New —
-		// unknown values return "unknown provider type" inside a 200
-		// response (status:error). The handler does not 4xx for bad
-		// input; it always 200s with a structured body.
+		// handleTestProviderConfig validates Type via
+		// providers.NewClusterTestProvider — unknown values return
+		// "unknown cluster-test provider type" inside a 200 response
+		// (status:error). The handler does not 4xx for bad input; it always
+		// 200s with a structured body. V125-1-11.6 split the dispatcher
+		// error wording from the pre-refactor "unknown provider type" to
+		// the mechanism-scoped "unknown cluster-test provider type" — the
+		// assertion below accepts the new wording (and keeps the old
+		// substring as a compat alias since "unknown ... provider" is the
+		// stable load-bearing fragment for operators grepping logs).
 		bad := admin.TestProviderConfig(t, harness.ProviderTestRequest{
 			Type: "definitely-not-a-real-type",
 		})
 		if status, _ := bad["status"].(string); status != "error" {
 			t.Errorf("providers/test-config (bad type): status=%v want \"error\" (full=%v)", bad["status"], bad)
 		}
-		if msg, _ := bad["message"].(string); !strings.Contains(strings.ToLower(msg), "unknown provider") &&
+		if msg, _ := bad["message"].(string); !strings.Contains(strings.ToLower(msg), "unknown cluster-test provider type") &&
+			!strings.Contains(strings.ToLower(msg), "unknown provider type") &&
 			!strings.Contains(strings.ToLower(msg), "no secrets") {
-			// We accept either the "unknown provider type" or
-			// "no secrets provider" wording — the handler emits
-			// whichever providers.New returned.
+			// We accept any of: the new V125-1-11.6 "unknown cluster-test
+			// provider type" wording (current canonical), the pre-refactor
+			// "unknown provider type" wording (compat), or the
+			// "no secrets provider" wording (auto-default fallthrough).
 			t.Errorf("providers/test-config (bad type): message=%q lacks expected prefix (full=%v)", msg, bad)
 		}
 

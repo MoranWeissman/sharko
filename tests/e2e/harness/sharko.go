@@ -284,7 +284,8 @@ func startSharkoInProcess(t *testing.T, cfg SharkoConfig, user, pass string) *Sh
 	// promotes it onto Server.gitopsCfg.
 	srv.SetWriteAPIDeps(
 		nil, // no credentials provider — kubeconfig path bypasses it; EKS-only tests skip-graceful
-		nil, // no provider config — system info endpoint reports "not configured"
+		nil, // no addon-secret config — system info endpoint reports "not configured" (V125-1-11.6)
+		nil, // no cluster-test config — same (V125-1-11.6)
 		orchestrator.RepoPathsConfig{
 			ClusterValues:   "configuration/addons-clusters-values",
 			GlobalValues:    "configuration/addons-global-values",

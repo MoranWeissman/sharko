@@ -138,7 +138,96 @@ For migration state storage:
 | `affinity` | Affinity/anti-affinity rules |
 | `hostAliases` | Host aliases for private DNS resolution |
 
-## AWS Secrets Manager — Secret Formats
+## Provider Configuration (3-mechanism split — v1.25+) {#provider-3mech}
+
+v1.25 split the previously-overloaded `providers.Config` struct into **three orthogonal provider concerns**, each with its own typed config block. Operators only need to configure the mechanisms they actually use; defaults are safe for the production happy path (Sharko-in-cluster + ArgoCD-installed).
+
+For the cluster-connectivity story end-to-end, also read [Cluster Connectivity Model](cluster-connectivity-model.md) — it covers the auto-default behaviour and the EKS / exec-plugin limitations.
+
+### 1. Addon-secret backend — supplies addon secret material
+
+The **addon-secrets** mechanism is the Sharko-native replacement for [External Secrets Operator](https://external-secrets.io). The reconciler fetches addon secret values (Datadog API keys, GitHub tokens, anything referenced by `secrets:` on a catalog entry) from a configured backend and pushes them into target clusters as `app.kubernetes.io/managed-by: sharko` K8s Secrets.
+
+Supported backends:
+
+| Backend | `type` value | Notes |
+|---------|--------------|-------|
+| AWS Secrets Manager | `aws-sm` / `aws-secrets-manager` | Region + Prefix supported |
+| Kubernetes Secrets | `k8s-secrets` / `kubernetes` | Reads from the configured `namespace` (default `sharko`) |
+| GCP Secret Manager | `gcp-sm` / `google-secret-manager` | Stub today (not yet implemented) |
+| Azure Key Vault | `azure-kv` / `azure-key-vault` | Stub today (not yet implemented) |
+| HashiCorp Vault | `vault` | Reserved for future work |
+
+**How to configure** — addon-secret backends are configured via the **active connection** (Settings UI → Connections, or the connections API). The connection's `provider` block carries the backend type, region, prefix, namespace, and role ARN. Helm doesn't have a top-level `addonSecrets:` block — addon secrets are connection-scoped.
+
+Reconciler tuning lives in Helm under `secrets.reconciler.*` (see [Secrets Reconciler](#secrets-reconciler) below) and the AWS-SM payload shape is documented under [AWS Secrets Manager — Secret Formats](#aws-secrets-manager-secret-formats).
+
+### 2. Cluster connectivity (`clusterTest`)
+
+The **cluster-test** mechanism resolves cluster connectivity credentials — the kubeconfig used by the Test cluster button, the `POST /api/v1/clusters/{name}/test` endpoint, the dashboard "Verified" state, and the secrets reconciler's push channel.
+
+**v1.25 supports one backend: `argocd`.** ArgoCDProvider reads cluster Secrets from the namespace where ArgoCD is installed. Auto-defaults to `argocd` when Sharko runs in-cluster, so the production happy path needs no explicit configuration.
+
+```yaml
+# charts/sharko/values.yaml
+clusterTest:
+  # K8s namespace where ArgoCD stores its cluster Secrets.
+  # Leave empty to fall back to SHARKO_ARGOCD_NAMESPACE env var
+  # (deprecated) or the "argocd" default.
+  argocdNamespace: ""
+```
+
+Precedence (matches `resolveArgoCDNamespaceTyped` in `internal/providers/argocd_provider.go`):
+
+1. `clusterTest.argocdNamespace` (Helm value, when non-empty) — **canonical**
+2. `SHARKO_ARGOCD_NAMESPACE` env var — **DEPRECATED** in v1.25, emits a `slog.Warn` on use, removal slated for **v1.26**
+3. Hardcoded `"argocd"` default — matches the standard ArgoCD install location
+
+The chart also exposes `rbac.argocdNamespace` — a separate knob that controls the Role/RoleBinding the chart creates in ArgoCD's namespace so Sharko's in-cluster ServiceAccount can read ArgoCD Secrets. On standard installs both values point at the same `argocd` namespace.
+
+!!! warning "Legacy cluster-credentials backends retired in v1.25"
+    Before v1.25, operators could route cluster-connectivity credentials through `aws-sm`, `k8s-secrets`, `gcp-sm`, or `azure-kv` by setting `provider.type` on the connection. Those code paths were **retired in v1.25** as part of the three-mechanism split (one cycle earlier than originally promised in `provider.go:55`). Migrate to `argocd` — auto-defaulted when Sharko runs in-cluster.
+
+    The same backend names (`aws-sm`, `k8s-secrets`, `gcp-sm`, `azure-kv`) **remain fully supported as addon-secret backends** — only their cluster-credentials usage was killed. The ESO-replacement layer is unaffected.
+
+### 3. Cluster registration source (`clusterRegSource`)
+
+The **cluster-registration-source** mechanism pre-wires the configuration knob for the future V125-1-8 reconciler — the component that will write ArgoCD cluster Secrets into the configured namespace based on `managed-clusters.yaml` content.
+
+**No consumer in v1.25** — the block is parsed and validated at startup but the reconciler that consumes it ships in a later sprint. Until then, operators register clusters via the ArgoCD UI or `kubectl apply` directly, as today.
+
+```yaml
+# charts/sharko/values.yaml
+clusterRegSource:
+  type: ""              # "" → no reconciler (today); "argocd" → V125-1-8 writes
+  argocdNamespace: ""   # "" → defaults to "argocd" when V125-1-8 ships
+```
+
+Corresponding env vars (surfaced in startup logs so operators can verify the values are propagating):
+
+| Env var | Helm value | Default |
+|---------|------------|---------|
+| `SHARKO_CLUSTER_REG_TYPE` | `clusterRegSource.type` | `""` (no reconciler) |
+| `SHARKO_CLUSTER_REG_ARGOCD_NAMESPACE` | `clusterRegSource.argocdNamespace` | `""` (will default to `argocd` once V125-1-8 ships) |
+
+### Migration from pre-v1.25 configuration
+
+Most operators see **zero impact** in v1.25:
+
+- **If you only use the ESO-replacement** (`vault` / `aws-sm` / `azure-kv` / `gcp-sm` / `k8s-secrets` supplying addon secret material) — no changes needed. The addon-secrets layer is unchanged.
+- **If your connection uses `provider.type: argocd`** (the default for new installs since V125-1-10.2) — no changes needed; the new typed config inherits the same value.
+- **If you set `SHARKO_ARGOCD_NAMESPACE`** — it still works but emits a deprecation warning. Migrate to `clusterTest.argocdNamespace` in Helm values. Removed in v1.26.
+- **If your connection had `provider.type: aws-sm` / `k8s-secrets` / `gcp-sm` / `azure-kv` to fetch cluster kubeconfigs** (the cluster-credentials usage — NOT the addon-secrets usage) — migrate to `provider.type: argocd`. Sharko reads kubeconfigs from the ArgoCD cluster Secret it (or you) already wrote.
+
+For developers building on Sharko's Go API, the canonical types now live in `internal/providers/config_types.go`:
+
+- `AddonSecretProviderConfig` — backends for addon secret material
+- `ClusterTestProviderConfig` — argocd-only cluster connectivity backend
+- `ClusterRegistrationSourceConfig` — pre-wire for the V125-1-8 reconciler
+
+The pre-v1.25 `providers.Config` struct and the `providers.New` / `providers.NewSecretProvider` factories were retired in V125-1-11.6 — call `NewAddonSecretProvider` / `NewClusterTestProvider` directly with the typed configs instead.
+
+## AWS Secrets Manager — Secret Formats {#aws-secrets-manager-secret-formats}
 
 When using the `aws-sm` provider (configured via Settings UI or API), each cluster secret in AWS SM can be stored in one of two formats. Sharko auto-detects which format is used.
 

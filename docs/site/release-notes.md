@@ -1,5 +1,79 @@
 # Release Notes
 
+## v1.25 (in progress) — Three-mechanism provider config split
+
+v1.25 splits the previously field-overloaded `providers.Config` struct into **three orthogonal typed configs**. The split closes the V125-1-10.8 cross-contamination smell at the type level: the compiler now enforces that an "ArgoCD namespace" knob cannot accidentally flow into an "addon-secrets namespace" slot. See [Operator → Configuration → Provider Configuration (3-mechanism split)](operator/configuration.md#provider-3mech) for the full operator surface and the [Cluster Connectivity Model](operator/cluster-connectivity-model.md) for the end-to-end story.
+
+### What changed
+
+The single `providers.Config` blob — which carried `Type`, `Region`, `Prefix`, `Namespace`, and `RoleARN` for three different consumers — was split into three sibling types in `internal/providers/config_types.go`:
+
+- `AddonSecretProviderConfig` — backends supplying addon secret material (Vault / AWS-SM / Azure-KV / GCP-SM / Kubernetes Secrets). This is the ESO-replacement layer Sharko was built around.
+- `ClusterTestProviderConfig` — cluster connectivity credentials (argocd-only in v1.25).
+- `ClusterRegistrationSourceConfig` — pre-wire for the future V125-1-8 cluster reconciler; no consumer in v1.25.
+
+The old `providers.Config` struct and the `providers.New` / `providers.NewSecretProvider` factories were retired in the same sprint.
+
+### Why
+
+V125-1-10.8 (commit `28e5bcda`, PR #327) shipped a one-line workaround: ArgoCDProvider ignored its `cfg.Namespace` and read `SHARKO_ARGOCD_NAMESPACE` directly, with an `slog.Warn` flagging the cross-contamination. The smell could not be cleanly fixed inside the overloaded struct — three consumers reading the same `Namespace` field with three different default values is a structural problem. The typed split makes the cross-contamination impossible at compile time.
+
+### Action items for operators
+
+In priority order:
+
+1. **If you set `SHARKO_ARGOCD_NAMESPACE` env var** — it still works but logs a deprecation warning on startup. Migrate to `clusterTest.argocdNamespace` in Helm values (or `ClusterTestProviderConfig.ArgoCDNamespace` for Go API consumers). **Removed in v1.26.**
+
+2. **If your active connection has `provider.type: aws-sm` / `k8s-secrets` / `gcp-sm` / `azure-kv` AT THE CONNECTION LEVEL for fetching cluster kubeconfigs** — those code paths were retired one cycle earlier than the `provider.go:55` doc comment promised. Migrate to `provider.type: argocd` (the auto-default when Sharko runs in-cluster; reads from the ArgoCD cluster Secret Sharko already creates during `sharko register-cluster`). **This does NOT affect operators using the same backend names for addon secrets** — the ESO-replacement layer is unchanged.
+
+3. **If you only use the ESO-replacement** (Vault / AWS-SM / Azure-KV / GCP-SM / Kubernetes Secrets supplying addon secret material via the secrets reconciler) — no changes needed.
+
+### New operator-facing knobs
+
+```yaml
+# charts/sharko/values.yaml
+clusterTest:
+  # Canonical replacement for SHARKO_ARGOCD_NAMESPACE env var.
+  # Empty falls back to env (deprecated) → "argocd" default.
+  argocdNamespace: ""
+
+clusterRegSource:
+  # Pre-wire for V125-1-8 reconciler. No consumer in v1.25.
+  type: ""              # "" → no reconciler; "argocd" → V125-1-8 will write
+  argocdNamespace: ""   # "" → defaults to "argocd" when V125-1-8 ships
+```
+
+Corresponding env vars (always surfaced in startup logs so values can be verified):
+
+| Env var | Helm value |
+|---------|------------|
+| `SHARKO_CLUSTER_REG_TYPE` | `clusterRegSource.type` |
+| `SHARKO_CLUSTER_REG_ARGOCD_NAMESPACE` | `clusterRegSource.argocdNamespace` |
+| `SHARKO_ARGOCD_NAMESPACE` *(DEPRECATED, removal v1.26)* | use `clusterTest.argocdNamespace` instead |
+
+### Internal API change (for codebase consumers)
+
+The canonical Go types now live in `internal/providers/config_types.go`. Construct providers with the new typed factories:
+
+- `providers.NewAddonSecretProvider(AddonSecretProviderConfig)` — for the addon-secrets reconciler.
+- `providers.NewClusterTestProvider(ClusterTestProviderConfig)` — for the Test cluster surface and any code path that needs a `ClusterCredentialsProvider`.
+
+The pre-v1.25 `providers.Config` struct and `providers.New` / `providers.NewSecretProvider` factories no longer exist.
+
+### Compatibility window
+
+- **Most operators see zero impact.** New installs since V125-1-10.2 already auto-default to `argocd` for cluster connectivity; ESO-replacement users were never touched.
+- **`SHARKO_ARGOCD_NAMESPACE` env var** — still functional with a deprecation `slog.Warn` in v1.25. Removed in **v1.26**.
+- **Legacy cluster-credentials backends** (`aws-sm` / `k8s-secrets` / `gcp-sm` / `azure-kv` as `provider.type` for fetching cluster kubeconfigs) — **retired in v1.25**. This is the only hard break in the release. Same backend names remain supported as addon-secret backends.
+
+### Acknowledgements
+
+The refactor shipped after V125-1-13.y closed the in-process e2e gate (required scaffolding before this sprint per `epics-v125-1-13.md`). One regression was caught by the V125-1-10.8 regression guard during Story 11.7 validation and fixed in 11.7-fix (`a9632706`) — `connProv.Namespace` was being copied into `ClusterTestProviderConfig.ArgoCDNamespace`, recreating the cross-contamination via a different code path. The fix narrows the fan-out: only `connProv.Type == "argocd"` lights up the cluster-test config, with `ArgoCDNamespace` left empty so the typed env/default fallback runs.
+
+Refs: `.bmad/output/diagnostics/BUG-OVERLOAD-DIAGNOSIS.md`, `.bmad/output/planning-artifacts/epics-v125-1-11.md`.
+
+---
+
 ## v1.24 — Polish & Hotfix Bundle (merged to main; not formally tagged, 2026-05-13)
 
 v1.24 is a maintainer-discipline release: no new user features, but two months of bugs found in real end-to-end smoke passes (Track A on the published `1.23.0-pre.0` image, Track B against a `kind` + ArgoCD stack) got fixed in one consolidated bundle that landed on `main` via PR #319 and a small follow-up sweep (PR #323). A `v1.24.0-pre.0` changelog entry was prepared (`V124-21`) but the tag was never cut — the bundle ships as part of `main` and is what every release after `v1.23.0-pre.0` is built on.
