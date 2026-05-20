@@ -40,7 +40,7 @@
 # - Tagging: NO tags cut reflexively — merge PRs to main when green; tag only when user explicitly asks (see feedback_release_cadence.md)
 
 generated: 2026-04-20
-last_updated: 2026-05-20 (PR #332 V125-1-11 config split CI GREEN awaiting maintainer merge; PR #333 DOC-01 release-notes backfill CI in flight. NEW PLANS this session: (a) V1X-BUGS-040-043 — 4-story UI/UX bug-sweep bundle on dev/v1.x-bug-fixes-040-043; (b) V124-1 polish bundle dispatch — 5 stories already in this file as backlog (lines 339-343), wrapper plan at epics-v124-1-polish.md, branch dev/v1.x-polish-v124-1. Two bundles dispatchable in parallel; DESIGN-01 + DESIGN-02 deferred to bmad-brainstorming after bundles land.)
+last_updated: 2026-05-20 (3 PRs SHIPPED to main: PR #332 V125-1-11 config split (commit d1f0274f), PR #333 DOC-01 release-notes backfill (commit 9bd24691), PR #334 V1X-BUGS UI/UX sweep BUG-040..043 (commit e32a7105). Auto-merge enabled per new feedback_auto_merge_when_green memory — going forward, green Sharko PRs ship without explicit maintainer click. Remaining post-v1.25 backlog: V124-1 polish bundle (5 stories, branch dev/v1.x-polish-v124-1 not yet started), DESIGN-01 + DESIGN-02 brainstorms.)
 project: sharko
 project_key: NOKEY
 tracking_system: file-system
@@ -1296,11 +1296,11 @@ development_status:
   # Role files: tech-lead + frontend-expert + test-engineer + code-reviewer
   # (BUG-040/041/042); tech-lead + k8s-expert + docs-writer + devops-agent
   # (BUG-043). Worktree-isolated per feedback_agent_dispatch_worktree_isolation.
-  epic-V1X-BUGS-040-043: backlog
-  V1X-BUGS-040-043-1-dashboard-vs-clusters-page-count-mismatch: backlog
-  V1X-BUGS-040-043-2-hide-test-button-when-no-secrets-backend: backlog
-  V1X-BUGS-040-043-3-cluster-addons-page-shows-pending-prs: backlog
-  V1X-BUGS-040-043-4-tls-x509-corporate-mitm-helm-extra-ca-bundle-plus-runbook: backlog
+  epic-V1X-BUGS-040-043: done                                                      # PR #334 merged to main 2026-05-20 09:30 UTC (commit e32a7105)
+  V1X-BUGS-040-043-1-dashboard-vs-clusters-page-count-mismatch: done               # commit 49527d63 (Variant A — widened StatusFilter with 'disconnected' lane)
+  V1X-BUGS-040-043-2-hide-test-button-when-no-secrets-backend: done                # commit 39244aa2 (added cluster_test_available to /api/v1/health + UI gate + swagger regen)
+  V1X-BUGS-040-043-3-cluster-addons-page-shows-pending-prs: done                   # commit 2ebaabfd (UI-only; reused V125-1-6 aggregator's cluster+addon filter)
+  V1X-BUGS-040-043-4-tls-x509-corporate-mitm-helm-extra-ca-bundle-plus-runbook: done  # commit aeda35d4 (informational values comment + docs/site/operator/corporate-mitm-tls.md — Sharko does NOT package ArgoCD as subchart)
   epic-V1X-BUGS-040-043-retrospective: optional
 
   # ============================================================
