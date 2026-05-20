@@ -1326,4 +1326,26 @@ development_status:
   # in-progress → review → done as the dispatch progresses.
 
   # ============================================================
+  # V126-1 — BUG-033 cluster-status-after-registration (planned 2026-05-20)
+  # ============================================================
+  # Source: .bmad/output/planning-artifacts/epics-v126-1-bug-033.md
+  # Scope: single bug, single story. After successful cluster registration
+  # (PR merged + ArgoCD cluster Secret created), the UI still shows the
+  # cluster as "disconnected". Last lingering UX bug from the post-v1.23/v1.24
+  # smoke pass. Agent investigates root cause (6 candidates: UI cache stale,
+  # backend status compute bug, ArgoCD reconcile race, missing secret labels,
+  # full-reload requirement, wizard-completion missing refetch) and picks fix
+  # shape per actual root cause.
+  # Branch: dev/bug-033-cluster-status-after-registration from main HEAD
+  # (5b50bc8f after V124-1 merge).
+  # Single PR, NO release, NO tag. Auto-merge per feedback_auto_merge_when_green.
+  # Role files: tech-lead + go-expert + frontend-expert + k8s-expert +
+  # test-engineer (agent prunes per fix surface). Sequential-thinking MCP
+  # useful for timing/race analysis. Worktree-isolated per
+  # feedback_agent_dispatch_worktree_isolation.
+  epic-V126-1-bug-033-cluster-status: backlog
+  V126-1-1-cluster-status-flips-after-registration: backlog
+  epic-V126-1-bug-033-cluster-status-retrospective: optional
+
+  # ============================================================
 
