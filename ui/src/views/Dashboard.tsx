@@ -21,6 +21,7 @@ import {
   useAddonStates,
   deepLinkToAddonOnCluster,
 } from '@/hooks/useAddonStates';
+import { isClusterFailed } from '@/lib/clusterStatus';
 
 // --- Health Bar with totals ---
 
@@ -234,9 +235,16 @@ export function Dashboard() {
             }
             return { name: c.name, serverUrl: c.server_url, connectionStatus: c.connection_status || 'Unknown', addons, healthy, total }
           })
+        // BUG-033: a freshly-registered cluster sits in a pending
+        // connection state ("", "Unknown", "missing") for the ~10-60s
+        // window until ArgoCD's cluster-info refresher produces a probe
+        // result. That window is not an issue — it's a normal part of
+        // the registration lifecycle. Surface a cluster in "Needs
+        // Attention" only when ArgoCD has reported an explicit failure
+        // OR the cluster has unhealthy addons. The pending state is
+        // visualised in-place via the neutral ClusterCard pill.
         const problemClusters = cards.filter(c =>
-          (c.connectionStatus !== 'Successful' && c.connectionStatus !== 'Connected') ||
-          c.healthy < c.total
+          isClusterFailed(c.connectionStatus) || c.healthy < c.total
         )
         setClusters(problemClusters)
       }
