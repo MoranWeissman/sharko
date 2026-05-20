@@ -1700,30 +1700,30 @@ export function AddonDetail() {
               <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 dark:ring-gray-700 dark:bg-gray-800">
                 <div className="grid gap-x-8 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
                   <div>
-                    <p className="text-xs font-semibold uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">Version</p>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-[#5a8aaa] dark:text-[#5a8aaa]/60">Version</p>
                     <p className="mt-0.5 font-mono text-sm font-bold text-[#0a2a4a] dark:text-gray-100">{addon.version}</p>
                   </div>
                   <div>
-                    <p className="text-xs font-semibold uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">Chart</p>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-[#5a8aaa] dark:text-[#5a8aaa]/60">Chart</p>
                     <p className="mt-0.5 font-mono text-sm text-[#0a2a4a] dark:text-gray-100">{addon.chart}</p>
                   </div>
                   <div>
-                    <p className="text-xs font-semibold uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">Namespace</p>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-[#5a8aaa] dark:text-[#5a8aaa]/60">Namespace</p>
                     <p className="mt-0.5 text-sm text-[#0a2a4a] dark:text-gray-100">{namespace}</p>
                   </div>
                   <div>
-                    <p className="text-xs font-semibold uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">Sync Wave</p>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-[#5a8aaa] dark:text-[#5a8aaa]/60">Sync Wave</p>
                     <p className="mt-0.5 font-mono text-sm text-[#0a2a4a] dark:text-gray-100">{addon.syncWave ?? 0}</p>
                   </div>
                   <div>
-                    <p className="text-xs font-semibold uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">Self-Heal</p>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-[#5a8aaa] dark:text-[#5a8aaa]/60">Self-Heal</p>
                     <p className={`mt-0.5 text-sm font-medium ${addon.selfHeal !== false ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400'}`}>
                       {addon.selfHeal !== false ? 'Enabled' : 'Disabled'}
                     </p>
                   </div>
                   {addon.repo_url && (
                     <div>
-                      <p className="text-xs font-semibold uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">Helm Repository</p>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-[#5a8aaa] dark:text-[#5a8aaa]/60">Helm Repository</p>
                       <a
                         href={addon.repo_url}
                         target="_blank"
@@ -1741,7 +1741,7 @@ export function AddonDetail() {
                       clickable link — paths may carry auth tokens). */}
                   {catalogEntry && (
                     <div>
-                      <p className="text-xs font-semibold uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">Source</p>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-[#5a8aaa] dark:text-[#5a8aaa]/60">Source</p>
                       {catalogEntry.source && catalogEntry.source !== 'embedded' ? (
                         <div className="mt-0.5 text-sm">
                           <div className="break-all text-[#0a3a5a] dark:text-[#d6eeff]">
@@ -1771,7 +1771,7 @@ export function AddonDetail() {
                       defaults (missing verified === Unsigned). */}
                   {catalogEntry && (
                     <div>
-                      <p className="text-xs font-semibold uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">Verified</p>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-[#5a8aaa] dark:text-[#5a8aaa]/60">Verified</p>
                       <div className="mt-0.5">
                         <VerifiedBadge
                           verified={catalogEntry.verified}
@@ -2461,7 +2461,7 @@ export function AddonDetail() {
                         ))}
                       </div>
                     ) : (
-                      <p className="text-xs text-[#5a8aaa] dark:text-gray-500">Default (CreateNamespace=true)</p>
+                      <p className="text-xs text-[#5a8aaa] dark:text-[#5a8aaa]/60">Default (CreateNamespace=true)</p>
                     )}
                   </div>
 
@@ -2486,7 +2486,7 @@ export function AddonDetail() {
                         {JSON.stringify(addon.ignoreDifferences, null, 2)}
                       </pre>
                     ) : (
-                      <p className="text-xs text-[#5a8aaa] dark:text-gray-500">None configured</p>
+                      <p className="text-xs text-[#5a8aaa] dark:text-[#5a8aaa]/60">None configured</p>
                     )}
                   </div>
 
@@ -2515,7 +2515,7 @@ export function AddonDetail() {
                         ))}
                       </div>
                     ) : (
-                      <p className="text-xs text-[#5a8aaa] dark:text-gray-500">Single source (main chart only)</p>
+                      <p className="text-xs text-[#5a8aaa] dark:text-[#5a8aaa]/60">Single source (main chart only)</p>
                     )}
                   </div>
 
