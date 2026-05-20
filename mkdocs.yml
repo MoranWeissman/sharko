@@ -64,6 +64,7 @@ nav:
     - Security: operator/security.md
     - Supply Chain: operator/supply-chain.md
     - Catalog Sources: operator/catalog-sources.md
+    - Catalog Sources Smoke: operator/catalog-sources-smoke.md
     - Catalog Trust Policy: operator/catalog-trust-policy.md
     - Cluster Connectivity Model: operator/cluster-connectivity-model.md
     - AWS IAM Cluster Auth: operator/aws-iam-cluster-auth.md
