@@ -266,6 +266,85 @@ describe('ClustersOverview', () => {
     }
   });
 
+  // BUG-040: the Dashboard's "N disconnected cluster(s)" link navigates to
+  // /clusters?status=disconnected. The Clusters page MUST resolve that
+  // deep-link to the same set of clusters the headline count covers — any
+  // managed cluster that ArgoCD is not currently reporting as "Successful"
+  // / "Connected" (failed + missing + unknown). Previously this routed to
+  // a 'failed' filter which showed 0 rows whenever the disconnected
+  // cluster's status was actually `missing` (not yet bootstrapped) or
+  // `unknown` (ArgoCD has no record yet). That mismatch read as "count
+  // says 1, list shows 0" which is the user-facing symptom of BUG-040.
+  it('?status=disconnected filter resolves to all non-connected managed clusters (BUG-040)', async () => {
+    const mixedDisconnected = {
+      clusters: [
+        {
+          name: 'prod-eu',
+          labels: { env: 'prod' },
+          server_version: '1.28',
+          connection_status: 'connected',
+          managed: true,
+        },
+        {
+          name: 'failing-cluster',
+          labels: { env: 'staging' },
+          server_version: '1.27',
+          connection_status: 'failed',
+          managed: true,
+        },
+        {
+          name: 'missing-cluster',
+          labels: { env: 'dev' },
+          server_version: '1.28',
+          connection_status: 'missing',
+          managed: true,
+        },
+        {
+          name: 'unknown-cluster',
+          labels: { env: 'lab' },
+          server_version: '1.28',
+          connection_status: 'unknown',
+          managed: true,
+        },
+        {
+          name: 'discovered-cluster',
+          labels: {},
+          server_version: '1.28',
+          connection_status: 'not_in_git',
+          managed: false,
+        },
+      ],
+      health_stats: {
+        total_in_git: 4,
+        connected: 1,
+        failed: 1,
+        missing_from_argocd: 1,
+        not_in_git: 1,
+      },
+    };
+    mockGetClusters.mockResolvedValue(mixedDisconnected);
+
+    render(
+      <MemoryRouter initialEntries={["/clusters?status=disconnected"]}>
+        <ClustersOverview />
+      </MemoryRouter>,
+    );
+
+    // Wait for the row of any of the 3 disconnected clusters to show.
+    await waitFor(() => {
+      expect(screen.getByText('failing-cluster')).toBeInTheDocument();
+    });
+
+    // All 3 disconnected managed clusters must appear under the deep-link.
+    expect(screen.getByText('failing-cluster')).toBeInTheDocument();
+    expect(screen.getByText('missing-cluster')).toBeInTheDocument();
+    expect(screen.getByText('unknown-cluster')).toBeInTheDocument();
+
+    // Connected and discovered/unmanaged clusters must NOT appear.
+    expect(screen.queryByText('prod-eu')).not.toBeInTheDocument();
+    expect(screen.queryByText('discovered-cluster')).not.toBeInTheDocument();
+  });
+
   it('toggles status filter on stat card click', async () => {
     renderView();
 

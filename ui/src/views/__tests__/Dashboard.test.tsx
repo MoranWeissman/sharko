@@ -1,10 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { Dashboard } from '@/views/Dashboard';
 // v1.21 Bundle 3 — Dashboard now consumes addon state via the unified
 // provider. Tests have to mount it inside one or the hook throws.
 import { AddonStatesProvider } from '@/hooks/useAddonStates';
+
+const mockNavigate = vi.fn();
+vi.mock('react-router-dom', async () => {
+  const actual = await vi.importActual<typeof import('react-router-dom')>(
+    'react-router-dom',
+  );
+  return {
+    ...actual,
+    useNavigate: () => mockNavigate,
+  };
+});
 
 vi.mock('recharts', () => {
   const C = ({ children }: { children?: React.ReactNode }) => <div>{children}</div>;
@@ -77,5 +88,29 @@ describe('Dashboard', () => {
     // Health bars
     expect(screen.getByText('Application Health')).toBeInTheDocument();
     expect(screen.getByText('Cluster Connectivity')).toBeInTheDocument();
+  });
+
+  // BUG-040: clicking the "N disconnected cluster(s)" button under
+  // "Needs Attention" must deep-link to /clusters?status=disconnected so
+  // the Clusters page's filter resolves to the SAME set of clusters the
+  // headline count refers to (any managed cluster ArgoCD does not report
+  // as "Successful" / "Connected"). The previous implementation landed on
+  // a "failed-only" filter and showed 0 rows when the cluster was actually
+  // "missing" or "unknown" — a count vs list mismatch that read as a bug.
+  it('disconnected-clusters button deep-links to ?status=disconnected (BUG-040)', async () => {
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText('Sharko')).toBeInTheDocument();
+    });
+
+    // The mocked /dashboard/stats returns disconnected_from_argocd: 2 so
+    // the button is rendered with the plural label.
+    const btn = await screen.findByRole('button', {
+      name: /2 disconnected clusters/i,
+    });
+    fireEvent.click(btn);
+
+    expect(mockNavigate).toHaveBeenCalledWith('/clusters?status=disconnected');
   });
 });

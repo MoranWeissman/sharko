@@ -64,6 +64,14 @@ import {
 type StatusFilter =
   | 'all'
   | 'connected'
+  // BUG-040: 'disconnected' is the union of failed + missing + unknown.
+  // Dashboard's `disconnected_from_argocd` headline count is defined as
+  // (managed total) - (connected) — i.e., every managed cluster whose ArgoCD
+  // ConnectionState is not "Successful". Without this lane, clicking the
+  // Dashboard's "N disconnected" link landed on a filter that only matched
+  // status === 'failed' and showed 0 rows whenever the cluster was actually
+  // missing/unknown rather than explicitly failed.
+  | 'disconnected'
   | 'failed'
   | 'missing_from_argocd'
   | 'not_in_git';
@@ -108,7 +116,11 @@ export function ClustersOverview() {
   const [searchParams] = useSearchParams();
   const initialStatus = searchParams.get('status');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(
-    initialStatus === 'disconnected' ? 'failed' : 'all'
+    // BUG-040: keep the `?status=disconnected` deep-link from the Dashboard
+    // intact so the headline count and the resulting row list refer to the
+    // same set of clusters (everything in managed-clusters.yaml that isn't
+    // currently "Connected" / "Successful" in ArgoCD).
+    initialStatus === 'disconnected' ? 'disconnected' : 'all'
   );
   const [filters, setFilters] = useState<Filters>({
     name: '',
@@ -635,6 +647,14 @@ export function ClustersOverview() {
           switch (statusFilter) {
             case 'connected':
               return cs === 'connected' || cs === 'successful';
+            case 'disconnected':
+              // BUG-040: any managed cluster that ArgoCD does not currently
+              // report as "Successful" / "Connected" — this is the same
+              // definition the Dashboard uses for its headline count.
+              // Discovered / not_in_git clusters are NOT counted here (they
+              // are a separate lane in the Dashboard headline anyway).
+              if (cluster.managed === false || cs === 'not_in_git') return false;
+              return cs !== 'connected' && cs !== 'successful';
             case 'failed':
               return cs === 'failed';
             case 'missing_from_argocd':
