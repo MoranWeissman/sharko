@@ -1343,8 +1343,8 @@ development_status:
   # test-engineer (agent prunes per fix surface). Sequential-thinking MCP
   # useful for timing/race analysis. Worktree-isolated per
   # feedback_agent_dispatch_worktree_isolation.
-  epic-V126-1-bug-033-cluster-status: backlog
-  V126-1-1-cluster-status-flips-after-registration: backlog
+  epic-V126-1-bug-033-cluster-status: done   # PR #338 merged to main 2026-05-20 11:25 UTC (commit db154763)
+  V126-1-1-cluster-status-flips-after-registration: done   # commit bb114e65 — root cause was UI binary classifier on ClusterCard + Dashboard problemClusters filter treating empty connection_status (transient post-registration ArgoCD state) as red Disconnected; fix introduced shared ui/src/lib/clusterStatus.ts three-state classifier + neutral "Connecting…" pill; +24 tests; backend untouched (wire contract + BUG-040 headline count preserved)
   epic-V126-1-bug-033-cluster-status-retrospective: optional
 
   # ============================================================
