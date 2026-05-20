@@ -230,6 +230,9 @@ vi.mock('@/services/api', () => {
     updateClusterSettings: vi.fn().mockResolvedValue({}),
     testClusterConnection: vi.fn().mockResolvedValue({ reachable: true, server_version: 'v1.29.0' }),
     isAddonAlreadyExistsError: () => false,
+    // BUG-042: ClusterDetail fetches /api/v1/prs?status=open&cluster=<name>
+    // alongside the comparison to overlay pending-PR badges on addon rows.
+    fetchTrackedPRs: vi.fn().mockResolvedValue({ prs: [] }),
   }
 })
 
