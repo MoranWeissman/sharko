@@ -74,12 +74,19 @@ type Server struct {
 	authStore         *auth.Store
 	aiConfigStore     *config.AIConfigStore
 
-	// Write API dependencies (optional — set via SetOrchestrator).
-	credProvider providers.ClusterCredentialsProvider
-	providerCfg  *providers.Config
-	repoPaths    orchestrator.RepoPathsConfig
-	gitopsCfg    orchestrator.GitOpsConfig
-	gitMu        sync.Mutex // shared mutex serializing all Git operations across requests
+	// Write API dependencies (optional — set via SetWriteAPIDeps).
+	//
+	// V125-1-11.6: the single field-overloaded *providers.Config is retired
+	// and replaced by two typed configs. Handlers that need addon-secret
+	// fields (RoleARN, Region, Prefix) read from addonSecretCfg; the
+	// /providers + /providers/test endpoints display either addonSecretCfg
+	// or clusterTestCfg per request semantics (see system.go).
+	credProvider    providers.ClusterCredentialsProvider
+	addonSecretCfg  *providers.AddonSecretProviderConfig
+	clusterTestCfg  *providers.ClusterTestProviderConfig
+	repoPaths       orchestrator.RepoPathsConfig
+	gitopsCfg       orchestrator.GitOpsConfig
+	gitMu           sync.Mutex // shared mutex serializing all Git operations across requests
 
 	// Remote secret management (optional — set via SetAddonSecretDefs).
 	addonSecretDefs   map[string]orchestrator.AddonSecretDefinition
@@ -252,12 +259,27 @@ func (s *Server) SetTemplateFS(tfs fs.FS) {
 }
 
 // SetWriteAPIDeps configures the dependencies for write API endpoints.
-// credProvider is the cluster credentials backend (e.g. AWS SM, K8s secrets).
-// provCfg holds the provider configuration for system info endpoints.
+//
+// credProvider is the cluster-test backend (the ClusterCredentialsProvider used
+// to verify connectivity to managed clusters — argocd-only post-V125-1-11.6).
+//
+// addonSecretCfg + clusterTestCfg are the two typed config blocks introduced
+// by V125-1-11.6 (replacing the single field-overloaded *providers.Config).
+// Either or both may be nil if no provider was successfully constructed at
+// startup. Handlers that need RoleARN / Region / Prefix (default IAM role,
+// AWS region, secret-name prefix) read from addonSecretCfg with a nil-guard.
+//
 // paths and gitops hold the repo layout and gitops commit settings.
-func (s *Server) SetWriteAPIDeps(credProvider providers.ClusterCredentialsProvider, provCfg *providers.Config, paths orchestrator.RepoPathsConfig, gitops orchestrator.GitOpsConfig) {
+func (s *Server) SetWriteAPIDeps(
+	credProvider providers.ClusterCredentialsProvider,
+	addonSecretCfg *providers.AddonSecretProviderConfig,
+	clusterTestCfg *providers.ClusterTestProviderConfig,
+	paths orchestrator.RepoPathsConfig,
+	gitops orchestrator.GitOpsConfig,
+) {
 	s.credProvider = credProvider
-	s.providerCfg = provCfg
+	s.addonSecretCfg = addonSecretCfg
+	s.clusterTestCfg = clusterTestCfg
 	s.repoPaths = paths
 	s.gitopsCfg = gitops
 }
@@ -313,50 +335,87 @@ func (s *Server) ReinitializeFromConnection() {
 
 	slog.Info("[startup] active connection found", "name", conn.Name, "has_provider", conn.Provider != nil)
 
-	// Reinit secrets provider from connection.
+	// Reinit cluster-test provider from connection.
 	//
-	// V125-1-10.7: gating providers.New on pc.Type != "" silently bypassed
-	// the V125-1-10.2 auto-default (in-cluster + empty type → ArgoCDProvider),
-	// which left credProvider nil after a connection update where the user
-	// picked "None" in the Settings dropdown. We now ALWAYS call providers.New
-	// when there is an active connection so the auto-default path can fire.
-	// providers.New itself returns the legacy "no provider configured" error
-	// out-of-cluster — that path leaves credProvider unchanged (logged at info)
-	// and the existing BUG-035 surface still applies in the Test handler.
+	// V125-1-10.7: gating provider construction on pc.Type != "" silently
+	// bypassed the V125-1-10.2 auto-default (in-cluster + empty type →
+	// ArgoCDProvider), which left credProvider nil after a connection update
+	// where the user picked "None" in the Settings dropdown. We now ALWAYS
+	// call the cluster-test factory when there is an active connection so the
+	// auto-default path can fire. NewClusterTestProvider itself returns the
+	// legacy "no provider configured" error out-of-cluster — that path leaves
+	// credProvider unchanged (logged at info) and the existing BUG-035 surface
+	// still applies in the Test handler.
+	//
+	// V125-1-11.6: the single field-overloaded providers.Config is gone. The
+	// connection-level Provider block fans out into TWO typed configs here:
+	// AddonSecretProviderConfig (carries Type/Region/Prefix/Namespace/RoleARN
+	// for addon-secret backends) and ClusterTestProviderConfig (carries
+	// Type/ArgoCDNamespace for cluster-test). Both are stashed on the Server
+	// so /providers and the orchestrator handlers can read the right slice.
 	pc := conn.Provider
 	{
 		namespace := os.Getenv("SHARKO_NAMESPACE")
 		if namespace == "" {
 			namespace = "sharko"
 		}
-		cfg := providers.Config{Namespace: namespace}
+
+		addonCfg := providers.AddonSecretProviderConfig{Namespace: namespace}
+		testCfg := providers.ClusterTestProviderConfig{}
 		if pc != nil {
 			if pc.Namespace != "" {
 				namespace = pc.Namespace
 			}
-			cfg = providers.Config{
+			addonCfg = providers.AddonSecretProviderConfig{
 				Type:      pc.Type,
 				Region:    pc.Region,
 				Prefix:    pc.Prefix,
 				Namespace: namespace,
 				RoleARN:   pc.RoleARN,
 			}
+			// V125-1-11.7-fix: cluster-test fans only the connection-level
+			// Type — NEVER pc.Namespace — into the typed cluster-test config.
+			// The addon-secrets-shaped pc.Namespace value (default "sharko",
+			// or whatever the operator picked while the dropdown was on
+			// k8s-secrets) MUST NOT bleed into ArgoCDNamespace (the slot for
+			// the argocd-install-namespace, semantically different — typically
+			// "argocd"). Story 11.6 had copied pc.Namespace through here,
+			// recreating the V125-1-10.8 cross-contamination via a different
+			// code path. Leaving ArgoCDNamespace empty lets the canonical
+			// resolveArgoCDNamespaceTyped precedence take over:
+			//   1. cfg.ArgoCDNamespace (empty here, by design)
+			//   2. SHARKO_ARGOCD_NAMESPACE env (deprecated compat alias)
+			//   3. "argocd" hardcoded default
+			// — which is the correct cluster-test behavior for any connection
+			// whose Provider block has no dedicated cluster-test ns knob (i.e.
+			// every connection today; a future enhancement could add one).
+			if pc.Type == "argocd" {
+				testCfg = providers.ClusterTestProviderConfig{
+					Type:            pc.Type,
+					ArgoCDNamespace: "",
+				}
+			} else {
+				// Non-argocd Type values are addon-secret backends; cluster-
+				// test stays on auto-default (empty Type → in-cluster argocd).
+				testCfg = providers.ClusterTestProviderConfig{}
+			}
 			if pc.Type != "" {
 				slog.Info("[startup] initializing provider", "type", pc.Type, "region", pc.Region)
 			} else {
-				slog.Info("[startup] no explicit provider type — providers.New will auto-default")
+				slog.Info("[startup] no explicit provider type — cluster-test will auto-default")
 			}
 		} else {
-			slog.Info("[startup] no provider config in connection — providers.New will auto-default")
+			slog.Info("[startup] no provider config in connection — cluster-test will auto-default")
 		}
 
-		p, err := providers.New(cfg)
+		p, err := providers.NewClusterTestProvider(testCfg)
 		if err != nil {
 			slog.Info("[startup] no credentials provider configured", "reason", err)
 		} else {
 			s.credProvider = p
-			s.providerCfg = &cfg
-			slog.Info("[startup] provider reinitialized from connection", "type", cfg.Type, "region", cfg.Region, "prefix", cfg.Prefix)
+			s.addonSecretCfg = &addonCfg
+			s.clusterTestCfg = &testCfg
+			slog.Info("[startup] provider reinitialized from connection", "type", addonCfg.Type, "region", addonCfg.Region, "prefix", addonCfg.Prefix)
 		}
 	}
 
@@ -399,8 +458,8 @@ func (s *Server) ReinitializeFromConnection() {
 			baseBranch = "main"
 		}
 		defaultRoleARN := ""
-		if s.providerCfg != nil {
-			defaultRoleARN = s.providerCfg.RoleARN
+		if s.addonSecretCfg != nil {
+			defaultRoleARN = s.addonSecretCfg.RoleARN
 		}
 
 		newManager := argosecrets.NewManager(cfg.K8sClient, cfg.ArgocdNamespace)

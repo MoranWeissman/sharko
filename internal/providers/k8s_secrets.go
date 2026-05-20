@@ -19,9 +19,15 @@ type KubernetesSecretProvider struct {
 	namespace string
 }
 
-// NewKubernetesSecretProvider creates a provider that reads from K8s Secrets.
-// Uses in-cluster config when running inside Kubernetes, falls back to default kubeconfig for local dev.
-func NewKubernetesSecretProvider(cfg Config) (*KubernetesSecretProvider, error) {
+// NewKubernetesSecretProviderFromAddonConfig creates a provider that reads from
+// K8s Secrets from the canonical AddonSecretProviderConfig (V125-1-11.3+).
+// Uses in-cluster config when running inside Kubernetes, falls back to default
+// kubeconfig for local dev.
+//
+// Only AddonSecretProviderConfig.Namespace is read — Type is consumed by the
+// upstream dispatcher (NewAddonSecretProvider) and Region/Prefix/RoleARN are
+// AWS-SM specific and ignored here.
+func NewKubernetesSecretProviderFromAddonConfig(cfg AddonSecretProviderConfig) (*KubernetesSecretProvider, error) {
 	namespace := cfg.Namespace
 	if namespace == "" {
 		namespace = "sharko"

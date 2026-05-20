@@ -20,10 +20,11 @@ import (
 //     (e.g. "clusters-{cluster-name}") using client.NewListSecretPropertiesPager.
 type AzureKeyVaultProvider struct{}
 
-// NewAzureKeyVaultProvider creates a provider backed by Azure Key Vault.
+// NewAzureKeyVaultProviderFromAddonConfig creates a provider backed by Azure
+// Key Vault from the canonical AddonSecretProviderConfig (V125-1-11.3+).
 // This function always returns an error — the provider is not yet implemented.
 // Community contributions welcome at https://github.com/MoranWeissman/sharko
-func NewAzureKeyVaultProvider(cfg Config) (*AzureKeyVaultProvider, error) {
+func NewAzureKeyVaultProviderFromAddonConfig(cfg AddonSecretProviderConfig) (*AzureKeyVaultProvider, error) {
 	return nil, fmt.Errorf("Azure Key Vault provider is not yet implemented — community contributions welcome at https://github.com/MoranWeissman/sharko")
 }
 

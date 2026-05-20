@@ -27,6 +27,42 @@ rbac:
   argocdNamespace: argocd
 
 # ---------------------------------------------------------------------------
+# Cluster-Test Provider (V125-1-11.4)
+# ---------------------------------------------------------------------------
+# Configures the backend Sharko uses to fetch CONNECTIVITY credentials for a
+# target cluster — i.e. the kubeconfig used to verify a cluster is reachable
+# and auth works (POST /api/v1/clusters/{name}/test, the dashboard "Verified"
+# state). Today only the "argocd" backend is supported: it reads ArgoCD's
+# cluster Secret from the namespace where ArgoCD is installed.
+#
+# For the end-to-end story on Sharko's 3-mechanism provider split (this knob
+# is part of the v1.25 split that replaced the field-overloaded
+# providers.Config struct), see:
+#   docs/site/operator/configuration.md#provider-3mech
+#   docs/site/operator/cluster-connectivity-model.md
+#   docs/site/release-notes.md (v1.25 section)
+#
+# clusterTest.argocdNamespace is the CANONICAL replacement for the V125-1-10.8
+# SHARKO_ARGOCD_NAMESPACE env-var workaround. When set, it is the single
+# authoritative source for the ArgoCD namespace ArgoCDProvider reads from.
+#
+# Precedence (matches resolveArgoCDNamespaceTyped in internal/providers/argocd_provider.go):
+#   1. clusterTest.argocdNamespace (this value, when non-empty)
+#   2. SHARKO_ARGOCD_NAMESPACE env var — DEPRECATED, emits slog.Warn at startup;
+#      removal slated for v1.26 per V125-1-11 planning doc OQ #4
+#   3. hardcoded "argocd" default (matches the standard ArgoCD install location)
+#
+# NOTE: rbac.argocdNamespace below is a SEPARATE knob — it controls the
+# Role/RoleBinding the chart creates in the ArgoCD namespace so Sharko's
+# in-cluster service account can read ArgoCD Secrets. The two namespaces are
+# almost always the same value on standard installs; leaving clusterTest.argocdNamespace
+# empty falls back to env/default and continues to work as before.
+clusterTest:
+  # K8s namespace where ArgoCD stores its cluster Secrets. Leave empty to fall
+  # back to SHARKO_ARGOCD_NAMESPACE env var (deprecated) or the "argocd" default.
+  argocdNamespace: ""
+
+# ---------------------------------------------------------------------------
 # Connection Configuration
 # ---------------------------------------------------------------------------
 config:
@@ -116,6 +152,24 @@ bootstrapAdmin:
 gitops:
   actions:
     enabled: false  # Set to true to enable write operations (PR creation)
+
+# ---------------------------------------------------------------------------
+# Cluster Registration Source (V125-1-11.5 pre-wire)
+# ---------------------------------------------------------------------------
+# Pre-wire for the V125-1-8 cluster reconciler. No consumer today; safe
+# defaults. When V125-1-8 ships, setting `type: argocd` will cause Sharko to
+# write ArgoCD cluster Secrets into `argocdNamespace` based on the contents
+# of managed-clusters.yaml. Leaving both empty preserves today's behavior
+# (operators register clusters via ArgoCD UI or `kubectl apply` directly).
+#
+# Conceptually distinct from clusterTest.argocdNamespace above: clusterTest
+# READS from the ArgoCD namespace (where ArgoCD's own cluster Secrets live);
+# clusterRegSource WRITES to it (where Sharko's future reconciler will create
+# registration Secrets). On standard installs both values point at "argocd".
+# See docs/site/operator/configuration.md#provider-3mech for details.
+clusterRegSource:
+  type: ""              # "" → no reconciler; "argocd" → V125-1-8 writes to ArgoCD cluster Secrets
+  argocdNamespace: ""   # "" → defaults to "argocd" when V125-1-8 ships
 
 # ---------------------------------------------------------------------------
 # AI Provider (optional)

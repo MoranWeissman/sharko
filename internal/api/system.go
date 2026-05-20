@@ -25,7 +25,8 @@ import (
 func (s *Server) handleGetProviders(w http.ResponseWriter, r *http.Request) {
 	availableTypes := []string{"aws-sm", "k8s-secrets"}
 
-	if s.providerCfg == nil {
+	displayType, displayRegion, displayPrefix := s.providerDisplay()
+	if displayType == "" && displayRegion == "" && displayPrefix == "" && s.credProvider == nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"configured_provider": nil,
 			"available_types":     availableTypes,
@@ -45,13 +46,13 @@ func (s *Server) handleGetProviders(w http.ResponseWriter, r *http.Request) {
 		} else {
 			status = "error"
 			statusError = err.Error()
-			slog.Warn("[provider] HealthCheck failed", "type", s.providerCfg.Type, "region", s.providerCfg.Region, "prefix", s.providerCfg.Prefix, "error", err)
+			slog.Warn("[provider] HealthCheck failed", "type", displayType, "region", displayRegion, "prefix", displayPrefix, "error", err)
 		}
 	}
 
 	providerInfo := map[string]interface{}{
-		"type":   s.providerCfg.Type,
-		"region": s.providerCfg.Region,
+		"type":   displayType,
+		"region": displayRegion,
 		"status": status,
 	}
 	if statusError != "" {
@@ -79,6 +80,11 @@ func (s *Server) handleGetProviders(w http.ResponseWriter, r *http.Request) {
 // @Router /providers/test [post]
 // handleTestProvider handles POST /api/v1/providers/test — test provider connectivity.
 // Reads optional type/region from request body. If empty, tests the configured provider.
+//
+// V125-1-11.6: this endpoint tests cluster-test (ClusterCredentialsProvider)
+// backends only — post-retirement of providers.New the cluster-test factory
+// accepts argocd + "" (auto-default). For req.Type other than those two, the
+// endpoint returns an error message advising the caller to migrate.
 func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Type   string `json:"type"`
@@ -95,9 +101,8 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 	var provType string
 
 	if req.Type != "" {
-		prov, err := providers.New(providers.Config{
-			Type:   req.Type,
-			Region: req.Region,
+		prov, err := providers.NewClusterTestProvider(providers.ClusterTestProviderConfig{
+			Type: req.Type,
 		})
 		if err != nil {
 			writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -110,7 +115,12 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 		provType = req.Type
 	} else if s.credProvider != nil {
 		provider = s.credProvider
-		provType = s.providerCfg.Type
+		if s.clusterTestCfg != nil {
+			provType = s.clusterTestCfg.Type
+		}
+		if provType == "" && s.addonSecretCfg != nil {
+			provType = s.addonSecretCfg.Type
+		}
 	} else {
 		writeError(w, http.StatusNotImplemented, "no provider configured and no type specified in request")
 		return
@@ -147,7 +157,11 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 // @Success 200 {object} map[string]interface{} "Test result"
 // @Failure 400 {object} map[string]interface{} "Bad request"
 // @Router /providers/test-config [post]
-// handleTestProviderConfig tests an ad-hoc provider configuration.
+// handleTestProviderConfig tests an ad-hoc cluster-test provider configuration.
+//
+// V125-1-11.6: the cluster-test factory accepts argocd + "" only. The legacy
+// aws-sm / k8s-secrets cluster-creds arms are retired; configure those via the
+// addon-secret factory if the caller is testing addon-secret backend access.
 func (s *Server) handleTestProviderConfig(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Type      string `json:"type"`
@@ -160,11 +174,9 @@ func (s *Server) handleTestProviderConfig(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	prov, err := providers.New(providers.Config{
-		Type:      req.Type,
-		Region:    req.Region,
-		Prefix:    req.Prefix,
-		Namespace: req.Namespace,
+	prov, err := providers.NewClusterTestProvider(providers.ClusterTestProviderConfig{
+		Type:            req.Type,
+		ArgoCDNamespace: req.Namespace,
 	})
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -219,10 +231,10 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Provider info (type + region, no secrets).
-	if s.providerCfg != nil {
+	if displayType, displayRegion, _ := s.providerDisplay(); displayType != "" || displayRegion != "" {
 		cfg["provider"] = map[string]string{
-			"type":   s.providerCfg.Type,
-			"region": s.providerCfg.Region,
+			"type":   displayType,
+			"region": displayRegion,
 		}
 	}
 
@@ -239,4 +251,24 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	cfg["argocd"] = argocdInfo
 
 	writeJSON(w, http.StatusOK, cfg)
+}
+
+// providerDisplay returns the (type, region, prefix) triple to show in
+// /providers and /config response payloads. The display unifies the two
+// typed configs introduced by V125-1-11.6: addon-secret carries the richer
+// fields (Type/Region/Prefix/RoleARN) while cluster-test carries the
+// authoritative cluster-creds Type. When both are set, addon-secret wins for
+// Type/Region/Prefix because that's what the legacy display used to show; if
+// addon-secret is unset (cluster-test-only install), we fall back to
+// cluster-test's Type and empty Region/Prefix.
+func (s *Server) providerDisplay() (typ, region, prefix string) {
+	if s.addonSecretCfg != nil {
+		typ = s.addonSecretCfg.Type
+		region = s.addonSecretCfg.Region
+		prefix = s.addonSecretCfg.Prefix
+	}
+	if typ == "" && s.clusterTestCfg != nil {
+		typ = s.clusterTestCfg.Type
+	}
+	return typ, region, prefix
 }

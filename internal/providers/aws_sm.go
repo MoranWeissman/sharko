@@ -23,9 +23,15 @@ type AWSSecretsManagerProvider struct {
 	roleARN string // default IAM role to assume for EKS token generation
 }
 
-// NewAWSSecretsManagerProvider creates a provider backed by AWS Secrets Manager.
-// Uses default AWS credential chain (IRSA when in-cluster, env vars or profile for local dev).
-func NewAWSSecretsManagerProvider(cfg Config) (*AWSSecretsManagerProvider, error) {
+// NewAWSSecretsManagerProviderFromAddonConfig creates a provider backed by AWS
+// Secrets Manager from the canonical AddonSecretProviderConfig (V125-1-11.3+).
+// Uses default AWS credential chain (IRSA when in-cluster, env vars or profile
+// for local dev).
+//
+// Only AddonSecretProviderConfig fields Region, Prefix, and RoleARN are read —
+// Type is consumed by the upstream dispatcher (NewAddonSecretProvider) and
+// Namespace is ignored (AWS Secrets Manager has no namespace concept).
+func NewAWSSecretsManagerProviderFromAddonConfig(cfg AddonSecretProviderConfig) (*AWSSecretsManagerProvider, error) {
 	opts := []func(*awsconfig.LoadOptions) error{}
 	if cfg.Region != "" {
 		opts = append(opts, awsconfig.WithRegion(cfg.Region))

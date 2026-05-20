@@ -75,8 +75,8 @@ func (s *Server) handleEnableAddon(w http.ResponseWriter, r *http.Request) {
 	orch.SetSecretManagement(s.addonSecretDefs, s.secretFetcher, remoteclient.NewClientFromKubeconfig)
 	if s.argoSecretManager != nil {
 		roleARN := ""
-		if s.providerCfg != nil {
-			roleARN = s.providerCfg.RoleARN
+		if s.addonSecretCfg != nil {
+			roleARN = s.addonSecretCfg.RoleARN
 		}
 		orch.SetArgoSecretManager(&argoManagerAdapter{mgr: s.argoSecretManager}, roleARN)
 	}
@@ -178,8 +178,8 @@ func (s *Server) handleDisableAddon(w http.ResponseWriter, r *http.Request) {
 	orch.SetSecretManagement(s.addonSecretDefs, s.secretFetcher, remoteclient.NewClientFromKubeconfig)
 	if s.argoSecretManager != nil {
 		roleARN := ""
-		if s.providerCfg != nil {
-			roleARN = s.providerCfg.RoleARN
+		if s.addonSecretCfg != nil {
+			roleARN = s.addonSecretCfg.RoleARN
 		}
 		orch.SetArgoSecretManager(&argoManagerAdapter{mgr: s.argoSecretManager}, roleARN)
 	}
