@@ -157,6 +157,23 @@ export function ClustersOverview() {
   // ArgoCD unreachable detection
   const [argoCDUnreachable, setArgoCDUnreachable] = useState(false);
 
+  // BUG-041 helper: stable copy for the disabled-Test-button tooltip so all
+  // four render sites (managed-list table + grid, discovered table + grid)
+  // stay consistent.
+  // BUG-041: capability flag for the per-cluster Test button.
+  // /api/v1/health.cluster_test_available is true when a secrets backend
+  // (Vault / AWS Secrets Manager / file-store / ArgoCDProvider auto-default)
+  // is configured on the active connection. When false the backend returns
+  // 503 + error_code=no_secrets_backend for POST /clusters/{name}/test —
+  // so we render the button disabled with a tooltip explaining how to
+  // enable it, instead of leaving operators to discover the unavailability
+  // by clicking and getting a confusing error. Defaults to `true` so the
+  // first render before the /health fetch resolves doesn't flash a
+  // disabled state for installs that DO have a backend.
+  const [clusterTestAvailable, setClusterTestAvailable] = useState(true);
+  const TEST_BUTTON_DISABLED_TOOLTIP =
+    'Cluster connectivity test is unavailable: no secrets backend (Vault / AWS Secrets Manager / file-store) is configured on the active connection. Configure one in Settings → Connections to enable.';
+
   // Auth context for role-based auto-merge logic
   const authCtx = useContext(AuthContext);
 
@@ -266,6 +283,31 @@ export function ClustersOverview() {
   useEffect(() => {
     void fetchData();
   }, [fetchData]);
+
+  // BUG-041: fetch /health once to learn whether the cluster-connectivity
+  // test endpoint is available on this install (depends on a secrets
+  // backend being configured). The flag flips false only in the
+  // `--demo` / no-backend dev path; once available it does not change at
+  // runtime, so we don't poll. If /health fails we keep the optimistic
+  // default (button enabled) — we'd rather let the operator click and
+  // see the structured 503 than silently disable a feature.
+  useEffect(() => {
+    let cancelled = false;
+    void api
+      .health()
+      .then((h) => {
+        if (cancelled) return;
+        if (typeof h?.cluster_test_available === 'boolean') {
+          setClusterTestAvailable(h.cluster_test_available);
+        }
+      })
+      .catch(() => {
+        /* keep optimistic default */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Auto-refresh every 30s
   useEffect(() => {
@@ -1713,8 +1755,10 @@ export function ClustersOverview() {
                           <button
                             type="button"
                             onClick={(e) => handleTestCluster(cluster.name, e)}
-                            disabled={testResult === 'testing'}
-                            className="inline-flex items-center gap-1 rounded border border-[#5a9dd0] px-2 py-1 text-xs text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+                            disabled={testResult === 'testing' || !clusterTestAvailable}
+                            title={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : undefined}
+                            aria-label={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : 'Test'}
+                            className="inline-flex items-center gap-1 rounded border border-[#5a9dd0] px-2 py-1 text-xs text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 disabled:cursor-not-allowed dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
                           >
                             {testResult === 'testing'
                               ? <Loader2 className="h-3 w-3 animate-spin" />
@@ -1784,8 +1828,10 @@ export function ClustersOverview() {
                       <button
                         type="button"
                         onClick={(e) => handleTestCluster(cluster.name, e)}
-                        disabled={testResult === 'testing'}
-                        className="inline-flex items-center gap-1 rounded border border-[#5a9dd0] px-2 py-1 text-xs text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+                        disabled={testResult === 'testing' || !clusterTestAvailable}
+                        title={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : undefined}
+                        aria-label={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : 'Test'}
+                        className="inline-flex items-center gap-1 rounded border border-[#5a9dd0] px-2 py-1 text-xs text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 disabled:cursor-not-allowed dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
                       >
                         {testResult === 'testing' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wifi className="h-3 w-3" />}
                         Test
@@ -1929,8 +1975,10 @@ export function ClustersOverview() {
                               <button
                                 type="button"
                                 onClick={(e) => handleTestCluster(cluster.name, e)}
-                                disabled={testResult === 'testing'}
-                                className="inline-flex items-center gap-1 rounded border border-[#5a9dd0] px-2 py-1 text-xs text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+                                disabled={testResult === 'testing' || !clusterTestAvailable}
+                                title={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : undefined}
+                                aria-label={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : 'Test'}
+                                className="inline-flex items-center gap-1 rounded border border-[#5a9dd0] px-2 py-1 text-xs text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 disabled:cursor-not-allowed dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
                               >
                                 {testResult === 'testing' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wifi className="h-3 w-3" />}
                                 Test
@@ -1986,8 +2034,10 @@ export function ClustersOverview() {
                       <button
                         type="button"
                         onClick={(e) => handleTestCluster(cluster.name, e)}
-                        disabled={testResult === 'testing'}
-                        className="inline-flex items-center gap-1 rounded border border-[#5a9dd0] px-2 py-1 text-xs text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:text-gray-300"
+                        disabled={testResult === 'testing' || !clusterTestAvailable}
+                        title={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : undefined}
+                        aria-label={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : 'Test'}
+                        className="inline-flex items-center gap-1 rounded border border-[#5a9dd0] px-2 py-1 text-xs text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 disabled:cursor-not-allowed dark:border-gray-600 dark:text-gray-300"
                       >
                         {testResult === 'testing' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wifi className="h-3 w-3" />}
                         Test

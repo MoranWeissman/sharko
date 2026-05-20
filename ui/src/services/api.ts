@@ -688,9 +688,27 @@ export async function fetchMergedPRs(filters?: { cluster?: string; addon?: strin
   return fetchJSON<MergedPRsResponse>(`/prs/merged${qs ? `?${qs}` : ''}`)
 }
 
+// HealthResponse mirrors the shape returned by GET /api/v1/health.
+// BUG-041: `cluster_test_available` is the capability flag the UI uses
+// to gate the per-cluster Test button when no secrets backend is wired
+// up on the active connection.
+//
+// The index signature is intentional — existing callers (e.g.
+// settings/GitOpsSection.tsx) read ad-hoc fields like host_cluster_name
+// that aren't yet pinned into this contract. Keeping the signature open
+// lets the BUG-041 typed fields coexist with those legacy reads instead
+// of forcing a wider refactor on this hotfix bundle.
+export interface HealthResponse {
+  status: string
+  version?: string
+  mode?: string
+  cluster_test_available?: boolean
+  [key: string]: unknown
+}
+
 export const api = {
   // Health
-  health: () => fetchJSON<{ status: string }>('/health'),
+  health: () => fetchJSON<HealthResponse>('/health'),
 
   // Clusters
   getClusters: () => fetchJSON<ClustersResponse>('/clusters'),

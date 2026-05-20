@@ -4865,7 +4865,7 @@ const docTemplate = `{
         },
         "/health": {
             "get": {
-                "description": "Returns server health status and version",
+                "description": "Returns server health status, version, deployment mode, and capability flags. ` + "`" + `cluster_test_available` + "`" + ` is true when a secrets backend is configured on the active connection (the cluster-connectivity test endpoint requires one).",
                 "produces": [
                     "application/json"
                 ],

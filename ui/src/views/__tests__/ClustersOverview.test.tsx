@@ -14,9 +14,15 @@ vi.mock('react-router-dom', async () => {
 });
 
 const mockGetClusters = vi.fn();
+const mockHealth = vi.fn();
 vi.mock('@/services/api', () => ({
   api: {
     getClusters: (...args: unknown[]) => mockGetClusters(...args),
+    // BUG-041: ClustersOverview now fetches /api/v1/health on mount to read
+    // the cluster_test_available capability flag. Default the mock to "true"
+    // so existing tests keep observing the Test button enabled and do not
+    // need to be rewritten.
+    health: (...args: unknown[]) => mockHealth(...args),
   },
 }));
 
@@ -62,6 +68,11 @@ describe('ClustersOverview', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetClusters.mockResolvedValue(clustersResponse);
+    mockHealth.mockResolvedValue({
+      status: 'healthy',
+      version: 'test',
+      cluster_test_available: true,
+    });
   });
 
   it('renders loading state initially', () => {
@@ -343,6 +354,67 @@ describe('ClustersOverview', () => {
     // Connected and discovered/unmanaged clusters must NOT appear.
     expect(screen.queryByText('prod-eu')).not.toBeInTheDocument();
     expect(screen.queryByText('discovered-cluster')).not.toBeInTheDocument();
+  });
+
+  // BUG-041: Test button on each cluster row must be disabled (with a
+  // tooltip pointing at Settings → Connections) when /api/v1/health
+  // reports cluster_test_available=false. That happens whenever no
+  // secrets backend (Vault / AWS Secrets Manager / file-store /
+  // ArgoCDProvider auto-default) is configured on the active connection
+  // — typically the `--demo` dev path. Previously the button was always
+  // enabled, the user clicked it, and the test endpoint returned 503 +
+  // error_code=no_secrets_backend — confusing UX.
+  it('disables Test button when health reports cluster_test_available=false (BUG-041)', async () => {
+    mockHealth.mockResolvedValue({
+      status: 'healthy',
+      version: 'test',
+      cluster_test_available: false,
+    });
+
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    });
+
+    // Wait for the /health fetch to resolve and the gate to flip.
+    await waitFor(() => {
+      const testButtons = screen.getAllByRole('button', { name: /no secrets backend/i });
+      expect(testButtons.length).toBeGreaterThanOrEqual(1);
+    });
+
+    const testButtons = screen.getAllByRole('button', { name: /no secrets backend/i });
+    for (const btn of testButtons) {
+      expect(btn).toBeDisabled();
+      // The aria-label / title both contain the explanatory tooltip copy.
+      const tooltipSource = btn.getAttribute('title') ?? btn.getAttribute('aria-label') ?? '';
+      expect(tooltipSource).toMatch(/secrets backend/i);
+      expect(tooltipSource).toMatch(/Settings\s*→\s*Connections/);
+    }
+  });
+
+  // BUG-041 (paired): the default-enabled path must remain enabled when
+  // /health reports cluster_test_available=true so existing flows work.
+  it('keeps Test button enabled when cluster_test_available=true (BUG-041)', async () => {
+    // Default beforeEach mock already returns true; just confirm.
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    });
+
+    // Allow /health fetch to resolve.
+    await waitFor(() => {
+      expect(mockHealth).toHaveBeenCalled();
+    });
+
+    // After health resolves with true, no Test button is disabled by the gate.
+    // (it may still be disabled while testing=true, but no test is in flight.)
+    const testButtons = screen.getAllByRole('button', { name: /^Test$/ });
+    expect(testButtons.length).toBeGreaterThanOrEqual(1);
+    for (const btn of testButtons) {
+      expect(btn).not.toBeDisabled();
+    }
   });
 
   it('toggles status filter on stat card click', async () => {
