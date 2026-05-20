@@ -40,7 +40,7 @@
 # - Tagging: NO tags cut reflexively — merge PRs to main when green; tag only when user explicitly asks (see feedback_release_cadence.md)
 
 generated: 2026-04-20
-last_updated: 2026-05-15 (V125-1-10 epic CLOSED on main with #325/#326/#327 — 10.7 ungate + 10.8 ns hardcode + 10.9 test-seam fix; V125-1-13 e2e Helm-harness sprint dispatched, 6 OQs RESOLVED per maintainer rubber-stamp; sequence: V125-1-13 → V125-1-11 → V125-1-9 → V125-1-8 → V125-1-7 → V125-2)
+last_updated: 2026-05-20 (PR #332 V125-1-11 config split CI GREEN awaiting maintainer merge; PR #333 DOC-01 release-notes backfill CI in flight. NEW PLANS this session: (a) V1X-BUGS-040-043 — 4-story UI/UX bug-sweep bundle on dev/v1.x-bug-fixes-040-043; (b) V124-1 polish bundle dispatch — 5 stories already in this file as backlog (lines 339-343), wrapper plan at epics-v124-1-polish.md, branch dev/v1.x-polish-v124-1. Two bundles dispatchable in parallel; DESIGN-01 + DESIGN-02 deferred to bmad-brainstorming after bundles land.)
 project: sharko
 project_key: NOKEY
 tracking_system: file-system
@@ -892,62 +892,312 @@ development_status:
   # Worktree-isolated per memory — DRILL agents on cd to worktree path
   # (V125-1-10.6/7/8 agents all reported worktree-vs-main slips; 10.9 agent
   # got it right after explicit drill in dispatch prompt — replicate).
-  epic-V125-1-13-e2e-helm-harness: in-progress  # Wave A dispatching 2026-05-15
-  # 13.1 Helm-install harness primitive. New tests/e2e/harness/sharko_helm.go
-  # implementing installSharkoHelm: docker build sharko:e2e-<sha> from worktree,
-  # kind load docker-image, helm install ./charts/sharko -n sharko, wait for
-  # rollout. Returns *HelmHandle. Image build cached per make invocation via
-  # SHARKO_E2E_IMAGE_TAG env var. Cleanup via t.Cleanup.
-  V125-1-13-1-helm-install-harness-primitive: backlog
-  # 13.2 In-cluster auth bootstrap. New bootstrapHelmSharkoAuth: reads
-  # sharko-initial-admin-secret (V124-6.3+V124-7.1 ArgoCD-style admin secret),
-  # port-forwards svc/sharko, POSTs /api/v1/auth/login, mints JWT, returns
-  # *AuthBundle for the typed API client (Story 7-1.3). t.Cleanup manages
-  # port-forward lifecycle.
-  V125-1-13-2-in-cluster-auth-bootstrap: backlog
-  # 13.3 Wire SharkoModeHelm to call 13.1 + 13.2. Replaces the t.Skip stub
-  # at sharko.go:117-148 with real install path. Returns *SharkoHandle
-  # matching existing in-process shape. E2E_SHARKO_MODE=helm path also works.
-  V125-1-13-3-wire-sharko-mode-helm: backlog
-  # 13.4 Convert cluster_test_argocd_provider_test.go to run + pass under
-  # Helm mode. Today t.Skip's. Rewrite: install Sharko+ArgoCD into kind,
-  # register kind target via kubeconfig POST, wait for ArgoCD Secret,
-  # POST /clusters/{name}/test, assert 200 + 7 steps PASS. Subtests for
-  # awsAuthConfig + execProviderConfig mutated Secrets → assert matching
-  # error_codes (Story 10.3 contract end-to-end exercised).
-  V125-1-13-4-convert-cluster-test-argocd-provider: backlog
-  # 13.5 Regression test for V125-1-10.7's serve.go ungate. New test
-  # cluster_test_provider_autodefault_test.go: Helm-install with NO Provider
-  # configured, register target, click Test, assert 200+7 steps PASS (proves
-  # auto-default fired AND ArgoCDProvider works). Would have FAILED pre-10.7.
-  V125-1-13-5-regression-serve-go-ungate: backlog
-  # 13.6 Regression test for V125-1-10.8's namespace cross-contamination.
-  # New cluster_test_provider_crosscontamination_test.go: Helm-install with
-  # Provider.Type=k8s-secrets+Namespace=sharko (mimics maintainer's pre-10.8
-  # setup), switch Type to argocd via PUT /connections/{name} (mimics
-  # dropdown change), assert /providers GET returns argocd, click Test,
-  # assert 200+7 steps PASS. Would have FAILED pre-10.8.
-  V125-1-13-6-regression-namespace-crosscontamination: backlog
-  # 13.7 UI-backend factory contract test (Go-side generated TS const).
-  # New cmd/gen-provider-types/main.go introspects providers.New() switch,
-  # emits ui/src/generated/provider-types.ts with VALID_PROVIDER_TYPES const.
-  # Makefile target generate-provider-types + CI guard. Settings UI dropdown
-  # imports the const, renders <option>s in a loop — can no longer drift.
-  # Vitest test asserts dropdown count matches const. Would have CAUGHT
-  # V125-1-10.7's "argocd missing from dropdown" pre-merge.
-  V125-1-13-7-ui-backend-factory-contract-test: backlog
-  # 13.8 Makefile + CI workflow integration. New make test-e2e-helm running
-  # TestClusterTest|TestProviderAuto|TestProviderCross under E2E_SHARKO_MODE=helm.
-  # New GH Actions job helm-mode-e2e in .github/workflows/e2e.yml runs on
-  # EVERY PR (per maintainer OQ #1 "don't save runtime"). Status check
-  # "Go E2E (helm + kind + argocd)". Failure blocks merge.
-  V125-1-13-8-makefile-and-ci-workflow-integration: backlog
-  # 13.9 Documentation. Update docs/site/developer-guide/e2e-testing.md with
-  # "Full-fidelity Helm mode" section, "Writing a Helm-mode test" guide,
-  # troubleshooting. Cross-link V125-1-13 plan + V125-1-10.7+10.8 bug context.
-  # mkdocs --strict passes.
-  V125-1-13-9-documentation: backlog
+  epic-V125-1-13-e2e-helm-harness: done  # All 9 stories shipped via PRs #328 + #329 (2026-05-16/17)
+  V125-1-13-1-helm-install-harness-primitive: done
+  V125-1-13-2-in-cluster-auth-bootstrap: done
+  V125-1-13-3-wire-sharko-mode-helm: done
+  V125-1-13-4-convert-cluster-test-argocd-provider: done
+  V125-1-13-5-regression-serve-go-ungate: done
+  V125-1-13-6-regression-namespace-crosscontamination: done
+  V125-1-13-7-ui-backend-factory-contract-test: done
+  V125-1-13-8-makefile-and-ci-workflow-integration: done
+  V125-1-13-9-documentation: done
   epic-V125-1-13-e2e-helm-harness-retrospective: optional
+
+  # ============================================================
+  # V125-1-13.x — In-cluster gitfake + env-gated git-host allowlist
+  # ============================================================
+  # Planned 2026-05-18. Source: memory file project_v125_1_13_helm_tests_followup.md
+  # + local verification 2026-05-18 (TestClusterTest_ProviderCrossContamination_
+  # NamespaceSwitch reproduces FAIL with GET /api/v1/clusters: 500).
+  # Planning artifact: .bmad/output/planning-artifacts/epics-v125-1-13-x.md.
+  #
+  # Why this sprint: After V125-1-13 shipped, make test-e2e-helm passes only
+  # 1 of 3 helm-mode tests. The 2 failing tests are blocked by Sharko's
+  # git-host whitelist at internal/service/connection.go:179-194 rejecting
+  # the harness's local gitfake URL.
+  #
+  # Approach: Path A from the follow-up memory file (chosen 2026-05-18) —
+  # containerize the existing in-process gitfake (478 LOC, already speaks
+  # full git-protocol over HTTP), deploy as Pod in kind, add opt-in
+  # SHARKO_E2E_GIT_HOSTS_ALLOWLIST env var to extend the production
+  # whitelist (safe: no-op when unset).
+  #
+  # Success criterion: make test-e2e-helm shows 3/3 PASS.
+  # Branch: dev/v125-1-13-x-gitfake-pod from main@d7c49afc.
+  # Single PR to main, no release, no tag.
+  # Effort: ~1-2 dev days.
+  #
+  # OPEN QUESTIONS for maintainer (BLOCK dispatch until resolved — 6 OQs
+  # itemized in epics-v125-1-13-x.md §"Open questions for maintainer";
+  # shortcut: type "a" to lock all 6 to recommended defaults):
+  #   1. Sprint name format → V125-1-13.x (recommended)
+  #   2. Env var name → SHARKO_E2E_GIT_HOSTS_ALLOWLIST (recommended)
+  #   3. gitfake Pod namespace → default (recommended)
+  #   4. Image build cadence → mirror Sharko's pattern (recommended)
+  #   5. Reject-list of obvious prod hostnames → NO (recommended)
+  #   6. CI integration → same e2e-gated helm-mode-e2e job (recommended)
+  #
+  # Lean workflow + role files: tech-lead always; go-expert 13.x.1+13.x.3;
+  # k8s-expert 13.x.2+13.x.4+13.x.5; test-engineer 13.x.6; docs-writer 13.x.7;
+  # devops-agent 13.x.4 if chart structure needs deeper attention;
+  # code-reviewer final PR. Worktree-isolated dispatches — DRILL agents on
+  # cd to worktree path (V125-1-10.6/7/8 slipped; 10.9 + V125-1-13 wave got
+  # it right after explicit drill).
+  epic-V125-1-13-x-gitfake-pod: done  # All 7 stories shipped 2026-05-18; make test-e2e-helm = 3/3 PASS locally
+  V125-1-13-x-1-containerize-gitfake: done
+  V125-1-13-x-2-in-cluster-deployment-and-primitive: done
+  V125-1-13-x-3-env-var-allowlist-extension: done
+  V125-1-13-x-4-helm-chart-env-pipe: done
+  V125-1-13-x-5-wire-gitfake-into-helm-install: done
+  # 13.x.6 actual implementation pivoted: tests bypass Sharko's git flow by
+  # registering target cluster directly in ArgoCD's REST API (Sharko's
+  # GitHubProvider is hardwired to api.github.com regardless of env-var
+  # allowlist — that wider gitfake-as-full-git-mock work deferred to
+  # future V125-1-13.y if needed).
+  V125-1-13-x-6-update-tests-validation-gate: done
+  V125-1-13-x-7-docs-and-memory-cleanup: done
+  epic-V125-1-13-x-gitfake-pod-retrospective: optional
+
+  # ============================================================
+  # V125-1-13.y — In-process e2e mock-provider wiring fix
+  # ============================================================
+  # Planned 2026-05-18 after PR #330 surfaced a deeper bypass exposing why
+  # Go E2E (kind + argocd) has been red on main since 2026-05-14. Planning
+  # artifact: .bmad/output/planning-artifacts/epics-v125-1-13-y.md.
+  #
+  # ROOT CAUSE (already diagnosed, do not re-investigate):
+  #   - SURFACE (BUG #189-surface): seedActiveConnection sends single-segment
+  #     gitfake RepoURL — Sharko's ParseRepoURL rejects with 400.
+  #   - DEEPER (BUG #189-real): internal/api/tiered_git.go::
+  #     providerFromConnectionWithToken constructs gitprovider.NewGitHubProvider
+  #     directly at line 140 when a token is supplied — bypasses the
+  #     SetGitProviderOverride hook → real api.github.com → 401.
+  #
+  # Both fixable. Path A (fix the override-bypass) is chosen — fix in
+  # tiered_git.go consults the override before per-tier construction.
+  # Approximately 5 lines of production code + new unit tests.
+  #
+  # USER GATE: Moran has explicitly gated v1.25 forward feature work on
+  # this sprint shipping. "only when i'll have e2e tests fully running and
+  # working will I'll able to proceed with our next features development."
+  #
+  # STRICT DEPENDENCY: branch from main AFTER PR #330 merges. Do NOT
+  # dispatch Wave A until PR #330 is on main (commit 5341d406 reverted
+  # via 5d8115d1 — V125-1-13.y.1 re-lands it as first sprint commit).
+  #
+  # All 7 OQs PRE-RESOLVED per feedback_decide_dont_ask_technical_oqs.
+  # Single legitimate product OQ surfaces only if bypass surface is wider
+  # than diagnosed (5+ files have direct New*Provider calls).
+  #
+  # Lean workflow + role files: tech-lead + go-expert + test-engineer every
+  # story; code-reviewer for final PR. Worktree-isolated dispatches — drill
+  # agents on cd to worktree path.
+  epic-V125-1-13-y-mock-provider-wiring: done  # All 3 hard stories shipped 2026-05-19 via PR #331 (commit 718e07a9); both e2e CI jobs GREEN on main
+  V125-1-13-y-1-surface-fix-reland: done                    # commit 9daa7d66
+  V125-1-13-y-2-fix-tiered-git-override-bypass: done        # commit 0dd12a5b — internal/api/tiered_git.go override-first short-circuit + new tiered_git_test.go
+  V125-1-13-y-3-validation-gate: done                       # commit faa6e517 — also includes K8s client default timeout + Mac-Docker harness helper
+  V125-1-13-y-4-docs-and-cleanup: backlog                   # optional close-out; not shipped (not deemed necessary post-merge)
+  epic-V125-1-13-y-mock-provider-wiring-retrospective: optional
+
+  # ============================================================
+  # V125-1-11 — Three-mechanism ProviderConfig split (architectural epic)
+  # ============================================================
+  # Planned 2026-05-19. Source: docs/design/2026-05-12-v125-architectural-todos.md
+  # (V125 sequence), .bmad/output/planning-artifacts/epics-v125-1-13.md:27,38,44
+  # (explicit V125-1-11 preview as "three-mechanism config split: addon-secret-
+  # provider / cluster-test / cluster-registration-source as independent
+  # settings"), and the V125-1-10.8 fix entry above (the "field overload smell
+  # as future V125-1-11" smoking gun).
+  # Planning artifact: .bmad/output/planning-artifacts/epics-v125-1-11.md.
+  #
+  # Why this sprint NOW: V125-1-13 + V125-1-13.x + V125-1-13.y all shipped
+  # (test-fidelity scaffolding in place). V125-1-10.8 hack (SHARKO_ARGOCD_
+  # NAMESPACE env-var + cross-contamination Warn log in argocd_provider.go:
+  # 118-122) needs to die before V125-1-8 (cluster reconciler) lands — V125-1-8
+  # needs a CLEAN "cluster-registration-source" config knob; overloading
+  # Config.Namespace further is unacceptable. V125-1-11 also pre-wires the
+  # ClusterRegistrationSourceConfig type so V125-1-8 has a clean interface.
+  #
+  # Sequence: V125-1-13.y (done) → V125-1-11 (THIS) → V125-1-9 (schema envelope)
+  # → V125-1-8 (cluster reconciler) → V125-1-7 tightening → V125-2 cleanup.
+  #
+  # Scope: split single providers.Config blob into three sibling types
+  # (AddonSecretProviderConfig, ClusterTestProviderConfig,
+  # ClusterRegistrationSourceConfig). Six production Config-construction sites
+  # to migrate (cmd/sharko/serve.go ×2, internal/api/router.go ×3,
+  # internal/api/system.go ×2, internal/demo/setup.go ×1). Compat shim
+  # preserved during migration, deleted in 11.6. SHARKO_ARGOCD_NAMESPACE
+  # env-var deprecated with slog.Warn (removed in v1.26).
+  #
+  # 6 hard stories + 1 optional + 1 diagnosis = 8 dispatch units. Wave A (11.1)
+  # → B (11.2) → C parallel (11.3, 11.4, 11.5 in 3 worktrees — first V125
+  # arch sprint with meaningful parallelism) → D (11.6) → E (11.7 VALIDATION
+  # GATE) → F (11.8 docs). ~2-3 dev days with parallel C, ~3-5 days serial.
+  #
+  # Single PR dev/v125-1-11-config-split → main. NO release / NO tag during
+  # sprint (bundle V125 architectural arc into single version bump at end).
+  #
+  # All 10 technical OQs PRE-RESOLVED per feedback_decide_dont_ask_technical_oqs:
+  #   1. Sprint name: V125-1-11
+  #   2. Approach: Path A (three sibling types); adapt to hybrid if 11.1 finds
+  #      >8 stories of refactor — DON'T escalate
+  #   3. Subpackage structure: flat under internal/providers/ initially;
+  #      11.1's diagnosis verdict locks it
+  #   4. SHARKO_ARGOCD_NAMESPACE deprecation: warn-now, remove in v1.26
+  #   5. Branch base: cut from main at 718e07a9 (current HEAD)
+  #   6. Compat shim duration: lives only across 11.2-11.5; deleted in 11.6
+  #   7. BUG-OVERLOAD-DIAGNOSIS.md location: .bmad/output/diagnostics/
+  #   8. Test harness SharkoConfig shape: mirror production split
+  #   9. Helm chart values.yaml: 3 sibling blocks (addonSecrets, clusterTest,
+  #      clusterRegSource); old providers: block stays as compat alias
+  #   10. Release cadence: NO release during sprint
+  #
+  # ONE legitimate product-shaped question surfaces ONLY if 11.1 reveals
+  # scope > 8 stories: split into 11.a + 11.b OR adopt hybrid Path A+B?
+  #
+  # Role files (every dispatch): tech-lead + architect + go-expert +
+  # test-engineer. k8s-expert + devops-agent for stories touching
+  # charts/sharko/ (11.4, 11.5). docs-writer for 11.8. code-reviewer for
+  # final PR. Worktree-isolated per feedback_agent_dispatch_worktree_isolation.
+  epic-V125-1-11-config-split: in-progress
+  # 11.1 SHIPPED 2026-05-19. Verdict: PROCEED as planned. Path A locked
+  # (three sibling types — argocd-only cluster-test). Subpackages: flat.
+  # Wave C: parallel safe. Scope: 8 stories as drafted. Two surprise
+  # findings for Wave B+ dispatches: (1) connection-level Provider config
+  # is a SECOND smell adjacent to Namespace overload — Wave C must
+  # preserve compat parsing that fans the old Provider block into 3 new
+  # typed configs at parse time. (2) Story 11.6 will retire legacy
+  # aws-sm/k8s-secrets/gcp-sm/azure-kv CLUSTER-CREDS variants one cycle
+  # earlier than provider.go:55 doc promised (V125-2) — Story 11.8
+  # release notes must call this out. Diagnosis file:
+  # .bmad/output/diagnostics/BUG-OVERLOAD-DIAGNOSIS.md (272 lines, gitignored).
+  V125-1-11-1-diagnose-providerconfig-usage: done
+  # 11.2 SHIPPED 2026-05-19. Commit 303cd6b4. internal/providers/config_types.go
+  # (+117 lines) with the three sibling types verbatim from diagnosis §4.
+  # Deprecation comment on old providers.Config in provider.go. Compat shim
+  # fully intact, zero behavior change.
+  V125-1-11-2-introduce-three-new-types-compat-shim-preserved: done
+  # 11.3 SHIPPED 2026-05-19. Commit 32aa9373 (cherry-picked from worktree-3).
+  # 8 files +295 LoC. NewXxxProviderFromAddonConfig canonical constructors +
+  # NewAddonSecretProvider dispatcher. Old NewXxxProvider(Config) are thin
+  # compat shims via addonSecretConfigFromLegacy identity-translation bridge.
+  # ESO-replacement canary (internal/secrets/...) green. serve.go:522 edited
+  # with one-grep-and-delete tombstone for 11.6. 9 new unit tests in
+  # provider_test.go + 2 in k8s_secrets_test.go.
+  V125-1-11-3-migrate-addon-secret-factories: done
+  # 11.4 SHIPPED 2026-05-19. Commit aaeda08e (cherry-picked from worktree-4).
+  # 4 files net +181 LoC. argocd_provider.go: resolveArgoCDNamespaceTyped
+  # consumes ClusterTestProviderConfig.ArgoCDNamespace; cross-contamination
+  # slog.Warn at lines 118-122 REMOVED (smoking gun killed). Deprecation
+  # warn-log on SHARKO_ARGOCD_NAMESPACE env-var fallback (removal v1.26).
+  # 7 new test cases including slog warn-capture + V125-1-10.8 regression.
+  # charts/sharko/values.yaml adds clusterTest.argocdNamespace canonical knob.
+  # Compat shim: providers.New(Config) for Type="argocd"/"" routes through
+  # configToClusterTest(). Legacy aws-sm/k8s-secrets/gcp-sm/azure-kv cluster-
+  # creds switch arms left functional for compat window; deleted in 11.6.
+  # serve.go:591 not touched in this story (deferred to 11.6 cleanup —
+  # ARGOCD_NAMESPACE chart env is a SEPARATE var consumed by argocd_resource_
+  # exclusions.go:68, not affected).
+  V125-1-11-4-migrate-cluster-test-argocdprovider: done
+  # 11.5 SHIPPED 2026-05-19. Commit dcf4edd4 (cherry-picked from worktree-5).
+  # 4 files +107 LoC. serve.go:517 new parsing block reads
+  # SHARKO_CLUSTER_REG_TYPE + SHARKO_CLUSTER_REG_ARGOCD_NAMESPACE env, builds
+  # ClusterRegistrationSourceConfig, stashes via `_ = clusterRegCfg` tombstone
+  # (no central config-stash exists in serve.go RunE; V125-1-8 will plumb).
+  # Helm chart adds clusterRegSource: top-level block; deployment.yaml wires
+  # both env vars with safe defaults. cmd/sharko/serve_test.go NEW: 2 table-
+  # driven cases verify env→struct mapping. helm template round-trip verified
+  # end-to-end. helm lint/template clean.
+  V125-1-11-5-add-cluster-registration-source-prewire: done
+  # 11.6 SHIPPED 2026-05-19. Commit 78808c80 (cherry-picked from worktree-6).
+  # 25 files +470/-584 LoC. Deleted: providers.Config struct, providers.New,
+  # providers.NewSecretProvider, all 6 compat-shim factories (NewXxxProvider
+  # (Config) + NewArgoCDProvider/WithRESTConfig(Config)), addonSecretConfig
+  # FromLegacy + configToClusterTest bridges. Legacy cluster-creds switch
+  # arms (aws-sm/k8s-secrets/gcp-sm/azure-kv) retired in providers.New —
+  # one cycle earlier than provider.go:55 promised. SetWriteAPIDeps signature
+  # now takes (credProvider, addonSecretCfg, clusterTestCfg, paths, gitops);
+  # all 4 call sites updated (serve.go, demo/setup.go, harness/sharko.go,
+  # lifecycle/addon_cluster_test.go). router.go ReinitializeFromConnection
+  # fans out conn.Provider into both typed configs at parse time. system.go
+  # handleTestProvider + handleTestProviderConfig use NewClusterTestProvider.
+  # gen-provider-types/main.go walks both NewAddonSecretProvider + NewCluster
+  # TestProvider switches; regenerated ui/src/generated/provider-types.ts is
+  # value-identical (UI dropdown semantics unchanged). serve.go:624 second
+  # SHARKO_ARGOCD_NAMESPACE read now prefers clusterTestCfg.ArgoCDNamespace.
+  # Verification grep returns zero production matches (only doc comments
+  # remain). ESO canary green. Helm chart still validates.
+  V125-1-11-6-retire-compat-shim: done
+  # 11.7 SHIPPED 2026-05-20. First run on 78808c80 caught 2 regressions:
+  # (a) TestAIConfig/ProvidersTestConfig — stale assertion (cosmetic);
+  # (b) TestClusterTest_ProviderCrossContamination_NamespaceSwitch — REAL
+  # bug: Story 11.6's ReinitializeFromConnection fan-out was copying
+  # conn.Provider.Namespace into clusterTestCfg.ArgoCDNamespace, recreating
+  # the V125-1-10.8 cross-contamination via a different code path.
+  # Fix shipped as commit a9632706 (V125-1-11.7-fix): leave
+  # clusterTestCfg.ArgoCDNamespace empty during fan-out, let
+  # resolveArgoCDNamespaceTyped fall back to env → "argocd" default. Mirror
+  # fix in serve.go startup parsing. Added unit-level regression test in
+  # internal/api/handlers_test.go (TestReinitializeFromConnection_NoCross
+  # ContaminationIntoClusterTestNamespace) so future regressions are caught
+  # before e2e harness. Re-validation on a9632706:
+  # make test-e2e — PASS 927s (TestClusterLifecycle PASS 112.87s;
+  #   TestClusterTest_ProviderCrossContamination_NamespaceSwitch PASS
+  #   168.79s; TestAIConfig/ProvidersTestConfig PASS)
+  # make test-e2e-helm — PASS 380s
+  #   (TestClusterTest_ProviderCrossContamination_NamespaceSwitch PASS
+  #   108.68s with "6/6 steps PASS — V125-1-10.8 fix confirmed" log)
+  # Sprint exit criterion met.
+  V125-1-11-7-validation-gate: done
+  # 11.8 SHIPPED 2026-05-20. Commit 774d814b (cherry-picked from worktree-8).
+  # 3 files +177/-1. Added new 91-line section to existing docs/site/operator/
+  # configuration.md covering the 3-mechanism config split + env-var/Helm
+  # surface + deprecation timeline. Prepended 74-line v1.25 entry to existing
+  # docs/site/release-notes.md (kept existing single-flat-file pattern instead
+  # of inventing per-version subdir). Refreshed charts/sharko/values.yaml
+  # comments on clusterTest: + clusterRegSource: blocks with operator-doc
+  # cross-references. mkdocs build --strict PASS. helm lint + helm template
+  # PASS. Agent corrected the dispatch spec: no SHARKO_ADDON_SECRETS_TYPE/
+  # NAMESPACE/REGION env vars exist (addon-secrets is connection-scoped,
+  # stored in the encrypted connections Secret via Settings UI / API — NOT
+  # Helm-scoped). Only clusterTest.argocdNamespace + clusterRegSource.* are
+  # Helm knobs. No nav changes (used existing file). No invented Helm surface.
+  V125-1-11-8-docs-and-release-notes: done
+  epic-V125-1-11-config-split-retrospective: optional
+
+  # ============================================================
+  # DOC-01 — Release notes backfill (v1.22 / v1.23 / v1.24)
+  # ============================================================
+  # Planned 2026-05-20. Triggered by maintainer query "is our doc site fully
+  # updated?" after PR #332 (V125-1-11) opened. Published readthedocs site
+  # (sharko.readthedocs.io/en/latest/) was in sync with main but main itself
+  # was missing release-notes entries for v1.22, v1.23 (v1.23.0-pre.0 tagged),
+  # and v1.24 (hotfix bundle merged to main, never tagged). Planning artifact:
+  # .bmad/output/planning-artifacts/epics-doc-01.md.
+  #
+  # Scope: doc-only edit to docs/site/release-notes.md. Backfill 3 sections
+  # in reverse-chrono order (v1.24, v1.23, v1.22) above existing v1.21 entries.
+  # 30-60 lines per entry, matching v1.21 style. Sources: epics-v1.22.md,
+  # epics-v1.23.md, epics-v1.24.md planning artifacts + git log v1.21.7..
+  # v1.23.0-pre.0 (161 commits) + v1.23.0-pre.0..718e07a9 (123 commits,
+  # FILTER OUT V125 prep — V125-1-11 release notes already on PR #332).
+  #
+  # Single story, single agent, single PR. ~30-60 min runtime. NO release,
+  # NO tag, NO version cut.
+  #
+  # All 7 OQs PRE-RESOLVED. ONE legitimate product-shaped question: surface
+  # only if v1.22 epic artifact is skeletal AND git log shows no v1.22
+  # content (collapse vs placeholder vs skip).
+  #
+  # Role files: tech-lead + docs-writer + product-manager. Worktree-isolated.
+  # Branch: dev/docs-release-notes-backfill from main 718e07a9.
+  epic-DOC-01-release-notes-backfill: backlog
+  # DOC-01.1 Backfill 3 sections to docs/site/release-notes.md per epic
+  # planning artifacts + git log. mkdocs build --strict must pass. No other
+  # files touched.
+  DOC-01-1-backfill-v122-v123-v124-release-notes: backlog
+  epic-DOC-01-release-notes-backfill-retrospective: optional
 
   # ============================================================
   # V125-1-9 — Schema envelope + JSON Schema (architectural epic)
@@ -1028,3 +1278,52 @@ development_status:
   # via yaml-language-server schema header. mkdocs --strict passes.
   V125-1-9-6-documentation-and-migration-runbook: backlog
   epic-V125-1-9-schema-envelope-retrospective: optional
+
+  # ============================================================
+  # V1X-BUGS-040-043 — UI/UX bug-sweep bundle (planned 2026-05-20)
+  # ============================================================
+  # Source: .bmad/output/planning-artifacts/epics-v1x-bugs-040-043.md
+  # Scope: 4 UI/UX bugs lingering from maintainer's post-v1.23/v1.24 personal
+  # smoke pass. BUG-040 = dashboard/clusters count mismatch (UI consistency).
+  # BUG-041 = hide Test button when no secrets backend (capability flag).
+  # BUG-042 = cluster→addons sub-page surfaces pending-PR state (cross-cut UI+API).
+  # BUG-043 = argocd-repo-server TLS x509 corporate MITM (Helm value + runbook,
+  # NOT a code bug — environmental).
+  # Branch: dev/v1.x-bug-fixes-040-043 from main HEAD (718e07a9).
+  # Wave A (serial): BUG-040 → BUG-041 → BUG-042 (UI surface conflicts).
+  # Wave B (parallel to A): BUG-043 (Helm + docs only, no UI overlap).
+  # Single PR, NO release, NO tag.
+  # Role files: tech-lead + frontend-expert + test-engineer + code-reviewer
+  # (BUG-040/041/042); tech-lead + k8s-expert + docs-writer + devops-agent
+  # (BUG-043). Worktree-isolated per feedback_agent_dispatch_worktree_isolation.
+  epic-V1X-BUGS-040-043: backlog
+  V1X-BUGS-040-043-1-dashboard-vs-clusters-page-count-mismatch: backlog
+  V1X-BUGS-040-043-2-hide-test-button-when-no-secrets-backend: backlog
+  V1X-BUGS-040-043-3-cluster-addons-page-shows-pending-prs: backlog
+  V1X-BUGS-040-043-4-tls-x509-corporate-mitm-helm-extra-ca-bundle-plus-runbook: backlog
+  epic-V1X-BUGS-040-043-retrospective: optional
+
+  # ============================================================
+  # V124-1 polish bundle dispatch (planned 2026-05-20)
+  # ============================================================
+  # Source of truth: .bmad/output/planning-artifacts/epics-v1.24.md lines 49-127
+  # Dispatch wrapper: .bmad/output/planning-artifacts/epics-v124-1-polish.md
+  # Scope: 5 stories backlogged since v1.23 ship (3 weeks).
+  #   1.1 = gray-class refactor (UI cosmetic)
+  #   1.2 = argosecrets test deprecation cleanup
+  #   1.3 = V123-2 real-bundle CI smoke (closes 4-rc-tag gap)
+  #   1.4 = cosign cert-claim assertions (depends on 1.3 CI infra)
+  #   1.5 = third-party fetcher production smoke runbook
+  # Branch: dev/v1.x-polish-v124-1 from main HEAD (718e07a9; NOT dev/v1.24-polish
+  # because v1.24 is closed and this lands on current main).
+  # Wave A (parallel): 1.1 + 1.2 + 1.5 (different surfaces).
+  # Wave B (serial after A): 1.3 (CI infra; isolated for clearer attribution).
+  # Wave C (serial after B): 1.4 (depends on 1.3 CI infra).
+  # Single PR, NO release, NO tag.
+  # NOTE: Updating these 5 entries (already in sprint-status.yaml at lines
+  # 338-344 above as backlog) once dispatched — no duplicate epic block here.
+  # These below are pointers — same keys above flip backlog → ready-for-dev →
+  # in-progress → review → done as the dispatch progresses.
+
+  # ============================================================
+
