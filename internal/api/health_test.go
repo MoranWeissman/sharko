@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -8,8 +9,24 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/ai"
 	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/providers"
 	"github.com/MoranWeissman/sharko/internal/service"
 )
+
+// healthTestStubCredProvider is a minimal ClusterCredentialsProvider
+// implementation used only to flip srv.credProvider to non-nil for the
+// BUG-041 capability-flag assertion. The handler under test only checks
+// `s.credProvider != nil` — none of the interface methods are invoked.
+type healthTestStubCredProvider struct{}
+
+func (healthTestStubCredProvider) GetCredentials(string) (*providers.Kubeconfig, error) {
+	return nil, nil
+}
+func (healthTestStubCredProvider) ListClusters() ([]providers.ClusterInfo, error) {
+	return nil, nil
+}
+func (healthTestStubCredProvider) SearchSecrets(string) ([]string, error) { return nil, nil }
+func (healthTestStubCredProvider) HealthCheck(context.Context) error      { return nil }
 
 func newTestServer() *Server {
 	store := config.NewFileStore("/tmp/sharko-test-config.yaml")
@@ -38,13 +55,76 @@ func TestHealthEndpoint(t *testing.T) {
 		t.Errorf("expected status 200, got %d", w.Code)
 	}
 
-	var body map[string]string
+	var body map[string]interface{}
 	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
 		t.Fatal(err)
 	}
 
-	if body["status"] != "healthy" {
-		t.Errorf("expected status=healthy, got %s", body["status"])
+	if status, _ := body["status"].(string); status != "healthy" {
+		t.Errorf("expected status=healthy, got %v", body["status"])
+	}
+}
+
+// BUG-041: the /health response advertises `cluster_test_available` so
+// the UI can disable the per-cluster Test button when there is no
+// credentials provider configured on the active connection. The button
+// otherwise renders enabled and the underlying POST /clusters/{name}/test
+// returns 503 + error_code=no_secrets_backend, which is needlessly
+// confusing in dev / `--demo` mode.
+func TestHealthEndpoint_ClusterTestAvailable_False_NoCredProvider(t *testing.T) {
+	srv := newTestServer() // no credProvider set
+	router := NewRouter(srv, nil)
+
+	req := httptest.NewRequest("GET", "/api/v1/health", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var body map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	got, ok := body["cluster_test_available"]
+	if !ok {
+		t.Fatalf("response missing cluster_test_available field; got keys: %v", body)
+	}
+	if available, _ := got.(bool); available {
+		t.Errorf("expected cluster_test_available=false when no credProvider configured, got %v", got)
+	}
+}
+
+// BUG-041 (paired with the false case above): when a credentials provider
+// IS configured on the active connection, /health must report
+// cluster_test_available=true so the UI renders the per-cluster Test
+// button fully enabled.
+func TestHealthEndpoint_ClusterTestAvailable_True_WithCredProvider(t *testing.T) {
+	srv := newTestServer()
+	srv.credProvider = &healthTestStubCredProvider{}
+	router := NewRouter(srv, nil)
+
+	req := httptest.NewRequest("GET", "/api/v1/health", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var body map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	available, ok := body["cluster_test_available"].(bool)
+	if !ok {
+		t.Fatalf("cluster_test_available not a bool: %v", body["cluster_test_available"])
+	}
+	if !available {
+		t.Errorf("expected cluster_test_available=true with credProvider configured, got false")
 	}
 }
 

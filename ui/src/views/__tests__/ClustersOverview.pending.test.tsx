@@ -27,6 +27,8 @@ vi.mock('@/services/api', () => ({
   api: {
     getClusters: (...args: unknown[]) => mockGetClusters(...args),
     getAddonCatalog: (...args: unknown[]) => mockGetAddonCatalog(...args),
+    // BUG-041: ClustersOverview reads cluster_test_available on mount.
+    health: () => Promise.resolve({ status: 'healthy', cluster_test_available: true }),
   },
   registerCluster: (...args: unknown[]) => mockRegisterCluster(...args),
   // Other named exports used by the view module — stubbed to no-ops so

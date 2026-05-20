@@ -38,7 +38,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import type { AddonCatalogItem } from '@/services/models';
-import { api, deregisterCluster, updateClusterAddons, updateClusterSettings, testClusterConnection, isTestClusterUnavailable } from '@/services/api';
+import { api, deregisterCluster, updateClusterAddons, updateClusterSettings, testClusterConnection, isTestClusterUnavailable, fetchTrackedPRs } from '@/services/api';
 import type { TestClusterUnavailable } from '@/services/api';
 import type { ClusterComparisonResponse, AddonComparisonStatus, ConfigDiffResponse, SyncActivityEntry, VerifyStep } from '@/services/models';
 import { StatCard } from '@/components/StatCard';
@@ -190,6 +190,14 @@ export function ClusterDetail() {
   const { name } = useParams<{ name: string }>();
   const navigate = useNavigate();
   const [data, setData] = useState<ClusterComparisonResponse | null>(null);
+  // BUG-042: pending PRs scoped to this cluster, indexed by addon name.
+  // The Sharko PR-tracker already filters by `?cluster=...&addon=...` on
+  // /api/v1/prs (V125-1-6); we fetch ALL open PRs for this cluster once
+  // and bucket per-addon in the FE so the addons table can render an
+  // inline pending-PR badge without N round-trips. PRs that didn't
+  // attribute an `addon` (e.g. cluster register/deregister) are dropped
+  // from this map — they belong to the cluster's separate PR panel.
+  const [pendingPRsByAddon, setPendingPRsByAddon] = useState<Record<string, TrackedPR[]>>({});
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -315,12 +323,35 @@ export function ClusterDetail() {
         setLoading(true);
       }
       setError(null);
-      const [result, nodes, connections] = await Promise.all([
+      // BUG-042: fetch the cluster-scoped open PRs alongside the comparison
+      // so the addons table can render per-row pending-PR badges. The
+      // .catch keeps the page rendering when the PR-tracker is disabled
+      // (no prTracker → /prs returns an empty list and 200; this catch is
+      // belt-and-braces for network drops).
+      const [result, nodes, connections, prsResp] = await Promise.all([
         api.getClusterComparison(name),
         api.getNodeInfo().catch(() => null),
         api.getConnections().catch(() => null),
+        fetchTrackedPRs({ status: 'open', cluster: name }).catch(() => null),
       ]);
       setData(result);
+
+      // BUG-042: bucket pending PRs by addon so ComparisonRow can look up
+      // its own row in O(1). PRs without an `addon` field (e.g. cluster
+      // register/deregister, init) are dropped — they belong on the
+      // cluster's PRs section, not in the addon row.
+      if (prsResp?.prs) {
+        const byAddon: Record<string, TrackedPR[]> = {};
+        for (const pr of prsResp.prs) {
+          if (!pr.addon) continue;
+          if (pr.last_status.toLowerCase() !== 'open') continue;
+          if (!byAddon[pr.addon]) byAddon[pr.addon] = [];
+          byAddon[pr.addon].push(pr);
+        }
+        setPendingPRsByAddon(byAddon);
+      } else {
+        setPendingPRsByAddon({});
+      }
       // Initialize addon toggles from cluster data
       const toggleMap: Record<string, boolean> = {};
       result.addon_comparisons.forEach((a: { addon_name: string; git_enabled: boolean }) => {
@@ -1361,6 +1392,7 @@ export function ClusterDetail() {
                         onToggleExpand={() => toggleExpanded(addon.addon_name)}
                         argocdBaseURL={argocdBaseURL}
                         highlighted={highlightedAddon === addon.addon_name}
+                        pendingPRs={pendingPRsByAddon[addon.addon_name] ?? []}
                       />
                     ))}
                     {filteredAddons.length === 0 && (
@@ -1449,9 +1481,13 @@ interface ComparisonRowProps {
   onToggleExpand: () => void;
   argocdBaseURL: string;
   highlighted?: boolean;
+  // BUG-042: pending PRs targeting this addon on the current cluster.
+  // Rendered as inline badges (newest-first) on the addon-name cell so
+  // operators see "PR open" without leaving the addons sub-page.
+  pendingPRs?: TrackedPR[];
 }
 
-function ComparisonRow({ addon, isExpanded, onToggleExpand, argocdBaseURL, highlighted }: ComparisonRowProps) {
+function ComparisonRow({ addon, isExpanded, onToggleExpand, argocdBaseURL, highlighted, pendingPRs = [] }: ComparisonRowProps) {
   const allIssues = addon.issues;
   const isTruncated = shouldTruncateIssues(allIssues);
   const displayedIssues = isExpanded ? allIssues : allIssues.slice(0, 2);
@@ -1490,7 +1526,7 @@ function ComparisonRow({ addon, isExpanded, onToggleExpand, argocdBaseURL, highl
         )}
       </td>
       <td className="px-4 py-3 font-medium text-[#0a2a4a] dark:text-gray-100">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Link
             to={`/addons/${encodeURIComponent(addon.addon_name)}`}
             className="hover:text-teal-600 hover:underline dark:hover:text-teal-400"
@@ -1510,6 +1546,35 @@ function ComparisonRow({ addon, isExpanded, onToggleExpand, argocdBaseURL, highl
               <ExternalLink className="h-3.5 w-3.5" />
             </a>
           )}
+          {/*
+            BUG-042: pending-PR badges. One per open PR targeting this
+            addon on this cluster. Renders inline next to the addon name
+            so the operator can tell "this addon's state is in flight"
+            without scrolling to the cluster PRs section. Clicking the
+            badge opens the PR in a new tab.
+            data-testid stays stable so the per-row test can locate it.
+          */}
+          {pendingPRs.map((pr) => (
+            <a
+              key={pr.pr_id}
+              href={pr.pr_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              data-testid="addon-pending-pr-badge"
+              title={`Open PR #${pr.pr_id} — ${pr.pr_title}`}
+              className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:hover:bg-amber-900/60"
+            >
+              <GitPullRequest className="h-3 w-3" />
+              PR #{pr.pr_id}
+              {pr.operation && (
+                <span className="rounded bg-amber-200/70 px-1 py-px text-[10px] capitalize text-amber-900 dark:bg-amber-800/50 dark:text-amber-200">
+                  {pr.operation.replace(/^addon-/, '')}
+                </span>
+              )}
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          ))}
         </div>
       </td>
       <td className="px-4 py-3 font-mono text-xs text-[#1a4a6a] dark:text-gray-400">

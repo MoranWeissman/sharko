@@ -65,6 +65,8 @@ const mockGetClusters = vi.fn();
 vi.mock('@/services/api', () => ({
   api: {
     getClusters: (...args: unknown[]) => mockGetClusters(...args),
+    // BUG-041: ClustersOverview reads cluster_test_available on mount.
+    health: () => Promise.resolve({ status: 'healthy', cluster_test_available: true }),
   },
 }));
 

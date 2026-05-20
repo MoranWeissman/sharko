@@ -33,6 +33,7 @@ vi.mock('react-router-dom', async () => {
 
 const mockGetClusterComparison = vi.fn();
 const mockTestClusterConnection = vi.fn();
+const mockFetchTrackedPRs = vi.fn();
 vi.mock('@/services/api', async () => {
   // V125-1-10.5: keep `isTestClusterUnavailable` real so the view's
   // discriminator stays in sync with the API contract; only stub the
@@ -51,6 +52,12 @@ vi.mock('@/services/api', async () => {
     deregisterCluster: vi.fn().mockResolvedValue({}),
     updateClusterAddons: vi.fn().mockResolvedValue({}),
     updateClusterSettings: vi.fn().mockResolvedValue({}),
+    // BUG-042: ClusterDetail now fetches /api/v1/prs?status=open&cluster=<name>
+    // alongside the cluster comparison to overlay pending-PR badges on
+    // addon rows. Default to an empty PR list so existing tests keep
+    // observing the no-badges baseline; per-test overrides drive the
+    // BUG-042 assertions below.
+    fetchTrackedPRs: (...args: unknown[]) => mockFetchTrackedPRs(...args),
   };
 });
 
@@ -144,6 +151,9 @@ describe('ClusterDetail', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetClusterComparison.mockResolvedValue(comparisonResponse);
+    // BUG-042: default to "no pending PRs" so existing assertions don't
+    // accidentally find a badge. Per-test overrides drive the badge cases.
+    mockFetchTrackedPRs.mockResolvedValue({ prs: [] });
   });
 
   it('renders loading state initially', () => {
@@ -290,6 +300,188 @@ describe('ClusterDetail', () => {
     });
 
     expect(screen.getByText('Ingress-nginx')).toBeInTheDocument();
+  });
+
+  // BUG-042: the cluster→addons sub-page must show open pending-PR
+  // badges inline on each addon row. The Sharko GitOps model opens a PR
+  // for every addon enable / disable / upgrade — before this fix the
+  // operator only saw the merged-state addon list and had to switch to
+  // the cluster's PRs section to learn that work was in flight.
+  describe('BUG-042: pending PR badges on cluster addons sub-page', () => {
+    it('renders one badge per open PR targeting an addon on this cluster', async () => {
+      mockFetchTrackedPRs.mockResolvedValueOnce({
+        prs: [
+          {
+            pr_id: 4242,
+            pr_url: 'https://github.com/example/repo/pull/4242',
+            pr_branch: 'sharko/addon-upgrade-ingress-nginx-prod-eu',
+            pr_title: 'Upgrade ingress-nginx to 4.8.0 on prod-eu',
+            cluster: 'prod-eu',
+            addon: 'ingress-nginx',
+            operation: 'addon-upgrade',
+            user: 'admin',
+            source: 'sharko',
+            created_at: '2026-05-20T10:00:00Z',
+            last_status: 'open',
+            last_polled_at: '2026-05-20T10:01:00Z',
+          },
+          {
+            pr_id: 4243,
+            pr_url: 'https://github.com/example/repo/pull/4243',
+            pr_branch: 'sharko/addon-add-cert-manager-prod-eu',
+            pr_title: 'Enable cert-manager on prod-eu',
+            cluster: 'prod-eu',
+            addon: 'cert-manager',
+            operation: 'addon-add',
+            user: 'admin',
+            source: 'sharko',
+            created_at: '2026-05-20T10:05:00Z',
+            last_status: 'open',
+            last_polled_at: '2026-05-20T10:06:00Z',
+          },
+        ],
+      });
+
+      renderView('addons');
+
+      await waitFor(() => {
+        expect(screen.getByText('Ingress-nginx')).toBeInTheDocument();
+      });
+
+      // Wait for the PR fetch to resolve and badges to render.
+      await waitFor(() => {
+        expect(screen.getAllByTestId('addon-pending-pr-badge').length).toBeGreaterThanOrEqual(2);
+      });
+
+      const badges = screen.getAllByTestId('addon-pending-pr-badge');
+      // Two open PRs → two badges
+      expect(badges).toHaveLength(2);
+
+      // Each badge links to the PR with target="_blank" — click opens in a new tab.
+      const prUrls = badges.map((b) => b.getAttribute('href'));
+      expect(prUrls).toContain('https://github.com/example/repo/pull/4242');
+      expect(prUrls).toContain('https://github.com/example/repo/pull/4243');
+      for (const badge of badges) {
+        expect(badge).toHaveAttribute('target', '_blank');
+        expect(badge).toHaveAttribute('rel', expect.stringContaining('noopener'));
+      }
+
+      // The /prs fetch must be scoped to this cluster + open status so we
+      // don't drag in noise from other clusters or merged PRs.
+      expect(mockFetchTrackedPRs).toHaveBeenCalledWith(
+        expect.objectContaining({ cluster: 'prod-eu', status: 'open' }),
+      );
+    });
+
+    it('renders no badges when no open PRs match', async () => {
+      // beforeEach already sets the empty default; this test is the
+      // explicit regression guard for "happy path = no badges".
+      renderView('addons');
+
+      await waitFor(() => {
+        expect(screen.getByText('Ingress-nginx')).toBeInTheDocument();
+      });
+
+      // Allow the PR fetch to resolve.
+      await waitFor(() => {
+        expect(mockFetchTrackedPRs).toHaveBeenCalled();
+      });
+
+      expect(screen.queryAllByTestId('addon-pending-pr-badge')).toHaveLength(0);
+    });
+
+    it('supports multiple open PRs against the same addon', async () => {
+      // Rare but possible — e.g. an upgrade PR opened while a values
+      // edit PR is still in flight. Both must render so the operator
+      // can see (and resolve) both.
+      mockFetchTrackedPRs.mockResolvedValueOnce({
+        prs: [
+          {
+            pr_id: 1001,
+            pr_url: 'https://github.com/example/repo/pull/1001',
+            pr_branch: 'sharko/addon-upgrade-prometheus-prod-eu',
+            pr_title: 'Upgrade prometheus to 2.46 on prod-eu',
+            cluster: 'prod-eu',
+            addon: 'prometheus',
+            operation: 'addon-upgrade',
+            user: 'admin',
+            source: 'sharko',
+            created_at: '2026-05-20T09:00:00Z',
+            last_status: 'open',
+            last_polled_at: '2026-05-20T09:01:00Z',
+          },
+          {
+            pr_id: 1002,
+            pr_url: 'https://github.com/example/repo/pull/1002',
+            pr_branch: 'sharko/values-edit-prometheus-prod-eu',
+            pr_title: 'Edit prometheus values on prod-eu',
+            cluster: 'prod-eu',
+            addon: 'prometheus',
+            operation: 'values-edit',
+            user: 'admin',
+            source: 'sharko',
+            created_at: '2026-05-20T09:10:00Z',
+            last_status: 'open',
+            last_polled_at: '2026-05-20T09:11:00Z',
+          },
+        ],
+      });
+
+      renderView('addons');
+
+      await waitFor(() => {
+        expect(screen.getByText('Prometheus')).toBeInTheDocument();
+      });
+
+      await waitFor(() => {
+        expect(screen.getAllByTestId('addon-pending-pr-badge').length).toBe(2);
+      });
+
+      // Both badges link to their respective PRs.
+      const badges = screen.getAllByTestId('addon-pending-pr-badge');
+      const hrefs = badges.map((b) => b.getAttribute('href')).sort();
+      expect(hrefs).toEqual([
+        'https://github.com/example/repo/pull/1001',
+        'https://github.com/example/repo/pull/1002',
+      ]);
+    });
+
+    it('drops PRs without an addon attribution (e.g. cluster register/deregister)', async () => {
+      // Cluster-scope PRs (register / deregister / init) appear in the
+      // cluster PRs section, not on individual addon rows. The handler
+      // dropped any pr.addon === undefined.
+      mockFetchTrackedPRs.mockResolvedValueOnce({
+        prs: [
+          {
+            pr_id: 9999,
+            pr_url: 'https://github.com/example/repo/pull/9999',
+            pr_branch: 'sharko/register-prod-eu',
+            pr_title: 'Register cluster prod-eu',
+            cluster: 'prod-eu',
+            // no `addon` — cluster-scope PR
+            operation: 'cluster-register',
+            user: 'admin',
+            source: 'sharko',
+            created_at: '2026-05-20T08:00:00Z',
+            last_status: 'open',
+            last_polled_at: '2026-05-20T08:01:00Z',
+          },
+        ],
+      });
+
+      renderView('addons');
+
+      await waitFor(() => {
+        expect(screen.getByText('Ingress-nginx')).toBeInTheDocument();
+      });
+
+      await waitFor(() => {
+        expect(mockFetchTrackedPRs).toHaveBeenCalled();
+      });
+
+      // No per-addon badges — the cluster-scope PR was correctly ignored.
+      expect(screen.queryAllByTestId('addon-pending-pr-badge')).toHaveLength(0);
+    });
   });
 
   // BUG-034: the connection-status banner copy must distinguish "Unknown"

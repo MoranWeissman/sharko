@@ -14,9 +14,15 @@ vi.mock('react-router-dom', async () => {
 });
 
 const mockGetClusters = vi.fn();
+const mockHealth = vi.fn();
 vi.mock('@/services/api', () => ({
   api: {
     getClusters: (...args: unknown[]) => mockGetClusters(...args),
+    // BUG-041: ClustersOverview now fetches /api/v1/health on mount to read
+    // the cluster_test_available capability flag. Default the mock to "true"
+    // so existing tests keep observing the Test button enabled and do not
+    // need to be rewritten.
+    health: (...args: unknown[]) => mockHealth(...args),
   },
 }));
 
@@ -62,6 +68,11 @@ describe('ClustersOverview', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetClusters.mockResolvedValue(clustersResponse);
+    mockHealth.mockResolvedValue({
+      status: 'healthy',
+      version: 'test',
+      cluster_test_available: true,
+    });
   });
 
   it('renders loading state initially', () => {
@@ -263,6 +274,146 @@ describe('ClustersOverview', () => {
       expect(screen.queryByText('Strict refresh fail')).not.toBeInTheDocument();
     } finally {
       errorSpy.mockRestore();
+    }
+  });
+
+  // BUG-040: the Dashboard's "N disconnected cluster(s)" link navigates to
+  // /clusters?status=disconnected. The Clusters page MUST resolve that
+  // deep-link to the same set of clusters the headline count covers — any
+  // managed cluster that ArgoCD is not currently reporting as "Successful"
+  // / "Connected" (failed + missing + unknown). Previously this routed to
+  // a 'failed' filter which showed 0 rows whenever the disconnected
+  // cluster's status was actually `missing` (not yet bootstrapped) or
+  // `unknown` (ArgoCD has no record yet). That mismatch read as "count
+  // says 1, list shows 0" which is the user-facing symptom of BUG-040.
+  it('?status=disconnected filter resolves to all non-connected managed clusters (BUG-040)', async () => {
+    const mixedDisconnected = {
+      clusters: [
+        {
+          name: 'prod-eu',
+          labels: { env: 'prod' },
+          server_version: '1.28',
+          connection_status: 'connected',
+          managed: true,
+        },
+        {
+          name: 'failing-cluster',
+          labels: { env: 'staging' },
+          server_version: '1.27',
+          connection_status: 'failed',
+          managed: true,
+        },
+        {
+          name: 'missing-cluster',
+          labels: { env: 'dev' },
+          server_version: '1.28',
+          connection_status: 'missing',
+          managed: true,
+        },
+        {
+          name: 'unknown-cluster',
+          labels: { env: 'lab' },
+          server_version: '1.28',
+          connection_status: 'unknown',
+          managed: true,
+        },
+        {
+          name: 'discovered-cluster',
+          labels: {},
+          server_version: '1.28',
+          connection_status: 'not_in_git',
+          managed: false,
+        },
+      ],
+      health_stats: {
+        total_in_git: 4,
+        connected: 1,
+        failed: 1,
+        missing_from_argocd: 1,
+        not_in_git: 1,
+      },
+    };
+    mockGetClusters.mockResolvedValue(mixedDisconnected);
+
+    render(
+      <MemoryRouter initialEntries={["/clusters?status=disconnected"]}>
+        <ClustersOverview />
+      </MemoryRouter>,
+    );
+
+    // Wait for the row of any of the 3 disconnected clusters to show.
+    await waitFor(() => {
+      expect(screen.getByText('failing-cluster')).toBeInTheDocument();
+    });
+
+    // All 3 disconnected managed clusters must appear under the deep-link.
+    expect(screen.getByText('failing-cluster')).toBeInTheDocument();
+    expect(screen.getByText('missing-cluster')).toBeInTheDocument();
+    expect(screen.getByText('unknown-cluster')).toBeInTheDocument();
+
+    // Connected and discovered/unmanaged clusters must NOT appear.
+    expect(screen.queryByText('prod-eu')).not.toBeInTheDocument();
+    expect(screen.queryByText('discovered-cluster')).not.toBeInTheDocument();
+  });
+
+  // BUG-041: Test button on each cluster row must be disabled (with a
+  // tooltip pointing at Settings → Connections) when /api/v1/health
+  // reports cluster_test_available=false. That happens whenever no
+  // secrets backend (Vault / AWS Secrets Manager / file-store /
+  // ArgoCDProvider auto-default) is configured on the active connection
+  // — typically the `--demo` dev path. Previously the button was always
+  // enabled, the user clicked it, and the test endpoint returned 503 +
+  // error_code=no_secrets_backend — confusing UX.
+  it('disables Test button when health reports cluster_test_available=false (BUG-041)', async () => {
+    mockHealth.mockResolvedValue({
+      status: 'healthy',
+      version: 'test',
+      cluster_test_available: false,
+    });
+
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    });
+
+    // Wait for the /health fetch to resolve and the gate to flip.
+    await waitFor(() => {
+      const testButtons = screen.getAllByRole('button', { name: /no secrets backend/i });
+      expect(testButtons.length).toBeGreaterThanOrEqual(1);
+    });
+
+    const testButtons = screen.getAllByRole('button', { name: /no secrets backend/i });
+    for (const btn of testButtons) {
+      expect(btn).toBeDisabled();
+      // The aria-label / title both contain the explanatory tooltip copy.
+      const tooltipSource = btn.getAttribute('title') ?? btn.getAttribute('aria-label') ?? '';
+      expect(tooltipSource).toMatch(/secrets backend/i);
+      expect(tooltipSource).toMatch(/Settings\s*→\s*Connections/);
+    }
+  });
+
+  // BUG-041 (paired): the default-enabled path must remain enabled when
+  // /health reports cluster_test_available=true so existing flows work.
+  it('keeps Test button enabled when cluster_test_available=true (BUG-041)', async () => {
+    // Default beforeEach mock already returns true; just confirm.
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('prod-eu')).toBeInTheDocument();
+    });
+
+    // Allow /health fetch to resolve.
+    await waitFor(() => {
+      expect(mockHealth).toHaveBeenCalled();
+    });
+
+    // After health resolves with true, no Test button is disabled by the gate.
+    // (it may still be disabled while testing=true, but no test is in flight.)
+    const testButtons = screen.getAllByRole('button', { name: /^Test$/ });
+    expect(testButtons.length).toBeGreaterThanOrEqual(1);
+    for (const btn of testButtons) {
+      expect(btn).not.toBeDisabled();
     }
   });
 

@@ -68,6 +68,7 @@ nav:
     - Cluster Connectivity Model: operator/cluster-connectivity-model.md
     - AWS IAM Cluster Auth: operator/aws-iam-cluster-auth.md
     - Audit Log: operator/audit-log.md
+    - Corporate TLS MITM: operator/corporate-mitm-tls.md
     - Troubleshooting: operator/troubleshooting.md
   - CLI Reference:
     - Overview: cli/overview.md

@@ -314,6 +314,67 @@ extraEnv: []
 #    value: "my-value"
 
 # ---------------------------------------------------------------------------
+# Corporate TLS MITM / SSL inspection (BUG-043) — informational only
+# ---------------------------------------------------------------------------
+# Some corporate networks intercept TLS to inspect traffic, re-signing
+# certificates with a corporate root CA that public CAs do not trust. In
+# those environments argocd-repo-server fails to fetch public Git repos
+# (e.g. github.com) with:
+#
+#   x509: certificate signed by unknown authority
+#
+# Sharko does NOT package the ArgoCD chart as a subchart — ArgoCD is
+# installed separately, ahead of Sharko (see Prerequisites in the operator
+# installation guide). The fix therefore lives in your ArgoCD Helm values,
+# NOT in this file. Sharko has no key that injects volumes into the
+# argocd-repo-server pod, and no such key would be safe because Sharko
+# does not own the ArgoCD release.
+#
+# Mechanism chosen: ConfigMap-backed extra volume mounted into
+# argocd-repo-server + SSL_CERT_DIR env var pointing OpenSSL at it. We
+# pick this over `configs.tls.certificates` (which is for ArgoCD's own
+# inbound TLS, not outbound git fetches) and over baking the CA into a
+# custom image (operationally heavier).
+#
+# Workaround in three steps (full runbook:
+# docs/site/operator/corporate-mitm-tls.md):
+#
+#   1. Capture the corporate root CA:
+#        openssl s_client -connect github.com:443 -showcerts < /dev/null 2>/dev/null \
+#          | awk '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/' \
+#          > corporate-ca.crt
+#
+#   2. Create a ConfigMap in the argocd namespace:
+#        kubectl create configmap sharko-extra-ca-bundle -n argocd \
+#          --from-file=ca.crt=corporate-ca.crt
+#
+#   3. In your ArgoCD Helm values (NOT in this Sharko values file),
+#      add the block below and run `helm upgrade` on the ArgoCD release:
+#
+#        # values for the argo-cd Helm chart (chart name: argo-cd)
+#        repoServer:
+#          volumes:
+#            - name: extra-ca-bundle
+#              configMap:
+#                name: sharko-extra-ca-bundle
+#          volumeMounts:
+#            - name: extra-ca-bundle
+#              mountPath: /etc/ssl/certs/corporate-ca.crt
+#              subPath: ca.crt
+#              readOnly: true
+#          env:
+#            - name: SSL_CERT_DIR
+#              value: /etc/ssl/certs
+#
+# After applying, restart argocd-repo-server and verify the x509 errors
+# are gone:
+#
+#   kubectl rollout restart deployment/argocd-repo-server -n argocd
+#   kubectl logs -n argocd deploy/argocd-repo-server | grep -i x509
+#
+# (empty output after ~30s = workaround applied)
+
+# ---------------------------------------------------------------------------
 # E2E TEST HARNESS ONLY — DO NOT SET IN PRODUCTION DEPLOYMENTS.
 #
 # These keys exist to wire test-only behavior. They MUST remain empty/default
