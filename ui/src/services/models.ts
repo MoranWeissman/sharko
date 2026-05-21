@@ -153,6 +153,18 @@ export interface AddonCatalogItem {
   healthy_applications: number
   degraded_applications: number
   missing_applications: number
+  /**
+   * V126-3.1 (DESIGN-02): paired counts that drive the tile-level
+   * "Running on N/M clusters" badge. Both default to 0 when the backend
+   * predates V126-3.1 — the badge falls through to "Not deployed anywhere".
+   *
+   * deployed_cluster_count (N): clusters where the ArgoCD Application for
+   * this addon is BOTH Synced AND Healthy.
+   * total_target_cluster_count (M): clusters where the addon is labelled
+   * enabled in managed-clusters.yaml.
+   */
+  deployed_cluster_count?: number
+  total_target_cluster_count?: number
   applications: AddonDeploymentInfo[]
   syncWave?: number
   selfHeal?: boolean

@@ -84,6 +84,17 @@ type AddonCatalogItem struct {
 	DegradedApplications int `json:"degraded_applications"`
 	MissingApplications  int `json:"missing_applications"`
 
+	// V126-3.1 (DESIGN-02): paired counts that drive the tile-level
+	// "Running on N/M clusters" badge. N = clusters where the ArgoCD
+	// Application for this addon is Synced + Healthy.
+	// M = clusters where the addon is labelled enabled in
+	// managed-clusters.yaml. These are kept separate from the existing
+	// HealthyApplications / EnabledClusters fields so the tile copy can
+	// distinguish "addon is in catalog" from "addon is actually running"
+	// without changing the historical stat semantics other tiles depend on.
+	DeployedClusterCount     int `json:"deployed_cluster_count"`
+	TotalTargetClusterCount  int `json:"total_target_cluster_count"`
+
 	// Per-cluster details
 	Applications []AddonDeploymentInfo `json:"applications"`
 }

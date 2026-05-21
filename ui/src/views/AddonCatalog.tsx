@@ -44,7 +44,11 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 
-type AddonsView = 'installed' | 'marketplace'
+// V126-3.1 (DESIGN-02): the historical tab value `'installed'` was renamed to
+// `'catalog'` to remove the implication that an addon listed in the catalog
+// is necessarily running on a cluster. The tile badge now sources its copy
+// from deployed_cluster_count / total_target_cluster_count (see DeploymentBadge).
+type AddonsView = 'catalog' | 'marketplace'
 
 type FilterType = 'all' | 'healthy' | 'unhealthy' | 'git-only'
 type SortBy = 'name' | 'applications'
@@ -52,10 +56,12 @@ type PageSize = 15 | 30 | 60
 
 /**
  * AddonsTabBar — top-of-page tab control switching between the user's
- * "Installed" addons (the historical AddonCatalog content) and the v1.21
- * curated "Marketplace" tab. Implemented as a real WAI-ARIA tablist so
- * keyboard users get arrow-key navigation for free via the browser's default
- * radio-group behaviour on the underlying buttons.
+ * "Catalog" (the historical AddonCatalog content; renamed from "Installed"
+ * in V126-3.1 / DESIGN-02 so the tab name no longer implies the addons are
+ * running on a cluster) and the v1.21 curated "Marketplace" tab.
+ * Implemented as a real WAI-ARIA tablist so keyboard users get arrow-key
+ * navigation for free via the browser's default radio-group behaviour on
+ * the underlying buttons.
  */
 function AddonsTabBar({
   tab,
@@ -65,7 +71,7 @@ function AddonsTabBar({
   onChange: (next: AddonsView) => void
 }) {
   const items: { value: AddonsView; label: string; icon: React.ReactNode }[] = [
-    { value: 'installed', label: 'Installed', icon: <Boxes className="h-4 w-4" /> },
+    { value: 'catalog', label: 'Catalog', icon: <Boxes className="h-4 w-4" /> },
     { value: 'marketplace', label: 'Marketplace', icon: <Store className="h-4 w-4" /> },
   ]
   return (
@@ -89,7 +95,7 @@ function AddonsTabBar({
             onKeyDown={(e) => {
               if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
                 e.preventDefault()
-                onChange(tab === 'installed' ? 'marketplace' : 'installed')
+                onChange(tab === 'catalog' ? 'marketplace' : 'catalog')
               }
             }}
             className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#6aade0] ${
@@ -152,6 +158,67 @@ function StatusChip({
   )
 }
 
+/**
+ * DeploymentBadge — V126-3.1 (DESIGN-02) tile badge.
+ *
+ * Replaces the historical "Installed" / "Catalog Only" headline + "Deployed
+ * on N clusters" stats text that conflated two distinct ideas: being listed
+ * in the catalog vs actually running on a cluster. Renders one of four
+ * copies based on (deployed, target):
+ *
+ *   target = 0           → "Not deployed anywhere"   (amber, no targets opted in)
+ *   deployed = 0, M > 0  → "Not deployed yet"        (amber, opted-in but ArgoCD hasn't synced+healthy)
+ *   0 < N < M            → "Running on N/M clusters" (project-blue, partial)
+ *   N == M, M > 0        → "Running on N clusters"   (green, fully covered)
+ *
+ * The component reads deployed_cluster_count + total_target_cluster_count
+ * from the addon row; both default to 0 if the backend is older than
+ * V126-3.1, in which case the badge degrades gracefully to "Not deployed
+ * anywhere" rather than crashing.
+ */
+function DeploymentBadge({ addon }: { addon: AddonCatalogItem }) {
+  const deployed = addon.deployed_cluster_count ?? 0
+  const target = addon.total_target_cluster_count ?? 0
+
+  let label: string
+  let tone: 'amber' | 'blue' | 'green'
+
+  if (target === 0) {
+    label = 'Not deployed anywhere'
+    tone = 'amber'
+  } else if (deployed === 0) {
+    label = 'Not deployed yet'
+    tone = 'amber'
+  } else if (deployed === target) {
+    // N == M, M > 0 — cleaner copy than "Running on N/N clusters"
+    label = `Running on ${deployed} ${deployed === 1 ? 'cluster' : 'clusters'}`
+    tone = 'green'
+  } else {
+    // 0 < N < M — partial coverage
+    label = `Running on ${deployed}/${target} clusters`
+    tone = 'blue'
+  }
+
+  const toneClasses: Record<typeof tone, string> = {
+    amber:
+      'bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:ring-amber-700',
+    blue:
+      // Sharko project-blue tokens, matches the existing tile chrome.
+      'bg-[#d0e8f8] text-[#0a3a5a] ring-[#6aade0] dark:bg-blue-900/30 dark:text-blue-300 dark:ring-blue-700',
+    green:
+      'bg-green-50 text-green-700 ring-green-200 dark:bg-green-900/30 dark:text-green-400 dark:ring-green-700',
+  }
+
+  return (
+    <span
+      data-testid="addon-deployment-badge"
+      className={`mt-1 inline-flex w-fit items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1 ${toneClasses[tone]}`}
+    >
+      {label}
+    </span>
+  )
+}
+
 function AddonCard({ addon }: { addon: AddonCatalogItem }) {
   const [expanded, setExpanded] = useState(false)
   const navigate = useNavigate()
@@ -182,19 +249,14 @@ function AddonCard({ addon }: { addon: AddonCatalogItem }) {
             <p className="truncate text-xs text-[#2a5a7a] dark:text-gray-400">
               Namespace: {namespace}
             </p>
-            {enabledApps > 0 ? (
-              <p className="mt-1 text-sm font-semibold text-teal-600 dark:text-teal-400">
-                {enabledApps} Active Applications
-              </p>
-            ) : (
-              // v1.21 QA Bundle 4 Fix #2: unify vocabulary on the Installed
-              // addons page — "Catalog Only" matches the summary card and the
-              // legend strip; cards used to say "Not Deployed" which was the
-              // same idea with different words.
-              <p className="mt-1 text-sm font-semibold text-amber-600 dark:text-amber-400">
-                Catalog Only
-              </p>
-            )}
+            {/*
+             * V126-3.1 (DESIGN-02): the "Installed" badge that previously
+             * lived here ("X Active Applications" / "Catalog Only") was
+             * replaced with a single source-of-truth badge that distinguishes
+             * "in catalog" from "running on N clusters" — the old badge
+             * implied the addon was running whenever it was simply listed.
+             */}
+            <DeploymentBadge addon={addon} />
           </div>
           <button
             type="button"
@@ -212,13 +274,6 @@ function AddonCard({ addon }: { addon: AddonCatalogItem }) {
             )}
           </button>
         </div>
-
-        {/* Stats */}
-        <p className="mb-2 text-xs text-[#2a5a7a] dark:text-gray-400">
-          {enabledApps > 0
-            ? `Deployed on ${enabledApps} ${enabledApps === 1 ? 'cluster' : 'clusters'}`
-            : 'Not deployed on any cluster'}
-        </p>
 
         <HealthProgressBar healthy={addon.healthy_applications} total={enabledApps} />
 
@@ -448,12 +503,26 @@ function AddonListTable({ addons }: { addons: AddonCatalogItem[] }) {
 
 export function AddonCatalog() {
   // Tab state — kept in URL so Marketplace deep links survive a refresh.
-  // Default tab is "installed" to preserve the historical behaviour of this
-  // page; Marketplace is opt-in via ?tab=marketplace or the tab control.
+  // Default tab is "catalog" (the renamed historical "installed" tab; V126-3.1
+  // / DESIGN-02). Stale `?tab=installed` links from bookmarks or external
+  // links are normalised to the new value via a one-shot redirect effect so
+  // they don't crash and so the URL stays canonical after navigation.
+  // Marketplace is opt-in via ?tab=marketplace or the tab control.
   const [searchParams, setSearchParams] = useSearchParams()
   const initialTab: AddonsView =
-    searchParams.get('tab') === 'marketplace' ? 'marketplace' : 'installed'
+    searchParams.get('tab') === 'marketplace' ? 'marketplace' : 'catalog'
   const [tab, setTab] = useState<AddonsView>(initialTab)
+  // Stale `?tab=installed` redirect — strip the legacy param so the URL
+  // stays canonical. Runs once on mount; subsequent navigation goes through
+  // switchTab below.
+  useEffect(() => {
+    if (searchParams.get('tab') === 'installed') {
+      const params = new URLSearchParams(searchParams.toString())
+      params.delete('tab')
+      setSearchParams(params, { replace: true })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const switchTab = useCallback(
     (next: AddonsView) => {
       setTab(next)
@@ -788,7 +857,7 @@ export function AddonCatalog() {
       <div>
         <h2 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">Addons</h2>
         <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
-          {tab === 'installed'
+          {tab === 'catalog'
             ? 'All addons defined in your Git catalog. See deployment coverage, health, and version per addon.'
             : 'Browse Sharko\u2019s curated catalog and configure a new addon for your Git repo.'}
         </p>

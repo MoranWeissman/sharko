@@ -50,11 +50,15 @@ func (s *Server) handleListAddons(w http.ResponseWriter, r *http.Request) {
 // handleGetAddonCatalog godoc
 //
 // @Summary Get addon catalog
-// @Description Returns the full addon catalog with per-cluster deployment status
+// @Description Returns the full addon catalog with per-cluster deployment status.
+// @Description Each addon carries deployed_cluster_count (clusters where the
+// @Description ArgoCD Application is Synced + Healthy) and total_target_cluster_count
+// @Description (clusters where the addon is labelled enabled in managed-clusters.yaml);
+// @Description the UI uses the pair to render the tile-level "Running on N/M clusters" badge.
 // @Tags addons
 // @Produce json
 // @Security BearerAuth
-// @Success 200 {object} map[string]interface{} "Addon catalog"
+// @Success 200 {object} models.AddonCatalogResponse "Addon catalog"
 // @Failure 500 {object} map[string]interface{} "Internal error"
 // @Failure 503 {object} map[string]interface{} "Service unavailable"
 // @Router /addons/catalog [get]

@@ -238,6 +238,85 @@ definitions:
       permission:
         type: string
     type: object
+  github_com_MoranWeissman_sharko_internal_models.AddonCatalogItem:
+    properties:
+      addon_name:
+        type: string
+      applications:
+        description: Per-cluster details
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.AddonDeploymentInfo'
+        type: array
+      chart:
+        type: string
+      degraded_applications:
+        type: integer
+      deployed_cluster_count:
+        description: |-
+          V126-3.1 (DESIGN-02): paired counts that drive the tile-level
+          "Running on N/M clusters" badge. N = clusters where the ArgoCD
+          Application for this addon is Synced + Healthy.
+          M = clusters where the addon is labelled enabled in
+          managed-clusters.yaml. These are kept separate from the existing
+          HealthyApplications / EnabledClusters fields so the tile copy can
+          distinguish "addon is in catalog" from "addon is actually running"
+          without changing the historical stat semantics other tiles depend on.
+        type: integer
+      enabled_clusters:
+        type: integer
+      healthy_applications:
+        type: integer
+      missing_applications:
+        type: integer
+      namespace:
+        type: string
+      repo_url:
+        type: string
+      total_clusters:
+        description: Stats
+        type: integer
+      total_target_cluster_count:
+        type: integer
+      version:
+        type: string
+    type: object
+  github_com_MoranWeissman_sharko_internal_models.AddonCatalogResponse:
+    properties:
+      addons:
+        items:
+          $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.AddonCatalogItem'
+        type: array
+      addons_only_in_git:
+        type: integer
+      total_addons:
+        type: integer
+      total_clusters:
+        type: integer
+    type: object
+  github_com_MoranWeissman_sharko_internal_models.AddonDeploymentInfo:
+    properties:
+      application_name:
+        type: string
+      cluster_environment:
+        type: string
+      cluster_name:
+        type: string
+      configured_version:
+        type: string
+      deployed_version:
+        type: string
+      enabled:
+        type: boolean
+      health_status:
+        type: string
+      namespace:
+        type: string
+      status:
+        type: string
+      sync_status:
+        description: ArgoCD status
+        type: string
+    type: object
   github_com_MoranWeissman_sharko_internal_models.AddonSource:
     properties:
       chart:
@@ -2217,15 +2296,19 @@ paths:
       - addons
   /addons/catalog:
     get:
-      description: Returns the full addon catalog with per-cluster deployment status
+      description: |-
+        Returns the full addon catalog with per-cluster deployment status.
+        Each addon carries deployed_cluster_count (clusters where the
+        ArgoCD Application is Synced + Healthy) and total_target_cluster_count
+        (clusters where the addon is labelled enabled in managed-clusters.yaml);
+        the UI uses the pair to render the tile-level "Running on N/M clusters" badge.
       produces:
       - application/json
       responses:
         "200":
           description: Addon catalog
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.AddonCatalogResponse'
         "500":
           description: Internal error
           schema:
