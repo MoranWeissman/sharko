@@ -1,5 +1,11 @@
 # Release Notes
 
+## v1.26 (in progress)
+
+- **Bootstrap no longer pre-populates 3 foundation addons.** Previously `addons-catalog.yaml` shipped with cert-manager, external-secrets, and metrics-server pre-configured. New installs start with an empty catalog; install these (or any other) addons from the Marketplace as needed.
+
+---
+
 ## v1.25 (in progress) — Three-mechanism provider config split
 
 v1.25 splits the previously field-overloaded `providers.Config` struct into **three orthogonal typed configs**. The split closes the V125-1-10.8 cross-contamination smell at the type level: the compiler now enforces that an "ArgoCD namespace" knob cannot accidentally flow into an "addon-secrets namespace" slot. See [Operator → Configuration → Provider Configuration (3-mechanism split)](operator/configuration.md#provider-3mech) for the full operator surface and the [Cluster Connectivity Model](operator/cluster-connectivity-model.md) for the end-to-end story.
