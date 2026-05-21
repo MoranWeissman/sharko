@@ -6,10 +6,19 @@ metadata:
 spec:
   # Cluster Addons Registry — managed by Sharko
   # See docs: https://moranweissman.github.io/sharko/user-guide/clusters/
+  #
+  # V125-1-9.5: clusters MUST be an array (even when empty). The JSON
+  # Schema (https://sharko.io/schemas/managed-clusters.v1.json) requires
+  # spec.clusters to be of type "array"; YAML's bare `clusters:` parses
+  # to null and fails schema validation. Keep the `[]` even when there
+  # are no clusters — `sharko add-cluster` and the UI both append to
+  # this list in-place.
 
-  clusters:
-    # - name: prod-eu
-    #   secretPath: k8s-prod-eu-eks   # explicit path to secret in provider
-    #   region: eu-central-1
-    #   labels:
-    #     <addon-name>: enabled       # one line per enabled addon
+  clusters: []
+  # Example with all available fields (uncomment + remove the `[]` above):
+  # clusters:
+  #   - name: prod-eu
+  #     secretPath: k8s-prod-eu-eks   # explicit path to secret in provider
+  #     region: eu-central-1
+  #     labels:
+  #       <addon-name>: enabled       # one line per enabled addon

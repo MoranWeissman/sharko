@@ -162,6 +162,74 @@ jobs:
             exit 1
           fi
 
+  # V125-1-9.5 — PR-time Sharko YAML validation.
+  # On every pull request, this job builds the sharko CLI binary and
+  # runs `sharko validate-config` against every changed *.yaml / *.yml
+  # file in the PR diff. The CLI itself decides which files are Sharko-
+  # owned (top-level apiVersion: sharko.io/v1) and silently skips the
+  # rest, so this job stays permissive: it only blocks PRs whose
+  # enveloped Sharko YAML actually fails schema validation. Helm
+  # templates, kustomize, workflows, kind configs, etc. all flow
+  # through untouched.
+  #
+  # Shape mirrors swagger-check + schemas-up-to-date so a contributor
+  # reading the file sees a consistent "check + remediation hint"
+  # pattern. The diff-only approach (vs validating the whole repo)
+  # keeps the job O(changed-files) rather than O(repo-yaml-count),
+  # which matters as the docs/ tree grows.
+  validate-sharko-config:
+    name: Sharko Config Validation
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # fetch-depth: 0 gives us the full history so the diff range
+          # `origin/${{ github.base_ref }}...HEAD` resolves cleanly.
+          # The default fetch-depth (1) would fail with "fatal: bad
+          # revision" on the first push to a branch that hasn't been
+          # rebased onto a fresh main yet.
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: Build sharko CLI
+        # Single static binary; same recipe `make build-go` uses but
+        # inlined here so the job doesn't depend on Makefile drift.
+        run: go build -o sharko ./cmd/sharko
+
+      - name: Validate changed Sharko YAML
+        run: |
+          set -e
+          # `git diff --name-only A...HEAD` is the symmetric-difference
+          # form — every commit reachable from HEAD but not from A.
+          # This is what `gh pr diff` shows the reviewer, so the check
+          # operates on the same set of changes the reviewer sees.
+          changed=$(git diff --name-only origin/${{ github.base_ref }}...HEAD -- '*.yaml' '*.yml' || true)
+          if [ -z "$changed" ]; then
+            echo "no YAML changes in this PR — skipping validation"
+            exit 0
+          fi
+          echo "Validating changed YAML files:"
+          echo "$changed"
+          echo "---"
+          fail=0
+          while IFS= read -r f; do
+            # Deleted files appear in the diff name list but no longer
+            # exist on disk — skip them rather than failing the loop.
+            [ -f "$f" ] || continue
+            ./sharko validate-config "$f" || fail=1
+          done <<< "$changed"
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::Sharko config validation failed — see https://sharko.io/schemas/ for schema URLs"
+            exit 1
+          fi
+          echo "All changed Sharko YAML validated cleanly."
+
   helm-validate:
     name: Helm Lint & Template
     runs-on: ubuntu-latest
