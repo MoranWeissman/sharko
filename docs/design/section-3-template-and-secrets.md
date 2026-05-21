@@ -278,6 +278,18 @@ Sharko doesn't control ArgoCD's sync timing. ArgoCD could start deploying within
 
 ### Solution: The PR Is the Gate
 
+> **V125-1-8 update (2026-05-21):** The pre-creation pattern described in
+> this section was REPLACED by the cluster-secret reconciler. ArgoCD
+> cluster Secrets are now created **post-merge** by the reconciler in
+> `internal/clusterreconciler/`, gated by an
+> `app.kubernetes.io/managed-by: sharko` ownership label. The
+> PR-closed-without-merge orphan case (the bug that motivated V125-1-8)
+> cannot occur because no Secret is created until the PR merges. See
+> [`2026-05-11-cluster-secret-reconciler-and-gitops-stance.md`](./2026-05-11-cluster-secret-reconciler-and-gitops-stance.md)
+> for the current architecture and the operator runbook at
+> [`docs/site/operator/cluster-reconciler.md`](../site/operator/cluster-reconciler.md).
+> The text below is preserved for historical traceability.
+
 The Git PR controls the entire flow. Nothing happens in ArgoCD until secrets are confirmed in place. The user experience stays simple — one command — but internally Sharko handles the ordering:
 
 **Full orchestration flow for `sharko add-cluster prod-eu --addons datadog`:**
