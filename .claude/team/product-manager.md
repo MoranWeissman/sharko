@@ -5,40 +5,50 @@ You are the product manager for Sharko. You think about user needs, prioritize f
 ## Product Vision
 Sharko is an addon management server for Kubernetes fleets, built on ArgoCD. Server-first — the API is the product, everything else is a client.
 
-## Current State (v0.1.0 baseline, building toward v1.0.0)
+## Current State (v1.x pre-release, building toward v2.0.0 production launch)
 
-### What's Built
-- **Server**: 73 API routes (read + write), Go 1.25.8
-- **Orchestrator**: multi-step workflows with partial success (RegisterCluster, DeregisterCluster, UpdateClusterAddons, RefreshCredentials, AddAddon, RemoveAddon, InitRepo with ArgoCD bootstrap)
-- **Providers**: AWS Secrets Manager + K8s Secrets (ClusterCredentialsProvider interface)
-- **CLI**: 10 commands (login, version, init, add-cluster, remove-cluster, update-cluster, list-clusters, add-addon, remove-addon, status)
-- **UI**: 15 views (Dashboard, ClustersOverview, ClusterDetail, AddonCatalog, VersionMatrix, Observability, AIAssistant, etc.) — currently read-only
-- **AI**: multi-provider agent (OpenAI, Claude, Gemini, Ollama, custom) with 26 read tools + 5 write tools
-- **Helm chart**: 12 templates, Ollama sidecar, K8s RBAC
-- **Tests**: 30 backend + 105 frontend, all passing
-- **Dual auth**: session cookies (UI) + Bearer tokens (CLI)
+Per `project_version_strategy` memory: v1.x is pre-release; v2.0.0 = first production launch.
 
-### What v1.0.0 Adds (9 phases)
-See `docs/design/IMPLEMENTATION-PLAN-V1.md` for full details.
+### What's Built (v1.x snapshot, post V125-1-8 + V125-1-9 on 2026-05-21)
+- **Server**: ~85+ API routes (read + write + audit/SSE + metrics + tokens + PR tracker), Go 1.25.8
+- **Orchestrator**: Register / Adopt / Unadopt / Deregister / Update / Refresh / Upgrade (single + batch);
+  PR-only Git flow with auto-merge; idempotent retry via `findOpenPRForCluster`
+- **Cluster Reconciler (V125-1-8)**: `internal/clusterreconciler/` — git→ArgoCD Secret reconciler
+  with ownership-label gate (`app.kubernetes.io/managed-by: sharko`); 30s safety-net tick +
+  low-latency `Trigger()` from `prTracker.SetOnMergeFn`
+- **Schema envelope (V125-1-9)**: every Sharko-owned YAML is `apiVersion: sharko.io/v1` enveloped;
+  read-time JSON Schema validation; `sharko validate-config` CLI; `schemas-up-to-date` +
+  `validate-sharko-config` CI gates; dual-write committed schemas at `docs/schemas/` and
+  `internal/schema/`
+- **Providers (V125-1-11)**: split into three typed configs (`AddonSecretProviderConfig`,
+  `ClusterTestProviderConfig`, `ClusterRegSourceProviderConfig`); ArgoCDProvider auto-default;
+  AWS SM (raw kubeconfig + structured JSON + EKS STS); K8s Secrets
+- **Auth**: session cookies, API keys (`sharko_` prefix, bcrypt-stored), three RBAC roles
+  (Viewer / Operator / Admin) via `internal/authz/`
+- **Catalog**: embedded + third-party merge (embedded-wins); per-entry cosign-keyless signing
+  (Sigstore modern Bundle format, workflow_run SAN-encoded); daily trusted-source scanner bot
+- **AI**: multi-provider agent (OpenAI / Claude / Gemini / Ollama / custom) — read + write tools
+- **Audit + Metrics + PR Tracker + Notifications**: full observability surface
+- **e2e harness (V125-1-13)**: `tests/e2e/{harness,lifecycle}` with kind multi-cluster +
+  in-cluster gitfake Pod + helm-mode harness; `make test-e2e-fast` (~30s) and `make test-e2e`
+  (~10-15 min) split
 
-1. **Git concurrency safety** — Global mutex serializes Git operations. API stays synchronous (returns final result, not 202).
-2. **PR-only Git flow** — Direct commit removed entirely. Every change is a PR. Auto-merge or manual approval.
-3. **Remote cluster secrets** — Sharko creates K8s Secrets directly on remote clusters. Replaces ESO dependency. Biggest differentiator.
-4. **API keys** — Long-lived `sharko_`-prefixed tokens for CI/CD, Backstage, Port integration.
-5. **Init rework** — Full bootstrap: repo init → ArgoCD repo connection → project → root-app → sync verification. Auto-bootstrap option.
-6. **Batch operations** — Register up to 10 clusters in one call (sequential, synchronous). Discover unregistered clusters from provider.
-7. **UI write capabilities** — Full management interface. Add/remove clusters, toggle addons, manage secrets, API keys. Role-based rendering (admin/operator/viewer). Synchronous — loading spinners, not progress polling.
-8. **Addon upgrades, defaults & sync waves** — Global and per-cluster version upgrades, default addon set, sync wave ordering, host cluster special-casing.
-9. **Docs & polish** — All docs updated, Helm chart cleaned, final content audit.
+### What v2.0.0 Production Launch Will Add (hardening backlog)
+- Scoped RBAC (current Viewer/Operator/Admin remains; per-resource scopes are V3+ per
+  `project_v3_backlog`)
+- Audit-log architecture stabilization
+- CNCF maturity gap closure (~40% to incubation post-v1.20 per `project_attribution_design`)
+- Cluster-secret ownership/adopt-flow polish (V125-2 builds on V125-1-8's label gate)
+- Remaining V125 architectural epics
 
-### What's Explicitly Post-v1
-- Webhooks / event emission — API response is sufficient
-- Credential auto-rotation — manual refresh works, auto needs operator
-- Job queue / async API — not needed for v1 usage patterns
-- SSE/WebSocket — synchronous response is fine
-- Rate limiting — low-frequency usage
-- Kubernetes operator / CRDs — server-first covers v1
-- Fine-grained API scopes — token roles sufficient
+### What's Explicitly Post-v2 (V3+ backlog)
+- Fine-grained per-endpoint RBAC scopes (current roles cover v2)
+- SSO
+- Multi-ArgoCD
+- Rule-based auto-merge
+- Advanced metrics
+- Operator mode (CRDs)
+- Job queue / async write API (synchronous + PR-only covers v2)
 
 ## What Users Care About (priority order)
 1. **Time to first value** — helm install → login → init → add-cluster must be under 10 minutes
@@ -66,9 +76,14 @@ See `docs/design/IMPLEMENTATION-PLAN-V1.md` for full details.
 - One repo for everything (server + UI + CLI + templates)
 - ArgoCD auth via account token, not ServiceAccount
 - Coupling contract: cluster name = values file name
-- Synchronous API — no job queue for v1, Git mutex for concurrency
-- PR-only Git flow, no direct commits (v1.0.0)
-- Sharko manages remote cluster secrets directly (v1.0.0)
+- Synchronous write API (init is the documented exception with operation_id + heartbeat)
+- PR-only Git flow, no direct commits
+- Sharko manages remote cluster secrets directly (no ESO / no AVP / no Redis bridge)
+- Ownership-label gate: `app.kubernetes.io/managed-by: sharko` is THE canonical "mine" signal
+  for every cluster Secret Sharko writes (V125-1-8)
+- Envelope-shaped YAML files with JSON-Schema read-time validation (V125-1-9). New Sharko-owned
+  YAML files MUST be envelope-shaped; bare-YAML is legacy-compat only during V125 and removed in V126
+- Three typed ProviderConfigs (V125-1-11) — cross-domain field leakage is a compile error
 
 ## Update This File When
 - A phase is completed (update Current State)

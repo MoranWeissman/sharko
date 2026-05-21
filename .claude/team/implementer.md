@@ -11,12 +11,36 @@ You write code for the Sharko project following a plan or task description.
 - Go module: `github.com/MoranWeissman/sharko`
 - Go version: 1.25.8
 - Never add Co-Authored-By trailers to commits
+- Never use `--no-verify` or `-c commit.gpgsign=false`
 - Git user: Moran Weissman <moran.weissman@gmail.com>
 - Follow existing code patterns in the codebase
 - `go build ./...` and `go vet ./...` must pass before committing
-- Push to feature branches only, never to main
-- Self-review before presenting for human review
-- Implementation plan: `docs/design/IMPLEMENTATION-PLAN-V1.md`
+- Stay on your worktree branch. NO `git push`. NO retag. NO ref-mutation outside your branch.
+- Self-review before returning to the orchestrator (which will cherry-pick + open PR + auto-merge
+  per `feedback_auto_merge_when_green`).
+
+### Dispatch protocol (worktree-isolated)
+
+You run inside `Agent(isolation: "worktree")` on a `worktree-agent-<hash>` branch. Your contract:
+
+1. Read your own role file + tech-lead.md + any other role file embedded in the dispatch prompt.
+2. Implement the story; one focused commit per story unless instructed otherwise.
+3. Run quality gates locally (see CHECK section in tech-lead.md).
+4. Commit on your worktree branch. Return to the orchestrator — DO NOT push, DO NOT open a PR.
+
+The orchestrator cherry-picks your commit onto the sprint branch (from a clean main checkout, not
+your worktree) and opens / auto-merges the sprint PR.
+
+### Edit-to-main-repo drift protocol (mandatory)
+
+Edit/Write tools use the literal filesystem path. An absolute path under
+`/Users/weissmmo/projects/github-moran/sharko/...` lands in MAIN, not your worktree. This bit 4
+of 11 agents in a single recent session. **Mandatory:**
+
+- Use `$(git rev-parse --show-toplevel)/<relative>` prefix OR relative paths from the worktree.
+- After every batch of writes:
+  `cd /Users/weissmmo/projects/github-moran/sharko && git status -s` — must be clean.
+- If main got polluted: `cd <main> && git checkout -- <files>`, re-apply inside the worktree.
 
 ## Project Structure — Actual Files
 
@@ -25,21 +49,42 @@ cmd/sharko/
   main.go              Calls Execute()
   root.go              Cobra root command, --version, --insecure flag
   serve.go             'sharko serve' — full server startup logic
+                       (wires prTracker.SetOnMergeFn → clusterreconciler.Trigger)
   login.go             'sharko login --server <url> [--username] [--password]'
+  reset_admin.go       'sharko reset-admin' — local admin password reset
   version_cmd.go       'sharko version' — CLI + server version
   init_cmd.go          'sharko init' — POST /api/v1/init (async, returns operation ID)
   cluster.go           add-cluster, remove-cluster, update-cluster, list-clusters,
                        test-cluster (POST /api/v1/clusters/{name}/test)
-                       adopt-cluster (POST /api/v1/clusters/{name}/adopt)
-  addon.go             add-addon, remove-addon (--confirm for destructive)
-  addon_list.go        'sharko list-addons [--show-config]'
-  validate.go          'sharko validate [path]' — validate catalog YAML against schema
-  connect.go           'sharko connect' — configure Git connection (--name, --git-provider, --git-repo, --git-token)
-                       Sub-commands: 'sharko connect list', 'sharko connect test'
-  secrets.go           'sharko refresh-secrets [cluster]' — trigger secrets reconcile
-                       'sharko secret-status' — show reconciler status per cluster
+  adopt.go             'sharko adopt-cluster' — POST /api/v1/clusters/{name}/adopt
+  unadopt.go           'sharko unadopt-cluster' — POST /api/v1/clusters/{name}/unadopt
+  discover.go          'sharko discover' — provider/ArgoCD discovery
+  batch.go             'sharko add-clusters' — batch register (max 10)
+  addon.go             add-addon, remove-addon (--confirm), list-addons, configure-addon
+  upgrade.go           upgrade-addon, upgrade-addons (multi-addon batch)
+  validate.go          'sharko validate' — LEGACY pre-envelope validator (kept during V125,
+                       slated for V126 removal per yaml-schema-migration.md)
+  validate_config.go   'sharko validate-config <file-or-dir>' — V125-1-9 envelope-aware
+                       JSON-Schema validator used by the validate-sharko-config CI job.
+                       Accepts ONE path arg (file or directory). Flags: --quiet/-q.
+  connect.go           'sharko connect' — configure Git connection (--name, --git-provider,
+                       --git-repo, --git-token); sub-commands: list, test
+  secrets.go           'sharko refresh-secrets [cluster]' + 'sharko secret-status'
+  token.go             'sharko token create|list|revoke' — API key management
+  pr.go                'sharko pr list|wait' — PR tracker queries
+  user.go              'sharko user' — user management
   status.go            'sharko status' — fleet overview
   client.go            Shared HTTP client, config loading (~/.sharko/config)
+
+cmd/schema-gen/        V125-1-9 — introspects envelope-Go types via invopop/jsonschema and emits
+                       committed schemas at BOTH docs/schemas/*.v1.json AND
+                       internal/schema/*.v1.json (writeSchemaToBoth helper).
+                       The schemas-up-to-date CI job re-runs this and fails on diff.
+cmd/catalog-sign/      cosign-keyless catalog signer (v1.23 — workflow_run cert SAN, modern
+                       Sigstore Bundle format).
+cmd/gen-provider-types/  Provider type-mapping codegen — keeps providers.AddonSecretProviderConfig
+                       / ClusterTestProviderConfig / ClusterRegSourceProviderConfig in sync.
+                       provider-types-up-to-date CI job re-runs this and fails on diff.
 
 internal/
   api/              HTTP handlers (28 files)
@@ -107,13 +152,21 @@ internal/
     azuredevops.go  Azure DevOps read
     azuredevops_impl.go  Azure DevOps full implementation
 
-  ai/               LLM agent (6 files)
+  ai/               LLM agent
     client.go       Multi-provider (ollama, claude, openai, gemini, custom-openai)
-    agent.go        Tool-calling loop, system prompt
-    tools.go        26 read tools (list_clusters, get_health, etc.)
-    tools_write.go  5 write tools (enable/disable addon, update version, sync, refresh)
+    agent.go        Tool-calling loop, system prompt; SimplePrompt for one-shot LLM calls
+    tools.go        Read tools (list_clusters, get_health, etc.)
+    tools_write.go  Write tools (enable/disable addon, update version, sync, refresh)
     memory.go       JSON persistence for agent memory
     websearch.go    Web search tool
+
+  schema/           V125-1-9 — Envelope[T] generic + IsEnveloped + DefaultValidator
+                    (santhosh-tekuri/jsonschema v5) + generator.go (invopop/jsonschema)
+                    + embedded JSON schemas (addon-catalog.v1.json, managed-clusters.v1.json)
+  clusterreconciler/  V125-1-8 — Reconciler struct + Trigger() channel + ownership label
+                    (labels.go: LabelManagedBy/LabelValueSharko + IsManagedBySharko +
+                    ApplyManagedBySharkoLabel). 30s DefaultTickInterval + post-merge Trigger()
+                    via prTracker.SetOnMergeFn. Uses models.LoadManagedClusters (envelope-aware).
 
   config/           Configuration (6 files)
     store.go        Store interface + FileStore (YAML, local dev)
@@ -122,11 +175,18 @@ internal/
     parser.go       Git repo config parser (addons-catalog, cluster-addons)
 
   auth/             store.go — User auth (K8s ConfigMap or env var)
-  crypto/           crypto.go — AES-256-GCM encryption
-  gitops/           yaml_mutator.go — Line-level YAML mutation preserving comments
+  authz/            RBAC (Viewer/Operator/Admin) + action→role map
+  crypto/           AES-256-GCM encryption
+  gitops/           Envelope-aware YAML mutators:
+                    yaml_mutator.go         — legacy line-level mutators (still in use for addons)
+                    yaml_mutator_cluster.go — V125-1-9 parse-mutate-marshal replacement for the
+                                              cluster mutators; defers to models.SaveManagedClusters
+                                              (envelope-aware writer)
   helm/             fetcher.go + diff.go — Helm chart version fetching and diffing
-  models/           8 model files (addon, argocd, cluster, connection, dashboard, observability, upgrade)
+  models/           addon/argocd/cluster/connection/dashboard/observability/upgrade
+                    + V125-1-9 envelope-aware LoadManagedClusters / SaveManagedClusters readers
   platform/         detect.go — K8s vs local mode detection
+  prtracker/        PR lifecycle tracker; SetOnMergeFn callback fans merge events to consumers
   service/          7 service files (addon, cluster, connection, dashboard, observability, upgrade)
 
 docs/swagger/       Auto-generated Swagger/OpenAPI docs (NEVER edit manually)
@@ -134,11 +194,19 @@ docs/swagger/       Auto-generated Swagger/OpenAPI docs (NEVER edit manually)
   swagger.json      OpenAPI 2.0 JSON spec
   swagger.yaml      OpenAPI 2.0 YAML spec
 
-ui/                 React 18 + TypeScript + Vite
-  src/views/        17 view components
-  src/components/   21 custom + 13 shadcn/ui components
-  src/hooks/        5 custom hooks (useAuth, useTheme, useConnections, useDashboards, use-mobile)
+ui/                 React 18 + TypeScript + Vite + Tailwind + shadcn/ui
+  src/views/        view components (Dashboard, Clusters, AddonCatalog, Settings, etc.)
+  src/components/   custom + shadcn/ui components
+  src/hooks/        custom hooks (useAuth, useTheme, useConnections, useDashboards, use-mobile)
   src/services/     api.ts + models.ts
+
+tests/e2e/          V125-1-13 e2e harness
+  harness/          apiclient_*.go (per-domain), argocd.go, auth.go, fixtures.go, ghmock.go,
+                    gitfake* (in-cluster gitfake Pod for kind multi-cluster runs), kind.go,
+                    sharko_helm* (Wave-D helm-mode harness)
+  lifecycle/        addon, cluster, catalog, dashboard, init, pr, reconciler, ai, auth, values
+                    domain tests. Run via `make test-e2e-fast` (~30s, no kind) or
+                    `make test-e2e` (~10-15 min, kind-backed) / `make test-e2e-helm`.
 
 templates/
   starter/          Embedded scaffold for sharko init
@@ -251,19 +319,33 @@ These routes are redirects, not separate pages:
 
 The Docs page (`Docs.tsx`) and AIAssistant page (`AIAssistant.tsx`) still exist as components but are no longer routed directly — Docs content is informational only, and AI is embedded in the Layout drawer.
 
-## New Package Coming (v1.0.0)
+## Schema / Envelope Pattern (V125-1-9)
 
-### Phase 3: `internal/remoteclient/`
-```
-client.go     — Build temporary kubernetes.Interface from kubeconfig
-secrets.go    — Create/update/delete K8s Secrets on remote clusters
+Every Sharko-owned YAML file (managed-clusters.yaml, addon-catalog.yaml) ships as:
+
+```yaml
+# yaml-language-server: $schema=https://sharko.io/schemas/managed-clusters.v1.json
+apiVersion: sharko.io/v1
+kind: ManagedClusters
+metadata:
+  name: managed-clusters
+spec:
+  clusters: [...]
 ```
 
-### Planned: `internal/notifications/`
-```
-checker.go    — Periodic notification checker (upgrade available, drift detected, security)
-store.go      — In-memory notification store with read/unread state
-```
+Read path: `models.LoadManagedClusters` / `catalog.LoadAddonCatalog` → IsEnveloped detect →
+`schema.DefaultValidator.Validate(filename, body)` → unmarshal `Spec`.
+Write path: `models.SaveManagedClusters(spec)` always emits the full envelope (the file header
+comment is prepended on every save).
+Legacy bare-YAML reads still work during V125 (validate-skip) and are removed in V126.
+
+If you add a new envelope-shaped file or change the Spec type:
+1. Update the Go envelope type (e.g. `internal/models/cluster.go`).
+2. Run `go run ./cmd/schema-gen` — emits to BOTH `docs/schemas/*.v1.json` AND
+   `internal/schema/*.v1.json` via `writeSchemaToBoth`.
+3. Commit both schema files. The `schemas-up-to-date` CI job fails on diff.
+4. Update `docs/site/operator/yaml-schema-migration.md` if user-visible.
+5. Add a YAML sample under `docs/site/configuration/` so `sharko validate-config` exercises it.
 
 ## Key Patterns
 - Handlers: methods on `*Server`, use `writeJSON(w, status, data)` / `writeError(w, status, msg)`

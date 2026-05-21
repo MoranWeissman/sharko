@@ -98,10 +98,42 @@ Every handler for POST/DELETE/PATCH must call `s.requireAdmin(w, r)` as the firs
 - RBAC: ClusterRole grants read-only access to ArgoCD resources
 - Pod: runs as non-root (uid 1001), read-only root filesystem, all capabilities dropped
 
-### 10. Concurrency Safety (v1.0.0 Phase 1)
+### 10. Concurrency Safety
 - Global Git mutex on orchestrator prevents branch/merge race conditions
 - Mutex held ONLY during Git operations — non-Git ops (provider, ArgoCD, remote secrets) run freely
 - No deadlock risk: single mutex, no nesting, no cross-lock dependencies
+- Reconcilers (`internal/clusterreconciler`, `internal/prtracker`, `internal/argosecrets`,
+  `internal/secrets`) use a single-goroutine design with `sync.Once` for Start() idempotency.
+  Test seams MUST be per-instance Deps fields, never package-level vars (race hazard under
+  `t.Parallel()` — V125-1-8.0 lesson).
+
+### 11. Ownership-Label Gate (V125-1-8)
+- Every ArgoCD cluster Secret Sharko writes carries `app.kubernetes.io/managed-by: sharko`.
+- Every cluster-Secret deletion MUST check `clusterreconciler.IsManagedBySharko(secret)` first.
+  This is the canonical safety gate for V125-1-7 orphan-delete and V125-2 Adopt distinction.
+  A delete code path that bypasses the predicate is a critical finding.
+- Both the legacy `argosecrets.Manager` and the new `clusterreconciler.Reconciler` MUST emit
+  byte-identical Secret payloads — they share `argosecrets.BuildSecretConfigJSON` +
+  `argosecrets.BuildClusterSecretLabels` wrappers. Hand-rolled Secret payloads in either path
+  are a critical finding.
+
+### 12. Schema / Envelope Integrity (V125-1-9)
+- Reads of `managed-clusters.yaml` and `addon-catalog.yaml` MUST go through the envelope-aware
+  loaders (`models.LoadManagedClusters`, `catalog.LoadAddonCatalog`), which validate against the
+  committed JSON Schema before unmarshalling. Direct `yaml.Unmarshal` over these files (especially
+  remotely-fetched bytes) is a finding — it bypasses the validator and allows malformed input
+  through the trust boundary.
+- Writes MUST go through `models.SaveManagedClusters` / catalog equivalents (envelope-emitting
+  writers).
+- Schema regeneration is committed (`docs/schemas/*.v1.json` + `internal/schema/*.v1.json` —
+  dual-write via `cmd/schema-gen`). The `schemas-up-to-date` CI gate catches drift; an audit
+  that finds a way to silence the gate is a critical finding.
+
+### 13. No-AVP / No-Redis-Leak Design Constraint
+- Sharko intentionally has NO AVP (ArgoCD Vault Plugin) integration and NO Redis ingestion of
+  secret material. Any code path that proposes to bridge secrets through ArgoCD's Redis cache
+  or AVP's secret-injection model is a critical finding — the current design is push-based,
+  Sharko-controlled, and audit-reviewable.
 
 ## Catalog signing surface (V123-2)
 

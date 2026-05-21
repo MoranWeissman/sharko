@@ -6,16 +6,36 @@ This file is not a subagent. It is the playbook for the main conversation (Claud
 
 ```
 1. Read memory:  .claude/projects/.../memory/MEMORY.md → relevant memory files
-2. Read plan:    docs/design/IMPLEMENTATION-PLAN-V1.md
-3. Read state:   git status, git log --oneline -5, git branch
-4. Read PM:      .claude/team/project-manager.md (phase status table)
-5. Determine:    What phase are we in? What's the next unfinished task?
-6. Resume or report: If work is in progress, continue. If a phase just completed, report.
+                 (project_sharko_current_state, project_sharko_roadmap,
+                  feedback_always_use_bmad, feedback_agent_dispatch_worktree_isolation)
+2. Read state:   git status, git log --oneline -5, git branch
+3. Read PM:      .claude/team/project-manager.md (sprint status table)
+4. Read CLAUDE.md: confirm MANDATORY BMAD FLOW + Agent Team rules
+5. Determine:    What sprint/bundle are we in? What's the next unfinished task?
+6. Resume or report: If work is in progress, continue. If a bundle just completed, report.
 ```
 
-If the user says nothing specific, summarize: "We're on Phase X, step Y. Continuing." Then continue.
+If the user says nothing specific, summarize: "We're on bundle V<X>, story Y. Continuing." Then continue.
 
-If the user says "start", begin executing from wherever the plan is.
+If the user says "start" / "plan" / "build" / "do it" / "ship" / "feature" / "bundle" — that is a
+BMAD-trigger word. Invoke the matching BMAD skill FIRST (see "MANDATORY BMAD FLOW" below) before
+any dispatch.
+
+## MANDATORY BMAD FLOW (mirrors CLAUDE.md hard rule)
+
+Before ANY of the following, invoke the matching BMAD skill FIRST — not as an afterthought:
+
+- Code dispatch / feature work / sprint kickoff → `bmad-sprint-planning` or `bmad-create-epics-and-stories`
+- Design / trade-off question → `bmad-brainstorming` or `bmad-party-mode`
+- Post-feature review → `bmad-code-review`
+- Requirements definition → `bmad-create-prd`
+- Architecture design → `bmad-create-architecture`
+- Test coverage expansion → `bmad-testarch-automate`
+- Ambiguous intent → `bmad-help`
+
+Quick operational answers (status checks, "what's current", one-liner triage with no dispatch) are
+the only things that proceed without BMAD. Everything else — even small bundles, even "obvious"
+work — runs through BMAD first. This is not negotiable; see CLAUDE.md "MANDATORY BMAD FLOW".
 
 ## BMAD Skills — When to Use Each
 
@@ -130,27 +150,62 @@ Why: The tech lead's job is orchestration, review, and decision-making. Mixing e
 **Dispatch template:**
 ```
 When dispatching a subagent, always include:
-1. The relevant .claude/team/{role}.md content
-2. What specifically to build/review/test
-3. Which files to read first
-4. What the expected output is
-5. Any constraints from the implementation plan
+1. The relevant .claude/team/{role}.md content (MANDATORY — CLAUDE.md hard rule)
+2. tech-lead.md role context (always)
+3. What specifically to build/review/test
+4. Which files to read first
+5. What the expected output is
+6. Any constraints from the design doc / story file
+7. Worktree-isolation directive (see below)
 ```
+
+### Worktree-Isolated Dispatch (mandatory pattern)
+
+Every agent dispatch runs `Agent(isolation: "worktree")`. The agent commits on its own
+`worktree-agent-<hash>` branch. The orchestrator (main conversation) then cherry-picks the agent's
+commit onto a sprint branch from the main checkout and pushes / opens the PR. **Agents NEVER push,
+NEVER run `git branch -f`, NEVER `update-ref` outside their own branch.**
+
+Include this in every dispatch prompt:
+
+> Stay on your worktree branch. Do not `git push`. Do not retag. Do not modify any ref outside your
+> own `worktree-agent-*` branch. Commit your work on the worktree branch and return — the
+> orchestrator will cherry-pick.
+
+### Edit-to-Main-Repo Drift Protocol (mandatory)
+
+The Edit/Write tools take the literal filesystem path you give them. An absolute path under
+`/Users/weissmmo/projects/github-moran/sharko/...` lands in the MAIN repo, NOT in your worktree.
+This bit 4 of 11 agents in a single recent session. **Mandatory protocol:**
+
+- Use `$(git rev-parse --show-toplevel)/<relative>` prefix OR relative paths from the worktree —
+  never bare main-repo absolute paths.
+- After every batch of writes: `cd /Users/weissmmo/projects/github-moran/sharko && git status -s`
+  — the main repo must be clean.
+- If main got polluted: `cd <main> && git checkout -- <files>` then re-apply inside the worktree.
+
+This protocol is permanent; include the discipline reminder when dispatching agents that will Edit
+or Write under `.claude/team/`, `docs/`, or any path under the main repo.
 
 ### CHECK — Quality Gates
 
-After each task (not just each phase):
+After each task (not just each bundle):
 ```bash
 go build ./...           # Must pass
 go vet ./...             # Must pass
 ```
 
-After each phase (before presenting for review):
+After each bundle (before presenting for review):
 ```bash
-go test ./...            # All tests pass
-cd ui && npm run build   # If UI was touched
-cd ui && npm test        # If UI was touched
-helm template sharko charts/sharko/  # If Helm was touched
+go test ./...                                 # All backend tests pass
+cd ui && npm run build                        # If UI was touched
+cd ui && npm test                             # If UI was touched
+helm template sharko charts/sharko/           # If Helm was touched
+swag init -g cmd/sharko/serve.go -o docs/swagger --parseDependency --parseInternal  # If any handler annotation changed
+go run ./cmd/schema-gen                       # If any schema-relevant model field changed (V125-1-9)
+./bin/sharko validate-config docs/site/configuration/  # Smoke YAML samples (V125-1-9)
+make test-e2e-fast                            # In-process e2e (~30s, no kind)
+# make test-e2e                               # Full kind-backed e2e (~10-15 min) — for release-gate runs
 
 # Security (always)
 grep -rn "scrdairy\|merck\|msd\.com\|mahi-techlabs\|merck-ahtl" \
@@ -158,20 +213,31 @@ grep -rn "scrdairy\|merck\|msd\.com\|mahi-techlabs\|merck-ahtl" \
   grep -v node_modules | grep -v .git/
 ```
 
+CI mirrors this with seven jobs in `.github/workflows/ci.yml`: `go-build-test`, `ui-build-test`,
+`swagger-check`, `provider-types-up-to-date`, `schemas-up-to-date`, `validate-sharko-config`,
+`helm-validate`, `security-scan`. The `schemas-up-to-date` and `validate-sharko-config` jobs were
+added by V125-1-9 and gate every PR that touches an envelope-shaped YAML or its model.
+
 Always run the quality gate commands and read the output. Never assume things pass.
 
-Dispatch code-reviewer after each logical chunk of work (not every single file change, but after a feature is complete within a phase).
+Dispatch code-reviewer after each logical chunk of work (not every single file change, but after a
+feature is complete within a bundle).
 
-Dispatch security-auditor once per phase, after all code is written.
+Dispatch security-auditor once per bundle, after all code is written.
 
 ### COMMIT — Branch & Progress
 
-- One feature branch per phase: `feat/phase-{N}-{short-name}`
-- Commit after each completed task (small, focused commits)
-- Never push to main. Branch → push → present for human review → human merges
-- Update task status as you go (TaskUpdate → completed)
+- One sprint branch per bundle (e.g. `sprint/v125-1-9-schema-envelope`).
+- Each story is a single agent commit on its `worktree-agent-*` branch; the orchestrator
+  cherry-picks each commit onto the sprint branch (from main checkout, not the worktree).
+- Multi-story sprints typically ship as ONE PR containing the cherry-picked commits in order
+  (e.g. V125-1-9 PR #346 contained 7 commits across 6 stories + scaffold).
+- Never push to main. Branch → push → open PR → CI green → auto-merge.
+- Auto-merge default (per `feedback_auto_merge_when_green` memory): `gh pr merge <N> --squash
+  --auto --delete-branch`. CI green IS the gate; don't gate on a maintainer click.
+- Tracking-only chore PRs (e.g. sprint-status updates) may use `--admin` to bypass CI wait.
 
-### NEXT — Phase Transitions
+### NEXT — Bundle Transitions
 
 When a phase is complete:
 1. All tasks done, all quality gates pass (go build, go test, npm build, npm test, helm template, security grep)
@@ -248,8 +314,49 @@ When context is getting large:
 
 **Bias toward action.** If you can make progress without asking, make progress. The user said "start" — that means go. Only stop when you genuinely cannot continue without human input or approval.
 
-## Recent Shipped Surface (v1.23, 2026-04-29)
+## Recent Shipped Surface (V125 architectural sprint + V126 polish, 2026-05-21)
 
-`v1.23.0-pre.0` shipped catalog extensibility: third-party catalog sources (`SHARKO_CATALOG_URLS`, embedded-wins merge), per-entry cosign-keyless signing on every embedded entry (UI Verified badge), and a daily trusted-source scanner bot (CNCF Landscape + AWS EKS Blueprints). The release validated two practices worth keeping: BMAD discipline on multi-story epics held the planning + dev + review gates clean across V123-1/2/3, and the **throwaway-tag protocol** (cut `-rc.N` tags freely against production-only bugs, never promote them, then cut the real `-pre.0` once green) absorbed four production-only failures (TUF cache path, Sigstore bundle format, trust-regex SAN encoding, GoReleaser dirty-tree check) without polluting the user-visible release surface. The same release added the `prerelease: auto` flag so future debug tags don't steal "Latest release" on GitHub.
+Two architectural epics landed on 2026-05-21 and reshape how every future dispatch under
+`internal/` should think about persistence and cluster-secret ownership:
 
-Future tech-lead dispatches that touch `internal/catalog/`, `internal/catalog/sources/`, or `internal/catalog/signing/` MUST consider catalog-signing implications: trust-policy regex semantics, sidecar bundle fetch path, sources-vs-signing import boundary, and the per-entry `Verified` + `SignatureIdentity` API contract. Bring the security-auditor in by default for any change in those packages.
+- **V125-1-9 — Schema envelope + JSON Schema + read-time validation + CLI + CI gates (PR #346).**
+  New `internal/schema/` package (Envelope[T] generic, IsEnveloped detector, DefaultValidator using
+  santhosh-tekuri/jsonschema v5, schema generator using invopop/jsonschema). New `cmd/schema-gen/`
+  binary introspects Go envelope types and emits committed schemas at both
+  `docs/schemas/*.v1.json` and `internal/schema/*.v1.json` (dual-write via `writeSchemaToBoth`).
+  New `sharko validate-config <file|dir>` CLI subcommand (`cmd/sharko/validate_config.go`).
+  New CI jobs `schemas-up-to-date` + `validate-sharko-config` gate every YAML change.
+  Migration runbook at `docs/site/operator/yaml-schema-migration.md`.
+
+- **V125-1-8 — Cluster reconciler + ownership label + GitOps stance fix (PR #348).**
+  New `internal/clusterreconciler/` package (Reconciler struct mirroring prtracker shape,
+  30s `DefaultTickInterval`, immediate post-merge trigger via `prTracker.SetOnMergeFn →
+  recon.Trigger()`). Ownership label `app.kubernetes.io/managed-by: sharko` (`labels.go` —
+  `IsManagedBySharko` + `ApplyManagedBySharkoLabel`) is now the canonical "this Secret is mine"
+  signal — V125-1-7 orphan-delete tightening and V125-2 Adopt distinction both key off this.
+  `internal/argosecrets/manager.go` exposes `BuildSecretConfigJSON` + `BuildClusterSecretLabels`
+  as shared wrappers so the reconciler and the orchestrator emit identical Secret payloads.
+  Operator runbook at `docs/site/operator/cluster-reconciler.md`.
+
+- **V125-1-11 — ProviderConfig split into 3 typed configs** (`providers.AddonSecretProviderConfig`,
+  `providers.ClusterTestProviderConfig`, `providers.ClusterRegSourceProviderConfig`) replaces the
+  old monolithic `providers.ProviderConfig`. Cross-domain leakage (e.g. argocd-namespace on an
+  addon-secret provider) is now a compile error.
+
+- **V125-1-13.x/y — e2e harness** at `tests/e2e/{harness,lifecycle}/` with kind multi-cluster +
+  in-cluster gitfake Pod + opt-in git-host allowlist + helm-mode harness. Run via
+  `make test-e2e-fast` (~30s, no kind) or `make test-e2e` (~10-15 min, kind-backed).
+
+- **V126-2 / V126-3 / V126-4 / V126-5** — DESIGN-01 empty-state bootstrap, DESIGN-02 N/M cluster
+  badge, e2e harness QoL, `scripts/sharko-dev.sh` DX additions (`upgrade <version>` subcommand
+  + `preflight()` ready/up/install check + `--force-clean` flag).
+
+Dispatches that touch `internal/schema/`, `internal/clusterreconciler/`, or `internal/argosecrets/`
+MUST: keep `app.kubernetes.io/managed-by: sharko` ownership invariant; never write
+`docs/swagger/`, `docs/schemas/`, or `internal/schema/*.v1.json` by hand (regenerators only);
+bring code-reviewer for the gitops stance and security-auditor for the credential surface.
+
+Catalog signing surface (v1.23) still applies: any change in `internal/catalog/`,
+`internal/catalog/sources/`, or `internal/catalog/signing/` must consider trust-policy regex
+semantics, sidecar bundle fetch path, sources-vs-signing import boundary, and the per-entry
+`Verified` + `SignatureIdentity` API contract. Bring the security-auditor for those by default.

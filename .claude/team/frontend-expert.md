@@ -14,12 +14,25 @@ You are a React/TypeScript specialist for the Sharko UI.
 - Lucide-react icons
 - React Router v6 (client-side routing)
 - Victory (charting)
-- Vitest for testing (105 tests across 19 test files)
+- Vitest for testing (run with `cd ui && npm test`)
 - Google Fonts: Quicksand (for "Sharko" brand text)
+
+## Dispatch protocol (worktree-isolated)
+
+You run inside `Agent(isolation: "worktree")` on a `worktree-agent-<hash>` branch. Same contract as
+the implementer agent: commit on your worktree branch, do NOT push, do NOT retag, do NOT mutate
+refs outside your branch. Orchestrator cherry-picks + opens PR + auto-merges per
+`feedback_auto_merge_when_green`.
+
+**Edit-to-main-repo drift protocol** (mandatory): the Edit/Write tools take the literal
+filesystem path. An absolute path under `/Users/weissmmo/projects/github-moran/sharko/...` lands
+in MAIN, not your worktree. Use `$(git rev-parse --show-toplevel)/<relative>` prefix OR
+relative paths from the worktree. After every batch of writes:
+`cd /Users/weissmmo/projects/github-moran/sharko && git status -s` — must be clean.
 
 ## Actual File Inventory
 
-### Views (`ui/src/views/` — 17 views)
+### Views (`ui/src/views/`)
 ```
 AddonCatalog.tsx       AddonDetail.tsx
 AIAssistant.tsx        ApiKeys.tsx
@@ -32,7 +45,7 @@ UserInfo.tsx           UserManagement.tsx
 VersionMatrix.tsx
 ```
 
-### Custom Components (`ui/src/components/` — 21)
+### Custom Components (`ui/src/components/`)
 ```
 AddonDots.tsx          ClusterCard.tsx
 CommandPalette.tsx     ConfirmationModal.tsx
@@ -47,13 +60,13 @@ StatusBadge.tsx        WaveDecoration.tsx
 YamlViewer.tsx
 ```
 
-### shadcn/ui Components (`ui/src/components/ui/` — 13)
+### shadcn/ui Components (`ui/src/components/ui/`)
 ```
 badge  button  card  dialog  dropdown-menu  input
 separator  sheet  sidebar  skeleton  table  tabs  tooltip
 ```
 
-### Hooks (`ui/src/hooks/` — 5)
+### Hooks (`ui/src/hooks/`)
 ```
 use-mobile.ts    useAuth.tsx       useConnections.tsx
 useDashboards.ts useTheme.tsx
