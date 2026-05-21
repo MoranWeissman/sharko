@@ -1388,4 +1388,41 @@ development_status:
   epic-V126-3-design-02-catalog-states-retrospective: optional
 
   # ============================================================
+  # V126-4 — e2e harness QoL (planned 2026-05-21, locked)
+  # ============================================================
+  # Source: .bmad/output/planning-artifacts/epics-v126-4-e2e-harness-qol.md
+  # Tasks bundled: #187 (progress heartbeat) + #188 (cleanup hardening) +
+  # #189 (seedActiveConnection URL validator — REAL product bug, not just
+  # test-only). #189 unblocks self-hosted Gitea on non-standard paths and
+  # corporate proxies that don't follow <host>/<owner>/<repo>.
+  # Branch: dev/v126-4-e2e-harness-qol from main HEAD (0a746410).
+  # Single multi-surface story, single agent. Parallel-dispatchable with
+  # V126-5. Role files: tech-lead + go-expert + test-engineer. Serena MCP
+  # for navigating tests/e2e/harness + internal/api/connections.go.
+  # Auto-merge per feedback_auto_merge_when_green.
+  # NOT in scope: SIGINT handler (out of bounds for standard go test).
+  epic-V126-4-e2e-harness-qol: done                                 # PR #344 merged to main 2026-05-21 (commit c96fbf54)
+  V126-4-1-heartbeat-cleanup-validator: done                        # commit 9ff2c716 — #187: t.Logf + 30s heartbeat goroutine in ProvisionTopology (stopped via t.Cleanup, idempotent close); #188: pre-flight scan already shared in DestroyAllStaleE2EClusters helper (all 7 lifecycle tests inherit); new forceRemoveKindControlPlane fallback when kind delete fails; new make test-e2e-clean; #189: validator at internal/models/connection.go::ParseRepoURL fixed per Option A — explicit Owner+Repo fields override path-parse fallback (4-case table test added); bonus: symmetric fix applied to dev.azure.com + *.visualstudio.com paths
+  epic-V126-4-e2e-harness-qol-retrospective: optional
+
+  # ============================================================
+  # V126-5 — sharko-dev.sh DX (planned 2026-05-21, locked)
+  # ============================================================
+  # Source: .bmad/output/planning-artifacts/epics-v126-5-sharko-dev-dx.md
+  # Tasks bundled: #190 (upgrade <version> subcommand integrating
+  # .local/scripts-pending/upgrade.sh) + #191 (ready preflight: stale kind
+  # detection, Docker memory headroom, orphan k8s_* containers, degraded
+  # sharko-e2e detection; --force-clean flag for CI).
+  # Branch: dev/v126-5-sharko-dev-dx from main HEAD (0a746410).
+  # Single bash story, single agent. Parallel-dispatchable with V126-4.
+  # Role files: tech-lead + devops-agent. Serena MCP for navigating the
+  # ~2300-line scripts/sharko-dev.sh.
+  # Closes 2026-05-13 incident where ready failed silently after 5 min
+  # ArgoCD apply due to leaked clusters + crashlooping control-plane.
+  # Auto-merge per feedback_auto_merge_when_green.
+  epic-V126-5-sharko-dev-dx: done                                   # PR #343 merged to main 2026-05-21 (commit a1dc26c5)
+  V126-5-1-upgrade-subcommand-and-ready-preflight: done             # commit 5cb14a6d — #190: do_upgrade() reuses helm_release_exists / start_port_forward / SHARKO_* helpers, reads Chart.yaml version, polls OCI URL oci://ghcr.io/moranweissman/sharko/sharko (agent used proven URL from standalone script + install docs; planner had said …/charts/sharko which was wrong); .local/scripts-pending/upgrade.sh deleted post-merge; #191: preflight() (~192 lines — extra for BSD/GNU date cross-platform) checks stale kind clusters, Docker memory headroom, orphan k8s_* containers, degraded sharko-e2e; --force-clean flag + SHARKO_FORCE_CLEAN env var bypass prompts; wired into do_ready / do_up / do_install (preflight_once guard)
+  epic-V126-5-sharko-dev-dx-retrospective: optional
+
+  # ============================================================
 
