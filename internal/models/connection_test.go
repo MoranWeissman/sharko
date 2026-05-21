@@ -62,6 +62,114 @@ func TestConnectionToResponse(t *testing.T) {
 	}
 }
 
+// TestParseRepoURL_ExplicitFieldsOverride covers V126-4.1 / BUG-189:
+// ParseRepoURL must accept a URL whose path can't be parsed into owner/repo
+// when the caller has already populated the explicit Owner+Repo fields.
+// This unblocks self-hosted Gitea, corporate proxies, in-cluster gitfake
+// URLs, and any other deployment whose URL shape doesn't match a public-SaaS
+// path layout.
+//
+// The four canonical cases below preserve every existing accept/reject and
+// add the new accept case the bug fix unlocks.
+func TestParseRepoURL_ExplicitFieldsOverride(t *testing.T) {
+	tests := []struct {
+		name      string
+		in        GitRepoConfig
+		wantErr   bool
+		wantOwner string
+		wantRepo  string
+	}{
+		{
+			name: "PathWithOwnerRepo_NoExplicitFields_Accept_PreservedBehavior",
+			in: GitRepoConfig{
+				RepoURL: "https://github.com/sharko-e2e/sharko-addons",
+			},
+			wantErr:   false,
+			wantOwner: "sharko-e2e",
+			wantRepo:  "sharko-addons",
+		},
+		{
+			name: "PathWithoutOwnerRepo_ExplicitFieldsPopulated_Accept_NewBehavior_FixesBug",
+			in: GitRepoConfig{
+				// Single path segment — pre-fix this produced
+				// "Git URL must contain owner/repo (got: /sharko-e2e)".
+				RepoURL: "http://127.0.0.1:34567/sharko-e2e.git",
+				Owner:   "sharko-e2e",
+				Repo:    "sharko-addons",
+			},
+			wantErr:   false,
+			wantOwner: "sharko-e2e",  // explicit field preserved
+			wantRepo:  "sharko-addons", // explicit field preserved
+		},
+		{
+			name: "PathWithoutOwnerRepo_ExplicitFieldsEmpty_Reject_PreservedBehavior",
+			in: GitRepoConfig{
+				RepoURL: "http://127.0.0.1:34567/sharko-e2e.git",
+				// no Owner / Repo set
+			},
+			wantErr: true,
+		},
+		{
+			name: "GitHubURL_ExplicitFieldsPopulated_Accept_PathParseStillWins_PreservedBehavior",
+			in: GitRepoConfig{
+				// Both URL path AND explicit fields present — path parse
+				// wins (path is the canonical source when valid). The
+				// explicit fields the caller passed are overwritten with
+				// the parsed values; for github.com this is a no-op when
+				// they agree, and a self-correction when they disagree.
+				RepoURL: "https://github.com/parsed-owner/parsed-repo",
+				Owner:   "explicit-owner",
+				Repo:    "explicit-repo",
+			},
+			wantErr:   false,
+			wantOwner: "parsed-owner",
+			wantRepo:  "parsed-repo",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := tt.in // copy so we don't mutate the table
+			err := g.ParseRepoURL()
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("ParseRepoURL() = nil, want error (case: %s)", tt.name)
+				}
+				// The reject path MUST keep the friendly "Git URL must
+				// contain owner/repo" wording so operators can still grep
+				// the message they've seen in past logs.
+				if !contains(err.Error(), "owner/repo") {
+					t.Errorf("error %q should still mention 'owner/repo' so operators get a stable, friendly message", err.Error())
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseRepoURL() = %v, want nil (case: %s)", err, tt.name)
+			}
+			if g.Provider != GitProviderGitHub {
+				t.Errorf("Provider = %q, want %q", g.Provider, GitProviderGitHub)
+			}
+			if g.Owner != tt.wantOwner {
+				t.Errorf("Owner = %q, want %q", g.Owner, tt.wantOwner)
+			}
+			if g.Repo != tt.wantRepo {
+				t.Errorf("Repo = %q, want %q", g.Repo, tt.wantRepo)
+			}
+		})
+	}
+}
+
+// contains is a tiny strings.Contains shim that keeps the test file free
+// of an extra import when the rest of the package's tests don't need it.
+func contains(s, sub string) bool {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}
+
 func TestConnectionToResponseAzureDevOps(t *testing.T) {
 	conn := Connection{
 		Name: "azure-test",

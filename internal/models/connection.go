@@ -39,6 +39,18 @@ type GitRepoConfig struct {
 //   - https://github.example.com/owner/repo (GitHub Enterprise)
 //   - https://dev.azure.com/org/project/_git/repo
 //   - https://org.visualstudio.com/project/_git/repo
+//
+// V126-4.1 / BUG-189: explicit-fields override. When the URL path cannot
+// be parsed into the canonical owner/repo (or org/project/repo) shape but
+// the caller has already populated the explicit identifier fields, the
+// explicit fields win and the URL is treated as opaque (Provider is still
+// set from host detection). Rejection only fires when BOTH path-parse fails
+// AND the explicit identifier fields are empty. This unblocks self-hosted
+// Gitea behind a non-standard path, corporate Git proxies, in-cluster
+// gitfake URLs (e.g. http://gitfake.default.svc.cluster.local/<repo>.git),
+// and any other deployment whose URL shape doesn't match a public-SaaS
+// path layout. The Owner/Repo (or Org/Project/Repository) the caller
+// passed in is the source of truth in that case.
 func (g *GitRepoConfig) ParseRepoURL() error {
 	if g.RepoURL == "" {
 		return nil // nothing to parse, fields must be set directly
@@ -55,6 +67,17 @@ func (g *GitRepoConfig) ParseRepoURL() error {
 	// Azure DevOps: dev.azure.com/org/project/_git/repo
 	if host == "dev.azure.com" {
 		if len(parts) < 4 || parts[2] != "_git" {
+			// V126-4.1: accept when the caller already populated the
+			// explicit Azure DevOps identifier fields. Path parsing is
+			// best-effort in that case — the explicit fields are the
+			// source of truth.
+			if g.Organization != "" && g.Project != "" && g.Repository != "" {
+				g.Provider = GitProviderAzureDevOps
+				if g.Token != "" && g.PAT == "" {
+					g.PAT = g.Token
+				}
+				return nil
+			}
 			return fmt.Errorf("Azure DevOps URL must be https://dev.azure.com/org/project/_git/repo")
 		}
 		g.Provider = GitProviderAzureDevOps
@@ -75,6 +98,15 @@ func (g *GitRepoConfig) ParseRepoURL() error {
 			g.Project = parts[0]
 			g.Repository = parts[2]
 		} else {
+			// V126-4.1: accept when the caller already populated the
+			// explicit Azure DevOps Project + Repository fields. Host
+			// gave us Organization for free.
+			if g.Project != "" && g.Repository != "" {
+				if g.Token != "" && g.PAT == "" {
+					g.PAT = g.Token
+				}
+				return nil
+			}
 			return fmt.Errorf("Azure DevOps URL must be https://org.visualstudio.com/project/_git/repo")
 		}
 		if g.Token != "" && g.PAT == "" {
@@ -83,11 +115,18 @@ func (g *GitRepoConfig) ParseRepoURL() error {
 		return nil
 	}
 
-	// GitHub (github.com or any other host = GitHub Enterprise)
+	// GitHub (github.com or any other host = GitHub Enterprise).
+	g.Provider = GitProviderGitHub
 	if len(parts) < 2 {
+		// V126-4.1 / BUG-189: explicit-fields override. The URL path lacks
+		// the owner/repo segments the path-parser needs, but if the caller
+		// already populated Owner + Repo directly, treat the URL as opaque
+		// and use the explicit fields as-is.
+		if g.Owner != "" && g.Repo != "" {
+			return nil
+		}
 		return fmt.Errorf("Git URL must contain owner/repo (got: %s)", u.Path)
 	}
-	g.Provider = GitProviderGitHub
 	g.Owner = parts[0]
 	g.Repo = strings.Join(parts[1:], "/") // handle nested paths
 	return nil
