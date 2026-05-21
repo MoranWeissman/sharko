@@ -5,26 +5,49 @@
 // provides low-latency post-merge convergence when prTracker observes a
 // Sharko-opened PR being merged.
 //
-// V125-1-8.0 (this file): scaffold only. pollOnce is a stub; Story 8.1
-// lands the real git→ArgoCD diff + act logic. The public lifecycle API
-// (New / Start / Stop / Trigger) is the stable contract that downstream
-// stories build against.
+// V125-1-8.1 (this file): the real git → ArgoCD diff + act logic landed
+// on top of V125-1-8.0's scaffold. pollOnce now:
+//
+//  1. Reads managed-clusters.yaml from git via models.LoadManagedClusters
+//     (V125-1-9 envelope-aware + JSON-Schema-validated reader).
+//  2. Lists ArgoCD cluster Secrets in the argocd namespace filtered by
+//     app.kubernetes.io/managed-by=sharko (ownership label, V125-1-8.0).
+//  3. Computes a set diff (in-git ∖ in-argocd → create; in-argocd ∖ in-git
+//     → delete; with-label-only on delete so foreign Secrets are never
+//     touched — V125-2 Adopt territory).
+//  4. Per-cluster + per-secret error isolation: a vault failure on one
+//     cluster does NOT block reconciliation of the others (design §10).
 //
 // See:
 //   - docs/design/2026-05-11-cluster-secret-reconciler-and-gitops-stance.md
-//     §7 (Option E), §8 (pattern), §12 (V125-1-8 deltas).
-//   - internal/prtracker/tracker.go (pattern this package mirrors).
+//     §7 (Option E), §8 (pattern), §9 (two-direction policy), §10 (REST
+//     git read; failure modes), §12 (V125-1-8 deltas).
+//   - internal/prtracker/tracker.go (lifecycle pattern this package mirrors).
+//   - internal/argosecrets/manager.go (the Secret payload shape — execProvider
+//     config — that the existing reconciler writes; V125-1-8 writes the same
+//     shape so ArgoCD's auth code path is unchanged across the two writers).
 package clusterreconciler
 
 import (
 	"context"
+	"encoding/base64"
+	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+
+	"github.com/MoranWeissman/sharko/internal/argosecrets"
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/cmstore"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
+	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/providers"
 )
 
 const (
@@ -40,26 +63,36 @@ const (
 	// DefaultManagedClustersPath is the in-repo location of the source-of-truth
 	// managed clusters file. Overridable via Deps.ManagedClustersPath.
 	DefaultManagedClustersPath = "configuration/managed-clusters.yaml"
+
+	// DefaultArgoCDNamespace is the namespace the reconciler writes cluster
+	// Secrets into. Overridable via Deps.Namespace.
+	DefaultArgoCDNamespace = "argocd"
+
+	// DefaultBranch is the git ref the reconciler reads managed-clusters.yaml
+	// from when Deps.Branch is empty. Matches the design doc §10 default and
+	// the existing secrets reconciler's "main" fallback.
+	DefaultBranch = "main"
 )
 
-// ArgoClient is the subset of the ArgoCD cluster-Secret API the reconciler
-// needs. Defined locally (and intentionally minimal for the scaffold) so the
-// concrete client lives outside this package and Story 8.1 can extend the
-// method set without churning every dispatch site.
+// ArgoClient is the kubernetes.Interface the reconciler uses to List, Get,
+// Create, and Delete ArgoCD cluster Secrets in the argocd namespace.
 //
-// Story 8.1 will widen this interface to cover Upsert/Delete/List of cluster
-// Secrets. Until then it is empty: the contract is "some object the
-// reconciler can call into," and the build cost is zero.
-type ArgoClient interface{}
+// Story 8.1 widens A0's empty-interface placeholder to kubernetes.Interface so
+// production wiring passes the same clientset that powers argosecrets.Manager
+// + the rest of Sharko's K8s access, and tests use k8s.io/client-go/kubernetes/
+// fake.NewSimpleClientset() without an adapter layer. A narrower Sharko-
+// specific interface was considered (cleaner method surface) but would have
+// required a fake adapter that re-implements list-by-selector semantics — the
+// fake clientset already gets that exactly right, so the broader interface
+// pays off in test simplicity.
+type ArgoClient = kubernetes.Interface
 
-// Vault is the subset of the credential-provider API the reconciler needs
-// (per-cluster kubeconfig / bearer-token retrieval at reconcile time).
-// Mirrors the prtracker pattern of declaring a local interface for the
-// dependency rather than importing the concrete type — keeps the package
-// dependency graph flat and the test seams small.
-//
-// Story 8.1 will widen this interface to specify the exact methods needed.
-type Vault interface{}
+// Vault is the providers.ClusterCredentialsProvider Sharko uses everywhere
+// else to fetch per-cluster credentials (server URL, CA, bearer token /
+// kubeconfig bytes). Widened from A0's empty-interface placeholder so the
+// reconciler can call GetCredentials directly and tests can substitute the
+// existing internal/demo.MockClusterCredentialsProvider (or a one-off mock).
+type Vault = providers.ClusterCredentialsProvider
 
 // Deps holds the reconciler's external dependencies. Constructor-injected so
 // tests can substitute fakes (k8s.io/client-go/kubernetes/fake, gitprovider
@@ -95,6 +128,21 @@ type Deps struct {
 	// ManagedClustersPath overrides the in-repo source-of-truth file.
 	// Empty string means DefaultManagedClustersPath.
 	ManagedClustersPath string
+
+	// Namespace is the K8s namespace the reconciler writes ArgoCD cluster
+	// Secrets into. Empty string means DefaultArgoCDNamespace ("argocd").
+	Namespace string
+
+	// Branch is the git ref the reconciler reads managed-clusters.yaml from.
+	// Empty string means DefaultBranch ("main").
+	Branch string
+
+	// DefaultRoleARN is the AWS IAM role ARN passed to argocd-k8s-auth via
+	// --role-arn for clusters whose entry does NOT specify one. Empty means
+	// "no --role-arn flag" (parity with argosecrets.Reconciler's behavior so
+	// the Secret payload shape matches across both writers during the
+	// transition window).
+	DefaultRoleARN string
 }
 
 // Reconciler is a background reconciler that converges ArgoCD cluster Secret
@@ -103,6 +151,8 @@ type Reconciler struct {
 	deps                Deps
 	tickInterval        time.Duration
 	managedClustersPath string
+	namespace           string
+	branch              string
 
 	triggerCh chan struct{} // buffered(1) — Trigger() never blocks
 	stopCh    chan struct{}
@@ -137,10 +187,20 @@ func New(deps Deps) *Reconciler {
 	if path == "" {
 		path = DefaultManagedClustersPath
 	}
+	ns := deps.Namespace
+	if ns == "" {
+		ns = DefaultArgoCDNamespace
+	}
+	branch := deps.Branch
+	if branch == "" {
+		branch = DefaultBranch
+	}
 	r := &Reconciler{
 		deps:                deps,
 		tickInterval:        tick,
 		managedClustersPath: path,
+		namespace:           ns,
+		branch:              branch,
 		triggerCh:           make(chan struct{}, 1),
 		stopCh:              make(chan struct{}),
 	}
@@ -201,18 +261,512 @@ func (r *Reconciler) run(ctx context.Context) {
 	}
 }
 
-// pollOnce is the reconcile body. STUB for V125-1-8.0 — Story 8.1
-// implements the real git→ArgoCD diff + act logic. For the scaffold it
-// only logs once and returns.
+// reconcileStats holds the per-tick counters used in the summary audit
+// entry. Intentionally minimal — the design doc §10 calls for an
+// operational signal ("what happened this tick"), not a full metrics
+// surface. Counters that need to feed Prometheus / Grafana can ride on a
+// future MetricsFn dep without changing this struct.
+type reconcileStats struct {
+	Created          int
+	Deleted          int
+	SkippedUnlabeled int // existing same-name unlabeled Secret — V125-2 Adopt territory
+	Errors           int
+}
+
+// pollOnce is the reconcile body — one tick of the git → ArgoCD diff
+// + act loop. Invoked via r.pollFn (per-instance test seam set up in
+// New) so tests can observe tick / trigger events without depending on
+// the production audit + slog output of this function.
 //
-// Invoked via r.pollFn (per-instance test seam set up in New) rather than
-// called directly so tests can observe tick / trigger events without
-// depending on slog output.
+// Failure isolation contract (design doc §10):
+//   - A git fetch error aborts the tick BEFORE any K8s mutation, logs +
+//     audits the failure, and leaves all live state intact.
+//   - A schema-validation error from models.LoadManagedClusters has the
+//     same shape — the V125-1-9 reader already audits the violation list
+//     via slog; we add a single audit.Entry so the operator sees the
+//     rejection in /api/v1/audit alongside the slog spam.
+//   - A vault error on cluster X logs + audits + CONTINUES to cluster X+1.
+//   - A K8s create / delete error on Secret Y logs + audits + CONTINUES to
+//     the next item in the same set.
+//
+// The final summary entry fires unconditionally so an operator can tell
+// at a glance whether the tick was a no-op or did meaningful work.
 func (r *Reconciler) pollOnce(ctx context.Context) {
-	// ctx is accepted for parity with Story 8.1's real implementation.
-	_ = ctx
-	slog.Info("[clusterreconciler] tick (V125-1-8.0 scaffold — pollOnce not yet implemented; Story 8.1 lands the real logic)",
-		"managed_clusters_path", r.managedClustersPath,
-		"tick_interval", r.tickInterval,
+	stats := reconcileStats{}
+
+	// Step 0: dependency precondition. The reconciler is wired into the
+	// process at Start time but the git provider is resolved lazily (no
+	// active connection on first boot is normal — wait for the operator
+	// to configure one). This branch matches secrets.Reconciler's idiom.
+	if r.deps.GitProvider == nil {
+		slog.Warn("[clusterreconciler] no GitProvider getter configured, skipping reconcile")
+		return
+	}
+	gp := r.deps.GitProvider()
+	if gp == nil {
+		slog.Debug("[clusterreconciler] no active git provider, skipping reconcile",
+			"managed_clusters_path", r.managedClustersPath,
+		)
+		return
+	}
+	if r.deps.ArgoClient == nil {
+		slog.Warn("[clusterreconciler] no ArgoClient (k8s clientset) configured, skipping reconcile")
+		return
+	}
+	if r.deps.Vault == nil {
+		slog.Warn("[clusterreconciler] no Vault (cluster-credentials provider) configured, skipping reconcile")
+		return
+	}
+
+	// Step 1: read managed-clusters.yaml from git.
+	body, err := gp.GetFileContent(ctx, r.managedClustersPath, r.branch)
+	if err != nil {
+		// ErrFileNotFound is not exceptional — a freshly-bootstrapped repo
+		// has zero clusters in managed-clusters.yaml until the first
+		// register-cluster PR merges. Treat it as "empty desired state"
+		// rather than an error: the diff against argocd will compute
+		// in-argocd ∖ in-git correctly (no creates, only the deletes that
+		// would have happened anyway). Without this carve-out a fresh repo
+		// would log noise on every tick and a sharko-labeled Secret
+		// orphaned in argocd would never be cleaned up.
+		if errors.Is(err, gitprovider.ErrFileNotFound) {
+			slog.Info("[clusterreconciler] managed-clusters.yaml not in git — treating as empty desired state",
+				"path", r.managedClustersPath, "branch", r.branch,
+			)
+			// fall through with body == nil; LoadManagedClusters([]byte{})
+			// would still error, so short-circuit to empty spec instead.
+			r.reconcileDiff(ctx, nil, &stats)
+			r.emitSummaryAudit(stats)
+			return
+		}
+		slog.Error("[clusterreconciler] git read failed — aborting tick (no state mutated)",
+			"path", r.managedClustersPath, "branch", r.branch, "error", err,
+		)
+		r.audit(audit.Entry{
+			Level:    "error",
+			Event:    "cluster_secret_reconcile",
+			User:     "sharko",
+			Action:   "git_read",
+			Resource: fmt.Sprintf("file:%s ref:%s", r.managedClustersPath, r.branch),
+			Source:   "reconciler",
+			Result:   "failure",
+			Error:    err.Error(),
+		})
+		return
+	}
+
+	// Step 2: parse + schema-validate (V125-1-9).
+	spec, err := models.LoadManagedClusters(body)
+	if err != nil {
+		// schema.LogValidationFailure already fired slog.Error with the
+		// full violation list inside LoadManagedClusters; mirror it onto
+		// the audit log so the rejection is visible alongside other
+		// reconciler events.
+		slog.Error("[clusterreconciler] managed-clusters.yaml rejected — aborting tick (no state mutated)",
+			"path", r.managedClustersPath, "error", err,
+		)
+		r.audit(audit.Entry{
+			Level:    "error",
+			Event:    "cluster_secret_reconcile",
+			User:     "sharko",
+			Action:   "schema_validation",
+			Resource: fmt.Sprintf("file:%s", r.managedClustersPath),
+			Source:   "reconciler",
+			Result:   "failure",
+			Error:    err.Error(),
+		})
+		return
+	}
+
+	r.reconcileDiff(ctx, &spec, &stats)
+	r.emitSummaryAudit(stats)
+}
+
+// reconcileDiff drives the create / delete decisions from the parsed
+// desired state and the live ArgoCD secret list. Extracted so the
+// "empty managed-clusters.yaml" branch in pollOnce can share the logic.
+// A nil spec is treated as "no clusters desired".
+func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClustersSpec, stats *reconcileStats) {
+	// Build the desired set (in-git names).
+	desired := make(map[string]models.ManagedClusterEntry)
+	if spec != nil {
+		for _, c := range spec.Clusters {
+			if c.Name == "" {
+				// Schema validation should have caught this; defensive
+				// skip so a stray "" entry doesn't try to create a Secret
+				// with an empty name.
+				continue
+			}
+			desired[c.Name] = c
+		}
+	}
+
+	// List the actual set (in-argocd, sharko-labeled only).
+	existing, err := r.listManagedSecrets(ctx)
+	if err != nil {
+		slog.Error("[clusterreconciler] listing managed cluster Secrets failed — aborting tick",
+			"namespace", r.namespace, "error", err,
+		)
+		r.audit(audit.Entry{
+			Level:    "error",
+			Event:    "cluster_secret_reconcile",
+			User:     "sharko",
+			Action:   "list_secrets",
+			Resource: fmt.Sprintf("namespace:%s", r.namespace),
+			Source:   "reconciler",
+			Result:   "failure",
+			Error:    err.Error(),
+		})
+		return
+	}
+
+	// Compute set diffs in O(n+m) via map lookups.
+	toCreate := make([]models.ManagedClusterEntry, 0, len(desired))
+	for name, entry := range desired {
+		if _, present := existing[name]; !present {
+			toCreate = append(toCreate, entry)
+		}
+	}
+	toDelete := make([]string, 0)
+	for name := range existing {
+		if _, present := desired[name]; !present {
+			toDelete = append(toDelete, name)
+		}
+	}
+
+	// Create missing Secrets (in-git ∖ in-argocd).
+	for _, entry := range toCreate {
+		r.createOne(ctx, entry, stats)
+	}
+
+	// Delete orphan Secrets (in-argocd ∖ in-git). Pass the cached corev1.Secret
+	// values so we can re-verify the ownership label as a defensive last check.
+	for _, name := range toDelete {
+		secret := existing[name]
+		r.deleteOne(ctx, name, secret, stats)
+	}
+}
+
+// listManagedSecrets fetches all sharko-labeled cluster Secrets from the
+// argocd namespace as a name→Secret map. Filtered by
+// app.kubernetes.io/managed-by=sharko so externally-owned Secrets are
+// invisible to the reconciler — the cornerstone of the V125-1-8 ownership
+// model (design doc §9: "without sharko label → never touched").
+func (r *Reconciler) listManagedSecrets(ctx context.Context) (map[string]*corev1.Secret, error) {
+	list, err := r.deps.ArgoClient.CoreV1().Secrets(r.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: LabelManagedBy + "=" + LabelValueSharko,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing secrets in namespace %q: %w", r.namespace, err)
+	}
+	out := make(map[string]*corev1.Secret, len(list.Items))
+	for i := range list.Items {
+		s := &list.Items[i]
+		out[s.Name] = s
+	}
+	return out, nil
+}
+
+// createOne builds and writes a single ArgoCD cluster Secret. Per-cluster
+// errors (vault fetch, K8s create) are logged + audited but NEVER bubble
+// up — the next cluster in the toCreate list still gets its turn.
+//
+// The "skip if same-name unlabeled Secret exists" branch implements design
+// doc §9: an unlabeled Secret is V125-2 Adopt territory; this reconciler
+// must not silently overwrite it (the legacy argosecrets.Manager.Ensure
+// path adopts, which is the wrong behavior for V125-1-8 since it strips
+// foreign ownership intent without operator consent).
+func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterEntry, stats *reconcileStats) {
+	// Defensive: a same-name Secret may already exist without our label
+	// (operator-created, or adopted-by-another-tool). The list step
+	// filtered those out, so we re-check via Get before we Create.
+	existing, getErr := r.deps.ArgoClient.CoreV1().Secrets(r.namespace).Get(ctx, entry.Name, metav1.GetOptions{})
+	if getErr != nil && !apierrors.IsNotFound(getErr) {
+		stats.Errors++
+		slog.Error("[clusterreconciler] pre-create Get failed — skipping cluster",
+			"cluster", entry.Name, "namespace", r.namespace, "error", getErr,
+		)
+		r.audit(audit.Entry{
+			Level:    "error",
+			Event:    "cluster_secret_create",
+			User:     "sharko",
+			Action:   "get_secret",
+			Resource: fmt.Sprintf("cluster:%s", entry.Name),
+			Source:   "reconciler",
+			Result:   "failure",
+			Error:    getErr.Error(),
+		})
+		return
+	}
+	if getErr == nil && !IsManagedBySharko(existing) {
+		// V125-2 Adopt territory — do not touch.
+		stats.SkippedUnlabeled++
+		slog.Info("[clusterreconciler] same-name Secret exists without sharko label — skipping (V125-2 Adopt)",
+			"cluster", entry.Name, "namespace", r.namespace,
+		)
+		r.audit(audit.Entry{
+			Level:    "warn",
+			Event:    "cluster_secret_skip_unlabeled",
+			User:     "sharko",
+			Action:   "skip",
+			Resource: fmt.Sprintf("cluster:%s", entry.Name),
+			Source:   "reconciler",
+			Result:   "partial",
+			Detail:   "unlabeled Secret exists in argocd namespace; defer to V125-2 Adopt flow",
+		})
+		return
+	}
+
+	// Resolve credentials. SecretPath overrides Name for the vault lookup
+	// (matches argosecrets.Reconciler — same contract so a single repo's
+	// managed-clusters.yaml works across both writers during the
+	// transition window).
+	credKey := entry.Name
+	if entry.SecretPath != "" {
+		credKey = entry.SecretPath
+	}
+	creds, vaultErr := r.deps.Vault.GetCredentials(credKey)
+	if vaultErr != nil {
+		stats.Errors++
+		slog.Error("[clusterreconciler] vault GetCredentials failed — skipping cluster (others still reconcile)",
+			"cluster", entry.Name, "cred_key", credKey, "error", vaultErr,
+		)
+		r.audit(audit.Entry{
+			Level:    "error",
+			Event:    "cluster_secret_create",
+			User:     "sharko",
+			Action:   "get_credentials",
+			Resource: fmt.Sprintf("cluster:%s", entry.Name),
+			Source:   "reconciler",
+			Result:   "failure",
+			Error:    vaultErr.Error(),
+		})
+		return
+	}
+
+	// Build the Secret. We reuse argosecrets.ClusterSecretSpec + the
+	// package's payload builders so the Secret shape is byte-identical
+	// to what argosecrets.Manager.Ensure writes — ArgoCD's auth code
+	// path is unchanged regardless of which writer mutated the Secret.
+	clusterLabels := normalizeLabels(entry.Labels)
+	spec := argosecrets.ClusterSecretSpec{
+		Name:    entry.Name,
+		Server:  creds.Server,
+		Region:  entry.Region,
+		RoleARN: r.deps.DefaultRoleARN,
+		CAData:  base64.StdEncoding.EncodeToString(creds.CAData),
+		Labels:  clusterLabels,
+	}
+
+	secret, buildErr := buildClusterSecret(spec, r.namespace)
+	if buildErr != nil {
+		stats.Errors++
+		slog.Error("[clusterreconciler] building Secret payload failed — skipping cluster",
+			"cluster", entry.Name, "error", buildErr,
+		)
+		r.audit(audit.Entry{
+			Level:    "error",
+			Event:    "cluster_secret_create",
+			User:     "sharko",
+			Action:   "build_payload",
+			Resource: fmt.Sprintf("cluster:%s", entry.Name),
+			Source:   "reconciler",
+			Result:   "failure",
+			Error:    buildErr.Error(),
+		})
+		return
+	}
+
+	// Defense-in-depth: re-apply the label even though buildClusterSecret
+	// already set it. Cheap, idempotent, and lock-in for the invariant
+	// "every Secret this reconciler writes carries the sharko label".
+	ApplyManagedBySharkoLabel(secret)
+
+	if _, createErr := r.deps.ArgoClient.CoreV1().Secrets(r.namespace).Create(ctx, secret, metav1.CreateOptions{}); createErr != nil {
+		stats.Errors++
+		slog.Error("[clusterreconciler] Secret Create failed — skipping cluster",
+			"cluster", entry.Name, "namespace", r.namespace, "error", createErr,
+		)
+		r.audit(audit.Entry{
+			Level:    "error",
+			Event:    "cluster_secret_create",
+			User:     "sharko",
+			Action:   "create",
+			Resource: fmt.Sprintf("cluster:%s", entry.Name),
+			Source:   "reconciler",
+			Result:   "failure",
+			Error:    createErr.Error(),
+		})
+		return
+	}
+
+	stats.Created++
+	slog.Info("[clusterreconciler] cluster Secret created",
+		"cluster", entry.Name, "namespace", r.namespace, "server", creds.Server,
 	)
+	r.audit(audit.Entry{
+		Level:    "info",
+		Event:    "cluster_secret_create",
+		User:     "sharko",
+		Action:   "create",
+		Resource: fmt.Sprintf("cluster:%s", entry.Name),
+		Source:   "reconciler",
+		Result:   "success",
+	})
+}
+
+// deleteOne removes a single orphan ArgoCD cluster Secret. The list step
+// already filtered by the sharko label, but we re-verify defensively in
+// case of a label race (operator stripped the label between list and
+// delete) — paranoia is cheap and the design doc §9 invariant is
+// "Sharko never touches what it doesn't own."
+func (r *Reconciler) deleteOne(ctx context.Context, name string, cached *corev1.Secret, stats *reconcileStats) {
+	if !IsManagedBySharko(cached) {
+		// Should be impossible (LabelSelector pre-filtered), but the
+		// invariant is too important to trust the pre-filter. Skip + log.
+		slog.Warn("[clusterreconciler] cached secret missing sharko label between list and delete — skipping (invariant guard)",
+			"cluster", name, "namespace", r.namespace,
+		)
+		return
+	}
+
+	if err := r.deps.ArgoClient.CoreV1().Secrets(r.namespace).Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
+		if apierrors.IsNotFound(err) {
+			// Already gone (concurrent delete by an operator). Idempotent.
+			slog.Info("[clusterreconciler] orphan Secret already deleted",
+				"cluster", name, "namespace", r.namespace,
+			)
+			return
+		}
+		stats.Errors++
+		slog.Error("[clusterreconciler] orphan Secret delete failed — continuing to next",
+			"cluster", name, "namespace", r.namespace, "error", err,
+		)
+		r.audit(audit.Entry{
+			Level:    "error",
+			Event:    "cluster_secret_delete",
+			User:     "sharko",
+			Action:   "delete",
+			Resource: fmt.Sprintf("cluster:%s", name),
+			Source:   "reconciler",
+			Result:   "failure",
+			Error:    err.Error(),
+		})
+		return
+	}
+
+	stats.Deleted++
+	slog.Info("[clusterreconciler] orphan Secret deleted",
+		"cluster", name, "namespace", r.namespace,
+	)
+	r.audit(audit.Entry{
+		Level:    "info",
+		Event:    "cluster_secret_delete",
+		User:     "sharko",
+		Action:   "delete",
+		Resource: fmt.Sprintf("cluster:%s", name),
+		Source:   "reconciler",
+		Result:   "success",
+	})
+}
+
+// emitSummaryAudit fires one audit entry per tick describing the net
+// effect (counts of created / deleted / skipped / errors). Operationally
+// critical per design doc §10 — the operator's only signal that the
+// reconciler is alive AND making (or refusing to make) decisions.
+func (r *Reconciler) emitSummaryAudit(stats reconcileStats) {
+	level := "info"
+	result := "success"
+	if stats.Errors > 0 {
+		level = "warn"
+		result = "partial"
+	}
+	r.audit(audit.Entry{
+		Level:  level,
+		Event:  "cluster_secret_reconcile_tick",
+		User:   "sharko",
+		Action: "reconcile",
+		Resource: fmt.Sprintf("created:%d deleted:%d skipped_unlabeled:%d errors:%d",
+			stats.Created, stats.Deleted, stats.SkippedUnlabeled, stats.Errors),
+		Source: "reconciler",
+		Result: result,
+	})
+}
+
+// audit is a nil-safe wrapper around deps.AuditFn. The constructor does
+// not enforce AuditFn != nil (callers are expected to wire it) but a
+// missing wire-up should NOT panic the reconciler loop — log a warning
+// and continue.
+func (r *Reconciler) audit(entry audit.Entry) {
+	if r.deps.AuditFn == nil {
+		slog.Warn("[clusterreconciler] AuditFn not wired — dropping audit entry",
+			"event", entry.Event, "action", entry.Action,
+		)
+		return
+	}
+	r.deps.AuditFn(entry)
+}
+
+// normalizeLabels coerces the interface{} Labels field of a
+// ManagedClusterEntry into the map[string]string shape argosecrets
+// expects. Mirrors config.parseLabels: a yaml map becomes a string map;
+// the legacy `labels: []` empty-list sentinel becomes the empty map;
+// anything else (including nil) becomes the empty map.
+//
+// We intentionally do NOT depend on internal/config here (which would
+// pull a much bigger graph just for the helper) — the logic is small
+// and the duplication cost is low.
+func normalizeLabels(raw interface{}) map[string]string {
+	if raw == nil {
+		return map[string]string{}
+	}
+	switch v := raw.(type) {
+	case map[string]string:
+		out := make(map[string]string, len(v))
+		for k, val := range v {
+			out[k] = val
+		}
+		return out
+	case map[string]interface{}:
+		out := make(map[string]string, len(v))
+		for k, val := range v {
+			out[k] = fmt.Sprintf("%v", val)
+		}
+		return out
+	default:
+		return map[string]string{}
+	}
+}
+
+// buildClusterSecret constructs the corev1.Secret payload that
+// argosecrets.Manager.Ensure would have built — but as a standalone
+// helper so the reconciler can call Create directly without going
+// through Ensure's adoption path (which we deliberately avoid in
+// V125-1-8 per the §9 ownership policy).
+//
+// The Secret shape (labels, stringData keys, execProviderConfig JSON)
+// MUST stay byte-identical to argosecrets.Manager's output during the
+// V125-1-8 transition window — both writers coexist until the legacy
+// argosecrets.Reconciler is retired, and ArgoCD's auth code path
+// resolves the same way for both.
+func buildClusterSecret(spec argosecrets.ClusterSecretSpec, namespace string) (*corev1.Secret, error) {
+	configJSON, err := argosecrets.BuildSecretConfigJSON(spec)
+	if err != nil {
+		return nil, fmt.Errorf("building exec-provider config for cluster %q: %w", spec.Name, err)
+	}
+	labels := argosecrets.BuildClusterSecretLabels(spec)
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        spec.Name,
+			Namespace:   namespace,
+			Labels:      labels,
+			Annotations: spec.Annotations,
+		},
+		Type: corev1.SecretTypeOpaque,
+		StringData: map[string]string{
+			"name":   spec.Name,
+			"server": spec.Server,
+			"config": configJSON,
+		},
+	}, nil
 }
