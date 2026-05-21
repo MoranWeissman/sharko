@@ -231,7 +231,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns the full addon catalog with per-cluster deployment status",
+                "description": "Returns the full addon catalog with per-cluster deployment status.\nEach addon carries deployed_cluster_count (clusters where the\nArgoCD Application is Synced + Healthy) and total_target_cluster_count\n(clusters where the addon is labelled enabled in managed-clusters.yaml);\nthe UI uses the pair to render the tile-level \"Running on N/M clusters\" badge.",
                 "produces": [
                     "application/json"
                 ],
@@ -243,8 +243,7 @@ const docTemplate = `{
                     "200": {
                         "description": "Addon catalog",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.AddonCatalogResponse"
                         }
                     },
                     "500": {
@@ -6965,6 +6964,112 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "permission": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_models.AddonCatalogItem": {
+            "type": "object",
+            "properties": {
+                "addon_name": {
+                    "type": "string"
+                },
+                "applications": {
+                    "description": "Per-cluster details",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.AddonDeploymentInfo"
+                    }
+                },
+                "chart": {
+                    "type": "string"
+                },
+                "degraded_applications": {
+                    "type": "integer"
+                },
+                "deployed_cluster_count": {
+                    "description": "V126-3.1 (DESIGN-02): paired counts that drive the tile-level\n\"Running on N/M clusters\" badge. N = clusters where the ArgoCD\nApplication for this addon is Synced + Healthy.\nM = clusters where the addon is labelled enabled in\nmanaged-clusters.yaml. These are kept separate from the existing\nHealthyApplications / EnabledClusters fields so the tile copy can\ndistinguish \"addon is in catalog\" from \"addon is actually running\"\nwithout changing the historical stat semantics other tiles depend on.",
+                    "type": "integer"
+                },
+                "enabled_clusters": {
+                    "type": "integer"
+                },
+                "healthy_applications": {
+                    "type": "integer"
+                },
+                "missing_applications": {
+                    "type": "integer"
+                },
+                "namespace": {
+                    "type": "string"
+                },
+                "repo_url": {
+                    "type": "string"
+                },
+                "total_clusters": {
+                    "description": "Stats",
+                    "type": "integer"
+                },
+                "total_target_cluster_count": {
+                    "type": "integer"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_models.AddonCatalogResponse": {
+            "type": "object",
+            "properties": {
+                "addons": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.AddonCatalogItem"
+                    }
+                },
+                "addons_only_in_git": {
+                    "type": "integer"
+                },
+                "total_addons": {
+                    "type": "integer"
+                },
+                "total_clusters": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_MoranWeissman_sharko_internal_models.AddonDeploymentInfo": {
+            "type": "object",
+            "properties": {
+                "application_name": {
+                    "type": "string"
+                },
+                "cluster_environment": {
+                    "type": "string"
+                },
+                "cluster_name": {
+                    "type": "string"
+                },
+                "configured_version": {
+                    "type": "string"
+                },
+                "deployed_version": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "health_status": {
+                    "type": "string"
+                },
+                "namespace": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "sync_status": {
+                    "description": "ArgoCD status",
                     "type": "string"
                 }
             }

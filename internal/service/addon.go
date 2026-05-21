@@ -146,6 +146,12 @@ func (s *AddonService) GetCatalog(ctx context.Context, gp gitprovider.GitProvide
 		// Check which clusters have this addon
 		deployments := make([]models.AddonDeploymentInfo, 0)
 		enabledCount, healthyCount, degradedCount, missingCount := 0, 0, 0, 0
+		// V126-3.1 (DESIGN-02): N = clusters where the ArgoCD Application is
+		// BOTH Synced AND Healthy. Stricter than the existing healthyCount
+		// (which only checks HealthStatus) so the "Running on N/M clusters"
+		// tile badge means "actually serving traffic", not "is healthy but
+		// possibly out of sync".
+		deployedCount := 0
 
 		for _, cluster := range repoCfg.Clusters {
 			labelVal, hasAddon := cluster.Labels[addon.Name]
@@ -194,6 +200,9 @@ func (s *AddonService) GetCatalog(ctx context.Context, gp gitprovider.GitProvide
 					default:
 						dep.Status = "unknown"
 					}
+					if app.SyncStatus == "Synced" && app.HealthStatus == "Healthy" {
+						deployedCount++
+					}
 				} else {
 					dep.Status = "missing"
 					missingCount++
@@ -208,6 +217,11 @@ func (s *AddonService) GetCatalog(ctx context.Context, gp gitprovider.GitProvide
 		item.HealthyApplications = healthyCount
 		item.DegradedApplications = degradedCount
 		item.MissingApplications = missingCount
+		// V126-3.1 (DESIGN-02): tile badge sources.
+		// M = clusters where the addon is labelled enabled.
+		// N = clusters where the addon's ArgoCD Application is Synced + Healthy.
+		item.TotalTargetClusterCount = enabledCount
+		item.DeployedClusterCount = deployedCount
 		item.Applications = deployments
 
 		if enabledCount == 0 {

@@ -361,3 +361,175 @@ func TestGetVersionMatrix_EmptyResponseHasNoLeakedError(t *testing.T) {
 		t.Errorf("response body leaked error string: %s", string(body))
 	}
 }
+
+// TestGetCatalog_DeployedAndTargetClusterCounts is the V126-3.1 (DESIGN-02)
+// contract test: every AddonCatalogItem in the catalog response must carry
+// the deployed_cluster_count (N = clusters where the ArgoCD Application is
+// BOTH Synced AND Healthy) and total_target_cluster_count (M = clusters
+// where the addon is labelled enabled). The UI's tile-level badge picks one
+// of four copies based on the (N, M) pair, so we fixture four addons that
+// exercise all four states:
+//
+//	M=0, N=0  → "Not deployed anywhere"
+//	M>0, N=0  → "Not deployed yet"
+//	0<N<M     → "Running on N/M clusters"
+//	N==M, M>0 → "Running on N clusters"
+//
+// Synced + Healthy is the gating predicate, not Healthy alone — an addon
+// that is Healthy but OutOfSync is counted toward HealthyApplications (for
+// the legacy stat cards) but NOT toward DeployedClusterCount. This lock
+// down test guards both that gating logic and the field plumbing.
+func TestGetCatalog_DeployedAndTargetClusterCounts(t *testing.T) {
+	clustersYAML := []byte(`
+clusters:
+  - name: cluster-a
+    labels:
+      addon-running-everywhere: enabled
+      addon-partially-running: enabled
+      addon-target-only: enabled
+  - name: cluster-b
+    labels:
+      addon-running-everywhere: enabled
+      addon-partially-running: enabled
+      addon-target-only: enabled
+  - name: cluster-c
+    labels:
+      addon-running-everywhere: enabled
+      addon-not-anywhere: disabled
+`)
+
+	catalogYAML := []byte(`
+applicationsets:
+  - name: addon-running-everywhere
+    repoURL: https://example.com/charts
+    chart: chart-everywhere
+    version: "1.0.0"
+    namespace: ns-everywhere
+  - name: addon-partially-running
+    repoURL: https://example.com/charts
+    chart: chart-partial
+    version: "1.0.0"
+    namespace: ns-partial
+  - name: addon-target-only
+    repoURL: https://example.com/charts
+    chart: chart-target
+    version: "1.0.0"
+    namespace: ns-target
+  - name: addon-not-anywhere
+    repoURL: https://example.com/charts
+    chart: chart-nowhere
+    version: "1.0.0"
+    namespace: ns-nowhere
+`)
+
+	// ArgoCD fixture: each application carries explicit sync + health.
+	// - addon-running-everywhere/{a,b,c} → all Synced + Healthy → N=3, M=3
+	// - addon-partially-running/a → Synced + Healthy (counts toward N)
+	//   addon-partially-running/b → Synced + Healthy BUT we mark it
+	//                              OutOfSync to prove the predicate is the
+	//                              AND of sync + health, not health alone
+	//   → N=1, M=2
+	// - addon-target-only/{a,b} → NO ArgoCD apps → N=0, M=2
+	// - addon-not-anywhere → no cluster enables it (cluster-c sets disabled)
+	//                       → N=0, M=0
+	argoApps := map[string]interface{}{
+		"items": []map[string]interface{}{
+			{
+				"metadata": map[string]interface{}{"name": "addon-running-everywhere-cluster-a", "namespace": "argocd"},
+				"spec":     map[string]interface{}{"source": map[string]interface{}{}, "destination": map[string]interface{}{}},
+				"status": map[string]interface{}{
+					"sync":   map[string]interface{}{"status": "Synced"},
+					"health": map[string]interface{}{"status": "Healthy"},
+				},
+			},
+			{
+				"metadata": map[string]interface{}{"name": "addon-running-everywhere-cluster-b", "namespace": "argocd"},
+				"spec":     map[string]interface{}{"source": map[string]interface{}{}, "destination": map[string]interface{}{}},
+				"status": map[string]interface{}{
+					"sync":   map[string]interface{}{"status": "Synced"},
+					"health": map[string]interface{}{"status": "Healthy"},
+				},
+			},
+			{
+				"metadata": map[string]interface{}{"name": "addon-running-everywhere-cluster-c", "namespace": "argocd"},
+				"spec":     map[string]interface{}{"source": map[string]interface{}{}, "destination": map[string]interface{}{}},
+				"status": map[string]interface{}{
+					"sync":   map[string]interface{}{"status": "Synced"},
+					"health": map[string]interface{}{"status": "Healthy"},
+				},
+			},
+			{
+				"metadata": map[string]interface{}{"name": "addon-partially-running-cluster-a", "namespace": "argocd"},
+				"spec":     map[string]interface{}{"source": map[string]interface{}{}, "destination": map[string]interface{}{}},
+				"status": map[string]interface{}{
+					"sync":   map[string]interface{}{"status": "Synced"},
+					"health": map[string]interface{}{"status": "Healthy"},
+				},
+			},
+			{
+				// Healthy but OutOfSync — proves the AND predicate is enforced.
+				"metadata": map[string]interface{}{"name": "addon-partially-running-cluster-b", "namespace": "argocd"},
+				"spec":     map[string]interface{}{"source": map[string]interface{}{}, "destination": map[string]interface{}{}},
+				"status": map[string]interface{}{
+					"sync":   map[string]interface{}{"status": "OutOfSync"},
+					"health": map[string]interface{}{"status": "Healthy"},
+				},
+			},
+		},
+	}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(argoApps)
+	}))
+	defer ts.Close()
+
+	gp := &fakeGitProvider{
+		files: map[string][]byte{
+			"configuration/managed-clusters.yaml": clustersYAML,
+			"configuration/addons-catalog.yaml":   catalogYAML,
+		},
+	}
+	ac := argocd.NewClient(ts.URL, "fake-token", false)
+	svc := NewAddonService("")
+
+	resp, err := svc.GetCatalog(context.Background(), gp, ac)
+	if err != nil {
+		t.Fatalf("GetCatalog returned err: %v", err)
+	}
+
+	byName := make(map[string]int)
+	for i, a := range resp.Addons {
+		byName[a.AddonName] = i
+	}
+
+	cases := []struct {
+		name           string
+		wantDeployed   int // N
+		wantTarget     int // M
+		stateNarrative string
+	}{
+		{"addon-running-everywhere", 3, 3, "N==M (Running on N clusters)"},
+		{"addon-partially-running", 1, 2, "0<N<M (Running on N/M clusters)"},
+		{"addon-target-only", 0, 2, "N=0, M>0 (Not deployed yet)"},
+		{"addon-not-anywhere", 0, 0, "M=0 (Not deployed anywhere)"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			idx, ok := byName[tc.name]
+			if !ok {
+				t.Fatalf("expected addon %q in response, got %+v", tc.name, byName)
+			}
+			got := resp.Addons[idx]
+			if got.DeployedClusterCount != tc.wantDeployed {
+				t.Errorf("[%s] DeployedClusterCount: want %d, got %d (state: %s)",
+					tc.name, tc.wantDeployed, got.DeployedClusterCount, tc.stateNarrative)
+			}
+			if got.TotalTargetClusterCount != tc.wantTarget {
+				t.Errorf("[%s] TotalTargetClusterCount: want %d, got %d (state: %s)",
+					tc.name, tc.wantTarget, got.TotalTargetClusterCount, tc.stateNarrative)
+			}
+		})
+	}
+}
