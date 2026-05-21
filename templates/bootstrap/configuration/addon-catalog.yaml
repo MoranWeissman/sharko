@@ -1,0 +1,39 @@
+# yaml-language-server: $schema=https://sharko.io/schemas/addon-catalog.v1.json
+# Addon Catalog — managed by Sharko
+# See docs: https://moranweissman.github.io/sharko/user-guide/addons/
+#
+# V125-1-9: this file uses the self-describing sharko.io/v1 envelope so that
+# editors can validate it inline against the schema (yaml-language-server
+# directive above) and Sharko's reconciler can fail-loudly on malformed input
+# instead of silently dropping entries.
+
+apiVersion: sharko.io/v1
+kind: AddonCatalog
+metadata:
+  name: addon-catalog
+spec:
+  applicationsets: []
+  # Bootstrap ships empty. Install addons from the Marketplace
+  # (UI) or via `sharko add-addon` (CLI). Examples below show the
+  # available fields.
+
+  # Example with all available fields:
+  # - name: kyverno                        # (required) addon identifier
+  #   repoURL: https://kyverno.github.io/  # (required) Helm repo URL
+  #   chart: kyverno                       # (required) chart name in the repo
+  #   version: "3.3.4"                     # (required) chart version
+  #   namespace: kyverno                   # target namespace (default: addon name)
+  #   syncWave: 0                          # deploy order: negative=first, positive=last
+  #   selfHeal: true                       # auto-revert manual changes
+  #   syncOptions:                         # ArgoCD sync options
+  #     - ServerSideApply=true
+  #   ignoreDifferences:                   # fields ArgoCD should ignore during diff
+  #     - group: kyverno.io
+  #       kind: ClusterPolicy
+  #       jsonPointers:
+  #         - /spec/rules
+  #   dependsOn: [cert-manager]            # addon names that must be synced first
+
+  # Dependency ordering example:
+  # - name: istiod
+  #   dependsOn: [istio-base, istio-cni]   # istiod syncs after istio-base and istio-cni

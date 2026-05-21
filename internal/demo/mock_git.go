@@ -42,8 +42,15 @@ func (p *MockGitProvider) seedFiles() {
 	// external tooling pointed at it still resolve.
 	p.files["configuration/cluster-addons.yaml"] = []byte(clusterAddonsYAML)
 
-	// addons-catalog.yaml — the addon catalog (applicationsets format)
-	p.files["configuration/addons-catalog.yaml"] = []byte(addonsCatalogYAML)
+	// addon-catalog.yaml — the addon catalog (applicationsets format).
+	// V125-1-9.2 renamed the canonical filename from addons-catalog.yaml
+	// (plural) to addon-catalog.yaml (singular) and wrapped the body in
+	// the sharko.io/v1 envelope. The plural filename remains a read-only
+	// alias through V125 and is removed in V126 — the stub below mirrors
+	// the bootstrap template's "MOVED" placeholder so any caller pointed
+	// at the old path resolves to a helpful message rather than 404.
+	p.files["configuration/addon-catalog.yaml"] = []byte(addonsCatalogYAML)
+	p.files["configuration/addons-catalog.yaml"] = []byte(addonsCatalogLegacyStub)
 
 	// Global values stubs
 	p.files["configuration/addons-global-values/cert-manager.yaml"] = []byte(`replicaCount: 1
@@ -374,53 +381,72 @@ spec:
         kube-prometheus-stack-version: "55.5.0"
 `
 
-// addonsCatalogYAML is the fake configuration/addons-catalog.yaml in applicationsets format.
-const addonsCatalogYAML = `applicationsets:
-  - name: cert-manager
-    chart: cert-manager
-    repoURL: https://charts.jetstack.io
-    version: "1.14.4"
-    namespace: cert-manager
+// addonsCatalogLegacyStub is the body seeded at the legacy plural path
+// (configuration/addons-catalog.yaml) so demo callers that scripted against
+// the old filename hit a helpful "moved" placeholder instead of an error.
+// Matches the bootstrap template stub V125-1-9.2 lays down.
+const addonsCatalogLegacyStub = `# MOVED: this file is now at addon-catalog.yaml (singular).
+# The legacy filename remains a read-only alias through V125;
+# the alias will be removed in V126. Operators should rename
+# their local copy to addon-catalog.yaml at their convenience.
+`
 
-  - name: metrics-server
-    chart: metrics-server
-    repoURL: https://kubernetes-sigs.github.io/metrics-server/
-    version: "3.12.1"
-    namespace: kube-system
+// addonsCatalogYAML is the fake configuration/addon-catalog.yaml in the
+// V125-1-9 sharko.io/v1 envelope shape. The applicationsets payload is
+// unchanged from the pre-envelope demo content; only the wrapping frame
+// and the editor schema header are new.
+const addonsCatalogYAML = `# yaml-language-server: $schema=https://sharko.io/schemas/addon-catalog.v1.json
+apiVersion: sharko.io/v1
+kind: AddonCatalog
+metadata:
+  name: addon-catalog
+spec:
+  applicationsets:
+    - name: cert-manager
+      chart: cert-manager
+      repoURL: https://charts.jetstack.io
+      version: "1.14.4"
+      namespace: cert-manager
 
-  - name: datadog
-    chart: datadog
-    repoURL: https://helm.datadoghq.com
-    version: "3.69.0"
-    namespace: datadog
+    - name: metrics-server
+      chart: metrics-server
+      repoURL: https://kubernetes-sigs.github.io/metrics-server/
+      version: "3.12.1"
+      namespace: kube-system
 
-  - name: external-dns
-    chart: external-dns
-    repoURL: https://kubernetes-sigs.github.io/external-dns/
-    version: "1.14.4"
-    namespace: external-dns
+    - name: datadog
+      chart: datadog
+      repoURL: https://helm.datadoghq.com
+      version: "3.69.0"
+      namespace: datadog
 
-  - name: istio-base
-    chart: base
-    repoURL: https://istio-release.storage.googleapis.com/charts
-    version: "1.21.1"
-    namespace: istio-system
+    - name: external-dns
+      chart: external-dns
+      repoURL: https://kubernetes-sigs.github.io/external-dns/
+      version: "1.14.4"
+      namespace: external-dns
 
-  - name: kube-prometheus-stack
-    chart: kube-prometheus-stack
-    repoURL: https://prometheus-community.github.io/helm-charts
-    version: "58.2.1"
-    namespace: monitoring
+    - name: istio-base
+      chart: base
+      repoURL: https://istio-release.storage.googleapis.com/charts
+      version: "1.21.1"
+      namespace: istio-system
 
-  - name: logging-operator
-    chart: logging-operator
-    repoURL: https://kube-logging.github.io/helm-charts
-    version: "4.6.0"
-    namespace: logging
+    - name: kube-prometheus-stack
+      chart: kube-prometheus-stack
+      repoURL: https://prometheus-community.github.io/helm-charts
+      version: "58.2.1"
+      namespace: monitoring
 
-  - name: vault
-    chart: vault
-    repoURL: https://helm.releases.hashicorp.com
-    version: "0.28.0"
-    namespace: vault
+    - name: logging-operator
+      chart: logging-operator
+      repoURL: https://kube-logging.github.io/helm-charts
+      version: "4.6.0"
+      namespace: logging
+
+    - name: vault
+      chart: vault
+      repoURL: https://helm.releases.hashicorp.com
+      version: "0.28.0"
+      namespace: vault
 `
