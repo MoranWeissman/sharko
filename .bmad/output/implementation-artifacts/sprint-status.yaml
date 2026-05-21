@@ -1244,39 +1244,14 @@ development_status:
   # Story 9.6 adds .claude/team/docs-writer.md. Worktree-isolated per
   # feedback_agent_dispatch_worktree_isolation memory. Single commit per story,
   # commit prefix feat(schema): / refactor(schema): / docs(schema):.
-  epic-V125-1-9-schema-envelope: backlog
-  # 9.1 Envelope types + managed-clusters reader/writer compat. New
-  # internal/schema/ package with shared envelope helpers; ManagedClustersDoc
-  # apiVersion/kind/metadata/spec wrapper applied to internal/models/cluster.go;
-  # reader accepts legacy bare-YAML AND enveloped; writer always emits enveloped;
-  # bootstrap template + demo seed updated.
-  V125-1-9-1-envelope-types-and-managed-clusters-reader-writer-compat: backlog
-  # 9.2 Addon-catalog envelope + filename rename (alias preserved). Mirrors 9.1
-  # for internal/catalog/loader.go; AddonCatalogDoc envelope; reader accepts
-  # both addons-catalog.yaml (legacy) AND addon-catalog.yaml (new singular);
-  # writer always emits new filename + envelope; demo seed updated.
-  V125-1-9-2-addon-catalog-envelope-and-filename-rename-alias-preserved: backlog
-  # 9.3 JSON Schema generator (cmd/schema-gen/). New binary introspects 9.1+9.2
-  # types via invopop/jsonschema; emits docs/schemas/managed-clusters.v1.json +
-  # docs/schemas/addon-catalog.v1.json; Makefile target + CI drift-guard mirror
-  # the existing "Swagger Up To Date" check pattern.
-  V125-1-9-3-json-schema-generator-cmd-schema-gen: backlog
-  # 9.4 Read-time validation in reader paths. internal/schema/validator.go using
-  # santhosh-tekuri/jsonschema v5; reader code in cluster.go + catalog/loader.go
-  # validates BEFORE returning parsed doc; failure = audit-logged error, no
-  # silent swallowing; legacy bare-YAML routes past validation per 9.1 detection.
-  V125-1-9-4-read-time-validation-in-reader-paths: backlog
-  # 9.5 sharko validate-config CLI + CI/PR hook. cmd/sharko/validate.go subcommand
-  # auto-detects schema by kind; user-friendly errors with line numbers when
-  # the YAML lib supports them; exits 0/1. CI step matches files by
-  # apiVersion: sharko.io/* (per maintainer signoff #5) — catches user-renamed
-  # files too.
-  V125-1-9-5-sharko-validate-config-cli-and-ci-pr-hook: backlog
-  # 9.6 Documentation + migration runbook. Annotates architectural-todos doc §4
-  # with shipped state; new docs/site/operator/yaml-schema-migration.md covers
-  # what changed / why / user impact / V126 deprecation timeline / editor setup
-  # via yaml-language-server schema header. mkdocs --strict passes.
-  V125-1-9-6-documentation-and-migration-runbook: backlog
+  epic-V125-1-9-schema-envelope: done                                              # PR #346 squash-merged to main 2026-05-21 (commit 1ed2de6d). Single sprint PR; 6 stories + A0 scaffold shipped together. NO release/tag — waits for V125-1-8 reconciler.
+  # A0 scaffold: 375503fb — internal/schema/envelope.go with Envelope[T any] generic + Metadata + IsEnveloped detector + APIVersion/Kind constants
+  V125-1-9-1-envelope-types-and-managed-clusters-reader-writer-compat: done        # commit adfa4082 — ManagedClustersSpec + envelope-aware LoadManagedClusters/ParseClusterAddons; bootstrap template + demo seed envelope-wrapped; legacy bare-YAML routes past validation. RISK: yaml_mutator.go indent assumptions (task #257)
+  V125-1-9-2-addon-catalog-envelope-and-filename-rename-alias-preserved: done      # commit 26cfc858 (resolved-cherry via integration agent — original 8404cf27) — AddonCatalogSpec in internal/config/parser.go; addons-catalog.yaml → addon-catalog.yaml via git mv; legacy filename is a "MOVED" stub. Cherry-pick conflict with 9.1 in parser.go resolved by integration agent: 9.2's constants block above 9.1's doc comment
+  V125-1-9-3-json-schema-generator-cmd-schema-gen: done                            # commit 14692660 — cmd/schema-gen/ binary uses invopop/jsonschema v0.14.0; emits docs/schemas/{managed-clusters,addon-catalog}.v1.json; Makefile target generate-schemas; new CI drift-check job schemas-up-to-date mirrors swagger-check; generator logic extracted to internal/schema/generator.go (wrappers in main.go avoid import cycle)
+  V125-1-9-4-read-time-validation-in-reader-paths: done                            # commit ca9d4e12 — internal/schema/validator.go using santhosh-tekuri/jsonschema v5.3.1 (draft 2020-12); Option A embed (schemas copied to internal/schema/ via cmd/schema-gen writeSchemaToBoth helper, dual CI drift gate); lazy package singleton DefaultValidator(); wrong-kind check BEFORE schema validation (preserves existing error format pins); microbench 36µs/call (~140× under 5ms target); slog.Error audit-log path (internal/audit rejected as request-scoped)
+  V125-1-9-5-sharko-validate-config-cli-and-ci-pr-hook: done                       # commit 5f3b5fdc — cmd/sharko/validate_config.go Cobra subcommand: file + dir modes, --quiet, auto-skip non-sharko YAML; permissive PR-time validate-sharko-config GH Actions job. Bootstrap-template bug caught + fixed (clusters: null → clusters: []) — direct sprint-purpose payoff. Docs at docs/site/cli/commands.md (extended, not new file)
+  V125-1-9-6-documentation-and-migration-runbook: done                             # commit 13076b83 — 326-line docs/site/operator/yaml-schema-migration.md (what changed, why, editor setup VS Code / JetBrains / Neovim, V126 deprecation timeline, migration steps, validate-config quick ref); design doc §4 annotated with ✅/🔜 for all 10 locked-in decisions; cross-link banner on configuration.md; mkdocs nav updated; mkdocs build --strict clean. NO v1.25 release-notes entry — waits for V125-1-8
   epic-V125-1-9-schema-envelope-retrospective: optional
 
   # ============================================================
