@@ -5,12 +5,26 @@ import (
 	"strings"
 
 	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/schema"
 	"gopkg.in/yaml.v3"
 )
 
-// clusterAddonsFile represents the structure of cluster-addons.yaml.
+// clusterAddonsFile represents the legacy bare-YAML structure of
+// managed-clusters.yaml (top-level clusters: key, no envelope). After
+// V125-1-9 it is also the parse target for the spec block extracted from
+// an enveloped document — see ParseClusterAddons for the envelope routing.
 type clusterAddonsFile struct {
 	Clusters []clusterEntry `yaml:"clusters"`
+}
+
+// envelopedClusterAddonsFile is the parse target when the document is
+// enveloped (apiVersion: sharko.io/v1, kind: ManagedClusters). The spec
+// field re-uses clusterAddonsFile so the downstream label normalisation
+// is identical between legacy and enveloped reads.
+type envelopedClusterAddonsFile struct {
+	APIVersion string            `yaml:"apiVersion"`
+	Kind       string            `yaml:"kind"`
+	Spec       clusterAddonsFile `yaml:"spec"`
 }
 
 type clusterEntry struct {
@@ -44,11 +58,41 @@ func NewParser() *Parser {
 	return &Parser{}
 }
 
-// ParseClusterAddons parses cluster-addons.yaml content.
+// ParseClusterAddons parses managed-clusters.yaml (alias: cluster-addons.yaml)
+// content into a flat []models.Cluster suitable for the service / orchestrator
+// / reconciler consumers.
+//
+// V125-1-9: accepts BOTH the legacy bare-YAML shape AND the envelope shape
+// (apiVersion: sharko.io/v1, kind: ManagedClusters). Detection is delegated
+// to schema.IsEnveloped so the routing primitive is shared with the
+// addon-catalog reader (Story 9.2). The legacy reader is intentionally kept
+// rather than fully delegated to models.LoadManagedClusters because the
+// label-normalisation logic (interface{} → map[string]string, see
+// parseLabels) lives in this package and would round-trip awkwardly through
+// the models layer.
 func (p *Parser) ParseClusterAddons(data []byte) ([]models.Cluster, error) {
+	enveloped, err := schema.IsEnveloped(data)
+	if err != nil {
+		return nil, fmt.Errorf("parsing managed-clusters: %w", err)
+	}
+
 	var file clusterAddonsFile
-	if err := yaml.Unmarshal(data, &file); err != nil {
-		return nil, fmt.Errorf("parsing cluster-addons.yaml: %w", err)
+	if enveloped {
+		var env envelopedClusterAddonsFile
+		if err := yaml.Unmarshal(data, &env); err != nil {
+			return nil, fmt.Errorf("parsing managed-clusters envelope: %w", err)
+		}
+		if env.Kind != schema.KindManagedClusters {
+			return nil, fmt.Errorf(
+				"managed-clusters envelope kind %q, expected %q",
+				env.Kind, schema.KindManagedClusters,
+			)
+		}
+		file = env.Spec
+	} else {
+		if err := yaml.Unmarshal(data, &file); err != nil {
+			return nil, fmt.Errorf("parsing managed-clusters: %w", err)
+		}
 	}
 
 	clusters := make([]models.Cluster, 0, len(file.Clusters))

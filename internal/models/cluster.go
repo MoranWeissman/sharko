@@ -1,5 +1,176 @@
 package models
 
+import (
+	"bytes"
+	"fmt"
+
+	"gopkg.in/yaml.v3"
+
+	"github.com/MoranWeissman/sharko/internal/schema"
+)
+
+// ManagedClustersSchemaHeader is the yaml-language-server header line written
+// as the first line of every Sharko-emitted managed-clusters.yaml file. The
+// URL is the V125-1-9 locked schema URL (see
+// docs/design/2026-05-12-v125-architectural-todos.md §4 and the V125-1-9
+// epic's "Schema URL hosting" locked OQ for the two-track redirect plan).
+const ManagedClustersSchemaHeader = "# yaml-language-server: $schema=https://sharko.io/schemas/managed-clusters.v1.json"
+
+// ManagedClusterEntry is one row in the spec.clusters array of a
+// managed-clusters.yaml document. Field semantics:
+//
+//   - Name: required cluster identifier; matches the ArgoCD cluster Secret
+//     name (cluster-<Name>) the V125-1-8 reconciler will manage.
+//   - SecretPath: optional explicit path to the cluster's credentials in the
+//     credentials provider (e.g. Vault path, AWS Secrets Manager path). When
+//     empty, the credentials provider derives a default path from Name.
+//   - Region: optional cloud region label, surfaced in the UI / observability.
+//   - Labels: optional addon-enablement map. Modelled as interface{} to
+//     match the legacy parser's tolerance: the on-disk shape is either a
+//     map (`labels: { cert-manager: enabled }`) or the empty-list sentinel
+//     `labels: []` that older hand-authored files used to mean "no
+//     labels". Downstream code reads this via config.parseLabels which
+//     normalises both shapes into a map[string]string.
+//
+// The yaml tags mirror the existing config.clusterEntry shape exactly so
+// that bytes parsed via the legacy bare-YAML path and bytes parsed via the
+// new envelope path produce semantically-equivalent specs (see the
+// TestRoundTrip_* tests in cluster_test.go).
+type ManagedClusterEntry struct {
+	Name       string      `json:"name" yaml:"name"`
+	SecretPath string      `json:"secretPath,omitempty" yaml:"secretPath,omitempty"`
+	Region     string      `json:"region,omitempty" yaml:"region,omitempty"`
+	Labels     interface{} `json:"labels,omitempty" yaml:"labels,omitempty"`
+}
+
+// ManagedClustersSpec is the spec block of a managed-clusters.yaml envelope.
+// In legacy bare-YAML files this is the WHOLE document (top-level clusters:
+// key); in enveloped files it sits under spec:. LoadManagedClusters returns
+// the same spec value either way — the envelope is purely a transport
+// concern for the reader, and an aspiration-of-shape concern for the writer.
+type ManagedClustersSpec struct {
+	Clusters []ManagedClusterEntry `json:"clusters" yaml:"clusters"`
+}
+
+// ManagedClustersDoc is the on-disk shape for an enveloped
+// managed-clusters.yaml (apiVersion: sharko.io/v1, kind: ManagedClusters).
+// It is the canonical Save target; the reader accepts both this shape and
+// the legacy bare ManagedClustersSpec.
+type ManagedClustersDoc = schema.Envelope[ManagedClustersSpec]
+
+// ManagedClustersMetadataName is the conventional metadata.name value
+// emitted by SaveManagedClusters. It mirrors the example envelope in
+// docs/design/2026-05-12-v125-architectural-todos.md lines 100-114. The
+// V125-1-9 reader does not enforce the value — any non-empty name passes
+// the structural read — but the writer always emits this constant so that
+// freshly-rendered files are byte-identical regardless of which Sharko
+// installation rendered them.
+const ManagedClustersMetadataName = "managed-clusters"
+
+// LoadManagedClusters parses the on-disk bytes of a managed-clusters.yaml
+// document and returns its spec. The function accepts BOTH shapes during
+// the V125-1-9 → V126 transition window:
+//
+//   - **Legacy bare YAML** (no apiVersion) — unmarshalled directly as a
+//     ManagedClustersSpec. This is the shape every pre-V125-1-9 Sharko
+//     installation has on disk; the reader stays back-compat until the
+//     V126 cleanup (see the V125-1-9 epic's "Filename alias removal
+//     window" locked OQ).
+//   - **Enveloped YAML** (apiVersion: sharko.io/v1, kind: ManagedClusters)
+//     — unmarshalled into ManagedClustersDoc; the spec field is returned.
+//     An envelope whose kind is not ManagedClusters (e.g. the wrong file
+//     handed to the wrong loader) returns an explicit error so the
+//     caller surfaces "wrong document type" instead of silently treating
+//     it as an empty clusters list.
+//
+// Detection is delegated to schema.IsEnveloped so the two reader paths
+// (managed-clusters and addon-catalog, the latter landing in Story 9.2)
+// share one routing primitive.
+//
+// Read-time JSON Schema validation lands in Story 9.4; until then this
+// reader's structural validation is whatever yaml.v3 produces during
+// unmarshal plus the wrong-kind guard above.
+func LoadManagedClusters(body []byte) (ManagedClustersSpec, error) {
+	enveloped, err := schema.IsEnveloped(body)
+	if err != nil {
+		// IsEnveloped returns an error only on malformed top-level YAML.
+		// Surfacing it here means the caller gets one error type for
+		// "this is not parseable YAML at all" rather than a confusing
+		// fall-through into the bare-YAML unmarshal that would produce
+		// the same error twice.
+		return ManagedClustersSpec{}, fmt.Errorf("parsing managed-clusters: %w", err)
+	}
+
+	if enveloped {
+		var doc ManagedClustersDoc
+		if err := yaml.Unmarshal(body, &doc); err != nil {
+			return ManagedClustersSpec{}, fmt.Errorf("parsing managed-clusters envelope: %w", err)
+		}
+		if doc.Kind != schema.KindManagedClusters {
+			return ManagedClustersSpec{}, fmt.Errorf(
+				"managed-clusters envelope kind %q, expected %q",
+				doc.Kind, schema.KindManagedClusters,
+			)
+		}
+		return doc.Spec, nil
+	}
+
+	// Legacy bare YAML: unmarshal directly as a spec. The legacy shape's
+	// top-level keys are exactly ManagedClustersSpec's yaml-tagged fields
+	// (clusters:), so the same struct shape works for both paths.
+	var spec ManagedClustersSpec
+	if err := yaml.Unmarshal(body, &spec); err != nil {
+		return ManagedClustersSpec{}, fmt.Errorf("parsing managed-clusters: %w", err)
+	}
+	return spec, nil
+}
+
+// SaveManagedClusters renders spec as an enveloped managed-clusters.yaml
+// document. The output ALWAYS contains:
+//
+//  1. ManagedClustersSchemaHeader as the first line (the
+//     `# yaml-language-server: $schema=...` line that yaml-language-server
+//     in editors uses to fetch the schema for inline validation +
+//     auto-completion).
+//  2. The full envelope: apiVersion: sharko.io/v1, kind: ManagedClusters,
+//     metadata.name: managed-clusters, spec: { ... }.
+//
+// This is the canonical writer for new-file emission (bootstrap templates,
+// fresh demo seeds, future reconciler-side writes). The orchestrator's
+// existing line-level mutators in internal/gitops/yaml_mutator.go are NOT
+// replaced by this function in Story 9.1 — they continue to perform
+// in-place edits that preserve comments and authoring formatting. The
+// reconciler-driven design landing in V125-1-8 will retire those mutator
+// paths; until then, Sharko's read side handles both shapes (via
+// LoadManagedClusters) and write side picks the appropriate tool for the
+// edit (whole-file regenerate → SaveManagedClusters; in-place mutate →
+// gitops mutator).
+func SaveManagedClusters(spec ManagedClustersSpec) ([]byte, error) {
+	doc := ManagedClustersDoc{
+		APIVersion: schema.APIVersion,
+		Kind:       schema.KindManagedClusters,
+		Metadata:   schema.Metadata{Name: ManagedClustersMetadataName},
+		Spec:       spec,
+	}
+	body, err := yaml.Marshal(doc)
+	if err != nil {
+		return nil, fmt.Errorf("marshalling managed-clusters envelope: %w", err)
+	}
+
+	// Prepend the schema header as line 1. We do this here (rather than
+	// asking yaml.v3 to emit a head comment on the root node) because
+	// yaml.v3's HeadComment on a generic Envelope[T] would attach to the
+	// document via a yaml.Node wrapper, which would force every caller to
+	// construct a yaml.Node-based envelope instead of a plain
+	// ManagedClustersDoc value. The simpler bytes.Buffer prepend keeps
+	// the public API a plain struct.
+	var buf bytes.Buffer
+	buf.WriteString(ManagedClustersSchemaHeader)
+	buf.WriteByte('\n')
+	buf.Write(body)
+	return buf.Bytes(), nil
+}
+
 // Cluster represents a Kubernetes cluster from the Git configuration.
 type Cluster struct {
 	Name             string            `json:"name" yaml:"name"`

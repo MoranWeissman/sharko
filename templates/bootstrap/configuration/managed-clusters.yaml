@@ -1,9 +1,15 @@
-# Cluster Addons Registry — managed by Sharko
-# See docs: https://moranweissman.github.io/sharko/user-guide/clusters/
+# yaml-language-server: $schema=https://sharko.io/schemas/managed-clusters.v1.json
+apiVersion: sharko.io/v1
+kind: ManagedClusters
+metadata:
+  name: managed-clusters
+spec:
+  # Cluster Addons Registry — managed by Sharko
+  # See docs: https://moranweissman.github.io/sharko/user-guide/clusters/
 
-clusters:
-  # - name: prod-eu
-  #   secretPath: k8s-prod-eu-eks   # explicit path to secret in provider
-  #   region: eu-central-1
-  #   labels:
-  #     <addon-name>: enabled       # one line per enabled addon
+  clusters:
+    # - name: prod-eu
+    #   secretPath: k8s-prod-eu-eks   # explicit path to secret in provider
+    #   region: eu-central-1
+    #   labels:
+    #     <addon-name>: enabled       # one line per enabled addon
