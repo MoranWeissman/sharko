@@ -1348,4 +1348,44 @@ development_status:
   epic-V126-1-bug-033-cluster-status-retrospective: optional
 
   # ============================================================
+  # V126-2 — DESIGN-01 empty-bootstrap (planned 2026-05-21, locked)
+  # ============================================================
+  # Source: .bmad/output/planning-artifacts/epics-v126-2-design-01.md
+  # Brainstorm: .bmad/output/brainstorming/2026-05-20-bootstrap-opt-in-and-catalog-states.md
+  # Decision LOCKED by Moran 2026-05-21: Sharko ships with EMPTY bootstrap
+  # addons-catalog.yaml. The 3 entries (cert-manager / external-secrets /
+  # metrics-server) are removed from templates/bootstrap/configuration/.
+  # The curated marketplace catalog (catalog/addons.yaml) is unchanged —
+  # all 3 remain browsable + addable from the Marketplace tab. Pre-prod,
+  # no operators, no migration.
+  # Branch: dev/design-01-empty-bootstrap from main HEAD.
+  # Single story, single agent. Parallel-dispatchable with V126-3.
+  # Role files: tech-lead + k8s-expert + docs-writer.
+  # Auto-merge per feedback_auto_merge_when_green.
+  epic-V126-2-design-01-empty-bootstrap: backlog
+  V126-2-1-empty-bootstrap-addons-catalog: backlog
+  epic-V126-2-design-01-empty-bootstrap-retrospective: optional
+
+  # ============================================================
+  # V126-3 — DESIGN-02 catalog-states (planned 2026-05-21, locked)
+  # ============================================================
+  # Source: .bmad/output/planning-artifacts/epics-v126-3-design-02.md
+  # Brainstorm: .bmad/output/brainstorming/2026-05-20-bootstrap-opt-in-and-catalog-states.md
+  # Decision LOCKED by Moran 2026-05-21: Option C — single tile-level badge
+  # "Running on N/M clusters" (4 state copies: "Not deployed anywhere",
+  # "Not deployed yet", "Running on N/M clusters", "Running on N clusters")
+  # + rename the Installed tab to Catalog. Backend extends per-addon API
+  # response with deployed_cluster_count + total_target_cluster_count
+  # (reuse V125-1-6 PRs aggregator pattern; no new ArgoCD client layer).
+  # Swagger regen + UI tab/badge rewrite. AddonDetail untouched.
+  # Branch: dev/design-02-catalog-states from main HEAD.
+  # Single story (multi-surface in one agent), parallel-dispatchable with V126-2.
+  # Role files: tech-lead + go-expert + frontend-expert + test-engineer +
+  # code-reviewer. Sequential-thinking MCP for count-aggregation logic.
+  # Auto-merge per feedback_auto_merge_when_green.
+  epic-V126-3-design-02-catalog-states: backlog
+  V126-3-1-running-on-n-m-badge-and-catalog-tab-rename: backlog
+  epic-V126-3-design-02-catalog-states-retrospective: optional
+
+  # ============================================================
 

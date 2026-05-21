@@ -2,25 +2,9 @@
 # See docs: https://moranweissman.github.io/sharko/user-guide/addons/
 
 applicationsets:
-  - name: cert-manager
-    repoURL: https://charts.jetstack.io
-    chart: cert-manager
-    version: "1.16.3"
-    namespace: cert-manager
-    syncWave: -1
-
-  - name: external-secrets
-    repoURL: https://charts.external-secrets.io
-    chart: external-secrets
-    version: "0.12.1"
-    namespace: external-secrets
-    syncWave: -1
-
-  - name: metrics-server
-    repoURL: https://kubernetes-sigs.github.io/metrics-server/
-    chart: metrics-server
-    version: "3.12.2"
-    namespace: kube-system
+  # Bootstrap ships empty. Install addons from the Marketplace
+  # (UI) or via `sharko add-addon` (CLI). Examples below show the
+  # available fields.
 
   # Example with all available fields:
   # - name: kyverno                        # (required) addon identifier
