@@ -232,6 +232,237 @@ confirm_or_abort() {
 }
 
 # =====================================================================
+# preflight: V126-5.1 (#191) — resource-health check before bring-up.
+#
+# Runs at the top of `ready` / `up` / `install`. Catches the 2026-05-13
+# class of failure where ready failed silently after 5 min of ArgoCD
+# apply because of 4 leaked kind clusters + 1 crashlooping control-plane
+# starving Docker (15.6 GB used).
+#
+# Checks (in order):
+#   1. Stale kind clusters (other than ${KIND_CLUSTER_NAME}) — interactive
+#      cleanup prompt unless --force-clean.
+#   2. Docker memory headroom — non-blocking warn if (clusters × 2GB) + 2GB
+#      > total Docker memory.
+#   3. Orphan k8s_* containers outside any active control-plane — non-blocking
+#      warn.
+#   4. Existing ${KIND_CLUSTER_NAME} in degraded state (CrashLoopBackOff or
+#      ContainerCreating >2 min in kube-system) — interactive prompt to
+#      delete+recreate unless --force-clean.
+#
+# Flag (passed by caller as the SHARKO_FORCE_CLEAN env var, set to "1" when
+# --force-clean is on the invocation):
+#   SHARKO_FORCE_CLEAN=1   skips all prompts; auto-applies recommended fixes
+#                          (delete stale + delete degraded ${KIND_CLUSTER_NAME}).
+#
+# Side effects:
+#   - May `kind delete cluster --name <stale>` per user confirmation.
+#   - May `kind delete cluster --name ${KIND_CLUSTER_NAME}` if degraded.
+#
+# Always returns 0 unless the user declines a blocking prompt (then 1).
+# Always prints a one-line summary at the end.
+preflight() {
+    local force_clean="${SHARKO_FORCE_CLEAN:-0}"
+    local warnings=0
+    local stale_clusters=()
+    local stale_cluster
+
+    log_info "preflight: scanning environment"
+
+    # ---- 1. Stale kind clusters ----
+    if command -v kind >/dev/null 2>&1; then
+        local c
+        while IFS= read -r c; do
+            [ -z "$c" ] && continue
+            [ "$c" = "${KIND_CLUSTER_NAME}" ] && continue
+            stale_clusters+=("$c")
+        done < <(kind get clusters 2>/dev/null)
+    fi
+
+    if [ "${#stale_clusters[@]}" -gt 0 ]; then
+        log_warn "found ${#stale_clusters[@]} stale kind cluster(s) (not '${KIND_CLUSTER_NAME}'):"
+        for stale_cluster in "${stale_clusters[@]}"; do
+            local age="?"
+            local cp_name="${stale_cluster}-control-plane"
+            age=$(docker ps --filter "name=^${cp_name}$" --format '{{.RunningFor}}' 2>/dev/null | head -1)
+            [ -z "$age" ] && age="not running"
+            local cl_status="unknown"
+            if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$cp_name"; then
+                # Cheap CrashLoopBackOff probe in kube-system; skip if kubectl
+                # can't reach this context (control-plane may be wedged).
+                if KUBECONFIG="$(kind get kubeconfig --name "$stale_cluster" 2>/dev/null > /tmp/sharko-dev-preflight-kc-$$.yaml && echo /tmp/sharko-dev-preflight-kc-$$.yaml)" \
+                    kubectl --request-timeout=3s get pods -n kube-system \
+                    -o jsonpath='{.items[*].status.containerStatuses[*].state.waiting.reason}' \
+                    2>/dev/null | grep -q "CrashLoopBackOff"; then
+                    cl_status="${RED}CrashLoopBackOff in kube-system${RESET}"
+                else
+                    cl_status="reachable"
+                fi
+                rm -f "/tmp/sharko-dev-preflight-kc-$$.yaml"
+            fi
+            printf '         - %s (age=%s, status=%s)\n' "$stale_cluster" "$age" "$cl_status" >&2
+        done
+        warnings=$((warnings + 1))
+        if [ "$force_clean" = "1" ]; then
+            log_info "preflight: --force-clean set; deleting ${#stale_clusters[@]} stale cluster(s)"
+            for stale_cluster in "${stale_clusters[@]}"; do
+                kind delete cluster --name "$stale_cluster" >/dev/null 2>&1 || \
+                    log_warn "kind delete cluster --name $stale_cluster failed"
+            done
+        else
+            printf '         Delete %d stale cluster(s)? [y/N] ' "${#stale_clusters[@]}" >&2
+            local reply=""
+            read -r reply
+            case "$reply" in
+                y|Y|yes|YES)
+                    for stale_cluster in "${stale_clusters[@]}"; do
+                        log_info "kind delete cluster --name $stale_cluster"
+                        kind delete cluster --name "$stale_cluster" >/dev/null 2>&1 || \
+                            log_warn "kind delete cluster --name $stale_cluster failed"
+                    done
+                    ;;
+                *)
+                    log_info "leaving stale clusters in place (re-run with --force-clean to auto-delete)"
+                    ;;
+            esac
+        fi
+    fi
+
+    # ---- 2. Docker memory headroom ----
+    if docker info >/dev/null 2>&1; then
+        # docker info reports MemTotal in bytes via --format
+        local mem_bytes
+        mem_bytes=$(docker info --format '{{.MemTotal}}' 2>/dev/null || echo 0)
+        if [ -n "$mem_bytes" ] && [ "$mem_bytes" -gt 0 ] 2>/dev/null; then
+            # GB integer arithmetic; round down.
+            local mem_gb=$(( mem_bytes / 1024 / 1024 / 1024 ))
+            # Count currently running kind clusters (incl. the target if up).
+            local running_clusters=0
+            if command -v kind >/dev/null 2>&1; then
+                running_clusters=$(kind get clusters 2>/dev/null | grep -cv '^$' || echo 0)
+            fi
+            # Each kind control-plane node roughly needs 2 GB headroom; plus
+            # 2 GB baseline for Docker itself + system overhead. Heuristic.
+            local need_gb=$(( running_clusters * 2 + 2 ))
+            if [ "$need_gb" -gt "$mem_gb" ]; then
+                log_warn "Docker has ${mem_gb} GB; running ${running_clusters} cluster(s) needs ~${need_gb} GB; ArgoCD apply likely to timeout."
+                printf '         Free resources before continuing (close apps, prune containers, or raise Docker memory).\n' >&2
+                warnings=$((warnings + 1))
+            fi
+        fi
+    fi
+
+    # ---- 3. Orphan k8s_* containers ----
+    if docker ps >/dev/null 2>&1; then
+        local orphan_count
+        # k8s_* are sandboxed pod containers. With kind they live INSIDE the
+        # control-plane container, not at the host docker level, so any k8s_*
+        # at host level is almost certainly leaked from a deleted cluster.
+        orphan_count=$(docker ps --filter "name=^k8s_" --format '{{.Names}}' 2>/dev/null | grep -c . || true)
+        if [ -z "$orphan_count" ] || ! [ "$orphan_count" -ge 0 ] 2>/dev/null; then
+            orphan_count=0
+        fi
+        if [ "$orphan_count" -gt 0 ]; then
+            log_warn "found ${orphan_count} orphan k8s_* container(s) (stale pod containers from a deleted cluster)."
+            printf '         Run: docker container prune -f   to clean.\n' >&2
+            warnings=$((warnings + 1))
+        fi
+    fi
+
+    # ---- 4. Existing ${KIND_CLUSTER_NAME} in degraded state ----
+    if kind_cluster_exists; then
+        local degraded=0
+        local degraded_reason=""
+        local probe_kc="/tmp/sharko-dev-preflight-target-kc-$$.yaml"
+        if kind get kubeconfig --name "${KIND_CLUSTER_NAME}" > "$probe_kc" 2>/dev/null; then
+            # CrashLoopBackOff anywhere in kube-system?
+            if KUBECONFIG="$probe_kc" kubectl --request-timeout=3s get pods -n kube-system \
+                -o jsonpath='{.items[*].status.containerStatuses[*].state.waiting.reason}' \
+                2>/dev/null | grep -q "CrashLoopBackOff"; then
+                degraded=1
+                degraded_reason="CrashLoopBackOff in kube-system"
+            fi
+            # ContainerCreating stuck >2 min? Heuristic: any pod in
+            # kube-system with phase=Pending AND start time older than 120s.
+            if [ "$degraded" = "0" ]; then
+                local now_ts pending_old
+                now_ts=$(date +%s)
+                # Grab "name startTime" pairs for Pending pods.
+                while IFS=$'\t' read -r _pod _start; do
+                    [ -z "$_start" ] && continue
+                    # date -j -f for BSD (macOS); fall back to GNU.
+                    local start_ts=""
+                    start_ts=$(date -j -u -f '%Y-%m-%dT%H:%M:%SZ' "$_start" +%s 2>/dev/null \
+                        || date -u -d "$_start" +%s 2>/dev/null \
+                        || echo "")
+                    [ -z "$start_ts" ] && continue
+                    pending_old=$(( now_ts - start_ts ))
+                    if [ "$pending_old" -gt 120 ]; then
+                        degraded=1
+                        degraded_reason="kube-system pod stuck Pending/ContainerCreating >2 min"
+                        break
+                    fi
+                done < <(KUBECONFIG="$probe_kc" kubectl --request-timeout=3s get pods -n kube-system \
+                            --field-selector=status.phase=Pending \
+                            -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.startTime}{"\n"}{end}' \
+                            2>/dev/null || true)
+            fi
+        else
+            # Couldn't get kubeconfig — control-plane is wedged.
+            degraded=1
+            degraded_reason="unable to fetch kubeconfig (control-plane wedged)"
+        fi
+        rm -f "$probe_kc"
+
+        if [ "$degraded" = "1" ]; then
+            log_warn "existing '${KIND_CLUSTER_NAME}' is unhealthy: ${degraded_reason}"
+            warnings=$((warnings + 1))
+            if [ "$force_clean" = "1" ]; then
+                log_info "preflight: --force-clean set; deleting '${KIND_CLUSTER_NAME}'"
+                kind delete cluster --name "${KIND_CLUSTER_NAME}" >/dev/null 2>&1 || \
+                    log_warn "kind delete cluster --name ${KIND_CLUSTER_NAME} failed"
+            else
+                printf '         Delete and recreate ${KIND_CLUSTER_NAME}? [y/N] ' >&2
+                local reply2=""
+                read -r reply2
+                case "$reply2" in
+                    y|Y|yes|YES)
+                        log_info "kind delete cluster --name ${KIND_CLUSTER_NAME}"
+                        if ! kind delete cluster --name "${KIND_CLUSTER_NAME}" >/dev/null 2>&1; then
+                            log_fail "kind delete cluster --name ${KIND_CLUSTER_NAME} failed"
+                            return 1
+                        fi
+                        ;;
+                    *)
+                        log_warn "leaving degraded cluster in place; bring-up may fail"
+                        ;;
+                esac
+            fi
+        fi
+    fi
+
+    # ---- summary ----
+    if [ "$warnings" = "0" ]; then
+        log_ok "preflight: OK"
+    else
+        log_warn "preflight: ${warnings} warning(s)"
+    fi
+    return 0
+}
+
+# preflight_once: run preflight exactly once per invocation, even when one
+# subcommand (e.g. do_ready) cascades into another (e.g. do_install). Caller
+# may set SHARKO_FORCE_CLEAN=1 to skip prompts. Idempotent.
+preflight_once() {
+    if [ "${SHARKO_PREFLIGHT_RAN:-0}" = "1" ]; then
+        return 0
+    fi
+    SHARKO_PREFLIGHT_RAN=1
+    export SHARKO_PREFLIGHT_RAN
+    preflight
+}
+
+# =====================================================================
 # up_cluster_only / up_argocd_only / argocd_ready
 # Factored phases of `up`. V124-12.1 uses these in `do_ready` so each
 # bring-up step is a single source of truth.
@@ -299,7 +530,8 @@ Creates kind cluster (if missing), installs ArgoCD (if missing), then
 forwards to 'install' to build + load + helm install Sharko.
 
 Idempotent: re-running on a partially-up environment skips work that's
-already done.
+already done. Runs the V126-5.1 preflight resource check first
+(set SHARKO_FORCE_CLEAN=1 to skip prompts).
 
 Note: most maintainers should use 'ready' instead — it brings up missing
 pieces AND prints a unified credential summary (Sharko + ArgoCD admin
@@ -309,8 +541,14 @@ Usage: ./scripts/sharko-dev.sh up [--help]
 EOF
                 return 0
                 ;;
+            --force-clean)
+                SHARKO_FORCE_CLEAN=1
+                export SHARKO_FORCE_CLEAN
+                ;;
         esac
     done
+
+    preflight_once || return $?
 
     log_info "bringing up dev environment (cluster=${KIND_CLUSTER_NAME}, namespace=${SHARKO_NAMESPACE})"
 
@@ -335,18 +573,27 @@ do_install() {
                 cat <<EOF
 sharko-dev.sh install — install Sharko on an existing kind cluster
 
-Steps: docker daemon check, docker build, kind load, helm install,
-rollout wait, port-forward start, bootstrap password extraction.
+Steps: V126-5.1 preflight resource check, docker daemon check, docker
+build, kind load, helm install, rollout wait, port-forward start,
+bootstrap password extraction.
 
 Idempotent: if the helm release already exists, exits with a hint to
 use 'rebuild' instead.
+
+Set SHARKO_FORCE_CLEAN=1 to skip interactive preflight prompts.
 
 Usage: ./scripts/sharko-dev.sh install [--help]
 EOF
                 return 0
                 ;;
+            --force-clean)
+                SHARKO_FORCE_CLEAN=1
+                export SHARKO_FORCE_CLEAN
+                ;;
         esac
     done
+
+    preflight_once || return $?
 
     # 0. cluster present?
     if ! kind_cluster_exists; then
@@ -1139,6 +1386,180 @@ EOF
 }
 
 # =====================================================================
+# Subcommand: do_upgrade (V126-5.1 / #190)
+# Upgrade Sharko to a specific published OCI chart version. Polls until
+# the OCI artifact is available (catches publish-race), runs helm upgrade
+# against the published chart (catches values-defaults / image-manifest /
+# version-stamping bugs that don't show with the local chart), restarts
+# the pod + port-forward, then verifies the reported /api/v1/health
+# version matches.
+#
+# Integrated from .local/scripts-pending/upgrade.sh (87 lines, standalone
+# maintainer script) so it lives next to all other lifecycle commands.
+# =====================================================================
+do_upgrade() {
+    local version=""
+    local arg
+    for arg in "$@"; do
+        case "$arg" in
+            -h|--help)
+                cat <<EOF
+sharko-dev.sh upgrade — upgrade Sharko to a published OCI chart version
+
+Polls oci://ghcr.io/moranweissman/sharko/sharko:<version> until available
+(handles OCI publish race), runs 'helm upgrade' against the PUBLISHED
+chart (NOT the local checkout — that's what 'rebuild' is for), restarts
+the pod, restarts the Sharko port-forward, then verifies the version
+reported by /api/v1/health matches the requested version.
+
+Why use this instead of 'rebuild':
+  Running against the published artifact catches bugs that only surface
+  in the real release path — values-defaults regressions, image manifest
+  issues, version-stamping bugs, and OCI publish race conditions. After
+  cutting a release tag, use 'upgrade' to validate the published
+  artifact before declaring the release good.
+
+Usage:
+  ./scripts/sharko-dev.sh upgrade <version>    # explicit version (e.g. 1.24.1)
+  ./scripts/sharko-dev.sh upgrade              # use charts/sharko/Chart.yaml version
+  ./scripts/sharko-dev.sh upgrade --help       # this help
+
+Requirements:
+  - kind cluster '${KIND_CLUSTER_NAME}' up
+  - helm release 'sharko' installed in namespace '${SHARKO_NAMESPACE}'
+  - network access to ghcr.io
+EOF
+                return 0
+                ;;
+            -*)
+                log_fail "unknown flag: $arg"
+                echo "       Try: ./scripts/sharko-dev.sh upgrade --help" >&2
+                return 1
+                ;;
+            *)
+                if [ -z "$version" ]; then
+                    version="$arg"
+                else
+                    log_fail "unexpected extra argument: $arg"
+                    echo "       Usage: ./scripts/sharko-dev.sh upgrade [<version>]" >&2
+                    return 1
+                fi
+                ;;
+        esac
+    done
+
+    # Default to Chart.yaml version (same mechanism the original standalone
+    # script used — grep + awk is portable across macOS/Linux without a yq
+    # dependency).
+    if [ -z "$version" ]; then
+        local chart_yaml="${REPO_ROOT}/charts/sharko/Chart.yaml"
+        if [ ! -r "$chart_yaml" ]; then
+            log_fail "charts/sharko/Chart.yaml not readable at $chart_yaml"
+            return 1
+        fi
+        version=$(grep '^version:' "$chart_yaml" | awk '{print $2}' | head -1)
+        if [ -z "$version" ]; then
+            log_fail "could not parse version from $chart_yaml"
+            return 1
+        fi
+        log_info "no version arg — using charts/sharko/Chart.yaml version: ${version}"
+    fi
+
+    # Pre-flight: cluster + release must exist (we're upgrading, not installing).
+    if ! kind_cluster_exists; then
+        log_fail "kind cluster '${KIND_CLUSTER_NAME}' not found"
+        echo "       Run: ./scripts/sharko-dev.sh up" >&2
+        return 1
+    fi
+    if ! helm_release_exists; then
+        log_fail "no helm release 'sharko' in namespace '${SHARKO_NAMESPACE}'"
+        echo "       Run: ./scripts/sharko-dev.sh install" >&2
+        return 1
+    fi
+
+    local chart="oci://ghcr.io/moranweissman/sharko/sharko"
+
+    log_info "upgrading Sharko to v${version}"
+    log_info "polling for ${chart}:${version} (up to 5 minutes)"
+
+    # Wait up to 30*10s = 5 min for the OCI artifact to be available.
+    local i pulled=0
+    for i in $(seq 1 30); do
+        if helm pull "$chart" --version "$version" --destination /tmp >/dev/null 2>&1; then
+            rm -f "/tmp/sharko-${version}.tgz"
+            pulled=1
+            log_ok "helm chart v${version} available"
+            break
+        fi
+        sleep 10
+        printf '.'
+    done
+    if [ "$pulled" != "1" ]; then
+        echo
+        log_fail "timeout waiting for ${chart}:${version} (5 min)"
+        echo "       Verify the release tag exists and the OCI publish workflow finished." >&2
+        return 1
+    fi
+
+    log_info "helm upgrade sharko ${chart} --version ${version} -n ${SHARKO_NAMESPACE}"
+    if ! helm upgrade sharko "$chart" --version "$version" -n "${SHARKO_NAMESPACE}" >/tmp/sharko-dev-upgrade.log 2>&1; then
+        log_fail "helm upgrade failed (last 20 lines):"
+        tail -20 /tmp/sharko-dev-upgrade.log >&2
+        return 1
+    fi
+    log_ok "helm upgrade complete"
+
+    log_info "kubectl rollout restart deployment/sharko"
+    if ! kubectl rollout restart deployment/sharko -n "${SHARKO_NAMESPACE}" >/dev/null 2>&1; then
+        log_fail "rollout restart failed"
+        return 1
+    fi
+    log_info "kubectl rollout status (timeout 90s)"
+    if ! kubectl rollout status deployment/sharko -n "${SHARKO_NAMESPACE}" --timeout=90s >/dev/null 2>&1; then
+        log_fail "deployment/sharko did not become ready within 90s"
+        kubectl logs -n "${SHARKO_NAMESPACE}" deployment/sharko --tail=20 >&2 || true
+        return 1
+    fi
+    log_ok "rollout complete"
+
+    # Restart port-forward — reuse the shared helper which already does
+    # kill + restart + 30s readiness wait via /api/v1/health.
+    log_info "restarting port-forward localhost:${SHARKO_LOCAL_PORT} -> svc/sharko:${SHARKO_REMOTE_PORT}"
+    if ! start_port_forward; then
+        return 1
+    fi
+    log_ok "port-forward up; /api/v1/health: 200"
+
+    # Verify reported version matches requested version.
+    local actual
+    actual=$(curl -sS --max-time 5 "${HOST}/api/v1/health" 2>/dev/null \
+        | python3 -c "import sys,json
+try:
+    print(json.load(sys.stdin).get('version','unknown'))
+except Exception:
+    pass" 2>/dev/null || true)
+    if [ -z "$actual" ]; then
+        actual="unreachable"
+    fi
+    if [ "$actual" = "$version" ]; then
+        log_ok "Sharko v${version} running on ${HOST} (reported version matches)"
+    else
+        log_warn "expected v${version}, got v${actual}"
+        echo "       The pod is running but reports a different version — possible version-stamping bug." >&2
+        return 1
+    fi
+
+    # Print startup logs without health-check noise.
+    echo
+    log_info "recent startup logs:"
+    kubectl logs -n "${SHARKO_NAMESPACE}" -l app.kubernetes.io/name=sharko --since=30s 2>/dev/null \
+        | grep -v "request completed" | head -20 || true
+    echo
+    log_ok "upgrade to v${version} complete"
+    return 0
+}
+
+# =====================================================================
 # Subcommand: do_argocd_token (V124-9)
 # Generates an ArgoCD API token for use in Sharko's wizard step 3.
 # Codifies the 8-command apiKey gauntlet: port-forward, patch argocd-cm,
@@ -1529,6 +1950,12 @@ every credential the maintainer needs:
 State-aware: each phase only runs if its check fails. Re-running on a
 fully-up env is idempotent and finishes in under 2 seconds.
 
+Runs the V126-5.1 preflight resource check first: detects stale kind
+clusters, low Docker memory headroom, orphan k8s_* containers, and a
+degraded '${KIND_CLUSTER_NAME}' before any bring-up work. Stale-cluster
+and degraded-cluster prompts are interactive by default; --force-clean
+makes them non-interactive (auto-deletes).
+
 Output modes:
   default       unicode-box human-readable summary (or ASCII if piped)
   --export      export lines for eval-via-pipe:
@@ -1536,14 +1963,20 @@ Output modes:
                 Exports SHARKO_URL, ADMIN_PW, TOKEN, ARGOCD_URL,
                 ARGOCD_LOCAL_URL, ARGOCD_ADMIN_PW, ARGOCD_TOKEN.
   -q|--quiet    one-liner per service (terse but readable)
+  --force-clean non-interactive preflight: skip prompts, auto-delete
+                stale and degraded kind clusters
   -h|--help     this message
 
-Usage: ./scripts/sharko-dev.sh ready [--export | -q | --quiet]
+Usage: ./scripts/sharko-dev.sh ready [--export | -q | --quiet] [--force-clean]
 EOF
                 return 0
                 ;;
             --export) mode="export" ;;
             -q|--quiet) mode="quiet" ;;
+            --force-clean)
+                SHARKO_FORCE_CLEAN=1
+                export SHARKO_FORCE_CLEAN
+                ;;
             *)
                 log_fail "unknown flag: $1"
                 echo "       Try: ./scripts/sharko-dev.sh ready --help" >&2
@@ -1552,6 +1985,8 @@ EOF
         esac
         shift
     done
+
+    preflight_once || return $?
 
     # ---- 1. State detection ----
     local need_cluster=0 need_argocd=0 need_sharko=0
@@ -2165,6 +2600,7 @@ ${BOLD}Lifecycle${RESET} (use 'ready' for one-command end-to-end)
   up            (low-level) Create kind cluster + install ArgoCD + Sharko
   install       (low-level) Install Sharko on existing kind cluster (build, load, helm install)
   rebuild       Rebuild Sharko after a code change (existing install required)
+  upgrade       Upgrade Sharko to a published OCI chart version (validates real release path)
   reset         Cleanup helm release + secrets (preserves kind cluster + ArgoCD)
   down          Full teardown (deletes kind cluster)
 
@@ -2205,7 +2641,7 @@ EOF
 main() {
     local cmd="${1:-help}"
     case "$cmd" in
-        up|install|rebuild|reset|creds|login|rotate|smoke|status|down|ready)
+        up|install|rebuild|reset|creds|login|rotate|smoke|status|down|ready|upgrade)
             shift
             preflight_tools || return 1
             "do_${cmd}" "$@"
