@@ -1362,8 +1362,8 @@ development_status:
   # Single story, single agent. Parallel-dispatchable with V126-3.
   # Role files: tech-lead + k8s-expert + docs-writer.
   # Auto-merge per feedback_auto_merge_when_green.
-  epic-V126-2-design-01-empty-bootstrap: backlog
-  V126-2-1-empty-bootstrap-addons-catalog: backlog
+  epic-V126-2-design-01-empty-bootstrap: done      # PR #340 merged to main 2026-05-21 07:41 UTC
+  V126-2-1-empty-bootstrap-addons-catalog: done    # commit 762a7d61 — 3 hardcoded entries removed from templates/bootstrap/configuration/addons-catalog.yaml; managed-clusters.yaml labels stripped to generic <addon-name>: enabled placeholder; new v1.26 (in progress) release-notes section
   epic-V126-2-design-01-empty-bootstrap-retrospective: optional
 
   # ============================================================
@@ -1383,8 +1383,8 @@ development_status:
   # Role files: tech-lead + go-expert + frontend-expert + test-engineer +
   # code-reviewer. Sequential-thinking MCP for count-aggregation logic.
   # Auto-merge per feedback_auto_merge_when_green.
-  epic-V126-3-design-02-catalog-states: backlog
-  V126-3-1-running-on-n-m-badge-and-catalog-tab-rename: backlog
+  epic-V126-3-design-02-catalog-states: done                        # PR #341 merged to main 2026-05-21 07:41 UTC
+  V126-3-1-running-on-n-m-badge-and-catalog-tab-rename: done        # commit 0653e7b0 — backend AddonCatalogItem extended with deployed_cluster_count + total_target_cluster_count (reused existing appMap lookup in AddonService.GetCatalog, no new ArgoCD client layer); UI tab renamed installed->catalog with stale-URL redirect; new DeploymentBadge with 4 state copies; swagger regen; +6 frontend tests + 4-sub-test backend matrix
   epic-V126-3-design-02-catalog-states-retrospective: optional
 
   # ============================================================
