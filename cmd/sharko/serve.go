@@ -21,9 +21,11 @@ import (
 	"github.com/MoranWeissman/sharko/internal/catalog"
 	"github.com/MoranWeissman/sharko/internal/catalog/signing"
 	"github.com/MoranWeissman/sharko/internal/catalog/sources"
+	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
 	"github.com/MoranWeissman/sharko/internal/cmstore"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/demo"
+	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/metrics"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/notifications"
@@ -739,6 +741,15 @@ var serveCmd = &cobra.Command{
 
 		// PR Tracker — polls Git provider for PR status changes and emits audit events.
 		// Uses a ConfigMap to persist tracking state across restarts.
+		//
+		// V125-1-8.4: this block is also the production wiring site for the
+		// new internal/clusterreconciler.Reconciler. The K8s clientset built
+		// here is shared between prtracker's ConfigMap store and the cluster
+		// reconciler's ArgoCD-Secret CRUD path; the prTracker.OnMergeFn fans
+		// out into BOTH the legacy argosecrets reconciler trigger AND the
+		// new cluster reconciler trigger so sub-5s post-merge convergence
+		// works regardless of which writer is in charge during the
+		// V125-1-8 transition window.
 		{
 			prNamespace := os.Getenv("SHARKO_NAMESPACE")
 			if prNamespace == "" {
@@ -746,18 +757,91 @@ var serveCmd = &cobra.Command{
 			}
 
 			// Build K8s client for cmstore — in-cluster or skip if not available.
+			// V125-1-8.4: the SAME clientset is reused for the cluster
+			// reconciler (same in-cluster credentials, same RBAC surface).
 			var prCMStore *cmstore.Store
+			var inClusterK8sClient kubernetes.Interface
 			if mode == platform.ModeKubernetes {
 				inClusterCfg, inClusterErr := rest.InClusterConfig()
 				if inClusterErr == nil {
 					k8sClient, k8sErr := kubernetes.NewForConfig(inClusterCfg)
 					if k8sErr == nil {
+						inClusterK8sClient = k8sClient
 						prCMStore = cmstore.NewStore(k8sClient, prNamespace, "sharko-pending-prs")
 					} else {
 						slog.Warn("could not create k8s client for pr tracker", "error", k8sErr)
 					}
 				} else {
 					slog.Warn("not running in-cluster, skipping pr tracker cmstore", "error", inClusterErr)
+				}
+			}
+
+			// V125-1-8.4: construct + start the cluster Secret reconciler
+			// alongside the prtracker so its post-merge fan-out can nudge
+			// the reconciler immediately. The reconciler requires the same
+			// preconditions as the prtracker (in-cluster K8s clientset for
+			// argocd Secret API access; an active git provider eventually
+			// becomes available via connSvc lazy getter) PLUS credProvider
+			// for vault credential resolution at create time. When any
+			// precondition is missing we log + skip — the legacy
+			// argosecrets reconciler still runs above and covers the gap
+			// during the transition window.
+			var clusterRecon *clusterreconciler.Reconciler
+			if prCMStore != nil && inClusterK8sClient != nil && credProvider != nil {
+				clusterReconNamespace := getEnvDefault("SHARKO_ARGOCD_NAMESPACE", "argocd")
+				if clusterTestCfgPtr != nil && clusterTestCfgPtr.ArgoCDNamespace != "" {
+					clusterReconNamespace = clusterTestCfgPtr.ArgoCDNamespace
+				}
+				clusterReconBranch := gitopsCfg.BaseBranch
+				if clusterReconBranch == "" {
+					clusterReconBranch = clusterreconciler.DefaultBranch
+				}
+				clusterReconRoleARN := ""
+				if addonCfgPtr != nil {
+					clusterReconRoleARN = addonCfgPtr.RoleARN
+				}
+				auditLog := srv.AuditLog()
+				clusterRecon = clusterreconciler.New(clusterreconciler.Deps{
+					CMStore:             prCMStore,
+					GitProvider:         func() gitprovider.GitProvider {
+						gp, err := connSvc.GetActiveGitProvider()
+						if err != nil {
+							return nil
+						}
+						return gp
+					},
+					ArgoClient:          inClusterK8sClient,
+					Vault:               credProvider,
+					AuditFn:             auditLog.Add,
+					TickInterval:        clusterreconciler.DefaultTickInterval,
+					ManagedClustersPath: repoPaths.ManagedClusters,
+					Namespace:           clusterReconNamespace,
+					Branch:              clusterReconBranch,
+					DefaultRoleARN:      clusterReconRoleARN,
+				})
+				// Wire the trigger onto the Server BEFORE Start() so the
+				// first request to the per-request orchestrator helper
+				// (attachPRTracker, broadened in V125-1-8.4) immediately
+				// sees the nudge fn — no startup race.
+				srv.SetReconcilerTrigger(clusterRecon.Trigger)
+				clusterRecon.Start(context.Background())
+				// Server-lifetime: shutdown is signal-driven via Stop().
+				// http.ListenAndServe blocks the goroutine until the
+				// process exits, so the defer fires on shutdown.
+				defer clusterRecon.Stop()
+				slog.Info("cluster reconciler started",
+					"namespace", clusterReconNamespace,
+					"branch", clusterReconBranch,
+					"tick_interval", clusterreconciler.DefaultTickInterval,
+					"managed_clusters_path", repoPaths.ManagedClusters,
+				)
+			} else {
+				if prCMStore == nil {
+					slog.Info("cluster reconciler skipped: no ConfigMap store (out-of-cluster or k8s client failure)")
+				} else if inClusterK8sClient == nil {
+					slog.Info("cluster reconciler skipped: no in-cluster k8s client")
+				} else if credProvider == nil {
+					slog.Info("cluster reconciler skipped: no credentials provider configured")
 				}
 			}
 
@@ -775,11 +859,21 @@ var serveCmd = &cobra.Command{
 					auditLog.Add(e)
 				})
 
-				// On merge, trigger the argosecrets reconciler so it picks up changes immediately.
-				if srv.ArgoSecretReconciler() != nil {
+				// V125-1-8.4: post-merge fan-out hits BOTH triggers so
+				// either reconciler converges sub-5s after a PR merge.
+				//   - srv.ArgoSecretReconciler(): the legacy writer (will
+				//     be retired once V125-1-8 supersedes it).
+				//   - clusterRecon.Trigger(): the new writer added by
+				//     V125-1-8.4. Idempotent + lock-free Trigger() means
+				//     it is safe to call even when no reconciler is wired
+				//     (the buffered-1 channel drops the redundant nudge).
+				if srv.ArgoSecretReconciler() != nil || clusterRecon != nil {
 					prTracker.SetOnMergeFn(func(pr prtracker.PRInfo) {
 						if r := srv.ArgoSecretReconciler(); r != nil {
 							r.Trigger()
+						}
+						if clusterRecon != nil {
+							clusterRecon.Trigger()
 						}
 					})
 				}

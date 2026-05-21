@@ -58,14 +58,31 @@ func (a *prTrackerAdapter) TrackPR(ctx context.Context, p orchestrator.TrackedPR
 	})
 }
 
-// attachPRTracker wires the server's PR tracker onto an orchestrator
-// instance so every commitChangesWithMeta call automatically tracks
-// the resulting PR. Safe to call when no tracker is configured (no-op).
+// attachPRTracker wires server-lifetime background hooks onto a
+// per-request orchestrator instance. Despite the name (kept stable to
+// avoid touching every call site), this helper now attaches TWO hooks:
+//
+//  1. PR tracker (V125-1-6) — every commitChangesWithMeta call
+//     automatically tracks the resulting PR for dashboard surfacing.
+//  2. Reconciler trigger (V125-1-8.4) — every managed-clusters.yaml
+//     commit nudges the cluster Secret reconciler for sub-5s post-PR
+//     convergence; absent the nudge the reconciler still converges on
+//     its 30s safety-net tick.
+//
+// Both hooks are independently optional: a nil tracker or trigger is a
+// silent no-op. Callers MUST NOT assume either is wired — production
+// (cmd/sharko/serve.go) wires both only when the relevant Server-level
+// setter was called at boot, and tests deliberately leave both unwired.
 func (s *Server) attachPRTracker(orch *orchestrator.Orchestrator) *orchestrator.Orchestrator {
-	if orch == nil || s.prTracker == nil {
+	if orch == nil {
 		return orch
 	}
-	orch.SetPRTracker(&prTrackerAdapter{t: s.prTracker})
+	if s.prTracker != nil {
+		orch.SetPRTracker(&prTrackerAdapter{t: s.prTracker})
+	}
+	if s.reconcilerTrigger != nil {
+		orch.SetReconcilerTrigger(s.reconcilerTrigger)
+	}
 	return orch
 }
 
