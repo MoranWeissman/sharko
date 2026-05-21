@@ -99,20 +99,26 @@ lint: ## Go vet + UI build check
 generate-provider-types: ## Regenerate ui/src/generated/provider-types.ts from internal/providers/provider.go
 	go run ./cmd/gen-provider-types
 
-# V125-1-9.3 — schema generator. Reflects the envelope Go types in
-# internal/models (ManagedClustersSpec) and internal/config (AddonCatalogSpec)
-# via cmd/schema-gen and writes:
-#   docs/schemas/managed-clusters.v1.json
-#   docs/schemas/addon-catalog.v1.json
+# V125-1-9.3 + 9.4 — schema generator. Reflects the envelope Go types in
+# internal/models (ManagedClustersSpec) and internal/config
+# (AddonCatalogSpec) via cmd/schema-gen and writes to TWO mirrored
+# locations:
+#   docs/schemas/managed-clusters.v1.json      (human-facing)
+#   docs/schemas/addon-catalog.v1.json         (human-facing)
+#   internal/schema/managed-clusters.v1.json   (V125-1-9.4 embed source)
+#   internal/schema/addon-catalog.v1.json      (V125-1-9.4 embed source)
 #
-# Both files are committed to git. CI's "Schemas Up To Date" check runs
-# this target then `git diff --exit-code docs/schemas/` to catch stale
-# files — same shape as the swagger and provider-types drift gates.
+# The internal/schema/ copies feed the runtime validator's go:embed in
+# internal/schema/embed.go (Story 9.4); the docs/schemas/ copies are
+# what the public schema URLs + editor headers point at. All four files
+# are committed to git. CI's "Schemas Up To Date" check runs this target
+# then `git diff --exit-code` against both paths to catch stale files —
+# same shape as the swagger and provider-types drift gates.
 #
 # Idempotent by design: invopop/jsonschema preserves struct declaration
 # order, encoding/json sorts map keys, so back-to-back runs produce
-# byte-identical output.
-generate-schemas: ## Regenerate docs/schemas/*.v1.json from the Sharko envelope Go types
+# byte-identical output at every location.
+generate-schemas: ## Regenerate docs/schemas/*.v1.json + internal/schema/*.v1.json from the Sharko envelope Go types
 	go run ./cmd/schema-gen
 
 clean: ## Remove build artifacts

@@ -1,7 +1,9 @@
 package config
 
 import (
+	"bytes"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -696,5 +698,141 @@ func TestResolveAddonCatalogPath_Missing(t *testing.T) {
 	}
 	if !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("expected errors.Is(err, os.ErrNotExist), got %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// V125-1-9.4 — read-time JSON Schema validation wiring in the parser
+// ---------------------------------------------------------------------------
+
+// TestParseClusterAddons_EnvelopedInvalid_Reject mirrors
+// TestLoadManagedClusters_EnvelopedInvalid_Reject for the parser entry
+// point. An enveloped but invalid body returns an error wrapping a
+// *schema.ValidationFailure and emits a structured slog.Error audit
+// log line.
+//
+// NOT parallel — uses slog.SetDefault.
+func TestParseClusterAddons_EnvelopedInvalid_Reject(t *testing.T) {
+	body := []byte(`apiVersion: sharko.io/v1
+kind: ManagedClusters
+metadata:
+  name: managed-clusters
+spec:
+  unknownField: "x"
+`)
+
+	var buf bytes.Buffer
+	originalLogger := slog.Default()
+	defer slog.SetDefault(originalLogger)
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+
+	_, err := NewParser().ParseClusterAddons(body)
+	if err == nil {
+		t.Fatal("ParseClusterAddons: expected validation error, got nil")
+	}
+	var vf *schema.ValidationFailure
+	if !errors.As(err, &vf) {
+		t.Fatalf("expected error wrapping *schema.ValidationFailure, got %T: %v", err, err)
+	}
+	if vf.Kind != schema.KindManagedClusters {
+		t.Errorf("ValidationFailure.Kind = %q, want %q", vf.Kind, schema.KindManagedClusters)
+	}
+	logOut := buf.String()
+	if !strings.Contains(logOut, `"msg":"schema_validation_failed"`) {
+		t.Errorf("audit log missing schema_validation_failed event:\n%s", logOut)
+	}
+	if !strings.Contains(logOut, `"resource":"managed-clusters.yaml"`) {
+		t.Errorf("audit log missing resource field:\n%s", logOut)
+	}
+}
+
+// TestParseAddonsCatalog_EnvelopedInvalid_Reject — same shape as the
+// managed-clusters parser test, against the addon-catalog reader.
+//
+// NOT parallel — uses slog.SetDefault.
+func TestParseAddonsCatalog_EnvelopedInvalid_Reject(t *testing.T) {
+	body := []byte(`apiVersion: sharko.io/v1
+kind: AddonCatalog
+metadata:
+  name: addon-catalog
+spec:
+  unknownField: "x"
+`)
+
+	var buf bytes.Buffer
+	originalLogger := slog.Default()
+	defer slog.SetDefault(originalLogger)
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+
+	_, err := NewParser().ParseAddonsCatalog(body)
+	if err == nil {
+		t.Fatal("ParseAddonsCatalog: expected validation error, got nil")
+	}
+	var vf *schema.ValidationFailure
+	if !errors.As(err, &vf) {
+		t.Fatalf("expected error wrapping *schema.ValidationFailure, got %T: %v", err, err)
+	}
+	if vf.Kind != schema.KindAddonCatalog {
+		t.Errorf("ValidationFailure.Kind = %q, want %q", vf.Kind, schema.KindAddonCatalog)
+	}
+	logOut := buf.String()
+	if !strings.Contains(logOut, `"msg":"schema_validation_failed"`) {
+		t.Errorf("audit log missing schema_validation_failed event:\n%s", logOut)
+	}
+	if !strings.Contains(logOut, `"resource":"addon-catalog.yaml"`) {
+		t.Errorf("audit log missing resource field:\n%s", logOut)
+	}
+}
+
+// TestParseClusterAddons_LegacyBareYAML_ValidationSkipped — back-compat
+// guard mirroring TestLoadManagedClusters_LegacyBareYAML_ValidationSkipped.
+// No validation runs on legacy bodies; the parse must succeed AND no
+// schema_validation_failed event is emitted.
+func TestParseClusterAddons_LegacyBareYAML_ValidationSkipped(t *testing.T) {
+	body := []byte(`clusters:
+  - name: prod-eu
+    labels:
+      cert-manager: enabled
+`)
+	var buf bytes.Buffer
+	originalLogger := slog.Default()
+	defer slog.SetDefault(originalLogger)
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+
+	clusters, err := NewParser().ParseClusterAddons(body)
+	if err != nil {
+		t.Fatalf("legacy parse: %v", err)
+	}
+	if len(clusters) != 1 || clusters[0].Name != "prod-eu" {
+		t.Errorf("legacy parse content drift: %+v", clusters)
+	}
+	if strings.Contains(buf.String(), "schema_validation_failed") {
+		t.Errorf("legacy bare YAML must not trigger validation; got audit log:\n%s", buf.String())
+	}
+}
+
+// TestParseAddonsCatalog_LegacyBareYAML_ValidationSkipped — back-compat
+// guard for the addon-catalog reader.
+func TestParseAddonsCatalog_LegacyBareYAML_ValidationSkipped(t *testing.T) {
+	body := []byte(`applicationsets:
+  - name: cert-manager
+    repoURL: https://charts.jetstack.io
+    chart: cert-manager
+    version: "1.16.3"
+`)
+	var buf bytes.Buffer
+	originalLogger := slog.Default()
+	defer slog.SetDefault(originalLogger)
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+
+	entries, err := NewParser().ParseAddonsCatalog(body)
+	if err != nil {
+		t.Fatalf("legacy parse: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name != "cert-manager" {
+		t.Errorf("legacy parse content drift: %+v", entries)
+	}
+	if strings.Contains(buf.String(), "schema_validation_failed") {
+		t.Errorf("legacy bare YAML must not trigger validation; got audit log:\n%s", buf.String())
 	}
 }

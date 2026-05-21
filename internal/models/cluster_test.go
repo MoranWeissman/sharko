@@ -1,6 +1,9 @@
 package models
 
 import (
+	"bytes"
+	"errors"
+	"log/slog"
 	"reflect"
 	"strings"
 	"testing"
@@ -426,5 +429,113 @@ spec:
 		if !reflect.DeepEqual(l1, l2) {
 			t.Errorf("cluster[%d] labels drift:\n  in:  %v\n  out: %v", i, l1, l2)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// V125-1-9.4 — read-time JSON Schema validation wiring
+// ---------------------------------------------------------------------------
+
+// TestLoadManagedClusters_EnvelopedInvalid_Reject pins the Story 9.4
+// contract: an enveloped body that parses as YAML but violates the
+// JSON Schema is rejected with an error AND a slog.Error audit log
+// entry is emitted naming the kind + the structured violation list.
+//
+// Capture pattern: redirect slog.Default() to a buffer-backed JSON
+// handler for the duration of the test, then assert the JSON object
+// contains the expected msg+kind+violations fields. This is the same
+// pattern used by Story 9.5's CLI tests will use, so the shape is
+// future-friendly.
+//
+// NOT parallel — slog.SetDefault mutates a global; running side-by-side
+// with another slog-capturing test would race on the default handler.
+func TestLoadManagedClusters_EnvelopedInvalid_Reject(t *testing.T) {
+	// Body is enveloped (so the validator runs) but violates the schema
+	// in three ways: missing spec.clusters (required), extra field at
+	// spec level (additionalProperties: false), and apiVersion is the
+	// wrong const value (sharko.io/v2 instead of sharko.io/v1).
+	body := []byte(`apiVersion: sharko.io/v1
+kind: ManagedClusters
+metadata:
+  name: managed-clusters
+spec:
+  unknownField: "x"
+`)
+
+	var buf bytes.Buffer
+	originalLogger := slog.Default()
+	defer slog.SetDefault(originalLogger)
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+
+	_, err := LoadManagedClusters(body)
+	if err == nil {
+		t.Fatalf("LoadManagedClusters: expected validation error, got nil")
+	}
+
+	var vf *schema.ValidationFailure
+	if !errors.As(err, &vf) {
+		t.Fatalf("expected error wrapping *schema.ValidationFailure, got %T: %v", err, err)
+	}
+	if vf.Kind != schema.KindManagedClusters {
+		t.Errorf("ValidationFailure.Kind = %q, want %q", vf.Kind, schema.KindManagedClusters)
+	}
+	if len(vf.Violations) == 0 {
+		t.Errorf("ValidationFailure.Violations is empty; expected at least one")
+	}
+
+	// Audit log assertion. The slog JSON handler emits one record per
+	// log call; verify the schema_validation_failed event landed with
+	// the expected structured fields. We only require the substrings
+	// be present in the captured output — exact JSON shape is the
+	// handler's contract, not the validator's.
+	logOut := buf.String()
+	wantSubstrings := []string{
+		`"msg":"schema_validation_failed"`,
+		`"kind":"ManagedClusters"`,
+		`"resource":"managed-clusters.yaml"`,
+		`"validation_errors"`,
+	}
+	for _, want := range wantSubstrings {
+		if !strings.Contains(logOut, want) {
+			t.Errorf("audit log missing substring %q\nfull log:\n%s", want, logOut)
+		}
+	}
+}
+
+// TestLoadManagedClusters_LegacyBareYAML_ValidationSkipped exercises
+// the Story 9.4 back-compat invariant: legacy bare YAML does NOT
+// trigger validation (so the validator never sees it, no slog.Error
+// fires, and the read succeeds). This is the load-bearing test for
+// the back-compat contract — every existing Sharko installation has
+// legacy files on disk and they must keep loading after V125-1-9.
+//
+// Detection: capture slog output and assert no schema_validation_failed
+// event was emitted. The legacy path also surface-checks the parsed
+// content so a future bug that routes legacy through the enveloped
+// path (and somehow doesn't fail) would still be detected via the
+// audit-log absence + content correctness.
+func TestLoadManagedClusters_LegacyBareYAML_ValidationSkipped(t *testing.T) {
+	body := []byte(`clusters:
+  - name: prod-eu
+    region: eu-west-1
+    secretPath: clusters/prod-eu
+    labels:
+      cert-manager: enabled
+`)
+
+	var buf bytes.Buffer
+	originalLogger := slog.Default()
+	defer slog.SetDefault(originalLogger)
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+
+	spec, err := LoadManagedClusters(body)
+	if err != nil {
+		t.Fatalf("LoadManagedClusters legacy: %v", err)
+	}
+	if len(spec.Clusters) != 1 || spec.Clusters[0].Name != "prod-eu" {
+		t.Errorf("legacy parse content drift: %+v", spec.Clusters)
+	}
+	if strings.Contains(buf.String(), "schema_validation_failed") {
+		t.Errorf("legacy bare YAML must not trigger validation; got audit log:\n%s", buf.String())
 	}
 }

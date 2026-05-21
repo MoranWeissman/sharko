@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -109,6 +110,12 @@ func NewParser() *Parser {
 // label-normalisation logic (interface{} → map[string]string, see
 // parseLabels) lives in this package and would round-trip awkwardly through
 // the models layer.
+//
+// V125-1-9.4: on the ENVELOPED branch, the body is JSON-Schema-validated
+// against docs/schemas/managed-clusters.v1.json BEFORE yaml.Unmarshal.
+// Validation failures return *schema.ValidationFailure to the caller and
+// emit a slog.Error with the full violation list. Legacy bare YAML is
+// NOT validated — same back-compat contract as models.LoadManagedClusters.
 func (p *Parser) ParseClusterAddons(data []byte) ([]models.Cluster, error) {
 	enveloped, err := schema.IsEnveloped(data)
 	if err != nil {
@@ -117,6 +124,12 @@ func (p *Parser) ParseClusterAddons(data []byte) ([]models.Cluster, error) {
 
 	var file clusterAddonsFile
 	if enveloped {
+		// Wrong-kind check FIRST — same precedence as
+		// models.LoadManagedClusters so the actionable "wrong file
+		// handed to wrong loader" error surfaces ahead of any generic
+		// schema violation. Pre-9.4 tests pin this format and
+		// downstream tooling (V125-1-8 reconciler audit log, Story
+		// 9.5 CLI) depends on it.
 		var env envelopedClusterAddonsFile
 		if err := yaml.Unmarshal(data, &env); err != nil {
 			return nil, fmt.Errorf("parsing managed-clusters envelope: %w", err)
@@ -127,8 +140,25 @@ func (p *Parser) ParseClusterAddons(data []byte) ([]models.Cluster, error) {
 				env.Kind, schema.KindManagedClusters,
 			)
 		}
+
+		// Story 9.4 — validate AFTER wrong-kind check. Validator
+		// failures are surfaced as the canonical
+		// "validating managed-clusters envelope" wrapper so callers can
+		// errors.As into *schema.ValidationFailure (and the Story 9.5
+		// CLI prefix-matches "validating managed-clusters" to render a
+		// user-friendly message).
+		if validator, vErr := schema.DefaultValidator(); vErr == nil && validator != nil {
+			if err := validator.Validate(schema.KindManagedClusters, data); err != nil {
+				var vf *schema.ValidationFailure
+				if errors.As(err, &vf) {
+					schema.LogValidationFailure("managed-clusters.yaml", vf)
+				}
+				return nil, fmt.Errorf("validating managed-clusters envelope: %w", err)
+			}
+		}
 		file = env.Spec
 	} else {
+		// Legacy bare YAML — back-compat path, no validation by design.
 		if err := yaml.Unmarshal(data, &file); err != nil {
 			return nil, fmt.Errorf("parsing managed-clusters: %w", err)
 		}
@@ -185,6 +215,12 @@ func parseLabels(raw interface{}) map[string]string {
 // existing caller. The envelope's metadata (Name, Annotations) is not yet
 // surfaced anywhere in Sharko's runtime; later stories can extend the API if
 // needed.
+//
+// V125-1-9.4: on the ENVELOPED branch, the body is JSON-Schema-validated
+// against docs/schemas/addon-catalog.v1.json BEFORE yaml.Unmarshal.
+// Validation failures return *schema.ValidationFailure to the caller and
+// emit a slog.Error with the full violation list. Legacy bare YAML is
+// NOT validated — same back-compat contract as ParseClusterAddons.
 func (p *Parser) ParseAddonsCatalog(data []byte) ([]models.AddonCatalogEntry, error) {
 	enveloped, err := schema.IsEnveloped(data)
 	if err != nil {
@@ -195,6 +231,10 @@ func (p *Parser) ParseAddonsCatalog(data []byte) ([]models.AddonCatalogEntry, er
 	}
 
 	if enveloped {
+		// Wrong-kind check FIRST — same precedence as
+		// models.LoadManagedClusters and ParseClusterAddons. The
+		// pre-9.4 V125-1-9.2 test pins the format
+		// (parser_test.go: TestLoadCatalog_EnvelopedWrongKind_Reject).
 		var doc schema.Envelope[AddonCatalogSpec]
 		if err := yaml.Unmarshal(data, &doc); err != nil {
 			return nil, fmt.Errorf("parsing addons-catalog.yaml: %w", err)
@@ -204,10 +244,21 @@ func (p *Parser) ParseAddonsCatalog(data []byte) ([]models.AddonCatalogEntry, er
 				"parsing addons-catalog.yaml: envelope kind %q, expected %q",
 				doc.Kind, schema.KindAddonCatalog)
 		}
+
+		// Story 9.4 — validate AFTER wrong-kind check.
+		if validator, vErr := schema.DefaultValidator(); vErr == nil && validator != nil {
+			if err := validator.Validate(schema.KindAddonCatalog, data); err != nil {
+				var vf *schema.ValidationFailure
+				if errors.As(err, &vf) {
+					schema.LogValidationFailure("addon-catalog.yaml", vf)
+				}
+				return nil, fmt.Errorf("validating addon-catalog envelope: %w", err)
+			}
+		}
 		return doc.Spec.ApplicationSets, nil
 	}
 
-	// Legacy bare-YAML path.
+	// Legacy bare-YAML path — no validation by design.
 	var file addonsCatalogFile
 	if err := yaml.Unmarshal(data, &file); err != nil {
 		return nil, fmt.Errorf("parsing addons-catalog.yaml: %w", err)

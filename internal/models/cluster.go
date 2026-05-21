@@ -2,6 +2,7 @@ package models
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 
 	"gopkg.in/yaml.v3"
@@ -75,21 +76,31 @@ const ManagedClustersMetadataName = "managed-clusters"
 //     ManagedClustersSpec. This is the shape every pre-V125-1-9 Sharko
 //     installation has on disk; the reader stays back-compat until the
 //     V126 cleanup (see the V125-1-9 epic's "Filename alias removal
-//     window" locked OQ).
+//     window" locked OQ). Legacy bodies SKIP JSON Schema validation —
+//     the V125-1-9 design contract is that pre-envelope files keep
+//     working as-is; introducing validation on the legacy path would
+//     break every existing user repo on upgrade day.
 //   - **Enveloped YAML** (apiVersion: sharko.io/v1, kind: ManagedClusters)
-//     — unmarshalled into ManagedClustersDoc; the spec field is returned.
-//     An envelope whose kind is not ManagedClusters (e.g. the wrong file
-//     handed to the wrong loader) returns an explicit error so the
-//     caller surfaces "wrong document type" instead of silently treating
-//     it as an empty clusters list.
+//     — JSON-Schema-validated against docs/schemas/managed-clusters.v1.json
+//     (Story 9.4), then unmarshalled into ManagedClustersDoc; the spec
+//     field is returned. An envelope whose kind is not ManagedClusters
+//     (e.g. the wrong file handed to the wrong loader) returns an
+//     explicit error so the caller surfaces "wrong document type"
+//     instead of silently treating it as an empty clusters list.
 //
 // Detection is delegated to schema.IsEnveloped so the two reader paths
 // (managed-clusters and addon-catalog, the latter landing in Story 9.2)
 // share one routing primitive.
 //
-// Read-time JSON Schema validation lands in Story 9.4; until then this
-// reader's structural validation is whatever yaml.v3 produces during
-// unmarshal plus the wrong-kind guard above.
+// Read-time JSON Schema validation (V125-1-9.4): the enveloped branch
+// runs the body through schema.DefaultValidator().Validate before
+// unmarshal. A validation failure returns the *schema.ValidationFailure
+// to the caller and emits a slog.Error with the full violation list
+// (via schema.LogValidationFailure) so an operator who has corrupted
+// the file sees the same audit-log entry the reconciler would have
+// emitted on a silent failure. Per the design doc §4 line 167: malformed
+// files are rejected with an audit-logged error rather than a silent
+// reconcile failure.
 func LoadManagedClusters(body []byte) (ManagedClustersSpec, error) {
 	enveloped, err := schema.IsEnveloped(body)
 	if err != nil {
@@ -102,6 +113,14 @@ func LoadManagedClusters(body []byte) (ManagedClustersSpec, error) {
 	}
 
 	if enveloped {
+		// Peek the kind BEFORE schema validation. Story 9.4 contract:
+		// the wrong-kind guard (an envelope with apiVersion sharko.io/v1
+		// but a kind other than ManagedClusters) emits the SAME
+		// actionable error message the pre-9.4 reader produced — the
+		// V125-1-9.1 tests pin the format and downstream consumers
+		// (Story 9.5's CLI, V125-1-8's reconciler audit log) depend
+		// on it. Running validation first would surface the generic
+		// "kind: value must be ..." schema violation instead.
 		var doc ManagedClustersDoc
 		if err := yaml.Unmarshal(body, &doc); err != nil {
 			return ManagedClustersSpec{}, fmt.Errorf("parsing managed-clusters envelope: %w", err)
@@ -112,12 +131,35 @@ func LoadManagedClusters(body []byte) (ManagedClustersSpec, error) {
 				doc.Kind, schema.KindManagedClusters,
 			)
 		}
+
+		// Story 9.4 — JSON Schema validation on the enveloped path
+		// only, AFTER the wrong-kind check so the error precedence
+		// matches the pre-9.4 reader. Legacy bare YAML deliberately
+		// skips this step (see docstring back-compat contract).
+		//
+		// If DefaultValidator returned an error (embed assets failed
+		// to compile — a build-time bug, not a runtime data problem),
+		// we deliberately do NOT block the read: the upstream
+		// envelope/structural checks already fired above, and a
+		// panic-on-read would brick the server on a corrupt build.
+		// The build-time invariant (TestNewValidator passes) is the
+		// actual gate.
+		if validator, vErr := schema.DefaultValidator(); vErr == nil && validator != nil {
+			if err := validator.Validate(schema.KindManagedClusters, body); err != nil {
+				var vf *schema.ValidationFailure
+				if errors.As(err, &vf) {
+					schema.LogValidationFailure("managed-clusters.yaml", vf)
+				}
+				return ManagedClustersSpec{}, fmt.Errorf("validating managed-clusters envelope: %w", err)
+			}
+		}
 		return doc.Spec, nil
 	}
 
 	// Legacy bare YAML: unmarshal directly as a spec. The legacy shape's
 	// top-level keys are exactly ManagedClustersSpec's yaml-tagged fields
 	// (clusters:), so the same struct shape works for both paths.
+	// SKIPS Story 9.4's JSON Schema validation by design.
 	var spec ManagedClustersSpec
 	if err := yaml.Unmarshal(body, &spec); err != nil {
 		return ManagedClustersSpec{}, fmt.Errorf("parsing managed-clusters: %w", err)

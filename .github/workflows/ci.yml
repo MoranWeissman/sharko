@@ -123,14 +123,22 @@ jobs:
             exit 1
           fi
 
-  # V125-1-9.3 — drift gate for the JSON Schema envelope. cmd/schema-gen
-  # reflects the Go envelope types (internal/models.ManagedClustersSpec +
-  # internal/config.AddonCatalogSpec) via invopop/jsonschema and writes:
-  #   docs/schemas/managed-clusters.v1.json
-  #   docs/schemas/addon-catalog.v1.json
-  # If any contributor changes the envelope types without re-running the
-  # generator, this job fails the PR with a clear remediation hint. Mirrors
-  # the swagger-check + provider-types-up-to-date shape.
+  # V125-1-9.3 + 9.4 — drift gate for the JSON Schema envelope.
+  # cmd/schema-gen reflects the Go envelope types
+  # (internal/models.ManagedClustersSpec + internal/config.AddonCatalogSpec)
+  # via invopop/jsonschema and writes the same bytes to TWO locations:
+  #   docs/schemas/managed-clusters.v1.json     (human-facing copy)
+  #   docs/schemas/addon-catalog.v1.json        (human-facing copy)
+  #   internal/schema/managed-clusters.v1.json  (V125-1-9.4 embed source)
+  #   internal/schema/addon-catalog.v1.json     (V125-1-9.4 embed source)
+  #
+  # The internal/schema/ copies exist because Story 9.4's runtime
+  # validator (internal/schema/validator.go) loads schemas via go:embed
+  # and Go's embed package rejects `..` parent-directory paths. Keeping
+  # both locations in lock-step is enforced here — any contributor who
+  # changes the envelope types without re-running the generator OR who
+  # hand-edits one location without the other gets a red build.
+  # Mirrors the swagger-check + provider-types-up-to-date shape.
   schemas-up-to-date:
     name: Schemas Up To Date
     runs-on: ubuntu-latest
@@ -148,9 +156,9 @@ jobs:
 
       - name: Check for diff
         run: |
-          if ! git diff --exit-code -- docs/schemas/; then
-            echo "docs/schemas/ is out of date."
-            echo "Run 'make generate-schemas' and commit the result."
+          if ! git diff --exit-code -- docs/schemas/ internal/schema/managed-clusters.v1.json internal/schema/addon-catalog.v1.json; then
+            echo "docs/schemas/ or internal/schema/*.v1.json is out of date."
+            echo "Run 'make generate-schemas' and commit the result (both locations are written from the same source)."
             exit 1
           fi
 
