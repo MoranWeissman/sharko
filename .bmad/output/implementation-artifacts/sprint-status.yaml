@@ -1255,6 +1255,64 @@ development_status:
   epic-V125-1-9-schema-envelope-retrospective: optional
 
   # ============================================================
+  # V125-1-8 — Cluster reconciler + ownership label + GitOps stance fix
+  # ============================================================
+  # Planned 2026-05-21. Source: .bmad/output/planning-artifacts/epics-v125-1-8.md
+  # Primary design doc: docs/design/2026-05-11-cluster-secret-reconciler-and-gitops-stance.md
+  # (17 sections, all 13 architectural decisions locked by design doc).
+  # Paired predecessor: V125-1-9 (PR #346, 2026-05-21) — provides the validated
+  # read-contract that the reconciler depends on (schema.DefaultValidator(),
+  # envelope-aware models.LoadManagedClusters, sharko validate-config CLI).
+  #
+  # Scope: ship the stateless reconciler goroutine pattern (per design §7 Option E
+  # + §13 stateless-vs-operator analysis). New internal/clusterreconciler/ package
+  # (~200 LoC mirroring internal/prtracker/). Adds app.kubernetes.io/managed-by:
+  # sharko ownership label on every Sharko-created Secret. Wires reconciler.Start()
+  # into cmd/sharko/serve.go + prTracker.SetOnMergeFn for low-latency post-merge
+  # convergence. Retires pre-merge argoSecretManager.Ensure + direct-ArgoCD-API
+  # RegisterCluster paths in internal/orchestrator/cluster.go. Tightens V125-1-7
+  # orphan delete to require the sharko label. Replaces internal/gitops/yaml_mutator.go
+  # line-level mutators with V125-1-9's envelope-aware parse-mutate-marshal
+  # (handles task #257 follow-up).
+  #
+  # NOT in scope: CRD/operator-mode (V3+), HA/leader election (V2), webhook for
+  # sub-30s reconcile (V2), Adopt UI (V125-2 backlog), version bump or release
+  # tag (separate sprint cuts v1.25.0-pre.0 after this lands).
+  #
+  # V125-1-9.1 follow-up (task #257) disposition: IN-SCOPE for Story 8.3.
+  # The line-level yaml_mutator.go funcs are replaced (not just indent-fixed)
+  # with V125-1-9's SaveManagedClusters parse-mutate-marshal — robust to any
+  # envelope-shape evolution, retires the indent-assumption brittleness entirely.
+  #
+  # Branch: dev/v125-1-8-cluster-reconciler from main HEAD 57c01a5a (post V125-1-9
+  # chore-merge #347). Single sprint PR at the end. Auto-merge per
+  # feedback_auto_merge_when_green when CI green.
+  #
+  # 6 stories (8.0-8.5) in 5 waves. Wave A0 scaffold → Wave A reconciler core →
+  # Wave B (8.2 + 8.3 PARALLEL — independent surfaces) → Wave C wiring + e2e
+  # smoke → Wave D docs. Est wall-clock 1-2 dev days. Mirrors V125-1-9 cadence.
+  #
+  # All 13 OQs LOCKED by design doc + 2 supplementary by `feedback_realistic_framing`
+  # and yaml_mutator disposition. ZERO open questions to surface to maintainer.
+  #
+  # Role files: tech-lead.md + architect.md on every dispatch; go-expert on all
+  # implementation stories; k8s-expert on 8.1+8.3+8.4 (orchestrator + ArgoCD
+  # Secret CRUD surfaces); frontend-expert on 8.2 (UI button rename); test-engineer
+  # on every story; docs-writer on 8.5.
+  # Worktree-isolated per feedback_agent_dispatch_worktree_isolation. Every
+  # dispatch carries the Edit-to-main-repo drift warning (bit 4 of 7 V125-1-9
+  # agents; mitigated via $(git rev-parse --show-toplevel) prefix + post-batch
+  # git status -s self-check on main).
+  epic-V125-1-8-cluster-reconciler: done                                           # PR #348 squash-merged to main 2026-05-21 (commit 5966e244). A0 scaffold + 6 stories shipped together. NO release/tag — V125-1-9 + V125-1-8 ship as v1.25.0-pre.0 in a follow-up version-tag sprint.
+  V125-1-8-0-scaffold-reconciler-and-label-utilities: done                         # commit bc076aae — internal/clusterreconciler/{reconciler,labels}.go scaffold mirroring prtracker pattern; Envelope-T-style Deps struct; New/Start/Stop/Trigger lifecycle; buffered(1) trigger channel; sync.Once start+stop; 30s DefaultTickInterval; per-instance pollFn test seam (avoided -race issues with package-level seam); IsManagedBySharko + ApplyManagedBySharkoLabel utilities; 10 label tests + 7 lifecycle tests
+  V125-1-8-1-reconciler-core-git-to-argocd: done                                   # commit e3a6d7c7 — real pollOnce: reads managed-clusters.yaml via V125-1-9 envelope-aware models.LoadManagedClusters; lists sharko-labeled Secrets via k8s client; computes set diff (O(n+m) via two maps); creates with vault-fetch + label / deletes with managed-by gate; per-cluster + per-secret error isolation; audit-log every action; idempotent; ErrFileNotFound short-circuit (fresh-repo first-install no log spam); single-cycle deletes per design §9 self-heal model. Widened Deps.ArgoClient → kubernetes.Interface + Deps.Vault → providers.ClusterCredentialsProvider; added Deps.Namespace/Branch/DefaultRoleARN. 7 new poll tests + added wrappers BuildSecretConfigJSON + BuildClusterSecretLabels to internal/argosecrets/manager.go (share Secret-construction logic with reconciler.createOne, avoid duplication)
+  V125-1-8-2-v125-1-7-tightening-label-gate-and-ui-rename: done                    # commit 99c36ad3 — handleDeleteOrphanCluster rejects unlabeled Secrets with 400 + friendly error pointing operators at Adopt; orphan resolver filters by sharko label (unlabeled = V125-2 Adopt territory). UI button "Discard cancelled registration" was already shipped in V125-1-7-fix sprint; agent only updated 2 stale comments. New internal/api/clusters_orphan_ownership.go (106 lines) with listSharkoOwnedSecretNames helper; "nil safety valve" when k8s unwired (gate disables rather than empty list — dev-mode preservation). Swagger regen: yes (@Failure 503 + updated annotations). 4 new tests + extended existing
+  V125-1-8-3-retire-pre-merge-and-yaml-mutator-closes-257: done                    # commit 958e0f57 — removed pre-merge argoSecretManager.Ensure (cluster.go:215-268) + direct-ArgoCD-API RegisterCluster (cluster.go:415-462 + RefreshClusterCredentials:701-714); replaced internal/gitops/yaml_mutator.go line-level mutators with internal/gitops/yaml_mutator_cluster.go using parse-mutate-marshal via V125-1-9's SaveManagedClusters — closes #257. argoSecretManager interface KEPT (still used by adopt/unadopt metadata: SetAnnotation/GetAnnotation/GetManagedByLabel/Unadopt); only Ensure method retired. New Orchestrator.SetReconcilerTrigger setter + fireReconcilerTrigger helper (nil-safe back-compat). AddClusterEntry idempotent silent-skip-on-duplicate preserved (matches adoptSingleCluster retry semantics). 6 behavioral parity tests + 12 yaml_mutator round-trip tests. Catalog mutators KEPT line-level (task #264 tracks follow-up for V126+)
+  V125-1-8-4-wire-reconciler-into-serve-and-e2e-smoke: done                        # commit 6da1d2b8 — cmd/sharko/serve.go constructs reconciler near prtracker bootstrap with inClusterK8sClient + lazy connSvc.GetActiveGitProvider() + credProvider + auditLog.Add + 30s DefaultTickInterval + argocd ns + gitopsCfg.BaseBranch + prCMStore; prTracker.SetOnMergeFn fan-out fires recon.Trigger() for sub-5s convergence; Server.SetReconcilerTrigger + attachPRTracker bridge threads trigger through per-request orchestrators (per-request not singleton — discovered by agent, structural deviation from spec). 3 e2e tests in tests/e2e/lifecycle/reconciler_test.go (TestClusterReconcilerE2E with 3 subtests) PASS in 105s — subtest #3 self-heal uses 2s tick for wall-time, contract independent of cadence
+  V125-1-8-5-docs-design-doc-annotation-and-runbook: done                          # commit cbf0e810 — 363-line docs/site/operator/cluster-reconciler.md (8 sections: overview, ownership label, cadence, two-direction policy table, 5 recovery scenarios, coexistence, troubleshooting, implementation references); design doc 2026-05-11-cluster-secret-reconciler-and-gitops-stance.md §12 annotated 14× ✅ shipped V1.25 + 1× ⚠ partially shipped (argoSecretManager interface kept); section-3-template-and-secrets.md "PR Is the Gate" callout marked superseded; configuration.md sibling banner; mkdocs nav entry. NO v1.25 release-notes entry — bundled with V125-1-9 in version-tag sprint. mkdocs build --strict clean
+  epic-V125-1-8-cluster-reconciler-retrospective: optional
+
+  # ============================================================
   # V1X-BUGS-040-043 — UI/UX bug-sweep bundle (planned 2026-05-20)
   # ============================================================
   # Source: .bmad/output/planning-artifacts/epics-v1x-bugs-040-043.md
