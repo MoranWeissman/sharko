@@ -11,7 +11,14 @@ import (
 	"sync/atomic"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/fake"
+
 	"github.com/MoranWeissman/sharko/internal/ai"
+	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/models"
@@ -120,11 +127,45 @@ func newStubArgoSrv(t *testing.T, clusters []map[string]interface{}, deleteStatu
 	return &stubArgoSrv{Server: s, deleteCalls: &calls, deleteStatus: deleteStatus, deleteCallURL: &last}
 }
 
+// orphanK8sSecret is a tiny helper that constructs a corev1.Secret in the
+// argocd namespace. labeled=true sets the Sharko ownership label that the
+// V125-1-8.2 label gate keys off; labeled=false produces an externally-
+// owned Secret the gate will reject (the unlabeled-rejection test path).
+func orphanK8sSecret(name string, labeled bool) *corev1.Secret {
+	s := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "argocd",
+		},
+		Type: corev1.SecretTypeOpaque,
+	}
+	if labeled {
+		clusterreconciler.ApplyManagedBySharkoLabel(s)
+	}
+	return s
+}
+
+// orphanK8sClient returns a fake k8s clientset seeded with the supplied
+// Secrets in the argocd namespace. Tests that exercise the V125-1-8.2
+// label gate use this to wire a real-looking K8s view at the same time as
+// the stub ArgoCD REST server (the two surfaces are independent — ArgoCD
+// reports the cluster, K8s reports the Secret-with-label).
+func orphanK8sClient(secrets ...*corev1.Secret) kubernetes.Interface {
+	objs := make([]runtime.Object, 0, len(secrets))
+	for _, s := range secrets {
+		objs = append(objs, s)
+	}
+	return fake.NewSimpleClientset(objs...)
+}
+
 // orphanTestServer wires up the bits the DELETE-orphan handler needs:
 // real Server with a saved + active connection pointing at the stub
-// ArgoCD server, and the supplied gitprovider override. Returns the
-// router for direct ServeHTTP calls.
-func orphanTestServer(t *testing.T, gp gitprovider.GitProvider, argoURL string) (*Server, http.Handler) {
+// ArgoCD server, and the supplied gitprovider override. When k8sClient is
+// non-nil, the server is wired with an ArgoReconcilerConfig pointing at
+// that clientset so the V125-1-8.2 ownership-label gate has a Secret API
+// to consult; pass nil to exercise the "no k8s client wired" 503 path.
+// Returns the router for direct ServeHTTP calls.
+func orphanTestServer(t *testing.T, gp gitprovider.GitProvider, argoURL string, k8sClient kubernetes.Interface) (*Server, http.Handler) {
 	t.Helper()
 	f, err := os.CreateTemp("", "sharko-orphan-test-*.yaml")
 	if err != nil {
@@ -160,6 +201,18 @@ func orphanTestServer(t *testing.T, gp gitprovider.GitProvider, argoURL string) 
 	}
 
 	connSvc.SetGitProviderOverride(gp)
+
+	// V125-1-8.2 ownership-label gate — the handler reads
+	// argoReconcilerConfig.K8sClient via Server.k8sClientAndNamespace().
+	// We deliberately wire ONLY the fields the gate needs (K8sClient +
+	// ArgocdNamespace) so this test fixture doesn't accidentally pull in
+	// the rest of the secrets-reconciler bootstrap.
+	if k8sClient != nil {
+		srv.SetArgoReconcilerConfig(&ArgoReconcilerCfg{
+			K8sClient:       k8sClient,
+			ArgocdNamespace: "argocd",
+		})
+	}
 	return srv, NewRouter(srv, nil)
 }
 
@@ -179,11 +232,18 @@ func TestHandleDeleteOrphanCluster_SuccessRealOrphan(t *testing.T) {
 	// ArgoCD has one cluster ("kind-orphan") that is NOT in
 	// managed-clusters.yaml AND has no open registration PR. The handler
 	// must DELETE it and respond 204.
+	//
+	// V125-1-8.2 — the backing Secret carries the sharko ownership label
+	// so the new label gate (clusterreconciler.IsManagedBySharko) lets the
+	// delete through. This is the V125-1-8.2 "labeled secret deletes as
+	// before" regression contract — the same test that proved 204 pre-
+	// label-gate continues to prove 204 post-label-gate.
 	argo := newStubArgoSrv(t, []map[string]interface{}{
 		{"name": "kind-orphan", "server": "https://kind-orphan.local:6443", "info": map[string]interface{}{"connectionState": map[string]interface{}{"status": "Successful"}}},
 	}, http.StatusOK)
 	gp := &orphanFakeGP{managedYAML: []byte("clusters: []")}
-	_, router := orphanTestServer(t, gp, argo.URL)
+	k8s := orphanK8sClient(orphanK8sSecret("kind-orphan", true))
+	_, router := orphanTestServer(t, gp, argo.URL, k8s)
 
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, orphanAdminReq("kind-orphan"))
@@ -215,7 +275,9 @@ func TestHandleDeleteOrphanCluster_RefusesManagedCluster(t *testing.T) {
 		{"name": "prod-eu", "server": "https://prod-eu.example.com"},
 	}, http.StatusOK)
 	gp := &orphanFakeGP{managedYAML: []byte("clusters:\n- name: prod-eu\n  labels: {}\n")}
-	_, router := orphanTestServer(t, gp, argo.URL)
+	// nil k8s client — this test rejects BEFORE the label gate (managed
+	// check is step 4; label gate is step 7), so k8s wiring is irrelevant.
+	_, router := orphanTestServer(t, gp, argo.URL, nil)
 
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, orphanAdminReq("prod-eu"))
@@ -247,7 +309,8 @@ func TestHandleDeleteOrphanCluster_RefusesPendingCluster(t *testing.T) {
 			},
 		},
 	}
-	_, router := orphanTestServer(t, gp, argo.URL)
+	// nil k8s client — pending check rejects before the label gate.
+	_, router := orphanTestServer(t, gp, argo.URL, nil)
 
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, orphanAdminReq("kind-pending"))
@@ -270,7 +333,9 @@ func TestHandleDeleteOrphanCluster_NotFoundInArgoCD(t *testing.T) {
 		{"name": "other", "server": "https://other.example.com"},
 	}, http.StatusOK)
 	gp := &orphanFakeGP{managedYAML: []byte("clusters: []")}
-	_, router := orphanTestServer(t, gp, argo.URL)
+	// nil k8s client — 404 fires at step 6 (ArgoCD lookup) before the
+	// V125-1-8.2 label gate at step 7 is reached.
+	_, router := orphanTestServer(t, gp, argo.URL, nil)
 
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, orphanAdminReq("missing"))
@@ -287,11 +352,16 @@ func TestHandleDeleteOrphanCluster_ArgocdDeleteErrorPropagates(t *testing.T) {
 	// The cluster IS an orphan — but the ArgoCD DELETE itself errors.
 	// The handler must surface a 5xx (upstream-error path), not silently
 	// pretend success.
+	//
+	// V125-1-8.2 — the test reaches the DELETE step only when the new
+	// ownership-label gate accepts the Secret, so seed it with the
+	// sharko label.
 	argo := newStubArgoSrv(t, []map[string]interface{}{
 		{"name": "kind-orphan", "server": "https://kind-orphan.local:6443"},
 	}, http.StatusInternalServerError)
 	gp := &orphanFakeGP{managedYAML: []byte("clusters: []")}
-	_, router := orphanTestServer(t, gp, argo.URL)
+	k8s := orphanK8sClient(orphanK8sSecret("kind-orphan", true))
+	_, router := orphanTestServer(t, gp, argo.URL, k8s)
 
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, orphanAdminReq("kind-orphan"))
@@ -391,7 +461,9 @@ func TestHandleDeleteOrphanCluster_ArgocdListErrorSurfaces502(t *testing.T) {
 	t.Cleanup(argoSrv.Close)
 
 	gp := &orphanFakeGP{managedYAML: []byte("clusters: []")}
-	_, router := orphanTestServer(t, gp, argoSrv.URL)
+	// nil k8s client — ArgoCD list error (step 6) fires before the label
+	// gate (step 7) so k8s wiring is irrelevant.
+	_, router := orphanTestServer(t, gp, argoSrv.URL, nil)
 
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, orphanAdminReq("kind-orphan"))
@@ -404,5 +476,112 @@ func TestHandleDeleteOrphanCluster_ArgocdListErrorSurfaces502(t *testing.T) {
 	body := w.Body.String()
 	if !strings.Contains(body, "delete_orphan_cluster_argocd_list") {
 		t.Errorf("expected op tag in body, got: %s", body)
+	}
+}
+
+// V125-1-8.2 — ownership-label gate tests. Adds the third safety check
+// (after managed + pending + ArgoCD-presence): the backing Secret must
+// carry app.kubernetes.io/managed-by=sharko. Unlabeled = V125-2 Adopt
+// territory; Discard would silently destroy whatever tool owns the Secret.
+
+func TestHandleDeleteOrphan_UnlabeledSecret_Reject400(t *testing.T) {
+	// Seed ArgoCD with an unmanaged cluster ("kind-foreign") that would
+	// have qualified as an orphan under the pre-V125-1-8.2 algorithm (in
+	// ArgoCD, not in git, no open PR). Seed K8s with the same-named Secret
+	// but WITHOUT the sharko label — simulates an externally-created
+	// Secret that V125-2 Adopt will own.
+	//
+	// The handler must:
+	//   - return HTTP 400 with the spec-locked error message
+	//   - NOT issue any DELETE to ArgoCD
+	//
+	// This is the V125-1-7 foot-gun closure: an operator who clicks
+	// Discard on an externally-owned cluster gets a clear remediation
+	// pointing them at the Adopt action instead.
+	argo := newStubArgoSrv(t, []map[string]interface{}{
+		{"name": "kind-foreign", "server": "https://kind-foreign.local:6443"},
+	}, http.StatusOK)
+	gp := &orphanFakeGP{managedYAML: []byte("clusters: []")}
+	k8s := orphanK8sClient(orphanK8sSecret("kind-foreign", false)) // labeled=false
+	_, router := orphanTestServer(t, gp, argo.URL, k8s)
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, orphanAdminReq("kind-foreign"))
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 (unlabeled Secret rejected), got %d (body=%s)", w.Code, w.Body.String())
+	}
+	if got := atomic.LoadInt32(argo.deleteCalls); got != 0 {
+		t.Errorf("expected 0 ArgoCD DELETE calls (label gate rejected), got %d", got)
+	}
+	// The spec-locked error message must reference managed-by and Adopt
+	// so operators understand both WHY the rejection happened and HOW to
+	// proceed. We assert on the two anchor substrings rather than the
+	// full string to keep the test robust against minor phrasing edits.
+	body := w.Body.String()
+	if !strings.Contains(body, "managed-by label") {
+		t.Errorf("expected error to reference managed-by label, got: %s", body)
+	}
+	if !strings.Contains(body, "Adopt") {
+		t.Errorf("expected error to point at Adopt action, got: %s", body)
+	}
+}
+
+func TestHandleDeleteOrphan_LabeledSecret_DeletesAsBeforeShipped(t *testing.T) {
+	// Regression guard for the V125-1-8.2 label gate: a Secret with the
+	// sharko label must continue to delete the same way it did before the
+	// gate landed. Same shape as TestHandleDeleteOrphanCluster_SuccessRealOrphan
+	// but spelled out as a dedicated test so the V125-1-8.2 commit can
+	// point at "this specific test proves we didn't regress the happy
+	// path while adding the gate".
+	argo := newStubArgoSrv(t, []map[string]interface{}{
+		{"name": "kind-owned", "server": "https://kind-owned.local:6443", "info": map[string]interface{}{"connectionState": map[string]interface{}{"status": "Successful"}}},
+	}, http.StatusOK)
+	gp := &orphanFakeGP{managedYAML: []byte("clusters: []")}
+	k8s := orphanK8sClient(orphanK8sSecret("kind-owned", true)) // labeled=true
+	_, router := orphanTestServer(t, gp, argo.URL, k8s)
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, orphanAdminReq("kind-owned"))
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 (labeled Secret deletes as before), got %d (body=%s)", w.Code, w.Body.String())
+	}
+	if got := atomic.LoadInt32(argo.deleteCalls); got != 1 {
+		t.Errorf("expected 1 ArgoCD DELETE call (gate passed), got %d", got)
+	}
+	// Verify it was the right URL — defence-in-depth in case a future
+	// refactor accidentally targets the wrong cluster after the gate.
+	last := argo.deleteCallURL.Load().(string)
+	if last == "" || !strings.Contains(last, "kind-owned.local:6443") {
+		t.Errorf("unexpected DELETE path: %q", last)
+	}
+}
+
+func TestHandleDeleteOrphan_NoK8sClient_Returns503(t *testing.T) {
+	// If the server is started without an in-cluster K8s client (the
+	// argoReconcilerConfig is nil — production never hits this path but
+	// dev / demo modes can), the label gate cannot be verified. The
+	// handler MUST fail closed with 503 rather than silently bypass the
+	// gate; doing otherwise would defeat the V125-1-7 foot-gun closure
+	// that motivated this story.
+	argo := newStubArgoSrv(t, []map[string]interface{}{
+		{"name": "kind-orphan", "server": "https://kind-orphan.local:6443"},
+	}, http.StatusOK)
+	gp := &orphanFakeGP{managedYAML: []byte("clusters: []")}
+	_, router := orphanTestServer(t, gp, argo.URL, nil) // nil k8s client
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, orphanAdminReq("kind-orphan"))
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 (k8s client not wired, gate cannot verify), got %d (body=%s)", w.Code, w.Body.String())
+	}
+	if got := atomic.LoadInt32(argo.deleteCalls); got != 0 {
+		t.Errorf("expected 0 ArgoCD DELETE calls (fail-closed), got %d", got)
+	}
+	// Sanity: the op tag identifies the failure mode for log grepping.
+	if !strings.Contains(w.Body.String(), "delete_orphan_cluster_no_k8s_client") {
+		t.Errorf("expected op=delete_orphan_cluster_no_k8s_client in body, got: %s", w.Body.String())
 	}
 }

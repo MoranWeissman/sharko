@@ -6,6 +6,15 @@
 >
 > **Trigger:** Live Track B testing of V125-1-7 surfaced the deeper bug class V125-1-7 was only a band-aid for, prompting a reconsideration of Sharko's GitOps posture and reconciliation model.
 
+> **SHIPPED V1.25 — 2026-05-21:** V125-1-8 closed on `dev/v125-1-8-cluster-reconciler`
+> (sprint PR pending). The cluster reconciler, ownership label, and pre-merge
+> Secret-path retirement are all in. See
+> [`docs/site/operator/cluster-reconciler.md`](../site/operator/cluster-reconciler.md)
+> for the operator runbook,
+> [`.bmad/output/planning-artifacts/epics-v125-1-8.md`](../../.bmad/output/planning-artifacts/epics-v125-1-8.md)
+> for the sprint plan, and §12 below for the per-component shipped-state
+> annotations. V125-1-9 (schema envelope) shipped in the same release cycle.
+
 ---
 
 ## 1. The triggering observation
@@ -433,9 +442,9 @@ Tier 3 is also the right preparation for Tier 4. When you graduate to a CRD in V
 **Problem identified:** the current implementation deletes ANY ArgoCD Secret that's in argocd ∖ git ∖ pending. Without an ownership label check, this risks mass-deleting user-managed Secrets when Sharko is layered onto an existing ArgoCD with pre-existing clusters.
 
 **Required follow-up:**
-- Add ownership label check to `handleDeleteOrphanCluster` — refuse to delete a Secret without `app.kubernetes.io/managed-by: sharko`.
-- The orphan resolver should similarly only surface Secrets that carry the Sharko label — Secrets without the label are V125-2 Adopt territory, not orphan territory.
-- Rename UI button from "Delete cluster Secret" (technical, confusing per maintainer feedback) to something the user mental model maps to: e.g. "Discard cancelled registration" or "Clean up orphan registration".
+- Add ownership label check to `handleDeleteOrphanCluster` — refuse to delete a Secret without `app.kubernetes.io/managed-by: sharko`. **✅ shipped V1.25** (label gate in `internal/api/clusters_orphan_delete.go`; helpers in `internal/api/clusters_orphan_ownership.go`; V125-1-8.2).
+- The orphan resolver should similarly only surface Secrets that carry the Sharko label — Secrets without the label are V125-2 Adopt territory, not orphan territory. **✅ shipped V1.25** (resolver gate in `internal/api/clusters_orphans.go`; V125-1-8.2).
+- Rename UI button from "Delete cluster Secret" (technical, confusing per maintainer feedback) to something the user mental model maps to: e.g. "Discard cancelled registration" or "Clean up orphan registration". **✅ shipped V1.25** (originally landed in the V125-1-7-fix sprint; confirmed + accompanying copy/comments tightened in V125-1-8.2).
 
 ### V125-1-8 (architectural close — reframed)
 
@@ -444,35 +453,35 @@ Tier 3 is also the right preparation for Tier 4. When you graduate to a CRD in V
 **New plan:** Build `internal/clusterreconciler` package that reconciles ArgoCD cluster Secret state from `managed-clusters.yaml` in git. Mirror prtracker's goroutine + ConfigMap state + audit pattern. Wire prtracker `onMergeFn` to trigger the reconciler for low-latency post-merge convergence; periodic 30s tick is the safety net.
 
 **Concrete deltas:**
-1. New package `internal/clusterreconciler` — ~200 LoC mirroring prtracker structure.
-2. Add ownership label `app.kubernetes.io/managed-by: sharko` on every Sharko-created Secret. Back-compat one-shot migration on first reconcile (label existing Sharko-managed Secrets).
-3. Wire `reconciler.Start(ctx)` into `cmd/sharko/serve.go` near the prtracker bootstrap.
-4. Wire `prTracker.SetOnMergeFn` to call `reconciler.Trigger()` for immediate post-merge reconcile.
-5. Remove pre-merge `argoSecretManager.Ensure` and direct-API `RegisterCluster` calls from `internal/orchestrator/cluster.go` — they become dead code once the reconciler owns Secret lifecycle.
-6. Remove `argoSecretManager` interface entirely if no remaining caller uses it.
+1. New package `internal/clusterreconciler` — ~200 LoC mirroring prtracker structure. **✅ shipped V1.25** (`reconciler.go` + `labels.go` scaffold in V125-1-8.0; full diff+act `PollOnce` with per-cluster error isolation + audit logging in V125-1-8.1; 200+ LoC).
+2. Add ownership label `app.kubernetes.io/managed-by: sharko` on every Sharko-created Secret. Back-compat one-shot migration on first reconcile (label existing Sharko-managed Secrets). **✅ shipped V1.25** (constants + helpers in `internal/clusterreconciler/labels.go`; label applied on every Sharko-created Secret via the reconciler's `createOne`). Per `feedback_realistic_framing` we did **not** ship a one-shot back-compat relabel — Sharko is pre-prod, no field operators have legacy unlabeled Sharko-Secrets in production; greenfield-only.
+3. Wire `reconciler.Start(ctx)` into `cmd/sharko/serve.go` near the prtracker bootstrap. **✅ shipped V1.25** (V125-1-8.4 wiring next to the prtracker bootstrap).
+4. Wire `prTracker.SetOnMergeFn` to call `reconciler.Trigger()` for immediate post-merge reconcile. **✅ shipped V1.25** (V125-1-8.4; sub-5s post-merge convergence proved by `tests/e2e/lifecycle/reconciler_test.go`; the 30s tick is the safety net).
+5. Remove pre-merge `argoSecretManager.Ensure` and direct-API `RegisterCluster` calls from `internal/orchestrator/cluster.go` — they become dead code once the reconciler owns Secret lifecycle. **✅ shipped V1.25** (V125-1-8.3 retired both pre-merge paths and replaced the line-level `yaml_mutator.go` with an envelope-aware writer using V125-1-9's `models.SaveManagedClusters` — closes task #257; behavioral parity tests pass on every register path: kubeconfig, EKS-direct, EKS-discovery, batch, adopt).
+6. Remove `argoSecretManager` interface entirely if no remaining caller uses it. **⚠ partially shipped V1.25** — the `Ensure` method was removed and all pre-merge Secret callers retired in V125-1-8.3, but the interface itself is kept because `adopt`/`unadopt` metadata methods on it are still in use. Full interface retirement deferred to a V125-2 cleanup pass if the remaining methods can be moved to the reconciler.
 
-**The hardest part isn't the operator question — it's the cleanup of the existing pre-merge code paths and proving the reconciler covers them.** Behavioral parity tests on every register path (kubeconfig, EKS-direct, EKS-discovery, batch, adopt) need to pass before the old paths can go.
+**The hardest part isn't the operator question — it's the cleanup of the existing pre-merge code paths and proving the reconciler covers them.** Behavioral parity tests on every register path (kubeconfig, EKS-direct, EKS-discovery, batch, adopt) need to pass before the old paths can go. **✅ shipped V1.25** (V125-1-8.3 closed the parity work).
 
 ### V125-1-9 (new candidate — schema versioning)
 
 Frame as a prerequisite for V125-1-8 to be operationally safe.
 
-1. Publish JSON Schema for `managed-clusters.yaml` at a stable URL.
-2. Adopt `apiVersion: sharko.io/v1` + `kind: ManagedClusters` + `spec:` envelope.
-3. `# yaml-language-server: $schema=...` header in every Sharko-written YAML.
-4. Validate on PR (CI hook) and on reconciler read (audit-logged rejection).
-5. Same treatment for `addons-catalog.yaml`.
+1. Publish JSON Schema for `managed-clusters.yaml` at a stable URL. **✅ shipped V1.25** (schemas under `docs/site/schemas/`, generated from Go structs via `make generate-schemas`).
+2. Adopt `apiVersion: sharko.io/v1` + `kind: ManagedClusters` + `spec:` envelope. **✅ shipped V1.25** (envelope reader/writer in `internal/models` + `internal/config`).
+3. `# yaml-language-server: $schema=...` header in every Sharko-written YAML. **✅ shipped V1.25** (writer emits the header on every save).
+4. Validate on PR (CI hook) and on reconciler read (audit-logged rejection). **✅ shipped V1.25** (`sharko validate-config` CLI + `.github/workflows/ci.yml` `validate-sharko-config` job; read-time validator in loaders).
+5. Same treatment for `addons-catalog.yaml`. **✅ shipped V1.25** (also renamed `addons-catalog.yaml` → `addon-catalog.yaml` with a v1.25 filename alias; `AddonCatalog` kind).
 
-Sequencing: V125-1-9 → V125-1-8 → V125-1-7 tightening (in that order; each depends on the previous for safety).
+Sequencing: V125-1-9 → V125-1-8 → V125-1-7 tightening (in that order; each depends on the previous for safety). **✅ delivered in this order during the V1.25 release cycle.**
 
-### V125-2 (Adopt UI)
+### V125-2 (Adopt UI) `[deps: V125-1-8 ✅ shipped]`
 
 Now becomes the natural complement to V125-1-7's tightened orphan surface. Same data (clusters in argocd ∖ git), now distinguishable by label:
 
 - **Has sharko label** → orphan candidate (V125-1-7).
 - **No sharko label** → unmanaged cluster, candidate for adoption (V125-2). The Adopt action writes managed-clusters.yaml entry **and** adds the sharko ownership label to the existing Secret, bringing it under management without re-registering.
 
-V2 Epic 4 backend (`internal/orchestrator/adopt.go`) already exists; V125-2 is the UI surfacing.
+V2 Epic 4 backend (`internal/orchestrator/adopt.go`) already exists; V125-2 is the UI surfacing. The label-based ownership gate shipped in V125-1-8 is the precondition that makes V125-2 safe to surface — the Adopt action can now run without colliding with the orphan-cleanup path.
 
 ### V3+ — operator mode (deferred, not blocked by anything above)
 

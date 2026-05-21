@@ -47,7 +47,7 @@ func TestResolveOrphanRegistrations_NoOrphansWhenAllManaged(t *testing.T) {
 	}
 	gitClusters := []models.Cluster{{Name: "prod-eu"}}
 
-	got := resolveOrphanRegistrations(context.Background(), lister, gitClusters, nil)
+	got := resolveOrphanRegistrations(context.Background(), lister, gitClusters, nil, nil)
 	if got == nil {
 		t.Fatal("expected non-nil empty slice (V125-1.4 nil-array regression guard)")
 	}
@@ -66,7 +66,7 @@ func TestResolveOrphanRegistrations_SingleOrphanDetected(t *testing.T) {
 		},
 	}
 
-	got := resolveOrphanRegistrations(context.Background(), lister, nil, nil)
+	got := resolveOrphanRegistrations(context.Background(), lister, nil, nil, nil)
 	if len(got) != 1 {
 		t.Fatalf("expected 1 orphan, got %d: %+v", len(got), got)
 	}
@@ -96,7 +96,7 @@ func TestResolveOrphanRegistrations_PendingExcludedFromOrphans(t *testing.T) {
 	}
 	pending := map[string]struct{}{"kind-local": {}}
 
-	got := resolveOrphanRegistrations(context.Background(), lister, nil, pending)
+	got := resolveOrphanRegistrations(context.Background(), lister, nil, pending, nil)
 	if len(got) != 0 {
 		t.Errorf("expected pending cluster to be excluded from orphans, got %d: %+v", len(got), got)
 	}
@@ -119,7 +119,7 @@ func TestResolveOrphanRegistrations_InClusterExcluded(t *testing.T) {
 		},
 	}
 
-	got := resolveOrphanRegistrations(context.Background(), lister, nil, nil)
+	got := resolveOrphanRegistrations(context.Background(), lister, nil, nil, nil)
 	if len(got) != 1 {
 		t.Fatalf("expected exactly 1 orphan (in-cluster + host filtered out), got %d: %+v", len(got), got)
 	}
@@ -135,7 +135,7 @@ func TestResolveOrphanRegistrations_ListErrorDegradesToEmpty(t *testing.T) {
 	// empty slice it would on the no-orphans happy path.
 	lister := &fakeArgoLister{err: errors.New("argocd unreachable (transient)")}
 
-	got := resolveOrphanRegistrations(context.Background(), lister, nil, nil)
+	got := resolveOrphanRegistrations(context.Background(), lister, nil, nil, nil)
 	if got == nil {
 		t.Fatal("expected non-nil empty slice on lister error")
 	}
@@ -147,12 +147,61 @@ func TestResolveOrphanRegistrations_ListErrorDegradesToEmpty(t *testing.T) {
 func TestResolveOrphanRegistrations_NilListerReturnsEmpty(t *testing.T) {
 	// Defensive: handler may pass a nil lister if no active connection.
 	// The resolver must not crash.
-	got := resolveOrphanRegistrations(context.Background(), nil, nil, nil)
+	got := resolveOrphanRegistrations(context.Background(), nil, nil, nil, nil)
 	if got == nil {
 		t.Fatal("expected non-nil empty slice on nil lister")
 	}
 	if len(got) != 0 {
 		t.Errorf("expected 0 orphans on nil lister, got %d", len(got))
+	}
+}
+
+func TestOrphanResolver_OnlySurfacesLabeledSecrets(t *testing.T) {
+	// V125-1-8.2 / V125-1-7 tightening — the ownership-label gate.
+	//
+	// Seed ArgoCD with two clusters that BOTH would qualify under the
+	// pre-V125-1-8.2 algorithm (in ArgoCD, not in git, no open PR). Only
+	// one of them carries the app.kubernetes.io/managed-by=sharko label
+	// (passed via the sharkoOwnedNames set the resolver receives from the
+	// caller — typically built from listSharkoOwnedSecretNames). The
+	// unlabeled one represents an externally-created Secret that V125-2's
+	// Adopt flow will handle; it MUST be filtered out so the orphan
+	// "Discard" UI cannot foot-gun it.
+	lister := &fakeArgoLister{
+		clusters: []models.ArgocdCluster{
+			{Name: "kind-owned", Server: "https://kind-owned.local:6443"},
+			{Name: "kind-foreign", Server: "https://kind-foreign.local:6443"},
+		},
+	}
+	sharkoOwned := map[string]struct{}{
+		"kind-owned": {},
+		// kind-foreign deliberately absent — V125-2 Adopt territory.
+	}
+
+	got := resolveOrphanRegistrations(context.Background(), lister, nil, nil, sharkoOwned)
+	if len(got) != 1 {
+		t.Fatalf("expected exactly 1 orphan after label gate, got %d: %+v", len(got), got)
+	}
+	if got[0].ClusterName != "kind-owned" {
+		t.Errorf("expected orphan = kind-owned (sharko-labeled), got %q", got[0].ClusterName)
+	}
+
+	// Sanity: when the gate is disabled (nil sharkoOwnedNames — legacy /
+	// no-k8s-client safety valve documented on the resolver), both
+	// candidates surface. Confirms the gate is what changes the count, not
+	// some other refactor in the algorithm.
+	gotNoGate := resolveOrphanRegistrations(context.Background(), lister, nil, nil, nil)
+	if len(gotNoGate) != 2 {
+		t.Errorf("expected 2 orphans with gate disabled (nil set), got %d: %+v", len(gotNoGate), gotNoGate)
+	}
+
+	// Empty set (k8s available, zero sharko-labeled Secrets) → ALL
+	// candidates filtered out. This is the "fresh install, no clusters
+	// yet" steady state — the orphan section should be empty rather than
+	// surfacing every unlabeled Secret in the namespace.
+	gotEmpty := resolveOrphanRegistrations(context.Background(), lister, nil, nil, map[string]struct{}{})
+	if len(gotEmpty) != 0 {
+		t.Errorf("expected 0 orphans with empty sharkoOwned set, got %d: %+v", len(gotEmpty), gotEmpty)
 	}
 }
 
@@ -170,7 +219,7 @@ func TestResolveOrphanRegistrations_MixedScenario(t *testing.T) {
 	gitClusters := []models.Cluster{{Name: "prod-eu"}}
 	pending := map[string]struct{}{"kind-pending": {}}
 
-	got := resolveOrphanRegistrations(context.Background(), lister, gitClusters, pending)
+	got := resolveOrphanRegistrations(context.Background(), lister, gitClusters, pending, nil)
 	if len(got) != 1 {
 		t.Fatalf("expected exactly 1 orphan, got %d: %+v", len(got), got)
 	}

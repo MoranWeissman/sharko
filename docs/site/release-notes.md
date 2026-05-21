@@ -1,6 +1,6 @@
 # Release Notes
 
-<!-- V125-1-9 schema envelope merged to dev/v125-1-9-schema-envelope — release note pending V125 tag with V125-1-8. When cutting v1.25, add a "YAML schema envelope" entry covering: envelope shape, schema header, addon-catalog.yaml rename, sharko validate-config CLI, CI validate-sharko-config job, read-time validation in loaders. Cross-link operator/yaml-schema-migration.md. -->
+<!-- V125-1-9 (schema envelope) + V125-1-8 (cluster reconciler) merged to main on dev/v125-1-* branches — release note pending v1.25.0-pre.0 cut bundling both architectural epics. When cutting v1.25, add: (a) "YAML schema envelope" entry covering envelope shape, schema header, addon-catalog.yaml rename, sharko validate-config CLI, CI validate-sharko-config job, read-time validation in loaders — cross-link operator/yaml-schema-migration.md; (b) "Cluster reconciler + ownership label" entry covering in-Pod reconciler goroutine, app.kubernetes.io/managed-by: sharko label gate, post-merge trigger + 30s safety-net cadence, retirement of pre-merge ArgoCD Secret paths in orchestrator/cluster.go, V125-1-7 orphan-delete tightening, and the "Discard cancelled registration" UI button rename — cross-link operator/cluster-reconciler.md. -->
 
 ## v1.26 (in progress)
 

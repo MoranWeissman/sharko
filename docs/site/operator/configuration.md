@@ -7,6 +7,13 @@ All Sharko configuration is managed via Helm values. This page documents every s
 > See [YAML schema migration](./yaml-schema-migration.md) for editor
 > setup, deprecation timeline, and rollout details.
 
+> **V125-1-8 update (2026-05-21):** ArgoCD cluster Secret lifecycle is now
+> managed by an in-Pod reconciler goroutine — Secrets are created
+> post-merge (no orphan-on-PR-close), gated by an
+> `app.kubernetes.io/managed-by: sharko` ownership label. See
+> [cluster reconciler](./cluster-reconciler.md) for ownership semantics,
+> reconcile cadence, and recovery scenarios.
+
 ## Connection Config
 
 | Value | Type | Default | Description |

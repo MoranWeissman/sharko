@@ -123,6 +123,15 @@ type Server struct {
 	// prTracker tracks PRs created by Sharko operations (optional — set via SetPRTracker).
 	prTracker *prtracker.Tracker
 
+	// reconcilerTrigger nudges the V125-1-8 cluster Secret reconciler after
+	// the orchestrator commits a managed-clusters.yaml change. Optional —
+	// set via SetReconcilerTrigger in cmd/sharko/serve.go alongside the
+	// reconciler bootstrap. Each per-request orchestrator inherits this
+	// trigger via attachPRTracker (broadened in V125-1-8.4 to attach both
+	// background hooks). nil disables — reconciler still converges on its
+	// periodic safety-net tick.
+	reconcilerTrigger func()
+
 	// obsStore persists cluster connectivity observations (optional — set via SetObservationsStore).
 	obsStore *observations.Store
 
@@ -314,6 +323,27 @@ func (s *Server) SetPRTracker(tracker *prtracker.Tracker) {
 // PRTracker returns the current PR tracker (may be nil if not configured).
 func (s *Server) PRTracker() *prtracker.Tracker {
 	return s.prTracker
+}
+
+// SetReconcilerTrigger wires in the V125-1-8 cluster Secret reconciler's
+// Trigger() nudge so every per-request orchestrator built by attachPRTracker
+// (V125-1-8.4 broadened that helper to attach both background hooks) can
+// request an immediate post-PR reconcile. Optional — when nil the
+// reconciler still converges on its periodic safety-net tick (30s).
+//
+// Call this once at startup AFTER constructing the reconciler in
+// cmd/sharko/serve.go, BEFORE the HTTP listener starts. Idempotent —
+// passing nil clears the hook for testing / shutdown scenarios.
+func (s *Server) SetReconcilerTrigger(fn func()) {
+	s.reconcilerTrigger = fn
+}
+
+// ReconcilerTrigger returns the currently-wired reconciler trigger (may be
+// nil if no reconciler is configured). Exposed for tests + harness wiring
+// so the e2e suite can assert the trigger seam is present without going
+// through a real orchestrator request.
+func (s *Server) ReconcilerTrigger() func() {
+	return s.reconcilerTrigger
 }
 
 // ReinitializeFromConnection reads provider config and GitOps settings from the active connection

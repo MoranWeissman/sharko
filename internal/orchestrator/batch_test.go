@@ -48,9 +48,10 @@ func TestRegisterClusterBatch_AllSucceed(t *testing.T) {
 		}
 	}
 
-	// Verify all three are registered in ArgoCD.
-	if len(argocd.registeredClusters) != 3 {
-		t.Errorf("expected 3 clusters registered in ArgoCD, got %d", len(argocd.registeredClusters))
+	// V125-1-8.3: batch register goes through RegisterCluster → reconciler.
+	// No direct ArgoCD API calls happen pre-merge.
+	if len(argocd.registeredClusters) != 0 {
+		t.Errorf("V125-1-8.3: expected 0 direct ArgoCD registrations (reconciler owns them), got %d", len(argocd.registeredClusters))
 	}
 }
 
@@ -99,12 +100,14 @@ func TestRegisterClusterBatch_OneFailure(t *testing.T) {
 		t.Errorf("expected prod-us to fail, got %q", failedCluster)
 	}
 
-	// The other two should have succeeded.
-	if _, ok := argocd.registeredClusters["prod-eu"]; !ok {
-		t.Error("prod-eu should be registered in ArgoCD")
+	// V125-1-8.3: the two successful clusters do NOT direct-register in
+	// ArgoCD (reconciler owns Secret writes). The orchestrator returns
+	// success because the PR landed and the reconciler trigger fired.
+	if _, ok := argocd.registeredClusters["prod-eu"]; ok {
+		t.Error("V125-1-8.3: prod-eu must NOT be direct-registered in ArgoCD (reconciler owns it)")
 	}
-	if _, ok := argocd.registeredClusters["staging"]; !ok {
-		t.Error("staging should be registered in ArgoCD")
+	if _, ok := argocd.registeredClusters["staging"]; ok {
+		t.Error("V125-1-8.3: staging must NOT be direct-registered in ArgoCD (reconciler owns it)")
 	}
 }
 

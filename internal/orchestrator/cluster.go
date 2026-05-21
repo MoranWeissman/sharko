@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"path"
 	"regexp"
-	"strings"
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/gitops"
@@ -33,17 +32,27 @@ var ErrClusterAlreadyExists = errors.New("cluster already exists")
 
 var validClusterName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]*$`)
 
-// RegisterCluster orchestrates cluster registration. Secrets and values must
-// exist before ArgoCD sees the cluster, so ArgoCD registration is LAST:
+// RegisterCluster orchestrates cluster registration via the V125-1-8
+// reconciler-owned model:
 //
 //  1. Validate input
 //  1b. Merge default addons
-//  2. Check for duplicate cluster in ArgoCD (409 if exists)
-//  3. Fetch credentials from provider
+//  2. Check for duplicate cluster in ArgoCD (adopt if exists; never duplicate-register)
+//  3. Fetch credentials from provider (kubeconfig or AWS-SM/EKS path)
+//  3a. Verify connectivity via Stage 1 (UX win — fail fast on bad creds)
 //  4. Create addon secrets on remote cluster (if configured)
 //  5. Generate values file + commit via PR (create + auto-merge if configured)
-//  6. Register cluster in ArgoCD with addon labels (LAST — secrets and values
-//     file exist by this point)
+//  6. Trigger the reconciler (V125-1-8.4 wires reconciler.Trigger) so the
+//     ArgoCD cluster Secret is created/updated immediately post-merge
+//     rather than waiting for the 30s safety-net tick.
+//
+// V125-1-8.3 retirement: the old Step 3b (`argoSecretManager.Ensure`
+// pre-merge) and old Step 6 (direct `argocd.RegisterCluster` API call
+// pre-merge) were deleted. The reconciler now owns the entire ArgoCD
+// cluster-Secret lifecycle — see design doc §12 V125-1-8 step 5. The
+// register flow no longer creates anything in the argocd namespace
+// before the managed-clusters.yaml PR merges, closing the orphan-on-PR-close
+// bug class (BUG-058) at the architectural level.
 func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterRequest) (*RegisterClusterResult, error) {
 	// Step 1: Validate input.
 	if req.Name == "" {
@@ -212,60 +221,17 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		return result, nil
 	}
 
-	// Step 3b: Create ArgoCD cluster secret (if Manager is configured AND auto-merge is on).
-	// When auto-merge is true the PR merges immediately, so the cluster will be in
-	// managed-clusters.yaml by the time the reconciler runs — creating the secret here
-	// gives instant ArgoCD connectivity without waiting for the next reconcile cycle.
-	//
-	// When auto-merge is false the PR is left open: the cluster is NOT yet in
-	// managed-clusters.yaml, so the reconciler would see any secret we create here as an
-	// orphan and delete it. In that case we skip this step entirely and let the reconciler
-	// create the secret after the user merges the PR.
-	//
-	// BUG-031: auto-merge resolution honors the per-request override before
-	// falling back to o.gitops.PRAutoMerge — same precedence used by
-	// commitChangesWithMeta a few steps below, so Step 3b stays in sync with
-	// whether the PR will actually merge in this operation.
-	//
-	// Non-blocking: a failure records a partial result but does not stop the remaining steps.
-	// The reconciler will retry on its next cycle, so a transient failure here is recoverable.
-	effectiveAutoMerge := resolveAutoMerge(req.AutoMerge, o.gitops.PRAutoMerge)
-	var argoSecretErr error
-	argoSecretCreated := false
-	if o.argoSecretManager != nil && effectiveAutoMerge {
-		// Use "true"/"false" to match the label format in cluster-addons.yaml.
-		// The reconciler reads labels directly from cluster-addons.yaml and writes them
-		// as-is; using the same format here prevents hash mismatches that would otherwise
-		// cause the reconciler to re-write the secret on every cycle.
-		argoLabels := make(map[string]string, len(req.Addons))
-		for addon, enabled := range req.Addons {
-			if enabled {
-				argoLabels[addon] = "true"
-			} else {
-				argoLabels[addon] = "false"
-			}
-		}
-		argoSpec := ArgoSecretSpec{
-			Name:    req.Name,
-			Server:  creds.Server,
-			Region:  req.Region,
-			RoleARN: o.defaultRoleARN,
-			Labels:  argoLabels,
-		}
-		if err := o.argoSecretManager.Ensure(ctx, argoSpec); err != nil {
-			slog.Error("ArgoCD secret creation failed — continuing with remaining steps",
-				"cluster", req.Name, "error", err,
-			)
-			argoSecretErr = err
-			// Do NOT return — continue with remaining steps.
-		} else {
-			argoSecretCreated = true
-			steps = append(steps, "create_argocd_secret")
-		}
-	} else if o.argoSecretManager != nil {
-		slog.Info("ArgoCD secret creation deferred — will be created by reconciler after PR is merged",
-			"cluster", req.Name)
-	}
+	// V125-1-8.3 retirement: the old Step 3b — `argoSecretManager.Ensure`
+	// pre-merge cluster-Secret creation — was deleted. The
+	// V125-1-8 reconciler (internal/clusterreconciler) is the single
+	// owner of ArgoCD cluster-Secret lifecycle. We no longer write
+	// anything in the argocd namespace before the managed-clusters.yaml
+	// PR is merged; the reconciler picks the new cluster up via either
+	// the post-merge trigger (V125-1-8.4 wires prTracker.SetOnMergeFn)
+	// or the periodic 30s safety-net tick. See design doc §12
+	// V125-1-8 step 5 — this closes the BUG-058 orphan-on-PR-close bug
+	// class architecturally rather than via the V125-1-7 recovery
+	// surface alone.
 
 	// Step 4: Create addon secrets on remote cluster (if configured).
 	// Uses partial-success semantics: individual failures are tracked but don't stop the flow.
@@ -412,66 +378,36 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 			"cluster", req.Name, "pr", gitResult.PRUrl)
 	}
 
-	// Step 6: Register cluster in ArgoCD with addon labels.
-	// This is LAST — by now secrets exist and the values file is merged.
-	// If the cluster was already in ArgoCD (adoption path), skip registration.
-	// If the ArgoCD secret Manager successfully created the secret in Step 3b, skip Step 6
-	// entirely — the Manager creates the correctly named and labeled secret, and
-	// calling ArgoCD's RegisterCluster API would create a duplicate with a
-	// URL-based name (e.g. cluster-35aeed...).
-	// When auto-merge is false, Step 3b was skipped; the reconciler will create the secret
-	// after the PR merges, so we also skip the ArgoCD API call here to avoid a duplicate.
-	// BUG-031: use the resolved effectiveAutoMerge (from Step 3b above) so this gate
-	// stays in sync with the actual merge decision for this operation.
-	if argoSecretCreated || (o.argoSecretManager != nil && !effectiveAutoMerge) {
-		slog.Info("ArgoCD cluster secret managed by Sharko, skipping ArgoCD API registration", "cluster", req.Name)
-		steps = append(steps, "argocd_secret_managed")
+	// V125-1-8.3 retirement: the old Step 6 — direct
+	// `o.argocd.RegisterCluster(...)` pre-merge API call — was deleted.
+	// The reconciler now owns ArgoCD-side registration. The adoption
+	// short-circuit is preserved as a no-op log line (the cluster is
+	// already in ArgoCD; the reconciler will mark it managed-by sharko
+	// on its next tick via the adoption code path in
+	// argosecrets.Manager.Ensure).
+	if alreadyInArgoCD {
+		slog.Info("cluster already in ArgoCD — reconciler will adopt on next tick", "cluster", req.Name)
+		steps = append(steps, "argocd_adopt")
 	} else {
-		labels := make(map[string]string)
-		for addon, enabled := range req.Addons {
-			if enabled {
-				labels[addon] = "enabled"
-			} else {
-				labels[addon] = "disabled"
-			}
-		}
-
-		if alreadyInArgoCD {
-			slog.Info("cluster already in ArgoCD, adopting — skipping registration", "cluster", req.Name)
-			steps = append(steps, "argocd_adopt")
-		} else {
-			if err := o.argocd.RegisterCluster(ctx, req.Name, creds.Server, creds.CAData, creds.Token, labels); err != nil {
-				// Handle race condition: cluster was registered between our check and now.
-				if strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "409") {
-					slog.Info("cluster already in ArgoCD, adopting", "cluster", req.Name)
-					result.Adopted = true
-					steps = append(steps, "argocd_adopt")
-				} else {
-					result.Status = "partial"
-					result.CompletedSteps = steps
-					result.FailedStep = "argocd_register"
-					result.Error = err.Error()
-					result.Message = "Secrets created and values PR merged, but ArgoCD registration failed. Register the cluster manually."
-					result.Git = gitResult
-					return result, nil
-				}
-			} else {
-				steps = append(steps, "argocd_register")
-			}
-		}
+		steps = append(steps, "reconciler_handoff")
 	}
+
+	// V125-1-8.3: nudge the reconciler so post-merge convergence happens
+	// immediately rather than waiting for the 30s safety-net tick. When
+	// auto-merge is off the PR is still open — the nudge is harmless
+	// (reconciler's poll will find no new managed-clusters.yaml entry
+	// until the user merges). The seam is wired in V125-1-8.4 via
+	// cmd/sharko/serve.go calling SetReconcilerTrigger; tests inject a
+	// counter to assert it fires on every register path.
+	o.fireReconcilerTrigger()
 
 	result.CompletedSteps = steps
 	result.Git = gitResult
 
-	// Determine final status: partial if any secrets failed or ArgoCD secret step failed.
-	hasSecretFailures := len(result.FailedSecrets) > 0
-	if argoSecretErr != nil {
-		result.Status = "partial"
-		result.FailedStep = "create_argocd_secret"
-		result.Error = argoSecretErr.Error()
-		result.Message = "Registration completed but ArgoCD cluster secret creation failed. The reconciler will retry."
-	} else if hasSecretFailures {
+	// Determine final status. With Step 6 retired the only partial-failure
+	// modes left are addon-secret failures (Step 4) and Git failures
+	// (already handled above with their own early returns).
+	if len(result.FailedSecrets) > 0 {
 		result.Status = "partial"
 		result.FailedStep = "create_secrets"
 		result.Message = fmt.Sprintf("Registration completed but %d addon secret(s) failed to create.", len(result.FailedSecrets))
@@ -698,18 +634,32 @@ func (o *Orchestrator) UpdateClusterAddons(ctx context.Context, name string, ser
 	return result, nil
 }
 
-// RefreshClusterCredentials fetches fresh credentials from the provider
-// and re-registers the cluster in ArgoCD.
-func (o *Orchestrator) RefreshClusterCredentials(ctx context.Context, name string, serverURL string) error {
-	creds, err := o.credProvider.GetCredentials(name)
-	if err != nil {
+// RefreshClusterCredentials validates that fresh credentials are reachable
+// in the credentials provider and nudges the V125-1-8 reconciler so the
+// ArgoCD cluster Secret is updated immediately rather than on the next
+// 30s safety-net tick.
+//
+// V125-1-8.3 retirement: the previous implementation called
+// o.argocd.RegisterCluster directly to upsert the Secret with fresh
+// CAData/Token. That direct write is now owned by the reconciler — when
+// it picks the cluster up, it re-fetches credentials via the same
+// credProvider this function probes and writes the new Secret payload
+// via argosecrets.Manager.Ensure. The probe is kept so the API endpoint
+// can fail fast (404 / 401) without dispatching a no-op reconcile.
+func (o *Orchestrator) RefreshClusterCredentials(_ context.Context, name string, _ string) error {
+	if o.credProvider == nil {
+		// No credProvider configured (e.g. kubeconfig-only deployment) —
+		// nothing to refresh; let the reconciler drive on its own cadence.
+		o.fireReconcilerTrigger()
+		return nil
+	}
+	if _, err := o.credProvider.GetCredentials(name); err != nil {
 		return fmt.Errorf("fetching fresh credentials for cluster %q: %w", name, err)
 	}
-
-	if err := o.argocd.RegisterCluster(ctx, name, creds.Server, creds.CAData, creds.Token, nil); err != nil {
-		return fmt.Errorf("re-registering cluster %q with fresh credentials: %w", name, err)
-	}
-
+	// Probe succeeded — hand off to reconciler. Secret write happens
+	// inside reconciler.pollOnce, which re-reads the credentials and
+	// reconciles the Secret payload via argosecrets.Manager.Ensure.
+	o.fireReconcilerTrigger()
 	return nil
 }
 

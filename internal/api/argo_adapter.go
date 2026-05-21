@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/MoranWeissman/sharko/internal/argosecrets"
-	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
 // argoManagerAdapter bridges argosecrets.Manager to orchestrator.ArgoSecretManager.
@@ -14,19 +13,11 @@ type argoManagerAdapter struct {
 	mgr *argosecrets.Manager
 }
 
-// Ensure satisfies orchestrator.ArgoSecretManager by translating the orchestrator-local
-// ArgoSecretSpec into an argosecrets.ClusterSecretSpec and delegating to the real Manager.
-func (a *argoManagerAdapter) Ensure(ctx context.Context, spec orchestrator.ArgoSecretSpec) error {
-	_, err := a.mgr.Ensure(ctx, argosecrets.ClusterSecretSpec{
-		Name:        spec.Name,
-		Server:      spec.Server,
-		Region:      spec.Region,
-		RoleARN:     spec.RoleARN,
-		Labels:      spec.Labels,
-		Annotations: spec.Annotations,
-	})
-	return err
-}
+// V125-1-8.3 retirement: the previous Ensure method on this adapter was
+// removed alongside the orchestrator.ArgoSecretManager.Ensure interface
+// method. The concrete argosecrets.Manager.Ensure remains the single
+// owner of cluster-Secret writes — it is now invoked by the V125-1-8
+// reconciler (internal/clusterreconciler), not by orchestrator handlers.
 
 // SetAnnotation delegates to the real Manager.
 func (a *argoManagerAdapter) SetAnnotation(ctx context.Context, name, key, value string) error {

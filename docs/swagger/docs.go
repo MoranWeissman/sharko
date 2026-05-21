@@ -3696,7 +3696,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Deletes an ArgoCD cluster Secret for a cluster that has no managed-clusters.yaml entry and no open registration PR. Refuses to delete a cluster that is genuinely managed (in git) or pending (has an open register PR) — those are not orphans.",
+                "description": "Deletes an ArgoCD cluster Secret for a cluster that has no managed-clusters.yaml entry and no open registration PR. Refuses to delete a cluster that is genuinely managed (in git), pending (has an open register PR), or NOT owned by Sharko (missing the app.kubernetes.io/managed-by=sharko label) — externally-owned Secrets are V125-2 Adopt territory.",
                 "produces": [
                     "application/json"
                 ],
@@ -3718,7 +3718,7 @@ const docTemplate = `{
                         "description": "Cluster Secret deleted"
                     },
                     "400": {
-                        "description": "Cluster is not orphaned (managed or pending)",
+                        "description": "Cluster is not orphaned (managed, pending, or not Sharko-owned)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -3754,6 +3754,13 @@ const docTemplate = `{
                     },
                     "502": {
                         "description": "Gateway error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "503": {
+                        "description": "K8s client not wired — ownership label cannot be verified",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true

@@ -12,13 +12,19 @@ import (
 )
 
 // ---------- mock ArgoSecretManager ----------
+//
+// V125-1-8.3 retirement: the previous mock implemented Ensure(ctx, spec)
+// to track pre-merge cluster-Secret creation calls. That interface
+// method (and the mock method) were removed because the V125-1-8
+// reconciler now owns Secret lifecycle — orchestrator code no longer
+// dispatches Ensure. The remaining methods (SetAnnotation, GetAnnotation,
+// GetManagedByLabel, Unadopt) cover the adopt/unadopt metadata paths
+// that remain orchestrator responsibilities.
 
 type mockArgoSecretManager struct {
-	ensureCalls    []ArgoSecretSpec
 	annotations    map[string]map[string]string // cluster -> key -> value
 	managedByLabel map[string]string            // cluster -> label value
 	unadopted      []string
-	ensureErr      error
 	annotationErr  error
 	labelErr       error
 	unadoptErr     error
@@ -29,11 +35,6 @@ func newMockArgoSecretManager() *mockArgoSecretManager {
 		annotations:    make(map[string]map[string]string),
 		managedByLabel: make(map[string]string),
 	}
-}
-
-func (m *mockArgoSecretManager) Ensure(_ context.Context, spec ArgoSecretSpec) error {
-	m.ensureCalls = append(m.ensureCalls, spec)
-	return m.ensureErr
 }
 
 func (m *mockArgoSecretManager) SetAnnotation(_ context.Context, name, key, value string) error {
