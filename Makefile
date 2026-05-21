@@ -1,6 +1,6 @@
 # Sharko — Makefile
 
-.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e test-e2e test-e2e-fast test-e2e-domain test-e2e-helm test-e2e-clean test-e2e-coverage test-e2e-fast-coverage test-e2e-junit test-e2e-report install-test-tools kind-up kind-down catalog-scan catalog-scan-pr generate-provider-types build-gitfake-image
+.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e test-e2e test-e2e-fast test-e2e-domain test-e2e-helm test-e2e-clean test-e2e-coverage test-e2e-fast-coverage test-e2e-junit test-e2e-report install-test-tools kind-up kind-down catalog-scan catalog-scan-pr generate-provider-types generate-schemas build-gitfake-image
 
 PORT ?= 8080
 
@@ -98,6 +98,22 @@ lint: ## Go vet + UI build check
 # textually adjacent in the file but logically independent.
 generate-provider-types: ## Regenerate ui/src/generated/provider-types.ts from internal/providers/provider.go
 	go run ./cmd/gen-provider-types
+
+# V125-1-9.3 — schema generator. Reflects the envelope Go types in
+# internal/models (ManagedClustersSpec) and internal/config (AddonCatalogSpec)
+# via cmd/schema-gen and writes:
+#   docs/schemas/managed-clusters.v1.json
+#   docs/schemas/addon-catalog.v1.json
+#
+# Both files are committed to git. CI's "Schemas Up To Date" check runs
+# this target then `git diff --exit-code docs/schemas/` to catch stale
+# files — same shape as the swagger and provider-types drift gates.
+#
+# Idempotent by design: invopop/jsonschema preserves struct declaration
+# order, encoding/json sorts map keys, so back-to-back runs produce
+# byte-identical output.
+generate-schemas: ## Regenerate docs/schemas/*.v1.json from the Sharko envelope Go types
+	go run ./cmd/schema-gen
 
 clean: ## Remove build artifacts
 	rm -rf bin/ ui/dist/ _dist/

@@ -123,6 +123,37 @@ jobs:
             exit 1
           fi
 
+  # V125-1-9.3 — drift gate for the JSON Schema envelope. cmd/schema-gen
+  # reflects the Go envelope types (internal/models.ManagedClustersSpec +
+  # internal/config.AddonCatalogSpec) via invopop/jsonschema and writes:
+  #   docs/schemas/managed-clusters.v1.json
+  #   docs/schemas/addon-catalog.v1.json
+  # If any contributor changes the envelope types without re-running the
+  # generator, this job fails the PR with a clear remediation hint. Mirrors
+  # the swagger-check + provider-types-up-to-date shape.
+  schemas-up-to-date:
+    name: Schemas Up To Date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: Regenerate schemas
+        run: make generate-schemas
+
+      - name: Check for diff
+        run: |
+          if ! git diff --exit-code -- docs/schemas/; then
+            echo "docs/schemas/ is out of date."
+            echo "Run 'make generate-schemas' and commit the result."
+            exit 1
+          fi
+
   helm-validate:
     name: Helm Lint & Template
     runs-on: ubuntu-latest
