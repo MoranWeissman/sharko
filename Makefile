@@ -1,6 +1,6 @@
 # Sharko — Makefile
 
-.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e test-e2e test-e2e-fast test-e2e-domain test-e2e-helm test-e2e-coverage test-e2e-fast-coverage test-e2e-junit test-e2e-report install-test-tools kind-up kind-down catalog-scan catalog-scan-pr generate-provider-types build-gitfake-image
+.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e test-e2e test-e2e-fast test-e2e-domain test-e2e-helm test-e2e-clean test-e2e-coverage test-e2e-fast-coverage test-e2e-junit test-e2e-report install-test-tools kind-up kind-down catalog-scan catalog-scan-pr generate-provider-types build-gitfake-image
 
 PORT ?= 8080
 
@@ -22,6 +22,7 @@ help: ## Show available targets
 	@echo "    make test-e2e              Full e2e suite (kind + real argocd, ~10-15 min)"
 	@echo "    make test-e2e-domain       Run a single domain (DOMAIN=Cluster|Catalog|...)"
 	@echo "    make test-e2e-helm         Wave-D Helm-mode subset (~5-8 min, requires docker+kind+helm)"
+	@echo "    make test-e2e-clean        Force-delete every sharko-e2e-* kind cluster (manual recovery)"
 	@echo "    make test-e2e-coverage     Full e2e + coverage HTML in _dist/"
 	@echo "    make test-e2e-fast-coverage  Fast e2e + coverage HTML in _dist/"
 	@echo "    make test-e2e-junit        Full e2e + JUnit XML in _dist/"
@@ -171,6 +172,23 @@ test-e2e-helm: ## Run the Wave-D Helm-mode E2E subset (~5-8 min, requires docker
 	 go test -tags=e2e -timeout=20m -v \
 	 -run '^(TestClusterTest_ArgoCDProvider|TestClusterTest_ProviderAutoDefault_HappyPath|TestClusterTest_ProviderCrossContamination_NamespaceSwitch)$$' \
 	 ./tests/e2e/lifecycle/...
+
+# V126-4.1 / task #188 — Manual recovery for leaked e2e kind clusters.
+#
+# Intent: a developer who hits Ctrl+C mid-run, or comes back to a host
+# with a corrupted kind state file, can `make test-e2e-clean` once and
+# get back to zero. Safe to run with no leaks present — kind get
+# clusters returns nothing, the xargs no-ops, docker prune is a no-op,
+# and the target exits 0. Companion to the in-test
+# DestroyAllStaleE2EClusters helper (which only runs from inside a
+# go test process). The sharko-e2e- name prefix is the load-bearing
+# safety filter — only harness-provisioned clusters match; the
+# maintainer's hand-managed kind clusters (sharko-dev, etc.) are never
+# touched.
+test-e2e-clean: ## Force-delete every sharko-e2e-* kind cluster (manual recovery).
+	@kind get clusters 2>/dev/null | grep -E '^sharko-e2e-' | xargs -I{} kind delete cluster --name {} || true
+	@docker container prune -f --filter "label=io.x-k8s.kind.cluster" >/dev/null
+	@echo "e2e cleanup complete"
 
 # V125-1-13.x.1 — Build the gitfake-server image.
 #
