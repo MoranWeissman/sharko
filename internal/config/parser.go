@@ -1,16 +1,54 @@
 package config
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/schema"
 	"gopkg.in/yaml.v3"
 )
 
-// clusterAddonsFile represents the structure of cluster-addons.yaml.
+// File-naming constants for the addon catalog. V125-1-9.2 introduces the new
+// singular `addon-catalog.yaml` name; the plural `addons-catalog.yaml` is
+// retained as a read-only alias through V125 and is removed in V126 (per the
+// epic plan's locked OQ #3).
+const (
+	// AddonCatalogFilename is the canonical (singular) addon-catalog filename.
+	// All Sharko writers after V125-1-9.2 emit to this name.
+	AddonCatalogFilename = "addon-catalog.yaml"
+
+	// AddonCatalogLegacyFilename is the original plural filename. Readers
+	// continue to accept it until V126 removes the alias.
+	AddonCatalogLegacyFilename = "addons-catalog.yaml"
+
+	// AddonCatalogSchemaHeader is the editor schema directive emitted as the
+	// first line of every Sharko-written addon-catalog.yaml. yaml-language-server
+	// (VS Code / IntelliJ) uses it for inline validation + autocomplete.
+	AddonCatalogSchemaHeader = "# yaml-language-server: $schema=https://sharko.io/schemas/addon-catalog.v1.json"
+)
+
+// clusterAddonsFile represents the legacy bare-YAML structure of
+// managed-clusters.yaml (top-level clusters: key, no envelope). After
+// V125-1-9 it is also the parse target for the spec block extracted from
+// an enveloped document — see ParseClusterAddons for the envelope routing.
 type clusterAddonsFile struct {
 	Clusters []clusterEntry `yaml:"clusters"`
+}
+
+// envelopedClusterAddonsFile is the parse target when the document is
+// enveloped (apiVersion: sharko.io/v1, kind: ManagedClusters). The spec
+// field re-uses clusterAddonsFile so the downstream label normalisation
+// is identical between legacy and enveloped reads.
+type envelopedClusterAddonsFile struct {
+	APIVersion string            `yaml:"apiVersion"`
+	Kind       string            `yaml:"kind"`
+	Spec       clusterAddonsFile `yaml:"spec"`
 }
 
 type clusterEntry struct {
@@ -20,7 +58,23 @@ type clusterEntry struct {
 	Region     string      `yaml:"region,omitempty"`
 }
 
-// addonsCatalogFile represents the structure of addons-catalog.yaml.
+// AddonCatalogSpec is the spec body of an enveloped addon-catalog.yaml. It
+// holds the same payload as the legacy bare-YAML file (the `applicationsets`
+// list of AddonCatalogEntry). The envelope wraps this struct in an
+// apiVersion/kind/metadata frame so the on-disk file can be schema-validated
+// (V125-1-9.4) and is editor-friendly (V125-1-9.3 ships the JSON Schema).
+//
+// The YAML field name must remain `applicationsets` (lowercase, plural) so
+// legacy bare-YAML files keep deserializing into the same shape — only the
+// outer envelope is new.
+type AddonCatalogSpec struct {
+	ApplicationSets []models.AddonCatalogEntry `json:"applicationsets" yaml:"applicationsets"`
+}
+
+// addonsCatalogFile is the legacy on-disk shape of addons-catalog.yaml — a
+// bare YAML document with `applicationsets:` at the top level. Kept for the
+// transition period (V125 reader still accepts this shape; the writer always
+// emits the enveloped form via MarshalAddonCatalog).
 type addonsCatalogFile struct {
 	ApplicationSets []models.AddonCatalogEntry `yaml:"applicationsets"`
 }
@@ -44,11 +98,70 @@ func NewParser() *Parser {
 	return &Parser{}
 }
 
-// ParseClusterAddons parses cluster-addons.yaml content.
+// ParseClusterAddons parses managed-clusters.yaml (alias: cluster-addons.yaml)
+// content into a flat []models.Cluster suitable for the service / orchestrator
+// / reconciler consumers.
+//
+// V125-1-9: accepts BOTH the legacy bare-YAML shape AND the envelope shape
+// (apiVersion: sharko.io/v1, kind: ManagedClusters). Detection is delegated
+// to schema.IsEnveloped so the routing primitive is shared with the
+// addon-catalog reader (Story 9.2). The legacy reader is intentionally kept
+// rather than fully delegated to models.LoadManagedClusters because the
+// label-normalisation logic (interface{} → map[string]string, see
+// parseLabels) lives in this package and would round-trip awkwardly through
+// the models layer.
+//
+// V125-1-9.4: on the ENVELOPED branch, the body is JSON-Schema-validated
+// against docs/schemas/managed-clusters.v1.json BEFORE yaml.Unmarshal.
+// Validation failures return *schema.ValidationFailure to the caller and
+// emit a slog.Error with the full violation list. Legacy bare YAML is
+// NOT validated — same back-compat contract as models.LoadManagedClusters.
 func (p *Parser) ParseClusterAddons(data []byte) ([]models.Cluster, error) {
+	enveloped, err := schema.IsEnveloped(data)
+	if err != nil {
+		return nil, fmt.Errorf("parsing managed-clusters: %w", err)
+	}
+
 	var file clusterAddonsFile
-	if err := yaml.Unmarshal(data, &file); err != nil {
-		return nil, fmt.Errorf("parsing cluster-addons.yaml: %w", err)
+	if enveloped {
+		// Wrong-kind check FIRST — same precedence as
+		// models.LoadManagedClusters so the actionable "wrong file
+		// handed to wrong loader" error surfaces ahead of any generic
+		// schema violation. Pre-9.4 tests pin this format and
+		// downstream tooling (V125-1-8 reconciler audit log, Story
+		// 9.5 CLI) depends on it.
+		var env envelopedClusterAddonsFile
+		if err := yaml.Unmarshal(data, &env); err != nil {
+			return nil, fmt.Errorf("parsing managed-clusters envelope: %w", err)
+		}
+		if env.Kind != schema.KindManagedClusters {
+			return nil, fmt.Errorf(
+				"managed-clusters envelope kind %q, expected %q",
+				env.Kind, schema.KindManagedClusters,
+			)
+		}
+
+		// Story 9.4 — validate AFTER wrong-kind check. Validator
+		// failures are surfaced as the canonical
+		// "validating managed-clusters envelope" wrapper so callers can
+		// errors.As into *schema.ValidationFailure (and the Story 9.5
+		// CLI prefix-matches "validating managed-clusters" to render a
+		// user-friendly message).
+		if validator, vErr := schema.DefaultValidator(); vErr == nil && validator != nil {
+			if err := validator.Validate(schema.KindManagedClusters, data); err != nil {
+				var vf *schema.ValidationFailure
+				if errors.As(err, &vf) {
+					schema.LogValidationFailure("managed-clusters.yaml", vf)
+				}
+				return nil, fmt.Errorf("validating managed-clusters envelope: %w", err)
+			}
+		}
+		file = env.Spec
+	} else {
+		// Legacy bare YAML — back-compat path, no validation by design.
+		if err := yaml.Unmarshal(data, &file); err != nil {
+			return nil, fmt.Errorf("parsing managed-clusters: %w", err)
+		}
 	}
 
 	clusters := make([]models.Cluster, 0, len(file.Clusters))
@@ -86,14 +199,157 @@ func parseLabels(raw interface{}) map[string]string {
 	}
 }
 
-// ParseAddonsCatalog parses addons-catalog.yaml content.
+// ParseAddonsCatalog parses an addon-catalog.yaml (or legacy
+// addons-catalog.yaml) document. The reader accepts both the legacy bare-YAML
+// shape (top-level `applicationsets:` array) AND the V125-1-9 enveloped shape
+// (apiVersion/kind/metadata/spec — see internal/schema).
+//
+// Detection is byte-level via schema.IsEnveloped, which only inspects the
+// top-level apiVersion field. When the body declares an apiVersion of
+// sharko.io/v1 but a kind other than AddonCatalog, this function returns an
+// error — a foreign envelope (e.g. ManagedClusters) is a structural bug, not
+// a legacy file, and silently treating it as bare YAML would mask the
+// mismatch.
+//
+// Returns the flat slice of AddonCatalogEntry for consistency with every
+// existing caller. The envelope's metadata (Name, Annotations) is not yet
+// surfaced anywhere in Sharko's runtime; later stories can extend the API if
+// needed.
+//
+// V125-1-9.4: on the ENVELOPED branch, the body is JSON-Schema-validated
+// against docs/schemas/addon-catalog.v1.json BEFORE yaml.Unmarshal.
+// Validation failures return *schema.ValidationFailure to the caller and
+// emit a slog.Error with the full violation list. Legacy bare YAML is
+// NOT validated — same back-compat contract as ParseClusterAddons.
 func (p *Parser) ParseAddonsCatalog(data []byte) ([]models.AddonCatalogEntry, error) {
+	enveloped, err := schema.IsEnveloped(data)
+	if err != nil {
+		// IsEnveloped surfaces YAML-parse errors so we can distinguish "broken
+		// file" from "intentionally legacy". Propagate with the same context
+		// shape callers already log against.
+		return nil, fmt.Errorf("parsing addons-catalog.yaml: %w", err)
+	}
+
+	if enveloped {
+		// Wrong-kind check FIRST — same precedence as
+		// models.LoadManagedClusters and ParseClusterAddons. The
+		// pre-9.4 V125-1-9.2 test pins the format
+		// (parser_test.go: TestLoadCatalog_EnvelopedWrongKind_Reject).
+		var doc schema.Envelope[AddonCatalogSpec]
+		if err := yaml.Unmarshal(data, &doc); err != nil {
+			return nil, fmt.Errorf("parsing addons-catalog.yaml: %w", err)
+		}
+		if doc.Kind != schema.KindAddonCatalog {
+			return nil, fmt.Errorf(
+				"parsing addons-catalog.yaml: envelope kind %q, expected %q",
+				doc.Kind, schema.KindAddonCatalog)
+		}
+
+		// Story 9.4 — validate AFTER wrong-kind check.
+		if validator, vErr := schema.DefaultValidator(); vErr == nil && validator != nil {
+			if err := validator.Validate(schema.KindAddonCatalog, data); err != nil {
+				var vf *schema.ValidationFailure
+				if errors.As(err, &vf) {
+					schema.LogValidationFailure("addon-catalog.yaml", vf)
+				}
+				return nil, fmt.Errorf("validating addon-catalog envelope: %w", err)
+			}
+		}
+		return doc.Spec.ApplicationSets, nil
+	}
+
+	// Legacy bare-YAML path — no validation by design.
 	var file addonsCatalogFile
 	if err := yaml.Unmarshal(data, &file); err != nil {
 		return nil, fmt.Errorf("parsing addons-catalog.yaml: %w", err)
 	}
-
 	return file.ApplicationSets, nil
+}
+
+// MarshalAddonCatalog serializes the supplied entries to the V125-1-9
+// enveloped on-disk shape, prefixed with the yaml-language-server schema
+// header. This is the canonical writer — every Sharko code path that updates
+// the addon catalog SHOULD route through here so the resulting file stays
+// schema-conformant.
+//
+// The output is deterministic: the schema header is always the first line,
+// followed by the marshalled envelope. yaml.v3 marshals struct fields in
+// declaration order, so the envelope fields appear as
+// apiVersion / kind / metadata / spec.
+//
+// metadataName is the value emitted under metadata.name; callers usually pass
+// "addon-catalog" but the parameter exists so future tooling (operator mode,
+// multi-tenant catalogs) can stamp a different identifier without touching
+// this function.
+func MarshalAddonCatalog(metadataName string, entries []models.AddonCatalogEntry) ([]byte, error) {
+	if metadataName == "" {
+		metadataName = "addon-catalog"
+	}
+	// Normalize a nil slice to [] so the YAML always renders `applicationsets: []`
+	// instead of `applicationsets: null` — matches the bootstrap template's
+	// post-DESIGN-01 shipped state.
+	if entries == nil {
+		entries = []models.AddonCatalogEntry{}
+	}
+
+	doc := schema.Envelope[AddonCatalogSpec]{
+		APIVersion: schema.APIVersion,
+		Kind:       schema.KindAddonCatalog,
+		Metadata:   schema.Metadata{Name: metadataName},
+		Spec:       AddonCatalogSpec{ApplicationSets: entries},
+	}
+
+	body, err := yaml.Marshal(&doc)
+	if err != nil {
+		return nil, fmt.Errorf("marshalling addon-catalog envelope: %w", err)
+	}
+
+	var buf bytes.Buffer
+	buf.WriteString(AddonCatalogSchemaHeader)
+	buf.WriteByte('\n')
+	buf.Write(body)
+	return buf.Bytes(), nil
+}
+
+// ResolveAddonCatalogPath returns the on-disk path Sharko should read for the
+// addon catalog under `configDir` (typically `<repo>/configuration`).
+//
+// Precedence rules:
+//
+//   - If `addon-catalog.yaml` exists, return it. If the legacy
+//     `addons-catalog.yaml` ALSO exists, emit a WARN log line so operators
+//     know the alias is being ignored.
+//   - Otherwise, if `addons-catalog.yaml` exists, return it (the legacy
+//     alias is still honoured through V125).
+//   - Otherwise, return ("", os.ErrNotExist) so callers can fall back to
+//     whatever default-creation logic they already have.
+//
+// The signature returns the resolved absolute-or-relative path string rather
+// than the bytes so callers that care about audit logging / commit messages
+// can name the actual file they read.
+func ResolveAddonCatalogPath(configDir string) (string, error) {
+	newPath := filepath.Join(configDir, AddonCatalogFilename)
+	legacyPath := filepath.Join(configDir, AddonCatalogLegacyFilename)
+
+	_, newErr := os.Stat(newPath)
+	_, legacyErr := os.Stat(legacyPath)
+
+	switch {
+	case newErr == nil && legacyErr == nil:
+		slog.Warn(
+			"addon-catalog: both filenames present, using new singular name; legacy file is ignored",
+			"new", newPath,
+			"legacy_ignored", legacyPath,
+		)
+		return newPath, nil
+	case newErr == nil:
+		return newPath, nil
+	case legacyErr == nil:
+		return legacyPath, nil
+	default:
+		// Return the canonical missing-file error so callers can use errors.Is.
+		return "", os.ErrNotExist
+	}
 }
 
 // ParseClusterValues parses a per-cluster values file and extracts global values.

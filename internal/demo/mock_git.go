@@ -42,8 +42,15 @@ func (p *MockGitProvider) seedFiles() {
 	// external tooling pointed at it still resolve.
 	p.files["configuration/cluster-addons.yaml"] = []byte(clusterAddonsYAML)
 
-	// addons-catalog.yaml — the addon catalog (applicationsets format)
-	p.files["configuration/addons-catalog.yaml"] = []byte(addonsCatalogYAML)
+	// addon-catalog.yaml — the addon catalog (applicationsets format).
+	// V125-1-9.2 renamed the canonical filename from addons-catalog.yaml
+	// (plural) to addon-catalog.yaml (singular) and wrapped the body in
+	// the sharko.io/v1 envelope. The plural filename remains a read-only
+	// alias through V125 and is removed in V126 — the stub below mirrors
+	// the bootstrap template's "MOVED" placeholder so any caller pointed
+	// at the old path resolves to a helpful message rather than 404.
+	p.files["configuration/addon-catalog.yaml"] = []byte(addonsCatalogYAML)
+	p.files["configuration/addons-catalog.yaml"] = []byte(addonsCatalogLegacyStub)
 
 	// Global values stubs
 	p.files["configuration/addons-global-values/cert-manager.yaml"] = []byte(`replicaCount: 1
@@ -298,113 +305,148 @@ func indexOf(s string, sep byte) int {
 	return -1
 }
 
-// clusterAddonsYAML is the fake configuration/cluster-addons.yaml.
+// clusterAddonsYAML is the fake configuration/managed-clusters.yaml
+// (also seeded at the legacy configuration/cluster-addons.yaml alias path).
+//
+// V125-1-9 Story 9.1: the seed now ships in the enveloped shape
+// (apiVersion: sharko.io/v1, kind: ManagedClusters) with the
+// yaml-language-server schema header so the demo accurately previews what
+// a real Sharko-bootstrapped repo looks like post-V125-1-9. The reader
+// path (config.ParseClusterAddons) is envelope-aware in this same story,
+// so the demo's GET /api/v1/clusters response still resolves to the same
+// list of clusters.
+//
 // Each cluster has addon labels: addonName: enabled|disabled.
-const clusterAddonsYAML = `clusters:
-  - name: prod-eu
-    region: eu-west-1
-    labels:
-      env: production
+const clusterAddonsYAML = `# yaml-language-server: $schema=https://sharko.io/schemas/managed-clusters.v1.json
+apiVersion: sharko.io/v1
+kind: ManagedClusters
+metadata:
+  name: managed-clusters
+spec:
+  clusters:
+    - name: prod-eu
       region: eu-west-1
-      cert-manager: enabled
-      metrics-server: enabled
-      kube-prometheus-stack: enabled
-      external-dns: enabled
-      istio-base: enabled
+      labels:
+        env: production
+        region: eu-west-1
+        cert-manager: enabled
+        metrics-server: enabled
+        kube-prometheus-stack: enabled
+        external-dns: enabled
+        istio-base: enabled
 
-  - name: prod-us
-    region: us-east-1
-    labels:
-      env: production
+    - name: prod-us
       region: us-east-1
-      cert-manager: enabled
-      metrics-server: enabled
-      kube-prometheus-stack: enabled
-      external-dns: enabled
+      labels:
+        env: production
+        region: us-east-1
+        cert-manager: enabled
+        metrics-server: enabled
+        kube-prometheus-stack: enabled
+        external-dns: enabled
 
-  - name: staging-eu
-    region: eu-west-1
-    labels:
-      env: staging
+    - name: staging-eu
       region: eu-west-1
-      cert-manager: enabled
-      cert-manager-version: "1.13.6"
-      metrics-server: enabled
-      metrics-server-version: "3.11.0"
-      kube-prometheus-stack: enabled
-      kube-prometheus-stack-version: "57.2.0"
-      datadog: enabled
+      labels:
+        env: staging
+        region: eu-west-1
+        cert-manager: enabled
+        cert-manager-version: "1.13.6"
+        metrics-server: enabled
+        metrics-server-version: "3.11.0"
+        kube-prometheus-stack: enabled
+        kube-prometheus-stack-version: "57.2.0"
+        datadog: enabled
 
-  - name: dev-us
-    region: us-west-2
-    labels:
-      env: development
+    - name: dev-us
       region: us-west-2
-      cert-manager: enabled
-      cert-manager-version: "1.13.6"
-      metrics-server: enabled
-      vault: enabled
+      labels:
+        env: development
+        region: us-west-2
+        cert-manager: enabled
+        cert-manager-version: "1.13.6"
+        metrics-server: enabled
+        vault: enabled
 
-  - name: perf-asia
-    region: ap-southeast-1
-    labels:
-      env: performance
+    - name: perf-asia
       region: ap-southeast-1
-      cert-manager: enabled
-      cert-manager-version: "1.12.9"
-      metrics-server: enabled
-      metrics-server-version: "3.10.0"
-      kube-prometheus-stack: enabled
-      kube-prometheus-stack-version: "55.5.0"
+      labels:
+        env: performance
+        region: ap-southeast-1
+        cert-manager: enabled
+        cert-manager-version: "1.12.9"
+        metrics-server: enabled
+        metrics-server-version: "3.10.0"
+        kube-prometheus-stack: enabled
+        kube-prometheus-stack-version: "55.5.0"
 `
 
-// addonsCatalogYAML is the fake configuration/addons-catalog.yaml in applicationsets format.
-const addonsCatalogYAML = `applicationsets:
-  - name: cert-manager
-    chart: cert-manager
-    repoURL: https://charts.jetstack.io
-    version: "1.14.4"
-    namespace: cert-manager
+// addonsCatalogLegacyStub is the body seeded at the legacy plural path
+// (configuration/addons-catalog.yaml) so demo callers that scripted against
+// the old filename hit a helpful "moved" placeholder instead of an error.
+// Matches the bootstrap template stub V125-1-9.2 lays down.
+const addonsCatalogLegacyStub = `# MOVED: this file is now at addon-catalog.yaml (singular).
+# The legacy filename remains a read-only alias through V125;
+# the alias will be removed in V126. Operators should rename
+# their local copy to addon-catalog.yaml at their convenience.
+`
 
-  - name: metrics-server
-    chart: metrics-server
-    repoURL: https://kubernetes-sigs.github.io/metrics-server/
-    version: "3.12.1"
-    namespace: kube-system
+// addonsCatalogYAML is the fake configuration/addon-catalog.yaml in the
+// V125-1-9 sharko.io/v1 envelope shape. The applicationsets payload is
+// unchanged from the pre-envelope demo content; only the wrapping frame
+// and the editor schema header are new.
+const addonsCatalogYAML = `# yaml-language-server: $schema=https://sharko.io/schemas/addon-catalog.v1.json
+apiVersion: sharko.io/v1
+kind: AddonCatalog
+metadata:
+  name: addon-catalog
+spec:
+  applicationsets:
+    - name: cert-manager
+      chart: cert-manager
+      repoURL: https://charts.jetstack.io
+      version: "1.14.4"
+      namespace: cert-manager
 
-  - name: datadog
-    chart: datadog
-    repoURL: https://helm.datadoghq.com
-    version: "3.69.0"
-    namespace: datadog
+    - name: metrics-server
+      chart: metrics-server
+      repoURL: https://kubernetes-sigs.github.io/metrics-server/
+      version: "3.12.1"
+      namespace: kube-system
 
-  - name: external-dns
-    chart: external-dns
-    repoURL: https://kubernetes-sigs.github.io/external-dns/
-    version: "1.14.4"
-    namespace: external-dns
+    - name: datadog
+      chart: datadog
+      repoURL: https://helm.datadoghq.com
+      version: "3.69.0"
+      namespace: datadog
 
-  - name: istio-base
-    chart: base
-    repoURL: https://istio-release.storage.googleapis.com/charts
-    version: "1.21.1"
-    namespace: istio-system
+    - name: external-dns
+      chart: external-dns
+      repoURL: https://kubernetes-sigs.github.io/external-dns/
+      version: "1.14.4"
+      namespace: external-dns
 
-  - name: kube-prometheus-stack
-    chart: kube-prometheus-stack
-    repoURL: https://prometheus-community.github.io/helm-charts
-    version: "58.2.1"
-    namespace: monitoring
+    - name: istio-base
+      chart: base
+      repoURL: https://istio-release.storage.googleapis.com/charts
+      version: "1.21.1"
+      namespace: istio-system
 
-  - name: logging-operator
-    chart: logging-operator
-    repoURL: https://kube-logging.github.io/helm-charts
-    version: "4.6.0"
-    namespace: logging
+    - name: kube-prometheus-stack
+      chart: kube-prometheus-stack
+      repoURL: https://prometheus-community.github.io/helm-charts
+      version: "58.2.1"
+      namespace: monitoring
 
-  - name: vault
-    chart: vault
-    repoURL: https://helm.releases.hashicorp.com
-    version: "0.28.0"
-    namespace: vault
+    - name: logging-operator
+      chart: logging-operator
+      repoURL: https://kube-logging.github.io/helm-charts
+      version: "4.6.0"
+      namespace: logging
+
+    - name: vault
+      chart: vault
+      repoURL: https://helm.releases.hashicorp.com
+      version: "0.28.0"
+      namespace: vault
 `

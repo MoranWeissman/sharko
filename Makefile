@@ -1,6 +1,6 @@
 # Sharko — Makefile
 
-.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e test-e2e test-e2e-fast test-e2e-domain test-e2e-helm test-e2e-clean test-e2e-coverage test-e2e-fast-coverage test-e2e-junit test-e2e-report install-test-tools kind-up kind-down catalog-scan catalog-scan-pr generate-provider-types build-gitfake-image
+.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e test-e2e test-e2e-fast test-e2e-domain test-e2e-helm test-e2e-clean test-e2e-coverage test-e2e-fast-coverage test-e2e-junit test-e2e-report install-test-tools kind-up kind-down catalog-scan catalog-scan-pr generate-provider-types generate-schemas build-gitfake-image
 
 PORT ?= 8080
 
@@ -98,6 +98,28 @@ lint: ## Go vet + UI build check
 # textually adjacent in the file but logically independent.
 generate-provider-types: ## Regenerate ui/src/generated/provider-types.ts from internal/providers/provider.go
 	go run ./cmd/gen-provider-types
+
+# V125-1-9.3 + 9.4 — schema generator. Reflects the envelope Go types in
+# internal/models (ManagedClustersSpec) and internal/config
+# (AddonCatalogSpec) via cmd/schema-gen and writes to TWO mirrored
+# locations:
+#   docs/schemas/managed-clusters.v1.json      (human-facing)
+#   docs/schemas/addon-catalog.v1.json         (human-facing)
+#   internal/schema/managed-clusters.v1.json   (V125-1-9.4 embed source)
+#   internal/schema/addon-catalog.v1.json      (V125-1-9.4 embed source)
+#
+# The internal/schema/ copies feed the runtime validator's go:embed in
+# internal/schema/embed.go (Story 9.4); the docs/schemas/ copies are
+# what the public schema URLs + editor headers point at. All four files
+# are committed to git. CI's "Schemas Up To Date" check runs this target
+# then `git diff --exit-code` against both paths to catch stale files —
+# same shape as the swagger and provider-types drift gates.
+#
+# Idempotent by design: invopop/jsonschema preserves struct declaration
+# order, encoding/json sorts map keys, so back-to-back runs produce
+# byte-identical output at every location.
+generate-schemas: ## Regenerate docs/schemas/*.v1.json + internal/schema/*.v1.json from the Sharko envelope Go types
+	go run ./cmd/schema-gen
 
 clean: ## Remove build artifacts
 	rm -rf bin/ ui/dist/ _dist/

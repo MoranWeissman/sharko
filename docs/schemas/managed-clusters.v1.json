@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sharko.io/schemas/managed-clusters.v1.json",
+  "properties": {
+    "apiVersion": {
+      "const": "sharko.io/v1"
+    },
+    "kind": {
+      "const": "ManagedClusters"
+    },
+    "metadata": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "annotations": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name"
+      ]
+    },
+    "spec": {
+      "properties": {
+        "clusters": {
+          "items": {
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "secretPath": {
+                "type": "string"
+              },
+              "region": {
+                "type": "string"
+              },
+              "labels": true
+            },
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "name"
+            ]
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "clusters"
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "type": "object",
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "title": "Sharko ManagedClusters",
+  "description": "managed-clusters.yaml — the registry of clusters Sharko manages, including their credential paths and addon labels."
+}

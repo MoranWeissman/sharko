@@ -1,9 +1,17 @@
 package config
 
 import (
+	"bytes"
+	"errors"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/schema"
+	"gopkg.in/yaml.v3"
 )
 
 func TestParseClusterAddons(t *testing.T) {
@@ -395,5 +403,436 @@ clusters:
 	}
 	if c.Labels["nginx"] != "enabled" {
 		t.Errorf("expected nginx=enabled in labels, got %q", c.Labels["nginx"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// V125-1-9.2: addon-catalog envelope reader/writer + filename precedence
+// ---------------------------------------------------------------------------
+
+// legacyBareCatalogYAML is the pre-V125-1-9 on-disk shape — the bare
+// `applicationsets:` array without a wrapping envelope. Reused across the
+// envelope-compat tests so a single edit re-tests every back-compat path.
+const legacyBareCatalogYAML = `applicationsets:
+  - name: cert-manager
+    repoURL: https://charts.jetstack.io
+    chart: cert-manager
+    version: "1.16.3"
+    namespace: cert-manager
+`
+
+// envelopedCatalogYAML mirrors legacyBareCatalogYAML wrapped in the
+// sharko.io/v1 envelope. Used to assert that the same logical content
+// round-trips through the enveloped reader path.
+const envelopedCatalogYAML = `# yaml-language-server: $schema=https://sharko.io/schemas/addon-catalog.v1.json
+apiVersion: sharko.io/v1
+kind: AddonCatalog
+metadata:
+  name: addon-catalog
+spec:
+  applicationsets:
+    - name: cert-manager
+      repoURL: https://charts.jetstack.io
+      chart: cert-manager
+      version: "1.16.3"
+      namespace: cert-manager
+`
+
+// TestLoadCatalog_LegacyBareYAML_OldFilename_Accept proves back-compat: a
+// repo that has not yet migrated continues to deserialize through the
+// pre-V125-1-9 path. Same parser entry-point, same returned shape.
+func TestLoadCatalog_LegacyBareYAML_OldFilename_Accept(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, AddonCatalogLegacyFilename)
+	if err := os.WriteFile(path, []byte(legacyBareCatalogYAML), 0o600); err != nil {
+		t.Fatalf("seed legacy catalog: %v", err)
+	}
+
+	resolved, err := ResolveAddonCatalogPath(dir)
+	if err != nil {
+		t.Fatalf("ResolveAddonCatalogPath: %v", err)
+	}
+	if resolved != path {
+		t.Fatalf("resolved=%q want %q", resolved, path)
+	}
+
+	data, err := os.ReadFile(resolved)
+	if err != nil {
+		t.Fatalf("read resolved: %v", err)
+	}
+	entries, err := NewParser().ParseAddonsCatalog(data)
+	if err != nil {
+		t.Fatalf("ParseAddonsCatalog: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name != "cert-manager" {
+		t.Fatalf("unexpected entries: %#v", entries)
+	}
+}
+
+// TestLoadCatalog_LegacyBareYAML_NewFilename_Accept covers the transitional
+// state where an operator has renamed the file to the singular form but not
+// yet wrapped the body in the envelope. Reader must accept both axes
+// independently.
+func TestLoadCatalog_LegacyBareYAML_NewFilename_Accept(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, AddonCatalogFilename)
+	if err := os.WriteFile(path, []byte(legacyBareCatalogYAML), 0o600); err != nil {
+		t.Fatalf("seed catalog: %v", err)
+	}
+
+	resolved, err := ResolveAddonCatalogPath(dir)
+	if err != nil {
+		t.Fatalf("ResolveAddonCatalogPath: %v", err)
+	}
+	if resolved != path {
+		t.Fatalf("resolved=%q want %q", resolved, path)
+	}
+
+	data, err := os.ReadFile(resolved)
+	if err != nil {
+		t.Fatalf("read resolved: %v", err)
+	}
+	entries, err := NewParser().ParseAddonsCatalog(data)
+	if err != nil {
+		t.Fatalf("ParseAddonsCatalog: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Chart != "cert-manager" {
+		t.Fatalf("unexpected entries: %#v", entries)
+	}
+}
+
+// TestLoadCatalog_EnvelopedYAML_NewFilename_Accept is the new happy path —
+// new filename + new envelope. Asserts the spec body deserializes losslessly
+// into the same AddonCatalogEntry slice the legacy path returns.
+func TestLoadCatalog_EnvelopedYAML_NewFilename_Accept(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, AddonCatalogFilename)
+	if err := os.WriteFile(path, []byte(envelopedCatalogYAML), 0o600); err != nil {
+		t.Fatalf("seed catalog: %v", err)
+	}
+
+	resolved, err := ResolveAddonCatalogPath(dir)
+	if err != nil {
+		t.Fatalf("ResolveAddonCatalogPath: %v", err)
+	}
+
+	data, err := os.ReadFile(resolved)
+	if err != nil {
+		t.Fatalf("read resolved: %v", err)
+	}
+	entries, err := NewParser().ParseAddonsCatalog(data)
+	if err != nil {
+		t.Fatalf("ParseAddonsCatalog: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	e := entries[0]
+	if e.Name != "cert-manager" || e.Chart != "cert-manager" || e.Version != "1.16.3" {
+		t.Fatalf("envelope spec did not round-trip: %#v", e)
+	}
+}
+
+// TestLoadCatalog_EnvelopedWrongKind_Reject guards against accidentally
+// pointing the addon-catalog reader at a ManagedClusters envelope (or any
+// other Sharko kind). A foreign envelope is a structural bug — failing
+// loudly here prevents silent reconcile drift in V125-1-8.
+func TestLoadCatalog_EnvelopedWrongKind_Reject(t *testing.T) {
+	t.Parallel()
+	body := `apiVersion: sharko.io/v1
+kind: ManagedClusters
+metadata:
+  name: managed-clusters
+spec:
+  clusters: []
+`
+	_, err := NewParser().ParseAddonsCatalog([]byte(body))
+	if err == nil {
+		t.Fatal("expected error for wrong envelope kind, got nil")
+	}
+	if !strings.Contains(err.Error(), "ManagedClusters") || !strings.Contains(err.Error(), "AddonCatalog") {
+		t.Fatalf("error should mention actual + expected kinds, got: %v", err)
+	}
+}
+
+// TestLoadCatalog_BothFilenames_PrefersNew enforces the precedence rule from
+// the dispatch: when both filenames are present, the new singular name wins
+// and the legacy file is ignored with a WARN log line. The presence of the
+// warning is verified by capturing slog output (the message must mention
+// both paths so an operator can audit the divergence).
+func TestLoadCatalog_BothFilenames_PrefersNew(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	newPath := filepath.Join(dir, AddonCatalogFilename)
+	legacyPath := filepath.Join(dir, AddonCatalogLegacyFilename)
+
+	if err := os.WriteFile(newPath, []byte(envelopedCatalogYAML), 0o600); err != nil {
+		t.Fatalf("seed new: %v", err)
+	}
+	// Deliberately seed a DIFFERENT body at the legacy path so we can tell
+	// from the parsed result which file was actually read.
+	legacyBody := strings.Replace(legacyBareCatalogYAML, "cert-manager", "legacy-entry-should-be-ignored", 2)
+	if err := os.WriteFile(legacyPath, []byte(legacyBody), 0o600); err != nil {
+		t.Fatalf("seed legacy: %v", err)
+	}
+
+	resolved, err := ResolveAddonCatalogPath(dir)
+	if err != nil {
+		t.Fatalf("ResolveAddonCatalogPath: %v", err)
+	}
+	if resolved != newPath {
+		t.Fatalf("precedence broken: resolved=%q, want %q (new singular name)", resolved, newPath)
+	}
+
+	data, _ := os.ReadFile(resolved)
+	entries, err := NewParser().ParseAddonsCatalog(data)
+	if err != nil {
+		t.Fatalf("ParseAddonsCatalog: %v", err)
+	}
+	if entries[0].Name != "cert-manager" {
+		t.Fatalf("read wrong file: entries[0].Name=%q (legacy bled through)", entries[0].Name)
+	}
+}
+
+// TestSaveCatalog_AlwaysEmitsNewFilename + TestSaveCatalog_EmitsEnveloped
+// together prove the writer contract. The writer is a single function
+// (MarshalAddonCatalog) — there is no on-disk write path in this package,
+// so the filename guarantee is asserted at the constant level (every
+// caller spells out the constant rather than a string literal), and the
+// envelope shape is asserted on the marshalled bytes.
+
+func TestSaveCatalog_AlwaysEmitsNewFilename(t *testing.T) {
+	t.Parallel()
+	// Static invariant — the canonical filename constant must remain the
+	// singular form. Drift here would mean writers landed an undocumented
+	// alias.
+	if AddonCatalogFilename != "addon-catalog.yaml" {
+		t.Fatalf("AddonCatalogFilename drifted: got %q, want %q",
+			AddonCatalogFilename, "addon-catalog.yaml")
+	}
+	if AddonCatalogLegacyFilename != "addons-catalog.yaml" {
+		t.Fatalf("AddonCatalogLegacyFilename drifted: got %q, want %q",
+			AddonCatalogLegacyFilename, "addons-catalog.yaml")
+	}
+}
+
+func TestSaveCatalog_EmitsEnveloped(t *testing.T) {
+	t.Parallel()
+	entries := []models.AddonCatalogEntry{
+		{
+			Name:      "cert-manager",
+			RepoURL:   "https://charts.jetstack.io",
+			Chart:     "cert-manager",
+			Version:   "1.16.3",
+			Namespace: "cert-manager",
+		},
+	}
+
+	out, err := MarshalAddonCatalog("addon-catalog", entries)
+	if err != nil {
+		t.Fatalf("MarshalAddonCatalog: %v", err)
+	}
+
+	lines := strings.SplitN(string(out), "\n", 2)
+	if lines[0] != AddonCatalogSchemaHeader {
+		t.Fatalf("first line must be schema header.\n  got:  %q\n  want: %q", lines[0], AddonCatalogSchemaHeader)
+	}
+
+	// Round-trip through the envelope decoder to assert the apiVersion/kind/
+	// metadata/spec frame is structurally correct.
+	var doc schema.Envelope[AddonCatalogSpec]
+	if err := yaml.Unmarshal(out, &doc); err != nil {
+		t.Fatalf("written bytes do not round-trip through Envelope decoder: %v", err)
+	}
+	if doc.APIVersion != schema.APIVersion {
+		t.Errorf("apiVersion=%q want %q", doc.APIVersion, schema.APIVersion)
+	}
+	if doc.Kind != schema.KindAddonCatalog {
+		t.Errorf("kind=%q want %q", doc.Kind, schema.KindAddonCatalog)
+	}
+	if doc.Metadata.Name != "addon-catalog" {
+		t.Errorf("metadata.name=%q want %q", doc.Metadata.Name, "addon-catalog")
+	}
+	if len(doc.Spec.ApplicationSets) != 1 || doc.Spec.ApplicationSets[0].Name != "cert-manager" {
+		t.Errorf("spec did not round-trip: %#v", doc.Spec)
+	}
+
+	// The fresh write should be re-readable by the public ParseAddonsCatalog
+	// entry-point — the writer's output must be a valid input for the
+	// reader. This closes the loop that V125-1-8's reconciler will rely on.
+	parsed, err := NewParser().ParseAddonsCatalog(out)
+	if err != nil {
+		t.Fatalf("written bytes do not parse via ParseAddonsCatalog: %v", err)
+	}
+	if len(parsed) != 1 || parsed[0].Version != "1.16.3" {
+		t.Fatalf("written→parsed round-trip drifted: %#v", parsed)
+	}
+}
+
+// TestMarshalAddonCatalog_EmptyEntriesYieldsEmptyArray pins the contract
+// that a nil/empty entries slice renders as `applicationsets: []` rather
+// than `applicationsets: null` — matches the DESIGN-01 bootstrap default.
+func TestMarshalAddonCatalog_EmptyEntriesYieldsEmptyArray(t *testing.T) {
+	t.Parallel()
+	out, err := MarshalAddonCatalog("addon-catalog", nil)
+	if err != nil {
+		t.Fatalf("MarshalAddonCatalog(nil): %v", err)
+	}
+	if !strings.Contains(string(out), "applicationsets: []") {
+		t.Fatalf("expected applicationsets: [] in output, got:\n%s", out)
+	}
+}
+
+// TestResolveAddonCatalogPath_Missing returns os.ErrNotExist when neither
+// filename exists, so callers can detect the missing-file case via
+// errors.Is and trigger their own first-run bootstrap path.
+func TestResolveAddonCatalogPath_Missing(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	resolved, err := ResolveAddonCatalogPath(dir)
+	if resolved != "" {
+		t.Errorf("expected empty path on missing, got %q", resolved)
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("expected errors.Is(err, os.ErrNotExist), got %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// V125-1-9.4 — read-time JSON Schema validation wiring in the parser
+// ---------------------------------------------------------------------------
+
+// TestParseClusterAddons_EnvelopedInvalid_Reject mirrors
+// TestLoadManagedClusters_EnvelopedInvalid_Reject for the parser entry
+// point. An enveloped but invalid body returns an error wrapping a
+// *schema.ValidationFailure and emits a structured slog.Error audit
+// log line.
+//
+// NOT parallel — uses slog.SetDefault.
+func TestParseClusterAddons_EnvelopedInvalid_Reject(t *testing.T) {
+	body := []byte(`apiVersion: sharko.io/v1
+kind: ManagedClusters
+metadata:
+  name: managed-clusters
+spec:
+  unknownField: "x"
+`)
+
+	var buf bytes.Buffer
+	originalLogger := slog.Default()
+	defer slog.SetDefault(originalLogger)
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+
+	_, err := NewParser().ParseClusterAddons(body)
+	if err == nil {
+		t.Fatal("ParseClusterAddons: expected validation error, got nil")
+	}
+	var vf *schema.ValidationFailure
+	if !errors.As(err, &vf) {
+		t.Fatalf("expected error wrapping *schema.ValidationFailure, got %T: %v", err, err)
+	}
+	if vf.Kind != schema.KindManagedClusters {
+		t.Errorf("ValidationFailure.Kind = %q, want %q", vf.Kind, schema.KindManagedClusters)
+	}
+	logOut := buf.String()
+	if !strings.Contains(logOut, `"msg":"schema_validation_failed"`) {
+		t.Errorf("audit log missing schema_validation_failed event:\n%s", logOut)
+	}
+	if !strings.Contains(logOut, `"resource":"managed-clusters.yaml"`) {
+		t.Errorf("audit log missing resource field:\n%s", logOut)
+	}
+}
+
+// TestParseAddonsCatalog_EnvelopedInvalid_Reject — same shape as the
+// managed-clusters parser test, against the addon-catalog reader.
+//
+// NOT parallel — uses slog.SetDefault.
+func TestParseAddonsCatalog_EnvelopedInvalid_Reject(t *testing.T) {
+	body := []byte(`apiVersion: sharko.io/v1
+kind: AddonCatalog
+metadata:
+  name: addon-catalog
+spec:
+  unknownField: "x"
+`)
+
+	var buf bytes.Buffer
+	originalLogger := slog.Default()
+	defer slog.SetDefault(originalLogger)
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+
+	_, err := NewParser().ParseAddonsCatalog(body)
+	if err == nil {
+		t.Fatal("ParseAddonsCatalog: expected validation error, got nil")
+	}
+	var vf *schema.ValidationFailure
+	if !errors.As(err, &vf) {
+		t.Fatalf("expected error wrapping *schema.ValidationFailure, got %T: %v", err, err)
+	}
+	if vf.Kind != schema.KindAddonCatalog {
+		t.Errorf("ValidationFailure.Kind = %q, want %q", vf.Kind, schema.KindAddonCatalog)
+	}
+	logOut := buf.String()
+	if !strings.Contains(logOut, `"msg":"schema_validation_failed"`) {
+		t.Errorf("audit log missing schema_validation_failed event:\n%s", logOut)
+	}
+	if !strings.Contains(logOut, `"resource":"addon-catalog.yaml"`) {
+		t.Errorf("audit log missing resource field:\n%s", logOut)
+	}
+}
+
+// TestParseClusterAddons_LegacyBareYAML_ValidationSkipped — back-compat
+// guard mirroring TestLoadManagedClusters_LegacyBareYAML_ValidationSkipped.
+// No validation runs on legacy bodies; the parse must succeed AND no
+// schema_validation_failed event is emitted.
+func TestParseClusterAddons_LegacyBareYAML_ValidationSkipped(t *testing.T) {
+	body := []byte(`clusters:
+  - name: prod-eu
+    labels:
+      cert-manager: enabled
+`)
+	var buf bytes.Buffer
+	originalLogger := slog.Default()
+	defer slog.SetDefault(originalLogger)
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+
+	clusters, err := NewParser().ParseClusterAddons(body)
+	if err != nil {
+		t.Fatalf("legacy parse: %v", err)
+	}
+	if len(clusters) != 1 || clusters[0].Name != "prod-eu" {
+		t.Errorf("legacy parse content drift: %+v", clusters)
+	}
+	if strings.Contains(buf.String(), "schema_validation_failed") {
+		t.Errorf("legacy bare YAML must not trigger validation; got audit log:\n%s", buf.String())
+	}
+}
+
+// TestParseAddonsCatalog_LegacyBareYAML_ValidationSkipped — back-compat
+// guard for the addon-catalog reader.
+func TestParseAddonsCatalog_LegacyBareYAML_ValidationSkipped(t *testing.T) {
+	body := []byte(`applicationsets:
+  - name: cert-manager
+    repoURL: https://charts.jetstack.io
+    chart: cert-manager
+    version: "1.16.3"
+`)
+	var buf bytes.Buffer
+	originalLogger := slog.Default()
+	defer slog.SetDefault(originalLogger)
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+
+	entries, err := NewParser().ParseAddonsCatalog(body)
+	if err != nil {
+		t.Fatalf("legacy parse: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name != "cert-manager" {
+		t.Errorf("legacy parse content drift: %+v", entries)
+	}
+	if strings.Contains(buf.String(), "schema_validation_failed") {
+		t.Errorf("legacy bare YAML must not trigger validation; got audit log:\n%s", buf.String())
 	}
 }

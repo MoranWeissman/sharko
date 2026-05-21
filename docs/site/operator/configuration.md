@@ -2,6 +2,11 @@
 
 All Sharko configuration is managed via Helm values. This page documents every supported option.
 
+> **V125-1-9 update (2026-05-21):** YAML config files now wrap content in
+> `apiVersion: sharko.io/v1` envelope with schema-validated structure.
+> See [YAML schema migration](./yaml-schema-migration.md) for editor
+> setup, deprecation timeline, and rollout details.
+
 ## Connection Config
 
 | Value | Type | Default | Description |

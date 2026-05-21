@@ -71,6 +71,76 @@ sharko validate path/to/catalog.yaml
 
 Exits 0 on valid, 1 on schema errors (printed to stderr).
 
+> **Note:** `sharko validate` is the legacy field-presence validator over the pre-envelope YAML
+> shape. New work should use [`sharko validate-config`](#sharko-validate-config) below, which
+> validates against the committed JSON Schemas at `https://sharko.io/schemas/`. The legacy
+> command is retained for back-compat through V125 and will be removed in V126.
+
+### `sharko validate-config`
+
+Validate Sharko configuration YAML against the committed JSON Schema. Auto-detects the schema
+from the file's top-level `apiVersion: sharko.io/v1` + `kind:` fields, validates against the
+embedded `managed-clusters.v1.json` or `addon-catalog.v1.json`, and prints a human-readable
+violation list with a direct link to the schema URL on failure.
+
+This is the CLI front end for the same read-time validator that `sharko serve` runs against
+every config it loads — running `validate-config` locally is equivalent to seeing what the
+server would say at startup.
+
+```bash
+# Validate a single file
+sharko validate-config managed-clusters.yaml
+
+# Validate every YAML in a directory (recursive)
+sharko validate-config templates/bootstrap/configuration/
+
+# Quiet mode — only show failures + summary, no per-file pass lines
+sharko validate-config --quiet .
+```
+
+| Flag | Description |
+|------|-------------|
+| `-q`, `--quiet` | Suppress per-file pass lines; only show failures + summary. |
+
+**File selection in directory mode.** The walker descends recursively and picks up every
+`*.yaml` / `*.yml` file. For each file it peeks at the top-level `apiVersion`:
+
+- `apiVersion: sharko.io/v1` → validated against the matching schema (`kind` decides which one).
+- anything else (or missing) → skipped with a one-line `skip: <path> (not a Sharko-enveloped file)`.
+
+Hidden directories (anything starting with `.`, e.g. `.git`, `.github`) are not descended
+into, so `sharko validate-config .` in the repo root stays fast.
+
+**Exit codes:**
+
+- `0` — every Sharko-enveloped file validated; non-Sharko files were skipped.
+- `1` — at least one Sharko-enveloped file failed schema validation.
+
+**Example output (success):**
+
+```
+✓ templates/bootstrap/configuration/addon-catalog.yaml
+✓ templates/bootstrap/configuration/managed-clusters.yaml
+skip: templates/bootstrap/configuration/addons-catalog.yaml (not a Sharko-enveloped file)
+skip: templates/bootstrap/configuration/bootstrap-config.yaml (not a Sharko-enveloped file)
+```
+
+**Example output (failure):**
+
+```
+✘ configuration/managed-clusters.yaml: schema violations (kind: ManagedClusters)
+   ✘ /spec/clusters/0: missing required property "name"
+   → for details: https://sharko.io/schemas/managed-clusters.v1.json
+
+1 file(s) failed validation
+```
+
+**CI use.** A GitHub Actions job named *Sharko Config Validation* runs `validate-config` on
+every changed YAML file in every PR (see `.github/workflows/ci.yml`). The job is permissive
+by design: it only blocks PRs that change Sharko-enveloped YAML in a schema-invalid way.
+PRs that touch only non-Sharko YAML (workflows, Helm templates, kind configs, etc.) pass
+through untouched.
+
 ---
 
 ## Cluster Commands

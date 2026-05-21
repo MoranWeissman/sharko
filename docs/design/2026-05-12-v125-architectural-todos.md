@@ -95,6 +95,8 @@ Implication: the "decoupled labels" architectures (B, C-1, C-2 from the design d
 
 Adopt apiVersion/kind/spec envelope + published JSON Schema. Not a CRD (no operator), but CRD-shaped so future operator-mode graduation is mechanical, not architectural.
 
+> **Note (V125-1-9 shipped):** the example below pre-dated the implementation. The shipped `ManagedClusterEntry` (in `internal/models/cluster.go`) uses `labels:` for addon enablement (one key per enabled addon) and `secretPath:` for cluster registration — the illustrative `server:` / `addons:` fields are equivalent in intent. Example preserved as historical context; do not edit.
+
 Format example:
 ```yaml
 # yaml-language-server: $schema=https://sharko.io/schemas/managed-clusters.v1.json
@@ -146,11 +148,13 @@ Why this order (revised 2026-05-14):
 
 ## 4. V125-1-9 — Schema envelope + JSON Schema
 
+> **STATUS: V125-1-9 SHIPPED 2026-05-21** — see PR (link to be added when the sprint PR opens) and the operator-facing migration runbook at [`docs/site/operator/yaml-schema-migration.md`](../site/operator/yaml-schema-migration.md). Per-bullet annotations below.
+
 ### Goal
 Make `managed-clusters.yaml` and `addons-catalog.yaml` self-describing, schema-validated, editor-friendly. Bridge to operator mode in V3+.
 
 ### Scope
-1. **Adopt envelope** in both files:
+1. **Adopt envelope** in both files: ✅ shipped V1.25 — see `internal/schema/envelope.go` + the `Envelope[T]` generic type wrapping `ManagedClustersSpec` / `AddonCatalogSpec`.
    ```yaml
    apiVersion: sharko.io/v1
    kind: ManagedClusters    # or AddonCatalog
@@ -159,20 +163,20 @@ Make `managed-clusters.yaml` and `addons-catalog.yaml` self-describing, schema-v
    spec:
      ...
    ```
-2. **Generate JSON Schema** from Go struct definitions:
+2. **Generate JSON Schema** from Go struct definitions: ✅ shipped V1.25 — `cmd/schema-gen/main.go` emits `docs/schemas/*.v1.json` (canonical) AND `internal/schema/*.v1.json` (embedded for the runtime validator). CI's `schemas-up-to-date` job re-runs the generator on every PR and `git diff --exit-code`s both paths.
    - `cmd/schema-gen/main.go` (new) emits `docs/schemas/managed-clusters.v1.json` and `docs/schemas/addon-catalog.v1.json`
    - Hosted at a stable URL (publish via the docs site or as a release artifact)
-3. **Header in every Sharko-written YAML**:
+3. **Header in every Sharko-written YAML**: ✅ shipped V1.25 — `models.SaveManagedClusters` + `config.MarshalAddonCatalog` prepend the `yaml-language-server` directive; bootstrap templates ship with the header already in place.
    ```yaml
    # yaml-language-server: $schema=https://sharko.io/schemas/managed-clusters.v1.json
    ```
-4. **Validation on PR** — Sharko's CLI or CI hook runs validation on proposed YAML changes. Reject malformed YAML before merge.
-5. **Validation on read** — reconciler validates loaded YAML; rejects malformed file with audit-logged error rather than silent reconcile failure.
+4. **Validation on PR** — Sharko's CLI or CI hook runs validation on proposed YAML changes. Reject malformed YAML before merge. ✅ shipped V1.25 — PR-side: `validate-sharko-config` GitHub Actions job in `.github/workflows/ci.yml` runs `sharko validate-config` against changed YAML in the PR diff and fails the build on schema violation.
+5. **Validation on read** — reconciler validates loaded YAML; rejects malformed file with audit-logged error rather than silent reconcile failure. ✅ shipped V1.25 — read-side: `internal/schema/validator.go` exposes `DefaultValidator()`, wired into `models.LoadManagedClusters`, `config.ParseClusterAddons`, and `config.ParseAddonsCatalog`. Loaders return a structured error on schema failure rather than silently dropping entries. (The V125-1-8 reconciler integration that consumes these validated loads is deferred to its own sprint.)
 6. **Migration**:
-   - Reader supports both old (no envelope) and new (with envelope) formats during transition
-   - On first write after upgrade, Sharko writes the envelope shape
-   - Eventually deprecate the legacy reader (V126+)
-7. **Same treatment for `addons-catalog.yaml`** (rename to `addon-catalog.yaml` singular while we're at it; keep alias for back-compat)
+   - Reader supports both old (no envelope) and new (with envelope) formats during transition — ✅ shipped V1.25 — `schema.IsEnveloped` detector routes legacy-shape input past the schema validator while enveloped input goes through the strict path.
+   - On first write after upgrade, Sharko writes the envelope shape — ✅ shipped V1.25 — writers always emit enveloped output regardless of the input shape.
+   - Eventually deprecate the legacy reader (V126+) — 🔜 scheduled V126 — legacy reader removal + `addons-catalog.yaml` filename-alias removal both fire in v1.26.
+7. **Same treatment for `addons-catalog.yaml`** (rename to `addon-catalog.yaml` singular while we're at it; keep alias for back-compat) — ✅ shipped V1.25 — file renamed to `addon-catalog.yaml`; legacy filename `addons-catalog.yaml` remains an active alias through v1.25 and is scheduled for removal in v1.26.
 
 ### Files
 - `cmd/schema-gen/main.go` (new)
@@ -190,6 +194,23 @@ Make `managed-clusters.yaml` and `addons-catalog.yaml` self-describing, schema-v
 - CRD installation (that's operator mode)
 - Server-side validation webhook (operator mode)
 - Multi-version schema migration framework (just have v1 for now)
+
+### Locked-in decisions — shipped status
+
+The ten decisions that were locked in during planning and their as-shipped state:
+
+| # | Decision | Status |
+|---|----------|--------|
+| 1 | Envelope shape: `apiVersion: sharko.io/v1` + `kind:` + `metadata:` + `spec:` | ✅ shipped V1.25 — see `internal/schema/envelope.go` |
+| 2 | JSON Schema generated from Go structs and committed to repo | ✅ shipped V1.25 — see `docs/schemas/*.v1.json` (also embedded at `internal/schema/*.v1.json` for runtime validation) |
+| 3 | Schema header in every Sharko-written YAML | ✅ shipped V1.25 — see `SaveManagedClusters` / `MarshalAddonCatalog` |
+| 4 | Validation on PR (CLI / CI hook) AND validation on read (reconciler) | ✅ shipped V1.25 — PR-side: `validate-sharko-config` GH Actions job. Read-side: `internal/schema/validator.go` `DefaultValidator()` wired into `models.LoadManagedClusters` + `config.ParseClusterAddons` + `config.ParseAddonsCatalog`. (Reconciler integration deferred to V125-1-8.) |
+| 5 | Reader accepts BOTH old (no envelope) and new (enveloped) formats | ✅ shipped V1.25 — `schema.IsEnveloped` detector routes legacy past validation |
+| 6 | Writer always emits enveloped shape | ✅ shipped V1.25 |
+| 7 | Filename rename: `addons-catalog.yaml` → `addon-catalog.yaml`; keep old name as alias | ✅ shipped V1.25 — legacy alias active through V125; removal scheduled V126 |
+| 8 | Deprecate legacy reader in V126+ | 🔜 scheduled V126 |
+| 9 | Single-doc-with-array (DRY); NOT multi-doc YAML | ✅ shipped V1.25 |
+| 10 | CLI subcommand: `sharko validate-config <file>` (exit 0/1) | ✅ shipped V1.25 — also supports `<dir>` + `--quiet` |
 
 ---
 

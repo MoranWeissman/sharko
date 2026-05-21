@@ -1,5 +1,7 @@
 # Release Notes
 
+<!-- V125-1-9 schema envelope merged to dev/v125-1-9-schema-envelope — release note pending V125 tag with V125-1-8. When cutting v1.25, add a "YAML schema envelope" entry covering: envelope shape, schema header, addon-catalog.yaml rename, sharko validate-config CLI, CI validate-sharko-config job, read-time validation in loaders. Cross-link operator/yaml-schema-migration.md. -->
+
 ## v1.26 (in progress)
 
 - **Bootstrap no longer pre-populates 3 foundation addons.** Previously `addons-catalog.yaml` shipped with cert-manager, external-secrets, and metrics-server pre-configured. New installs start with an empty catalog; install these (or any other) addons from the Marketplace as needed.
