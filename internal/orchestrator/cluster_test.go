@@ -9,6 +9,13 @@ import (
 	"github.com/MoranWeissman/sharko/internal/providers"
 )
 
+// V125-1-8.3 contract change: RefreshClusterCredentials no longer calls
+// o.argocd.RegisterCluster directly. The reconciler owns Secret writes;
+// refresh now probes the credentials provider (fail-fast UX) and nudges
+// the reconciler trigger seam. These tests pin the new behaviour: probe
+// succeeds → trigger fires + no direct ArgoCD API write; probe fails →
+// error propagates + no trigger fires.
+
 func TestRefreshClusterCredentials_Success(t *testing.T) {
 	argocd := newMockArgocd()
 	creds := &mockCredProvider{
@@ -22,14 +29,21 @@ func TestRefreshClusterCredentials_Success(t *testing.T) {
 	}
 
 	orch := New(nil, creds, argocd, newMockGitProvider(), autoMergeGitOps(), defaultPaths(), nil)
+	triggers := 0
+	orch.SetReconcilerTrigger(func() { triggers++ })
+
 	err := orch.RefreshClusterCredentials(context.Background(), "prod-eu", "https://k8s.example.com:6443")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// ArgoCD should have the cluster re-registered.
-	if _, ok := argocd.registeredClusters["prod-eu"]; !ok {
-		t.Error("expected prod-eu to be re-registered in ArgoCD")
+	// V125-1-8.3: NO direct ArgoCD register API call — the reconciler does that.
+	if _, ok := argocd.registeredClusters["prod-eu"]; ok {
+		t.Error("V125-1-8.3 contract violated: refresh must NOT call argocd.RegisterCluster directly (reconciler owns it)")
+	}
+	// Trigger MUST fire so reconciler picks up the new credentials immediately.
+	if triggers != 1 {
+		t.Errorf("expected reconciler trigger to fire exactly once, got %d", triggers)
 	}
 }
 
@@ -40,6 +54,9 @@ func TestRefreshClusterCredentials_CredProviderError(t *testing.T) {
 	}
 
 	orch := New(nil, creds, argocd, newMockGitProvider(), autoMergeGitOps(), defaultPaths(), nil)
+	triggers := 0
+	orch.SetReconcilerTrigger(func() { triggers++ })
+
 	err := orch.RefreshClusterCredentials(context.Background(), "prod-eu", "https://k8s.example.com:6443")
 	if err == nil {
 		t.Fatal("expected error from credentials provider")
@@ -47,29 +64,28 @@ func TestRefreshClusterCredentials_CredProviderError(t *testing.T) {
 	if !strings.Contains(err.Error(), "fetching fresh credentials") {
 		t.Errorf("unexpected error message: %v", err)
 	}
+	// Probe failed → trigger MUST NOT fire (otherwise reconciler is woken to
+	// fetch the same broken creds for nothing).
+	if triggers != 0 {
+		t.Errorf("trigger must not fire when probe fails, got %d invocations", triggers)
+	}
 }
 
-func TestRefreshClusterCredentials_ArgoCDError(t *testing.T) {
+func TestRefreshClusterCredentials_NoCredProvider(t *testing.T) {
+	// V125-1-8.3: with a kubeconfig-only deployment (nil credProvider) the
+	// refresh has nothing to probe; it still fires the trigger so the
+	// reconciler can opportunistically re-reconcile.
 	argocd := newMockArgocd()
-	argocd.registerErr = errors.New("argocd unavailable")
+	orch := New(nil, nil, argocd, newMockGitProvider(), autoMergeGitOps(), defaultPaths(), nil)
+	triggers := 0
+	orch.SetReconcilerTrigger(func() { triggers++ })
 
-	creds := &mockCredProvider{
-		creds: map[string]*providers.Kubeconfig{
-			"prod-eu": {
-				Server: "https://k8s.example.com:6443",
-				CAData: []byte("ca"),
-				Token:  "tok",
-			},
-		},
+	err := orch.RefreshClusterCredentials(context.Background(), "kind-sharko", "https://127.0.0.1:60123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-
-	orch := New(nil, creds, argocd, newMockGitProvider(), autoMergeGitOps(), defaultPaths(), nil)
-	err := orch.RefreshClusterCredentials(context.Background(), "prod-eu", "https://k8s.example.com:6443")
-	if err == nil {
-		t.Fatal("expected error from ArgoCD re-registration")
-	}
-	if !strings.Contains(err.Error(), "re-registering cluster") {
-		t.Errorf("unexpected error message: %v", err)
+	if triggers != 1 {
+		t.Errorf("expected reconciler trigger to fire exactly once, got %d", triggers)
 	}
 }
 

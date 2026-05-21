@@ -518,6 +518,8 @@ func TestRegisterCluster_ManualPR(t *testing.T) {
 	argocd := newMockArgocd()
 	git := newMockGitProvider()
 	orch := New(nil, defaultCreds(), argocd, git, defaultGitOps(), defaultPaths(), nil)
+	triggers := 0
+	orch.SetReconcilerTrigger(func() { triggers++ })
 
 	result, err := orch.RegisterCluster(context.Background(), RegisterClusterRequest{
 		Name:   "prod-eu",
@@ -534,8 +536,15 @@ func TestRegisterCluster_ManualPR(t *testing.T) {
 	if result.Cluster.Server != "https://k8s.example.com:6443" {
 		t.Errorf("unexpected server: %s", result.Cluster.Server)
 	}
-	if _, ok := argocd.registeredClusters["prod-eu"]; !ok {
-		t.Error("cluster not registered in ArgoCD")
+	// V125-1-8.3: NO direct ArgoCD register call. The reconciler owns the
+	// Secret post-merge — verifying absence pins the architectural change.
+	if _, ok := argocd.registeredClusters["prod-eu"]; ok {
+		t.Error("V125-1-8.3 contract violated: register must NOT call argocd.RegisterCluster directly (reconciler owns it)")
+	}
+	// Reconciler-trigger seam MUST fire so post-merge convergence is
+	// immediate rather than 30s-tick-delayed.
+	if triggers != 1 {
+		t.Errorf("expected reconciler trigger to fire exactly once, got %d", triggers)
 	}
 	if result.Git == nil {
 		t.Fatal("expected Git result")
@@ -923,6 +932,12 @@ func TestRegisterCluster_ConcurrentDifferentClusters(t *testing.T) {
 	orchA := New(mu, creds, argocd, git, autoMergeGitOps(), defaultPaths(), nil)
 	orchB := New(mu, creds, argocd, git, autoMergeGitOps(), defaultPaths(), nil)
 
+	// V125-1-8.3: track trigger firings per orch.
+	var trigMu sync.Mutex
+	triggersA, triggersB := 0, 0
+	orchA.SetReconcilerTrigger(func() { trigMu.Lock(); defer trigMu.Unlock(); triggersA++ })
+	orchB.SetReconcilerTrigger(func() { trigMu.Lock(); defer trigMu.Unlock(); triggersB++ })
+
 	var errA, errB error
 	var resultA, resultB *RegisterClusterResult
 	var wg sync.WaitGroup
@@ -957,12 +972,19 @@ func TestRegisterCluster_ConcurrentDifferentClusters(t *testing.T) {
 	if len(git.branches) != 2 {
 		t.Errorf("expected 2 branches, got %d", len(git.branches))
 	}
-	// Both should be registered in ArgoCD.
-	if _, ok := argocd.registeredClusters["cluster-a"]; !ok {
-		t.Error("cluster-a not registered in ArgoCD")
+	// V125-1-8.3: NEITHER cluster goes through direct ArgoCD API register —
+	// the reconciler picks them up via the trigger seam (1 per orch).
+	if _, ok := argocd.registeredClusters["cluster-a"]; ok {
+		t.Error("V125-1-8.3: cluster-a should NOT be direct-registered in ArgoCD (reconciler owns it)")
 	}
-	if _, ok := argocd.registeredClusters["cluster-b"]; !ok {
-		t.Error("cluster-b not registered in ArgoCD")
+	if _, ok := argocd.registeredClusters["cluster-b"]; ok {
+		t.Error("V125-1-8.3: cluster-b should NOT be direct-registered in ArgoCD (reconciler owns it)")
+	}
+	if triggersA != 1 {
+		t.Errorf("orchA: expected 1 trigger firing, got %d", triggersA)
+	}
+	if triggersB != 1 {
+		t.Errorf("orchB: expected 1 trigger firing, got %d", triggersB)
 	}
 }
 
@@ -1150,9 +1172,10 @@ func TestRegisterCluster_SecretFailure_PartialSuccess(t *testing.T) {
 	if len(git.prs) == 0 {
 		t.Error("expected a PR to be created even when some secrets failed")
 	}
-	// ArgoCD registration SHOULD have happened (it's the last step and proceeds after partial secret failure).
-	if _, ok := argocd.registeredClusters["prod-eu"]; !ok {
-		t.Error("expected cluster to be registered in ArgoCD even with partial secret failure")
+	// V125-1-8.3: NO direct ArgoCD register call regardless of secret success/failure —
+	// the reconciler owns the Secret post-merge.
+	if _, ok := argocd.registeredClusters["prod-eu"]; ok {
+		t.Error("V125-1-8.3: cluster must NOT be direct-registered in ArgoCD (reconciler owns it)")
 	}
 }
 

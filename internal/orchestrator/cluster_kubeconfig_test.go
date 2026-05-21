@@ -75,8 +75,11 @@ func TestRegisterCluster_Kubeconfig_HappyPath_NoCredProvider(t *testing.T) {
 	if !foundParseStep {
 		t.Errorf("expected parse_kubeconfig step in completed_steps; got %v", result.CompletedSteps)
 	}
-	if _, ok := argocd.registeredClusters["kind-sharko"]; !ok {
-		t.Errorf("cluster should be registered in ArgoCD")
+	// V125-1-8.3: kubeconfig provider used to fall through to a direct
+	// argocd.RegisterCluster pre-merge call (BUG-058 root cause). That call
+	// is now retired — the reconciler creates the Secret post-merge.
+	if _, ok := argocd.registeredClusters["kind-sharko"]; ok {
+		t.Errorf("V125-1-8.3 contract violated: kubeconfig path must NOT call argocd.RegisterCluster directly — reconciler owns Secret lifecycle")
 	}
 }
 
