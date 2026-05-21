@@ -68,7 +68,18 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 			gitManaged = append(gitManaged, c)
 		}
 	}
-	orphans := resolveOrphanRegistrations(r.Context(), ac, gitManaged, pendingNames)
+	// V125-1-8.2 — ownership-label gate. Pull the set of Secret names in
+	// the argocd namespace carrying app.kubernetes.io/managed-by=sharko so
+	// the resolver only surfaces Sharko-owned orphans (unlabeled = V125-2
+	// Adopt territory). Returns nil when the k8s client is not wired — the
+	// resolver disables the gate in that case so dev-mode without K8s does
+	// not silently lose the orphan surface (see resolveOrphanRegistrations
+	// doc-comment safety-valve rationale).
+	var sharkoOwnedNames map[string]struct{}
+	if k8sClient, namespace, ok := s.k8sClientAndNamespace(); ok {
+		sharkoOwnedNames = listSharkoOwnedSecretNames(r.Context(), k8sClient, namespace)
+	}
+	orphans := resolveOrphanRegistrations(r.Context(), ac, gitManaged, pendingNames, sharkoOwnedNames)
 	resp.OrphanRegistrations = orphans
 	orphanNames := make(map[string]struct{}, len(orphans))
 	for _, o := range orphans {

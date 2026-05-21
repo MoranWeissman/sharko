@@ -1,29 +1,32 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
+	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
 )
 
 // handleDeleteOrphanCluster godoc
 //
 // @Summary Delete an orphan cluster
-// @Description Deletes an ArgoCD cluster Secret for a cluster that has no managed-clusters.yaml entry and no open registration PR. Refuses to delete a cluster that is genuinely managed (in git) or pending (has an open register PR) — those are not orphans.
+// @Description Deletes an ArgoCD cluster Secret for a cluster that has no managed-clusters.yaml entry and no open registration PR. Refuses to delete a cluster that is genuinely managed (in git), pending (has an open register PR), or NOT owned by Sharko (missing the app.kubernetes.io/managed-by=sharko label) — externally-owned Secrets are V125-2 Adopt territory.
 // @Tags clusters
 // @Produce json
 // @Security BearerAuth
 // @Param name path string true "Cluster name"
 // @Success 204 "Cluster Secret deleted"
-// @Failure 400 {object} map[string]interface{} "Cluster is not orphaned (managed or pending)"
+// @Failure 400 {object} map[string]interface{} "Cluster is not orphaned (managed, pending, or not Sharko-owned)"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 403 {object} map[string]interface{} "Forbidden"
 // @Failure 404 {object} map[string]interface{} "Cluster Secret not found in ArgoCD"
 // @Failure 500 {object} map[string]interface{} "Internal error"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
+// @Failure 503 {object} map[string]interface{} "K8s client not wired — ownership label cannot be verified"
 // @Router /clusters/{name}/orphan [delete]
 //
 // V125-1-7 / BUG-058 — orphan-cluster recovery surface. The orphan resolver
@@ -154,6 +157,55 @@ func (s *Server) handleDeleteOrphanCluster(w http.ResponseWriter, r *http.Reques
 	if serverURL == "" {
 		writeError(w, http.StatusNotFound,
 			fmt.Sprintf("cluster %q not found in ArgoCD — nothing to delete", name))
+		return
+	}
+
+	// V125-1-8.2 — ownership-label gate (closes the V125-1-7 foot-gun where
+	// Discard could destroy an externally-created Secret). The Secret in the
+	// argocd namespace MUST carry the app.kubernetes.io/managed-by=sharko
+	// label written by the Story 8.0/8.1 reconciler — otherwise it is V125-2
+	// Adopt territory and Discard would silently destroy whatever tool
+	// (operator, GitOps, external script) was supposed to own it.
+	//
+	// Failure modes:
+	//   - k8s client not wired → 503; operator must restart Sharko with the
+	//     in-cluster client configured (production always wires it via
+	//     SetArgoReconcilerConfig in cmd/sharko/serve.go).
+	//   - Secret disappeared between the ArgoCD check (step 6) and now →
+	//     404. Race window is tiny but possible; ArgoCD's REST cache lags
+	//     the underlying K8s API.
+	//   - Secret lacks the sharko label → 400 with the spec'd remediation
+	//     message pointing operators at the V125-2 Adopt action.
+	//   - K8s API error → 502 (upstream-classify so a transient blip reads
+	//     as gateway error and not 500).
+	//
+	// On rejection we audit-log so the operator sees the rejection alongside
+	// the success case (Event: cluster_orphan_delete_rejected). The success
+	// case keeps its existing cluster_orphan_deleted event below.
+	secret, secErr := s.getSecretIfPresent(r.Context(), name)
+	if secErr != nil {
+		if errors.Is(secErr, errNoK8sClient) {
+			writeServerError(w, http.StatusServiceUnavailable, "delete_orphan_cluster_no_k8s_client", secErr)
+			return
+		}
+		writeUpstreamError(w, "delete_orphan_cluster_get_secret", secErr)
+		return
+	}
+	if secret == nil {
+		// Race: ArgoCD said it existed at step 6, but K8s says it's gone
+		// now. Idempotent: nothing to delete on the K8s side. Surface a 404
+		// so the FE refreshes and the row drops off the orphan list.
+		writeError(w, http.StatusNotFound,
+			fmt.Sprintf("cluster Secret %q no longer present in argocd namespace — nothing to delete (refresh and retry)", name))
+		return
+	}
+	if !clusterreconciler.IsManagedBySharko(secret) {
+		audit.Enrich(r.Context(), audit.Fields{
+			Event:    "cluster_orphan_delete_rejected",
+			Resource: fmt.Sprintf("cluster:%s", name),
+		})
+		writeError(w, http.StatusBadRequest,
+			"this Secret was not created by Sharko (no managed-by label); refusing to delete. If you want to bring it under management, use the Adopt action.")
 		return
 	}
 

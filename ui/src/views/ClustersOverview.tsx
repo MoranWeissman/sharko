@@ -100,7 +100,9 @@ export function ClustersOverview() {
   // mode register PR closed without merging. Surfaced in a dedicated
   // amber/orange "Cancelled / Orphan Registrations" section between the
   // blue Pending Registrations section and the main cluster table, with
-  // a per-row Delete cluster Secret button.
+  // a per-row "Discard cancelled registration" button (renamed from
+  // "Delete cluster Secret" in V125-1-7.1 — matches operator mental model
+  // that this is registration cleanup, not Secret management).
   const [orphanRegistrations, setOrphanRegistrations] = useState<OrphanRegistration[]>([]);
   // Per-cluster orphan-delete state. `null` = no action; `pending` = the
   // confirm dialog is open for this name; `deleting` = the API call is in
@@ -1614,8 +1616,9 @@ export function ClustersOverview() {
           AND no open registration PR. Typically a leftover from a
           manual-mode register PR that was closed without merging
           (orchestrator/cluster.go:408 pre-creates the Secret before the
-          PR opens). Per-row Delete button removes the orphan Secret via
-          DELETE /api/v1/clusters/{name}/orphan. The amber/orange tint
+          PR opens). Per-row "Discard cancelled registration" button
+          removes the orphan Secret via DELETE
+          /api/v1/clusters/{name}/orphan. The amber/orange tint
           signals "needs cleanup attention" — different from the blue
           Pending Registrations and the teal Managed Clusters above. */}
       {orphanRegistrations.length > 0 && (
