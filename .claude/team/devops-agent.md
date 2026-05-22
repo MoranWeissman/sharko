@@ -27,18 +27,32 @@ You handle CI/CD, Makefiles, Docker, Helm chart packaging, GitHub Actions, relea
 
 ## Key Files
 ```
-Makefile                        Build/dev/test targets
-Dockerfile                      Multi-stage Go + UI build (if exists)
-.github/workflows/              CI/CD pipelines (if exists)
-charts/sharko/                  Helm chart (12 templates)
+Makefile                        Build/dev/test/e2e targets (see test-e2e* family below)
+Dockerfile                      Multi-stage Go + UI build
+.github/workflows/              CI/CD pipelines
+  ci.yml                        7 jobs: go-build-test, ui-build-test, swagger-check,
+                                provider-types-up-to-date, schemas-up-to-date,
+                                validate-sharko-config, helm-validate, security-scan
+  release.yml                   workflow_run-triggered on CI success
+  pr-docker.yml                 PR-time Docker build smoke
+  e2e.yml                       Scheduled / on-demand kind-backed e2e
+  catalog-scan.yml              Trusted-source catalog scanner bot (CNCF Landscape + EKS Blueprints)
+  catalog-sign-roundtrip.yml    cosign-keyless signing round-trip verification
+  claude-code-review.yml        PR review automation
+  claude.yml                    @claude mention handler
+charts/sharko/                  Helm chart
 charts/sharko/values.yaml       Default values
 charts/sharko/Chart.yaml        Chart metadata
 docs/swagger/                   Auto-generated Swagger docs (regenerated, not committed manually)
+docs/schemas/                   V125-1-9 — committed JSON Schemas; CI gate schemas-up-to-date
+internal/schema/*.v1.json       V125-1-9 — embedded copy of the same schemas (dual-write)
+scripts/sharko-dev.sh           V126-5 — local dev DX: install / upgrade <version> / preflight
+                                ready/up/install check / --force-clean flag
+scripts/smoke/                  Smoke-test shell scripts (e.g. third-party-catalog.sh)
+scripts/helm-deploy.sh          Helm install/upgrade convenience
 ```
 
 ## Makefile Targets
-
-Current targets in the Makefile:
 
 | Target | Description |
 |--------|-------------|
@@ -52,6 +66,15 @@ Current targets in the Makefile:
 | `make test` | Run all tests (Go + UI) |
 | `make test-go` | Go tests only (`go clean -testcache && go test ./...`) |
 | `make test-ui` | UI tests only (`npm test -- --run`) |
+| `make test-e2e` | Full kind-backed e2e suite (~10-15 min; requires docker) |
+| `make test-e2e-fast` | In-process e2e (~30s, no kind needed) |
+| `make test-e2e-domain DOMAIN=<name>` | Single e2e domain |
+| `make test-e2e-helm` | Wave-D helm-mode e2e (~5-8 min; docker+kind+helm+kubectl) |
+| `make test-e2e-clean` | Force-delete every sharko-e2e-* kind cluster |
+| `make test-e2e-coverage` | E2E suite with coverage HTML at `_dist/e2e-coverage.html` |
+| `make test-e2e-fast-coverage` | Fast in-process e2e with coverage |
+| `make test-e2e-junit` | E2E suite with JUnit XML at `_dist/e2e-junit.xml` |
+| `make test-e2e-report` | Both coverage HTML + JUnit XML |
 | `make lint` | Go vet + UI build check |
 | `make clean` | Remove build artifacts (`bin/`, `ui/dist/`) |
 
@@ -89,17 +112,26 @@ This must be run:
 
 ## Build Pipeline
 
-The recommended build pipeline order:
-
 ```
-1. go build ./...                  # Verify Go compilation
-2. swag init -g cmd/sharko/serve.go -o docs/swagger --parseDependency --parseInternal  # Regenerate swagger
-3. cd ui && npm run build          # Build React UI
-4. go test ./...                   # Run Go tests
-5. cd ui && npm test -- --run      # Run UI tests
+1. go build ./...
+2. swag init -g cmd/sharko/serve.go -o docs/swagger --parseDependency --parseInternal
+3. go run ./cmd/schema-gen        # V125-1-9: regenerate JSON Schemas (dual-write to
+                                  # docs/schemas/ AND internal/schema/)
+4. go run ./cmd/gen-provider-types  # Regenerate provider type mappings
+5. cd ui && npm run build
+6. go test ./...
+7. cd ui && npm test -- --run
+8. ./bin/sharko validate-config docs/site/configuration/   # V125-1-9 smoke
 ```
 
-For CI, steps 1-3 are build, steps 4-5 are test. The swagger regeneration must happen before tests because the `docs/swagger/docs.go` file is imported by the router.
+For CI, steps 1-5 are build / regen, steps 6-8 are test + validation. The corresponding gates:
+
+- `swagger-check` → fails if step 2 produces a diff
+- `schemas-up-to-date` → fails if step 3 produces a diff
+- `provider-types-up-to-date` → fails if step 4 produces a diff
+- `validate-sharko-config` → runs step 8 over PR-diffed YAML files
+- `helm-validate` → `helm template charts/sharko/`
+- `security-scan` → forbidden-content grep
 
 ## Patterns
 - `make demo` — build UI + start with mock backends
@@ -165,14 +197,26 @@ Template in `charts/sharko/templates/deployment.yaml` should render these as env
       optional: true
 ```
 
+## scripts/sharko-dev.sh (V126-5)
+
+Local dev DX wrapper around the Helm chart. Subcommands:
+- `install` — first-install path
+- `upgrade <version>` — upgrade to a specific chart version (V126-5 addition)
+- `uninstall` — tear-down
+- `preflight()` — ready/up/install pre-check that classifies cluster state before running
+
+Flags: `--force-clean` for unconditional wipe before reinstall (V126-5 addition).
+
 ## Release Rules
 
-- **Every code change = new version.** Never retag. Never push the same version tag to a different commit.
+- **Every code change = new version.** Never retag. Never push the same version tag to a different
+  commit (CLAUDE.md hard rule).
 - Patch bump (x.y.Z) for bug fixes and small changes
 - Minor bump (x.Y.0) for new features
 - Major bump (X.0.0) for breaking changes
-- The release workflow is triggered by tags — one tag per commit, one commit per tag
+- One tag per commit, one commit per tag.
 - If a release has a bug, fix it and bump patch. Do not delete and recreate the tag.
+- v1.x is pre-release; v2.0.0 = first production launch (per `project_version_strategy` memory).
 
 ## Context7 MCP
 When working with Helm, Docker, or GitHub Actions syntax, use the context7 MCP to fetch current documentation for the tools you're configuring.

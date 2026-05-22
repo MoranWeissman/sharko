@@ -69,9 +69,29 @@ swag init -g cmd/sharko/serve.go -o docs/swagger --parseDependency --parseIntern
 The Swagger UI is available at `/swagger/index.html` when the server is running. Currently 71 annotated endpoints.
 
 ### Design Documentation
-- `docs/design/IMPLEMENTATION-PLAN-V1.md` — v1.0.0 implementation plan
-- `docs/design/section-*.md` — detailed design sections
-- `docs/design/` — design specs and implementation plans
+- `docs/design/2026-05-11-cluster-secret-reconciler-and-gitops-stance.md` — V125-1-8 design
+- `docs/design/2026-05-12-v125-architectural-todos.md` — V125-1-9 envelope/schema rationale
+- `docs/design/` — design specs (date-prefixed; annotate shipped stories with `[shipped]` or
+  similar inline markers so the next reader sees what landed without re-running git blame)
+
+### Operator runbooks (verified-by-execution)
+- `docs/site/operator/cluster-reconciler.md` — V125-1-8 reconciler operator runbook
+- `docs/site/operator/yaml-schema-migration.md` — V125-1-9 envelope migration runbook
+
+These two runbooks are the current reference shape for new operator runbooks: they are organized
+as "what shipped" / "why" / "how to verify" / "how to roll back" with concrete commands. They
+also carry the verified-by-execution `> **Verified:** ...` header.
+
+### Developer-guide runbooks
+- `docs/site/developer-guide/e2e-testing.md` — V125-1-13 harness usage
+- `docs/site/developer-guide/personal-smoke-runbook.md` — local smoke flow
+- `docs/site/developer-guide/catalog-scan-runbook.md` — third-party scanner bot
+- `docs/site/developer-guide/testing-guide.md` — general testing reference
+
+### Schemas
+- `docs/schemas/*.v1.json` — JSON Schemas for envelope-shaped YAML files. NEVER hand-edit;
+  always regenerate via `go run ./cmd/schema-gen`. The dual-write helper also emits to
+  `internal/schema/*.v1.json` for embedding.
 
 ### Agent Team Documentation
 - `.claude/team/*.md` — agent role files (living documents, update as project evolves)
@@ -99,35 +119,35 @@ After each phase:
 
 ### CLI flags — check `cmd/sharko/*.go`
 ```
-Actual commands: login, version, init, add-cluster, remove-cluster,
-                 update-cluster, list-clusters, add-addon, remove-addon, status, serve,
-                 upgrade-addon, upgrade-addons, add-clusters, token, pr
+Current commands (verify against cmd/sharko/*.go before documenting):
+  login, version, init, status, serve, reset-admin,
+  add-cluster, remove-cluster, update-cluster, list-clusters, test-cluster,
+  adopt-cluster, unadopt-cluster, discover, add-clusters (batch),
+  add-addon, remove-addon, list-addons, configure-addon,
+  upgrade-addon, upgrade-addons,
+  validate              (LEGACY pre-envelope validator — slated for V126 removal)
+  validate-config       (V125-1-9 envelope-aware JSON-Schema validator;
+                         accepts ONE path arg (file OR dir); flag --quiet/-q)
+  connect [list|test],
+  refresh-secrets, secret-status,
+  token [create|list|revoke],
+  pr [list|wait],
+  user
 
-Actual flags:
-  login:          --server (required)
-  add-cluster:    --addons (comma-sep), --region
-  update-cluster: --add-addon (comma-sep), --remove-addon (comma-sep)
-  add-addon:      --chart, --repo, --version (all required), --namespace
-  remove-addon:   --confirm
-  init:           --no-bootstrap
-  root (global):  --insecure, --version
-  pr list:        --status, --cluster, --user, -o (table/json)
-  pr wait:        --timeout (default 10m)
-  token create:   --name, --role
-```
-
-**v1.0.0 planned CLI additions (document only when implemented):**
-```
-  add-addon:        --sync-wave (Phase 8)
-  add-addon-secret: --secret-name, --namespace, --key (Phase 3)
-  list-secrets:     (cluster arg) (Phase 3)
-  refresh-secrets:  (cluster arg) (Phase 3)
-  token create:     --name, --role (Phase 4)
-  token list:       (Phase 4)
-  token revoke:     (name arg) (Phase 4)
-  add-clusters:     --from-provider, --addons (Phase 6)
-  upgrade-addon:    --version, --cluster (optional, per-cluster override) (Phase 8)
-  upgrade-addons:   name=version,name=version (multi-addon batch) (Phase 8)
+Selected flags (verify against the source before publishing):
+  login:           --server (required), --username, --password
+  add-cluster:     --addons (comma-sep), --region, --secret-path
+  update-cluster:  --add-addon (comma-sep), --remove-addon (comma-sep)
+  add-addon:       --chart, --repo, --version (all required), --namespace, --sync-wave
+  remove-addon:    --confirm
+  init:            --no-bootstrap
+  root (global):   --insecure, --version
+  pr list:         --status, --cluster, --user, -o (table/json)
+  pr wait:         --timeout (default 10m)
+  token create:    --name, --role
+  validate-config: --quiet/-q (single positional file-or-dir arg)
+  upgrade-addon:   --version, --cluster (optional, per-cluster override)
+  upgrade-addons:  name=version,name=version,... (multi-addon batch)
 ```
 
 ### Helm values — check `charts/sharko/values.yaml`
@@ -202,27 +222,44 @@ The API contract (`docs/api-contract.md`) is the single source of truth for endp
 - Using `--enable` / `--disable` instead of `--add-addon` / `--remove-addon`
 - Using `argocd.token` or `git.token` as Helm values (they don't exist)
 - Referring to `POST /api/v1/auth/token` (it's `/auth/login`)
-- Documenting async behavior (202 + job ID) — API is synchronous
+- Documenting init as fully synchronous (`POST /api/v1/init` returns 202 + operation_id with
+  heartbeat-keep-alive; write endpoints in general are synchronous, init is the exception)
 - Using `queue.*` Helm values — there is no queue
 - Editing `docs/swagger/` manually — always regenerate with `swag init`
+- Editing `docs/schemas/*.v1.json` or `internal/schema/*.v1.json` manually — always regenerate
+  via `go run ./cmd/schema-gen` (dual-write)
+- Documenting `sharko validate-config` as accepting multiple positional args — it takes ONE
+  path argument (file or directory)
+- Confusing `sharko validate` (legacy pre-envelope) with `sharko validate-config` (V125-1-9
+  envelope-aware) — they coexist during V125; the legacy one is slated for V126 removal
 
 ## Context7 MCP
 When documenting tools, frameworks, or libraries, use context7 MCP to verify current syntax and behavior rather than relying on memory.
 
 ## Verified-by-execution rule (applies to all runbooks)
 
-Every runbook in `docs/site/developer-guide/` MUST carry a `> **Verified:** ...`
-header at the top. The header date and image MUST be updated to reflect actual
-end-to-end execution whenever the runbook content changes substantively.
-Reviewers REJECT runbook PRs that:
+Every runbook in `docs/site/developer-guide/` AND `docs/site/operator/` MUST carry a
+`> **Verified:** ...` header at the top. The header date and image MUST be updated to reflect
+actual end-to-end execution whenever the runbook content changes substantively. Reviewers REJECT
+runbook PRs that:
 - Add a runbook without the header
 - Modify a runbook without updating the header date
 - Carry a header date older than the most recent commit to the runbook file
 
-Authoring discipline: NEVER write runbook steps you have not personally
-executed. Read-only inspection of code is insufficient — author by execution.
-This rule exists because BUG-015 (Track B runbook authored without execution)
-shipped a broken runbook that blocked the maintainer's first real-K8s smoke pass.
+Authoring discipline: NEVER write runbook steps you have not personally executed. Read-only
+inspection of code is insufficient — author by execution. This rule exists because BUG-015 (Track
+B runbook authored without execution) shipped a broken runbook that blocked the maintainer's
+first real-K8s smoke pass.
+
+## mkdocs --strict requirement
+
+The docs site is built with `mkdocs build --strict`. Strict mode fails on:
+- Unresolved internal links
+- Missing nav entries for pages under `docs/site/`
+- Orphan pages not referenced from `mkdocs.yml`
+
+Run `mkdocs build --strict` locally before pushing doc changes; CI mirrors this. NOTE: role
+files (`.claude/team/*.md`) are NOT in mkdocs nav and are NOT subject to `--strict`.
 
 ## Report Status
 End with: DONE, DONE_WITH_CONCERNS, NEEDS_CONTEXT, or BLOCKED

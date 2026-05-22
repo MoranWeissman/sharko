@@ -3,27 +3,39 @@
 You track progress, enforce quality gates, and manage the build sequence for Sharko.
 
 ## Workflow Rules
-1. Every feature gets its own branch (`feat/<name>`)
-2. Push branch → human review → merge. Never push to main directly
-3. Self-review code (dispatch code-reviewer) before presenting for human review
-4. API contract (`docs/api-contract.md`) is the source of truth for endpoints
-5. Architecture doc (`docs/architecture.md`) for design context
-6. Implementation plan (`docs/design/IMPLEMENTATION-PLAN-V1.md`) for phase sequence and scope
+1. Every bundle/sprint gets its own branch (e.g. `sprint/v125-1-9-schema-envelope`)
+2. Agents commit on their `worktree-agent-*` branches; orchestrator cherry-picks onto the sprint
+   branch from a main checkout, opens ONE PR per bundle, auto-merges per
+   `feedback_auto_merge_when_green` once CI is green
+3. Never push to main directly. Never retag a shipped version.
+4. Self-review code (dispatch code-reviewer) before opening the PR
+5. Design docs in `docs/design/` (date-prefixed) are the source of truth for new feature scope
+6. CLAUDE.md governs everything (BMAD-first, agent dispatch with role files, no
+   Co-Authored-By trailers, no --no-verify, never retag)
 
 ## Quality Gates (all must pass before merge)
 ```bash
 go build ./...                        # Go compiles
-go vet ./...                          # No static analysis issues  
+go vet ./...                          # No static analysis issues
 go test ./...                         # All backend tests pass
 cd ui && npm run build                # React compiles
 cd ui && npm test                     # All frontend tests pass
 helm template sharko charts/sharko/   # Helm renders clean
+make test-e2e-fast                    # In-process e2e (~30s)
+swag init -g cmd/sharko/serve.go -o docs/swagger --parseDependency --parseInternal  # if API changed
+go run ./cmd/schema-gen               # if envelope-relevant model changed (V125-1-9)
+./bin/sharko validate-config docs/site/configuration/  # YAML samples (V125-1-9)
 
 # Security check
 grep -rn "scrdairy\|merck\|msd\.com\|mahi-techlabs\|merck-ahtl" \
   --include="*.go" --include="*.ts" --include="*.yaml" . | \
   grep -v node_modules | grep -v .git/   # Must return empty
 ```
+
+CI mirrors this with 7 jobs (`.github/workflows/ci.yml`): `go-build-test`, `ui-build-test`,
+`swagger-check`, `provider-types-up-to-date`, `schemas-up-to-date`, `validate-sharko-config`,
+`helm-validate`, `security-scan`. The schemas/validate jobs were added by V125-1-9 and gate
+every PR touching envelope-shaped YAML or its Go model.
 
 ## v0.1.0 Build Sequence — COMPLETED
 | Step | What | Status |
@@ -40,90 +52,51 @@ grep -rn "scrdairy\|merck\|msd\.com\|mahi-techlabs\|merck-ahtl" \
 | 10 | Templates cleanup + embed | Done |
 | 11 | Docs + README + init endpoint | Done |
 
-## Current Phase — v1.23 shipped, V2 hardening backlog
+## Current State — 2026-05-21
 
-`v1.23.0-pre.0` cut on 2026-04-29 closes the catalog-extensibility milestone (Epics V123-1 third-party catalogs, V123-2 per-entry cosign signing, V123-3 trusted-source scanner bot, V123-4 docs + release polish). Documentation refresh PR (this file) is the post-ship cleanup. Next phase is **V2 hardening** (still backlog — no active sprint): scoped RBAC roadmap, audit-log architecture stabilization, CNCF maturity gap closure (~40% to incubation post-v1.20), and the items in `project_v3_backlog.md`. The v1.0.0 phase table below is **historical** — kept for reference.
+Today (2026-05-21) closed two architectural sprints in one day:
 
-## v1.0.0 Build Phases — IN PROGRESS
-Source: `docs/design/IMPLEMENTATION-PLAN-V1.md`
+- **V125-1-8** — cluster reconciler + ownership label + GitOps stance fix (PR #348, 6 stories + scaffold)
+- **V125-1-9** — schema envelope + JSON Schema + read-time validation + CLI + CI gates (PR #346, 6 stories + scaffold)
 
-| Phase | What | Key Deliverable | Status |
-|-------|------|-----------------|--------|
-| 1 | Git Mutex & Safety | Global Git lock on orchestrator, 409 duplicate check, synchronous API | Not started |
-| 2 | PR-Only Git | Remove direct commits, every change is a PR | Not started |
-| 3 | Remote Cluster Secrets | Create K8s Secrets on remote clusters, replace ESO | Not started |
-| 4 | API Keys | Long-lived tokens for automation, CLI + UI management | Not started |
-| 5 | Init Rework | Full bootstrap: repo + ArgoCD repo conn + root-app + sync | Not started |
-| 6 | Batch Operations | Sequential batch registration, discover from provider, max 10 | Not started |
-| 7 | UI Write Capabilities | Full management UI: clusters, addons, secrets, API keys | Not started |
-| 8 | Upgrades, Defaults & Sync Waves | Addon upgrades (global + per-cluster), defaults, sync waves, host cluster | Not started |
-| 9 | Docs & Polish | Update all docs, clean Helm chart, final audit | Not started |
+Plus today's polish: V126-2/3/4/5 (empty bootstrap, N/M badge, e2e harness QoL, sharko-dev DX).
 
-### Phase Dependencies
-```
-Phase 1 (Git Mutex & Safety)
-    ↓
-Phase 2 (PR-only Git)
-    ↓
-Phase 3 (Remote Secrets)  ←  depends on Phase 2 (PR flow)
-    ↓
-Phase 4 (API Keys)        ←  independent, can parallel with Phase 3
-    ↓
-Phase 5 (Init Rework)     ←  depends on Phase 2 + 3
-    ↓
-Phase 6 (Batch)           ←  depends on Phase 3 (secrets)
-    ↓
-Phase 7 (UI Write)        ←  depends on all backend phases (1-6)
-    ↓
-Phase 8 (Upgrades, Defaults & Sync Waves) ←  can parallel with Phase 7
-    ↓
-Phase 9 (Docs & Polish)   ←  last
-```
+The v1.0.0 phase table is historical and removed in this refresh — those phases all shipped during
+the v1.x pre-release stream. Current planning happens at the bundle level (V125-1-N, V126-N), tracked
+in `docs/site/planning/` and the project memory file `project_sharko_roadmap`.
 
-**Parallelizable:** Phase 3 + 4, Phase 7 + 8
+### Active workstream — V2.0.0 production launch
 
-### Key Architecture Decisions (v1.0.0)
-- **Synchronous API** — all write endpoints return final result (201/200/207), no job queue, no 202
-- **Git mutex** — `sync.Mutex` on orchestrator serializes Git operations only; non-Git ops run freely
-- **PR-only Git** — direct commit removed, every change is a PR with auto-merge or manual approval
-- **Batch max size 10** — keeps within HTTP timeout limits (~10s/cluster); CLI auto-splits larger batches
+Per `project_sharko_roadmap`: V2.0.0 = first production launch. Remaining V125 architectural epics
++ V126 polish constitute the production-launch backlog. Items currently on deck:
 
-### New Packages (v1.0.0)
-- `internal/remoteclient/` — Temporary K8s clients to remote clusters for secret management
+- V125-1-7 — orphan-delete tightening (keys off V125-1-8's `IsManagedBySharko` predicate)
+- V125-2 — Adopt flow (flips the ownership label on as the "now mine" signal)
+- V125-1-13.x cleanup — in-cluster gitfake + env-gated allowlist (Path A) per
+  `project_v125_1_13_helm_tests_followup` memory
+- Audit-log architecture stabilization
+- CNCF maturity gap closure (~40% to incubation post-v1.20)
 
-### New API Endpoints (v1.0.0)
-```
-POST /api/v1/tokens                      → create API key
-GET  /api/v1/tokens                      → list API keys
-DELETE /api/v1/tokens/{name}             → revoke API key
-POST /api/v1/addon-secrets               → define addon secret template
-GET  /api/v1/addon-secrets               → list addon secret definitions
-DELETE /api/v1/addon-secrets/{addon}      → remove addon secret definition
-GET  /api/v1/clusters/{name}/secrets     → list Sharko-managed secrets on cluster
-POST /api/v1/clusters/{name}/secrets/refresh → refresh secrets on cluster
-POST /api/v1/clusters/batch              → sequential batch register (max 10)
-GET  /api/v1/clusters/available          → discover unregistered clusters from provider
-POST /api/v1/addons/{name}/upgrade       → upgrade addon (global or per-cluster)
-POST /api/v1/addons/upgrade-batch        → multi-addon upgrade in one PR
-```
+### V3+ Backlog (per `project_v3_backlog`)
+- Fine-grained per-endpoint RBAC scopes
+- SSO
+- Multi-ArgoCD
+- Rule-based auto-merge
+- Advanced metrics
+- Operator mode (CRDs)
+- Job queue / async write API
+- ValidatingAdmissionWebhook for GitOps-only enforcement
+- Webhooks / event emission
 
-## v2 Backlog (future, if adoption justifies)
-- [ ] Kubernetes operator with CRDs (SharkoConfig, ManagedCluster)
-- [ ] Continuous credential rotation via reconcile loop
-- [ ] ValidatingAdmissionWebhook for GitOps-only enforcement
-- [ ] Job queue / async API (if high-concurrency demand emerges)
-- [ ] SSE/WebSocket for real-time progress
-- [ ] Webhooks / event emission
-- [ ] Rate limiting (if abuse becomes a concern)
-- [ ] Fine-grained API scopes (per-endpoint)
+## Sprint cadence (current shape)
 
-## Codebase Stats (current baseline)
-- **73** API routes (will grow to ~85+ with v1.0.0 phases)
-- **10** CLI commands (will grow to ~16+)
-- **15** UI views (will grow significantly in Phase 7)
-- **15** internal packages (will grow to 16+ with remoteclient)
-- **30** backend tests + **105** frontend tests
-- **12** Go direct dependencies
+- Bundles ship as a single sprint PR (multi-story, cherry-picked). V125-1-9's PR #346 contained 7
+  commits across 6 stories + scaffold; V125-1-8's PR #348 followed the same shape.
+- Auto-merge is the default per `feedback_auto_merge_when_green`: `gh pr merge <N> --squash
+  --auto --delete-branch`. CI green IS the gate.
+- Tracking-only chore PRs (sprint-status updates) may use `--admin` to bypass CI wait.
+- Per `feedback_release_cadence`: don't release a version per fix. Bundle on a working branch,
+  cut release at a real milestone.
 
 ## Update This File When
 - A phase is completed (update status)

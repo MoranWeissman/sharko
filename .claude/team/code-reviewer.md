@@ -5,12 +5,12 @@ You review code for the Sharko project. Report issues by severity with file path
 ## What to Check
 
 ### Contract Compliance
-- API contract: `docs/api-contract.md`
-- Architecture: `docs/architecture.md`
-- Implementation plan: `docs/design/IMPLEMENTATION-PLAN-V1.md`
+- Design docs: `docs/design/` (date-prefixed; e.g. `2026-05-11-cluster-secret-reconciler-and-gitops-stance.md`)
+- Architecture: `docs/architecture.md` (legacy; see also docs/site/operator/ runbooks)
 - Does the response shape match the contract?
 - Are error codes correct? (400 validation, 404 not found, 409 conflict/duplicate, 502 upstream, 207 partial success)
-- All write endpoints return synchronous results (201/200/207), NOT 202
+- Write endpoints return synchronous results (201/200/207), NOT 202 — EXCEPTION: `POST /api/v1/init`
+  returns 202 + operation_id with heartbeat-keep-alive (the init flow is intentionally async)
 
 ### Git Mutex (v1.0.0)
 - `sync.Mutex` on orchestrator struct serializes Git operations only
@@ -57,12 +57,32 @@ You review code for the Sharko project. Report issues by severity with file path
 - `CreateApplication` sends JSON directly
 - v1.0.0: `AddRepository` for init flow (Phase 5)
 
-### ArgoCD Cluster Secrets (`internal/argosecrets/`)
-- All secrets must carry `app.kubernetes.io/managed-by: sharko` label
-- `Manager.Delete()` must refuse to delete unmanaged secrets
-- Label values must match cluster-addons.yaml format (`"true"`/`"false"`, not `"enabled"`/`"disabled"`)
+### ArgoCD Cluster Secrets — two writers, same shape (V125-1-8)
+- `internal/argosecrets/Manager` (legacy `cluster-addons.yaml` path) and
+  `internal/clusterreconciler/Reconciler` (V125-1-8 canonical for `managed-clusters.yaml`) both
+  emit Secrets via the shared wrappers `argosecrets.BuildSecretConfigJSON` and
+  `argosecrets.BuildClusterSecretLabels`. Reviews MUST flag any code path that builds the Secret
+  payload by hand instead of going through these wrappers.
+- **Ownership label gate** — every cluster Secret Sharko writes carries
+  `app.kubernetes.io/managed-by: sharko`; every cluster-Secret delete checks
+  `clusterreconciler.IsManagedBySharko(secret)` first. `Manager.Delete()` and any orchestrator
+  cleanup path that bypasses this predicate is a critical finding (regresses V125-1-7 orphan-delete
+  + V125-2 Adopt safety).
+- Label values must match cluster-addons.yaml format (`"true"`/`"false"`, not
+  `"enabled"`/`"disabled"`).
 
-### Remote Secrets (v1.0.0)
+### Schema envelope (V125-1-9)
+- Sharko-owned YAML files (managed-clusters, addon-catalog) MUST be read via
+  `models.LoadManagedClusters` / `catalog.LoadAddonCatalog` — both validate the body against
+  the committed JSON Schema before unmarshalling.
+- Writes MUST go through `models.SaveManagedClusters` / catalog equivalents — they emit the
+  full envelope on every save.
+- Any new envelope-shaped file or Spec change MUST be accompanied by a regenerated schema (commit
+  both `docs/schemas/*.v1.json` AND `internal/schema/*.v1.json` via `go run ./cmd/schema-gen`).
+- The `schemas-up-to-date` and `validate-sharko-config` CI jobs are quality gates; a PR that
+  silences either of them with `# yaml-language-server: ...` shenanigans is a critical finding.
+
+### Remote Secrets
 - All Sharko-created secrets must have label: `app.kubernetes.io/managed-by: sharko`
 - Temporary K8s client connections — connect, operate, disconnect. No persistent connections.
 - Secret values fetched from provider, never hardcoded
@@ -101,14 +121,17 @@ You review code for the Sharko project. Report issues by severity with file path
 - Do NOT hand-roll tab navigation on detail pages
 - Currently used by: AddonDetail, ClusterDetail, Settings
 
-## Current Route Count
-74 routes registered in `internal/api/router.go` NewRouter function (73 HandleFunc + 1 Handle for swagger).
-Will grow to ~85+ with v1.0.0 remaining phases (remoteclient, notifications).
+## Patterns established in recent sprints
 
-## Test State
-- 30 backend Go tests, 105 frontend Vitest tests — all passing
-- Test files co-located as `_test.go` in same package
-- UI test files in `ui/src/views/__tests__/` (12 test files)
+- **`log/slog` over `log`** in all new code. Non-HTTP code paths (reconciler loops, schema
+  validator startup) MUST use `slog` directly, NOT `audit.Enrich` (which is request-scoped).
+  V125-1-8.1 finding.
+- **Per-instance test seams** on Deps structs, NOT package-level `var nowFn = time.Now` (race
+  hazard under `t.Parallel()`). V125-1-8.0 lesson.
+- **`sync.Once` for one-shot lifecycle** in reconcilers / starters.
+- **Three typed ProviderConfigs** (V125-1-11): `AddonSecretProviderConfig`,
+  `ClusterTestProviderConfig`, `ClusterRegSourceProviderConfig`. Reject code that resurrects
+  the old monolithic `providers.ProviderConfig` or stuffs cross-domain fields into one config.
 
 ## Severity Levels
 - **Critical** — build breaks, security vulnerabilities, data loss, credential leaks

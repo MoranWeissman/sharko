@@ -1458,4 +1458,30 @@ development_status:
   epic-V126-5-sharko-dev-dx-retrospective: optional
 
   # ============================================================
+  # v1.25.0-pre.0 — Release cut (planned 2026-05-21, locked)
+  # ============================================================
+  # Source: .bmad/output/planning-artifacts/release-v1.25.0-pre.0.md
+  # Bundles: V125-1-9 (PR #346) + V125-1-8 (PR #348) + V125-1-10/11/13.x/13.y
+  # interim + V126-1 (PR #338) + V126-2 (PR #340) + V126-3 (PR #341) +
+  # V126-4 (PR #344) + V126-5 (PR #343). Architectural headline is V125-1-9
+  # schema envelope + V125-1-8 cluster reconciler (read-contract + reconciler
+  # = YAML as operational source of truth).
+  # Two-phase: Story .1 agent-dispatched (Chart.yaml 1.19.0 -> 1.25.0-pre.0,
+  # appVersion bump, version-sentinel audit, release-notes.md consolidation,
+  # mkdocs --strict gate). Story .2 ORCHESTRATOR-driven (tag cut + push +
+  # release-pipeline watch + cosign verify + smoke). Tag is NOT agent work
+  # per CLAUDE.md "Executing actions with care" (hard-to-reverse + visible).
+  # NEVER retag pre.0 if pipeline fails -- cut pre.1 (CLAUDE.md hard rule).
+  # Branch: dev/v1.25.0-pre.0-release from main HEAD (da298893).
+  # Role files (Story .1 only): tech-lead + devops-agent + docs-writer.
+  # Serena MCP for version-sentinel search (1.19. + 1.24. patterns).
+  # Auto-merge per feedback_auto_merge_when_green.
+  # NOT bundled: role-file refresh (task #263 -- separate chore PR;
+  # internal tooling, not shipped surface).
+  epic-v1-25-0-pre-0-release: backlog
+  v1-25-0-pre-0-1-chart-bump-and-release-notes-consolidation: backlog
+  v1-25-0-pre-0-2-tag-cut-and-pipeline-watch-and-smoke: backlog
+  epic-v1-25-0-pre-0-release-retrospective: optional
+
+  # ============================================================
 

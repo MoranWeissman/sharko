@@ -11,11 +11,28 @@ You are a Go specialist for the Sharko project.
 - Go 1.25.8 (check `go.mod` for exact)
 - HTTP router: Go 1.22+ `net/http.ServeMux` with method+pattern matching — NO third-party router
 - K8s client: `k8s.io/client-go` v0.35.2
-- AWS SDK: `github.com/aws/aws-sdk-go-v2` v1.41.5
-- CLI: `github.com/spf13/cobra` v1.10.2
+- AWS SDK: `github.com/aws/aws-sdk-go-v2`
+- CLI: `github.com/spf13/cobra`
 - YAML: `gopkg.in/yaml.v3`
+- JSON Schema validation: `github.com/santhosh-tekuri/jsonschema/v5` (V125-1-9 read-time validator)
+- JSON Schema generation: `github.com/invopop/jsonschema` (V125-1-9 `cmd/schema-gen/`)
 - Auth: in-memory session map, bcrypt passwords, crypto/rand tokens, 24h expiry
-- Swagger: `github.com/swaggo/swag` v1.16.6, `github.com/swaggo/http-swagger` v1.3.4
+- Swagger: `github.com/swaggo/swag`, `github.com/swaggo/http-swagger`
+- Sigstore: `github.com/sigstore/sigstore-go` (v1.23 catalog signing — modern Bundle format)
+- Logging: `log/slog` (standard library — preferred over `log` for structured output)
+
+## Conventions established in recent sprints
+
+- **Use `log/slog` over `log`.** All new code uses `slog` for structured logs. Non-HTTP code paths
+  (reconciler loops, schema validator startup) MUST use `slog` directly — NOT `audit.Enrich`,
+  which is request-scoped via context (V125-1-8.1 finding).
+- **Per-instance test seams, not package-level vars.** Put `nowFn`, `tickInterval`,
+  `gitProviderFn`, etc. on the struct's Deps. Default them in the constructor; override per-test.
+  Package-level overrides race when multiple test goroutines mutate them (V125-1-8.0 lesson).
+- **`sync.Once` for one-shot lifecycle.** Reconciler `Start()` / closer methods that must be
+  idempotent use `sync.Once`, not a boolean + mutex dance.
+- **One Goroutine per reconciler.** Mirror the `internal/prtracker` shape: single goroutine,
+  safety-net tick + non-blocking `Trigger()` channel for low-latency external nudges.
 
 ## Swagger / OpenAPI (swaggo/swag)
 
@@ -194,10 +211,76 @@ func (o *Orchestrator) RegisterCluster(ctx, req) (*RegisterClusterResult, error)
 
 ## `internal/argosecrets/` — ArgoCD Cluster Secret Manager
 
-- `Manager.Ensure()` returns `(bool, error)` — true if write occurred, false if skipped
-- `Reconciler`: 3-min ticker reads cluster-addons.yaml, calls Manager.Ensure() per cluster
-- Adapter pattern: `ArgoSecretManager` interface in orchestrator, adapter in `internal/api/argo_adapter.go`
-- Dependency boundary: orchestrator cannot import argosecrets
+- `Manager.Ensure()` returns `(bool, error)` — true if write occurred, false if skipped.
+- `Reconciler`: 3-min ticker reads `cluster-addons.yaml`, calls `Manager.Ensure()` per cluster
+  (legacy path — kept for cluster-addons file).
+- Adapter pattern: `ArgoSecretManager` interface in orchestrator, adapter in
+  `internal/api/argo_adapter.go`. Dependency boundary: orchestrator cannot import argosecrets.
+- **Shared wrappers (V125-1-8)**: `BuildSecretConfigJSON(ClusterSecretSpec) (string, error)` and
+  `BuildClusterSecretLabels(ClusterSecretSpec) map[string]string` — both are package-level
+  wrappers reused by `internal/clusterreconciler/` so the new canonical reconciler emits
+  byte-identical Secret payloads. Never duplicate the build logic; always call these wrappers.
+
+## `internal/clusterreconciler/` — Cluster-Secret Reconciler (V125-1-8 canonical)
+
+The new canonical reconciler for `configuration/managed-clusters.yaml`. Mirrors `prtracker` shape:
+
+```go
+type Reconciler struct {
+    deps Deps   // dependencies + per-instance test seams
+    // ... single goroutine, sync.Once for Start, Trigger() channel for nudges
+}
+
+const (
+    DefaultTickInterval        = 30 * time.Second
+    DefaultManagedClustersPath = "configuration/managed-clusters.yaml"
+    DefaultArgoCDNamespace     = "argocd"
+    DefaultBranch              = "main"
+)
+```
+
+`labels.go`:
+```go
+const (
+    LabelManagedBy   = "app.kubernetes.io/managed-by"
+    LabelValueSharko = "sharko"
+)
+
+func IsManagedBySharko(secret *corev1.Secret) bool   // nil-safe
+func ApplyManagedBySharkoLabel(secret *corev1.Secret) // idempotent setter
+```
+
+Wiring in `cmd/sharko/serve.go`: `prTracker.SetOnMergeFn(func(pr prtracker.PRInfo) {
+recon.Trigger() })`. The 30s tick is the drift safety-net; the Trigger channel is the
+low-latency post-merge nudge.
+
+## `internal/schema/` — Envelope + JSON Schema Validation (V125-1-9)
+
+```go
+type Envelope[T any] struct {
+    APIVersion string   `json:"apiVersion" yaml:"apiVersion"`
+    Kind       string   `json:"kind"       yaml:"kind"`
+    Metadata   Metadata `json:"metadata"   yaml:"metadata"`
+    Spec       T        `json:"spec"       yaml:"spec"`
+}
+
+const APIVersion = "sharko.io/v1"
+const (
+    KindManagedClusters = "ManagedClusters"
+    KindAddonCatalog    = "AddonCatalog"
+)
+
+func IsEnveloped(body []byte) bool
+func DefaultValidator() Validator             // compiled embedded schemas
+func (v Validator) Validate(filename string, body []byte) error
+```
+
+`cmd/schema-gen/` introspects Go envelope types via `invopop/jsonschema` and emits committed
+schemas at BOTH `docs/schemas/*.v1.json` AND `internal/schema/*.v1.json` (the dual-write
+`writeSchemaToBoth` helper). The CI job `schemas-up-to-date` re-runs schema-gen and fails on diff.
+
+`sharko validate-config <file-or-dir>` (one path argument, optional `--quiet/-q`) is the CLI
+front-end and is invoked by the `validate-sharko-config` CI job on every changed YAML file.
 
 ## v1.4.0 New Packages and Patterns
 

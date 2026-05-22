@@ -122,16 +122,43 @@ addonSecrets:
       app-key: secrets/datadog/app-key
 ```
 
-## ArgoCD Cluster Secret Management (`internal/argosecrets/`)
+## ArgoCD Cluster Secret Management
 
-Sharko creates and manages ArgoCD cluster secrets in the `argocd` namespace, replacing ESO.
+Two cooperating writers exist, both emitting identical Secret shapes via shared wrappers in
+`internal/argosecrets/manager.go`:
 
-- `manager.go` — `Manager`: CRUD for ArgoCD cluster secrets in `execProviderConfig` format
-- `reconciler.go` — `Reconciler`: background loop (3 min) syncs `cluster-addons.yaml` → ArgoCD secrets
-- Ownership: `app.kubernetes.io/managed-by: sharko` label. `Delete()` refuses unmanaged secrets
-- Adoption: "Start Managing" adds managed-by label to pre-existing ArgoCD secrets
-- Helm RBAC: Role + RoleBinding in argocd namespace for secret writes (`rbac.argocdNamespace`)
-- Adapter: `argo_adapter.go` in `internal/api/` bridges Manager → `ArgoSecretManager` interface in orchestrator
+- `internal/argosecrets/` (legacy path, still in use)
+  - `manager.go` — CRUD for ArgoCD cluster secrets in `execProviderConfig` format.
+    `BuildSecretConfigJSON(ClusterSecretSpec) (string, error)` and
+    `BuildClusterSecretLabels(ClusterSecretSpec) map[string]string` are the **shared wrappers**
+    that V125-1-8's `internal/clusterreconciler/` reuses so both writers produce identical Secret
+    payloads — ArgoCD's auth code path is unchanged across the two.
+  - `reconciler.go` — 3-min ticker over `cluster-addons.yaml` (legacy file).
+  - Adapter: `argo_adapter.go` in `internal/api/` bridges Manager → `ArgoSecretManager` interface
+    in orchestrator.
+
+- `internal/clusterreconciler/` (V125-1-8 canonical reconciler for managed-clusters.yaml)
+  - `reconciler.go` — single goroutine, 30s `DefaultTickInterval` safety-net + non-blocking
+    `Trigger()` channel for low-latency post-merge convergence (wired in `serve.go` via
+    `prTracker.SetOnMergeFn(func(pr) { recon.Trigger() })`).
+  - `labels.go` — `LabelManagedBy = "app.kubernetes.io/managed-by"`,
+    `LabelValueSharko = "sharko"`, plus `IsManagedBySharko(secret)` (nil-safe predicate) and
+    `ApplyManagedBySharkoLabel(secret)` (idempotent setter).
+  - Reads via `models.LoadManagedClusters` (V125-1-9 envelope-aware reader); writes Secrets in
+    the `argocd` namespace filtered by the ownership label.
+  - Per-cluster + per-secret error isolation: one vault failure does NOT block reconciliation
+    of the others (design §10).
+  - Default path `configuration/managed-clusters.yaml`, branch `main`, namespace `argocd` —
+    all overridable via `Deps`.
+
+**Ownership rule (universal):** every cluster Secret Sharko writes carries the managed-by label;
+every cluster-Secret deletion checks `IsManagedBySharko` first. V125-1-7 orphan-delete tightening
+keys off the same predicate; V125-2 Adopt flips the label on as the "now mine" signal.
+
+Reference docs:
+- `docs/design/2026-05-11-cluster-secret-reconciler-and-gitops-stance.md` — design (Option E,
+  ownership model, two-direction policy, REST git read, failure modes, V125-1-8 deltas).
+- `docs/site/operator/cluster-reconciler.md` — operator runbook.
 
 ## Helm Chart (`charts/sharko/`)
 - 12 templates, 24 top-level value keys (will grow with v1.0.0 phases)
@@ -355,12 +382,26 @@ When implementing:
 
 E2E tests are in a separate `e2e` Go package (`package e2e`), not `package main`. They use `testing.T` and skip if `E2E_SHARKO_SERVER` is not set. This ensures they do not run in normal `go test ./...` or `make test`.
 
+## V125-1-11: Typed ProviderConfig split
+
+The old monolithic `providers.ProviderConfig` was split into three typed configs so cross-domain
+field leakage (e.g. `argocd_namespace` on an addon-secret provider) is a compile error:
+
+```go
+type AddonSecretProviderConfig    struct { Type string; ... }  // for SecretProvider
+type ClusterTestProviderConfig    struct { Type string; ArgoCDNamespace string; ... }
+type ClusterRegSourceProviderConfig struct { Type string; ... }  // for ClusterCredentialsProvider
+```
+
+Constructors: `NewAddonSecretProvider`, `NewClusterTestProvider`, etc. The
+`provider-types-up-to-date` CI job regenerates type mappings via `cmd/gen-provider-types/` and
+fails on diff. V125-1-10 added ArgoCDProvider auto-default + the cross-contamination namespace fix.
+
 ## Update This File When
 - ArgoCD API usage changes (new endpoints)
 - Helm chart structure changes (new templates, values)
-- New provider implementations are added
+- New provider implementations are added (typed-config constructor signature changes)
 - ApplicationSet pattern changes
-- Remote client patterns are established (Phase 3)
-- Secrets reconciler behavior changes
+- Reconciler ownership-label semantics change
 - Cluster adoption flow changes
 - ArgoCD service discovery logic changes

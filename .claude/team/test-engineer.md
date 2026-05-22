@@ -12,75 +12,84 @@ You write and maintain tests for the Sharko project.
 - React: Vitest (`npm test` in `ui/`)
 - K8s mocking: `k8s.io/client-go/kubernetes/fake`
 - HTTP testing: `net/http/httptest`
+- Schema validation: `github.com/santhosh-tekuri/jsonschema/v5` (V125-1-9)
+- e2e harness: `tests/e2e/{harness,lifecycle}` — kind multi-cluster + in-cluster gitfake Pod
+  (V125-1-13)
+- Coverage reporting: `make test-e2e-coverage` → `_dist/e2e-coverage.html`; JUnit XML via
+  `make test-e2e-junit` → `_dist/e2e-junit.xml`
 
-## Current Test State (verified)
-
-### Backend — 30 tests passing
+## Test command map
 ```
-internal/api/
-  health_test.go           TestHealthEndpoint, TestCORSHeaders, TestConnectionsListEmpty
-
-internal/argocd/
-  client_write_test.go     TestSyncApplication_Success, TestSyncApplication_Non200ReturnsError,
-                           TestRefreshApplication_Hard, TestRefreshApplication_Normal
-
-internal/config/
-  k8s_store_test.go        12 tests (SaveAndList, GetConnection, Delete, Active, FirstDefault,
-                           Update, Persist, WrongKey, DeleteActive, IsDefault, Empty)
-  parser_test.go           TestParseClusterAddons, TestParseAddonsCatalog, TestGetEnabledAddons,
-                           TestParseClusterValues, TestParseAll
-
-internal/crypto/
-  crypto_test.go           TestEncryptDecrypt, TestDecryptWrongKey, TestEncryptEmptyKey, TestDecryptEmptyKey
-
-internal/gitops/
-  yaml_mutator_test.go     (tests exist)
-
-internal/gitprovider/
-  github_write_test.go     (tests exist)
-  azuredevops_impl_test.go (tests exist)
-
-internal/models/
-  connection_test.go       (tests exist)
-
-internal/orchestrator/
-  orchestrator_test.go     11 tests (RegisterCluster direct/PR/partial/providerFail/invalidName,
-                           DeregisterCluster, UpdateClusterAddons, AddAddon, RemoveAddon,
-                           GenerateClusterValues, GenerateClusterValues_NoAddons)
-
-internal/providers/
-  k8s_secrets_test.go      4 tests (GetCredentials valid/missing/missingKey, ListClusters)
-  provider_test.go         6 tests (factory routing for k8s-secrets, kubernetes, aws-sm, 
-                           aws-secrets-manager, unknown, empty)
-
-internal/service/
-  addon_test.go            (tests exist)
-
-internal/helm/
-  diff_test.go             (tests exist)
-  fetcher_test.go          (tests exist)
+make test                  # all (Go + UI)
+make test-go               # Go only (clean cache + ./...)
+make test-ui               # UI only (vitest --run)
+make test-e2e-fast         # ~30s, in-process e2e, no kind
+make test-e2e              # ~10-15 min, kind-backed full e2e
+make test-e2e-domain DOMAIN=Cluster   # single domain
+make test-e2e-helm         # Wave-D helm-mode subset (requires docker+kind+helm+kubectl)
+make test-e2e-clean        # nuke every sharko-e2e-* kind cluster (manual recovery)
+make test-e2e-coverage     # coverage HTML in _dist/
+make test-e2e-junit        # JUnit XML in _dist/
 ```
 
-### Frontend — 105 tests passing across 19 test files
-Located in `ui/src/views/__tests__/` and component test files.
+## Current Test State
 
-## Coverage Gaps (needs tests)
+Backend tests are co-located as `*_test.go` next to source under `internal/*`. The codebase has
+grown well beyond the v0.1.0 baseline — significant test coverage exists in:
 
-### High Priority (existing code, no tests)
-- `internal/api/clusters_write.go` — no HTTP-level tests for POST/DELETE/PATCH cluster handlers
-- `internal/api/addons_write.go` — no HTTP-level tests for POST/DELETE addon handlers
-- `internal/api/init.go` — no test for handleInit
-- `internal/api/fleet.go` — no test for handleGetFleetStatus
-- `internal/api/system.go` — no tests for handleGetProviders, handleTestProvider, handleGetConfig
+- `internal/schema/` (envelope_test, validator_test, generator_test — V125-1-9)
+- `internal/clusterreconciler/` (labels_test, poll_test, reconciler_test — V125-1-8; per-instance
+  test seams, NOT package-level vars — see V125-1-8.0 race-fix lesson under "Patterns")
+- `internal/prtracker/` (lifecycle, SetOnMergeFn callback paths)
+- `internal/argosecrets/` (Manager Ensure/Delete, Reconciler tick)
+- `internal/orchestrator/` (Register/Adopt/Unadopt/Remove/Upgrade flows + findOpenPRForCluster
+  idempotent retry)
+- `internal/providers/` (typed configs from V125-1-11: AddonSecretProviderConfig,
+  ClusterTestProviderConfig, ClusterRegSourceProviderConfig + ArgoCDProvider auto-default +
+  cross-contamination namespace fix from V125-1-10)
+- `internal/api/` (audit_coverage_test enforces every mutating handler calls audit.Enrich)
+- `internal/verify/`, `internal/observations/`, `internal/diagnose/`, `internal/metrics/`,
+  `internal/authz/`, `internal/cmstore/` — all have dedicated test files
+- `cmd/sharko/` (validate_config_test, root_test, login_test, reset_admin_test, serve_test,
+  client_test)
 
-### Medium Priority (existing code)
-- `internal/argocd/client_write.go` — RegisterCluster, DeleteCluster, UpdateClusterLabels, CreateProject, CreateApplication not tested with httptest
-- `internal/orchestrator/init.go` — InitRepo not tested (needs embedded FS + mock git + mock argocd)
-- `cmd/sharko/` — no CLI command tests (would need mock HTTP server)
+E2E tests live under `tests/e2e/{harness,lifecycle}` (V125-1-13). The lifecycle directory
+contains per-domain `*_test.go` files; the harness directory contains shared apiclient_*.go
+helpers plus the in-cluster gitfake Pod scaffolding.
 
-### Low Priority
-- `internal/ai/` — no tests (complex, provider-dependent)
-- `internal/auth/store.go` — no tests
+Frontend tests are vitest, co-located alongside views/components.
+
+## Patterns established by V125-1-8 / V125-1-9 work
+
+### Per-instance test seams (not package-level vars)
+
+V125-1-8.0 surfaced a race-fix lesson: do NOT introduce package-level test-doubles
+(`var nowFn = time.Now`) when multiple test goroutines may mutate them. Instead, give the
+struct a `nowFn`, `tickInterval`, `gitProviderFn` field on its Deps struct, default it in the
+constructor, and override per-test. This keeps tests parallel-safe (`t.Parallel()`).
+
+### `slog` for non-HTTP reader paths
+
+`internal/audit` is request-scoped via context Enrich. For non-HTTP code paths (reconciler poll
+loops, schema validator startup, etc.) use `log/slog` directly. Do NOT route reconciler logs
+through audit.Enrich — there's no request context to attach to (V125-1-8.1 finding).
+
+### `sync.Once` for one-shot lifecycle
+
+Reconciler Start() must be safe to call multiple times. Use `sync.Once` to guard the goroutine
+spawn rather than a boolean+mutex dance.
+
+### Schema-validation unit-test shape (V125-1-9)
+
+```go
+// Round-trip an envelope and assert the schema validator accepts it.
+spec := models.ManagedClustersSpec{Clusters: []models.ManagedCluster{...}}
+body, err := models.SaveManagedClusters(spec)        // emits enveloped YAML
+require.NoError(t, err)
+
+err = schema.DefaultValidator().Validate("managed-clusters.yaml", body)
+require.NoError(t, err)
+```
 
 ## v1.0.0 New Test Areas
 
