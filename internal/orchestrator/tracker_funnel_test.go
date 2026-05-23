@@ -116,8 +116,12 @@ func TestUpgradeAddonGlobal_TracksWithAddonUpgradeOp(t *testing.T) {
 	git := newMockGitProvider()
 	tracker := &stubPRTracker{}
 
-	// Seed a catalog with the addon to upgrade.
-	git.files["configuration/addons-catalog.yaml"] = []byte("addons:\n- name: metrics-server\n  chart: metrics-server\n  repoUrl: https://example.com\n  version: 3.12.0\n")
+	// Seed a catalog with the addon to upgrade. The shape must match the
+	// real on-disk schema (applicationsets:, repoURL camelcase) — the
+	// pre-ZG1-A.264 line-level mutator did pure substring matching and
+	// accepted the previous (incorrectly shaped) fixture; the V125-1-9.2
+	// envelope-aware reader is stricter.
+	git.files["configuration/addons-catalog.yaml"] = []byte("applicationsets:\n- name: metrics-server\n  chart: metrics-server\n  repoURL: https://example.com\n  version: 3.12.0\n")
 
 	orch := New(nil, nil, argocd, git, defaultGitOps(), defaultPaths(), nil)
 	orch.SetPRTracker(tracker)
