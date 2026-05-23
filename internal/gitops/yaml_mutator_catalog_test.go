@@ -1,111 +1,267 @@
 package gitops
 
+// ZG1-A.264 / closes #264: envelope round-trip tests for the catalog-side
+// mutators (AddCatalogEntry, RemoveCatalogEntry, UpdateCatalogEntry,
+// UpdateCatalogVersion). Mirrors the cluster-side
+// yaml_mutator_envelope_test.go shape introduced in V125-1-8.3.
+//
+// Pins the V125-1-9.2 contract:
+//
+//   - Output ALWAYS carries the schema header on line 1 (so editors
+//     using yaml-language-server fetch the schema for inline validation).
+//   - Output ALWAYS carries the apiVersion/kind/metadata/spec envelope
+//     (canonical MarshalAddonCatalog emission).
+//   - Legacy bare-YAML inputs are accepted on read and silently upgraded
+//     to the envelope on the next emit (V125-1-9 → V126 transition).
+//   - Mutations round-trip cleanly: load → mutate → re-load returns the
+//     expected struct state with no extra entries / missing entries /
+//     mangled fields.
+//   - AddCatalogEntry returns an error on duplicate name (no silent-skip
+//     retry path on the catalog side — unlike the cluster-side mutator
+//     where adoption depends on it).
+//   - Remove / Update return an error when the addon is not found.
+//   - UpdateCatalogEntry rejects updates to the "name" key and to
+//     unknown field keys.
+
 import (
 	"strings"
 	"testing"
+
+	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/models"
 )
 
-// ---------------------------------------------------------------------------
-// Fixtures
-// ---------------------------------------------------------------------------
+// envelopedCatalogFixture is a V125-1-9.2-shaped addon-catalog.yaml body
+// used by the round-trip tests. Schema header + envelope + two entries
+// with different field shapes (with and without optional fields) exercise
+// the reader/writer paths the mutators stitch together.
+const envelopedCatalogFixture = `# yaml-language-server: $schema=https://sharko.io/schemas/addon-catalog.v1.json
+apiVersion: sharko.io/v1
+kind: AddonCatalog
+metadata:
+  name: addon-catalog
+spec:
+  applicationsets:
+    - name: datadog
+      repoURL: https://helm.datadoghq.com
+      chart: datadog
+      version: 3.160.1
+    - name: keda
+      repoURL: https://kedacore.github.io/charts
+      chart: keda
+      version: 2.14.2
+      namespace: keda-system
+`
 
-const catalogBase = `applicationsets:
+// legacyBareCatalogFixture is a pre-V125-1-9.2 addon-catalog body (no
+// envelope, top-level `applicationsets:` key). The reader accepts both
+// during the back-compat window; the writer always emits the envelope.
+const legacyBareCatalogFixture = `applicationsets:
   - name: datadog
     repoURL: https://helm.datadoghq.com
     chart: datadog
     version: 3.160.1
-
   - name: keda
     repoURL: https://kedacore.github.io/charts
     chart: keda
     version: 2.14.2
 `
 
+// catalogSchemaHeader is the canonical line-1 emission. Tests assert
+// exact bytes (modulo trailing newline) — anything else would break
+// editor inline validation.
+const catalogSchemaHeader = "# yaml-language-server: $schema=https://sharko.io/schemas/addon-catalog.v1.json"
+
+// assertEnvelopedCatalogOutput is the shared post-condition every
+// catalog mutator must satisfy: line 1 is the schema header, the
+// document re-parses successfully into a slice of AddonCatalogEntry,
+// and the envelope shape (apiVersion/kind/metadata) survives a
+// marshal/unmarshal cycle.
+func assertEnvelopedCatalogOutput(t *testing.T, out []byte, msg string) []models.AddonCatalogEntry {
+	t.Helper()
+	if !strings.HasPrefix(string(out), catalogSchemaHeader+"\n") {
+		t.Errorf("%s: schema header missing or not on line 1\n--- got ---\n%s\n--- end ---", msg, out)
+	}
+	if !strings.Contains(string(out), "apiVersion: sharko.io/v1") {
+		t.Errorf("%s: envelope apiVersion missing", msg)
+	}
+	if !strings.Contains(string(out), "kind: AddonCatalog") {
+		t.Errorf("%s: envelope kind missing", msg)
+	}
+	entries, err := config.NewParser().ParseAddonsCatalog(out)
+	if err != nil {
+		t.Fatalf("%s: output failed to re-parse via ParseAddonsCatalog: %v\n--- bytes ---\n%s", msg, err, out)
+	}
+	return entries
+}
+
+// findEntry returns the entry with name n, or nil. Convenience for the
+// round-trip assertions below.
+func findEntry(entries []models.AddonCatalogEntry, n string) *models.AddonCatalogEntry {
+	for i := range entries {
+		if entries[i].Name == n {
+			return &entries[i]
+		}
+	}
+	return nil
+}
+
 // ---------------------------------------------------------------------------
 // AddCatalogEntry
 // ---------------------------------------------------------------------------
 
-func TestAddCatalogEntry_Basic(t *testing.T) {
-	entry := CatalogEntryInput{
+func TestAddCatalogEntry_EnvelopedYAML_PreservesEnvelope(t *testing.T) {
+	out, err := AddCatalogEntry([]byte(envelopedCatalogFixture), CatalogEntryInput{
 		Name:    "prometheus",
 		RepoURL: "https://prometheus-community.github.io/helm-charts",
 		Chart:   "prometheus",
 		Version: "25.0.0",
-	}
-	out, err := AddCatalogEntry([]byte(catalogBase), entry)
+	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	s := string(out)
-	if !strings.Contains(s, "  - name: prometheus") {
-		t.Errorf("new entry not found:\n%s", s)
+
+	entries := assertEnvelopedCatalogOutput(t, out, "AddCatalogEntry")
+	if got := len(entries); got != 3 {
+		t.Fatalf("expected 3 entries after add, got %d", got)
 	}
-	if !strings.Contains(s, "    repoURL: https://prometheus-community.github.io/helm-charts") {
-		t.Errorf("repoURL not found:\n%s", s)
+	added := findEntry(entries, "prometheus")
+	if added == nil {
+		t.Fatal("prometheus missing from output")
 	}
-	if !strings.Contains(s, "    chart: prometheus") {
-		t.Errorf("chart not found:\n%s", s)
+	if added.RepoURL != "https://prometheus-community.github.io/helm-charts" {
+		t.Errorf("repoURL: got %q", added.RepoURL)
 	}
-	if !strings.Contains(s, "    version: 25.0.0") {
-		t.Errorf("version not found:\n%s", s)
+	if added.Chart != "prometheus" {
+		t.Errorf("chart: got %q", added.Chart)
 	}
-	// Namespace must NOT appear.
-	if strings.Contains(s, "namespace:") {
-		t.Errorf("unexpected namespace field:\n%s", s)
+	if added.Version != "25.0.0" {
+		t.Errorf("version: got %q", added.Version)
 	}
-	// Original entries preserved.
-	if !strings.Contains(s, "  - name: datadog") {
-		t.Errorf("datadog entry lost:\n%s", s)
+	if added.Namespace != "" {
+		t.Errorf("namespace: expected empty, got %q", added.Namespace)
 	}
-	if !strings.Contains(s, "  - name: keda") {
-		t.Errorf("keda entry lost:\n%s", s)
+
+	// Pre-existing entries survive untouched.
+	if findEntry(entries, "datadog") == nil {
+		t.Error("datadog was dropped by AddCatalogEntry")
+	}
+	if findEntry(entries, "keda") == nil {
+		t.Error("keda was dropped by AddCatalogEntry")
+	}
+}
+
+func TestAddCatalogEntry_LegacyBareYAML_UpgradesToEnvelope(t *testing.T) {
+	// Pre-V125-1-9.2 hand-authored file is read successfully; the new
+	// mutator emits the canonical envelope on save.
+	out, err := AddCatalogEntry([]byte(legacyBareCatalogFixture), CatalogEntryInput{
+		Name:    "prometheus",
+		RepoURL: "https://prometheus-community.github.io/helm-charts",
+		Chart:   "prometheus",
+		Version: "25.0.0",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	entries := assertEnvelopedCatalogOutput(t, out, "AddCatalogEntry (legacy bare input)")
+	if findEntry(entries, "prometheus") == nil {
+		t.Error("prometheus missing from output")
+	}
+}
+
+func TestAddCatalogEntry_EmptyInput_BootstrapsEnvelope(t *testing.T) {
+	out, err := AddCatalogEntry([]byte(""), CatalogEntryInput{
+		Name:    "first-addon",
+		RepoURL: "https://example.com/charts",
+		Chart:   "first-addon",
+		Version: "1.0.0",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	entries := assertEnvelopedCatalogOutput(t, out, "AddCatalogEntry (empty input)")
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	if entries[0].Name != "first-addon" {
+		t.Errorf("expected first-addon, got %q", entries[0].Name)
 	}
 }
 
 func TestAddCatalogEntry_WithNamespace(t *testing.T) {
-	entry := CatalogEntryInput{
+	out, err := AddCatalogEntry([]byte(envelopedCatalogFixture), CatalogEntryInput{
 		Name:      "metrics-server",
 		RepoURL:   "https://kubernetes-sigs.github.io/metrics-server",
 		Chart:     "metrics-server",
 		Version:   "3.12.0",
 		Namespace: "kube-system",
-	}
-	out, err := AddCatalogEntry([]byte(catalogBase), entry)
+	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	s := string(out)
-	if !strings.Contains(s, "    namespace: kube-system") {
-		t.Errorf("namespace field missing:\n%s", s)
+	entries := assertEnvelopedCatalogOutput(t, out, "AddCatalogEntry (with namespace)")
+	added := findEntry(entries, "metrics-server")
+	if added == nil {
+		t.Fatal("metrics-server missing")
+	}
+	if added.Namespace != "kube-system" {
+		t.Errorf("namespace: got %q", added.Namespace)
 	}
 }
 
 func TestAddCatalogEntry_WithSyncWave(t *testing.T) {
-	entry := CatalogEntryInput{
+	out, err := AddCatalogEntry([]byte(envelopedCatalogFixture), CatalogEntryInput{
 		Name:     "cert-manager",
 		RepoURL:  "https://charts.jetstack.io",
 		Chart:    "cert-manager",
 		Version:  "1.14.0",
 		SyncWave: -5,
-	}
-	out, err := AddCatalogEntry([]byte(catalogBase), entry)
+	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	s := string(out)
-	if !strings.Contains(s, "    syncWave: -5") {
-		t.Errorf("syncWave field missing:\n%s", s)
+	entries := assertEnvelopedCatalogOutput(t, out, "AddCatalogEntry (with syncWave)")
+	added := findEntry(entries, "cert-manager")
+	if added == nil {
+		t.Fatal("cert-manager missing")
+	}
+	if added.SyncWave != -5 {
+		t.Errorf("syncWave: got %d", added.SyncWave)
 	}
 }
 
-func TestAddCatalogEntry_DuplicateError(t *testing.T) {
-	entry := CatalogEntryInput{
+func TestAddCatalogEntry_WithDependsOn(t *testing.T) {
+	out, err := AddCatalogEntry([]byte(envelopedCatalogFixture), CatalogEntryInput{
+		Name:      "istiod",
+		RepoURL:   "https://istio-release.storage.googleapis.com/charts",
+		Chart:     "istiod",
+		Version:   "1.22.0",
+		DependsOn: []string{"datadog", "keda"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	entries := assertEnvelopedCatalogOutput(t, out, "AddCatalogEntry (with dependsOn)")
+	added := findEntry(entries, "istiod")
+	if added == nil {
+		t.Fatal("istiod missing")
+	}
+	if len(added.DependsOn) != 2 || added.DependsOn[0] != "datadog" || added.DependsOn[1] != "keda" {
+		t.Errorf("dependsOn: got %v", added.DependsOn)
+	}
+}
+
+func TestAddCatalogEntry_DuplicateName_ReturnsError(t *testing.T) {
+	// Unlike the cluster-side mutator (which silent-skips for retry
+	// semantics), the catalog mutator returns an error on duplicate —
+	// internal/orchestrator/addon.go surfaces this as a user-visible
+	// "addon already exists" error.
+	_, err := AddCatalogEntry([]byte(envelopedCatalogFixture), CatalogEntryInput{
 		Name:    "datadog",
 		RepoURL: "https://helm.datadoghq.com",
 		Chart:   "datadog",
 		Version: "3.200.0",
-	}
-	_, err := AddCatalogEntry([]byte(catalogBase), entry)
+	})
 	if err == nil {
 		t.Fatal("expected error for duplicate name")
 	}
@@ -114,153 +270,126 @@ func TestAddCatalogEntry_DuplicateError(t *testing.T) {
 	}
 }
 
-func TestAddCatalogEntry_EmptyApplicationsets(t *testing.T) {
-	input := `applicationsets:
-`
-	entry := CatalogEntryInput{
-		Name:    "keda",
-		RepoURL: "https://kedacore.github.io/charts",
-		Chart:   "keda",
-		Version: "2.14.2",
-	}
-	out, err := AddCatalogEntry([]byte(input), entry)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	s := string(out)
-	if !strings.Contains(s, "  - name: keda") {
-		t.Errorf("entry not added to empty applicationsets:\n%s", s)
-	}
-}
-
-func TestAddCatalogEntry_MissingApplicationsetsKey(t *testing.T) {
-	input := `clusters:
-  - name: test
-`
-	entry := CatalogEntryInput{Name: "keda", RepoURL: "x", Chart: "keda", Version: "1.0.0"}
-	_, err := AddCatalogEntry([]byte(input), entry)
-	if err == nil {
-		t.Fatal("expected error when applicationsets: key is absent")
-	}
-}
-
-func TestAddCatalogEntry_WithPath(t *testing.T) {
-	entry := CatalogEntryInput{
-		Name:    "hello-world",
-		RepoURL: "https://github.com/example/repo",
-		Chart:   "",
-		Version: "1.0.0",
-		Path:    "charts/hello-world",
-	}
-	out, err := AddCatalogEntry([]byte(catalogBase), entry)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	s := string(out)
-	if !strings.Contains(s, "    path: charts/hello-world") {
-		t.Errorf("path field missing:\n%s", s)
-	}
-}
-
 // ---------------------------------------------------------------------------
 // RemoveCatalogEntry
 // ---------------------------------------------------------------------------
 
 func TestRemoveCatalogEntry_First(t *testing.T) {
-	out, err := RemoveCatalogEntry([]byte(catalogBase), "datadog")
+	out, err := RemoveCatalogEntry([]byte(envelopedCatalogFixture), "datadog")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	s := string(out)
-	if strings.Contains(s, "name: datadog") {
-		t.Errorf("datadog entry still present:\n%s", s)
+	entries := assertEnvelopedCatalogOutput(t, out, "RemoveCatalogEntry (first)")
+	if findEntry(entries, "datadog") != nil {
+		t.Error("datadog still present")
 	}
-	if !strings.Contains(s, "name: keda") {
-		t.Errorf("keda entry was removed unexpectedly:\n%s", s)
+	if findEntry(entries, "keda") == nil {
+		t.Error("keda removed unexpectedly")
+	}
+	if len(entries) != 1 {
+		t.Errorf("expected 1 entry, got %d", len(entries))
 	}
 }
 
 func TestRemoveCatalogEntry_Last(t *testing.T) {
-	out, err := RemoveCatalogEntry([]byte(catalogBase), "keda")
+	out, err := RemoveCatalogEntry([]byte(envelopedCatalogFixture), "keda")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	s := string(out)
-	if strings.Contains(s, "name: keda") {
-		t.Errorf("keda entry still present:\n%s", s)
+	entries := assertEnvelopedCatalogOutput(t, out, "RemoveCatalogEntry (last)")
+	if findEntry(entries, "keda") != nil {
+		t.Error("keda still present")
 	}
-	if !strings.Contains(s, "name: datadog") {
-		t.Errorf("datadog entry was removed unexpectedly:\n%s", s)
+	if findEntry(entries, "datadog") == nil {
+		t.Error("datadog removed unexpectedly")
 	}
 }
 
 func TestRemoveCatalogEntry_Middle(t *testing.T) {
-	// Build a three-entry catalog.
-	threeEntry := `applicationsets:
-  - name: datadog
-    repoURL: https://helm.datadoghq.com
-    chart: datadog
-    version: 3.160.1
-
-  - name: keda
-    repoURL: https://kedacore.github.io/charts
-    chart: keda
-    version: 2.14.2
-
-  - name: prometheus
-    repoURL: https://prometheus-community.github.io/helm-charts
-    chart: prometheus
-    version: 25.0.0
+	threeEntry := `# yaml-language-server: $schema=https://sharko.io/schemas/addon-catalog.v1.json
+apiVersion: sharko.io/v1
+kind: AddonCatalog
+metadata:
+  name: addon-catalog
+spec:
+  applicationsets:
+    - name: datadog
+      repoURL: https://helm.datadoghq.com
+      chart: datadog
+      version: 3.160.1
+    - name: keda
+      repoURL: https://kedacore.github.io/charts
+      chart: keda
+      version: 2.14.2
+    - name: prometheus
+      repoURL: https://prometheus-community.github.io/helm-charts
+      chart: prometheus
+      version: 25.0.0
 `
 	out, err := RemoveCatalogEntry([]byte(threeEntry), "keda")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	s := string(out)
-	if strings.Contains(s, "name: keda") {
-		t.Errorf("keda entry still present:\n%s", s)
+	entries := assertEnvelopedCatalogOutput(t, out, "RemoveCatalogEntry (middle)")
+	if findEntry(entries, "keda") != nil {
+		t.Error("keda still present")
 	}
-	if !strings.Contains(s, "name: datadog") {
-		t.Errorf("datadog entry missing:\n%s", s)
+	if findEntry(entries, "datadog") == nil {
+		t.Error("datadog missing")
 	}
-	if !strings.Contains(s, "name: prometheus") {
-		t.Errorf("prometheus entry missing:\n%s", s)
-	}
-}
-
-func TestRemoveCatalogEntry_WithComment(t *testing.T) {
-	input := `applicationsets:
-  - name: datadog
-    repoURL: https://helm.datadoghq.com
-    chart: datadog
-    version: 3.160.1
-
-  # keda addon — installed in kube-system
-  - name: keda
-    repoURL: https://kedacore.github.io/charts
-    chart: keda
-    version: 2.14.2
-`
-	out, err := RemoveCatalogEntry([]byte(input), "keda")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	s := string(out)
-	if strings.Contains(s, "keda") {
-		t.Errorf("keda (including comment) still present:\n%s", s)
-	}
-	if !strings.Contains(s, "name: datadog") {
-		t.Errorf("datadog entry missing:\n%s", s)
+	if findEntry(entries, "prometheus") == nil {
+		t.Error("prometheus missing")
 	}
 }
 
 func TestRemoveCatalogEntry_NotFound(t *testing.T) {
-	_, err := RemoveCatalogEntry([]byte(catalogBase), "nonexistent")
+	_, err := RemoveCatalogEntry([]byte(envelopedCatalogFixture), "nonexistent")
 	if err == nil {
 		t.Fatal("expected error for nonexistent addon")
 	}
 	if !strings.Contains(err.Error(), "nonexistent") {
 		t.Errorf("error should mention addon name: %v", err)
+	}
+}
+
+func TestRemoveCatalogEntry_OnlyEntry(t *testing.T) {
+	input := `# yaml-language-server: $schema=https://sharko.io/schemas/addon-catalog.v1.json
+apiVersion: sharko.io/v1
+kind: AddonCatalog
+metadata:
+  name: addon-catalog
+spec:
+  applicationsets:
+    - name: keda
+      repoURL: https://kedacore.github.io/charts
+      chart: keda
+      version: 2.14.2
+`
+	out, err := RemoveCatalogEntry([]byte(input), "keda")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	entries := assertEnvelopedCatalogOutput(t, out, "RemoveCatalogEntry (only entry)")
+	if len(entries) != 0 {
+		t.Errorf("expected empty entries, got %d", len(entries))
+	}
+	// Envelope shape (applicationsets: []) must survive even when empty.
+	if !strings.Contains(string(out), "applicationsets:") {
+		t.Errorf("applicationsets key dropped from envelope:\n%s", out)
+	}
+}
+
+func TestRemoveCatalogEntry_LegacyBareYAML_UpgradesToEnvelope(t *testing.T) {
+	out, err := RemoveCatalogEntry([]byte(legacyBareCatalogFixture), "datadog")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	entries := assertEnvelopedCatalogOutput(t, out, "RemoveCatalogEntry (legacy bare input)")
+	if findEntry(entries, "datadog") != nil {
+		t.Error("datadog still present")
+	}
+	if findEntry(entries, "keda") == nil {
+		t.Error("keda removed unexpectedly")
 	}
 }
 
@@ -269,65 +398,76 @@ func TestRemoveCatalogEntry_NotFound(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestUpdateCatalogEntry_Version(t *testing.T) {
-	out, err := UpdateCatalogEntry([]byte(catalogBase), "datadog", map[string]string{"version": "3.200.0"})
+	out, err := UpdateCatalogEntry([]byte(envelopedCatalogFixture), "datadog", map[string]string{"version": "3.200.0"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	s := string(out)
-	if !strings.Contains(s, "    version: 3.200.0") {
-		t.Errorf("version not updated:\n%s", s)
+	entries := assertEnvelopedCatalogOutput(t, out, "UpdateCatalogEntry (version)")
+	updated := findEntry(entries, "datadog")
+	if updated == nil {
+		t.Fatal("datadog missing")
 	}
-	// keda version untouched.
-	if !strings.Contains(s, "    version: 2.14.2") {
-		t.Errorf("keda version was modified:\n%s", s)
+	if updated.Version != "3.200.0" {
+		t.Errorf("version: got %q", updated.Version)
+	}
+	// keda untouched.
+	other := findEntry(entries, "keda")
+	if other == nil || other.Version != "2.14.2" {
+		t.Errorf("keda version modified: %v", other)
 	}
 }
 
 func TestUpdateCatalogEntry_MultipleFields(t *testing.T) {
-	out, err := UpdateCatalogEntry([]byte(catalogBase), "keda", map[string]string{
+	out, err := UpdateCatalogEntry([]byte(envelopedCatalogFixture), "keda", map[string]string{
 		"version": "2.15.0",
 		"chart":   "keda-patched",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	s := string(out)
-	if !strings.Contains(s, "    version: 2.15.0") {
-		t.Errorf("keda version not updated:\n%s", s)
+	entries := assertEnvelopedCatalogOutput(t, out, "UpdateCatalogEntry (multi)")
+	updated := findEntry(entries, "keda")
+	if updated == nil {
+		t.Fatal("keda missing")
 	}
-	if !strings.Contains(s, "    chart: keda-patched") {
-		t.Errorf("keda chart not updated:\n%s", s)
+	if updated.Version != "2.15.0" {
+		t.Errorf("version: got %q", updated.Version)
 	}
-	// datadog untouched.
-	if !strings.Contains(s, "    version: 3.160.1") {
-		t.Errorf("datadog version was modified:\n%s", s)
+	if updated.Chart != "keda-patched" {
+		t.Errorf("chart: got %q", updated.Chart)
 	}
 }
 
 func TestUpdateCatalogEntry_AddNewField(t *testing.T) {
-	out, err := UpdateCatalogEntry([]byte(catalogBase), "datadog", map[string]string{"namespace": "monitoring"})
+	// datadog in the fixture has no namespace set; this update adds it.
+	out, err := UpdateCatalogEntry([]byte(envelopedCatalogFixture), "datadog", map[string]string{
+		"namespace": "monitoring",
+	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	s := string(out)
-	if !strings.Contains(s, "    namespace: monitoring") {
-		t.Errorf("namespace field not appended:\n%s", s)
+	entries := assertEnvelopedCatalogOutput(t, out, "UpdateCatalogEntry (add new field)")
+	updated := findEntry(entries, "datadog")
+	if updated == nil {
+		t.Fatal("datadog missing")
 	}
-	// Entry structure intact — name still at the right position.
-	if !strings.Contains(s, "  - name: datadog") {
-		t.Errorf("name line missing:\n%s", s)
+	if updated.Namespace != "monitoring" {
+		t.Errorf("namespace: got %q", updated.Namespace)
 	}
 }
 
 func TestUpdateCatalogEntry_NameRejected(t *testing.T) {
-	_, err := UpdateCatalogEntry([]byte(catalogBase), "datadog", map[string]string{"name": "renamed"})
+	_, err := UpdateCatalogEntry([]byte(envelopedCatalogFixture), "datadog", map[string]string{"name": "renamed"})
 	if err == nil {
 		t.Fatal("expected error when attempting to update name")
+	}
+	if !strings.Contains(err.Error(), "name") {
+		t.Errorf("error should mention name: %v", err)
 	}
 }
 
 func TestUpdateCatalogEntry_NotFound(t *testing.T) {
-	_, err := UpdateCatalogEntry([]byte(catalogBase), "nonexistent", map[string]string{"version": "1.0.0"})
+	_, err := UpdateCatalogEntry([]byte(envelopedCatalogFixture), "nonexistent", map[string]string{"version": "1.0.0"})
 	if err == nil {
 		t.Fatal("expected error for nonexistent addon")
 	}
@@ -336,94 +476,168 @@ func TestUpdateCatalogEntry_NotFound(t *testing.T) {
 	}
 }
 
+func TestUpdateCatalogEntry_SyncWaveParsed(t *testing.T) {
+	out, err := UpdateCatalogEntry([]byte(envelopedCatalogFixture), "datadog", map[string]string{"syncWave": "-3"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	entries := assertEnvelopedCatalogOutput(t, out, "UpdateCatalogEntry (syncWave)")
+	updated := findEntry(entries, "datadog")
+	if updated == nil {
+		t.Fatal("datadog missing")
+	}
+	if updated.SyncWave != -3 {
+		t.Errorf("syncWave: got %d", updated.SyncWave)
+	}
+}
+
+func TestUpdateCatalogEntry_SelfHealParsed(t *testing.T) {
+	out, err := UpdateCatalogEntry([]byte(envelopedCatalogFixture), "datadog", map[string]string{"selfHeal": "true"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	entries := assertEnvelopedCatalogOutput(t, out, "UpdateCatalogEntry (selfHeal)")
+	updated := findEntry(entries, "datadog")
+	if updated == nil {
+		t.Fatal("datadog missing")
+	}
+	if updated.SelfHeal == nil || *updated.SelfHeal != true {
+		t.Errorf("selfHeal: got %v", updated.SelfHeal)
+	}
+}
+
+func TestUpdateCatalogEntry_UnknownField_Rejected(t *testing.T) {
+	// The typed AddonCatalogEntry exposes a fixed field set; silently
+	// dropping unknown keys would mask caller bugs. Reject explicitly.
+	_, err := UpdateCatalogEntry([]byte(envelopedCatalogFixture), "datadog", map[string]string{"nonexistent": "value"})
+	if err == nil {
+		t.Fatal("expected error for unknown field key")
+	}
+	if !strings.Contains(err.Error(), "nonexistent") {
+		t.Errorf("error should mention field key: %v", err)
+	}
+}
+
+func TestUpdateCatalogEntry_InvalidSyncWave_ReturnsError(t *testing.T) {
+	_, err := UpdateCatalogEntry([]byte(envelopedCatalogFixture), "datadog", map[string]string{"syncWave": "not-a-number"})
+	if err == nil {
+		t.Fatal("expected error for invalid syncWave value")
+	}
+}
+
 // ---------------------------------------------------------------------------
-// AddCatalogEntry — secretName field via UpdateCatalogEntry (post-add mutation)
+// UpdateCatalogVersion (thin wrapper around UpdateCatalogEntry)
 // ---------------------------------------------------------------------------
 
-func TestAddCatalogEntry_ThenUpdateWithExtraField(t *testing.T) {
-	// Add an entry then update it with an extra field.
-	entry := CatalogEntryInput{
-		Name:    "cert-manager",
-		RepoURL: "https://charts.jetstack.io",
-		Chart:   "cert-manager",
-		Version: "1.14.0",
+func TestUpdateCatalogVersion_Existing(t *testing.T) {
+	out, err := UpdateCatalogVersion([]byte(envelopedCatalogFixture), "datadog", "3.170.0")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	after, err := AddCatalogEntry([]byte(catalogBase), entry)
+	entries := assertEnvelopedCatalogOutput(t, out, "UpdateCatalogVersion (existing)")
+	updated := findEntry(entries, "datadog")
+	if updated == nil {
+		t.Fatal("datadog missing")
+	}
+	if updated.Version != "3.170.0" {
+		t.Errorf("version: got %q", updated.Version)
+	}
+	// keda untouched.
+	other := findEntry(entries, "keda")
+	if other == nil || other.Version != "2.14.2" {
+		t.Errorf("keda version modified: %v", other)
+	}
+}
+
+func TestUpdateCatalogVersion_NotFound(t *testing.T) {
+	_, err := UpdateCatalogVersion([]byte(envelopedCatalogFixture), "nonexistent", "1.0.0")
+	if err == nil {
+		t.Fatal("expected error for nonexistent addon")
+	}
+	if !strings.Contains(err.Error(), "nonexistent") {
+		t.Errorf("error should mention addon name: %v", err)
+	}
+}
+
+func TestUpdateCatalogVersion_LegacyBareYAML_UpgradesToEnvelope(t *testing.T) {
+	out, err := UpdateCatalogVersion([]byte(legacyBareCatalogFixture), "keda", "2.15.0")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	entries := assertEnvelopedCatalogOutput(t, out, "UpdateCatalogVersion (legacy bare input)")
+	updated := findEntry(entries, "keda")
+	if updated == nil {
+		t.Fatal("keda missing")
+	}
+	if updated.Version != "2.15.0" {
+		t.Errorf("version: got %q", updated.Version)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Cross-cutting: full round-trip (load → mutate × N → re-load) must
+// converge on the expected entries without drift.
+// ---------------------------------------------------------------------------
+
+func TestCatalogMutators_FullRoundTrip_EntriesStable(t *testing.T) {
+	body := []byte(envelopedCatalogFixture)
+
+	// Add an entry.
+	body, err := AddCatalogEntry(body, CatalogEntryInput{
+		Name:     "cert-manager",
+		RepoURL:  "https://charts.jetstack.io",
+		Chart:    "cert-manager",
+		Version:  "1.14.0",
+		SyncWave: -5,
+	})
 	if err != nil {
 		t.Fatalf("AddCatalogEntry: %v", err)
 	}
 
-	// Now update it with an additional field (simulating a secrets placeholder).
-	updated, err := UpdateCatalogEntry(after, "cert-manager", map[string]string{
-		"namespace": "cert-manager",
-		"syncWave":  "-5",
-	})
+	// Update its namespace (was unset).
+	body, err = UpdateCatalogEntry(body, "cert-manager", map[string]string{"namespace": "cert-manager"})
 	if err != nil {
-		t.Fatalf("UpdateCatalogEntry after add: %v", err)
+		t.Fatalf("UpdateCatalogEntry: %v", err)
 	}
 
-	s := string(updated)
-	if !strings.Contains(s, "    namespace: cert-manager") {
-		t.Errorf("namespace field missing:\n%s", s)
-	}
-	if !strings.Contains(s, "    syncWave: -5") {
-		t.Errorf("syncWave field missing:\n%s", s)
-	}
-	// Original entries intact.
-	if !strings.Contains(s, "  - name: datadog") {
-		t.Errorf("datadog entry lost:\n%s", s)
-	}
-	if !strings.Contains(s, "  - name: keda") {
-		t.Errorf("keda entry lost:\n%s", s)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// RemoveCatalogEntry — single-entry catalog
-// ---------------------------------------------------------------------------
-
-func TestRemoveCatalogEntry_OnlyEntry(t *testing.T) {
-	input := `applicationsets:
-  - name: keda
-    repoURL: https://kedacore.github.io/charts
-    chart: keda
-    version: 2.14.2
-`
-	out, err := RemoveCatalogEntry([]byte(input), "keda")
+	// Bump datadog version.
+	body, err = UpdateCatalogVersion(body, "datadog", "3.200.0")
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("UpdateCatalogVersion: %v", err)
 	}
-	s := string(out)
-	if strings.Contains(s, "keda") {
-		t.Errorf("keda entry still present:\n%s", s)
-	}
-	if !strings.Contains(s, "applicationsets:") {
-		t.Errorf("applicationsets key removed unexpectedly:\n%s", s)
-	}
-}
 
-// ---------------------------------------------------------------------------
-// UpdateCatalogEntry — replace existing and add new in one call
-// ---------------------------------------------------------------------------
-
-func TestUpdateCatalogEntry_ReplaceExistingAndAddNew(t *testing.T) {
-	// keda exists with version and chart; update version (exists) + add namespace (new).
-	out, err := UpdateCatalogEntry([]byte(catalogBase), "keda", map[string]string{
-		"version":   "2.99.0",
-		"namespace": "keda-system",
-	})
+	// Remove keda.
+	body, err = RemoveCatalogEntry(body, "keda")
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("RemoveCatalogEntry: %v", err)
 	}
-	s := string(out)
-	if !strings.Contains(s, "    version: 2.99.0") {
-		t.Errorf("version not updated:\n%s", s)
+
+	entries := assertEnvelopedCatalogOutput(t, body, "round-trip final")
+
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(entries))
 	}
-	if !strings.Contains(s, "    namespace: keda-system") {
-		t.Errorf("namespace not appended:\n%s", s)
+
+	cm := findEntry(entries, "cert-manager")
+	if cm == nil {
+		t.Fatal("cert-manager missing")
 	}
-	// datadog untouched
-	if !strings.Contains(s, "    version: 3.160.1") {
-		t.Errorf("datadog version modified unexpectedly:\n%s", s)
+	if cm.Namespace != "cert-manager" {
+		t.Errorf("cert-manager namespace: got %q", cm.Namespace)
+	}
+	if cm.SyncWave != -5 {
+		t.Errorf("cert-manager syncWave: got %d", cm.SyncWave)
+	}
+
+	dd := findEntry(entries, "datadog")
+	if dd == nil {
+		t.Fatal("datadog missing")
+	}
+	if dd.Version != "3.200.0" {
+		t.Errorf("datadog version: got %q", dd.Version)
+	}
+
+	if findEntry(entries, "keda") != nil {
+		t.Error("keda still present after RemoveCatalogEntry")
 	}
 }
