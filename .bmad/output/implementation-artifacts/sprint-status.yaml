@@ -1478,10 +1478,44 @@ development_status:
   # Auto-merge per feedback_auto_merge_when_green.
   # NOT bundled: role-file refresh (task #263 -- separate chore PR;
   # internal tooling, not shipped surface).
-  epic-v1-25-0-pre-0-release: backlog
-  v1-25-0-pre-0-1-chart-bump-and-release-notes-consolidation: backlog
-  v1-25-0-pre-0-2-tag-cut-and-pipeline-watch-and-smoke: backlog
+  epic-v1-25-0-pre-0-release: done                                  # tag v1.25.0-pre.0 (commit abbd72a7) shipped 2026-05-22; ghcr.io image + helm OCI chart published; cosign verified
+  v1-25-0-pre-0-1-chart-bump-and-release-notes-consolidation: done  # PR #351 squash-merged 2026-05-22 (commit abbd72a7) — Chart.yaml 1.19.0→1.25.0-pre.0, cmd/sharko/root.go --version sentinel bumped, docs/site/release-notes.md consolidated section + 2 stale "in progress" placeholders folded in (net -70/+26)
+  v1-25-0-pre-0-2-tag-cut-and-pipeline-watch-and-smoke: done        # tag pushed 2026-05-22 via helper-branch (main-checkout pre-push hook); CI on tag run #26277969875 green first-try; Release workflow #26278085154 green first-try (zero RC iterations vs V123's 4); smoke verified — docker pull + OCI version label match + helm pull + appVersion match + cosign verify 2 sigs with Sigstore Fulcio (Issuer: token.actions.githubusercontent.com, SHA matches abbd72a7); GH release page created in ZG1-Z0 chore PR
   epic-v1-25-0-pre-0-release-retrospective: optional
+
+  # ============================================================
+  # ZG-1 -- Zero-gaps cleanup (planned 2026-05-23, locked)
+  # ============================================================
+  # Source: .bmad/output/planning-artifacts/zg1-zero-gaps-cleanup.md
+  # User dispatch: "i want NO gaps, at all. make a plan to address all of
+  # them.. now" (Moran 2026-05-23 post v1.25.0-pre.0 ship).
+  # Three waves: Z0 orchestrator-only tinies (1 chore PR) || A.265 + A.264
+  # parallel agent dispatches (2 separate PRs) -> B separate skill
+  # invocation (bmad-create-epics-and-stories for #82 V2 hardening).
+  # Wave Z0: GH release page for v1.25.0-pre.0 + sprint-status flip for
+  # the release entries + memory cluster_secrets_gap RESOLVED marker.
+  # Wave A.265: TestHarnessSharkoInProcess decode mismatch (pre-existing
+  # failure, handler correct, test wrong; align test shape to handler).
+  # Wave A.264: catalog-side line-level mutator retirement -- V125-1-8.3
+  # mirror for the catalog side; replace AddCatalogEntry sibling family
+  # with envelope reader/writer (models.LoadAddonCatalog +
+  # models.SaveAddonCatalog) per V125-1-9.2 writer pattern.
+  # Wave B: V2 hardening epic plan via separate bmad-create-epics-and-stories
+  # invocation post-Wave-A merge; scope = productionization for v2.0.0;
+  # V3+ items (RBAC fine-grained, SSO, multi-ArgoCD, operator mode, etc.)
+  # explicitly EXCLUDED.
+  # Branches: chore/zg1-release-page-and-status-flip-2026-05-23 ||
+  # dev/zg1-265-harness-decode-fix || dev/zg1-264-catalog-mutator-retirement
+  # from main HEAD (abbd72a7).
+  # Auto-merge all 3 PRs per feedback_auto_merge_when_green.
+  # PR #309 catalog-scan bot OUT of scope (content review != product cleanup).
+  # NO new tag this sprint -- cleanup work threads into the next release.
+  epic-zg1-zero-gaps-cleanup: backlog
+  zg1-z0-release-page-and-status-flip: backlog
+  zg1-a-265-harness-decode-fix: backlog
+  zg1-a-264-catalog-mutator-retirement: backlog
+  zg1-b-v2-hardening-plan: backlog
+  epic-zg1-zero-gaps-cleanup-retrospective: optional
 
   # ============================================================
 
