@@ -1,6 +1,6 @@
 // Package schema defines the shared self-describing YAML envelope used by
 // Sharko's gitops configuration files (managed-clusters.yaml and
-// addon-catalog.yaml). The envelope wraps the file's payload in an
+// addons-catalog.yaml). The envelope wraps the file's payload in an
 // apiVersion/kind/metadata/spec structure so the reader can validate the
 // document against a versioned JSON Schema before handing it to the
 // domain-specific loader.
@@ -45,7 +45,7 @@ const (
 	// Consumed by Story 9.1.
 	KindManagedClusters = "ManagedClusters"
 
-	// KindAddonCatalog identifies an addon-catalog.yaml document.
+	// KindAddonCatalog identifies an addons-catalog.yaml document.
 	// Consumed by Story 9.2.
 	KindAddonCatalog = "AddonCatalog"
 )

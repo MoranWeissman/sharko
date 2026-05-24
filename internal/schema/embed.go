@@ -37,7 +37,7 @@ import _ "embed"
 var embeddedManagedClustersSchema []byte
 
 // embeddedAddonCatalogSchema is the JSON Schema bytes for
-// addon-catalog.yaml. Same lifecycle as embeddedManagedClustersSchema.
+// addons-catalog.yaml. Same lifecycle as embeddedManagedClustersSchema.
 //
-//go:embed addon-catalog.v1.json
+//go:embed addons-catalog.v1.json
 var embeddedAddonCatalogSchema []byte

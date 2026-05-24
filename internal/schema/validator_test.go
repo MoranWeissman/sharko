@@ -29,7 +29,7 @@ spec:
         metrics-server: enabled
 `
 
-const validAddonCatalogBody = `# yaml-language-server: $schema=https://sharko.io/schemas/addon-catalog.v1.json
+const validAddonCatalogBody = `# yaml-language-server: $schema=https://sharko.io/schemas/addons-catalog.v1.json
 apiVersion: sharko.io/v1
 kind: AddonCatalog
 metadata:

@@ -65,7 +65,7 @@ func genAddonCatalog(t *testing.T) []byte {
 		&addonCatalogDoc{},
 		sharkoschema.AddonCatalogSchemaID,
 		"Sharko AddonCatalog",
-		"addon-catalog.yaml — the catalog of addons (ApplicationSets) Sharko can deploy to managed clusters.",
+		"addons-catalog.yaml — the catalog of addons (ApplicationSets) Sharko can deploy to managed clusters.",
 		sharkoschema.KindAddonCatalog,
 	)
 	if err != nil {

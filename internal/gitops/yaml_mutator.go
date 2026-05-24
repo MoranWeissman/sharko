@@ -1,5 +1,5 @@
 // Package gitops provides envelope-aware YAML mutation utilities for the
-// Sharko configuration files (addon-catalog.yaml, managed-clusters.yaml).
+// Sharko configuration files (addons-catalog.yaml, managed-clusters.yaml).
 //
 // Cluster-side mutators live in yaml_mutator_cluster.go and route
 // through models.LoadManagedClusters + SaveManagedClusters. Catalog-side
@@ -13,7 +13,7 @@
 // mutators (CatalogEntryInput).
 package gitops
 
-// CatalogEntryInput holds the fields for a new addon-catalog.yaml entry.
+// CatalogEntryInput holds the fields for a new addons-catalog.yaml entry.
 // Namespace, SyncWave and DependsOn are optional (zero value means not
 // set). The orchestrator builds this struct from AddAddonRequest and
 // passes it to AddCatalogEntry.

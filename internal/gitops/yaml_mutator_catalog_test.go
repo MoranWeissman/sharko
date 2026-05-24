@@ -31,11 +31,11 @@ import (
 	"github.com/MoranWeissman/sharko/internal/models"
 )
 
-// envelopedCatalogFixture is a V125-1-9.2-shaped addon-catalog.yaml body
+// envelopedCatalogFixture is a V125-1-9.2-shaped addons-catalog.yaml body
 // used by the round-trip tests. Schema header + envelope + two entries
 // with different field shapes (with and without optional fields) exercise
 // the reader/writer paths the mutators stitch together.
-const envelopedCatalogFixture = `# yaml-language-server: $schema=https://sharko.io/schemas/addon-catalog.v1.json
+const envelopedCatalogFixture = `# yaml-language-server: $schema=https://sharko.io/schemas/addons-catalog.v1.json
 apiVersion: sharko.io/v1
 kind: AddonCatalog
 metadata:
@@ -53,7 +53,7 @@ spec:
       namespace: keda-system
 `
 
-// legacyBareCatalogFixture is a pre-V125-1-9.2 addon-catalog body (no
+// legacyBareCatalogFixture is a pre-V125-1-9.2 addons-catalog body (no
 // envelope, top-level `applicationsets:` key). The reader accepts both
 // during the back-compat window; the writer always emits the envelope.
 const legacyBareCatalogFixture = `applicationsets:
@@ -70,7 +70,7 @@ const legacyBareCatalogFixture = `applicationsets:
 // catalogSchemaHeader is the canonical line-1 emission. Tests assert
 // exact bytes (modulo trailing newline) — anything else would break
 // editor inline validation.
-const catalogSchemaHeader = "# yaml-language-server: $schema=https://sharko.io/schemas/addon-catalog.v1.json"
+const catalogSchemaHeader = "# yaml-language-server: $schema=https://sharko.io/schemas/addons-catalog.v1.json"
 
 // assertEnvelopedCatalogOutput is the shared post-condition every
 // catalog mutator must satisfy: line 1 is the schema header, the
@@ -306,7 +306,7 @@ func TestRemoveCatalogEntry_Last(t *testing.T) {
 }
 
 func TestRemoveCatalogEntry_Middle(t *testing.T) {
-	threeEntry := `# yaml-language-server: $schema=https://sharko.io/schemas/addon-catalog.v1.json
+	threeEntry := `# yaml-language-server: $schema=https://sharko.io/schemas/addons-catalog.v1.json
 apiVersion: sharko.io/v1
 kind: AddonCatalog
 metadata:
@@ -353,7 +353,7 @@ func TestRemoveCatalogEntry_NotFound(t *testing.T) {
 }
 
 func TestRemoveCatalogEntry_OnlyEntry(t *testing.T) {
-	input := `# yaml-language-server: $schema=https://sharko.io/schemas/addon-catalog.v1.json
+	input := `# yaml-language-server: $schema=https://sharko.io/schemas/addons-catalog.v1.json
 apiVersion: sharko.io/v1
 kind: AddonCatalog
 metadata:
