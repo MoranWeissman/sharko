@@ -15,12 +15,12 @@ env:
   HELM_CHART_PATH: charts/sharko
 
 jobs:
-  # Story V123-2.5: cosign-keyless signs every entry in catalog/addons.yaml
-  # BEFORE the binary builds, so the embedded YAML inside the released image
-  # and CLI archives carries `signature.bundle` URLs that point at release
-  # assets uploaded later in the same workflow. Default trust policy
-  # (V123-2.3) whitelists this workflow's cert SAN, so fresh installs see
-  # the embedded catalog as Verified out of the box.
+  # cosign-keyless signs every entry in catalog/addons.yaml BEFORE the
+  # binary builds, so the embedded YAML inside the released image and
+  # CLI archives carries `signature.bundle` URLs that point at release
+  # assets uploaded later in the same workflow. The default trust policy
+  # whitelists this workflow's cert SAN, so fresh installs see the
+  # embedded catalog as Verified out of the box.
   sign-catalog-entries:
     name: Sign Catalog Entries
     if: >
@@ -31,7 +31,7 @@ jobs:
       contents: read
       # OIDC token for cosign keyless signing — Fulcio mints a short-lived
       # cert from this token; the cert SAN encodes the workflow ref pattern
-      # the V123-2.3 default trust policy regex matches.
+      # the default trust policy regex matches.
       id-token: write
 
     steps:
@@ -85,7 +85,7 @@ jobs:
       # id-token: write enables OIDC for cosign keyless signing — Fulcio
       # mints a short-lived cert from the GitHub Actions OIDC token, then
       # the signature is logged to the public Rekor transparency log. No
-      # long-lived signing key to rotate. Story V121-8.1.
+      # long-lived signing key to rotate.
       id-token: write
 
     steps:
@@ -97,10 +97,10 @@ jobs:
       - name: Fetch tags
         run: git fetch --tags --force
 
-      # Story V123-2.5: pull the signed catalog produced by the
-      # sign-catalog-entries job and overwrite catalog/addons.yaml on disk
-      # so `//go:embed addons.yaml` bakes the signed bytes into the image.
-      # Mutation is confined to this runner workspace; never committed back.
+      # Pull the signed catalog produced by the sign-catalog-entries job
+      # and overwrite catalog/addons.yaml on disk so `//go:embed
+      # addons.yaml` bakes the signed bytes into the image. Mutation is
+      # confined to this runner workspace; never committed back.
       - name: Download signed catalog artifact
         uses: actions/download-artifact@v4
         with:
@@ -168,7 +168,7 @@ jobs:
           # Multi-arch: amd64 for traditional cloud nodes, arm64 for
           # Graviton/Ampere/Apple Silicon. buildx assembles a manifest
           # list under the same tag; cosign signs the manifest digest
-          # once and the signature covers every per-arch image (V122-2).
+          # once and the signature covers every per-arch image.
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
@@ -179,10 +179,10 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Story V121-8.1: cosign keyless signing of the published image.
-      # Pins the OIDC issuer + repo-scoped certificate identity so a
-      # future `cosign verify` run can confirm the signature came from
-      # *this* repo's release workflow (not some other GHA workflow).
+      # cosign keyless signing of the published image. Pins the OIDC
+      # issuer + repo-scoped certificate identity so a future
+      # `cosign verify` run can confirm the signature came from *this*
+      # repo's release workflow (not some other GHA workflow).
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
         with:
@@ -270,7 +270,7 @@ jobs:
           fi
           echo "DIGEST=$DIGEST" >> "$GITHUB_OUTPUT"
 
-      # Story V121-8.1: cosign-sign the OCI Helm chart so consumers can
+      # cosign-sign the OCI Helm chart so consumers can
       # `cosign verify oci://ghcr.io/moranweissman/sharko:vX.Y.Z` before
       # `helm install`. Same identity policy as the image signing step.
       - name: Install cosign
@@ -296,7 +296,7 @@ jobs:
     permissions:
       contents: write
       # OIDC token for cosign keyless signing of every release archive
-      # via the goreleaser `signs:` block. Story V121-8.1.
+      # via the goreleaser `signs:` block.
       id-token: write
 
     steps:
@@ -308,11 +308,11 @@ jobs:
       - name: Fetch tags
         run: git fetch --tags --force
 
-      # Story V123-2.5: same embed-swap as build-and-push — replace the
-      # on-disk catalog with the signed copy so goreleaser-built CLI
-      # binaries also carry the signed bytes via //go:embed. The bundles
-      # are then attached to the GitHub release via .goreleaser.yaml's
-      # release.extra_files glob.
+      # Same embed-swap as build-and-push — replace the on-disk catalog
+      # with the signed copy so goreleaser-built CLI binaries also carry
+      # the signed bytes via //go:embed. The bundles are then attached
+      # to the GitHub release via .goreleaser.yaml's release.extra_files
+      # glob.
       - name: Download signed catalog artifact
         uses: actions/download-artifact@v4
         with:
@@ -346,13 +346,12 @@ jobs:
         with:
           distribution: goreleaser
           version: "~> v2"
-          # V123-2.5 swaps catalog/addons.yaml with the signed copy from the
-          # Sign Catalog Entries job (see "Use signed catalog for build" step
-          # above) and downloads the signed bundle into _dist/. Both mutate
-          # the workspace before GoReleaser runs, so its default dirty-tree
-          # check would refuse to release. --skip=validate tells GoReleaser
-          # the dirty workspace is intentional. We keep --clean so the dist/
-          # output dir is still wiped between runs.
+          # The signed-catalog swap (see "Use signed catalog for build"
+          # step above) and the bundle download mutate the workspace
+          # before GoReleaser runs, so its default dirty-tree check
+          # would refuse to release. --skip=validate tells GoReleaser
+          # the dirty workspace is intentional. We keep --clean so the
+          # dist/ output dir is still wiped between runs.
           # Ref: https://goreleaser.com/errors/dirty
           args: release --clean --skip=validate
         env:

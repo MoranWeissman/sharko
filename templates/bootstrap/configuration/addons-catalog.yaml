@@ -1,4 +1,3 @@
 # MOVED: this file is now at addon-catalog.yaml (singular).
-# The legacy filename remains a read-only alias through V125;
-# the alias will be removed in V126. Operators should rename
-# their local copy to addon-catalog.yaml at their convenience.
+# The legacy filename remains a read-only alias slated for removal.
+# Operators should rename their local copy to addon-catalog.yaml.

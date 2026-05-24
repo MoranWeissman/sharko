@@ -1,8 +1,8 @@
 ---
 name: E2E
 
-# V2 Epic 7-1.15 — comprehensive Go-native e2e suite. Runs the kind +
-# real-argocd lane (~10-15 min) on three triggers:
+# Comprehensive Go-native e2e suite. Runs the kind + real-argocd lane
+# (~10-15 min) on three triggers:
 #
 #   1. workflow_dispatch — ad-hoc runs from the Actions tab.
 #   2. pull_request labelled `e2e` — opt-in per-PR validation. Cheap PRs
@@ -109,18 +109,14 @@ jobs:
           kind get clusters 2>/dev/null | grep "^sharko-e2e-" | \
             xargs -I{} kind delete cluster --name {} || true
 
-  # V125-1-13.8 — Helm-mode E2E subset. Unlike the heavyweight `e2e`
-  # job above (label-gated, ~10-15 min, full suite), this lane runs the
-  # three Wave-D Helm-install tests on EVERY pull_request push so the
-  # real boot path (docker build → kind load → helm upgrade --install →
-  # bootstrap admin secret → port-forward) gets exercised before merge.
-  # OQ #1 resolution (maintainer 2026-05-15: "don't save runtime") —
-  # PR-blocking, no opt-in label.
-  #
-  # The kind+ArgoCD provisioning is owned by the test harness itself
-  # (tests/e2e/harness/kind.go + tests/e2e/lifecycle/*); CI just installs
-  # the binaries the harness shells out to (kind, kubectl, helm, docker).
-  # docker is preinstalled on ubuntu-latest.
+  # Helm-mode E2E subset. Unlike the heavyweight `e2e` job above
+  # (label-gated, ~10-15 min, full suite), this lane runs the
+  # Helm-install tests so the real boot path (docker build → kind load →
+  # helm upgrade --install → bootstrap admin secret → port-forward) gets
+  # exercised. The kind+ArgoCD provisioning is owned by the test harness
+  # itself (tests/e2e/harness/kind.go + tests/e2e/lifecycle/*); CI just
+  # installs the binaries the harness shells out to (kind, kubectl,
+  # helm, docker). docker is preinstalled on ubuntu-latest.
   helm-mode-e2e:
     name: Go E2E (helm + kind + argocd)
     # Same opt-in label gate as the existing e2e lane above. Helm-mode runs

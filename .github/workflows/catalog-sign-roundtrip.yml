@@ -1,46 +1,24 @@
-# V124-1.3 — catalog signing roundtrip test.
+# Catalog signing roundtrip test.
 #
-# Closes the validation gap that necessitated four throwaway -rc tags
-# during the v1.23 ship: every rc surfaced a production-only bug because
-# no CI test exercised the actual byte-format flowing from
-# `cmd/catalog-sign` (the writer) into `internal/catalog/signing.Verifier`
-# (the reader). The unit suite stubs the cosign binary with a fakeSigner —
-# fast and hermetic but blind to writer/reader byte-format drift.
+# Exercises the actual byte-format flowing from `cmd/catalog-sign` (the
+# writer) into `internal/catalog/signing.Verifier` (the reader). The unit
+# suite stubs the cosign binary with a fakeSigner — fast and hermetic but
+# blind to writer/reader byte-format drift. This job runs the production
+# cosignCLI against the production Verifier so that drift is caught in
+# CI rather than at release time.
 #
-# What this job does:
-#   1. Checks out the PR branch (or main on push).
-#   2. Installs Go (matching go.mod) and cosign v2.4.1 (pinned — matches
-#      the version sigstore/cosign-installer wires up in release.yml).
-#   3. Builds the tree to surface compile errors fast.
-#   4. Runs `go test -tags=roundtrip ./cmd/catalog-sign/...` which
-#      executes TestRoundtrip_RealCosignAndVerifier. That test:
-#        - signs a synthetic fixture entry via the PRODUCTION cosignCLI
-#          (same code path, same argv, same --new-bundle-format flag);
-#        - reads back the bundle bytes and hands them to the PRODUCTION
-#          signing.Verifier;
-#        - asserts verified=true. A divergence between writer and reader
-#          byte formats fails the job with a loud, unambiguous message.
-#   5. V124-1.4 extension: the roundtrip's TrustPolicy now ALSO populates
-#      .WorkflowRef so the full verify pipeline (SAN regex + cert-claim
-#      assertion) is exercised. A regression that breaks claim extraction
-#      (e.g. a future sigstore-go refactor renaming GithubWorkflowRef)
-#      surfaces here alongside the byte-format regressions.
+# The roundtrip's TrustPolicy populates .WorkflowRef so the full verify
+# pipeline (SAN regex + cert-claim assertion) is exercised — a regression
+# that breaks claim extraction (e.g. a sigstore-go refactor) surfaces
+# here alongside the byte-format regressions.
 #
-# Why a dedicated workflow file (not an addition to ci.yml):
+# Dedicated workflow file (not an addition to ci.yml) for:
 #   - Clearer failure attribution — a red "Catalog Sign Roundtrip" check
 #     immediately tells the operator the failure is in the signing path.
 #   - Isolated cache strategy — this job needs cosign + Sigstore TUF
 #     cache, neither of which the rest of CI uses.
-#   - The job has unique permission needs (id-token: write for keyless
-#     signing) that the broader CI doesn't.
-#
-# Triggers:
-#   - pull_request to main — so a regression is caught BEFORE merge.
-#     This is the lesson from v1.23: regressions discovered post-tag are
-#     four times more expensive to ship around.
-#   - push to main — samples the main-branch lineage so a merge-time
-#     regression (e.g. from a no-rebase merge) doesn't sit undetected
-#     until the next tag.
+#   - Unique permission needs (id-token: write for keyless signing) the
+#     broader CI doesn't need.
 #
 # Network egress required:
 #   - Fulcio (https://fulcio.sigstore.dev) — cert minting from the GHA
@@ -130,15 +108,13 @@ jobs:
           # happy on self-hosted runners that may not propagate the
           # standard env (some old runner setups don't).
           CI: "true"
-          # V124-1.4 — exercise the cert-claim assertion path in the
-          # roundtrip. The production default is ^refs/tags/v.*$, but
-          # this workflow runs on pull_request / push (not tags), so we
-          # widen the policy to match the actual workflow_ref shape that
-          # Fulcio mints for those triggers. Leaving the test to fall
-          # back to its in-test default (defaultWorkflowRefRegex)
-          # achieves the same outcome — pinning here makes the
-          # assertion shape explicit in the workflow log for whoever
-          # debugs a future failure.
+          # Exercise the cert-claim assertion path in the roundtrip.
+          # The production default is ^refs/tags/v.*$, but this workflow
+          # runs on pull_request / push (not tags), so we widen the
+          # policy to match the actual workflow_ref shape Fulcio mints
+          # for those triggers. Pinning here (rather than relying on the
+          # test default) makes the assertion shape explicit in the
+          # workflow log for whoever debugs a future failure.
           SHARKO_ROUNDTRIP_WORKFLOW_REF_REGEX: '^refs/(heads/.*|pull/.*|tags/.*)$'
         run: |
           go test -tags=roundtrip -race -count=1 -v -timeout=5m \
