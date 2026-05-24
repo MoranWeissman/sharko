@@ -1041,7 +1041,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Fetches the chart's upstream values.yaml at the catalog-pinned version, runs the V121-7 AI annotate pass (one-line `# description` comments + LLM-suggested cluster-specific paths unioned with the heuristic), and opens a Tier 2 PR with the result. Hard-blocked when the secret-leak guard matches; in that case returns 422 with redacted matches and no PR. Skipped when AI is not configured or the addon is opted out.",
+                "description": "Fetches the chart's upstream values.yaml at the catalog-pinned version, runs the AI annotate pass (one-line `# description` comments + LLM-suggested cluster-specific paths unioned with the heuristic), and opens a Tier 2 PR with the result. Hard-blocked when the secret-leak guard matches; in that case returns 422 with redacted matches and no PR. Skipped when AI is not configured or the addon is opted out.",
                 "produces": [
                     "application/json"
                 ],
@@ -2398,7 +2398,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns one record per catalog source — the embedded binary catalog (url=\"embedded\", always first) plus each configured third-party URL from SHARKO_CATALOG_URLS. Per-source fields: url, status (ok|stale|failed), last_fetched (RFC3339 or null), entry_count, verified (cosign-verified, currently always true for embedded and false for third-party until V123-2.2 lands), and optional issuer when verified. Read-only; requires authentication.",
+                "description": "Returns one record per catalog source — the embedded binary catalog (url=\"embedded\", always first) plus each configured third-party URL from SHARKO_CATALOG_URLS. Per-source fields: url, status (ok|stale|failed), last_fetched (RFC3339 or null), entry_count, verified (cosign-verified), and optional issuer when verified. Read-only; requires authentication.",
                 "produces": [
                     "application/json"
                 ],
@@ -2580,7 +2580,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Registers a new cluster in ArgoCD and creates its GitOps configuration.\nPass \"dry_run\": true to preview what would happen without making changes.\nProvider may be \"eks\" (default; uses configured secrets provider) or\n\"kubeconfig\" (V125-1.1; caller supplies kubeconfig YAML inline via the\n\"kubeconfig\" field — bearer-token auth only).",
+                "description": "Registers a new cluster in ArgoCD and creates its GitOps configuration.\nPass \"dry_run\": true to preview what would happen without making changes.\nProvider may be \"eks\" (default; uses configured secrets provider) or\n\"kubeconfig\" (caller supplies kubeconfig YAML inline via the\n\"kubeconfig\" field — bearer-token auth only).",
                 "consumes": [
                     "application/json"
                 ],
@@ -2653,7 +2653,7 @@
                         }
                     },
                     "503": {
-                        "description": "Credentials provider not configured (V124-4.1; eks provider only)",
+                        "description": "Credentials provider not configured (eks provider only)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -2773,7 +2773,7 @@
                         }
                     },
                     "503": {
-                        "description": "Credentials provider not configured (V124-4.1)",
+                        "description": "Credentials provider not configured",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -2849,7 +2849,7 @@
                         }
                     },
                     "503": {
-                        "description": "Credentials provider not configured (V124-4.1)",
+                        "description": "Credentials provider not configured",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -3690,7 +3690,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Deletes an ArgoCD cluster Secret for a cluster that has no managed-clusters.yaml entry and no open registration PR. Refuses to delete a cluster that is genuinely managed (in git), pending (has an open register PR), or NOT owned by Sharko (missing the app.kubernetes.io/managed-by=sharko label) — externally-owned Secrets are V125-2 Adopt territory.",
+                "description": "Deletes an ArgoCD cluster Secret for a cluster that has no managed-clusters.yaml entry and no open registration PR. Refuses to delete a cluster that is genuinely managed (in git), pending (has an open register PR), or NOT owned by Sharko (missing the app.kubernetes.io/managed-by=sharko label) — externally-owned Secrets are Adopt territory.",
                 "produces": [
                     "application/json"
                 ],
@@ -3824,7 +3824,7 @@
                         }
                     },
                     "503": {
-                        "description": "Credentials provider not configured (V124-4.1)",
+                        "description": "Credentials provider not configured",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -3887,7 +3887,7 @@
                         }
                     },
                     "503": {
-                        "description": "Credentials provider not configured (V124-4.1)",
+                        "description": "Credentials provider not configured",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -3950,7 +3950,7 @@
                         }
                     },
                     "503": {
-                        "description": "Credentials provider not configured (V124-4.1)",
+                        "description": "Credentials provider not configured",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -6873,7 +6873,7 @@
                     "type": "string"
                 },
                 "signature": {
-                    "description": "Signature is the optional cosign-keyless attestation pointer\n(schema v1.1+; V123-2.1). nil when the entry is unsigned.",
+                    "description": "Signature is the optional cosign-keyless attestation pointer.\nnil when the entry is unsigned.",
                     "allOf": [
                         {
                             "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_catalog.Signature"
@@ -6881,7 +6881,7 @@
                     ]
                 },
                 "signature_identity": {
-                    "description": "SignatureIdentity is the OIDC subject (cert SAN) of the verified\nsigner when Verified is true. Empty otherwise. Powers the UI's\n\"Verified by \u003cissuer\u003e\" pill (V123-2.4). Same forgery-resistant\n`yaml:\"-\"` posture as Source/Verified.",
+                    "description": "SignatureIdentity is the OIDC subject (cert SAN) of the verified\nsigner when Verified is true. Empty otherwise. Powers the UI's\n\"Verified by \u003cissuer\u003e\" pill. Same forgery-resistant `yaml:\"-\"`\nposture as Source/Verified.",
                     "type": "string"
                 },
                 "source": {
@@ -6895,7 +6895,7 @@
                     "type": "string"
                 },
                 "verified": {
-                    "description": "Verified is the post-load cosign-verification outcome (V123-2.2).\nTrue only when the entry had a valid `signature.bundle` URL whose\nfetched Sigstore bundle verified against the configured trust\npolicy AND whose OIDC subject matched a TrustPolicy.Identities\nregex. False for unsigned entries, fail-closed defaults, sig\nmismatches, untrusted identities, and infrastructure failures\nfetching the bundle. Computed at load via LoadBytesWithVerifier;\nnever persisted to YAML (`yaml:\"-\"` matches the Source pattern).",
+                    "description": "Verified is the post-load cosign-verification outcome. True only\nwhen the entry had a valid `signature.bundle` URL whose fetched\nSigstore bundle verified against the configured trust policy\nAND whose OIDC subject matched a TrustPolicy.Identities regex.\nFalse for unsigned entries, fail-closed defaults, sig mismatches,\nuntrusted identities, and infrastructure failures fetching the\nbundle. Computed at load via LoadBytesWithVerifier; never\npersisted to YAML.",
                     "type": "boolean"
                 }
             }
@@ -6989,7 +6989,7 @@
                     "type": "integer"
                 },
                 "deployed_cluster_count": {
-                    "description": "V126-3.1 (DESIGN-02): paired counts that drive the tile-level\n\"Running on N/M clusters\" badge. N = clusters where the ArgoCD\nApplication for this addon is Synced + Healthy.\nM = clusters where the addon is labelled enabled in\nmanaged-clusters.yaml. These are kept separate from the existing\nHealthyApplications / EnabledClusters fields so the tile copy can\ndistinguish \"addon is in catalog\" from \"addon is actually running\"\nwithout changing the historical stat semantics other tiles depend on.",
+                    "description": "Paired counts that drive the tile-level \"Running on N/M clusters\"\nbadge. N = clusters where the ArgoCD Application for this addon\nis Synced + Healthy. M = clusters where the addon is labelled\nenabled in managed-clusters.yaml. Kept separate from the existing\nHealthyApplications / EnabledClusters fields so the tile copy can\ndistinguish \"addon is in catalog\" from \"addon is actually\nrunning\" without changing the historical stat semantics other\ntiles depend on.",
                     "type": "integer"
                 },
                 "enabled_clusters": {
@@ -7146,7 +7146,7 @@
                     "type": "boolean"
                 },
                 "use_saved": {
-                    "description": "UseSaved, when true on a test-credentials request, instructs the\nhandler to look up the saved connection by Name and test using its\nstored credentials instead of the request body. Returns 400 if no\nsaved connection with the given name exists. Ignored by Create /\nUpdate. V124-19 / BUG-044.",
+                    "description": "UseSaved, when true on a test-credentials request, instructs the\nhandler to look up the saved connection by Name and test using its\nstored credentials instead of the request body. Returns 400 if no\nsaved connection with the given name exists. Ignored by Create /\nUpdate.",
                     "type": "boolean"
                 }
             }
@@ -7726,7 +7726,7 @@
                     }
                 },
                 "auto_merge": {
-                    "description": "AutoMerge is the per-request auto-merge decision (BUG-031). nil\nmeans \"fall back to the connection-level PRAutoMerge default\";\na non-nil value overrides the default for this operation only.\nResolved via resolveAutoMerge — never mutate o.gitops.PRAutoMerge.",
+                    "description": "AutoMerge is the per-request auto-merge decision. nil means \"fall\nback to the connection-level PRAutoMerge default\"; a non-nil\nvalue overrides the default for this operation only. Resolved via\nresolveAutoMerge — never mutate o.gitops.PRAutoMerge.",
                     "type": "boolean"
                 },
                 "dry_run": {
@@ -8102,7 +8102,7 @@
             "type": "object",
             "properties": {
                 "annotate_on_seed": {
-                    "description": "AnnotateOnSeed (v1.21 Story V121-7.3) is the global Settings toggle\nfor \"Annotate values on generate\". When the AI provider is `none`\nthe field is reported as false regardless of the persisted value —\nthe UI uses this to gate the toggle row visibility.\n\nDefault-true semantics: on a fresh install with a configured AI\nprovider but no explicit AnnotateOnSeed value (older config blobs\nfrom before V121-7), the field reports `true`. The Save handler\nstamps the explicit value on every persist so subsequent reads are\nauthoritative.",
+                    "description": "AnnotateOnSeed is the global Settings toggle for \"Annotate values\non generate\". When the AI provider is `none` the field is\nreported as false regardless of the persisted value — the UI uses\nthis to gate the toggle row visibility.\n\nDefault-true semantics: on a fresh install with a configured AI\nprovider but no explicit value (legacy config blobs), the field\nreports `true`. The Save handler stamps the explicit value on\nevery persist so subsequent reads are authoritative.",
                     "type": "boolean"
                 },
                 "available_providers": {
@@ -8275,7 +8275,7 @@
                     "type": "string"
                 },
                 "verified": {
-                    "description": "Verified reports whether the sidecar signature was validated\nagainst the trust policy. True for the embedded row (\"the binary\ntrusts its own bundled catalog\") — this is not a cosign statement\n(V123-2.5 owns signing of the embedded catalog). False for\nthird-party until V123-2.2 wires the verifier.",
+                    "description": "Verified reports whether the sidecar signature was validated\nagainst the trust policy. True for the embedded row (\"the binary\ntrusts its own bundled catalog\") — not a cosign statement.",
                     "type": "boolean"
                 }
             }
@@ -8663,7 +8663,7 @@
             "type": "object",
             "properties": {
                 "annotate_on_seed": {
-                    "description": "AnnotateOnSeed (V121-7.3) is a tri-state via the *bool sentinel:\n  nil  → caller didn't pass the field; preserve the current value\n         (or fall through to default-true if no current value exists).\n  *false → explicit OFF.\n  *true  → explicit ON.\nOnce any save sets the field, AnnotateOnSeedSet flips to true and\nthe explicit value is authoritative on subsequent reads.",
+                    "description": "AnnotateOnSeed is a tri-state via the *bool sentinel:\n  nil  → caller didn't pass the field; preserve the current value\n         (or fall through to default-true if no current value exists).\n  *false → explicit OFF.\n  *true  → explicit ON.\nOnce any save sets the field, AnnotateOnSeedSet flips to true and\nthe explicit value is authoritative on subsequent reads.",
                     "type": "boolean"
                 },
                 "api_key": {
