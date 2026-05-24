@@ -116,16 +116,11 @@ function capitalizeAddonName(name: string): string {
   return name.charAt(0).toUpperCase() + name.slice(1);
 }
 
-// V125-1-10.5: per-error-code copy + optional action link for the
-// Test-unavailable banner. Story 10.3 added three argocd_provider_* codes
-// alongside the existing BUG-035 `no_secrets_backend` code; framing per
-// design doc 2026-05-13 §2.2 and maintainer 2026-05-14 — production targets
-// are self-hosted K8s + AWS-managed clusters; kind/minikube are dev-only and
-// must not anchor production-facing copy.
-//
-// Note: Story 10.6 will create the actual `/docs/operator/aws-iam-cluster-auth`
-// page; we use the in-app placeholder route today so the link is wired and
-// will resolve once the docs page lands.
+// Per-error-code copy + optional action link for the Test-unavailable
+// banner. Production targets are self-hosted K8s + AWS-managed clusters;
+// kind/minikube are dev-only and must not anchor production-facing copy.
+// The aws-iam-cluster-auth docs link points at an in-app placeholder
+// today; it will resolve once the operator-docs page lands.
 function TestUnavailableBanner({ result }: { result: TestClusterUnavailable }) {
   let title: string;
   let body: string;
@@ -134,7 +129,6 @@ function TestUnavailableBanner({ result }: { result: TestClusterUnavailable }) {
 
   switch (result.error_code) {
     case 'no_secrets_backend':
-      // BUG-035 / PR #323 — preserve existing copy and Settings link.
       title = 'Cluster test unavailable';
       body = result.error;
       actionTo = '/settings?section=connections';
@@ -190,13 +184,12 @@ export function ClusterDetail() {
   const { name } = useParams<{ name: string }>();
   const navigate = useNavigate();
   const [data, setData] = useState<ClusterComparisonResponse | null>(null);
-  // BUG-042: pending PRs scoped to this cluster, indexed by addon name.
-  // The Sharko PR-tracker already filters by `?cluster=...&addon=...` on
-  // /api/v1/prs (V125-1-6); we fetch ALL open PRs for this cluster once
-  // and bucket per-addon in the FE so the addons table can render an
-  // inline pending-PR badge without N round-trips. PRs that didn't
-  // attribute an `addon` (e.g. cluster register/deregister) are dropped
-  // from this map — they belong to the cluster's separate PR panel.
+  // Pending PRs scoped to this cluster, indexed by addon name. We fetch
+  // ALL open PRs for this cluster once and bucket per-addon in the FE so
+  // the addons table can render an inline pending-PR badge without N
+  // round-trips. PRs that didn't attribute an `addon` (e.g. cluster
+  // register/deregister) are dropped from this map — they belong to the
+  // cluster's separate PR panel.
   const [pendingPRsByAddon, setPendingPRsByAddon] = useState<Record<string, TrackedPR[]>>({});
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -247,7 +240,7 @@ export function ClusterDetail() {
   const [configFetched, setConfigFetched] = useState(false);
   const [nodeInfo, setNodeInfo] = useState<{ total: number; ready: number; not_ready: number } | null>(null);
   const [argocdBaseURL, setArgocdBaseURL] = useState<string>('');
-  // Values editor (v1.20) — derive a GitHub deep-link from the active
+  // Values editor — derive a GitHub deep-link from the active
   // connection so users can pop into github.com to see the file in context.
   const [gitRepoBase, setGitRepoBase] = useState<string>('');
   const [gitDefaultBranch, setGitDefaultBranch] = useState<string>('main');
@@ -286,18 +279,18 @@ export function ClusterDetail() {
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [selectedAddon, setSelectedAddon] = useState<AddonCatalogItem | null>(null);
   const [deploying, setDeploying] = useState(false);
-  // BUG-036: track whether the PR auto-merged so the success toast can
-  // accurately tell the operator what just happened (PR opened → still
-  // requires merge; PR merged → ArgoCD reconcile pending), rather than
-  // claiming "deploy requested successfully" regardless of merge state.
+  // Track whether the PR auto-merged so the success toast can accurately
+  // describe what happened (PR opened → still requires merge; PR merged →
+  // ArgoCD reconcile pending) instead of claiming "deploy requested
+  // successfully" regardless of merge state.
   const [deployResult, setDeployResult] = useState<{ prUrl?: string; prId?: number; merged?: boolean; error?: string } | null>(null);
 
   // Compute display status from test result + server state
   const computedStatus = useMemo((): string => {
     if (testResult && testResult !== 'testing') {
-      // BUG-035: a "test unavailable" result (no secrets backend on the
-      // active connection) does NOT mean the cluster is unreachable — it
-      // means the test feature itself is unavailable. Fall through to the
+      // A "test unavailable" result (no secrets backend on the active
+      // connection) does NOT mean the cluster is unreachable — it means
+      // the test feature itself is unavailable. Fall through to the
       // server-reported state instead of marking the cluster red.
       if (!isTestClusterUnavailable(testResult)) {
         if (testResult.reachable || testResult.success) return 'connected';
@@ -323,11 +316,9 @@ export function ClusterDetail() {
         setLoading(true);
       }
       setError(null);
-      // BUG-042: fetch the cluster-scoped open PRs alongside the comparison
-      // so the addons table can render per-row pending-PR badges. The
-      // .catch keeps the page rendering when the PR-tracker is disabled
-      // (no prTracker → /prs returns an empty list and 200; this catch is
-      // belt-and-braces for network drops).
+      // Fetch cluster-scoped open PRs alongside the comparison so the
+      // addons table can render per-row pending-PR badges. The .catch
+      // keeps the page rendering when the PR-tracker is disabled.
       const [result, nodes, connections, prsResp] = await Promise.all([
         api.getClusterComparison(name),
         api.getNodeInfo().catch(() => null),
@@ -336,10 +327,10 @@ export function ClusterDetail() {
       ]);
       setData(result);
 
-      // BUG-042: bucket pending PRs by addon so ComparisonRow can look up
-      // its own row in O(1). PRs without an `addon` field (e.g. cluster
-      // register/deregister, init) are dropped — they belong on the
-      // cluster's PRs section, not in the addon row.
+      // Bucket pending PRs by addon so ComparisonRow can look up its own
+      // row in O(1). PRs without an `addon` field (cluster register/
+      // deregister, init) are dropped — they belong on the cluster's PRs
+      // section, not in the addon row.
       if (prsResp?.prs) {
         const byAddon: Record<string, TrackedPR[]> = {};
         for (const pr of prsResp.prs) {
@@ -441,8 +432,8 @@ export function ClusterDetail() {
     try {
       const result = await testClusterConnection(name);
       setTestResult(result);
-      // BUG-035: skip the refetch when the test came back as "unavailable" —
-      // there's no new server-side state to observe; the call was a no-op.
+      // Skip the refetch when the test came back as "unavailable" —
+      // there's no new server-side state to observe.
       if (isTestClusterUnavailable(result)) {
         return;
       }
@@ -483,12 +474,12 @@ export function ClusterDetail() {
     setDeployResult(null);
     try {
       const result = await api.enableAddonOnCluster(name, selectedAddon.addon_name);
-      // BUG-036: capture pr_url, pr_id, AND merged from `git` so the toast
-      // can branch on auto-merge state. The response shape is the orchestrator
-      // EnableAddonResult: `{ status, git: { pr_url, pr_id, merged, ... } }`.
-      // Defensive ?. chains because the wire shape might not include `git`
-      // for legacy or partial-failure responses; the UI then falls back to
-      // the generic "Request submitted" copy.
+      // Capture pr_url, pr_id, AND merged from `git` so the toast can
+      // branch on auto-merge state. Response shape is EnableAddonResult:
+      // `{ status, git: { pr_url, pr_id, merged, ... } }`. Defensive ?.
+      // chains because the wire shape might not include `git` on legacy
+      // or partial-failure responses; the UI falls back to the generic
+      // "Request submitted" copy.
       const prUrl = result?.git?.pr_url || result?.pr_url || result?.pull_request_url;
       const prId = result?.git?.pr_id || result?.pr_id;
       const merged = result?.git?.merged ?? result?.merged;
@@ -601,18 +592,12 @@ export function ClusterDetail() {
     return <LoadingState message="Loading cluster details..." />;
   }
 
-  // V125-1.5 / BUG-055 — defensive guard for the pending-PR pseudo-row
-  // case. Pre-V125-1.5 you could click a "discovered" cluster whose
-  // registration PR hadn't merged yet; this page would 404 + render the
-  // raw error string with a Retry button that always failed. The
-  // user-facing pre-V125-1.5 wording was "Failed to load comparison for
-  // cluster: <name>" — technically true, useless to act on.
-  //
+  // Defensive guard for the pending-PR pseudo-row case. A "discovered"
+  // cluster whose registration PR hasn't merged yet will 404 here.
   // We can't reliably distinguish "404 because pending PR" from "404
-  // because misspelled URL" from this component (we don't have the
-  // pending-registrations list cached). Showing a single empty state with
-  // a link back to /clusters is the right minimum: the operator gets one
-  // click to the surface that DOES know about pending PRs.
+  // because misspelled URL" without the pending-registrations list cached.
+  // Show an empty state with a link back to /clusters — the operator gets
+  // one click to the surface that DOES know about pending PRs.
   if (error) {
     const lower = error.toLowerCase();
     const looksLikeNotFound =
@@ -739,20 +724,20 @@ export function ClusterDetail() {
           <div className="flex flex-wrap items-center gap-3">
             <h2 className="text-2xl font-bold text-[#0a2a4a] dark:text-gray-100">{data.cluster.name}</h2>
             <StatusBadge status={computedStatus} size="sm" />
-            {/* V125-1-10.4: cosmetic type pill derived from server hostname. */}
+            {/* Cosmetic type pill derived from server hostname. */}
             <ClusterTypeBadge server={data.cluster.server_url} />
           </div>
           <p className="mt-1 text-sm text-[#2a5a7a] dark:text-gray-400">
             Kubernetes cluster managed by ArgoCD — deployed addons, health, and configuration overrides.
           </p>
           {testResult && testResult !== 'testing' && isTestClusterUnavailable(testResult) && (
-            // V125-1-10.5: the Test endpoint can be unavailable for several
-            // reasons — Story 10.3 extended the structured 503 envelope with
-            // typed `error_code` values. Render branch-specific copy + an
-            // action link per code so the operator gets a clear next step
-            // instead of a generic "test failed" message. The cluster itself
-            // is NOT classified as "Unreachable" in any of these branches —
-            // only the test feature is unavailable. See computedStatus above.
+            // The Test endpoint can be unavailable for several reasons —
+            // see the typed `error_code` values on TestClusterUnavailable.
+            // Branch-specific copy + an action link per code gives the
+            // operator a clear next step instead of a generic "test
+            // failed" message. The cluster itself is NOT classified as
+            // "Unreachable" in any of these branches — only the test
+            // feature is unavailable. See computedStatus above.
             <TestUnavailableBanner result={testResult} />
           )}
           {testResult && testResult !== 'testing' && !isTestClusterUnavailable(testResult) && (
@@ -1078,23 +1063,17 @@ export function ClusterDetail() {
                 </div>
               )}
 
-              {/* ArgoCD connection error banner — only shown when ArgoCD has reported
-                * an actual failure state (not the neutral "Unknown" state which Sharko
-                * uses when it hasn't yet observed an ArgoCD response).
-                *
-                * BUG-034: the previous predicate (`argocd_connection_status !== 'Successful'`)
-                * incorrectly classified the "Unknown" state as a failure. That ran the
-                * "ArgoCD Connection Failed" copy on a cluster Sharko had just learned
-                * about and not yet probed, misleading operators into thinking their
-                * cluster was broken when in fact Sharko simply hadn't observed
-                * anything yet. The fix is to distinguish three states:
+              {/* ArgoCD connection banner — distinguishes three states so a
+                * cluster Sharko hasn't yet probed isn't mis-labelled as
+                * "Connection Failed":
                 *
                 *   - argocd_connection_status missing / "Unknown" → neutral banner below
                 *   - argocd_connection_status === "Successful"    → no banner (happy path)
                 *   - anything else                                 → red "Connection Failed" banner
                 *
-                * Keep the !== 'unreachable' guard so we don't double-render the banner
-                * when the consolidated "Cluster Unreachable" banner is already shown.
+                * The !== 'unreachable' guard prevents double-rendering when
+                * the consolidated "Cluster Unreachable" banner is already
+                * shown.
                 */}
               {(() => {
                 if (computedStatus === 'unreachable') return null;
@@ -1102,8 +1081,8 @@ export function ClusterDetail() {
                 if (!argoStatus) return null;
                 if (argoStatus === 'Successful') return null;
                 const lowered = argoStatus.toLowerCase();
-                // BUG-034: "Unknown" is not a failure — it's the absence of an observation.
-                // Treat it as the neutral state and render a calm "status unknown" banner
+                // "Unknown" is not a failure — it's the absence of an
+                // observation. Render a neutral "status unknown" banner
                 // instead of the red Connection Failed copy.
                 if (lowered === 'unknown' || lowered === '') {
                   return (
@@ -1213,12 +1192,9 @@ export function ClusterDetail() {
                       {deployResult.error ? (
                         <p>{deployResult.error}</p>
                       ) : (
-                        // BUG-036: accurately describe what happened based on
-                        // git.merged. Previously this said "Addon deploy
-                        // requested successfully." regardless of whether the
-                        // PR auto-merged — operators saw success then watched
-                        // nothing arrive on the cluster (because the PR was
-                        // still open) and lost trust in the success toast.
+                        // Describe what happened based on git.merged so
+                        // operators know whether to wait for ArgoCD
+                        // reconcile or to merge the PR first.
                         <div>
                           {deployResult.merged === true && (
                             <>
@@ -1414,7 +1390,7 @@ export function ClusterDetail() {
           {/* Config section */}
           {activeSection === 'config' && (
             <div className="space-y-6">
-              {/* v1.20 — per-cluster overrides editor (Tier 2) */}
+              {/* Per-cluster overrides editor (Tier 2) */}
               <RoleGuard roles={['admin', 'operator']}>
                 <PerClusterAddonOverridesEditor
                   clusterName={name!}
@@ -1481,9 +1457,9 @@ interface ComparisonRowProps {
   onToggleExpand: () => void;
   argocdBaseURL: string;
   highlighted?: boolean;
-  // BUG-042: pending PRs targeting this addon on the current cluster.
-  // Rendered as inline badges (newest-first) on the addon-name cell so
-  // operators see "PR open" without leaving the addons sub-page.
+  // Pending PRs targeting this addon on the current cluster. Rendered as
+  // inline badges (newest-first) on the addon-name cell so operators see
+  // "PR open" without leaving the addons sub-page.
   pendingPRs?: TrackedPR[];
 }
 
@@ -1546,14 +1522,11 @@ function ComparisonRow({ addon, isExpanded, onToggleExpand, argocdBaseURL, highl
               <ExternalLink className="h-3.5 w-3.5" />
             </a>
           )}
-          {/*
-            BUG-042: pending-PR badges. One per open PR targeting this
-            addon on this cluster. Renders inline next to the addon name
-            so the operator can tell "this addon's state is in flight"
-            without scrolling to the cluster PRs section. Clicking the
-            badge opens the PR in a new tab.
-            data-testid stays stable so the per-row test can locate it.
-          */}
+          {/* Pending-PR badges (one per open PR targeting this addon on
+              this cluster). Renders inline next to the addon name so the
+              operator can tell "this addon's state is in flight" without
+              scrolling to the cluster PRs section. data-testid stays
+              stable so per-row tests can locate it. */}
           {pendingPRs.map((pr) => (
             <a
               key={pr.pr_id}

@@ -150,7 +150,7 @@ export function AuditViewer() {
         </div>
       </div>
 
-      {/* Retention banner — explains the two-stream architecture (V122-3) */}
+      {/* Retention banner — explains the two-stream architecture. */}
       <div
         role="status"
         aria-live="polite"

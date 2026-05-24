@@ -14,26 +14,24 @@ import { SourceBadge } from '@/components/SourceBadge'
 import { VerifiedBadge } from '@/components/VerifiedBadge'
 
 /**
- * MarketplaceCard — single tile rendered in the Marketplace Browse grid.
+ * Single tile rendered in the Marketplace Browse grid.
  *
  * The whole card is one keyboard-focusable button so screen readers announce
- * the addon name + key facts in one go. We intentionally avoid nested
- * interactive children to stay keyboard-friendly. Click behaviour is
- * context-dependent:
+ * the addon name + key facts in one go — no nested interactive children, to
+ * stay keyboard-friendly. Click behaviour is context-dependent:
  *
- *   - Already in your catalog → navigates to /addons/<name> (the addon
- *     detail page) so the operator can edit values or per-cluster overrides.
- *   - Not yet in catalog → swaps the Marketplace tab content for the in-page
- *     addon detail view by setting ?mp_addon=<name> on the current URL
- *     (v1.21 QA Bundle 2 — replaced the old Configure modal). The detail
- *     view shows README + an embedded "Add to your catalog" panel.
+ *   - Already in your catalog → navigates to /addons/<name> so the operator
+ *     can edit values or per-cluster overrides.
+ *   - Not yet in catalog → sets ?mp_addon=<name> on the current URL so the
+ *     parent MarketplaceTab swaps to the in-page detail view (README +
+ *     embedded "Add to your catalog" panel).
  *
- * The optional `onOpen` prop overrides the navigation (useful for tests
- * and the Search-tab where ArtifactHub results need a different source
- * marker on the URL).
+ * The optional `onOpen` prop overrides the navigation (useful for tests and
+ * the Search tab where ArtifactHub results need a different source marker
+ * on the URL).
  *
- * The "icon" is intentionally generic — chart-specific logos are out of
- * scope until V121-3 (ArtifactHub proxy) gives us a reliable source.
+ * The icon is intentionally generic — chart-specific logos are out of scope
+ * until we have a reliable source.
  */
 
 export interface MarketplaceCardProps {
@@ -46,10 +44,10 @@ export interface MarketplaceCardProps {
    *  addons-catalog.yaml. The card flips to a "View in catalog" affordance
    *  with a green check badge and tinted styling. */
   inCatalog?: boolean
-  /** V123-1.7: optional `CatalogSourceRecord` matching `entry.source`.
-   *  Powers the SourceBadge tooltip's last-fetched + status lines. Cards
-   *  without a parent-provided record still render a badge — the tooltip
-   *  just lacks the last-fetched date. */
+  /** Optional `CatalogSourceRecord` matching `entry.source`. Powers the
+   *  SourceBadge tooltip's last-fetched + status lines. Cards without a
+   *  parent-provided record still render a badge — the tooltip just lacks
+   *  the last-fetched date. */
   sourceRecord?: CatalogSourceRecord
 }
 
@@ -102,12 +100,9 @@ export function MarketplaceCard({
     .filter(Boolean)
     .join('. ')
 
-  // v1.21 QA Bundle 2: Configure → "Open" since the click leads to the
-  // in-page detail view (which then shows an "Add to your catalog" panel).
-  // Tests still match on /Configure <name>/ so we keep that token in the
-  // aria-label as a synonym to avoid breaking the existing axe + behaviour
-  // suites in a single bundle. When the v1.21 QA cycle closes we'll drop
-  // it for the cleaner "Open" label.
+  // The aria-label keeps "Configure <name>" as a synonym alongside "Open"
+  // because tests still match on /Configure <name>/. Drop the synonym
+  // once those test assertions move off the legacy label.
   const ariaLabel = inCatalog
     ? `View ${entry.name} in your catalog: ${ariaSummary}`
     : `Open ${entry.name} (Configure ${entry.name}): ${ariaSummary}`
@@ -215,13 +210,12 @@ export function MarketplaceCard({
             {c}
           </span>
         ))}
-        {/* V123-1.7 — source attribution */}
         <SourceBadge
           source={entry.source}
           sourceRecord={sourceRecord}
           compact
         />
-        {/* V123-2.4 — cosign signature attribution */}
+        {/* Cosign signature attribution */}
         <VerifiedBadge
           verified={entry.verified}
           signatureIdentity={entry.signature_identity}
@@ -241,9 +235,9 @@ export function MarketplaceCard({
           score={entry.security_score}
           tier={entry.security_tier}
           updated={entry.security_score_updated}
-          // v1.21 QA Bundle 4 Fix #3d: tiles skip the "Unknown" chip so
-          // users don't see every card labelled with placeholder text
-          // before the daily OpenSSF refresh populates real scores.
+          // Tiles skip the "Unknown" chip so cards aren't labelled with
+          // placeholder text before the daily OpenSSF refresh populates
+          // real scores.
           hideWhenUnknown
         />
         {stars && (

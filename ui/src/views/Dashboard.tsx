@@ -148,10 +148,10 @@ export function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // v1.21 Bundle 3: addon health/sync state is now sourced from the unified
-  // AddonStatesProvider so the Dashboard's "Issues" and "Progressing"
-  // sections agree with AddonDetail / ClusterDetail. We no longer fetch
-  // /dashboard/attention here — the provider does it once for the whole app.
+  // Addon health/sync state is sourced from the unified AddonStatesProvider
+  // so the Dashboard's "Issues" and "Progressing" sections agree with
+  // AddonDetail / ClusterDetail. The provider polls /dashboard/attention
+  // once for the whole app.
   const { byApp: addonStateMap, refresh: refreshAddonStates } = useAddonStates();
   const [showAttention, setShowAttention] = useState(false);
   const [showProgressing, setShowProgressing] = useState(false);
@@ -209,12 +209,11 @@ export function Dashboard() {
       // Build cluster cards
       const typedClusters = clustersData as ClustersResponse | null
       if (typedClusters?.clusters && matrixData?.addons) {
-        // V125-1.5 / BUG-051: a cluster whose registration PR is open
-        // (but not yet merged) must NOT appear in the "Clusters Needing
-        // Attention" panel. The cluster is mid-lifecycle, not broken.
-        // The BE already strips pending names from the `not_in_git`
-        // lane (internal/api/clusters.go) but a transient race could
-        // leak one through; defending in depth here.
+        // A cluster with an open (not yet merged) registration PR must NOT
+        // appear in the "Clusters Needing Attention" panel — it's mid-
+        // lifecycle, not broken. The BE strips pending names from the
+        // `not_in_git` lane; defending in depth here against transient
+        // races.
         const pendingNames = new Set(
           (typedClusters.pending_registrations ?? []).map(p => p.cluster_name)
         )
@@ -235,14 +234,12 @@ export function Dashboard() {
             }
             return { name: c.name, serverUrl: c.server_url, connectionStatus: c.connection_status || 'Unknown', addons, healthy, total }
           })
-        // BUG-033: a freshly-registered cluster sits in a pending
-        // connection state ("", "Unknown", "missing") for the ~10-60s
-        // window until ArgoCD's cluster-info refresher produces a probe
-        // result. That window is not an issue — it's a normal part of
-        // the registration lifecycle. Surface a cluster in "Needs
-        // Attention" only when ArgoCD has reported an explicit failure
-        // OR the cluster has unhealthy addons. The pending state is
-        // visualised in-place via the neutral ClusterCard pill.
+        // A freshly-registered cluster sits in a pending connection state
+        // for ~10-60s (until ArgoCD's cluster-info refresher produces a
+        // probe result) — that's a normal part of the registration
+        // lifecycle, not an issue. Surface a cluster in "Needs Attention"
+        // only when ArgoCD reports an explicit failure OR the cluster has
+        // unhealthy addons.
         const problemClusters = cards.filter(c =>
           isClusterFailed(c.connectionStatus) || c.healthy < c.total
         )
@@ -292,11 +289,10 @@ export function Dashboard() {
   const appTotal = stats.applications.total;
   const healthyCount = stats.applications.by_health_status.healthy;
 
-  // v1.21 Bundle 3 — split attention items into "real issues" vs
-  // "progressing-advisory" using the unified state model. Pure-Progressing
-  // apps no longer appear in the red "Apps with issues" widget; they get
-  // their own subtle Progressing widget with the maintainer-requested
-  // "usually temporary" advisory.
+  // Split attention items into "real issues" vs "progressing-advisory"
+  // using the unified state model. Pure-Progressing apps get their own
+  // subtle widget with a "usually temporary" advisory; they don't appear
+  // in the red "Apps with issues" widget.
   const allAddonStates = Array.from(addonStateMap.values());
   const issuesItems = allAddonStates.filter(
     (s) => s.displayState === 'degraded' || s.displayState === 'missing' || s.displayState === 'unknown',
@@ -377,9 +373,9 @@ export function Dashboard() {
               )}
             </div>
           </div>
-          {/* Expandable detail panel — v1.21 Bundle 3: addon names are
-              clickable and route to /clusters/<cluster>?section=addons&addon=<name>
-              for quick debug + AI-assisted investigation. */}
+          {/* Expandable detail panel — addon names route to
+              /clusters/<cluster>?section=addons&addon=<name> for quick
+              debug + AI-assisted investigation. */}
           {showAttention && issuesItems.length > 0 && (
             <div className="border-t border-amber-200 p-4 dark:border-amber-700">
               <div className="max-h-64 overflow-y-auto space-y-1.5">
@@ -426,13 +422,9 @@ export function Dashboard() {
         </div>
       )}
 
-      {/*
-        Progressing — separate widget per maintainer feedback (Bundle 3 §1):
-        "a progressing state can be temporary and from various reasons. App
-         can still be healthy but with a msg about it, with advisement to
-         check it." Subtle blue styling so it doesn't read as a hard error.
-        Click an addon name to land on the cluster's addon row for debugging.
-      */}
+      {/* Progressing widget — apps can still be healthy while progressing;
+          subtle blue styling so it doesn't read as a hard error. Click an
+          addon name to land on the cluster's addon row for debugging. */}
       {progressingItems.length > 0 && (
         <div className="rounded-xl border border-blue-200 bg-blue-50/60 dark:border-blue-800 dark:bg-blue-900/10">
           <div className="flex items-center justify-between p-4 pb-2">
@@ -535,7 +527,7 @@ export function Dashboard() {
           ]} />
       </div>
 
-      {/* Pull Requests — v1.21 Bundle 3: Pending/Merged toggle. */}
+      {/* Pull Requests — Pending/Merged toggle. */}
       <PullRequestsPanel onMergeDetected={handlePRMerged} />
 
       {/* Drift Alerts */}

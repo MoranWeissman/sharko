@@ -3,14 +3,12 @@ import { AlertTriangle, ExternalLink, GitMerge, Loader2, RefreshCw } from 'lucid
 import type { RecentPRsResponse } from '@/services/models'
 
 /**
- * RecentPRsPanel — small "Recent changes (last 5)" card rendered beneath a
- * ValuesEditor. Shows recently-merged PRs that touched the matching values
- * file. Backed by a 5-minute backend cache; no client-side polling.
- *
- * v1.20.2: always renders a visible card (empty-state included). Previously
- * the panel collapsed to null when zero entries, which made users think it
- * was broken. It also now accepts a `refreshKey` that forces a re-fetch
- * after the editor submits — needed so the user sees their own new PR.
+ * Small "Recent changes (last 5)" card rendered beneath a ValuesEditor.
+ * Shows recently-merged PRs that touched the matching values file. Backed
+ * by a 5-minute backend cache; no client-side polling. Always renders a
+ * visible card (empty-state included) so users don't think it's broken
+ * when there are no entries. Accepts a `refreshKey` that forces a
+ * re-fetch after the editor submits, so the user sees their own new PR.
  */
 export interface RecentPRsPanelProps {
   /** A loader that returns the response. Caller picks the addon / cluster. */

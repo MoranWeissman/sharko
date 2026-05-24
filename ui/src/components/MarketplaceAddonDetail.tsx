@@ -37,61 +37,30 @@ import { VersionPicker } from '@/components/VersionPicker'
 import { showToast } from '@/components/ToastNotification'
 
 /**
- * MarketplaceAddonDetail — v1.21 QA Bundle 2 in-page Marketplace detail view.
- *
- * Replaces the popup-style MarketplaceConfigureModal that earlier Bundles
- * shipped. Maintainer feedback (2026-04-19): the modal was too cramped for
- * the metadata an operator wants when picking an addon, and the title
- * "Configure <addon>" was misleading — clicking the button doesn't configure
- * the addon on a cluster, it adds a new entry to the catalog (which then
- * spawns an ApplicationSet).
+ * In-page Marketplace detail view. Embedded form (NOT a modal) — clicking
+ * "Add to catalog" creates an ArgoCD ApplicationSet and adds an entry to
+ * the user's `addons-catalog.yaml`.
  *
  * Layout (top → bottom):
- *
- *   1. Back link + title row
- *      "← Back to Marketplace" + addon name + "✓ In your catalog" badge
- *
- *   2. Hero section
- *      Icon + name + one-line description + category/curator chips +
- *      license + OpenSSF score + GitHub stars + chart name
- *
- *   3. Action panel — "Add <addon> to your catalog"
- *      Embedded form (NOT a modal) with explainer text:
- *        "This creates an ArgoCD ApplicationSet for <addon> and adds an
- *         entry to your `addons-catalog.yaml`. The addon will be available
- *         to deploy on any cluster afterwards."
- *      Display name + Namespace + Chart-version picker (from VersionPicker).
- *      No sync-wave (Bundle 1 decision — operators set it on the addon
- *      page after creation).
- *      AttributionNudge inline if user has no PAT.
- *      "Add to catalog" submit (NOT "Configure").
- *      When the addon is already in the catalog, the panel collapses to
- *      a friendly link to the addon detail page so we don't tempt the user
- *      to open a no-op PR.
- *
- *   4. README section
- *      Markdown rendered via MarkdownRenderer (the in-house renderer used
- *      everywhere else — same XSS-safe parsing, no dangerouslySetInnerHTML).
- *      Loading skeleton while fetching; empty state when ArtifactHub doesn't
- *      have a README for this chart.
- *
- *   5. Metadata footer
- *      Helm chart name, repo URL, docs URL, source URL, maintainers.
+ *   1. Back link + title row + "✓ In your catalog" badge
+ *   2. Hero — icon, name, description, category/curator chips, license,
+ *      OpenSSF score, GitHub stars, chart name
+ *   3. Action panel — "Add <addon> to your catalog" (no sync-wave; set on
+ *      the addon page after creation). Collapses to a friendly link when
+ *      the addon is already in the catalog so we don't tempt the user to
+ *      open a no-op PR.
+ *   4. README — Markdown rendered via MarkdownRenderer (XSS-safe). Loading
+ *      skeleton while fetching; empty state when no README.
+ *   5. Metadata footer — chart, repo URL, docs URL, source URL, maintainers.
  *
  * Data fetching:
- *   - Curated source: /catalog/addons/{name} for metadata + /catalog/addons/{name}/readme for README
- *   - ArtifactHub source: /catalog/remote/{repo}/{name} for both metadata AND README
+ *   - Curated: /catalog/addons/{name}[/readme]
+ *   - ArtifactHub: /catalog/remote/{repo}/{name} (carries the README too)
  *
- * Accessibility (WCAG 2.1 AA):
- *   - The back link is the first focusable element when the view mounts and
- *     receives focus on initial render so keyboard users land in a sensible
- *     spot after the tab swap.
- *   - The header is wrapped in a <header role="banner"> landmark, the
- *     action panel in <section aria-labelledby=...>, README in another
- *     <section>, and metadata in a <footer> — the page reads as a coherent
- *     document, not a soup of divs.
- *   - All interactive controls are keyboard-navigable (no custom click
- *     handlers on non-button elements).
+ * Accessibility (WCAG 2.1 AA): the back link gets initial focus so keyboard
+ * users land in a sensible spot after the tab swap. Sections use
+ * <header role="banner">, <section aria-labelledby=...>, and <footer>
+ * landmarks. All interactive controls are keyboard-navigable.
  */
 
 export interface MarketplaceAddonDetailProps {
@@ -140,9 +109,8 @@ export function MarketplaceAddonDetail({
   const [versionsLoading, setVersionsLoading] = useState(false)
   const [versionsError, setVersionsError] = useState<string | null>(null)
 
-  // Pre-flight duplicate detection — same approach as the (now-retired)
-  // Configure modal: lower-cased compare against the user's catalog so the
-  // submit button is gated before the network round-trip.
+  // Pre-flight duplicate detection: lower-cased compare against the user's
+  // catalog so the submit button is gated before the network round-trip.
   const [existingNames, setExistingNames] = useState<Set<string> | null>(null)
   const [hasPersonalToken, setHasPersonalToken] = useState<boolean | undefined>(
     undefined,
@@ -153,18 +121,16 @@ export function MarketplaceAddonDetail({
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [submitResult, setSubmitResult] = useState<AddAddonResponse | null>(null)
 
-  // V123-1.7: configured catalog sources. Curated detail view uses this to
-  // render the "Source" section + SourceBadge tooltip (last_fetched/status).
+  // Configured catalog sources. Curated detail view uses this to render the
+  // "Source" section + SourceBadge tooltip (last_fetched/status).
   // ArtifactHub (source === 'ah') entries skip this fetch.
   const [catalogSources, setCatalogSources] = useState<CatalogSourceRecord[]>([])
 
   const backLinkRef = useRef<HTMLButtonElement>(null)
 
-  // v1.21 QA Bundle 4 Fix #3b: README tabs — Helm Chart (existing) vs
-  // Project (upstream GitHub repo's README). Default to the Helm chart
-  // tab so the existing behaviour is preserved; project README lazy-
-  // loads on tab click so we don't pay GitHub API round-trips for users
-  // who never click it.
+  // README tabs — Helm Chart vs upstream GitHub repo's project README.
+  // Project README lazy-loads on tab click so we don't pay GitHub API
+  // round-trips for users who never click it.
   const [readmeTab, setReadmeTab] = useState<'chart' | 'project'>('chart')
   const [projectReadme, setProjectReadme] =
     useState<{ readme: string; available: boolean; source_url?: string; reason?: string } | null>(null)
@@ -175,9 +141,9 @@ export function MarketplaceAddonDetail({
     backLinkRef.current?.focus()
   }, [])
 
-  // V123-1.7: pull configured catalog sources once for the curated detail
-  // view so we can render the "Source" section + SourceBadge tooltip.
-  // Defensive — older test fixtures may not mock listCatalogSources.
+  // Pull configured catalog sources once for the curated detail view so we
+  // can render the "Source" section + SourceBadge tooltip. Defensive —
+  // older test fixtures may not mock listCatalogSources.
   useEffect(() => {
     if (source !== 'curated') return
     if (typeof api.listCatalogSources !== 'function') return
@@ -477,8 +443,8 @@ export function MarketplaceAddonDetail({
         repo_url: entry.repo,
         version: version.trim(),
         namespace: namespace.trim(),
-        // No sync_wave field — Bundle 1 decision; operators set it on the
-        // addon page after creation.
+        // No sync_wave field — operators set it on the addon page after
+        // creation.
         source: source === 'curated' ? 'marketplace' : 'artifacthub',
       })
       setSubmitResult(res)
@@ -527,17 +493,11 @@ export function MarketplaceAddonDetail({
   }
 
   return (
-    // v1.21 QA Bundle 4 Fix #3a: constrain the detail view to a comfortable
-    // reading width centred in the available space. Previously the view
-    // spanned the full parent width which made README paragraphs 1600px+
-    // wide on desktop — unreadable. Uses max-w-5xl (64rem) which is the
-    // widely-accepted "prose" ceiling.
-    //
-    // Fix #3c (scrollbar disappearing): the outer article now reserves a
-    // stable scrollbar gutter so the document-level scrollbar doesn't
-    // pop in/out as the user scrolls. WebKit also gets a track visible
-    // at all times via the `scrollbarGutter` inline style (Tailwind has
-    // no utility for it yet).
+    // Constrain the detail view to a comfortable reading width centred in
+    // the available space (max-w-5xl is the widely-accepted "prose"
+    // ceiling). Also reserves a stable scrollbar gutter so the document-
+    // level scrollbar doesn't pop in/out as the user scrolls — Tailwind
+    // has no utility for `scrollbar-gutter` yet.
     <article
       className="mx-auto flex w-full max-w-5xl flex-col gap-5"
       aria-labelledby="mp-addon-detail-title"
@@ -622,23 +582,20 @@ export function MarketplaceAddonDetail({
               score={entry.security_score}
               tier={entry.security_tier}
               updated={entry.security_score_updated}
-              // v1.21 QA Bundle 4 Fix #3d: skip the "Unknown" chip entirely.
-              // Maintainer feedback: "we have for every addon in marketplace
-              // a badge called 'Unknown' - I don't know what that is." We
-              // now render a real OpenSSF Scorecard badge only when the
-              // daily refresh job has populated a real score.
+              // Skip the "Unknown" chip — render the OpenSSF Scorecard
+              // badge only when the daily refresh job has populated a
+              // real score.
               hideWhenUnknown
             />
-            {/* V123-1.7 — source attribution badge */}
             {source === 'curated' && (
               <SourceBadge
                 source={entry.source}
                 sourceRecord={matchedSourceRecord}
               />
             )}
-            {/* V123-2.4 — cosign signature attribution. Only for curated
-                entries; ArtifactHub responses don't carry a Sharko-side
-                verified flag. */}
+            {/* Cosign signature attribution. Only for curated entries —
+                ArtifactHub responses don't carry a Sharko-side verified
+                flag. */}
             {source === 'curated' && (
               <VerifiedBadge
                 verified={entry.verified}
@@ -659,9 +616,8 @@ export function MarketplaceAddonDetail({
         </div>
       </section>
 
-      {/* V123-1.7 — third-party catalog source section. URL is text only
-          (never a clickable link — paths may carry auth tokens, see
-          .bmad/output/implementation-artifacts/V123-1-7...md §Gotchas). */}
+      {/* Third-party catalog source section. URL is rendered as text only,
+          never as a clickable link — paths may carry auth tokens. */}
       {source === 'curated' && entry.source && entry.source !== 'embedded' ? (
         <section
           aria-label="Third-party catalog source"
@@ -873,7 +829,7 @@ export function MarketplaceAddonDetail({
         )}
       </section>
 
-      {/* ─── 4. README (v1.21 QA Bundle 4 Fix #3b: tabs + stable scrollbar) ─── */}
+      {/* ─── 4. README (tabs + stable scrollbar) ─── */}
       <section
         aria-labelledby="mp-readme-title"
         className="flex flex-col gap-2 rounded-lg border border-[#c0ddf0] bg-white p-4 dark:border-gray-700 dark:bg-gray-900"
@@ -948,14 +904,9 @@ export function MarketplaceAddonDetail({
           )}
         </header>
 
-        {/*
-          Fix #3c: the README body container keeps its scrollbar gutter
-          stable (CSS scrollbar-gutter) so the scrollbar track is always
-          rendered — previously the track appeared only while actively
-          scrolling, which the maintainer flagged as annoying. max-h
-          anchors a scrollable region so long READMEs (argo-cd) don't
-          dominate the layout.
-        */}
+        {/* The README body keeps its scrollbar gutter stable so the track
+            is always rendered. max-h anchors a scrollable region so long
+            READMEs don't dominate the layout. */}
         <div
           className="max-h-[72vh] overflow-y-auto pr-1 dark:[color-scheme:dark]"
           style={{ scrollbarGutter: 'stable' }}

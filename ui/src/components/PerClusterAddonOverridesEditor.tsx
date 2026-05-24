@@ -20,18 +20,15 @@ import type {
  *
  * Pre-fetches /users/me once for the proactive AttributionNudge signal.
  *
- * v1.21.8: wrapped in React.memo with a content-based equality check on
- * `addons`. The parent (ClusterDetail) polls every 30s and produces a
- * fresh `data.addon_comparisons` array reference on every tick — even
- * when the content is unchanged. Without memo, each tick re-rendered
- * this component, which re-ran the `eligible` useMemo (returning a new
- * array ref) and, combined with the ValuesEditor's `selected`-based key,
- * caused the editor to remount repeatedly. That remount storm saturated
- * the event loop after post-migration cache invalidations and made tab
- * clicks feel dead. Memoising on addon identity (addon_name +
- * git_configured + argocd_deployed — the three fields the filter and
- * picker care about) eliminates the storm while still re-rendering when
- * the user enables/disables or adopts an addon.
+ * Wrapped in React.memo with a content-based equality check on `addons`.
+ * The parent (ClusterDetail) polls every 30s and produces a fresh
+ * `data.addon_comparisons` array reference on every tick — without memo,
+ * each tick would re-render this component, re-run the `eligible`
+ * useMemo, and (combined with the ValuesEditor's `selected`-based key)
+ * remount the editor repeatedly. Memoising on addon identity
+ * (addon_name + git_configured + argocd_deployed) prevents the remount
+ * storm while still re-rendering when the user enables/disables or adopts
+ * an addon.
  */
 export interface PerClusterAddonOverridesEditorProps {
   clusterName: string

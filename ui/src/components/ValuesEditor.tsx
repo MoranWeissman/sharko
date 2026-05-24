@@ -16,11 +16,9 @@ import { showToast } from '@/components/ToastNotification'
 import type { PreviewMergeResponse, ValuesEditResult } from '@/services/models'
 
 /**
- * ValuesEditor — the v1.20 in-app YAML editor for addon values.
- *
- * Single textarea preloaded with the Git content. Edit. Submit. The PR-diff
- * lives on GitHub; we don't replicate it here (v1.20.2 — diff pane removed
- * after maintainer feedback: "values is values, Helm takes it as-is").
+ * In-app YAML editor for addon values. Single textarea preloaded with the
+ * Git content. Edit. Submit. The PR diff lives on GitHub; we don't
+ * replicate it here.
  *
  * Schema-driven autocomplete intentionally not bundled — Monaco would add
  * ~5MB to the build. When `schema` is supplied we surface a top-level-keys
@@ -58,18 +56,15 @@ export interface ValuesEditorProps {
    */
   allowEmpty?: boolean
   /**
-   * v1.21 (Story V121-6.5): version-mismatch banner.
-   *
-   * When the backend reports `values_version_mismatch` on the
-   * GET /addons/{name}/values-schema response, the parent passes the
-   * pair plus a refresh callback. The banner only renders when both
-   * versions are present.
+   * Version-mismatch banner. When the backend reports
+   * `values_version_mismatch` on the GET /addons/{name}/values-schema
+   * response, the parent passes the pair plus a refresh callback. The
+   * banner only renders when both versions are present.
    *
    * The refresh handler should call
-   * `api.refreshAddonValuesFromUpstream(addon)` (which is the existing
-   * PUT endpoint with `refresh_from_upstream: true`). The endpoint
-   * regenerates the global file via the smart-values pipeline and opens
-   * a Tier 2 PR — the locked decision is to keep this on the same
+   * `api.refreshAddonValuesFromUpstream(addon)` (the existing PUT endpoint
+   * with `refresh_from_upstream: true`). The endpoint regenerates the
+   * global file via the smart-values pipeline and opens a Tier 2 PR — same
    * handler as manual edits.
    */
   versionMismatch?: { catalogVersion: string; valuesVersion: string } | null
@@ -84,34 +79,31 @@ export interface ValuesEditorProps {
    */
   belowEditor?: React.ReactNode | ((ctx: { refreshKey: number }) => React.ReactNode)
   /**
-   * V121-7.4: when set, the parent has determined that the values file's
-   * header says `# AI annotation: disabled` AND AI is not configured at
-   * all in Sharko's Settings. Renders the "AI annotation not configured"
-   * banner with a link to Settings → AI. Suppressed when AI is wired,
-   * even if the file isn't annotated yet.
+   * When set, the values file's header says `# AI annotation: disabled`
+   * AND AI is not configured at all in Sharko's Settings. Renders the
+   * "AI annotation not configured" banner with a link to Settings → AI.
+   * Suppressed when AI is wired, even if the file isn't annotated yet.
    */
   showAINotConfiguredBanner?: boolean
   /**
-   * V121-7.4: when set, the parent has determined that the values file's
-   * header says `# sharko: ai-annotate=off`. Renders an inline note
-   * explaining why the file has no comments. Different from
-   * showAINotConfiguredBanner — this state is per-addon, not global.
+   * When set, the values file's header says `# sharko: ai-annotate=off`.
+   * Renders an inline note explaining why the file has no comments.
+   * Different from showAINotConfiguredBanner — this state is per-addon,
+   * not global.
    */
   showAIOptedOutNote?: boolean
   /**
-   * V121-7.4: optional handler for the "AI annotate this values file"
-   * action in the Edit menu. When provided, the editor renders a button
-   * that calls this handler; the parent does the API call and toast. The
-   * editor only owns the trigger.
+   * Optional handler for the "AI annotate this values file" action.
+   * When provided, the editor renders a button that calls this handler;
+   * the parent does the API call and toast.
    */
   onAnnotateNow?: () => Promise<void>
 
   /**
-   * v1.21 QA Bundle 4 Fix #4: "Pull new fields from upstream" — additive
-   * merge that keeps user customizations. When provided, the editor
-   * renders a button that calls `onPreviewMerge` to fetch the candidate
-   * body, shows a diff modal, and on Apply calls the standard
-   * `onSubmit` with the merged body.
+   * "Pull new fields from upstream" — additive merge that keeps user
+   * customizations. When provided, the editor renders a button that calls
+   * `onPreviewMerge` to fetch the candidate body, shows a diff modal, and
+   * on Apply calls the standard `onSubmit` with the merged body.
    *
    * Distinct from onRefreshFromUpstream (Refresh = REPLACE; Pull new
    * fields = MERGE). Parents wire the two to different API endpoints:
@@ -121,12 +113,11 @@ export interface ValuesEditorProps {
   onPreviewMerge?: () => Promise<PreviewMergeResponse>
 
   /**
-   * v1.21 Bundle 5: legacy `<addonName>:` wrap migration. When set, the
-   * backend reported that the current values file is wrapped under a
-   * legacy root key — Helm silently ignores those values. Editor renders
-   * a yellow banner with a "Migrate this file" button that calls
-   * `onMigrateLegacyWrap` (which opens a Tier 2 PR via the unwrap-globals
-   * endpoint scoped to this addon).
+   * Legacy `<addonName>:` wrap migration. When set, the backend reported
+   * that the current values file is wrapped under a legacy root key — Helm
+   * silently ignores those values. Editor renders a yellow banner with a
+   * "Migrate this file" button that calls `onMigrateLegacyWrap`, which
+   * opens a Tier 2 PR via the unwrap-globals endpoint scoped to this addon.
    */
   legacyWrapDetected?: boolean
   onMigrateLegacyWrap?: () => Promise<void>
@@ -161,7 +152,7 @@ export function ValuesEditor({
   const [refreshKey, setRefreshKey] = useState(0)
   const [annotating, setAnnotating] = useState(false)
   const [migratingWrap, setMigratingWrap] = useState(false)
-  // v1.21 QA Bundle 4 Fix #4: preview-merge modal state.
+  // Preview-merge modal state.
   const [previewOpen, setPreviewOpen] = useState(false)
   const [previewing, setPreviewing] = useState(false)
   const [previewError, setPreviewError] = useState<string | null>(null)
@@ -244,10 +235,10 @@ export function ValuesEditor({
   const showProactiveNudge = hasPersonalToken === false
   const responsePR = lastResult?.pr_url || lastResult?.result?.pr_url
 
-  // Story V121-6.5 banner: only render when the backend reported a real
-  // mismatch AND the user has not dismissed the banner for this pair AND
-  // a refresh handler is wired (parents that don't support refresh —
-  // per-cluster overrides editor — will pass undefined).
+  // Only render the mismatch banner when the backend reported a real
+  // mismatch AND the user has not dismissed it for this pair AND a refresh
+  // handler is wired (parents that don't support refresh — per-cluster
+  // overrides editor — pass undefined).
   const showMismatchBanner =
     !!versionMismatch && !!onRefreshFromUpstream && !bannerDismissed
 
@@ -302,11 +293,10 @@ export function ValuesEditor({
               Edit in GitHub
             </a>
           )}
-          {/* v1.21 QA Bundle 4 Fix #4: "Pull new fields from upstream"
-              — additive merge that keeps user customizations. Distinct
-              from refresh-from-upstream (which REPLACES the file via
-              the version-mismatch banner). Tooltip clarifies the
-              difference so the operator picks the right action. */}
+          {/* "Pull new fields from upstream" — additive merge that keeps
+              user customizations. Distinct from refresh-from-upstream
+              (which REPLACES the file via the version-mismatch banner).
+              Tooltip clarifies the difference. */}
           {onPreviewMerge && (
             <button
               type="button"
@@ -344,10 +334,9 @@ export function ValuesEditor({
               )}
             </button>
           )}
-          {/* V121-7.4: manual annotate trigger. Renders only when the
-              parent supplied a handler (i.e. AI is configured and the
-              addon is not opted out). The button calls the parent and
-              the parent owns the toast + secret-block surfacing. */}
+          {/* Manual annotate trigger. Renders only when the parent
+              supplied a handler (AI configured + addon not opted out).
+              Parent owns the toast + secret-block surfacing. */}
           {onAnnotateNow && (
             <button
               type="button"
@@ -374,19 +363,12 @@ export function ValuesEditor({
               )}
             </button>
           )}
-          {/*
-            v1.21 (Story V121-6.5): the always-visible "Pull upstream
-            defaults" actions menu was removed. The same functionality
-            now appears as a contextual banner above the editor when the
-            values file's stamped chart version is older than the
-            catalog's pinned version. See `showMismatchBanner` below.
-          */}
         </div>
       </div>
 
-      {/* v1.21 Bundle 5: legacy `<addon>:` wrap migration banner. Renders
-          above the version-mismatch banner so the operator sees the more
-          severe issue (Helm silently ignoring values) first. */}
+      {/* Legacy `<addon>:` wrap migration banner. Renders above the
+          version-mismatch banner so the operator sees the more severe
+          issue (Helm silently ignoring values) first. */}
       {legacyWrapDetected && onMigrateLegacyWrap && (
         <div
           role="alert"
@@ -429,7 +411,7 @@ export function ValuesEditor({
         </div>
       )}
 
-      {/* Version-mismatch banner (Story V121-6.5). */}
+      {/* Version-mismatch banner. */}
       {showMismatchBanner && versionMismatch && (
         <div
           role="alert"
@@ -476,8 +458,7 @@ export function ValuesEditor({
         </div>
       )}
 
-      {/* V121-7.4: AI annotation status banners. Three mutually exclusive
-          states are interesting:
+      {/* AI annotation status banners. Three mutually exclusive states:
             1. AI not configured (global) AND file says "annotation: disabled":
                nudge the operator toward Settings → AI.
             2. Per-addon opt-out is set: explain why the file has no comments.
@@ -672,22 +653,11 @@ export function ValuesEditor({
         </div>
       )}
 
-      {/*
-        Note: the v1.20.2 "Pull upstream defaults" confirm modal lived
-        here. It was removed in v1.21 (Story V121-6.5). The contextual
-        version-mismatch banner above replaces it — refresh now happens
-        in-place from the banner, no second confirm step. The locked
-        rationale is that the banner only fires when the values are
-        actually stale, so the "you'll lose your edits" warning the
-        modal carried is no longer the user's first encounter with the
-        action.
-      */}
-
-      {/* v1.21 QA Bundle 4 Fix #4: diff-and-merge preview modal.
-          Shows the candidate merged body and a summary of what changed.
-          "Apply changes" calls the standard onSubmit (same endpoint as
-          manual edits) so the commit path, audit, and attribution are
-          unchanged. "Cancel" closes without touching Git.
+      {/* Diff-and-merge preview modal. Shows the candidate merged body and
+          a summary of what changed. "Apply changes" calls the standard
+          onSubmit (same endpoint as manual edits) so the commit path,
+          audit, and attribution are unchanged. "Cancel" closes without
+          touching Git.
 
           WCAG 2.1 AA:
             - role=dialog + aria-modal=true

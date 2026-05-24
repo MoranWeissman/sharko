@@ -156,13 +156,10 @@ function StepGit({
   onNext: () => void
   onBack: () => void
   onClearConfig?: () => void
-  // V124-17 / BUG-040: when an existing connection is loaded into the form
-  // (resume mode), the password input renders empty by design — we never
-  // re-display saved secrets. The previous "Personal access token (PAT)"
-  // placeholder made it look like the user's saved credential had been
-  // wiped. Surface the saved-credential affordance instead so the user
-  // knows blank-submit preserves the saved token (PUT /connections/{name}
-  // does the merge server-side, see internal/api/connections.go).
+  // In resume mode, the password input renders empty by design — saved
+  // secrets are never re-displayed. The saved-credential placeholder tells
+  // the user that blank-submit preserves the saved token (the backend's
+  // PUT /connections/{name} handler does a token-preserving merge).
   hasSavedToken?: boolean
 }) {
   const canNext = testStatus.git === 'ok'
@@ -240,11 +237,9 @@ function StepGit({
         )}
       </div>
 
-      {/* V124-16 / BUG-037: when the wizard runs in resume mode (existing
-          connection loaded into the form), expose a "clear everything and
-          start over" escape hatch. Only rendered when the parent wires
-          onClearConfig — i.e. only for the resume-mode flow, not the
-          fresh-install flow where there's nothing to clear. */}
+      {/* In resume mode, expose a "clear everything and start over" escape
+          hatch. Only rendered when the parent wires onClearConfig — fresh-
+          install mode has nothing to clear. */}
       {onClearConfig && (
         <div className="pt-2 border-t border-[#bee0ff] dark:border-gray-700">
           <button
@@ -305,10 +300,8 @@ function StepArgoCD({
   saving: boolean
   saveError: string | null
   onBack: () => void
-  // V124-17 / BUG-040: same saved-credential affordance as StepGit. The
-  // ArgoCD token input renders empty in resume mode by design; this
-  // placeholder + helper text make the "blank-submit preserves saved
-  // value" semantic visible to the user.
+  // Same saved-credential affordance as StepGit — token field is empty in
+  // resume mode by design; blank-submit preserves the saved value.
   hasSavedToken?: boolean
 }) {
   const canSave = testStatus.argocd === 'ok'
@@ -502,10 +495,10 @@ function StepInit({ onDone, resumed, onBack }: { onDone: () => void; resumed?: b
   const [steps, setSteps] = useState<OperationStep[]>([])
   const [operationStatus, setOperationStatus] = useState<string>('idle')
   const [prUrl, setPrUrl] = useState<string | null>(null)
-  // V124-15 / BUG-033: when session expires mid-poll, render a "Log in
-  // again" button (instead of the generic "Retry"/"Skip"). Tracked
-  // separately from `error` so a malformed error string can't accidentally
-  // trigger the auth-recovery flow.
+  // When session expires mid-poll, render a "Log in again" button instead
+  // of the generic "Retry"/"Skip". Tracked separately from `error` so a
+  // malformed error string can't accidentally trigger the auth-recovery
+  // flow.
   const [sessionExpired, setSessionExpired] = useState(false)
 
   const handleInit = async (autoMerge: boolean) => {
@@ -557,12 +550,11 @@ function StepInit({ onDone, resumed, onBack }: { onDone: () => void; resumed?: b
           }
         }
       } catch (e: unknown) {
-        // V124-15 / BUG-033: distinguish 401 (session expired — fatal,
-        // surface to user) from transient errors (network blip, 5xx —
-        // keep swallowing so a single transient doesn't tear down the
-        // wizard). On 401 we stop both intervals so we don't keep
-        // hammering the server, then drop into the error state with a
-        // clear "log in again" call to action.
+        // Distinguish 401 (session expired — fatal, surface to user) from
+        // transient errors (network blip, 5xx — keep swallowing so a
+        // single transient doesn't tear down the wizard). On 401, stop
+        // both intervals so we don't keep hammering the server, then drop
+        // into the error state with a clear "log in again" call to action.
         if (isUnauthorizedError(e)) {
           clearInterval(pollInterval)
           clearInterval(heartbeatInterval)
@@ -720,11 +712,11 @@ function StepInit({ onDone, resumed, onBack }: { onDone: () => void; resumed?: b
           </div>
           <div className="flex items-center gap-3">
             {sessionExpired ? (
-              // V124-15 / BUG-033: 401 during polling — clear the auth
-              // token (keeps the rest of the SPA from re-auth-looping
-              // against a stale token) and bounce the user to login.
-              // We use window.location to force a full reload so all
-              // in-flight effects in the wizard are torn down cleanly.
+              // 401 during polling — clear the auth token (keeps the rest
+              // of the SPA from re-auth-looping against a stale token) and
+              // bounce the user to login. window.location forces a full
+              // reload so all in-flight effects in the wizard are torn
+              // down cleanly.
               <button
                 type="button"
                 onClick={() => {
@@ -757,24 +749,13 @@ function StepInit({ onDone, resumed, onBack }: { onDone: () => void; resumed?: b
         </div>
       )}
 
-      {/* V124-16 / BUG-038 + V124-17 / BUG-039 + BUG-042: in resume mode the
-          wizard hard-gates every route to step 4 (App.tsx behaviour), so
+      {/* In resume mode the wizard hard-gates every route to step 4, so
           StepInit needs a Back button to walk back to the connection-edit
-          screens (step 3 → step 2). Two V124-17 refinements on top of the
-          V124-16 button:
-            - BUG-039: hide Back while state !== 'idle'. While the init
-              operation is running, clicking Back navigates to step 3 mid-
-              flight; the polling-effect cleanup runs, the operation
-              continues on the backend, and a later Initialize click hits an
-              already-init check that may detect a half-created repo state.
-              The safe rule is: Back only when the wizard is not actively
-              driving an operation. Done/error states are also non-Back: at
-              done the user clicks "Go to Dashboard"; at error the user
-              clicks Retry/Skip/"Log in again".
-            - BUG-042: match the secondary-button styling used by
-              StepGit/StepArgoCD's Back buttons exactly so the affordance
-              looks the same on every wizard step.
-          */}
+          screens. Back is hidden while state !== 'idle': clicking Back
+          mid-operation would tear down the polling effect while the
+          backend keeps running, and a later Initialize click could hit a
+          half-created repo state. Done/error states are also non-Back:
+          done → "Go to Dashboard"; error → Retry/Skip/"Log in again". */}
       {resumed && onBack && state === 'idle' && (
         <div className="pt-2 border-t border-[#bee0ff] dark:border-gray-700">
           <button
@@ -795,24 +776,16 @@ function StepInit({ onDone, resumed, onBack }: { onDone: () => void; resumed?: b
 /* ------------------------------------------------------------------ */
 
 /**
- * detectGitProvider — V124-10 / BUG-028.
- *
  * Inspect a git repo URL and return the canonical Sharko provider name
  * the backend expects (`'github'` / `'azuredevops'`), or `undefined` when
  * the host is unsupported or the URL is not parseable.
  *
- * Why client-side: the FirstRunWizard's `buildPayload` historically sent
- * only `repo_url` + `token`, which V124-4.2's required-field gate then
- * rejects with "git.provider is required". The backend now auto-derives
- * the provider too (defense in depth), but populating it here lets the
- * wizard's "Test Connection" round-trip surface a recognizable provider
- * value in the test response without round-tripping through derivation.
- *
- * Returning `undefined` (instead of throwing) lets `buildPayload`
- * naturally omit the field via `JSON.stringify` — the backend's
- * derivation then takes over and either succeeds or returns a clear
- * unsupported-host error that the wizard already surfaces in
- * `setSaveError` / `setTestStatus`.
+ * Populating the provider here lets the wizard's "Test Connection" round-
+ * trip surface a recognizable provider value in the test response without
+ * round-tripping through backend derivation. Returning `undefined`
+ * (instead of throwing) lets `buildPayload` naturally omit the field via
+ * `JSON.stringify` — the backend then derives it server-side or returns a
+ * clear unsupported-host error.
  *
  * Recognized hosts (mirror of backend deriveProviderFromURL whitelist):
  *   - github.com, *.github.com
@@ -842,16 +815,12 @@ export function FirstRunWizard({ initialStep = 1 }: { initialStep?: number } = {
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
 
-  // V124-16 / BUG-037 + BUG-038: in resume mode, pre-populate the form with
-  // the existing connection so the user can navigate back through step 3 →
-  // step 2 and see/edit the saved values (rather than blank fields). The
-  // first connection wins — Sharko's data model is single-connection in
-  // practice (see frontend-expert.md §"Single Connection Edit"), and the
-  // wizard's resume gate fires only when at least one connection exists.
-  // We track the loaded connection's name so the save path can hit
-  // PUT /connections/{name} instead of POST, which guarantees an update
-  // (with token-preserving merge) rather than relying on the backend's
-  // upsert-by-derived-name behavior.
+  // In resume mode, pre-populate the form with the existing connection so
+  // the user can navigate back through step 3 → step 2 and see/edit the
+  // saved values (rather than blank fields). First connection wins —
+  // Sharko's data model is single-connection in practice. The loaded name
+  // is tracked so save hits PUT /connections/{name} for a guaranteed
+  // token-preserving merge update (vs POST upsert-by-derived-name).
   const existingConnection = connections[0]
   const [loadedConnectionName, setLoadedConnectionName] = useState<string | null>(null)
   useEffect(() => {
@@ -887,11 +856,10 @@ export function FirstRunWizard({ initialStep = 1 }: { initialStep?: number } = {
 
   const buildPayload = () => ({
     git: {
-      // V124-10 / BUG-028: send provider proactively so the create-time
-      // required-field gate (V124-4.2) doesn't fire on every wizard
-      // submission. `undefined` is dropped by JSON.stringify, in which
-      // case the backend's deriveProviderFromURL takes over. See
-      // detectGitProvider for the recognized-host list.
+      // Send provider proactively so the create-time required-field gate
+      // doesn't fire on wizard submission. `undefined` is dropped by
+      // JSON.stringify, in which case the backend's deriveProviderFromURL
+      // takes over. See detectGitProvider for the recognized-host list.
       provider: detectGitProvider(form.git_url),
       repo_url: form.git_url,
       token: form.git_token || undefined,
@@ -917,22 +885,14 @@ export function FirstRunWizard({ initialStep = 1 }: { initialStep?: number } = {
     },
   })
 
-  // V124-19 / BUG-044: in resume mode the wizard renders the password
-  // inputs empty by design (we never re-display saved secrets). The
-  // V124-17 placeholder promised "leave blank to keep, or enter new value
-  // to replace", but Test Connection still rejected blank submissions
-  // because TestCredentials → buildArgocdClient surfaced "ArgoCD token
-  // not configured". The backend now accepts `use_saved: true` + the
-  // saved connection's name and tests using the stored credentials
-  // server-side. Send that combination whenever:
+  // In resume mode, blank password fields mean "use the stored credential
+  // instead of submitting a new one". The backend accepts `use_saved: true`
+  // + the saved connection's name to test using stored credentials server-
+  // side, avoiding the "token not configured" rejection that a blank
+  // payload would otherwise produce. Send that combination whenever:
   //   - a saved connection is loaded (resume mode), AND
   //   - the relevant token field is blank (user did not opt into replace)
   // Otherwise fall back to the regular fresh-body payload.
-  //
-  // The same flag covers Step 2 (Git) and Step 3 (ArgoCD): they share a
-  // single saved record, and the test-credentials handler tests both
-  // paths in one call. The wizard's per-step Test buttons read only the
-  // matching status off the shared response.
   const buildTestPayload = (service: 'git' | 'argocd') => {
     const base = buildPayload()
     if (!loadedConnectionName) {
@@ -988,12 +948,11 @@ export function FirstRunWizard({ initialStep = 1 }: { initialStep?: number } = {
     setSaving(true)
     setSaveError(null)
     try {
-      // V124-16 / BUG-038: in resume mode the wizard already has a saved
-      // connection. Hit PUT /connections/{name} so the backend's
-      // token-preserving merge runs (empty token fields keep the saved
-      // values — the wizard's password inputs render empty even after
-      // pre-population, so a blank submit must NOT wipe the saved token).
-      // POST is left as the create path for the fresh-install flow.
+      // In resume mode hit PUT /connections/{name} so the backend's
+      // token-preserving merge runs (blank token fields keep the saved
+      // values — the password inputs render empty even after pre-
+      // population, so a blank submit must NOT wipe the saved token).
+      // POST is the create path for fresh-install.
       if (loadedConnectionName) {
         await api.updateConnection(loadedConnectionName, buildPayload())
       } else {
@@ -1015,22 +974,21 @@ export function FirstRunWizard({ initialStep = 1 }: { initialStep?: number } = {
     navigate('/dashboard')
   }, [navigate, refreshConnections])
 
-  // V124-16 / BUG-035: the X button used to navigate('/dashboard'), but
-  // App.tsx's wizard gate immediately re-renders FirstRunWizard whenever a
-  // connection exists with an un-initialized repo, so the navigation was a
-  // no-op. Set a session-scoped sessionStorage flag that App.tsx consults
-  // to skip the gate for the rest of this session. A fresh tab / hard
-  // refresh clears the flag automatically — this is "dismiss for now",
-  // not "permanently skip setup".
+  // The X button can't just navigate('/dashboard') — App.tsx's wizard gate
+  // would immediately re-render FirstRunWizard whenever a connection exists
+  // with an un-initialized repo. Set a session-scoped flag that App.tsx
+  // consults to skip the gate for the rest of this session. A fresh tab /
+  // hard refresh clears the flag automatically — "dismiss for now", not
+  // "permanently skip setup".
   const handleEscape = useCallback(() => {
     sessionStorage.setItem('sharko:dismiss-wizard', '1')
     refreshConnections()
     navigate('/dashboard')
   }, [navigate, refreshConnections])
 
-  // V124-16 / BUG-037: nuclear "start over" affordance from step 2 in
-  // resume mode. Confirm, then DELETE every saved connection so App.tsx's
-  // empty-connections branch renders the wizard fresh from step 1.
+  // Nuclear "start over" affordance from step 2 in resume mode. Confirm,
+  // then DELETE every saved connection so App.tsx's empty-connections
+  // branch renders the wizard fresh from step 1.
   const handleClearConfig = useCallback(async () => {
     if (
       !window.confirm(
@@ -1108,15 +1066,11 @@ export function FirstRunWizard({ initialStep = 1 }: { initialStep?: number } = {
             </div>
           </div>
 
-          {/* Step label.
-              V124-6.4 / BUG-024: when App.tsx resumes the wizard at step 4
-              (because a connection exists but the repo is not yet
-              initialized), drop the "Step N of M" counter — there is no
-              counter that makes sense for "you skipped 1-3 because they
+          {/* Step label. When the wizard resumes at step 4 (connection
+              exists but repo not yet initialized), drop the "Step N of M"
+              counter — it makes no sense for "you skipped 1-3 because they
               already happened in a prior session". Show "Resuming setup —
-              Initialize" instead. The counter still appears for the normal
-              start-from-step-1 flow.
-              */}
+              Initialize" instead. */}
           <div className="border-b border-[#bee0ff] dark:border-gray-800 bg-[#e8f4ff] dark:bg-gray-800/50 px-6 py-2">
             <p
               className="text-xs font-semibold uppercase tracking-wider text-[#3a6a8a] dark:text-gray-400"
@@ -1140,11 +1094,10 @@ export function FirstRunWizard({ initialStep = 1 }: { initialStep?: number } = {
                 onNext={handleGoToStep3}
                 onBack={() => setStep(1)}
                 onClearConfig={loadedConnectionName ? handleClearConfig : undefined}
-                // V124-17 / BUG-040: signal "the backend has a saved token
-                // for this connection" so the password input renders the
-                // saved-credential placeholder + helper text. Bound to
+                // Signal "saved token exists" so the password input renders
+                // the saved-credential placeholder + helper text. Bound to
                 // loadedConnectionName (truthy iff resume-mode pre-populate
-                // ran) — fresh-install mode has no saved token to preserve.
+                // ran) — fresh-install has no saved token to preserve.
                 hasSavedToken={Boolean(loadedConnectionName)}
               />
             )}
@@ -1158,9 +1111,8 @@ export function FirstRunWizard({ initialStep = 1 }: { initialStep?: number } = {
                 saving={saving}
                 saveError={saveError}
                 onBack={() => setStep(2)}
-                // V124-17 / BUG-040: same signal as StepGit — the ArgoCD
-                // token field gets the saved-credential affordance in
-                // resume mode.
+                // Same signal as StepGit — ArgoCD token field gets the
+                // saved-credential affordance in resume mode.
                 hasSavedToken={Boolean(loadedConnectionName)}
               />
             )}
@@ -1174,10 +1126,9 @@ export function FirstRunWizard({ initialStep = 1 }: { initialStep?: number } = {
           </div>
         </div>
 
-        {/* V124-16 / BUG-036: in resume mode the wizard hard-gates Settings,
-            so claiming "you can update connections later in Settings" is a
-            lie. Point the user at the in-wizard controls instead.
-            */}
+        {/* In resume mode the wizard hard-gates Settings, so "update later
+            in Settings" is misleading — point at the in-wizard controls
+            instead. */}
         <p className="mt-4 text-center text-xs text-[#3a6a8a] dark:text-gray-600">
           {initialStep === 4
             ? 'Initialize the repository to continue, or use the controls above to edit or reset.'

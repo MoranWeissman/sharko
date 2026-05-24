@@ -86,12 +86,12 @@ export function AdoptClustersDialog({
         try {
           const result = await testClusterConnection(verifications[i].cluster.name)
           if (cancelled) return
-          // BUG-035: when the test feature itself is unavailable (no
-          // secrets backend configured), treat as failed for the adopt
-          // workflow but surface the underlying message so the operator
-          // understands the root cause. Adoption still requires a working
-          // test, so we can't auto-select these — but we don't want to
-          // pretend the cluster "failed to verify" with a misleading error.
+          // When the test feature itself is unavailable (no secrets backend
+          // configured), treat as failed for the adopt workflow but surface
+          // the underlying message so the operator understands the root
+          // cause. Adoption still requires a working test, so we can't
+          // auto-select these — but we don't want to pretend the cluster
+          // "failed to verify" with a misleading error.
           if (isTestClusterUnavailable(result)) {
             setVerifications((prev) => {
               const next = [...prev]

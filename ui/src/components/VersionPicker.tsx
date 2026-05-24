@@ -6,8 +6,8 @@ import type {
 } from '@/services/models'
 
 /**
- * VersionPicker — shared chart-version picker used by both the Marketplace
- * Configure modal and the manual "Add Addon" form (v1.21 QA Bundle 1).
+ * Shared chart-version picker used by both the Marketplace Configure
+ * modal and the manual "Add Addon" form.
  *
  * Renders three things, top to bottom:
  *   1. A text <input> with a backing <datalist> for type-as-you-go
@@ -20,10 +20,9 @@ import type {
  *      is what makes "click on Chart version → see versions" actually work.
  *   3. A "Show pre-releases" checkbox + a tiny error / hint area.
  *
- * Visible list size: top 10 stable by default. When prereleases are toggled
- * on we expand to the full list. The 10-version cap matches the v1.21 QA
- * report — five was too few for charts like cert-manager that ship a new
- * patch every couple of weeks.
+ * Visible list size: top 10 stable by default. When prereleases are
+ * toggled on we expand to the full list. Five was too few for charts like
+ * cert-manager that ship a new patch every couple of weeks.
  *
  * Accessibility (WCAG 2.1 AA):
  *   - The input has an explicit <label> via the `labelHtmlFor` it accepts
@@ -139,9 +138,8 @@ export function VersionPicker({
         ))}
       </datalist>
 
-      {/* Always-visible pill list. This is what the QA fix in Bundle 1
-          delivers — clicking the field now shows real options instead of
-          relying on browser datalist quirks. */}
+      {/* Always-visible pill list — clicking the field shows real options
+          instead of relying on browser datalist quirks. */}
       {versionsResp && visibleCount > 0 && (
         // Use a <div role="listbox"> so the option pills can be direct
         // children. ARIA's listbox role requires its children to be option

@@ -1,19 +1,11 @@
 /**
- * ClusterTypeBadge — V125-1-10.4. A cosmetic "type pill" derived purely
- * from a cluster's API server hostname at render time. Never persisted.
+ * Cosmetic "type pill" derived from a cluster's API server hostname at
+ * render time. Never persisted. Purely decorative — connectivity testing
+ * routes off the ArgoCD cluster Secret shape, not this badge, so a
+ * misidentification (e.g. an EKS cluster behind custom DNS rendering as
+ * `Self-hosted`) is acceptable.
  *
- * Per design doc 2026-05-13 §2.3 (cluster-connectivity-test-redesign): we
- * explicitly reject storing a cluster-type label on the cluster model. That
- * would force every API/CLI/CRD caller to provide it correctly. Instead the
- * UI derives a recognition-aid pill (`EKS`, `AKS`, `GKE`, `kind`, `minikube`,
- * `Self-hosted`) from the cluster's `server` URL.
- *
- * The badge is purely decorative. The connectivity Test path routes off the
- * shape of the ArgoCD cluster Secret (Story V125-1-10.3), NOT this badge —
- * so a misidentification (e.g. an EKS cluster behind custom DNS rendering as
- * `Self-hosted`) is acceptable. Cost is purely cosmetic.
- *
- * Hostname mapping (from §2.3):
+ * Hostname mapping:
  *
  * | Pattern                                   | Pill          | Tone          |
  * |-------------------------------------------|---------------|---------------|
@@ -24,16 +16,8 @@
  * | `*.minikube.io`                           | `minikube`    | neutral       |
  * | anything else (incl. malformed / empty)   | `Self-hosted` | neutral       |
  *
- * **Palette:** the cloud-provider pills (orange/sky/red) carry
- * brand-association meaning, so they use Tailwind colour scales with proper
- * `dark:` variants. The neutral pills (kind / minikube / Self-hosted) follow
- * the Sharko "no `bg-gray-*` in light mode" rule (see
- * `.claude/team/frontend-expert.md`) and reuse the V123-1.7 / V123-2.4
- * blue-tinted neutral family `#eaf4fc` / `#2a5a7a` / `#c0ddf0` already in use
- * by `<SourceBadge>` and `<VerifiedBadge>` for an "Unsigned"-style chip.
- *
- * **Empty / malformed input:** still renders `Self-hosted` so the column is
- * never visually empty. We never throw — `new URL()` failures are caught.
+ * Empty / malformed input still renders `Self-hosted` so the column is never
+ * visually empty. `new URL()` failures are caught — we never throw.
  */
 
 type ClusterType = 'EKS' | 'AKS' | 'GKE' | 'kind' | 'minikube' | 'Self-hosted'
@@ -62,9 +46,9 @@ function extractHostname(server: string | undefined): string {
 }
 
 /**
- * Maps a hostname to a `ClusterType` using the patterns from design §2.3.
- * Order matters: more-specific cloud-provider patterns are checked first,
- * then dev-flavour heuristics, then fall through to `Self-hosted`.
+ * Maps a hostname to a `ClusterType`. Order matters: more-specific
+ * cloud-provider patterns are checked first, then dev-flavour heuristics,
+ * then fall through to `Self-hosted`.
  */
 export function classifyClusterType(server: string | undefined): ClusterType {
   const host = extractHostname(server)
