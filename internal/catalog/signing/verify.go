@@ -37,7 +37,7 @@ const defaultBundleFetchTimeout = 30 * time.Second
 // trustedMaterialProvider is the abstraction the verifier uses to
 // resolve the Sigstore trust root (Fulcio CAs + Rekor pubkeys + CT
 // logs). In production the provider returns the bundled public-good
-// trust root (or one fetched via TUF — TODO post-V123-2.2). In tests
+// trust root (or one fetched via TUF). In tests
 // the provider returns the *ca.VirtualSigstore (which itself implements
 // root.TrustedMaterial).
 type trustedMaterialProvider interface {
@@ -86,13 +86,12 @@ func WithTrustedMaterial(tm root.TrustedMaterial) VerifierOption {
 // alone — the default `slog.Default().With("component",
 // "catalog-signing")` is the right answer in every real deployment.
 //
-// The seam exists so V123-2.6 tests can swap in a recording handler
-// and assert on the exact `reason` attribute attached to a failure
-// log, which is the only observable that distinguishes a
-// signature-mismatch outcome from an untrusted-identity outcome
-// (both collapse to (false, "", nil) on the wire). nil is ignored to
-// keep the option tolerant of "build the slice up dynamically"
-// callers.
+// The seam exists so tests can swap in a recording handler and assert
+// on the exact `reason` attribute attached to a failure log — the only
+// observable that distinguishes a signature-mismatch outcome from an
+// untrusted-identity outcome (both collapse to (false, "", nil) on
+// the wire). nil is ignored to keep the option tolerant of "build the
+// slice up dynamically" callers.
 func WithLogger(log *slog.Logger) VerifierOption {
 	return func(v *Verifier) {
 		if log != nil {
@@ -114,11 +113,10 @@ func (s staticTrust) TrustedMaterial(ctx context.Context) (root.TrustedMaterial,
 
 // NewVerifier constructs a Verifier ready to use. If no
 // WithTrustedMaterial option is supplied, the verifier returns
-// (false, "", err) on every call until trust is configured — V123-2.3
-// will land the env-var-driven config that supplies a real trust root
-// (TUF-fetched). This is a deliberate fail-closed default: a misconfigured
-// Sharko refuses to mark anything verified rather than silently
-// trusting nothing-or-everything.
+// (false, "", err) on every call until trust is configured. This is a
+// deliberate fail-closed default: a misconfigured Sharko refuses to
+// mark anything verified rather than silently trusting
+// nothing-or-everything.
 //
 // nil httpClient is fine — a sane default with a 30s timeout is used.
 func NewVerifier(httpClient *http.Client, opts ...VerifierOption) *Verifier {
@@ -330,15 +328,14 @@ func (v *Verifier) verifyEntity(
 		return false, "", nil
 	}
 
-	// Step 8b (V124-1.4): cert-claim assertion. Defense-in-depth layered
-	// on top of the SAN regex above — even an attacker whose SAN matches
-	// the trust policy must ALSO have come from a workflow ref the
-	// operator allows. Default-secure: production wiring (serve.go via
-	// signing.LoadTrustPolicyFromEnv) populates trustPolicy.WorkflowRef
-	// with ^refs/tags/v.*$ when the env var is unset, so the assertion
-	// is on by default. Empty WorkflowRef in a TrustPolicy means SKIP
-	// (backward-compat for callers that construct TrustPolicy directly,
-	// e.g. unit tests that pre-date V124-1.4).
+	// Cert-claim assertion: defense-in-depth layered on top of the SAN
+	// regex above — even an attacker whose SAN matches the trust
+	// policy must ALSO have come from a workflow ref the operator
+	// allows. Default-secure: production wiring populates
+	// trustPolicy.WorkflowRef with ^refs/tags/v.*$ when the env var
+	// is unset. Empty WorkflowRef in a TrustPolicy means SKIP
+	// (back-compat for callers that construct TrustPolicy directly,
+	// e.g. unit tests).
 	if reason, ok := assertWorkflowRef(cert, trustPolicy.WorkflowRef); !ok {
 		v.logFailure(urlForFingerprint, reason)
 		return false, "", nil
@@ -386,7 +383,7 @@ func (v *Verifier) fetchBundle(ctx context.Context, bundleURL string) ([]byte, e
 
 // logFailure emits a WARN log for a verification failure on a bundle
 // the caller actually fetched. Uses the URL fingerprint, never the URL
-// itself (paths may encode auth tokens — see V123-1.1 Gotcha #1).
+// itself (paths may encode auth tokens).
 func (v *Verifier) logFailure(rawURL, reason string) {
 	v.log.Warn("catalog signature verification failed",
 		"source_fp", urlFingerprint(rawURL),
@@ -427,7 +424,7 @@ func compileIdentityPatterns(identities []string) ([]*regexp.Regexp, error) {
 // that mirrors cosign's certificate-identity-regexp semantics where
 // `^` and `$` anchors are explicit when the operator wants a strict
 // match. This is documented in the trust policy env var help text
-// (V123-2.3).
+// when strict matching is required.
 func matchAnyPattern(subject string, patterns []*regexp.Regexp) bool {
 	for _, re := range patterns {
 		if re.MatchString(subject) {
@@ -451,7 +448,7 @@ func extractSubject(cert *x509.Certificate) (string, error) {
 	return summary.SubjectAlternativeName, nil
 }
 
-// assertWorkflowRef (V124-1.4) enforces the optional cert-claim
+// assertWorkflowRef enforces the optional cert-claim
 // assertion on a Fulcio leaf cert's GitHub workflow_ref extension.
 //
 // Contract:

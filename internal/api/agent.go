@@ -88,7 +88,7 @@ func (s *Server) handleAgentChat(w http.ResponseWriter, r *http.Request) {
 		}
 
 		executor := ai.NewToolExecutor(gp, ac, s.agentMemory, nil, s.repoPaths.ManagedClusters)
-		// V125-1-6: surface AI assistant write-tool PRs on the dashboard.
+		// Surface AI assistant write-tool PRs on the dashboard.
 		if s.prTracker != nil {
 			executor.SetPRTracker(&aiToolTrackerAdapter{t: s.prTracker})
 		}

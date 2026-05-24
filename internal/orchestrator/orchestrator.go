@@ -25,19 +25,17 @@ type ArgocdClient interface {
 }
 
 // ArgoSecretManager is the interface the orchestrator uses for ArgoCD
-// cluster-secret metadata operations that are NOT covered by the V125-1-8
+// cluster-secret metadata operations that are NOT covered by the cluster
 // reconciler — i.e. adopt / unadopt label + annotation manipulation. It is
 // defined here (not in internal/argosecrets) to avoid an import cycle:
 // orchestrator must not import argosecrets. The adapter in internal/api
 // bridges the two packages.
 //
-// V125-1-8.3 retirement: the orchestrator no longer creates or updates
-// cluster Secrets pre-merge — the reconciler owns Secret lifecycle. The
-// old Ensure(ctx, spec) method has been removed from this interface
-// (the concrete argosecrets.Manager.Ensure remains; the reconciler calls
-// it). Adopt / unadopt remain orchestrator concerns because they mutate
-// ArgoCD-side metadata (managed-by label + adopted annotation) on a
-// per-operation basis that the periodic reconciler does not own.
+// The orchestrator does NOT create or update cluster Secrets pre-merge —
+// the reconciler owns Secret lifecycle. Adopt / unadopt remain
+// orchestrator concerns because they mutate ArgoCD-side metadata
+// (managed-by label + adopted annotation) on a per-operation basis that
+// the periodic reconciler does not own.
 type ArgoSecretManager interface {
 	SetAnnotation(ctx context.Context, name, key, value string) error
 	GetAnnotation(ctx context.Context, name, key string) (string, error)
@@ -46,13 +44,9 @@ type ArgoSecretManager interface {
 }
 
 // ArgoSecretSpec mirrors argosecrets.ClusterSecretSpec but is defined locally
-// to keep the orchestrator free from argosecrets imports.
-//
-// V125-1-8.3 retirement: kept as a value type so api/argo_adapter.go can
-// hold its package-local shape during the transition window, but no
-// orchestrator code reads it after the pre-merge Ensure call was removed
-// from RegisterCluster. Safe to delete in V125-2 once the adapter is
-// reshaped or the connection-level role-ARN plumbing moves.
+// to keep the orchestrator free from argosecrets imports. Kept as a value
+// type so api/argo_adapter.go can hold its package-local shape; no
+// orchestrator code reads it after the pre-merge Ensure call was removed.
 type ArgoSecretSpec struct {
 	Name        string
 	Server      string
@@ -102,8 +96,8 @@ type PRMetadata struct {
 	Source        string // ui, cli, api — defaults to "api" in handlers
 
 	// AutoMergeOverride lets a single operation override the connection-
-	// level PRAutoMerge default for THIS PR only (BUG-031). nil means
-	// "fall back to o.gitops.PRAutoMerge"; non-nil wins. Resolved inside
+	// level PRAutoMerge default for THIS PR only. nil means "fall back
+	// to o.gitops.PRAutoMerge"; non-nil wins. Resolved inside
 	// commitChangesWithMeta via resolveAutoMerge — never mutate
 	// o.gitops.PRAutoMerge (shared state across concurrent requests).
 	AutoMergeOverride *bool
@@ -124,10 +118,10 @@ type Orchestrator struct {
 	remoteClientFn    RemoteClientFactory
 	defaultAddons     map[string]bool   // addon name → enabled (merged into RegisterCluster when req.Addons is empty)
 	drainSleep        time.Duration     // wait after label removal in DeregisterCluster; overridable in tests
-	argoSecretManager ArgoSecretManager // optional — adopt/unadopt ArgoCD cluster-secret metadata only (V125-1-8.3: Ensure was retired; reconciler owns Secret lifecycle)
-	defaultRoleARN    string            // connection-level default RoleARN. Held for back-compat with SetArgoSecretManager (V125-1-8.3 retirement left no readers — wire-only artefact until cleaned up in V125-2)
-	prTracker         PRTracker         // optional — tracks every commitChanges-created PR (V125-1-6)
-	triggerFn         func()            // optional — invoked after Sharko writes managed-clusters.yaml to nudge V125-1-8 reconciler; nil disables (cmd/sharko/serve.go wires reconciler.Trigger in V125-1-8.4)
+	argoSecretManager ArgoSecretManager // optional — adopt/unadopt ArgoCD cluster-secret metadata only (reconciler owns Secret lifecycle)
+	defaultRoleARN    string            // connection-level default RoleARN, held for SetArgoSecretManager back-compat
+	prTracker         PRTracker         // optional — tracks every commitChanges-created PR
+	triggerFn         func()            // optional — invoked after Sharko writes managed-clusters.yaml to nudge the reconciler; nil disables
 }
 
 // SetDefaultAddons configures the default addons applied to clusters
@@ -147,12 +141,10 @@ func (o *Orchestrator) SetArgoSecretManager(m ArgoSecretManager, defaultRoleARN 
 
 // SetReconcilerTrigger wires in a nudge function that is invoked after the
 // orchestrator commits a managed-clusters.yaml change (register / refresh).
-// V125-1-8.4 will wire this to reconciler.Trigger so that post-merge Secret
+// Production wires this to reconciler.Trigger so post-merge Secret
 // convergence happens immediately rather than waiting for the periodic 30s
 // safety-net tick. Passing nil (or skipping the call) disables the nudge —
-// the reconciler still converges on its periodic tick. Tests inject a
-// counter func to assert the seam is fired on every register path
-// (V125-1-8.3 behavioral parity tests).
+// the reconciler still converges on its periodic tick.
 //
 // The function MUST be cheap and non-blocking; reconciler.Trigger is a
 // channel send into a buffered drain. The orchestrator calls it

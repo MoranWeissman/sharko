@@ -38,7 +38,6 @@ const (
 	// 30s is short enough that an idle gotestsum stream no longer
 	// looks frozen but long enough to keep the log volume readable
 	// across a full e2e run.
-	// V126-4.1 / task #187.
 	heartbeatInterval = 30 * time.Second
 )
 
@@ -170,20 +169,20 @@ func ProvisionTopology(t *testing.T, req ProvisionRequest) []KindCluster {
 		}
 	}
 
-	// V126-4.1 / task #187: anxiety-reducer log line at the very start of
-	// every kind-touching path so gotestsum doesn't go silent between
-	// fast-tests-done and first kind-test-completes. The "typical: 60-90s"
-	// hint sets expectations — a fresh kind cluster on a warm host lands
-	// around 45s; cold + multi-cluster topologies can take ~3-5 min.
+	// Anxiety-reducer log line at the start of every kind-touching path
+	// so gotestsum doesn't go silent between fast-tests-done and the
+	// first kind test completing. The "typical: 60-90s" hint sets
+	// expectations — a fresh kind cluster on a warm host lands around
+	// 45s; cold + multi-cluster topologies can take ~3-5 min.
 	t.Logf("[harness] starting kind cluster(s) %s (typical: 60-90s per cluster)…",
 		strings.Join(clusterNames(clusters), ", "))
 	t.Logf("harness: provisioning %d kind cluster(s) [run-id=%s]: %s",
 		total, runID, strings.Join(clusterNames(clusters), ", "))
 
-	// V126-4.1 / task #187: 30s "still waiting" heartbeat goroutine.
-	// Stopped via t.Cleanup so it never outlives the test (even on a
-	// t.Fatalf below). The done channel is closed before the cleanup
-	// returns so the goroutine exits its select promptly.
+	// 30s "still waiting" heartbeat goroutine. Stopped via t.Cleanup so
+	// it never outlives the test (even on t.Fatalf). The done channel
+	// is closed before the cleanup returns so the goroutine exits its
+	// select promptly.
 	heartbeatStart := time.Now()
 	heartbeatDone := make(chan struct{})
 	go func() {
@@ -251,10 +250,10 @@ func ProvisionTopology(t *testing.T, req ProvisionRequest) []KindCluster {
 		t.Fatalf("ProvisionTopology failed: %v", err)
 	}
 
-	// V126-4.1 / task #187: stop the heartbeat now that provisioning is
-	// done — t.Cleanup still owns the guaranteed-stop, but stopping here
-	// quiets the log immediately on the happy path so post-provisioning
-	// test output isn't interleaved with stale "waiting" lines.
+	// Stop the heartbeat now that provisioning is done — t.Cleanup
+	// still owns the guaranteed-stop, but stopping here quiets the log
+	// immediately on the happy path so post-provisioning test output
+	// isn't interleaved with stale "waiting" lines.
 	select {
 	case <-heartbeatDone:
 	default:
@@ -356,12 +355,12 @@ func DestroyTopology(t *testing.T, clusters []KindCluster) {
 		cancel()
 		if err != nil {
 			t.Logf("harness: WARNING destroy %s via kind failed: %v\noutput: %s", c.Name, err, out)
-			// V126-4.1 / task #188: fall back to `docker rm -f` against
-			// the well-known control-plane container name. kind's own
-			// state file might be corrupted (interrupted run, dangling
-			// cluster, kind binary upgrade) — the underlying Docker
-			// container is what actually holds resources, and forcing it
-			// down stops the resource leak even when kind can't.
+			// Fall back to `docker rm -f` against the well-known
+			// control-plane container name. kind's own state file
+			// might be corrupted (interrupted run, dangling cluster,
+			// kind binary upgrade) — the underlying Docker container
+			// is what actually holds resources, and forcing it down
+			// stops the resource leak even when kind can't.
 			if forceRemoveKindControlPlane(t, c.Name) {
 				t.Logf("harness: destroyed %s via docker rm -f fallback", c.Name)
 			}
@@ -380,8 +379,6 @@ func DestroyTopology(t *testing.T, clusters []KindCluster) {
 // was removed). Returns false on every other path (docker not on PATH,
 // container already absent, force-remove error) — the caller logs but
 // never fails the test on cleanup.
-//
-// V126-4.1 / task #188.
 func forceRemoveKindControlPlane(t *testing.T, clusterName string) bool {
 	t.Helper()
 	dockerBin := defaultDockerBinName
@@ -435,8 +432,8 @@ func DestroyAllStaleE2EClusters(t *testing.T) {
 		cancel()
 		if err != nil {
 			t.Logf("harness: WARNING stale destroy %s via kind failed: %v\noutput: %s", name, err, out)
-			// V126-4.1 / task #188: docker-side fallback so a corrupted
-			// kind state file never blocks the next run.
+			// Docker-side fallback so a corrupted kind state file
+			// never blocks the next run.
 			if forceRemoveKindControlPlane(t, name) {
 				t.Logf("harness: stale cleanup destroyed %s via docker rm -f fallback", name)
 			}

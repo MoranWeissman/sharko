@@ -216,10 +216,8 @@ func (c *Client) ListAvailableClusters(t *testing.T) (status int, body map[strin
 // DiscoverEKSClusters issues POST /api/v1/clusters/discover. 503 is
 // expected when no credentials provider is configured.
 //
-// V125-1-13.y.3: provider="eks" must be sent — the handler rejects any
-// other value with a 400 (only the EKS path is wired today). Pre-fix
-// the harness sent an empty provider and tripped that 400 in every
-// in-process e2e run.
+// provider="eks" must be sent — the handler rejects any other value
+// with a 400 (only the EKS path is wired today).
 func (c *Client) DiscoverEKSClusters(t *testing.T, region string) (status int, body map[string]any) {
 	t.Helper()
 	req := map[string]any{

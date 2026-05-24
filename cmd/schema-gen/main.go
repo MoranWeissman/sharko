@@ -1,8 +1,5 @@
 // Command schema-gen emits the canonical Sharko JSON Schemas to
-// docs/schemas/ AND internal/schema/. V125-1-9 Stories 9.3 (initial
-// generator) and 9.4 (added the internal/schema/ mirror so the runtime
-// validator can embed the schemas via go:embed without a `..` path
-// escape — Go's embed package rejects parent-directory paths).
+// docs/schemas/ AND internal/schema/.
 //
 // Run via:
 //
@@ -14,26 +11,23 @@
 //
 //	docs/schemas/managed-clusters.v1.json
 //	docs/schemas/addon-catalog.v1.json
-//	internal/schema/managed-clusters.v1.json   (V125-1-9.4 — embed source)
-//	internal/schema/addon-catalog.v1.json      (V125-1-9.4 — embed source)
+//	internal/schema/managed-clusters.v1.json   (embed source)
+//	internal/schema/addon-catalog.v1.json      (embed source)
 //
 // The two locations exist for different consumers:
 //
-//   - docs/schemas/ is the human-facing copy. It is the URL target the
-//     writer-emitted `# yaml-language-server: $schema=...` headers
-//     point editors at (via the sharko.io/schemas/ redirect plan in the
-//     V125-1-9 epic's "Schema URL hosting" OQ), and it is what the
-//     project docs site links to for `mkdocs build`.
+//   - docs/schemas/ is the human-facing copy and the URL target for
+//     editor `# yaml-language-server: $schema=...` headers and the docs
+//     site links.
 //   - internal/schema/ is the build-time copy. internal/schema/embed.go
 //     declares `//go:embed managed-clusters.v1.json addon-catalog.v1.json`
-//     so the runtime validator (Story 9.4) compiles schemas from the
-//     binary, not from disk. Embedding from docs/schemas/ would require
-//     a `..` path which Go forbids.
+//     so the runtime validator compiles schemas from the binary, not
+//     from disk. Embedding from docs/schemas/ would require a `..` path
+//     which Go forbids.
 //
 // CI ("Schemas Up To Date") runs `make generate-schemas` then
-// `git diff --exit-code` against BOTH locations (see
-// .github/workflows/ci.yml). The binary is strictly idempotent —
-// running it N times produces byte-identical output at every path. The
+// `git diff --exit-code` against BOTH locations. The binary is strictly
+// idempotent — running it N times produces byte-identical output. The
 // determinism comes from invopop/jsonschema preserving struct field
 // declaration order plus encoding/json sorting map keys.
 //

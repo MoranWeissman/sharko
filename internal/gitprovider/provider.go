@@ -10,8 +10,8 @@ import (
 // the requested ref. Callers MUST detect missing-file conditions via
 // errors.Is(err, gitprovider.ErrFileNotFound) rather than substring-matching
 // the error message — substring matching silently masks legitimate
-// auth/branch/perm errors that happen to contain the words "not found" or
-// "404" (review finding H2 against PR #318).
+// auth/branch/perm errors that happen to contain the words "not found"
+// or "404".
 //
 // Implementations should wrap the sentinel with additional context using
 // fmt.Errorf("...: %w", gitprovider.ErrFileNotFound) so logs retain the path

@@ -32,10 +32,8 @@ func NewMockGitProvider() *MockGitProvider {
 
 func (p *MockGitProvider) seedFiles() {
 	// managed-clusters.yaml — the file ClusterService.ListClusters reads.
-	// Without this, GET /api/v1/clusters returns the BUG-005 500 because
-	// the service tries to read managed-clusters.yaml from this provider
-	// and the demo previously only seeded the legacy cluster-addons.yaml
-	// path.
+	// Without this, GET /api/v1/clusters would 500 because the service
+	// tries to read managed-clusters.yaml from this provider.
 	p.files["configuration/managed-clusters.yaml"] = []byte(clusterAddonsYAML)
 
 	// cluster-addons.yaml — legacy alias kept so any older read paths or
@@ -43,12 +41,11 @@ func (p *MockGitProvider) seedFiles() {
 	p.files["configuration/cluster-addons.yaml"] = []byte(clusterAddonsYAML)
 
 	// addon-catalog.yaml — the addon catalog (applicationsets format).
-	// V125-1-9.2 renamed the canonical filename from addons-catalog.yaml
-	// (plural) to addon-catalog.yaml (singular) and wrapped the body in
-	// the sharko.io/v1 envelope. The plural filename remains a read-only
-	// alias through V125 and is removed in V126 — the stub below mirrors
-	// the bootstrap template's "MOVED" placeholder so any caller pointed
-	// at the old path resolves to a helpful message rather than 404.
+	// The canonical filename is addon-catalog.yaml (singular) wrapped
+	// in the sharko.io/v1 envelope. The plural addons-catalog.yaml is
+	// a read-only alias; the stub below mirrors the bootstrap
+	// template's "MOVED" placeholder so any caller pointed at the old
+	// path resolves to a helpful message rather than 404.
 	p.files["configuration/addon-catalog.yaml"] = []byte(addonsCatalogYAML)
 	p.files["configuration/addons-catalog.yaml"] = []byte(addonsCatalogLegacyStub)
 
@@ -77,9 +74,7 @@ alertmanager:
 	// orchestrator.BootstrapRootAppPath — the demo simulates a repo that
 	// has already been through init, so the file lives at repo root, not
 	// under bootstrap/ (the orchestrator's CollectBootstrapFiles strips
-	// the bootstrap/ prefix from this and other repo-root files). Pre-V124-20
-	// this was seeded at "bootstrap/root-app.yaml" to match the (then-buggy)
-	// API check; both have been corrected.
+	// the bootstrap/ prefix from this and other repo-root files).
 	p.files["root-app.yaml"] = []byte(`apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -94,8 +89,8 @@ spec:
 `)
 	// bootstrap/Chart.yaml — the file the /repo/status handler checks to
 	// decide whether the repo is bootstrapped. Without it the demo lands
-	// on the FirstRunWizard at Step 4 forever, which made the docs
-	// screenshot script (V122-4) unable to capture real pages.
+	// on the FirstRunWizard at Step 4 forever, blocking screenshot
+	// scripts from capturing real pages.
 	p.files["bootstrap/Chart.yaml"] = []byte(`apiVersion: v2
 name: sharko-bootstrap
 description: Bootstrap chart that registers the Sharko ApplicationSet
@@ -308,13 +303,11 @@ func indexOf(s string, sep byte) int {
 // clusterAddonsYAML is the fake configuration/managed-clusters.yaml
 // (also seeded at the legacy configuration/cluster-addons.yaml alias path).
 //
-// V125-1-9 Story 9.1: the seed now ships in the enveloped shape
-// (apiVersion: sharko.io/v1, kind: ManagedClusters) with the
-// yaml-language-server schema header so the demo accurately previews what
-// a real Sharko-bootstrapped repo looks like post-V125-1-9. The reader
-// path (config.ParseClusterAddons) is envelope-aware in this same story,
-// so the demo's GET /api/v1/clusters response still resolves to the same
-// list of clusters.
+// The seed ships in the enveloped shape (apiVersion: sharko.io/v1,
+// kind: ManagedClusters) with the yaml-language-server schema header
+// so the demo previews what a real Sharko-bootstrapped repo looks
+// like. The reader (config.ParseClusterAddons) is envelope-aware so
+// the demo's GET /api/v1/clusters response resolves cleanly.
 //
 // Each cluster has addon labels: addonName: enabled|disabled.
 const clusterAddonsYAML = `# yaml-language-server: $schema=https://sharko.io/schemas/managed-clusters.v1.json
@@ -384,7 +377,7 @@ spec:
 // addonsCatalogLegacyStub is the body seeded at the legacy plural path
 // (configuration/addons-catalog.yaml) so demo callers that scripted against
 // the old filename hit a helpful "moved" placeholder instead of an error.
-// Matches the bootstrap template stub V125-1-9.2 lays down.
+// Matches the bootstrap template stub.
 const addonsCatalogLegacyStub = `# MOVED: this file is now at addon-catalog.yaml (singular).
 # The legacy filename remains a read-only alias through V125;
 # the alias will be removed in V126. Operators should rename
@@ -392,9 +385,9 @@ const addonsCatalogLegacyStub = `# MOVED: this file is now at addon-catalog.yaml
 `
 
 // addonsCatalogYAML is the fake configuration/addon-catalog.yaml in the
-// V125-1-9 sharko.io/v1 envelope shape. The applicationsets payload is
-// unchanged from the pre-envelope demo content; only the wrapping frame
-// and the editor schema header are new.
+// sharko.io/v1 envelope shape. The applicationsets payload itself is
+// unchanged; only the wrapping frame and the editor schema header are
+// new.
 const addonsCatalogYAML = `# yaml-language-server: $schema=https://sharko.io/schemas/addon-catalog.v1.json
 apiVersion: sharko.io/v1
 kind: AddonCatalog

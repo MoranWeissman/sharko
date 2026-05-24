@@ -90,23 +90,23 @@ type tlsConfig struct {
 }
 
 // BuildSecretConfigJSON is the public wrapper around buildSecretConfig.
-// It exists so the V125-1-8 clusterreconciler (internal/clusterreconciler)
-// can construct the exact same execProviderConfig payload this package's
+// It exists so the clusterreconciler (internal/clusterreconciler) can
+// construct the exact same execProviderConfig payload this package's
 // Manager.Ensure writes — without going through Ensure's adoption path
-// (which the new reconciler deliberately avoids per design §9 ownership
-// policy). Output is byte-identical to what Ensure produces for the same
-// spec, so ArgoCD's auth code path resolves the same regardless of which
-// writer mutated the Secret during the V125-1-8 transition window.
+// (which the reconciler deliberately avoids per the ownership policy).
+// Output is byte-identical to Ensure's output for the same spec, so
+// ArgoCD's auth code path resolves the same regardless of which writer
+// mutated the Secret.
 func BuildSecretConfigJSON(spec ClusterSecretSpec) (string, error) {
 	return buildSecretConfig(spec)
 }
 
 // BuildClusterSecretLabels is the public wrapper around buildLabels.
-// Same V125-1-8 motivation as BuildSecretConfigJSON — the new
-// clusterreconciler constructs Secrets without going through Ensure, and
-// must apply the identical label set (system labels + caller-supplied
-// addon labels with system labels winning conflicts) so the V125-1-8
-// reconciler's writes are indistinguishable from this package's writes.
+// Same motivation as BuildSecretConfigJSON — the clusterreconciler
+// constructs Secrets without going through Ensure, and must apply the
+// identical label set (system labels + caller-supplied addon labels
+// with system labels winning conflicts) so its writes are
+// indistinguishable from this package's writes.
 func BuildClusterSecretLabels(spec ClusterSecretSpec) map[string]string {
 	return buildLabels(spec)
 }

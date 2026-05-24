@@ -17,21 +17,18 @@ import (
 // matcher used by internal/orchestrator/git_helpers.go's
 // findOpenPRForCluster — same contract, derived from the same emitter.
 //
-// V125-1.5 (BUG-050..055): the V125-1.1 manual-mode register flow opens a
-// PR but does NOT mutate managed-clusters.yaml until merge. Without this
-// surface, multiple UI panels (Dashboard "Clusters needing attention",
-// ClustersOverview "Discovered clusters", ClusterDetail) treated the
-// pending cluster as if it half-existed, producing six related bugs in
-// the same UX hole. Surfacing the PR explicitly closes the loop.
+// The manual-mode register flow opens a PR but does NOT mutate
+// managed-clusters.yaml until merge. Without this surface, UI panels
+// would treat the pending cluster as if it half-existed.
 //
-// Defensive degrade (V124-22 pattern): a provider error (rate limit,
-// transient 5xx, auth blip) returns an EMPTY slice + a log warning rather
-// than failing the entire /clusters endpoint. The cost of "we couldn't
-// list PRs right now" is a missing pending-registrations section on the
-// next refresh — not a 500 that takes down the whole clusters page.
+// Defensive degrade: a provider error (rate limit, transient 5xx, auth
+// blip) returns an EMPTY slice + a log warning rather than failing the
+// entire /clusters endpoint. The cost of "we couldn't list PRs right
+// now" is a missing pending-registrations section on the next refresh
+// — not a 500 that takes down the whole clusters page.
 //
 // The return type is always a non-nil slice. Callers do NOT need to
-// nil-check. V125-1.4 lesson: never let a nil array reach the FE.
+// nil-check (never let a nil array reach the FE).
 func resolvePendingRegistrations(
 	ctx context.Context,
 	gp gitprovider.GitProvider,

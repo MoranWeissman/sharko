@@ -31,7 +31,7 @@ type discoverClusterEntry struct {
 // @Security BearerAuth
 // @Success 200 {object} map[string]interface{} "Available clusters"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
-// @Failure 503 {object} map[string]interface{} "Credentials provider not configured (V124-4.1)"
+// @Failure 503 {object} map[string]interface{} "Credentials provider not configured"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
 // @Router /clusters/available [get]
 // handleDiscoverClusters handles GET /api/v1/clusters/available — list provider clusters
@@ -157,14 +157,12 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.credProvider == nil {
-		// BUG-035: the bare "no credentials provider configured" message
-		// was surfaced by the UI as "Unreachable" — but the cluster isn't
+		// A bare "no credentials provider configured" message would be
+		// surfaced by the UI as "Unreachable" — but the cluster isn't
 		// unreachable, the *test feature* is unavailable because no
-		// secrets backend (Vault / AWS Secrets Manager / file-store) is
-		// wired up on the active connection. Return a structured payload
-		// so the UI can render a dedicated "test unavailable" state with
-		// a path to Settings → Connections, instead of misleading the
-		// operator into thinking the cluster itself is broken.
+		// secrets backend is wired up on the active connection. Return a
+		// structured payload so the UI can render a dedicated "test
+		// unavailable" state with a path to Settings → Connections.
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
 			"error":      "Cluster connectivity test requires a secrets backend (Vault / AWS Secrets Manager / file-store) on the active connection. Configure one in Settings → Connections to enable testing.",
 			"error_code": "no_secrets_backend",
@@ -191,15 +189,14 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 	slog.Info("[cluster-test] fetching credentials", "name", name, "lookupName", credLookupName)
 	creds, err := s.credProvider.GetCredentials(credLookupName)
 	if err != nil {
-		// V125-1-10.3: when the active credentials provider is the
-		// ArgoCDProvider (built-in default for in-cluster installs), it
-		// returns a typed *ArgoCDProviderError for any cluster Secret whose
-		// auth shape is not the bearerToken happy-path (awsAuthConfig →
-		// IAM required; execProviderConfig → exec-plugin auth not
-		// supported in v1.x; unknown shape). Surface those via the same
-		// structured-503 envelope BUG-035 introduced for the missing-
-		// backend case so the UI (Story 10.5) can render branch-specific
-		// copy off the stable error_code field.
+		// When the active credentials provider is ArgoCDProvider (the
+		// built-in default for in-cluster installs), it returns a typed
+		// *ArgoCDProviderError for any cluster Secret whose auth shape
+		// is not the bearerToken happy-path (awsAuthConfig → IAM
+		// required; execProviderConfig → exec-plugin auth not supported;
+		// unknown shape). Surface those via the same structured-503
+		// envelope as the missing-backend case so the UI can render
+		// branch-specific copy off the stable error_code field.
 		var argoErr *providers.ArgoCDProviderError
 		if errors.As(err, &argoErr) {
 			slog.Warn("[cluster-test] argocd provider unavailable shape",
@@ -308,19 +305,15 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 }
 
 // writeStructuredError emits the {"error", "error_code"} envelope used by
-// callers (UI, CLI) that dispatch on a stable machine-readable code instead
-// of parsing the human-readable error string.
+// callers (UI, CLI) that dispatch on a stable machine-readable code
+// instead of parsing the human-readable error string. The shape covers
+// the no_secrets_backend response and argocd_provider_* codes for the
+// ArgoCDProvider's IAM / exec-plugin / unknown-auth branches.
 //
-// The shape mirrors the existing BUG-035 no_secrets_backend response so the
-// UI does not have to handle two envelope variants. V125-1-10.3 (Story 10.3)
-// extended this to carry argocd_provider_* codes for the ArgoCDProvider's
-// IAM / exec-plugin / unknown-auth branches.
-//
-// Note: writeMissingProviderError in router.go uses a parallel envelope with
-// a "code"+"hint" pair (V124-4.1 contract for write/discover endpoints whose
-// provider is unset). The cluster-test endpoint deliberately uses the
-// "error_code" key — that is what the UI keys off for this surface, so a
-// rename would silently break the UI dispatch.
+// Note: writeMissingProviderError in router.go uses a parallel envelope
+// with a "code"+"hint" pair. The cluster-test endpoint deliberately
+// uses the "error_code" key — that is what the UI keys off for this
+// surface, so a rename would silently break the UI dispatch.
 func writeStructuredError(w http.ResponseWriter, status int, code, message string) {
 	writeJSON(w, status, map[string]string{
 		"error":      message,

@@ -1,6 +1,6 @@
 package api
 
-// catalog_search.go — V121-3.2: blended search endpoint.
+// catalog_search.go — blended search endpoint.
 //
 //   GET /api/v1/catalog/search?q=<term>&limit=20
 //

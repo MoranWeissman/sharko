@@ -16,16 +16,13 @@ var rootCmd = &cobra.Command{
 	Version: version,
 }
 
-// serverFlag holds the value of the global --server flag. It is registered as
-// a persistent flag on rootCmd in init() so every subcommand inherits it
-// uniformly (V124-3.5 / BUG-010). Per-command --server flag definitions were
-// removed in the same change so subcommands now read this single shared value.
+// serverFlag holds the value of the global --server flag, registered as a
+// persistent flag on rootCmd so every subcommand inherits it uniformly.
 //
 // Resolution at call sites:
 //   - When non-empty, this overrides the server URL stored in the saved CLI
-//     config (~/.sharko/config). Used by `sharko list-clusters --server URL`,
-//     `sharko status --server URL`, etc.
-//   - When empty, callers fall back to the saved config (existing behaviour).
+//     config (~/.sharko/config).
+//   - When empty, callers fall back to the saved config.
 //
 // `sharko login` is the one exception: it always requires --server because it
 // runs before any saved config exists. The required-flag check lives in

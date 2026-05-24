@@ -31,7 +31,7 @@ func (o *Orchestrator) SetGlobalAddonValues(ctx context.Context, addonName, valu
 	return o.SetGlobalAddonValuesWithOp(ctx, addonName, valuesYAML, "values-edit", "")
 }
 
-// SetGlobalAddonValuesWithOp is the V125-1-6 tracking-aware variant of
+// SetGlobalAddonValuesWithOp is the tracking-aware variant of
 // SetGlobalAddonValues. The opCode argument controls which dashboard
 // PR-panel filter chip the resulting PR lands under — handlers that
 // invoke the values writer for non-edit reasons (e.g. AI annotate, AI
@@ -141,9 +141,9 @@ func (o *Orchestrator) CommitFilesAsPR(ctx context.Context, files map[string][]b
 	return o.commitChanges(ctx, files, nil, operation)
 }
 
-// CommitFilesAsPRWithMeta is the V125-1-6 tracking-aware variant of
-// CommitFilesAsPR. The supplied meta drives the dashboard PR-panel filter
-// chip + per-row badge.
+// CommitFilesAsPRWithMeta is the tracking-aware variant of CommitFilesAsPR.
+// The supplied meta drives the dashboard PR-panel filter chip + per-row
+// badge.
 func (o *Orchestrator) CommitFilesAsPRWithMeta(ctx context.Context, files map[string][]byte, operation string, meta PRMetadata) (*GitResult, error) {
 	if len(files) == 0 {
 		return nil, fmt.Errorf("no files to commit")

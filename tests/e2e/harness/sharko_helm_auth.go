@@ -27,18 +27,16 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Story V125-1-13.2 — In-cluster auth bootstrap for Helm-mode Sharko
+// In-cluster auth bootstrap for Helm-mode Sharko.
 //
-// bootstrapHelmSharkoAuth turns a freshly-helm-installed Sharko (Story 13.1's
-// *HelmHandle) into a host-reachable, authenticated *AuthBundle that the
-// typed API client (apiclient.go) can consume. It mirrors the pattern the
-// argocd lifecycle helpers use (tests/e2e/lifecycle/cluster_helpers.go) but
-// reads the Sharko-side bootstrap admin secret instead of ArgoCD's.
+// bootstrapHelmSharkoAuth turns a freshly-helm-installed Sharko (a
+// *HelmHandle) into a host-reachable, authenticated *AuthBundle that
+// the typed API client (apiclient.go) can consume.
 //
 // The flow:
-//   1. Read sharko-initial-admin-secret (V124-6.3 + V124-7.1 format:
-//      data.username + data.password, the secret created by the bootstrap
-//      auth-store on first start and rewritten by `sharko reset-admin`).
+//   1. Read sharko-initial-admin-secret (data.username + data.password
+//      — the secret created by the bootstrap auth-store on first start
+//      and rewritten by `sharko reset-admin`).
 //   2. Spawn `kubectl port-forward svc/sharko -n <ns> :<svcPort>` — the
 //      ":<svcPort>" form asks kubectl for a random local port, which
 //      avoids conflicts under parallel tests. Parse the local port out of
@@ -51,11 +49,11 @@ import (
 //      defer would NOT cover it because t.Cleanup runs in LIFO after the
 //      test body, including its own t.Cleanup-registered cleanups).
 //
-// OQ #4 + OQ #5 (resolved 2026-05-15): the secret is read directly via the
-// K8s API rather than via `kubectl get secret -o jsonpath` (matches V124-6.3
-// + V124-7.1 ArgoCD-style flow + the cmd/sharko/reset_admin.go pattern); the
-// port-forward is a kubectl subprocess (operator-friendly + simpler debug
-// story than the in-process k8s.io/client-go/tools/portforward path).
+// The secret is read directly via the K8s API rather than via
+// `kubectl get secret -o jsonpath` (matches the ArgoCD-style flow and
+// the cmd/sharko/reset_admin.go pattern); the port-forward is a
+// kubectl subprocess (operator-friendly + simpler debug story than
+// the in-process k8s.io/client-go/tools/portforward path).
 //
 // Story 13.3 wires SharkoModeHelm to call installSharkoHelm +
 // bootstrapHelmSharkoAuth in sequence; Wave D's tests are the first to
@@ -220,10 +218,10 @@ func bootstrapHelmSharkoAuth(t *testing.T, helmHandle *HelmHandle) (*AuthBundle,
 // internal helpers — Secret read
 // ---------------------------------------------------------------------------
 
-// readBootstrapAdminSecret reads sharko-initial-admin-secret from <namespace>
-// via the K8s API and returns (username, password). The Secret data shape
-// (V124-6.3 + V124-7.1; see cmd/sharko/reset_admin.go::writeInitialAdminSecretCLI)
-// is:
+// readBootstrapAdminSecret reads sharko-initial-admin-secret from
+// <namespace> via the K8s API and returns (username, password). The
+// Secret data shape (see
+// cmd/sharko/reset_admin.go::writeInitialAdminSecretCLI):
 //
 //	data:
 //	  username: "admin"   (always)

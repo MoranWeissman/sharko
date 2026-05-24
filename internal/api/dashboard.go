@@ -30,7 +30,7 @@ func (s *Server) handleGetDashboardStats(w http.ResponseWriter, r *http.Request)
 
 	resp, err := s.dashboardSvc.GetStats(r.Context(), gp, ac)
 	if err != nil {
-		// Upstream call (Git provider + ArgoCD): classify (V124-3.2).
+		// Upstream call (Git provider + ArgoCD): classify.
 		writeUpstreamError(w, "dashboard_stats", err)
 		return
 	}
@@ -61,7 +61,7 @@ func (s *Server) handleGetAttentionItems(w http.ResponseWriter, r *http.Request)
 	apps, err := ac.ListApplications(ctx)
 	if err != nil {
 		// Upstream call (ArgoCD): classify so an ArgoCD timeout reads as
-		// 504 rather than 500 (V124-3.2).
+		// 504 rather than 500.
 		writeUpstreamError(w, "dashboard_attention", err)
 		return
 	}
@@ -133,7 +133,7 @@ func (s *Server) handleGetPullRequests(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := s.dashboardSvc.GetPullRequests(r.Context(), gp)
 	if err != nil {
-		// Upstream call (Git provider): classify (V124-3.2).
+		// Upstream call (Git provider): classify.
 		writeUpstreamError(w, "dashboard_pull_requests", err)
 		return
 	}

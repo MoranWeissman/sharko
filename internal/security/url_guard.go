@@ -1,7 +1,7 @@
 // Package security holds cross-cutting hardening primitives shared across
 // the Sharko codebase.
 //
-// url_guard.go — Story V121-8.2 SSRF guard.
+// url_guard.go — SSRF guard.
 //
 // Several Sharko endpoints take a user-supplied URL and fetch it server-side
 // (e.g. /catalog/validate fetches `<repo>/index.yaml`). Without a guard, an
@@ -147,7 +147,7 @@ func ValidateExternalURL(rawURL string) error {
 // classifyBlocked returns a non-empty reason if the IP belongs to a blocked
 // range, or "" if the address is acceptable for outbound fetches. The set of
 // blocked nets matches the RFC1918 + loopback + link-local + IPv6 ULA/LL
-// list from the Story V121-8.2 acceptance criteria.
+// list.
 func classifyBlocked(ip net.IP) string {
 	if ip == nil {
 		return "invalid_ip"

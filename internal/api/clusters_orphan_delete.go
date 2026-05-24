@@ -14,7 +14,7 @@ import (
 // handleDeleteOrphanCluster godoc
 //
 // @Summary Delete an orphan cluster
-// @Description Deletes an ArgoCD cluster Secret for a cluster that has no managed-clusters.yaml entry and no open registration PR. Refuses to delete a cluster that is genuinely managed (in git), pending (has an open register PR), or NOT owned by Sharko (missing the app.kubernetes.io/managed-by=sharko label) — externally-owned Secrets are V125-2 Adopt territory.
+// @Description Deletes an ArgoCD cluster Secret for a cluster that has no managed-clusters.yaml entry and no open registration PR. Refuses to delete a cluster that is genuinely managed (in git), pending (has an open register PR), or NOT owned by Sharko (missing the app.kubernetes.io/managed-by=sharko label) — externally-owned Secrets are Adopt territory.
 // @Tags clusters
 // @Produce json
 // @Security BearerAuth
@@ -29,25 +29,16 @@ import (
 // @Failure 503 {object} map[string]interface{} "K8s client not wired — ownership label cannot be verified"
 // @Router /clusters/{name}/orphan [delete]
 //
-// V125-1-7 / BUG-058 — orphan-cluster recovery surface. The orphan resolver
+// Orphan-cluster recovery surface. The orphan resolver
 // (resolveOrphanRegistrations) detects ArgoCD cluster Secrets with no
-// matching managed-clusters.yaml entry and no open registration PR — these
-// are typically left behind when a manual-mode register PR was closed
-// without merging (the orchestrator pre-creates the Secret in
-// internal/orchestrator/cluster.go:408 before the PR opens).
+// matching managed-clusters.yaml entry and no open registration PR.
 //
 // SAFETY: this endpoint refuses to delete a cluster Secret unless it is
 // genuinely an orphan — the same name must be (1) present in ArgoCD,
 // (2) NOT in managed-clusters.yaml, and (3) NOT in pending_registrations.
-// A user-initiated DELETE on a managed or pending cluster gets a 400 with
-// a remediation hint ("use DELETE /api/v1/clusters/{name}" for managed;
-// "close the registration PR first" for pending). This guard is the
-// difference between a recovery action and a foot-gun.
-//
-// V125-1-8 closes this bug class architecturally by deferring the ArgoCD
-// register call to post-PR-merge so orphans are never created in the first
-// place. This endpoint stays as the recovery surface for orphans created
-// by older Sharko versions or by direct-API races.
+// A user-initiated DELETE on a managed or pending cluster gets a 400
+// with a remediation hint. This guard is the difference between a
+// recovery action and a foot-gun.
 func (s *Server) handleDeleteOrphanCluster(w http.ResponseWriter, r *http.Request) {
 	// Reuse the cluster.remove permission — deleting a cluster Secret in
 	// ArgoCD is no less destructive than deregistering a managed cluster.
@@ -160,12 +151,12 @@ func (s *Server) handleDeleteOrphanCluster(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// V125-1-8.2 — ownership-label gate (closes the V125-1-7 foot-gun where
-	// Discard could destroy an externally-created Secret). The Secret in the
-	// argocd namespace MUST carry the app.kubernetes.io/managed-by=sharko
-	// label written by the Story 8.0/8.1 reconciler — otherwise it is V125-2
-	// Adopt territory and Discard would silently destroy whatever tool
-	// (operator, GitOps, external script) was supposed to own it.
+	// Ownership-label gate (prevents Discard from destroying an
+	// externally-created Secret). The Secret in the argocd namespace
+	// MUST carry the app.kubernetes.io/managed-by=sharko label written
+	// by the reconciler — otherwise it is Adopt territory and Discard
+	// would silently destroy whatever tool (operator, GitOps, external
+	// script) was supposed to own it.
 	//
 	// Failure modes:
 	//   - k8s client not wired → 503; operator must restart Sharko with the
@@ -174,8 +165,8 @@ func (s *Server) handleDeleteOrphanCluster(w http.ResponseWriter, r *http.Reques
 	//   - Secret disappeared between the ArgoCD check (step 6) and now →
 	//     404. Race window is tiny but possible; ArgoCD's REST cache lags
 	//     the underlying K8s API.
-	//   - Secret lacks the sharko label → 400 with the spec'd remediation
-	//     message pointing operators at the V125-2 Adopt action.
+	//   - Secret lacks the sharko label → 400 with a remediation
+	//     message pointing operators at the Adopt action.
 	//   - K8s API error → 502 (upstream-classify so a transient blip reads
 	//     as gateway error and not 500).
 	//

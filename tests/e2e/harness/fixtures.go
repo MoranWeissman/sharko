@@ -137,7 +137,7 @@ func BuildKubeconfig(t *testing.T, cluster KindCluster, saName string) string {
 // must reach the kind cluster's API server via the host-published port
 // (NOT the Docker bridge IP).
 //
-// Why this exists (V125-1-13.y.3 / BUG-189-final):
+// Why this exists:
 //
 //   - BuildKubeconfig produces a kubeconfig pointing at the kind control-
 //     plane container's Docker-network IP (e.g. https://172.18.0.x:6443).
@@ -165,7 +165,7 @@ func BuildKubeconfig(t *testing.T, cluster KindCluster, saName string) string {
 //
 // Callers: tests/e2e/lifecycle/cluster_helpers.go::makeKubeconfigRegisterBody
 // (in-process Sharko consumption). DO NOT switch ArgoCD-direct callers
-// (registerClusterInArgoCDDirect / V125-1-13.x.6 tests) to this — they
+// (registerClusterInArgoCDDirect tests) to this — they
 // need the Docker-bridge IP for in-pod reachability.
 func BuildHostReachableKubeconfig(t *testing.T, cluster KindCluster, saName string) string {
 	t.Helper()

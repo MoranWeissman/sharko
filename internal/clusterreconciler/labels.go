@@ -1,16 +1,17 @@
 // Package clusterreconciler — labels.go defines the ownership label that
-// Sharko writes on every ArgoCD cluster Secret it creates. The label is the
-// canonical signal for "this Secret is mine" and gates downstream behaviour:
+// Sharko writes on every ArgoCD cluster Secret it creates. The label is
+// the canonical signal for "this Secret is mine" and gates downstream
+// behaviour:
 //
-//   - Story 8.1 (reconciler core): apply the label on every Secret create/update.
-//   - Story 8.2 (V125-1-7 orphan-delete tightening): only delete a Secret when
-//     IsManagedBySharko returns true; never touch unlabeled / externally-owned
-//     Secrets.
-//   - Story 8.3 (orchestrator-side cleanup): use the same predicate as the
-//     reconciler so behaviour is consistent across code paths.
+//   - Reconciler core: apply the label on every Secret create/update.
+//   - Orphan-delete tightening: only delete a Secret when
+//     IsManagedBySharko returns true; never touch unlabeled /
+//     externally-owned Secrets.
+//   - Orchestrator-side cleanup: same predicate so behaviour is
+//     consistent across code paths.
 //
 // See docs/design/2026-05-11-cluster-secret-reconciler-and-gitops-stance.md
-// §5 (ownership model) and §12 (V125-1-8 deltas).
+// §5 (ownership model).
 package clusterreconciler
 
 import (
@@ -33,8 +34,7 @@ const (
 // with the expected value.
 //
 // nil-safe: returns false for a nil Secret or a Secret with no labels.
-// Used by Story 8.2 (V125-1-7 tightening) to gate orphan deletes and by
-// Story 8.3 to gate orchestrator cleanups.
+// Used to gate orphan deletes and orchestrator cleanups.
 func IsManagedBySharko(secret *corev1.Secret) bool {
 	if secret == nil || secret.Labels == nil {
 		return false

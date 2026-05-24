@@ -24,7 +24,7 @@ type AWSSecretsManagerProvider struct {
 }
 
 // NewAWSSecretsManagerProviderFromAddonConfig creates a provider backed by AWS
-// Secrets Manager from the canonical AddonSecretProviderConfig (V125-1-11.3+).
+// Secrets Manager from the canonical AddonSecretProviderConfig.
 // Uses default AWS credential chain (IRSA when in-cluster, env vars or profile
 // for local dev).
 //

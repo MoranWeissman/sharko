@@ -39,7 +39,7 @@ func (s *Server) handleUpgradeAddon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// V124-4.5 (BUG-019 class): decode + validate body BEFORE upstream call.
+	// Decode + validate body BEFORE upstream call.
 	var req struct {
 		Version string `json:"version"`
 		Cluster string `json:"cluster"`
@@ -81,8 +81,6 @@ func (s *Server) handleUpgradeAddon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// V125-1-6: TrackPR centralized in orchestrator.UpgradeAddon{Global,Cluster}.
-
 	detail := fmt.Sprintf("to=%s", req.Version)
 	if req.Cluster != "" {
 		detail += fmt.Sprintf(" cluster=%s", req.Cluster)
@@ -116,7 +114,7 @@ func (s *Server) handleUpgradeAddonsBatch(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// V124-4.5 (BUG-019 class): decode + validate body BEFORE upstream call.
+	// Decode + validate body BEFORE upstream call.
 	var req struct {
 		Upgrades map[string]string `json:"upgrades"`
 	}
@@ -150,8 +148,6 @@ func (s *Server) handleUpgradeAddonsBatch(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-
-	// V125-1-6: TrackPR centralized in orchestrator.UpgradeAddons (batch).
 
 	audit.Enrich(r.Context(), audit.Fields{
 		Event:    "addon_upgraded",

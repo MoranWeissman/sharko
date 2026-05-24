@@ -1,4 +1,4 @@
-// Package api — orchestrator <-> prtracker bridge (V125-1-6).
+// Package api — orchestrator <-> prtracker bridge.
 //
 // The orchestrator deliberately does NOT import internal/prtracker (that
 // would close a small cycle through internal/audit), so it declares a
@@ -6,11 +6,9 @@
 // of PRInfo (orchestrator.TrackedPR). This file lives in the api
 // package because only this layer can import both safely.
 //
-// Story V125-1-6 / BUG-056: every PR-creating orchestrator path now
-// funnels through commitChangesWithMeta, which calls TrackPR via this
-// adapter. Previously only ad-hoc handler-level TrackPR calls fired,
-// so register-cluster, adopt-cluster, init, and 5 orchestrator addon
-// ops were silently missing from the dashboard PR panel.
+// Every PR-creating orchestrator path funnels through
+// commitChangesWithMeta, which calls TrackPR via this adapter, so every
+// Sharko-created PR surfaces on the dashboard PR panel.
 
 package api
 
@@ -62,12 +60,12 @@ func (a *prTrackerAdapter) TrackPR(ctx context.Context, p orchestrator.TrackedPR
 // per-request orchestrator instance. Despite the name (kept stable to
 // avoid touching every call site), this helper now attaches TWO hooks:
 //
-//  1. PR tracker (V125-1-6) — every commitChangesWithMeta call
-//     automatically tracks the resulting PR for dashboard surfacing.
-//  2. Reconciler trigger (V125-1-8.4) — every managed-clusters.yaml
-//     commit nudges the cluster Secret reconciler for sub-5s post-PR
-//     convergence; absent the nudge the reconciler still converges on
-//     its 30s safety-net tick.
+//  1. PR tracker — every commitChangesWithMeta call automatically
+//     tracks the resulting PR for dashboard surfacing.
+//  2. Reconciler trigger — every managed-clusters.yaml commit nudges
+//     the cluster Secret reconciler for sub-5s post-PR convergence;
+//     absent the nudge the reconciler still converges on its 30s
+//     safety-net tick.
 //
 // Both hooks are independently optional: a nil tracker or trigger is a
 // silent no-op. Callers MUST NOT assume either is wired — production
@@ -88,8 +86,7 @@ func (s *Server) attachPRTracker(orch *orchestrator.Orchestrator) *orchestrator.
 
 // aiToolTrackerAdapter satisfies ai.ToolPRTracker so the AI assistant's
 // write tools (enable_addon, disable_addon, update_addon_version) can
-// surface their PRs on the dashboard PR panel under the "AI" filter
-// chip. V125-1-6.
+// surface their PRs on the dashboard PR panel under the "AI" filter chip.
 type aiToolTrackerAdapter struct {
 	t *prtracker.Tracker
 }

@@ -13,23 +13,18 @@ import (
 // exec-plugin auth). It is wrapped with a descriptive error message that
 // callers can pass through to the API as a 400-level validation failure.
 //
-// V125-1.1 ships bearer-token-only support. Cert-based and exec-plugin auth
-// (aws-iam-authenticator, gke-gcloud-auth-plugin, etc.) need follow-on work
-// to either:
-//   - run the exec plugin server-side at registration time (security boundary
-//     concerns: we'd be executing arbitrary binaries from the user's caller
-//     environment in the Sharko pod), OR
-//   - persist the cert + key as the ArgoCD cluster Secret config payload
-//     (different ArgoCD secret schema from bearer-token, plus rotation
-//     concerns).
-//
-// Both paths are V125-1.x material. For now we surface a clear error with
-// the kubectl-create-token recipe so the maintainer can unblock kind testing.
+// This release ships bearer-token-only support. Cert-based and
+// exec-plugin auth (aws-iam-authenticator, gke-gcloud-auth-plugin) need
+// follow-on work — either run the exec plugin server-side (security
+// boundary: we'd execute arbitrary binaries in the Sharko pod) or
+// persist cert+key as the ArgoCD cluster Secret payload (different
+// ArgoCD secret schema plus rotation concerns). The current path
+// surfaces a clear error with a `kubectl create token` recipe.
 var ErrUnsupportedKubeconfigAuth = errors.New("unsupported kubeconfig auth method")
 
-// ParseInlineKubeconfig parses a raw kubeconfig YAML supplied inline by an
-// API caller (V125-1.1) and extracts the bearer-token credentials needed
-// for ArgoCD cluster registration.
+// ParseInlineKubeconfig parses a raw kubeconfig YAML supplied inline by
+// an API caller and extracts the bearer-token credentials needed for
+// ArgoCD cluster registration.
 //
 // The function rejects auth methods this release does not support:
 //   - Cert-based auth (TLSClientConfig.CertData / KeyData populated, no
@@ -84,13 +79,13 @@ func ParseInlineKubeconfig(raw string) (*Kubeconfig, error) {
 
 	// Step 2: enforce the bearer-token-only constraint.
 	if authInfo.Exec != nil {
-		return nil, fmt.Errorf("%w: exec-plugin auth (e.g. aws-iam-authenticator, gke-gcloud-auth-plugin) is not supported in v1.25; this release supports bearer-token only — generate a token via `kubectl create token <serviceaccount> --duration=24h` and paste a kubeconfig that uses it (full exec-plugin support coming in V125-1.x)", ErrUnsupportedKubeconfigAuth)
+		return nil, fmt.Errorf("%w: exec-plugin auth (e.g. aws-iam-authenticator, gke-gcloud-auth-plugin) is not supported; this release supports bearer-token only — generate a token via `kubectl create token <serviceaccount> --duration=24h` and paste a kubeconfig that uses it", ErrUnsupportedKubeconfigAuth)
 	}
 	hasCert := len(authInfo.ClientCertificateData) > 0 || authInfo.ClientCertificate != ""
 	hasKey := len(authInfo.ClientKeyData) > 0 || authInfo.ClientKey != ""
 	hasToken := authInfo.Token != "" || authInfo.TokenFile != ""
 	if (hasCert || hasKey) && !hasToken {
-		return nil, fmt.Errorf("%w: cert-based auth is not supported in v1.25; this release supports bearer-token only — generate a token via `kubectl create token <serviceaccount> --duration=24h` and paste a kubeconfig that uses it (cert-based auth coming in V125-1.x)", ErrUnsupportedKubeconfigAuth)
+		return nil, fmt.Errorf("%w: cert-based auth is not supported; this release supports bearer-token only — generate a token via `kubectl create token <serviceaccount> --duration=24h` and paste a kubeconfig that uses it", ErrUnsupportedKubeconfigAuth)
 	}
 
 	// Step 3: resolve to a *rest.Config — at this point we've ruled out

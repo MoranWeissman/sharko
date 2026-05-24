@@ -1,27 +1,17 @@
-// Package gitops — V125-1-8.3 / closes #257.
+// Package gitops — cluster-side managed-clusters.yaml mutators.
 //
-// Cluster-side managed-clusters.yaml mutators now use parse-mutate-marshal
-// via the V125-1-9 models.LoadManagedClusters + SaveManagedClusters writer
-// instead of the old line-level string manipulation that lived alongside
-// the catalog mutators in yaml_mutator.go.
+// These use parse-mutate-marshal via models.LoadManagedClusters +
+// SaveManagedClusters instead of line-level string manipulation.
+// Line-level mutators would have to be indent-aware to handle the
+// apiVersion/kind/metadata/spec envelope (cluster entries at indent 4
+// under `spec.clusters:`) — parse-mutate-marshal sidesteps that entire
+// class of brittleness.
 //
-// Why the replacement was required (task #257): the legacy mutators assumed
-// bare YAML at indent 0 / cluster entries at indent 2. V125-1-9 introduced
-// the apiVersion/kind/metadata/spec envelope, which sits cluster entries
-// at indent 4 under `spec.clusters:`. The line-level mutators produced
-// silently-broken output against the new shape — they could not be
-// salvaged with an indent-aware tweak because the surrounding envelope
-// keys (apiVersion/kind/metadata) would still need full structural
-// awareness to keep round-tripping cleanly.
-//
-// Trade-off: the new mutators no longer preserve inline comments, blank-line
-// separators, or original key ordering inside cluster entries — the yaml.v3
-// marshaller emits canonical formatting. The schema header
-// (models.ManagedClustersSchemaHeader) is always preserved as line 1 because
-// SaveManagedClusters prepends it on every emit. The catalog mutators
-// (addons-catalog.yaml) remain line-level for now (no V125-1-9 envelope
-// writer exists for that file yet; landing the schema-aware catalog writer
-// is V125-1-9.x follow-up scope, not Story 8.3).
+// Trade-off: the mutators no longer preserve inline comments, blank-line
+// separators, or original key ordering inside cluster entries — the
+// yaml.v3 marshaller emits canonical formatting. The schema header
+// (models.ManagedClustersSchemaHeader) is always preserved as line 1
+// because SaveManagedClusters prepends it on every emit.
 //
 // Behavioural contract (matches the legacy mutators where possible):
 //
@@ -37,12 +27,10 @@
 //     non-empty sets/replaces it. Returns an error when the cluster is
 //     not found.
 //
-// Output bytes always carry the V125-1-9 envelope (the canonical Save
-// emission). Legacy bare-YAML inputs are accepted on read (back-compat
-// per LoadManagedClusters contract) and silently upgraded to the
-// envelope on the next emit. That upgrade is the explicit V125-1-9 →
-// V126 transition path documented in
-// docs/design/2026-05-12-v125-architectural-todos.md.
+// Output bytes always carry the envelope (the canonical Save emission).
+// Legacy bare-YAML inputs are accepted on read (back-compat per
+// LoadManagedClusters contract) and silently upgraded to the envelope
+// on the next emit.
 package gitops
 
 import (
@@ -55,7 +43,7 @@ import (
 // entry. Region and SecretPath are optional (zero value means not set).
 // Labels should use "true"/"false" format to match managed-clusters.yaml
 // convention — the orchestrator builds this map in that shape and the
-// V125-1-9 schema validates either-or-empty.
+// the schema validates either-or-empty.
 type ClusterEntryInput struct {
 	Name       string
 	Region     string            // optional
@@ -66,7 +54,7 @@ type ClusterEntryInput struct {
 // AddClusterEntry adds a new cluster to the managed-clusters.yaml spec.
 // Idempotent on duplicate name (silent skip, no error) to preserve the
 // retry-after-partial-failure semantics the orchestrator relied on with
-// the legacy line-level mutator. Returns the canonical V125-1-9 enveloped
+// any legacy line-level behavior. Returns the canonical enveloped
 // document.
 func AddClusterEntry(data []byte, entry ClusterEntryInput) ([]byte, error) {
 	spec, err := loadOrBootstrap(data)
@@ -191,10 +179,8 @@ func UpdateClusterSecretPath(data []byte, clusterName, secretPath string) ([]byt
 	return models.SaveManagedClusters(spec)
 }
 
-// loadOrBootstrap parses an existing managed-clusters.yaml body or returns
-// an empty spec when the body is empty / whitespace-only. The legacy
-// AddClusterEntry mutator bootstrapped a `clusters:` header into raw
-// bytes; the V125-1-9 equivalent is an empty ManagedClustersSpec —
+// loadOrBootstrap parses an existing managed-clusters.yaml body or
+// returns an empty spec when the body is empty / whitespace-only.
 // SaveManagedClusters will emit the full envelope on save.
 func loadOrBootstrap(data []byte) (models.ManagedClustersSpec, error) {
 	if len(trimSpace(data)) == 0 {

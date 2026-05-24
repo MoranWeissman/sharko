@@ -15,9 +15,9 @@ import (
 
 // PRListResponse is the response for GET /api/v1/prs.
 //
-// V125-1-6: gains a Limit field so the FE can render a "View all on
-// GitHub →" escape hatch when the server response is at the limit cap.
-// Limit reflects the effective limit (clamped to prsMaxLimit).
+// Limit reflects the effective limit (clamped to prsMaxLimit) so the FE
+// can render a "View all on GitHub →" escape hatch when the server
+// response is at the cap.
 type PRListResponse struct {
 	PRs   []PRItem `json:"prs"`
 	Limit int      `json:"limit,omitempty"`
@@ -81,8 +81,7 @@ func (s *Server) handleListPRs(w http.ResponseWriter, r *http.Request) {
 	addon := r.URL.Query().Get("addon")
 	user := r.URL.Query().Get("user")
 
-	// V125-1-6: ?operation=<csv> filter. Empty = all. Whitespace
-	// segments are dropped silently.
+	// ?operation=<csv> filter. Empty = all. Whitespace segments are dropped silently.
 	var operations []string
 	if raw := r.URL.Query().Get("operation"); raw != "" {
 		for _, op := range strings.Split(raw, ",") {

@@ -21,16 +21,15 @@ type aiConfigResponse struct {
 	CurrentProvider    string           `json:"current_provider"`
 	AvailableProviders []aiProviderInfo `json:"available_providers"`
 
-	// AnnotateOnSeed (v1.21 Story V121-7.3) is the global Settings toggle
-	// for "Annotate values on generate". When the AI provider is `none`
-	// the field is reported as false regardless of the persisted value —
-	// the UI uses this to gate the toggle row visibility.
+	// AnnotateOnSeed is the global Settings toggle for "Annotate values
+	// on generate". When the AI provider is `none` the field is
+	// reported as false regardless of the persisted value — the UI uses
+	// this to gate the toggle row visibility.
 	//
 	// Default-true semantics: on a fresh install with a configured AI
-	// provider but no explicit AnnotateOnSeed value (older config blobs
-	// from before V121-7), the field reports `true`. The Save handler
-	// stamps the explicit value on every persist so subsequent reads are
-	// authoritative.
+	// provider but no explicit value (legacy config blobs), the field
+	// reports `true`. The Save handler stamps the explicit value on
+	// every persist so subsequent reads are authoritative.
 	AnnotateOnSeed bool `json:"annotate_on_seed"`
 }
 
@@ -86,9 +85,9 @@ func (s *Server) handleGetAIConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// AnnotateOnSeed default-true: when AI is configured but the
-	// persisted blob doesn't have an explicit value (legacy config from
-	// before V121-7), report `true`. Defer to ai.Client.AnnotateOnSeedEnabled
-	// so the same default rule lives in one place.
+	// persisted blob doesn't have an explicit value, report `true`.
+	// Defer to ai.Client.AnnotateOnSeedEnabled so the same default rule
+	// lives in one place.
 	annotate := s.aiClient.AnnotateOnSeedEnabled()
 
 	resp := aiConfigResponse{
@@ -114,7 +113,7 @@ type saveAIConfigRequest struct {
 	BaseURL   string `json:"base_url,omitempty"`
 	OllamaURL string `json:"ollama_url,omitempty"`
 
-	// AnnotateOnSeed (V121-7.3) is a tri-state via the *bool sentinel:
+	// AnnotateOnSeed is a tri-state via the *bool sentinel:
 	//   nil  → caller didn't pass the field; preserve the current value
 	//          (or fall through to default-true if no current value exists).
 	//   *false → explicit OFF.

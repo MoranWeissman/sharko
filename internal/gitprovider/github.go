@@ -18,11 +18,10 @@ import (
 // trees, commits) on freshly-created repos that have never received a push
 // or initial commit.
 //
-// V124-11 root cause: the bootstrap flow (CreateBranch in github_write.go)
-// previously only handled 404 Not Found from GetRef as the empty-repo
-// signal. A repo created via `gh repo create` (no --add-readme) returns 409
-// instead, so the wizard's step 4 ("Initialize") would fail with the 409
-// surfaced verbatim and the maintainer was blocked on first-time setup.
+// The bootstrap flow (CreateBranch in github_write.go) needs this
+// detector because a repo created via `gh repo create` (no --add-readme)
+// returns 409 on GetRef instead of 404, and the wizard's Initialize
+// step must handle both paths.
 //
 // Detection strategy: GitHub does not expose a stable machine-readable
 // "code" for this scenario, so we combine (1) the type-asserted

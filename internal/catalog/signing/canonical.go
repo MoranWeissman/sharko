@@ -1,5 +1,5 @@
 // Package signing implements per-entry and per-catalog cosign-keyless
-// signature verification (v1.23 Subsystem B / Story V123-2.2).
+// signature verification.
 //
 // Two verification surfaces are exposed:
 //
@@ -35,8 +35,8 @@
 //     this in logs but typically retains the prior snapshot.
 //
 // No URL is ever logged in this package. Sidecar URLs may encode auth
-// tokens (Gotcha #1 from V123-1.1). Use the 10-char SHA-256 fingerprint
-// helper urlFingerprint when an identifier is genuinely needed.
+// tokens. Use the 10-char SHA-256 fingerprint helper urlFingerprint
+// when an identifier is genuinely needed.
 package signing
 
 import (

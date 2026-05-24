@@ -29,7 +29,7 @@ type TrustPolicy struct {
 	// should reject every signature rather than fall back to a default.
 	Identities []string
 
-	// WorkflowRef (V124-1.4) is an OPTIONAL second-layer assertion that
+	// WorkflowRef is an OPTIONAL second-layer assertion that
 	// the verifier applies to the cert's GitHub workflow_ref claim
 	// (Fulcio extension OID 1.3.6.1.4.1.57264.1.6, mapped to
 	// fulcio/certificate.Extensions.GithubWorkflowRef in sigstore-go).
@@ -62,9 +62,8 @@ type TrustPolicy struct {
 // SidecarVerifier is the narrow contract that Subsystem A calls into
 // when it detects a sidecar signature next to a fetched catalog
 // payload. Subsystem B (`internal/catalog/signing/`) supplies the
-// concrete implementation in V123-2.2; until then, the fetcher is
-// constructed with a nil verifier and every fetched entry inherits
-// `verified: false`.
+// concrete implementation; when the fetcher is constructed with a nil
+// verifier, every fetched entry inherits `verified: false`.
 //
 // IMPORTANT: this interface lives in the fetcher package on purpose.
 // Keeping the contract here means the fetcher package does not import

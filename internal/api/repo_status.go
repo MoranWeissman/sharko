@@ -9,14 +9,12 @@ import (
 // `Initialized` reports whether bootstrap/Chart.yaml is readable on the
 // configured base branch — i.e. the GitOps repo has been seeded.
 //
-// `BootstrapSynced` (V124-22 / BUG-046) reports whether the canonical
-// ArgoCD application `cluster-addons-bootstrap` exists AND is
-// Sync=Synced AND Health=Healthy. The wizard gate in App.tsx uses this
-// to auto-open the wizard when the repo is initialized but the cluster-
-// side bootstrap is missing or degraded — V124-15 made the operation
-// framework treat that condition as a failure, but the wizard previously
-// only checked `Initialized`, so the user landed on a dashboard splattered
-// with errors instead of a recovery surface.
+// `BootstrapSynced` reports whether the canonical ArgoCD application
+// `cluster-addons-bootstrap` exists AND is Sync=Synced AND Health=Healthy.
+// The wizard gate in App.tsx uses this to auto-open the wizard when the
+// repo is initialized but the cluster-side bootstrap is missing or
+// degraded — without this signal, the user would land on a dashboard
+// full of errors instead of a recovery surface.
 //
 // `Reason` is a short machine-readable tag (only set when Initialized=false)
 // that helps the UI distinguish e.g. "no_connection" from "not_bootstrapped".
@@ -63,11 +61,11 @@ func (s *Server) handleRepoStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Repo files are present. V124-22 / BUG-046: probe ArgoCD for the
-	// canonical bootstrap root-app and report Synced+Healthy. Any error
-	// path (no client, app missing, OutOfSync, Degraded) reports
-	// bootstrap_synced=false — the UI then auto-opens the wizard so the
-	// user has a recovery surface instead of a dashboard full of errors.
+	// Repo files are present. Probe ArgoCD for the canonical bootstrap
+	// root-app and report Synced+Healthy. Any error path (no client,
+	// app missing, OutOfSync, Degraded) reports bootstrap_synced=false
+	// — the UI then auto-opens the wizard so the user has a recovery
+	// surface instead of a dashboard full of errors.
 	//
 	// We deliberately swallow the GetActiveOrchestratorArgocdClient error:
 	// "the connection has Git but no usable ArgoCD" is exactly the

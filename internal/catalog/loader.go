@@ -59,12 +59,12 @@ var allowedCuratedBy = map[string]struct{}{
 // this const mirrors it for ergonomics within the catalog package).
 const SourceEmbedded = "embedded"
 
-// Signature is the optional per-entry cosign-keyless attestation pointer
-// (schema v1.1+; V123-2.1). When present, V123-2.2's load-time verifier
-// checks the bundle against the configured trust policy.
+// Signature is the optional per-entry cosign-keyless attestation pointer.
+// When present, the load-time verifier checks the bundle against the
+// configured trust policy.
 //
 // `bundle` is a URL to a Sigstore bundle file (cert + sig + Rekor entry).
-// Convention matches the V123-1.2 fetcher's `.bundle` sidecar probe but is
+// Convention matches the fetcher's `.bundle` sidecar probe but is
 // per-entry, not per-catalog-file.
 type Signature struct {
 	Bundle string `yaml:"bundle" json:"bundle"`
@@ -78,17 +78,16 @@ type Signature struct {
 // catch-all map. That matches the design decision "Unknown fields are
 // tolerated" — we do not fail startup on unknown keys.
 //
-// Schema v1.1 (V123-2.1) added the optional `signature` block — a per-entry
-// cosign-keyless attestation pointer. Older catalogs without it deserialize
-// cleanly (the pointer stays nil); older Sharko binaries that don't yet know
-// the field tolerate it as unknown per design §4.2.
+// The optional `signature` block carries a per-entry cosign-keyless
+// attestation pointer. Older catalogs without it deserialize cleanly
+// (the pointer stays nil).
 //
-// V123-2.2 introduced two computed-at-load fields — `Verified` and
-// `SignatureIdentity` — that surface the cosign verification outcome on
-// the API. Both are tagged `yaml:"-"` for the same forgery-resistance
-// reason as `Source` (V123-1.4): without the dash, a hostile third-party
-// YAML could set `verified: true` and masquerade as cosign-attested
-// without ever producing a valid signature.
+// `Verified` and `SignatureIdentity` are computed-at-load fields that
+// surface the cosign verification outcome on the API. Both are tagged
+// `yaml:"-"` for the same forgery-resistance reason as `Source`:
+// without the dash, a hostile third-party YAML could set
+// `verified: true` and masquerade as cosign-attested without ever
+// producing a valid signature.
 type CatalogEntry struct {
 	Name                 string        `yaml:"name" json:"name"`
 	Description          string        `yaml:"description" json:"description"`
@@ -110,8 +109,8 @@ type CatalogEntry struct {
 	Deprecated           bool          `yaml:"deprecated,omitempty" json:"deprecated,omitempty"`
 	SupersededBy         string        `yaml:"superseded_by,omitempty" json:"superseded_by,omitempty"`
 
-	// Signature is the optional cosign-keyless attestation pointer
-	// (schema v1.1+; V123-2.1). nil when the entry is unsigned.
+	// Signature is the optional cosign-keyless attestation pointer.
+	// nil when the entry is unsigned.
 	Signature *Signature `yaml:"signature,omitempty" json:"signature,omitempty"`
 
 	// SecurityTier is derived from SecurityScore by the API layer (Strong /
@@ -126,20 +125,20 @@ type CatalogEntry struct {
 	// never written to disk.
 	Source string `yaml:"-" json:"source,omitempty"`
 
-	// Verified is the post-load cosign-verification outcome (V123-2.2).
-	// True only when the entry had a valid `signature.bundle` URL whose
-	// fetched Sigstore bundle verified against the configured trust
-	// policy AND whose OIDC subject matched a TrustPolicy.Identities
-	// regex. False for unsigned entries, fail-closed defaults, sig
-	// mismatches, untrusted identities, and infrastructure failures
-	// fetching the bundle. Computed at load via LoadBytesWithVerifier;
-	// never persisted to YAML (`yaml:"-"` matches the Source pattern).
+	// Verified is the post-load cosign-verification outcome. True only
+	// when the entry had a valid `signature.bundle` URL whose fetched
+	// Sigstore bundle verified against the configured trust policy
+	// AND whose OIDC subject matched a TrustPolicy.Identities regex.
+	// False for unsigned entries, fail-closed defaults, sig mismatches,
+	// untrusted identities, and infrastructure failures fetching the
+	// bundle. Computed at load via LoadBytesWithVerifier; never
+	// persisted to YAML.
 	Verified bool `yaml:"-" json:"verified"`
 
 	// SignatureIdentity is the OIDC subject (cert SAN) of the verified
 	// signer when Verified is true. Empty otherwise. Powers the UI's
-	// "Verified by <issuer>" pill (V123-2.4). Same forgery-resistant
-	// `yaml:"-"` posture as Source/Verified.
+	// "Verified by <issuer>" pill. Same forgery-resistant `yaml:"-"`
+	// posture as Source/Verified.
 	SignatureIdentity string `yaml:"-" json:"signature_identity,omitempty"`
 }
 
@@ -389,9 +388,8 @@ func LoadBytesWithSource(data []byte, source string) (*Catalog, error) {
 // The trust policy is closed over by verifyFn at construction time
 // (see signing.Verifier.VerifyEntryFunc). An empty trust policy
 // triggers the verifier's fail-closed branch — every signed entry
-// surfaces Verified=false. This is the canonical default for a v1.23
-// install with no SHARKO_CATALOG_TRUSTED_IDENTITIES set yet (V123-2.3
-// lands the env var parser).
+// surfaces Verified=false. This is the canonical default for installs
+// without SHARKO_CATALOG_TRUSTED_IDENTITIES set.
 func LoadBytesWithVerifier(
 	ctx context.Context,
 	data []byte,
@@ -607,9 +605,9 @@ func (c *Catalog) Len() int {
 	return len(c.entries)
 }
 
-// UpdateScore lets the Scorecard refresh job (internal/catalog/scorecard.go,
-// Story V121-1.5) update the in-memory score for a given entry. No-op and
-// returns false when the name is unknown.
+// UpdateScore lets the Scorecard refresh job
+// (internal/catalog/scorecard.go) update the in-memory score for a
+// given entry. No-op and returns false when the name is unknown.
 func (c *Catalog) UpdateScore(name string, score float64, refreshed string) bool {
 	if c == nil {
 		return false

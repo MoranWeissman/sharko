@@ -1,8 +1,8 @@
 package api
 
-// catalog_versions.go — read-only endpoint that surfaces chart versions for a
-// curated catalog entry. Powers the version picker in the v1.21 Marketplace
-// Configure modal (Epic V121-2.4).
+// catalog_versions.go — read-only endpoint that surfaces chart versions
+// for a curated catalog entry. Powers the version picker in the
+// Marketplace Configure modal.
 //
 // Why a separate endpoint vs. the existing /api/v1/upgrade/{addonName}/versions:
 //   • upgrade/versions is keyed by an addon already present in the user's GitOps

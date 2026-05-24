@@ -1,6 +1,6 @@
 package api
 
-// secret_leak_audit.go — Story V121-8.5 helper.
+// secret_leak_audit.go — secret-guard audit helper.
 //
 // When the AI-annotate secret guard hard-blocks an upstream values payload,
 // we want a dedicated audit-log entry so the security team can grep one

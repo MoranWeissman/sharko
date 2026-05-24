@@ -102,8 +102,8 @@ func (e *ToolExecutor) enableAddon(ctx context.Context, connectionName, clusterN
 		return "", fmt.Errorf("creating pull request: %w", err)
 	}
 
-	// V125-1-6: surface the AI assistant's PR on the dashboard panel
-	// under the "AI" filter chip.
+	// Surface the AI assistant's PR on the dashboard panel under the
+	// "AI" filter chip.
 	if e.prTracker != nil {
 		_ = e.prTracker.TrackPR(ctx, ToolTrackedPR{
 			PRID:      pr.ID,
@@ -161,7 +161,7 @@ func (e *ToolExecutor) disableAddon(ctx context.Context, connectionName, cluster
 		return "", fmt.Errorf("creating pull request: %w", err)
 	}
 
-	// V125-1-6: surface AI-tool disable PR on the dashboard.
+	// Surface AI-tool disable PR on the dashboard.
 	if e.prTracker != nil {
 		_ = e.prTracker.TrackPR(ctx, ToolTrackedPR{
 			PRID:      pr.ID,
@@ -219,7 +219,7 @@ func (e *ToolExecutor) updateAddonVersion(ctx context.Context, connectionName, a
 		return "", fmt.Errorf("creating pull request: %w", err)
 	}
 
-	// V125-1-6: surface AI-tool catalog-version-update PR on the dashboard.
+	// Surface AI-tool catalog-version-update PR on the dashboard.
 	if e.prTracker != nil {
 		_ = e.prTracker.TrackPR(ctx, ToolTrackedPR{
 			PRID:      pr.ID,

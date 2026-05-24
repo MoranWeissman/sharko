@@ -29,13 +29,11 @@ func (o *Orchestrator) ConfigureAddon(ctx context.Context, req ConfigureAddonReq
 	// directly. Simple-only updates fall through to the gitops shared
 	// helper below.
 	//
-	// ZG1-A.264.1: this branch previously did its OWN envelope-naive
-	// yaml.Unmarshal -> mutate -> yaml.Marshal cycle, which silently
-	// stripped the V125-1-9.2 envelope (apiVersion/kind/metadata/spec)
-	// on every complex-field UPDATE. The reader/writer route below
-	// preserves the envelope and upgrades legacy bare-YAML inputs on
-	// the next emit — same contract as gitops.UpdateCatalogEntry, which
-	// the simple-fields branch already delegates to.
+	// The reader/writer route preserves the envelope
+	// (apiVersion/kind/metadata/spec) and upgrades legacy bare-YAML
+	// inputs on the next emit — same contract as
+	// gitops.UpdateCatalogEntry, which the simple-fields branch already
+	// delegates to.
 	hasComplexFields := req.SyncOptions != nil || req.AdditionalSources != nil ||
 		req.IgnoreDifferences != nil || req.ExtraHelmValues != nil
 

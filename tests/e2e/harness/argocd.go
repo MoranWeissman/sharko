@@ -27,7 +27,7 @@ const (
 //
 // Server-side apply is mandatory because the ApplicationSet CRD metadata
 // exceeds the 256 KiB limit of client-side apply's last-applied-configuration
-// annotation. See V124-3.6 for the original fix in the bash harness.
+// annotation.
 //
 // NOT invoked by 7-1.2's hello-world tests (too slow — ~90s); lives in the
 // harness so downstream story 7-1.4+ lifecycle tests can reuse it.

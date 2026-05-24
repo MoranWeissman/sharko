@@ -45,13 +45,11 @@ import (
 
 // setAddonValuesRequest is the body of PUT /api/v1/addons/{name}/values.
 //
-// v1.21 (V121-6.4) extension: when `RefreshFromUpstream` is true, the
-// handler ignores any client-supplied `Values`, fetches the chart's
-// upstream `values.yaml` for the version pinned in `addons-catalog.yaml`,
-// runs the smart-values pipeline, and overwrites the global values file
-// with the regenerated content. This replaces the dedicated
-// `POST /api/v1/addons/{name}/values/pull-upstream` endpoint that v1.20.1
-// shipped — see the locked decision in `epics-v1.21.md` Story V121-6.4.
+// When `RefreshFromUpstream` is true, the handler ignores any
+// client-supplied `Values`, fetches the chart's upstream `values.yaml`
+// for the version pinned in `addons-catalog.yaml`, runs the smart-values
+// pipeline, and overwrites the global values file with the regenerated
+// content.
 type setAddonValuesRequest struct {
 	// Values is the full YAML file content. Sharko commits this verbatim
 	// as the new global default values for the addon. Ignored when
@@ -140,9 +138,8 @@ func (s *Server) handleSetAddonValues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Refresh path (V121-6.4): regenerate from the upstream chart's
-	// values.yaml at the catalog-pinned version, then commit. This
-	// replaces the dedicated pull-upstream endpoint deleted in V121-6.5.
+	// Refresh path: regenerate from the upstream chart's values.yaml at
+	// the catalog-pinned version, then commit.
 	yamlPayload := req.Values
 	auditEvent := "addon_values_edited"
 	prTitle := "Update global values for " + name
@@ -179,7 +176,7 @@ func (s *Server) handleSetAddonValues(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// V121-7 AI annotate on refresh: same rules as the addon-add seed
+		// AI annotate on refresh: same rules as the addon-add seed
 		// flow. AI off / opted out / secret-blocked → heuristic-only.
 		var (
 			extraPaths  []string
@@ -195,10 +192,9 @@ func (s *Server) handleSetAddonValues(w http.ResponseWriter, r *http.Request) {
 						"addon", name, "chart", chart, "version", version,
 						"matches", len(secretBlock.Matches),
 					)
-					// Story V121-8.5: emit a dedicated
-					// `secret_leak_blocked` audit entry so security review
-					// can grep across handlers without parsing per-event
-					// detail strings.
+					// Emit a dedicated `secret_leak_blocked` audit entry so
+					// security review can grep across handlers without
+					// parsing per-event detail strings.
 					s.emitSecretLeakAuditBlock(ctx, "values_refresh", name, chart, version, secretBlock.Matches)
 				}
 			}
@@ -225,11 +221,9 @@ func (s *Server) handleSetAddonValues(w http.ResponseWriter, r *http.Request) {
 
 	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
 	s.attachPRTracker(orch)
-	// V125-1-6: route through the WithOp variant so the dashboard PR
-	// panel filter chip reflects the requested operation (manual edit vs.
-	// upstream refresh) rather than the generic values-edit default.
-	// values-refresh-upstream stays under the Addons category bucket on
-	// the FE side.
+	// Route through the WithOp variant so the dashboard PR panel filter
+	// chip reflects the requested operation (manual edit vs. upstream
+	// refresh) rather than the generic values-edit default.
 	result, err := orch.SetGlobalAddonValuesWithOp(ctx, name, yamlPayload, prOperation, prTitle)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
@@ -309,9 +303,6 @@ func (s *Server) handleSetClusterAddonValues(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// V125-1-6: TrackPR centralized in orchestrator.SetClusterAddonValues
-	// (operation=values-edit, addon+cluster set automatically).
-
 	audit.Enrich(ctx, audit.Fields{
 		Event:    "cluster_addon_values_edited",
 		Resource: fmt.Sprintf("cluster:%s addon:%s", cluster, addonName),
@@ -356,17 +347,15 @@ func (s *Server) handleGetAddonValuesSchema(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// V121-6.5: version-mismatch detection. If the values file has a
-	// smart-values header with `sharko: managed=true` and the chart
-	// version it was generated against doesn't match the catalog's
-	// current pin, we surface the mismatch so the UI can render the
-	// refresh banner. This is best-effort — any failure to look up the
-	// catalog (no ArgoCD, transient Git error) just suppresses the
-	// banner; the values themselves still render.
+	// Version-mismatch detection. If the values file has a smart-values
+	// header with `sharko: managed=true` and the chart version it was
+	// generated against doesn't match the catalog's current pin, we
+	// surface the mismatch so the UI can render the refresh banner.
+	// Best-effort — a catalog-lookup failure just suppresses the banner.
 	if resp != nil && resp.CurrentValues != "" {
 		header := orchestrator.ParseSmartValuesHeader([]byte(resp.CurrentValues))
-		// V121-7.4: surface the header-stored AI annotation state so the
-		// UI can render the "AI not configured" banner and the per-addon
+		// Surface the header-stored AI annotation state so the UI can
+		// render the "AI not configured" banner and the per-addon
 		// opt-out toggle without re-parsing the YAML on the client.
 		resp.AIAnnotated = header.AIAnnotated
 		resp.AIOptOut = header.AIOptOut

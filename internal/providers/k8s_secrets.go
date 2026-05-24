@@ -20,7 +20,7 @@ type KubernetesSecretProvider struct {
 }
 
 // NewKubernetesSecretProviderFromAddonConfig creates a provider that reads from
-// K8s Secrets from the canonical AddonSecretProviderConfig (V125-1-11.3+).
+// K8s Secrets from the canonical AddonSecretProviderConfig.
 // Uses in-cluster config when running inside Kubernetes, falls back to default
 // kubeconfig for local dev.
 //

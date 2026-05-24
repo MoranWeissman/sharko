@@ -1,10 +1,10 @@
-// V125-1-9 Story 9.4 — embedded schema sources for the runtime validator.
+// Embedded schema sources for the runtime validator.
 //
 // The two .v1.json files in this package directory are byte-identical
-// copies of docs/schemas/*.v1.json. They are duplicated here (Option A in
-// the Story 9.4 plan) so the validator can load schemas via go:embed
-// rather than from a runtime filesystem path — deployed Sharko binaries
-// ship the schemas inside the binary.
+// copies of docs/schemas/*.v1.json. They are duplicated here so the
+// validator can load schemas via go:embed rather than from a runtime
+// filesystem path — deployed Sharko binaries ship the schemas inside
+// the binary.
 //
 // Idempotency / drift:
 //

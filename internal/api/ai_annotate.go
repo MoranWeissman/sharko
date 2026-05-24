@@ -1,4 +1,4 @@
-// Package api — AI annotate endpoints (v1.21 Epic V121-7, Story 7.4).
+// Package api — AI annotate endpoints.
 //
 // Two small endpoints sit on top of the existing values-editor pipeline:
 //
@@ -63,7 +63,7 @@ type aiAnnotateBlockedResponse struct {
 // handleAnnotateAddonValues godoc
 //
 // @Summary Re-annotate an addon's global values via AI
-// @Description Fetches the chart's upstream values.yaml at the catalog-pinned version, runs the V121-7 AI annotate pass (one-line `# description` comments + LLM-suggested cluster-specific paths unioned with the heuristic), and opens a Tier 2 PR with the result. Hard-blocked when the secret-leak guard matches; in that case returns 422 with redacted matches and no PR. Skipped when AI is not configured or the addon is opted out.
+// @Description Fetches the chart's upstream values.yaml at the catalog-pinned version, runs the AI annotate pass (one-line `# description` comments + LLM-suggested cluster-specific paths unioned with the heuristic), and opens a Tier 2 PR with the result. Hard-blocked when the secret-leak guard matches; in that case returns 422 with redacted matches and no PR. Skipped when AI is not configured or the addon is opted out.
 // @Tags addons
 // @Produce json
 // @Security BearerAuth
@@ -150,9 +150,9 @@ func (s *Server) handleAnnotateAddonValues(w http.ResponseWriter, r *http.Reques
 				Resource: fmt.Sprintf("addon:%s", name),
 				Detail:   fmt.Sprintf("chart=%s version=%s matches=%d", chart, version, len(secretBlock.Matches)),
 			})
-			// Story V121-8.5: emit a separate, grep-stable
-			// `secret_leak_blocked` entry on the audit ring so security
-			// review can find every block (across handlers) with one query.
+			// Emit a separate, grep-stable `secret_leak_blocked` entry
+			// on the audit ring so security review can find every
+			// block (across handlers) with one query.
 			s.emitSecretLeakAuditBlock(ctx, "ai_annotate", name, chart, version, secretBlock.Matches)
 			writeJSON(w, http.StatusUnprocessableEntity, aiAnnotateBlockedResponse{
 				Code:    secretBlock.Code(),
@@ -173,9 +173,9 @@ func (s *Server) handleAnnotateAddonValues(w http.ResponseWriter, r *http.Reques
 
 	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
 	s.attachPRTracker(orch)
-	// V125-1-6: route through the WithOp variant so the resulting PR
-	// surfaces under the "AI" / Addons category on the dashboard PR
-	// panel rather than the generic "values-edit" bucket.
+	// Route through the WithOp variant so the resulting PR surfaces
+	// under the "AI" / Addons category on the dashboard PR panel rather
+	// than the generic "values-edit" bucket.
 	result, err := orch.SetGlobalAddonValuesWithOp(
 		ctx, name, string(generated), "ai-annotate",
 		fmt.Sprintf("AI annotate values for %s@%s", chart, version),
@@ -281,10 +281,10 @@ func (s *Server) handleSetAddonAIOptOut(w http.ResponseWriter, r *http.Request) 
 
 	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
 	s.attachPRTracker(orch)
-	// V125-1-6: AI opt-out toggle is a header-only mutation but it's
-	// still an AI-annotate-related action — file it under the same
-	// "ai-annotate" bucket so the dashboard shows it next to its sibling
-	// AI annotate runs rather than buried in the generic values-edit list.
+	// The AI opt-out toggle is a header-only mutation but it's still an
+	// AI-annotate-related action — file it under the same "ai-annotate"
+	// bucket so the dashboard shows it next to its sibling AI annotate
+	// runs rather than buried in the generic values-edit list.
 	result, err := orch.SetGlobalAddonValuesWithOp(
 		ctx, name, string(updated), "ai-annotate",
 		fmt.Sprintf("Toggle AI opt-out for %s (%s)", name, optOutLabel(req.OptOut)),

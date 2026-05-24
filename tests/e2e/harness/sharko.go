@@ -31,7 +31,7 @@ const (
 	// exercise containerised paths (Helm chart, image, K8s wiring).
 	SharkoModeInProcess SharkoMode = iota
 	// SharkoModeHelm helm-installs sharko into a kind mgmt cluster via
-	// installSharkoHelm + bootstrapHelmSharkoAuth (V125-1-13.1/13.2/13.3).
+	// installSharkoHelm + bootstrapHelmSharkoAuth.
 	// Slow (~30-90s boot depending on image build cache) but full-stack
 	// fidelity. Requires SharkoConfig.MgmtCluster to point at a provisioned
 	// kind cluster.
@@ -75,11 +75,10 @@ type SharkoConfig struct {
 	AIDisabled bool
 
 	// HelmOverrides are extra `--set key=value` overrides forwarded to
-	// installSharkoHelm (V125-1-13.1's HelmInstallConfig.SetValues).
-	// Optional; ignored for SharkoModeInProcess.
+	// installSharkoHelm. Optional; ignored for SharkoModeInProcess.
 	HelmOverrides map[string]string
 
-	// HelmTimeout caps the rollout wait for the Helm install (V125-1-13.1).
+	// HelmTimeout caps the rollout wait for the Helm install.
 	// Defaults to 180s when zero. Ignored for SharkoModeInProcess.
 	HelmTimeout time.Duration
 }
@@ -105,7 +104,7 @@ type Sharko struct {
 	// AdminUser/AdminPass.
 	Token string
 	// GitfakeInClusterURL is the in-cluster Service URL of the gitfake
-	// Pod that startSharkoHelm provisions alongside Sharko (V125-1-13.x.5).
+	// Pod that startSharkoHelm provisions alongside Sharko.
 	// Populated only in SharkoModeHelm — empty in SharkoModeInProcess.
 	// Tests that need gitfake-backed clones from within the Sharko Pod
 	// should declare SharkoModeHelm and read this URL.
@@ -140,7 +139,7 @@ func (s *Sharko) APIServer() *api.Server { return s.apiSrv }
 // way cmd/sharko/serve.go does in --demo mode (no provider, no reconcilers,
 // no K8s client) and wraps the resulting http.Handler in httptest.NewServer.
 //
-// Helm mode installs Sharko via Helm into cfg.MgmtCluster (V125-1-13.3) and
+// Helm mode installs Sharko via Helm into cfg.MgmtCluster and
 // returns a *Sharko whose URL points at the port-forwarded Helm-installed
 // instance. cfg.MgmtCluster is required for SharkoModeHelm.
 //
@@ -179,9 +178,9 @@ func StartSharko(t *testing.T, cfg SharkoConfig) *Sharko {
 	}
 }
 
-// startSharkoHelm bridges StartSharko's mode selector to V125-1-13.1's
-// installSharkoHelm + V125-1-13.2's bootstrapHelmSharkoAuth, returning a
-// *Sharko whose URL is host-reachable via a port-forward and whose
+// startSharkoHelm bridges StartSharko's mode selector to
+// installSharkoHelm + bootstrapHelmSharkoAuth, returning a *Sharko
+// whose URL is host-reachable via a port-forward and whose
 // AdminUser/AdminPass/Token come from the in-cluster bootstrap admin secret.
 //
 // cfg.MgmtCluster must be non-nil — every Helm-mode test owns at least one
@@ -256,23 +255,12 @@ func startSharkoInProcess(t *testing.T, cfg SharkoConfig, user, pass string) *Sh
 	srv := api.NewServer(connSvc, clusterSvc, addonSvc, dashboardSvc, observabilitySvc, upgradeSvc, aiClient)
 	srv.SetVersion("e2e")
 
-	// V125-1-13.y.3: align the in-process boot path with production
-	// defaults for the orchestrator's repo-paths + GitOps config.
-	//
-	// Pre-V125-1-13.y.3 the harness left Server.repoPaths and
-	// Server.gitopsCfg zero-valued, so the orchestrator wrote cluster
-	// values to "<empty>/<name>.yaml" while every reader (ConfigDiff,
-	// Values, ListClusters, ai/tools) looked under
-	// "configuration/addons-clusters-values/<name>.yaml" — every
-	// downstream subtest 500'd "file not found". CreatePR also failed
-	// with 'base branch "" not found' until the seeded connection
-	// included a GitOps block that ReinitializeFromConnection could
-	// pick up.
-	//
-	// We mirror cmd/sharko/serve.go's defaults exactly so the
-	// in-process boot behaves like a real Sharko start with no
-	// operator overrides — production parity matters for the e2e
-	// suite's job of catching path/config drift.
+	// Align the in-process boot path with production defaults for the
+	// orchestrator's repo-paths + GitOps config. Mirror
+	// cmd/sharko/serve.go's defaults exactly so the in-process boot
+	// behaves like a real Sharko start with no operator overrides —
+	// production parity matters for the e2e suite's job of catching
+	// path/config drift.
 	//
 	// PRAutoMerge is intentionally LEFT FALSE here. Several existing
 	// in-process tests (TestGlobalValuesEditor, TestPerClusterValuesOverride)
@@ -284,8 +272,8 @@ func startSharkoInProcess(t *testing.T, cfg SharkoConfig, user, pass string) *Sh
 	// promotes it onto Server.gitopsCfg.
 	srv.SetWriteAPIDeps(
 		nil, // no credentials provider — kubeconfig path bypasses it; EKS-only tests skip-graceful
-		nil, // no addon-secret config — system info endpoint reports "not configured" (V125-1-11.6)
-		nil, // no cluster-test config — same (V125-1-11.6)
+		nil, // no addon-secret config — system info endpoint reports "not configured"
+		nil, // no cluster-test config — same
 		orchestrator.RepoPathsConfig{
 			ClusterValues:   "configuration/addons-clusters-values",
 			GlobalValues:    "configuration/addons-global-values",
@@ -302,7 +290,7 @@ func startSharkoInProcess(t *testing.T, cfg SharkoConfig, user, pass string) *Sh
 		},
 	)
 
-	// Optional GitProvider injection (V2 Epic 7-1.3). When the caller
+	// Optional GitProvider injection. When the caller
 	// supplies a fake (typically *MockGitProvider from ghmock.go), wire
 	// it onto the connection service so every sharko handler that calls
 	// connSvc.GetActiveGitProvider() receives the fake. Without this

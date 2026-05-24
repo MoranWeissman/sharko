@@ -1,8 +1,5 @@
-// Package orchestrator — AI annotation pass for the smart-values pipeline
-// (v1.21 Epic V121-7, Stories 7.1 / 7.2 / 7.3).
+// Package orchestrator — AI annotation pass for the smart-values pipeline.
 //
-// What this layer does
-// ---------------------
 // AnnotateValues takes a chart's upstream values.yaml plus an AI client
 // and returns:
 //
@@ -15,36 +12,27 @@
 //     orchestrator UNIONS with the heuristic's detection set. The LLM is
 //     additive, never subtractive — the heuristic's results always win.
 //
-// Locked decisions (Moran, 2026-04-19):
+// Operating rules:
 //
 //   - Single deterministic LLM call per (chart, version). The result is
 //     cached in Git (the annotated file in the user's repo) — no
-//     ConfigMap, no BoltDB, no Sharko-side store. NFR-V121-1.
+//     ConfigMap, no BoltDB, no Sharko-side store.
 //   - HARD-BLOCK on any secret-leak match before the call. See
 //     ai_guard.go and the `SecretLeakError` typed return value. There is
 //     no "send anyway" override.
-//   - Token budget cap: input + output combined < ~50k tokens. We
-//     approximate tokens with bytes/4 (the standard ~4 chars/token rule
-//     of thumb for English-ish prose); if the values.yaml exceeds the
-//     bound, we skip the LLM and return the original bytes + empty
-//     additional-paths list. No partial-annotate fallback — the file
-//     stays predictable.
-//   - Latency budget: 30s per call (context.WithTimeout). Anything slower
-//     is treated as "AI not available right now" — heuristic-only output
-//     proceeds.
+//   - Token budget cap: input + output combined < ~50k tokens, approximated
+//     as bytes/4. If the values.yaml exceeds the bound, skip the LLM and
+//     return the original bytes + empty additional-paths list. No partial-
+//     annotate fallback — the file stays predictable.
+//   - Latency budget: 30s per call. Anything slower is treated as "AI not
+//     available right now" — heuristic-only output proceeds.
 //
-// Failure modes are graceful
-// --------------------------
-// AnnotateValues never fails the addon-add. On any of {AI not
-// configured, secret guard fires, token cap exceeded, network timeout,
-// LLM returned junk} the function returns the ORIGINAL valuesYAML bytes
-// plus an empty additional-paths list and an error that the caller logs
-// and continues past. The seed flow's contract with the orchestrator is
-// "best-effort annotation; fall through cleanly to heuristic-only".
-//
-// The caller still surfaces the SecretLeakError specifically because
-// that's the one the UI needs to render the dedicated banner — see the
-// Story 7.4 wiring in `ui/src/components/ValuesEditor.tsx`.
+// AnnotateValues never fails the addon-add. On any of {AI not configured,
+// secret guard fires, token cap exceeded, network timeout, LLM returned
+// junk} the function returns the ORIGINAL valuesYAML bytes plus an empty
+// additional-paths list and an error that the caller logs and continues
+// past. The caller still surfaces SecretLeakError specifically because
+// that's the one the UI needs to render the dedicated banner.
 
 package orchestrator
 

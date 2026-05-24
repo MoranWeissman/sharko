@@ -9,15 +9,11 @@
 //                                                     — same, scoped to a
 //         cluster overrides file.
 //
-// History:
-//   - v1.20.1 added a `POST /api/v1/addons/{name}/values/pull-upstream`
-//     endpoint that replaced the global values file with the chart's
-//     upstream values.yaml.
-//   - v1.21 (Story V121-6.4 + V121-6.5) deletes that endpoint. The same
-//     functionality moved into a `refresh_from_upstream: true` flag on
-//     the existing `PUT /api/v1/addons/{name}/values` handler — see
-//     `values_editor.go::handleSetAddonValues`. Locked decision (Moran):
-//     no new endpoint, no fragmented audit/tier surface for "edit values".
+// Note: there is no separate `pull-upstream` endpoint. Refresh-from-
+// upstream is a `refresh_from_upstream: true` flag on the existing
+// `PUT /api/v1/addons/{name}/values` handler — see
+// `values_editor.go::handleSetAddonValues`. One endpoint per "edit
+// values" surface keeps audit/tier semantics consistent.
 //
 // Implementation notes:
 //   - Recent-PRs goes to the GitProvider's ListPullRequests (state=closed)

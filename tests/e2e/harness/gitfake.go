@@ -7,8 +7,8 @@
 // gitfake_core.go (no build tag) so the standalone gitfake-server binary
 // at tests/e2e/harness/gitfake/cmd/gitfake-server can reuse them.
 //
-// V125-1-13.x.1: split out so containerised mode can serve the same
-// git-protocol surface from a kind Pod without dragging in `testing`.
+// Split out so containerised mode can serve the same git-protocol
+// surface from a kind Pod without dragging in `testing`.
 package harness
 
 import (

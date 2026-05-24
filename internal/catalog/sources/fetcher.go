@@ -28,9 +28,9 @@
 //     re-check the resolved IPs on every fetch attempt. When
 //     cfg.AllowPrivate is set the check is skipped (matches the startup
 //     escape hatch).
-//   - No URL is ever logged. Catalog URL paths may encode auth tokens
-//     (Gotcha #1 from V123-1.1). Log with a short host fingerprint
-//     instead where a log line is genuinely needed.
+//   - No URL is ever logged. Catalog URL paths may encode auth tokens.
+//     Log with a short host fingerprint instead where a log line is
+//     genuinely needed.
 //   - Schema validation reuses catalog.LoadBytes — same parser + rule
 //     set the embedded catalog goes through, so third-party feeds get
 //     identical treatment. No refactor of loader.go was needed.
@@ -58,7 +58,7 @@ import (
 
 // SourceStatus is the coarse last-fetch outcome for a single URL.
 // It maps to the `status` field in the future `GET /api/v1/catalog/sources`
-// payload (V123-1.5). Lower-case string values match design §2.6.
+// payload. Lower-case string values match design §2.6.
 type SourceStatus string
 
 const (
@@ -230,13 +230,11 @@ type Fetcher struct {
 	// per-entry verification" — the fetcher falls back to catalog.LoadBytes
 	// (back-compat for tests + builds that haven't wired the verifier).
 	//
-	// V123-2.4 / B3 BLOCKER fix: pre-fix the fetcher only verified the
-	// whole-file sidecar (`.bundle` next to the catalog YAML) and never
-	// looked at per-entry signature URLs, letting a compromised
-	// third-party curator flip an entry's bundle URL to a hostile target
-	// and have Sharko serve it as if signed. The closure baked here
-	// closes over the same trust policy the embedded catalog uses, so
-	// the trust surface is unified across the two ingestion paths.
+	// Without per-entry verification a compromised third-party curator
+	// could flip an entry's bundle URL to a hostile target and have
+	// Sharko serve it as if signed. The closure here closes over the
+	// same trust policy the embedded catalog uses, so the trust surface
+	// is unified across both ingestion paths.
 	//
 	// IMPORTANT: this field is a `catalog.VerifyEntryFunc` (defined in
 	// internal/catalog), NOT anything from internal/catalog/signing —
@@ -400,10 +398,10 @@ func (f *Fetcher) SetTrustPolicy(tp TrustPolicy) {
 
 // SetEntryVerifyFunc installs the per-entry verification callback used
 // by fetchOne when a third-party catalog's individual entries carry
-// `signature.bundle` URLs (V123-2.4 / B3 BLOCKER fix). Production callers
-// in cmd/sharko/serve.go pass `catalogVerifier.VerifyEntryFunc(trustPolicy)`
-// — the same closure that gates the embedded catalog so both paths
-// share one trust surface.
+// `signature.bundle` URLs. Production callers in cmd/sharko/serve.go
+// pass `catalogVerifier.VerifyEntryFunc(trustPolicy)` — the same
+// closure that gates the embedded catalog so both paths share one
+// trust surface.
 //
 // Nil is acceptable and resets the fetcher to the no-verification fast
 // path (catalog.LoadBytes). Tests that never wire a verifier rely on
@@ -419,7 +417,7 @@ func (f *Fetcher) SetEntryVerifyFunc(fn catalog.VerifyEntryFunc) {
 }
 
 // SetSnapshotsForTest replaces the in-memory snapshot map. Test-only
-// helper so callers (V123-1.4 merged-catalog handler tests, etc.) can
+// helper so callers (merged-catalog handler tests, etc.) can
 // construct a Fetcher with pre-populated snapshots without running a
 // full HTTP fetch loop. Production code has no reason to call this — the
 // supervisor + fetchOne path is the only writer in real deployments.
@@ -520,8 +518,7 @@ func (f *Fetcher) Stop() {
 // without affecting the fetcher.
 //
 // Deterministic iteration order is NOT guaranteed (map). Callers that
-// need a stable order should sort by URL; the V123-1.3 merge story
-// will do exactly that.
+// need a stable order should sort by URL; the merge layer does that.
 func (f *Fetcher) Snapshots() map[string]*SourceSnapshot {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
@@ -539,8 +536,7 @@ func (f *Fetcher) Snapshots() map[string]*SourceSnapshot {
 // into a cryptic error).
 //
 // ForceRefresh blocks until every targeted fetch completes so the
-// future V123-1.6 admin endpoint can return a deterministic response
-// body.
+// admin refresh endpoint can return a deterministic response body.
 func (f *Fetcher) ForceRefresh(ctx context.Context, urls ...string) {
 	targets := f.resolveTargets(urls)
 	if len(targets) == 0 {
@@ -683,14 +679,11 @@ func (f *Fetcher) fetchOne(ctx context.Context, rawURL string) {
 	// prior snapshot's entries are retained (AC #3) but status flips
 	// to StatusFailed and the error is stored.
 	//
-	// V123-2.4 / B3 BLOCKER fix: when an entry-level verify function
-	// is wired (the production path) we use LoadBytesWithVerifier so
-	// per-entry `signature.bundle` URLs get verified inline at load
-	// time. The nil-fn fallback to LoadBytes preserves behaviour for
-	// tests that construct a Fetcher without a signing-package wrapper
-	// — those tests never wire SetEntryVerifyFunc and continue to see
-	// Verified=false on every entry, matching the pre-fix behaviour
-	// they were calibrated against.
+	// When an entry-level verify function is wired (the production
+	// path) we use LoadBytesWithVerifier so per-entry
+	// `signature.bundle` URLs get verified inline at load time. The
+	// nil-fn fallback to LoadBytes preserves behaviour for tests that
+	// construct a Fetcher without a signing-package wrapper.
 	f.mu.RLock()
 	entryFn := f.entryVerifyFn
 	f.mu.RUnlock()

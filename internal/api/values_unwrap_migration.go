@@ -191,9 +191,9 @@ func (s *Server) handleUnwrapGlobalValues(w http.ResponseWriter, r *http.Request
 	}
 
 	// Step 3: open ONE PR with all migrations.
-	// V125-1-6: route through CommitFilesAsPRWithMeta so the PR tracks
-	// under the values-edit dashboard bucket (it's a global-values
-	// rewrite, semantically the same family as a manual edit).
+	// Route through CommitFilesAsPRWithMeta so the PR tracks under the
+	// values-edit dashboard bucket (it's a global-values rewrite,
+	// semantically the same family as a manual edit).
 	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
 	s.attachPRTracker(orch)
 	prResult, perr := orch.CommitFilesAsPRWithMeta(ctx, files,

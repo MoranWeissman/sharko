@@ -27,11 +27,11 @@ type RepoPathsConfig struct {
 
 // RegisterClusterRequest is the input for cluster registration.
 //
-// V125-1.1: Kubeconfig is required when Provider == "kubeconfig" and
-// MUST be empty for any other provider. SecretPath / Region / RoleARN
-// (carried separately on the API surface) are EKS-only and MUST be
-// empty when Provider == "kubeconfig". The handler enforces those
-// cross-field exclusions and returns 400 on violation.
+// Kubeconfig is required when Provider == "kubeconfig" and MUST be empty
+// for any other provider. SecretPath / Region / RoleARN (carried
+// separately on the API surface) are EKS-only and MUST be empty when
+// Provider == "kubeconfig". The handler enforces those cross-field
+// exclusions and returns 400 on violation.
 type RegisterClusterRequest struct {
 	Name       string          `json:"name"`
 	Provider   string          `json:"provider,omitempty"`
@@ -47,23 +47,20 @@ type RegisterClusterRequest struct {
 	// other provider.
 	Kubeconfig string `json:"kubeconfig,omitempty"`
 
-	// AutoMerge is the per-request auto-merge decision (BUG-031). nil
-	// means "fall back to the connection-level PRAutoMerge default";
-	// a non-nil value overrides the default for this operation only.
-	// Resolved via resolveAutoMerge — never mutate o.gitops.PRAutoMerge.
+	// AutoMerge is the per-request auto-merge decision. nil means "fall
+	// back to the connection-level PRAutoMerge default"; a non-nil
+	// value overrides the default for this operation only. Resolved via
+	// resolveAutoMerge — never mutate o.gitops.PRAutoMerge.
 	AutoMerge *bool `json:"auto_merge,omitempty"`
 }
 
 // UpdateClusterAddonsRequest is the input for PATCH /clusters/{name}.
-// Promoted to a named type in BUG-031 so the per-request AutoMerge
-// override can be added without an anonymous-struct field bag at the
-// handler edge.
 type UpdateClusterAddonsRequest struct {
 	Addons     map[string]bool `json:"addons,omitempty"`
 	SecretPath *string         `json:"secret_path,omitempty"`
 
-	// AutoMerge is the per-request auto-merge decision (BUG-031). nil
-	// means "fall back to the connection-level PRAutoMerge default".
+	// AutoMerge is the per-request auto-merge decision. nil means "fall
+	// back to the connection-level PRAutoMerge default".
 	AutoMerge *bool `json:"auto_merge,omitempty"`
 }
 
@@ -155,32 +152,31 @@ type AddAddonRequest struct {
 
 	// UpstreamValues is the raw chart `values.yaml` bytes that the API
 	// handler pre-fetched. When non-empty, AddAddon runs the smart-values
-	// pipeline (V121-6) and writes an annotated global values file with a
-	// per-cluster template block. When empty, AddAddon falls back to the
-	// pre-v1.21 minimal stub (`<name>:\n  enabled: false`). Not part of
-	// the wire schema — handlers populate it after `helm.FetchValues` and
-	// the smart-parser layer.
+	// pipeline and writes an annotated global values file with a
+	// per-cluster template block. When empty, AddAddon falls back to a
+	// minimal stub (`<name>:\n  enabled: false`). Not part of the wire
+	// schema — handlers populate it after `helm.FetchValues` and the
+	// smart-parser layer.
 	UpstreamValues []byte `json:"-"`
 
 	// AIAnnotated is set by the API handler after the AI annotate pass
-	// (V121-7 Story 7.3) succeeds. The orchestrator stamps the
+	// succeeds. The orchestrator stamps the
 	// `# AI annotation: enabled` line in the file header based on this
 	// flag — see WriteSmartValuesHeader. False means heuristic-only
 	// (or AI was skipped: not configured, secret blocked, timeout, opt-out).
 	AIAnnotated bool `json:"-"`
 
 	// AIOptOut is set by the API handler when the user has explicitly
-	// opted this addon out of AI annotation via the per-addon toggle
-	// (V121-7 Story 7.3). The orchestrator stamps the
-	// `# sharko: ai-annotate=off` line in the file header so that the
-	// later refresh-from-upstream path (V121-6.4) preserves the opt-out.
+	// opted this addon out of AI annotation via the per-addon toggle.
+	// The orchestrator stamps the `# sharko: ai-annotate=off` line in
+	// the file header so that the later refresh-from-upstream path
+	// preserves the opt-out.
 	AIOptOut bool `json:"-"`
 
 	// ExtraClusterSpecificPaths is the union-additive set of cluster-
-	// specific dotted paths from the AI annotate pass (V121-7 Story 7.2).
-	// The smart-values splitter treats this as additive — it never
-	// subtracts from the heuristic's classification. Empty when AI was
-	// skipped.
+	// specific dotted paths from the AI annotate pass. The smart-values
+	// splitter treats this as additive — it never subtracts from the
+	// heuristic's classification. Empty when AI was skipped.
 	ExtraClusterSpecificPaths []string `json:"-"`
 }
 
@@ -198,9 +194,9 @@ type ConfigureAddonRequest struct {
 
 // AdoptClustersRequest is the input for adopting existing ArgoCD clusters.
 //
-// BUG-031: AutoMerge is a pointer so callers can distinguish "not set"
-// (fall back to connection-level PRAutoMerge default) from explicit
-// true/false overrides. Resolved via resolveAutoMerge — never mutate
+// AutoMerge is a pointer so callers can distinguish "not set" (fall back
+// to connection-level PRAutoMerge default) from explicit true/false
+// overrides. Resolved via resolveAutoMerge — never mutate
 // o.gitops.PRAutoMerge (shared global state across concurrent requests).
 type AdoptClustersRequest struct {
 	Clusters  []string `json:"clusters"`
@@ -307,10 +303,10 @@ type EnableAddonResult struct {
 
 // InitRepoRequest is the input for initializing the addons repository.
 //
-// BUG-031: AutoMerge is a pointer so callers can distinguish "not set"
-// (fall back to connection-level PRAutoMerge default) from explicit
-// true/false overrides. The init handler resolves it via
-// resolveAutoMerge before deciding whether to merge the bootstrap PR.
+// AutoMerge is a pointer so callers can distinguish "not set" (fall back
+// to connection-level PRAutoMerge default) from explicit true/false
+// overrides. The init handler resolves it via resolveAutoMerge before
+// deciding whether to merge the bootstrap PR.
 type InitRepoRequest struct {
 	BootstrapArgoCD bool   `json:"bootstrap_argocd"`
 	AutoMerge       *bool  `json:"auto_merge,omitempty"`

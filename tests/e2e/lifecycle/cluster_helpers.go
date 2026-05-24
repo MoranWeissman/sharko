@@ -276,19 +276,17 @@ func insecureTransport() *http.Transport {
 // override on the connection service — but the connection still needs a
 // valid Git config to pass create-time validation. We supply Owner+Repo
 // only; sharko's validator accepts that shape and the runtime git side
-// is mocked separately via SharkoConfig.GitProvider override (see
-// V125-1-13.y for the override-wiring fix).
+// is mocked separately via SharkoConfig.GitProvider override.
 //
-// V125-1-13.y.3 / BUG-189-final: seeding the GitOps block is mandatory.
-// The in-process harness leaves Server.gitopsCfg zero-valued (empty
-// BaseBranch / BranchPrefix / CommitPrefix), and the only path that
-// populates it is connections.go → ReinitializeFromConnection, which
-// only copies fields from a non-nil conn.GitOps. Without an explicit
-// gitops block the orchestrator commits with branchName="" and base=""
-// → ghmock CreatePR returns 'base branch "" not found' → registration
-// returns 207/partial with no PR, no managed-cluster entry → every
-// downstream subtest fails with "cluster not found". Defaults match
-// the GitOpsSettings doc comments.
+// Seeding the GitOps block is mandatory. The in-process harness leaves
+// Server.gitopsCfg zero-valued, and the only path that populates it is
+// ReinitializeFromConnection, which only copies fields from a non-nil
+// conn.GitOps. Without an explicit gitops block the orchestrator
+// commits with branchName="" and base="" → ghmock CreatePR returns
+// 'base branch "" not found' → registration returns 207/partial with
+// no PR, no managed-cluster entry → every downstream subtest fails
+// with "cluster not found". Defaults match the GitOpsSettings doc
+// comments.
 //
 // pr_auto_merge=true closes Sharko's auto-merge loop in-process so the
 // register flow lands the values + managed-clusters.yaml on main
@@ -368,11 +366,10 @@ func seedActiveConnection(t *testing.T, admin *harness.Client, argoURL, argoToke
 // BuildHostReachableKubeconfig points at the host-bound 127.0.0.1:<port>
 // that kind already exposes, so the host-process verify completes in ms.
 //
-// ArgoCD-direct callers (registerClusterInArgoCDDirect / V125-1-13.x.6
-// tests) still use BuildKubeconfig because the consuming process is the
-// ArgoCD Pod inside the kind cluster, where the Docker bridge IP IS
-// reachable. See harness.BuildHostReachableKubeconfig doc for the full
-// contrast (V125-1-13.y.3 / BUG-189-final).
+// ArgoCD-direct callers (registerClusterInArgoCDDirect tests) still
+// use BuildKubeconfig because the consuming process is the ArgoCD Pod
+// inside the kind cluster, where the Docker bridge IP IS reachable.
+// See harness.BuildHostReachableKubeconfig doc for the full contrast.
 func makeKubeconfigRegisterBody(t *testing.T, target harness.KindCluster, name string) map[string]any {
 	t.Helper()
 	saName := "sharko-e2e-sa"
@@ -395,7 +392,7 @@ func fileExists(p string) bool {
 }
 
 // ---------------------------------------------------------------------------
-// V125-1-13.x.6 — direct ArgoCD cluster registration helper
+// Direct ArgoCD cluster registration helper
 // ---------------------------------------------------------------------------
 
 // registerClusterInArgoCDDirect registers a target kind cluster directly in

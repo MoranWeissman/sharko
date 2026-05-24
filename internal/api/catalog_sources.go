@@ -36,9 +36,7 @@ type catalogSourceRecord struct {
 
 	// Verified reports whether the sidecar signature was validated
 	// against the trust policy. True for the embedded row ("the binary
-	// trusts its own bundled catalog") — this is not a cosign statement
-	// (V123-2.5 owns signing of the embedded catalog). False for
-	// third-party until V123-2.2 wires the verifier.
+	// trusts its own bundled catalog") — not a cosign statement.
 	Verified bool `json:"verified"`
 
 	// Issuer is the human-readable OIDC subject of the signer, present
@@ -49,7 +47,7 @@ type catalogSourceRecord struct {
 // handleListCatalogSources godoc
 //
 // @Summary List catalog sources with fetch status
-// @Description Returns one record per catalog source — the embedded binary catalog (url="embedded", always first) plus each configured third-party URL from SHARKO_CATALOG_URLS. Per-source fields: url, status (ok|stale|failed), last_fetched (RFC3339 or null), entry_count, verified (cosign-verified, currently always true for embedded and false for third-party until V123-2.2 lands), and optional issuer when verified. Read-only; requires authentication.
+// @Description Returns one record per catalog source — the embedded binary catalog (url="embedded", always first) plus each configured third-party URL from SHARKO_CATALOG_URLS. Per-source fields: url, status (ok|stale|failed), last_fetched (RFC3339 or null), entry_count, verified (cosign-verified), and optional issuer when verified. Read-only; requires authentication.
 // @Tags catalog
 // @Produce json
 // @Security BearerAuth
@@ -65,12 +63,12 @@ func (s *Server) handleListCatalogSources(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, s.buildCatalogSourcesResponse())
 }
 
-// buildCatalogSourcesResponse assembles the []catalogSourceRecord used by
-// both GET /catalog/sources (V123-1.5) and POST /catalog/sources/refresh
-// (V123-1.6). The embedded pseudo-source is always first and always "ok"
-// — the binary trusts its own bundled catalog. Third-party rows appear
-// only when a fetcher is wired in; in embedded-only deployments
-// s.sourcesFetcher is nil and the result is a single-element slice.
+// buildCatalogSourcesResponse assembles the []catalogSourceRecord used
+// by both GET /catalog/sources and POST /catalog/sources/refresh. The
+// embedded pseudo-source is always first and always "ok" — the binary
+// trusts its own bundled catalog. Third-party rows appear only when a
+// fetcher is wired in; in embedded-only deployments s.sourcesFetcher is
+// nil and the result is a single-element slice.
 //
 // Callers must have already verified s.catalog != nil — the helper does
 // not 503 on its own because the two call sites differ on exactly which

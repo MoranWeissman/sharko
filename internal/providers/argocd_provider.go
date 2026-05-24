@@ -18,8 +18,9 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-// ArgoCDProvider reads cluster credentials from the ArgoCD-format Secret in the
-// argocd namespace (the same Secret Sharko's reconciler maintains after V125-1-8).
+// ArgoCDProvider reads cluster credentials from the ArgoCD-format Secret
+// in the argocd namespace (the same Secret Sharko's reconciler
+// maintains).
 //
 // It implements ClusterCredentialsProvider for the bearer-token auth shape and
 // returns stable, typed errors for the AWS-IAM and exec-plugin shapes so the
@@ -37,16 +38,13 @@ type ArgoCDProvider struct {
 // secrets (matches what argocd-server itself looks for).
 const argoCDClusterTypeSelector = "argocd.argoproj.io/secret-type=cluster"
 
-// NewArgoCDProviderFromConfig creates a provider that reads ArgoCD cluster
-// Secrets from the namespace specified by cfg.ArgoCDNamespace (V125-1-11.4
-// canonical constructor). Mirrors NewKubernetesSecretProvider: prefers
-// in-cluster config, falls back to ~/.kube/config for local dev.
-//
-// This is the typed-config replacement for the V125-1-10.8 SHARKO_ARGOCD_NAMESPACE
-// env-var workaround. The typed ClusterTestProviderConfig.ArgoCDNamespace field
-// carries the namespace value through the type system — the compiler enforces
-// what V125-1-10.8 had to enforce at runtime with a cross-contamination warn log
-// (now removed in this commit).
+// NewArgoCDProviderFromConfig creates a provider that reads ArgoCD
+// cluster Secrets from the namespace specified by cfg.ArgoCDNamespace.
+// Mirrors NewKubernetesSecretProvider: prefers in-cluster config, falls
+// back to ~/.kube/config for local dev. The typed
+// ClusterTestProviderConfig.ArgoCDNamespace field carries the namespace
+// value through the type system — cross-contamination from the
+// addon-secrets k8s-secrets backend is impossible by construction.
 func NewArgoCDProviderFromConfig(cfg ClusterTestProviderConfig) (*ArgoCDProvider, error) {
 	restCfg, err := rest.InClusterConfig()
 	if err != nil {
@@ -61,13 +59,13 @@ func NewArgoCDProviderFromConfig(cfg ClusterTestProviderConfig) (*ArgoCDProvider
 }
 
 // NewArgoCDProviderWithRESTConfigFromConfig creates a provider from an
-// already-resolved *rest.Config and a typed ClusterTestProviderConfig
-// (V125-1-11.4 canonical constructor). This is the seam used by the auto-default
-// path in New() (see provider.go), which probes for in-cluster config via the
-// mockable inClusterConfigFn — without this constructor, the typed factory
-// would re-probe rest.InClusterConfig directly, bypassing the test seam and
-// forcing a ~/.kube/config fallback that doesn't exist in CI runners
-// (V125-1-10.9).
+// already-resolved *rest.Config and a typed ClusterTestProviderConfig.
+// This is the seam used by the auto-default path in New() (see
+// provider.go), which probes for in-cluster config via the mockable
+// inClusterConfigFn — without this constructor, the typed factory
+// would re-probe rest.InClusterConfig directly, bypassing the test
+// seam and forcing a ~/.kube/config fallback that doesn't exist in
+// CI runners.
 //
 // Callers that have NOT already obtained a *rest.Config should use
 // NewArgoCDProviderFromConfig, which retains the probe + kubeconfig-fallback
@@ -92,20 +90,15 @@ func newArgoCDProviderWithClient(client kubernetes.Interface, namespace string) 
 	return &ArgoCDProvider{client: client, namespace: namespace}
 }
 
-// resolveArgoCDNamespaceTyped decides which K8s namespace the ArgoCDProvider
-// should query (V125-1-11.4 canonical). Precedence:
+// resolveArgoCDNamespaceTyped decides which K8s namespace the
+// ArgoCDProvider should query. Precedence:
 //
 //  1. cfg.ArgoCDNamespace (non-empty) — typed canonical source from the
-//     ClusterTestProviderConfig split. Replaces the V125-1-10.8 env hack.
-//  2. SHARKO_ARGOCD_NAMESPACE env var (non-empty) — DEPRECATED compat alias;
-//     emits slog.Warn so operators see they're on the legacy path. Scheduled
-//     for removal in v1.26 per V125-1-11 planning doc OQ #4.
+//     ClusterTestProviderConfig.
+//  2. SHARKO_ARGOCD_NAMESPACE env var (non-empty) — DEPRECATED compat
+//     alias; emits slog.Warn so operators see they're on the legacy
+//     path. Scheduled for removal in the next minor release.
 //  3. hardcoded "argocd" — the standard ArgoCD install location.
-//
-// The V125-1-10.8 cross-contamination warn log (cfg.Namespace ignored for
-// argocd type) is GONE in this constructor — with the typed config split, the
-// ArgoCD-namespace field is encoded in the type system so cross-contamination
-// from the addon-secrets k8s-secrets backend is impossible by construction.
 func resolveArgoCDNamespaceTyped(cfg ClusterTestProviderConfig) string {
 	if cfg.ArgoCDNamespace != "" {
 		return cfg.ArgoCDNamespace

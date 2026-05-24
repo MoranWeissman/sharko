@@ -31,7 +31,6 @@ type ToolFunction struct {
 // use to surface the PRs they create on the dashboard PR panel. Defined
 // locally to avoid an import cycle (internal/ai cannot import
 // internal/prtracker because the audit dependency would close back).
-// V125-1-6.
 type ToolPRTracker interface {
 	TrackPR(ctx context.Context, pr ToolTrackedPR) error
 }
@@ -60,7 +59,7 @@ type ToolExecutor struct {
 	memory              *MemoryStore
 	connections         map[string]gitprovider.GitProvider // named connections for multi-repo operations
 	managedClustersPath string                             // path in Git repo to managed-clusters.yaml
-	prTracker           ToolPRTracker                      // optional — surface AI-tool PRs on the dashboard panel (V125-1-6)
+	prTracker           ToolPRTracker                      // optional — surface AI-tool PRs on the dashboard panel
 }
 
 // NewToolExecutor creates a new ToolExecutor with the given providers.

@@ -5,27 +5,26 @@
 // provides low-latency post-merge convergence when prTracker observes a
 // Sharko-opened PR being merged.
 //
-// V125-1-8.1 (this file): the real git → ArgoCD diff + act logic landed
-// on top of V125-1-8.0's scaffold. pollOnce now:
+// pollOnce:
 //
 //  1. Reads managed-clusters.yaml from git via models.LoadManagedClusters
-//     (V125-1-9 envelope-aware + JSON-Schema-validated reader).
+//     (envelope-aware + JSON-Schema-validated reader).
 //  2. Lists ArgoCD cluster Secrets in the argocd namespace filtered by
-//     app.kubernetes.io/managed-by=sharko (ownership label, V125-1-8.0).
+//     app.kubernetes.io/managed-by=sharko (ownership label).
 //  3. Computes a set diff (in-git ∖ in-argocd → create; in-argocd ∖ in-git
 //     → delete; with-label-only on delete so foreign Secrets are never
-//     touched — V125-2 Adopt territory).
+//     touched — Adopt territory).
 //  4. Per-cluster + per-secret error isolation: a vault failure on one
-//     cluster does NOT block reconciliation of the others (design §10).
+//     cluster does NOT block reconciliation of the others.
 //
 // See:
 //   - docs/design/2026-05-11-cluster-secret-reconciler-and-gitops-stance.md
 //     §7 (Option E), §8 (pattern), §9 (two-direction policy), §10 (REST
-//     git read; failure modes), §12 (V125-1-8 deltas).
+//     git read; failure modes).
 //   - internal/prtracker/tracker.go (lifecycle pattern this package mirrors).
 //   - internal/argosecrets/manager.go (the Secret payload shape — execProvider
-//     config — that the existing reconciler writes; V125-1-8 writes the same
-//     shape so ArgoCD's auth code path is unchanged across the two writers).
+//     config — that the legacy reconciler writes; this reconciler writes the
+//     same shape so ArgoCD's auth code path is unchanged across writers).
 package clusterreconciler
 
 import (
@@ -269,7 +268,7 @@ func (r *Reconciler) run(ctx context.Context) {
 type reconcileStats struct {
 	Created          int
 	Deleted          int
-	SkippedUnlabeled int // existing same-name unlabeled Secret — V125-2 Adopt territory
+	SkippedUnlabeled int // existing same-name unlabeled Secret — Adopt territory
 	Errors           int
 }
 
@@ -282,7 +281,7 @@ type reconcileStats struct {
 //   - A git fetch error aborts the tick BEFORE any K8s mutation, logs +
 //     audits the failure, and leaves all live state intact.
 //   - A schema-validation error from models.LoadManagedClusters has the
-//     same shape — the V125-1-9 reader already audits the violation list
+//     same shape — the reader already audits the violation list
 //     via slog; we add a single audit.Entry so the operator sees the
 //     rejection in /api/v1/audit alongside the slog spam.
 //   - A vault error on cluster X logs + audits + CONTINUES to cluster X+1.
@@ -355,7 +354,7 @@ func (r *Reconciler) pollOnce(ctx context.Context) {
 		return
 	}
 
-	// Step 2: parse + schema-validate (V125-1-9).
+	// Step 2: parse + schema-validate.
 	spec, err := models.LoadManagedClusters(body)
 	if err != nil {
 		// schema.LogValidationFailure already fired slog.Error with the
@@ -450,8 +449,8 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 // listManagedSecrets fetches all sharko-labeled cluster Secrets from the
 // argocd namespace as a name→Secret map. Filtered by
 // app.kubernetes.io/managed-by=sharko so externally-owned Secrets are
-// invisible to the reconciler — the cornerstone of the V125-1-8 ownership
-// model (design doc §9: "without sharko label → never touched").
+// invisible to the reconciler — the cornerstone of the ownership model
+// (design doc §9: "without sharko label → never touched").
 func (r *Reconciler) listManagedSecrets(ctx context.Context) (map[string]*corev1.Secret, error) {
 	list, err := r.deps.ArgoClient.CoreV1().Secrets(r.namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: LabelManagedBy + "=" + LabelValueSharko,
@@ -471,11 +470,9 @@ func (r *Reconciler) listManagedSecrets(ctx context.Context) (map[string]*corev1
 // errors (vault fetch, K8s create) are logged + audited but NEVER bubble
 // up — the next cluster in the toCreate list still gets its turn.
 //
-// The "skip if same-name unlabeled Secret exists" branch implements design
-// doc §9: an unlabeled Secret is V125-2 Adopt territory; this reconciler
-// must not silently overwrite it (the legacy argosecrets.Manager.Ensure
-// path adopts, which is the wrong behavior for V125-1-8 since it strips
-// foreign ownership intent without operator consent).
+// The "skip if same-name unlabeled Secret exists" branch implements
+// design doc §9: an unlabeled Secret is Adopt territory; this
+// reconciler must not silently overwrite it.
 func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterEntry, stats *reconcileStats) {
 	// Defensive: a same-name Secret may already exist without our label
 	// (operator-created, or adopted-by-another-tool). The list step
@@ -499,9 +496,9 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 		return
 	}
 	if getErr == nil && !IsManagedBySharko(existing) {
-		// V125-2 Adopt territory — do not touch.
+		// Adopt territory — do not touch.
 		stats.SkippedUnlabeled++
-		slog.Info("[clusterreconciler] same-name Secret exists without sharko label — skipping (V125-2 Adopt)",
+		slog.Info("[clusterreconciler] same-name Secret exists without sharko label — skipping (Adopt territory)",
 			"cluster", entry.Name, "namespace", r.namespace,
 		)
 		r.audit(audit.Entry{
@@ -512,7 +509,7 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 			Resource: fmt.Sprintf("cluster:%s", entry.Name),
 			Source:   "reconciler",
 			Result:   "partial",
-			Detail:   "unlabeled Secret exists in argocd namespace; defer to V125-2 Adopt flow",
+			Detail:   "unlabeled Secret exists in argocd namespace; defer to Adopt flow",
 		})
 		return
 	}
@@ -741,14 +738,13 @@ func normalizeLabels(raw interface{}) map[string]string {
 // buildClusterSecret constructs the corev1.Secret payload that
 // argosecrets.Manager.Ensure would have built — but as a standalone
 // helper so the reconciler can call Create directly without going
-// through Ensure's adoption path (which we deliberately avoid in
-// V125-1-8 per the §9 ownership policy).
+// through Ensure's adoption path (which is deliberately avoided per
+// the §9 ownership policy).
 //
 // The Secret shape (labels, stringData keys, execProviderConfig JSON)
-// MUST stay byte-identical to argosecrets.Manager's output during the
-// V125-1-8 transition window — both writers coexist until the legacy
-// argosecrets.Reconciler is retired, and ArgoCD's auth code path
-// resolves the same way for both.
+// MUST stay byte-identical to argosecrets.Manager's output — both
+// writers coexist until the legacy argosecrets.Reconciler is retired,
+// and ArgoCD's auth code path resolves the same way for both.
 func buildClusterSecret(spec argosecrets.ClusterSecretSpec, namespace string) (*corev1.Secret, error) {
 	configJSON, err := argosecrets.BuildSecretConfigJSON(spec)
 	if err != nil {

@@ -76,11 +76,10 @@ type Server struct {
 
 	// Write API dependencies (optional — set via SetWriteAPIDeps).
 	//
-	// V125-1-11.6: the single field-overloaded *providers.Config is retired
-	// and replaced by two typed configs. Handlers that need addon-secret
-	// fields (RoleARN, Region, Prefix) read from addonSecretCfg; the
-	// /providers + /providers/test endpoints display either addonSecretCfg
-	// or clusterTestCfg per request semantics (see system.go).
+	// Two typed configs cover the provider surface. Handlers that need
+	// addon-secret fields (RoleARN, Region, Prefix) read from
+	// addonSecretCfg; the /providers + /providers/test endpoints display
+	// either addonSecretCfg or clusterTestCfg per request semantics.
 	credProvider    providers.ClusterCredentialsProvider
 	addonSecretCfg  *providers.AddonSecretProviderConfig
 	clusterTestCfg  *providers.ClusterTestProviderConfig
@@ -123,13 +122,11 @@ type Server struct {
 	// prTracker tracks PRs created by Sharko operations (optional — set via SetPRTracker).
 	prTracker *prtracker.Tracker
 
-	// reconcilerTrigger nudges the V125-1-8 cluster Secret reconciler after
-	// the orchestrator commits a managed-clusters.yaml change. Optional —
-	// set via SetReconcilerTrigger in cmd/sharko/serve.go alongside the
-	// reconciler bootstrap. Each per-request orchestrator inherits this
-	// trigger via attachPRTracker (broadened in V125-1-8.4 to attach both
-	// background hooks). nil disables — reconciler still converges on its
-	// periodic safety-net tick.
+	// reconcilerTrigger nudges the cluster Secret reconciler after the
+	// orchestrator commits a managed-clusters.yaml change. Optional —
+	// set via SetReconcilerTrigger. Each per-request orchestrator
+	// inherits this trigger via attachPRTracker. nil disables — the
+	// reconciler still converges on its periodic safety-net tick.
 	reconcilerTrigger func()
 
 	// obsStore persists cluster connectivity observations (optional — set via SetObservationsStore).
@@ -146,15 +143,14 @@ type Server struct {
 	// depend on it return 503 when nil.
 	catalog *catalog.Catalog
 
-	// catalogSources holds the parsed SHARKO_CATALOG_URLS config (v1.23 /
-	// Story V123-1.1). Empty Sources → embedded-only mode. The V123-1.2
-	// fetcher reads this via CatalogSources().
+	// catalogSources holds the parsed SHARKO_CATALOG_URLS config. Empty
+	// Sources → embedded-only mode. The fetcher reads this via
+	// CatalogSources().
 	catalogSources *config.CatalogSourcesConfig
 
-	// sourcesFetcher periodically pulls third-party catalog URLs (v1.23 /
-	// Story V123-1.2). Nil when no catalog sources are configured
-	// (embedded-only mode). The V123-1.3 merge story reads snapshots
-	// from this via SourcesFetcher().
+	// sourcesFetcher periodically pulls third-party catalog URLs. Nil
+	// when no catalog sources are configured (embedded-only mode). The
+	// merge layer reads snapshots from this via SourcesFetcher().
 	sourcesFetcher *sources.Fetcher
 }
 
@@ -175,7 +171,7 @@ func NewServer(
 	// Initialize auth store (auto-detects K8s vs local mode)
 	authStore := auth.NewStore()
 
-	// Bootstrap admin credential handling (V124-3.8 / BUG-013):
+	// Bootstrap admin credential handling:
 	//
 	//   1. Operator-supplied path — if SHARKO_BOOTSTRAP_ADMIN_PASSWORD is
 	//      set (via Helm `bootstrapAdmin.password` or `existingSecret`),
@@ -270,13 +266,13 @@ func (s *Server) SetTemplateFS(tfs fs.FS) {
 // SetWriteAPIDeps configures the dependencies for write API endpoints.
 //
 // credProvider is the cluster-test backend (the ClusterCredentialsProvider used
-// to verify connectivity to managed clusters — argocd-only post-V125-1-11.6).
+// to verify connectivity to managed clusters — argocd-only).
 //
-// addonSecretCfg + clusterTestCfg are the two typed config blocks introduced
-// by V125-1-11.6 (replacing the single field-overloaded *providers.Config).
-// Either or both may be nil if no provider was successfully constructed at
-// startup. Handlers that need RoleARN / Region / Prefix (default IAM role,
-// AWS region, secret-name prefix) read from addonSecretCfg with a nil-guard.
+// addonSecretCfg + clusterTestCfg are the two typed config blocks for
+// the provider surface. Either or both may be nil if no provider was
+// successfully constructed at startup. Handlers that need RoleARN /
+// Region / Prefix (default IAM role, AWS region, secret-name prefix)
+// read from addonSecretCfg with a nil-guard.
 //
 // paths and gitops hold the repo layout and gitops commit settings.
 func (s *Server) SetWriteAPIDeps(
@@ -325,15 +321,13 @@ func (s *Server) PRTracker() *prtracker.Tracker {
 	return s.prTracker
 }
 
-// SetReconcilerTrigger wires in the V125-1-8 cluster Secret reconciler's
-// Trigger() nudge so every per-request orchestrator built by attachPRTracker
-// (V125-1-8.4 broadened that helper to attach both background hooks) can
+// SetReconcilerTrigger wires in the cluster Secret reconciler's Trigger()
+// nudge so every per-request orchestrator built by attachPRTracker can
 // request an immediate post-PR reconcile. Optional — when nil the
 // reconciler still converges on its periodic safety-net tick (30s).
 //
-// Call this once at startup AFTER constructing the reconciler in
-// cmd/sharko/serve.go, BEFORE the HTTP listener starts. Idempotent —
-// passing nil clears the hook for testing / shutdown scenarios.
+// Call this once at startup AFTER constructing the reconciler, BEFORE
+// the HTTP listener starts. Idempotent — passing nil clears the hook.
 func (s *Server) SetReconcilerTrigger(fn func()) {
 	s.reconcilerTrigger = fn
 }
@@ -367,22 +361,19 @@ func (s *Server) ReinitializeFromConnection() {
 
 	// Reinit cluster-test provider from connection.
 	//
-	// V125-1-10.7: gating provider construction on pc.Type != "" silently
-	// bypassed the V125-1-10.2 auto-default (in-cluster + empty type →
-	// ArgoCDProvider), which left credProvider nil after a connection update
-	// where the user picked "None" in the Settings dropdown. We now ALWAYS
-	// call the cluster-test factory when there is an active connection so the
-	// auto-default path can fire. NewClusterTestProvider itself returns the
-	// legacy "no provider configured" error out-of-cluster — that path leaves
-	// credProvider unchanged (logged at info) and the existing BUG-035 surface
-	// still applies in the Test handler.
+	// We ALWAYS call the cluster-test factory when there is an active
+	// connection so the auto-default path (in-cluster + empty type →
+	// ArgoCDProvider) can fire. NewClusterTestProvider itself returns
+	// the "no provider configured" error out-of-cluster — that path
+	// leaves credProvider unchanged (logged at info) and the existing
+	// no_secrets_backend surface still applies in the Test handler.
 	//
-	// V125-1-11.6: the single field-overloaded providers.Config is gone. The
-	// connection-level Provider block fans out into TWO typed configs here:
-	// AddonSecretProviderConfig (carries Type/Region/Prefix/Namespace/RoleARN
-	// for addon-secret backends) and ClusterTestProviderConfig (carries
-	// Type/ArgoCDNamespace for cluster-test). Both are stashed on the Server
-	// so /providers and the orchestrator handlers can read the right slice.
+	// The connection-level Provider block fans out into TWO typed
+	// configs here: AddonSecretProviderConfig
+	// (Type/Region/Prefix/Namespace/RoleARN for addon-secret backends)
+	// and ClusterTestProviderConfig (Type/ArgoCDNamespace for
+	// cluster-test). Both are stashed on the Server so /providers and
+	// the orchestrator handlers can read the right slice.
 	pc := conn.Provider
 	{
 		namespace := os.Getenv("SHARKO_NAMESPACE")
@@ -403,22 +394,16 @@ func (s *Server) ReinitializeFromConnection() {
 				Namespace: namespace,
 				RoleARN:   pc.RoleARN,
 			}
-			// V125-1-11.7-fix: cluster-test fans only the connection-level
-			// Type — NEVER pc.Namespace — into the typed cluster-test config.
-			// The addon-secrets-shaped pc.Namespace value (default "sharko",
-			// or whatever the operator picked while the dropdown was on
-			// k8s-secrets) MUST NOT bleed into ArgoCDNamespace (the slot for
-			// the argocd-install-namespace, semantically different — typically
-			// "argocd"). Story 11.6 had copied pc.Namespace through here,
-			// recreating the V125-1-10.8 cross-contamination via a different
-			// code path. Leaving ArgoCDNamespace empty lets the canonical
+			// Cluster-test fans only the connection-level Type — NEVER
+			// pc.Namespace — into the typed cluster-test config. The
+			// addon-secrets-shaped pc.Namespace value MUST NOT bleed
+			// into ArgoCDNamespace (the slot for the argocd-install
+			// namespace, semantically different — typically "argocd").
+			// Leaving ArgoCDNamespace empty lets the canonical
 			// resolveArgoCDNamespaceTyped precedence take over:
 			//   1. cfg.ArgoCDNamespace (empty here, by design)
 			//   2. SHARKO_ARGOCD_NAMESPACE env (deprecated compat alias)
 			//   3. "argocd" hardcoded default
-			// — which is the correct cluster-test behavior for any connection
-			// whose Provider block has no dedicated cluster-test ns knob (i.e.
-			// every connection today; a future enhancement could add one).
 			if pc.Type == "argocd" {
 				testCfg = providers.ClusterTestProviderConfig{
 					Type:            pc.Type,
@@ -605,9 +590,9 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("POST /api/v1/clusters/{name}/unadopt", srv.handleUnadoptCluster)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/addons/{addon}", srv.handleEnableAddon)
 	mux.HandleFunc("DELETE /api/v1/clusters/{name}/addons/{addon}", srv.handleDisableAddon)
-	// V125-1-7 / BUG-058: orphan-cluster Secret cleanup. Refuses to delete
-	// a cluster that's actually managed (in git) or pending (open register
-	// PR) — see clusters_orphan_delete.go for the safety gates.
+	// Orphan-cluster Secret cleanup. Refuses to delete a cluster that's
+	// actually managed (in git) or pending (open register PR) — see
+	// clusters_orphan_delete.go for the safety gates.
 	mux.HandleFunc("DELETE /api/v1/clusters/{name}/orphan", srv.handleDeleteOrphanCluster)
 
 	// Init (orchestrator-backed)
@@ -634,28 +619,25 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	// Values editor extras:
 	//   • Recent merged PRs touching a values file (read)
 	//
-	// Note: the v1.20.1 `POST /api/v1/addons/{name}/values/pull-upstream`
-	// endpoint was removed in v1.21 (Story V121-6.5). Its functionality
-	// moved to a `refresh_from_upstream: true` flag on the existing
-	// `PUT /api/v1/addons/{name}/values` handler — the locked decision is
-	// to keep the values-edit surface single-handler.
+	// The `POST .../values/pull-upstream` endpoint was removed; its
+	// functionality moved to a `refresh_from_upstream: true` flag on the
+	// existing `PUT /api/v1/addons/{name}/values` handler.
 	mux.HandleFunc("GET /api/v1/addons/{name}/values/recent-prs", srv.handleGetAddonValuesRecentPRs)
 	mux.HandleFunc("GET /api/v1/clusters/{cluster}/addons/{name}/values/recent-prs", srv.handleGetClusterAddonValuesRecentPRs)
 
-	// v1.21 QA Bundle 4 (Fix #4): diff-and-merge preview. Tier 1 read —
-	// returns a candidate body that the user submits via the existing
-	// PUT values endpoint. POST is used for forward-compat (the body
-	// will eventually carry a "preview against version X" parameter).
+	// Diff-and-merge preview. Tier 1 read — returns a candidate body
+	// that the user submits via the existing PUT values endpoint. POST
+	// is used for forward-compat (the body will eventually carry a
+	// "preview against version X" parameter).
 	mux.HandleFunc("POST /api/v1/addons/{name}/values/preview-merge", srv.handlePreviewMergeAddonValues)
 
-	// V121-7 Story 7.4: manual AI annotate + per-addon opt-out toggle.
+	// Manual AI annotate + per-addon opt-out toggle.
 	mux.HandleFunc("POST /api/v1/addons/{name}/values/annotate", srv.handleAnnotateAddonValues)
 	mux.HandleFunc("PUT /api/v1/addons/{name}/values/ai-opt-out", srv.handleSetAddonAIOptOut)
 
-	// v1.21 Bundle 5: legacy `<addon>:` wrap migration. One PR per call,
-	// covering every wrapped global values file in the repo. Pass
-	// `?addon=<name>` to migrate a single file (used by the per-file
-	// "Migrate this file" button on the AddonDetail Values tab).
+	// Legacy `<addon>:` wrap migration. One PR per call, covering every
+	// wrapped global values file in the repo. Pass `?addon=<name>` to
+	// migrate a single file.
 	mux.HandleFunc("POST /api/v1/addons/unwrap-globals", srv.handleUnwrapGlobalValues)
 
 	// Addon secrets (definition CRUD)
@@ -688,35 +670,34 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	// distinct from /api/v1/addons/catalog which surfaces the USER's deployed
 	// addons for their connected GitOps repo.
 	mux.HandleFunc("GET /api/v1/catalog/addons", srv.handleListCatalogAddons)
-	// V123-1.5 — list configured catalog sources (embedded + third-party
-	// URLs from SHARKO_CATALOG_URLS) with per-source fetch status.
-	// Read-only; no tier check, no audit.
+	// List configured catalog sources (embedded + third-party URLs from
+	// SHARKO_CATALOG_URLS) with per-source fetch status. Read-only.
 	mux.HandleFunc("GET /api/v1/catalog/sources", srv.handleListCatalogSources)
-	// V123-1.6 — force-refresh every configured third-party catalog
-	// source synchronously. Tier 2 (admin). Audit-logged.
+	// Force-refresh every configured third-party catalog source
+	// synchronously. Tier 2 (admin). Audit-logged.
 	mux.HandleFunc("POST /api/v1/catalog/sources/refresh", srv.handleRefreshCatalogSources)
 	mux.HandleFunc("GET /api/v1/catalog/addons/{name}/versions", srv.handleListCatalogVersions)
-	// v1.21 QA Bundle 2: README proxy for the in-page Marketplace detail
-	// view. Resolves curated addon → ArtifactHub package, then returns the
-	// README markdown.
+	// README proxy for the in-page Marketplace detail view. Resolves
+	// curated addon → ArtifactHub package, then returns the README
+	// markdown.
 	mux.HandleFunc("GET /api/v1/catalog/addons/{name}/readme", srv.handleGetCatalogReadme)
-	// v1.21 QA Bundle 4 Fix #3b: tool README (distinct from Helm chart README).
-	// Resolved server-side so the browser doesn't need GitHub API access.
+	// Tool README (distinct from Helm chart README). Resolved server-side
+	// so the browser doesn't need GitHub API access.
 	mux.HandleFunc("GET /api/v1/catalog/addons/{name}/project-readme", srv.handleGetCuratedProjectReadme)
 	mux.HandleFunc("GET /api/v1/catalog/remote/{repo}/{name}/project-readme", srv.handleGetRemoteProjectReadme)
 	mux.HandleFunc("GET /api/v1/catalog/addons/{name}", srv.handleGetCatalogAddon)
 
-	// V121-4: Paste Helm URL validator — confirms an arbitrary repo+chart is
+	// Paste Helm URL validator — confirms an arbitrary repo+chart is
 	// reachable and parseable, returns versions for the Configure modal.
 	mux.HandleFunc("GET /api/v1/catalog/validate", srv.handleValidateCatalogChart)
 
-	// v1.21 QA Bundle 1: lists chart names available in an arbitrary Helm
-	// repository so the manual "Add Addon" form can show a chart-name
-	// dropdown after the operator validates the repo URL.
+	// Lists chart names available in an arbitrary Helm repository so the
+	// manual "Add Addon" form can show a chart-name dropdown after the
+	// operator validates the repo URL.
 	mux.HandleFunc("GET /api/v1/catalog/repo-charts", srv.handleListRepoCharts)
 
-	// ArtifactHub proxy + reprobe (v1.21 Epic V121-3) — server-side proxy so
-	// the browser doesn't call ArtifactHub directly (CORS + shared cache + rate-limit handling).
+	// ArtifactHub proxy + reprobe — server-side proxy so the browser
+	// doesn't call ArtifactHub directly (CORS + shared cache + rate-limit).
 	mux.HandleFunc("GET /api/v1/catalog/search", srv.handleSearchCatalog)
 	mux.HandleFunc("GET /api/v1/catalog/remote/{repo}/{name}", srv.handleGetRemotePackage)
 	mux.HandleFunc("POST /api/v1/catalog/reprobe", srv.handleReprobeArtifactHub)
@@ -799,18 +780,14 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 		srv.handleLogin(w, r)
 	})
 
-	// Stale dead-route stub (V124-6.1 / BUG-021).
+	// Stale dead-route stub.
 	//
 	// `/api/v1/login` was never registered, but unauthenticated POSTs to it
 	// were absorbed by basicAuthMiddleware and returned 401 — making the
-	// path look like a real auth-protected endpoint. The maintainer's
-	// 2026-05-08 walkthrough hit this and reported "401 in 146µs" which
-	// was indistinguishable from a real-route auth failure.
-	//
-	// Returning an explicit 404 with a hint pointing to /api/v1/auth/login
-	// (the actual route — see handleLogin) eliminates the false-positive.
-	// basicAuthMiddleware skips auth for this path so the 404 actually
-	// reaches the client (see /api/v1/login carve-out below).
+	// path look like a real auth-protected endpoint. Returning an explicit
+	// 404 with a hint pointing to /api/v1/auth/login (the actual route)
+	// eliminates the false positive. basicAuthMiddleware skips auth for
+	// this path so the 404 actually reaches the client.
 	mux.HandleFunc("POST /api/v1/login", srv.handleStaleLoginRoute)
 	mux.HandleFunc("POST /api/v1/auth/logout", srv.handleLogout)
 	mux.HandleFunc("POST /api/v1/auth/update-password", srv.handleUpdatePassword)
@@ -833,20 +810,14 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("DELETE /api/v1/users/{username}", srv.handleDeleteUser)
 	mux.HandleFunc("POST /api/v1/users/{username}/reset-password", srv.handleResetPassword)
 
-	// V124-4.4 / BUG-020: catch-all for unknown /api/v1/* paths.
-	//
-	// Pre-V124-4 the SPA catch-all below served index.html for any path not
-	// matched by a more specific route. That swallowed mistyped or removed
-	// API paths into the SPA — the symptom that surfaced as `POST
-	// /api/v1/notifications/providers → 200 OK` (HTML body) in V124 Track B
-	// re-smoke (B.4), with the smoke runner reading "200" as a passing
-	// validation case.
+	// Catch-all for unknown /api/v1/* paths. Without this, the SPA
+	// catch-all below would serve index.html for unmatched API paths,
+	// silently masking removed or mistyped endpoints as 200 OK HTML.
 	//
 	// Registering a literal `/api/v1/` prefix BEFORE the SPA catch-all
 	// (Go 1.22+ ServeMux longest-match semantics) ensures every unmatched
-	// API path returns a structured 404 JSON the smoke runner / UI / CLI
-	// can detect deterministically. Real API routes are registered above
-	// with method+path patterns that win the match by specificity.
+	// API path returns a structured 404 JSON. Real API routes are
+	// registered above with method+path patterns that win by specificity.
 	mux.HandleFunc("/api/v1/", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{
 			"error":  "API endpoint not found",
@@ -1136,21 +1107,18 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"token": token, "username": req.Username, "role": role})
 }
 
-// handleStaleLoginRoute serves the dead `/api/v1/login` path with an explicit
-// 404 + hint pointing at the real `/api/v1/auth/login` endpoint
-// (V124-6.1 / BUG-021).
+// handleStaleLoginRoute serves the dead `/api/v1/login` path with an
+// explicit 404 + hint pointing at the real `/api/v1/auth/login` endpoint.
 //
-// History: nothing in the codebase, scripts, CLI, UI, or docs uses
-// `/api/v1/login` — verified via repo-wide grep on 2026-05-08. The path was
-// never registered, but unauthenticated POSTs to it were absorbed by
-// basicAuthMiddleware and returned 401, which looked like a real
-// auth-protected endpoint to operators tracing through. Returning 404 with
-// a clear hint disambiguates "wrong path" from "wrong creds".
-//
-// The `/api/v1/login` path is also added to the basicAuthMiddleware skip
-// list so this handler — not the 401 response — is what the client sees.
+// Nothing in the codebase, scripts, CLI, UI, or docs uses
+// `/api/v1/login`. The path was never registered, but unauthenticated
+// POSTs to it were absorbed by basicAuthMiddleware and returned 401,
+// which looked like a real auth-protected endpoint. Returning 404 with
+// a clear hint disambiguates "wrong path" from "wrong creds". The path
+// is added to the basicAuthMiddleware skip list so this handler — not
+// the 401 response — is what the client sees.
 func (s *Server) handleStaleLoginRoute(w http.ResponseWriter, r *http.Request) {
-	slog.Warn("client hit dead /api/v1/login route — real endpoint is /api/v1/auth/login (V124-6.1 / BUG-021)",
+	slog.Warn("client hit dead /api/v1/login route — real endpoint is /api/v1/auth/login",
 		"path", r.URL.Path,
 		"client_ip", clientIP(r),
 	)
@@ -1217,8 +1185,9 @@ func (s *Server) basicAuthMiddleware(next http.Handler) http.Handler {
 		path := r.URL.Path
 
 		// Skip auth for: health, login, git webhooks (signature-verified), static files.
-		// /api/v1/login is the V124-6.1 dead-route stub — it must reach handleStaleLoginRoute
-		// so we return a clean 404 instead of swallowing the request as a 401 here.
+		// /api/v1/login is the dead-route stub — it must reach
+		// handleStaleLoginRoute so we return a clean 404 instead of
+		// swallowing the request as a 401 here.
 		if path == "/api/v1/health" || path == "/api/v1/auth/login" || path == "/api/v1/login" || path == "/api/v1/webhooks/git" || !strings.HasPrefix(path, "/api/") {
 			next.ServeHTTP(w, r)
 			return
@@ -1508,9 +1477,9 @@ func writeError(w http.ResponseWriter, status int, message string) {
 // error server-side. The response body deliberately does NOT include the
 // underlying error string because that often leaks filesystem paths or
 // upstream error messages (e.g. "reading managed-clusters.yaml: file not
-// found: configuration/managed-clusters.yaml" — exposed to the operator
-// during the v1.24 BUG-005 reproduction). The full error is preserved in
-// structured logs under "error" + context fields so debugging is unaffected.
+// found: configuration/managed-clusters.yaml"). The full error is preserved
+// in structured logs under "error" + context fields so debugging is
+// unaffected.
 //
 // status MUST be a 5xx HTTP status (e.g. http.StatusInternalServerError,
 // http.StatusServiceUnavailable, http.StatusBadGateway). The response body
@@ -1548,8 +1517,6 @@ func writeServerError(w http.ResponseWriter, status int, op string, err error) {
 // carrying a JSON body, sometimes a synthesized error built from the
 // response body. Matching on the canonical phrasing keeps the classifier
 // useful without needing per-provider error types.
-//
-// Closes V124-3.2 (M2 extended).
 func classifyUpstreamError(err error) int {
 	if err == nil {
 		return http.StatusInternalServerError
@@ -1588,10 +1555,10 @@ func classifyUpstreamError(err error) int {
 	return http.StatusInternalServerError
 }
 
-// writeUpstreamError is the convenience wrapper for the V124-2.10 sweep:
-// classify the error first, then funnel through writeServerError so the
-// response body stays sanitized (no leak of upstream paths/messages) and
-// the structured log preserves the full error for debugging.
+// writeUpstreamError classifies the error first, then funnels through
+// writeServerError so the response body stays sanitized (no leak of
+// upstream paths/messages) and the structured log preserves the full
+// error for debugging.
 //
 // Use this at any handler call site where the error originates from a
 // remote service (Git provider, ArgoCD, AWS API, K8s API server). For
@@ -1605,28 +1572,12 @@ func writeUpstreamError(w http.ResponseWriter, op string, err error) {
 // writeMissingProviderError is the canonical response for write/discover
 // endpoints whose backing credentials provider is not configured at runtime.
 //
-// V124-4.1 / BUG-018 fix: prior code returned `501 Not Implemented` with a
-// body of just `{"error":"secrets provider not configured"}`. That was
-// misleading on two axes:
-//
-//  1. 501 is reserved by RFC 9110 for "server does not support the
-//     functionality required to fulfil the request" — i.e. the endpoint
-//     itself is missing. Sharko's cluster CRUD endpoint IS implemented; what
-//     is missing is the operational prerequisite (credentials provider).
-//     Operators reading a 501 reasonably concluded "this endpoint is a
-//     stub, file a feature request" instead of "I need to configure a
-//     provider via Settings → Connections".
-//  2. The empty body offered no actionable next step. Operators had to
-//     grep server logs to discover that the absent piece was the secrets
-//     provider, and even then could not tell from the error whether the
-//     fix was via the UI, env vars, or a Helm value.
-//
 // 503 Service Unavailable is the correct status: the endpoint exists, the
 // resource (cluster CRUD) is temporarily unavailable because a precondition
 // is unmet, and the operator can fix it themselves. The response body
-// surfaces a structured `hint` field pointing at the standard configuration
-// flows so the UI / CLI can render an actionable message without parsing
-// English text.
+// surfaces a structured `hint` field pointing at the standard
+// configuration flows so the UI / CLI can render an actionable message
+// without parsing English text.
 //
 // Used by every handler that calls `s.credProvider == nil` early-return.
 func writeMissingProviderError(w http.ResponseWriter) {

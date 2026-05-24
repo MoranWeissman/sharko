@@ -10,9 +10,9 @@ import (
 )
 
 // argocdClusterLister is the narrow read-only slice of *argocd.Client that
-// the orphan resolver needs. Defining the interface here lets the resolver
-// be tested with a tiny fake without spinning up an httptest server (mirrors
-// the V124-22 / V125-1.5 dignified-degrade testability pattern).
+// the orphan resolver needs. Defining the interface here lets the
+// resolver be tested with a tiny fake without spinning up an httptest
+// server (dignified-degrade testability pattern).
 type argocdClusterLister interface {
 	ListClusters(ctx context.Context) ([]models.ArgocdCluster, error)
 }
@@ -22,27 +22,23 @@ type argocdClusterLister interface {
 // in managed-clusters.yaml AND no open registration PR matching the cluster
 // name.
 //
-// V125-1-7 / BUG-058 — when a manual-mode registration PR is closed without
-// merging, the ArgoCD cluster Secret created pre-merge by the
-// internal/orchestrator/cluster.go:408 fall-through (nil argoSecretManager
-// + manual mode → direct ArgoCD API RegisterCluster call) is left behind in
-// the live argocd ns. V125-1-5's pending-PR filter masked this while the PR
-// was open; once closed, the Secret reappeared as a `not_in_git` cluster
-// with no UI recovery path. This resolver surfaces those orphans into a
-// dedicated lifecycle state so the new DELETE
+// Background: when a manual-mode registration PR is closed without
+// merging, the ArgoCD cluster Secret created pre-merge may be left
+// behind in the live argocd ns. This resolver surfaces those orphans
+// into a dedicated lifecycle state so the DELETE
 // /api/v1/clusters/{name}/orphan endpoint can clean them up.
 //
-// V125-1-8.2 tightening — the resolver now applies an ownership-label gate
-// on top of the historical filter. Only Secrets carrying
-// app.kubernetes.io/managed-by=sharko surface as orphans; unlabeled Secrets
-// are V125-2 Adopt territory and must never appear in this list (operators
-// would otherwise be tempted to "Discard" an externally-created Secret via
-// the orphan UI, foot-gunning whichever tool was supposed to own it). The
-// gate set is supplied by the caller via sharkoOwnedNames — typically the
-// output of listSharkoOwnedSecretNames (clusters_orphan_ownership.go)
-// fetched via the k8s client. Passing nil for sharkoOwnedNames disables the
-// gate (legacy callers / dev mode without a k8s client) — see the
-// "ownership gate" branch below for the explicit nil-handling contract.
+// Ownership-label gate: the resolver applies an ownership-label gate.
+// Only Secrets carrying app.kubernetes.io/managed-by=sharko surface as
+// orphans; unlabeled Secrets are Adopt territory and must never appear
+// in this list (operators would otherwise be tempted to "Discard" an
+// externally-created Secret, foot-gunning whichever tool was supposed
+// to own it). The gate set is supplied by the caller via
+// sharkoOwnedNames — typically the output of
+// listSharkoOwnedSecretNames fetched via the k8s client. Passing nil
+// for sharkoOwnedNames disables the gate (dev mode without a k8s
+// client) — see the "ownership gate" branch below for the explicit
+// nil-handling contract.
 //
 // Algorithm:
 //
@@ -57,20 +53,16 @@ type argocdClusterLister interface {
 //     degraded approximation — see OrphanRegistration doc on
 //     internal/models/cluster.go).
 //
-// Defensive degrade (V124-22 / V125-1.5 pattern): a provider error or nil
-// lister returns an EMPTY slice + a log warning rather than failing the
-// entire /clusters endpoint. A missing Orphan Registrations section on the
-// next refresh is acceptable; a 500 that takes down the whole clusters page
-// is not. The same pattern extends to the V125-1-8.2 ownership gate: when
-// sharkoOwnedNames is nil (k8s client unwired or list-Secrets errored), the
-// gate is disabled and the legacy "in ArgoCD but not in git or pending"
-// algorithm decides — the alternative (return empty whenever k8s is
-// unavailable) would hide orphans that pre-date the label gate from
-// operators with no recovery path. Once the V125-1-8 reconciler has been
-// running for a release cycle, this safety-valve can tighten further.
+// Defensive degrade: a provider error or nil lister returns an EMPTY
+// slice + a log warning rather than failing the entire /clusters
+// endpoint. A missing Orphan Registrations section on the next refresh
+// is acceptable; a 500 that takes down the whole clusters page is not.
+// Same pattern for the ownership gate: when sharkoOwnedNames is nil
+// (k8s client unwired or list-Secrets errored), the gate is disabled
+// so orphans that pre-date the label gate stay visible.
 //
-// The return type is always a non-nil slice. Callers do NOT need to nil-
-// check. V125-1.4 lesson: never let a nil array reach the FE.
+// The return type is always a non-nil slice — never let a nil array
+// reach the FE.
 func resolveOrphanRegistrations(
 	ctx context.Context,
 	lister argocdClusterLister,
@@ -120,13 +112,12 @@ func resolveOrphanRegistrations(
 				continue
 			}
 		}
-		// V125-1-8.2 ownership gate: when the caller supplied the
-		// sharko-labeled Secret name set (non-nil), only surface Secrets
-		// that ARE in that set. Unlabeled Secrets are V125-2 Adopt
-		// territory and must never appear on the orphan surface — they
-		// represent externally-owned resources that Sharko's Discard
+		// Ownership gate: when sharkoOwnedNames is non-nil, only
+		// surface Secrets that ARE in that set. Unlabeled Secrets are
+		// Adopt territory and must never appear on the orphan surface
+		// — they represent externally-owned resources that the Discard
 		// action would silently destroy. When sharkoOwnedNames is nil
-		// the gate is disabled (see func-doc safety-valve rationale).
+		// the gate is disabled.
 		if sharkoOwnedNames != nil {
 			if _, hit := sharkoOwnedNames[ac.Name]; !hit {
 				continue

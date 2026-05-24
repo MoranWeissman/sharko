@@ -25,9 +25,8 @@ import (
 // missing-file conditions with gitprovider.ErrFileNotFound (see
 // internal/gitprovider/provider.go). The previous substring-matching
 // implementation silently masked legitimate auth/branch/perm errors that
-// happened to contain the words "not found" or "404" as "missing file →
-// empty list" (review finding H2 against PR #318) — examples that would
-// have tripped the old helper:
+// happened to contain the words "not found" or "404" as "missing file
+// → empty list" — examples that would have tripped a substring-matcher:
 //
 //   - "GitHub repository not found — check the URL and credentials"
 //   - "branch 'main' not found"
@@ -38,8 +37,8 @@ import (
 // (e.g. local filesystem in tests).
 //
 // A nil err returns false. This helper is intentionally lenient so a missing
-// managed-clusters.yaml in a brand-new install (the Sharko v1.24 reproducer
-// for BUG-005) is treated as an empty list rather than a 500.
+// managed-clusters.yaml in a brand-new install is treated as an empty
+// list rather than a 500.
 func isGitFileNotFound(err error) bool {
 	if err == nil {
 		return false
@@ -88,9 +87,8 @@ func (s *ClusterService) ListClusters(ctx context.Context, gp gitprovider.GitPro
 	argocdClusters, err := ac.ListClusters(ctx)
 	if err != nil {
 		slog.Warn("could not fetch argocd clusters", "error", err)
-		// Continue without ArgoCD data. PendingRegistrations default to a
-		// non-nil empty slice — V125-1.4 lesson: never let a nil array
-		// reach the FE.
+		// Continue without ArgoCD data. PendingRegistrations defaults to
+		// a non-nil empty slice — never let a nil array reach the FE.
 		return &models.ClustersResponse{
 			Clusters:             clusters,
 			HealthStats:          s.computeHealthStats(clusters, nil),
@@ -135,10 +133,10 @@ func (s *ClusterService) ListClusters(ctx context.Context, gp gitprovider.GitPro
 	allClusters := append(clusters, notInGitClusters...)
 
 	// PendingRegistrations is populated by the API handler from the Git
-	// provider's open-PR list (V125-1.5). OrphanRegistrations is populated
-	// by the API handler from the ArgoCD cluster list (V125-1-7 / BUG-058).
-	// The service contract guarantees both are non-nil empty slices here —
-	// handler may overwrite with the resolved lists. Defaulting at the
+	// provider's open-PR list. OrphanRegistrations is populated by the
+	// API handler from the ArgoCD cluster list. The service contract
+	// guarantees both are non-nil empty slices here — handler may
+	// overwrite with the resolved lists. Defaulting at the
 	// service layer keeps every code path that returns ClustersResponse
 	// honest about the no-nil contract.
 	return &models.ClustersResponse{

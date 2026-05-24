@@ -6,15 +6,15 @@
 //   - <out>/<entry-name>.pem         — Fulcio cert (companion).
 //   - <out>/addons.yaml.signed       — original YAML with `signature:` added.
 //
-// Used only by the release workflow (Story V123-2.5). Calls the same
+// Used only by the release workflow. Calls the same
 // signing.CanonicalEntryBytes function the runtime verifier uses, so signing
 // and verification agree on the message bytes.
 //
-// CLI shell-out to the cosign binary is fine here — NFR-V123-6's "no cosign
-// CLI shell-out" rule is for the runtime verifier inside the Sharko binary
-// (V123-2.2), not for the release pipeline. Cosign 2.4.x flag set
-// (--bundle, --output-signature, --output-certificate, --yes) confirmed via
-// context7 against the pinned `cosign-release: v2.4.1` in release.yml.
+// CLI shell-out to the cosign binary is acceptable here (the "no cosign CLI
+// shell-out" rule is for the runtime verifier inside the Sharko binary, not
+// for the release pipeline). Cosign 2.4.x flag set (--bundle,
+// --output-signature, --output-certificate, --yes) is pinned to the
+// `cosign-release` version in release.yml.
 package main
 
 import (
@@ -63,13 +63,12 @@ type cosignCLI struct{}
 // entry. Extracted from SignBlob so the regression-prone flag set is
 // independently testable without shelling out to a real cosign.
 //
-// `--new-bundle-format` is the load-bearing flag for V123-2 runtime
-// verification: cosign 2.4.x writes the modern Sigstore Bundle format
-// (mediaType / verificationMaterial / messageSignature) when it is set,
-// versus the legacy `{base64Signature, cert}` shape that sigstore-go's
-// bundle parser refuses. Without it the runtime verifier surfaces every
-// signed entry as Verified=false even with a valid trust root loaded.
-// The TestSignBlobArgs_IncludesNewBundleFormat test pins the regression.
+// `--new-bundle-format` is load-bearing for runtime verification: cosign
+// 2.4.x writes the modern Sigstore Bundle format (mediaType /
+// verificationMaterial / messageSignature) when it is set, versus the
+// legacy `{base64Signature, cert}` shape that sigstore-go's bundle parser
+// refuses. Without it the runtime verifier surfaces every signed entry as
+// Verified=false even with a valid trust root loaded.
 func (cosignCLI) signBlobArgs(payloadPath string, out signOutputs) []string {
 	return []string{
 		"sign-blob",

@@ -3,28 +3,22 @@
 // ui/src/generated/provider-types.ts so the UI cannot drift out of sync with
 // the backend's accepted Type strings.
 //
-// Background — V125-1-13.7 / OQ #6:
+// Why: the UI's hardcoded provider-type list has drifted from the backend
+// before — this generator + the matching CI check ("Provider Types Up To
+// Date") closes that gap by reading the canonical set from the source of
+// truth (the factory switches) on every build.
 //
-//	V125-1-10.7 hand-fixed the Settings → SecretsProviderSection dropdown
-//	after `argocd` was added to the backend factory but never propagated to
-//	the UI's hardcoded option list. This generator + the matching CI check
-//	("Provider Types Up To Date") makes that class of drift impossible:
-//	any new arm in the factory switches + a regenerate run + the CI gate
-//	catch stale generated files before they ship.
-//
-// V125-1-11.6 update: the legacy providers.New(Config) dispatcher was
-// retired and the factory split into two canonical entry points:
+// There are two canonical factory entry points:
 //
 //   - NewAddonSecretProvider(AddonSecretProviderConfig) — addon-secret
 //     backends (vault / aws-sm / k8s-secrets / gcp-sm / azure-kv).
 //   - NewClusterTestProvider(ClusterTestProviderConfig) — cluster-test
-//     backend (argocd only post-V125-1-11.6).
+//     backend (argocd only).
 //
-// The UI dropdown today is a single select that maps to the connection-
-// level Provider block, which still drives both mechanisms (per the
-// 11.6 compat-shim parsing at startup). So this generator emits the
-// UNION of both factory switches' arms — keeping the dropdown experience
-// unchanged while the typed configs split happens behind it.
+// The UI dropdown is a single select that maps to the connection-level
+// Provider block (still drives both mechanisms via the compat-shim
+// parsing at startup), so this generator emits the UNION of both
+// factory switches' arms.
 //
 // Approach: parse provider.go via go/parser + walk the AST. For each
 // target FuncDecl, find the *ast.SwitchStmt whose tag is the `cfg.Type`
@@ -67,7 +61,7 @@ const (
 // targetFuncNames is the ordered list of top-level factory functions whose
 // switch arms feed into VALID_PROVIDER_TYPES. The order is informational only
 // (output is sorted+deduped); ordering matches the canonical mechanism order
-// from BUG-OVERLOAD-DIAGNOSIS.md §4 (addon-secret first, cluster-test second).
+// (addon-secret first, cluster-test second).
 var targetFuncNames = []string{
 	"NewAddonSecretProvider",
 	"NewClusterTestProvider",
@@ -274,7 +268,7 @@ func renderTypeScript(types []string, sourcePath string) string {
 	b.WriteString("// This file is the single source of truth for the set of provider Type\n")
 	b.WriteString("// strings the backend factories accept. The Settings → SecretsProviderSection\n")
 	b.WriteString("// dropdown imports VALID_PROVIDER_TYPES so it cannot drift from the two\n")
-	b.WriteString("// canonical factories — see V125-1-13.7 + V125-1-11.6.\n")
+	b.WriteString("// canonical factories.\n")
 	b.WriteString("\n")
 	b.WriteString("export const VALID_PROVIDER_TYPES = [\n")
 	for _, t := range types {

@@ -3,13 +3,11 @@ package prtracker
 import "time"
 
 // Canonical Operation codes used by the dashboard PR panel filter chips.
-// V125-1-6 unified the previously-ad-hoc Operation strings into a small
-// fixed enum so the FE can categorize each PR into one of four buckets
-// (Clusters / Addons / Init / AI) without parsing free-form text.
+// The FE categorizes each PR into one of four buckets (Clusters /
+// Addons / Init / AI) by matching this string.
 //
-// New PR-creating paths MUST use one of these constants — do not invent
-// new ad-hoc strings, as the FE filter chips silently drop unknown
-// operations into the "default" gray bucket.
+// New PR-creating paths MUST use one of these constants — ad-hoc
+// strings get dropped into the "default" gray bucket by the FE.
 const (
 	// Init bucket
 	OpInitRepo = "init-repo"

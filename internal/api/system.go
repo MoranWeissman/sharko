@@ -81,10 +81,10 @@ func (s *Server) handleGetProviders(w http.ResponseWriter, r *http.Request) {
 // handleTestProvider handles POST /api/v1/providers/test — test provider connectivity.
 // Reads optional type/region from request body. If empty, tests the configured provider.
 //
-// V125-1-11.6: this endpoint tests cluster-test (ClusterCredentialsProvider)
-// backends only — post-retirement of providers.New the cluster-test factory
-// accepts argocd + "" (auto-default). For req.Type other than those two, the
-// endpoint returns an error message advising the caller to migrate.
+// This endpoint tests cluster-test (ClusterCredentialsProvider) backends
+// only — the cluster-test factory accepts argocd + "" (auto-default). For
+// req.Type other than those two, the endpoint returns an error message
+// advising the caller to migrate.
 func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Type   string `json:"type"`
@@ -159,9 +159,10 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 // @Router /providers/test-config [post]
 // handleTestProviderConfig tests an ad-hoc cluster-test provider configuration.
 //
-// V125-1-11.6: the cluster-test factory accepts argocd + "" only. The legacy
-// aws-sm / k8s-secrets cluster-creds arms are retired; configure those via the
-// addon-secret factory if the caller is testing addon-secret backend access.
+// The cluster-test factory accepts argocd + "" only. Legacy aws-sm /
+// k8s-secrets cluster-creds arms are retired; configure those via the
+// addon-secret factory if the caller is testing addon-secret backend
+// access.
 func (s *Server) handleTestProviderConfig(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Type      string `json:"type"`
@@ -255,12 +256,12 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 
 // providerDisplay returns the (type, region, prefix) triple to show in
 // /providers and /config response payloads. The display unifies the two
-// typed configs introduced by V125-1-11.6: addon-secret carries the richer
-// fields (Type/Region/Prefix/RoleARN) while cluster-test carries the
-// authoritative cluster-creds Type. When both are set, addon-secret wins for
-// Type/Region/Prefix because that's what the legacy display used to show; if
-// addon-secret is unset (cluster-test-only install), we fall back to
-// cluster-test's Type and empty Region/Prefix.
+// typed configs: addon-secret carries the richer fields
+// (Type/Region/Prefix/RoleARN) while cluster-test carries the
+// authoritative cluster-creds Type. When both are set, addon-secret
+// wins for Type/Region/Prefix; if addon-secret is unset
+// (cluster-test-only install), we fall back to cluster-test's Type and
+// empty Region/Prefix.
 func (s *Server) providerDisplay() (typ, region, prefix string) {
 	if s.addonSecretCfg != nil {
 		typ = s.addonSecretCfg.Type

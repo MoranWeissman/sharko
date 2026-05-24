@@ -23,8 +23,7 @@ var versionCmd = &cobra.Command{
 			return nil
 		}
 
-		// Honour the global --server override (V124-3.5 / BUG-010) when
-		// reporting which server we're talking to.
+		// Honour the global --server override when reporting which server we're talking to.
 		server := effectiveServer(cfg.Server)
 
 		respBody, status, err := apiGet("/api/v1/health")
