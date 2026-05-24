@@ -9,13 +9,12 @@ import {
   type ProviderType as GeneratedProviderType,
 } from '@/generated/provider-types'
 
-// V125-1-13.7: the dropdown options are now generated from the backend
-// factory in internal/providers/provider.go via cmd/gen-provider-types.
-// The Settings dropdown can no longer drift from the set of accepted
-// provider Type strings — see ui/src/generated/provider-types.ts and
-// the "Provider Types Up To Date" CI check. A new arm in providers.New()'s
-// switch + `make generate-provider-types` is the only edit required to
-// surface a new provider in the UI.
+// The dropdown options are generated from the backend factory in
+// internal/providers/provider.go via cmd/gen-provider-types — see
+// ui/src/generated/provider-types.ts and the "Provider Types Up To Date"
+// CI check. A new arm in providers.New()'s switch + `make
+// generate-provider-types` is the only edit required to surface a new
+// provider in the UI.
 //
 // `'' | GeneratedProviderType` because the form's empty value represents
 // "no provider configured", which corresponds to providers.New()'s

@@ -22,10 +22,6 @@ interface ErrorBoundaryState {
 /**
  * Catches render-phase errors thrown by descendant components and renders a
  * recoverable fallback instead of the stock React white screen.
- *
- * Added in V124-2.3 so a backend transient (e.g. /clusters returning 500)
- * that surfaces as an unhandled render error never leaves the page blank —
- * the user always sees the friendly fallback with a retry button.
  */
 export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   state: ErrorBoundaryState = { error: null };

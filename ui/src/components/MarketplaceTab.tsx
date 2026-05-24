@@ -7,27 +7,20 @@ import { MarketplaceSearchTab } from '@/components/MarketplaceSearchTab'
 import { MarketplaceAddonDetail } from '@/components/MarketplaceAddonDetail'
 
 /**
- * MarketplaceTab — top-level container rendered inside the AddonCatalog page.
+ * Top-level container rendered inside the AddonCatalog page.
  *
- * v1.21 QA Bundle 2 simplified the surface:
- *
- *   Browse   — curated catalog grid with filters (V121-2)
- *   Search   — name search across curated + ArtifactHub (V121-3.6)
+ *   Browse   — curated catalog grid with filters
+ *   Search   — name search across curated + ArtifactHub
  *   (Detail) — in-page addon detail view replaces the tablist when
- *              ?mp_addon=<name> is set on the URL. Maintainer feedback
- *              (2026-04-19): the popup-style Configure modal was too cramped;
- *              an in-page view shows README + an embedded "Add to catalog"
- *              panel without losing the Marketplace context.
- *
- * The Paste-URL subtab was retired in Bundle 2 — the manual Add Addon form
- * on the AddonCatalog page is the canonical "non-marketplace" entry point
- * (it auto-validates the repo URL and surfaces a chart-name dropdown).
+ *              ?mp_addon=<name> is set on the URL. Shows README + an
+ *              embedded "Add to catalog" panel without losing the
+ *              Marketplace context.
  *
  * Subtab state lives in the URL (?mp_view=browse|search) so deep links share.
- * Default is Browse to preserve the v1.20→v1.21 upgrade UX. The detail-view
- * navigation uses ?mp_addon=<name> and preserves any existing filter state in
- * mp_q / mp_cat / mp_curated / mp_lic / mp_tier so "← Back" returns the user
- * exactly where they came from.
+ * Default is Browse. The detail-view navigation uses ?mp_addon=<name> and
+ * preserves any existing filter state in mp_q / mp_cat / mp_curated /
+ * mp_lic / mp_tier so "← Back" returns the user exactly where they came
+ * from.
  */
 
 type MarketplaceView = 'browse' | 'search'

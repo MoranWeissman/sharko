@@ -12,7 +12,7 @@ interface ClusterAddonSummary {
 interface ClusterCardProps {
   name: string
   /** Optional API server URL — when present, renders a cosmetic
-   *  ClusterTypeBadge (V125-1-10.4) inline with the cluster name. */
+   *  ClusterTypeBadge inline with the cluster name. */
   serverUrl?: string
   connectionStatus: string
   addonSummary: ClusterAddonSummary[]
@@ -20,13 +20,10 @@ interface ClusterCardProps {
   totalCount: number
 }
 
-// BUG-033: classify the connection status into one of three buckets so a
-// freshly-registered cluster (ArgoCD has the secret but has not yet
-// produced a probe result) renders as a neutral "Connecting…" pill
-// rather than a red "Disconnected" failure. The previous binary
-// predicate flashed red for the entire ArgoCD probe window (~10-60s on
-// real installs), which made the registration flow look broken even
-// when it had completed successfully.
+// A freshly-registered cluster (ArgoCD has the secret but has not yet
+// produced a probe result) renders as a neutral "Connecting…" pill rather
+// than a red "Disconnected" failure — the ArgoCD probe window can be
+// ~10-60s on real installs.
 const PILL_STYLES: Record<
   ReturnType<typeof classifyClusterConnection>,
   { dot: string; text: string; label: string }
@@ -72,7 +69,7 @@ export function ClusterCard({
       <div className="mb-2 flex flex-wrap items-center gap-2">
         <Server className="h-4 w-4 text-teal-600 dark:text-teal-400" />
         <h3 className="truncate text-sm font-bold text-[#0a2a4a] dark:text-gray-100">{name}</h3>
-        {/* V125-1-10.4: cosmetic type pill derived from server hostname. */}
+        {/* Cosmetic type pill derived from server hostname. */}
         {serverUrl !== undefined && <ClusterTypeBadge server={serverUrl} compact />}
       </div>
       <div className="mb-2 flex items-center gap-1.5">

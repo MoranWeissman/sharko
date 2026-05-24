@@ -64,13 +64,10 @@ import {
 type StatusFilter =
   | 'all'
   | 'connected'
-  // BUG-040: 'disconnected' is the union of failed + missing + unknown.
-  // Dashboard's `disconnected_from_argocd` headline count is defined as
-  // (managed total) - (connected) — i.e., every managed cluster whose ArgoCD
-  // ConnectionState is not "Successful". Without this lane, clicking the
-  // Dashboard's "N disconnected" link landed on a filter that only matched
-  // status === 'failed' and showed 0 rows whenever the cluster was actually
-  // missing/unknown rather than explicitly failed.
+  // 'disconnected' is the union of failed + missing + unknown — it
+  // mirrors Dashboard's `disconnected_from_argocd` headline count
+  // (managed total minus connected). The deep-link `?status=disconnected`
+  // from the Dashboard relies on this.
   | 'disconnected'
   | 'failed'
   | 'missing_from_argocd'
@@ -87,22 +84,19 @@ export function ClustersOverview() {
   // Mirror the latest allClusters in a ref so fetchData's catch block can read
   // the current length without (a) closing over stale state and (b) putting
   // allClusters in fetchData's dep array (which would cause the fetch effect
-  // to re-fire on every state update). V124-3.1.
+  // to re-fire on every state update).
   const allClustersRef = useRef<Cluster[]>([]);
-  // V125-1.5: cluster-registration PRs that have NOT yet merged. The BE
-  // returns these via /api/v1/clusters.pending_registrations. We surface
-  // them as a dedicated "Pending Registrations" section AND filter their
-  // cluster names out of the Managed + Discovered sections so the same
-  // cluster never appears in two places (BUG-051/052).
+  // Cluster-registration PRs that have NOT yet merged. The BE returns
+  // these via /api/v1/clusters.pending_registrations. Surfaced as a
+  // dedicated "Pending Registrations" section AND filtered out of the
+  // Managed + Discovered sections so the same cluster never appears
+  // twice.
   const [pendingRegistrations, setPendingRegistrations] = useState<PendingRegistration[]>([]);
-  // V125-1-7 / BUG-058: ArgoCD cluster Secrets with no managed-clusters.yaml
-  // entry AND no open registration PR. Typically left over from a manual-
-  // mode register PR closed without merging. Surfaced in a dedicated
-  // amber/orange "Cancelled / Orphan Registrations" section between the
-  // blue Pending Registrations section and the main cluster table, with
-  // a per-row "Discard cancelled registration" button (renamed from
-  // "Delete cluster Secret" in V125-1-7.1 — matches operator mental model
-  // that this is registration cleanup, not Secret management).
+  // ArgoCD cluster Secrets with no managed-clusters.yaml entry AND no
+  // open registration PR (typically left over from a manual-mode register
+  // PR closed without merging). Surfaced in a dedicated amber/orange
+  // "Cancelled / Orphan Registrations" section with a "Discard cancelled
+  // registration" button — registration cleanup, not Secret management.
   const [orphanRegistrations, setOrphanRegistrations] = useState<OrphanRegistration[]>([]);
   // Per-cluster orphan-delete state. `null` = no action; `pending` = the
   // confirm dialog is open for this name; `deleting` = the API call is in
@@ -118,9 +112,9 @@ export function ClustersOverview() {
   const [searchParams] = useSearchParams();
   const initialStatus = searchParams.get('status');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>(
-    // BUG-040: keep the `?status=disconnected` deep-link from the Dashboard
-    // intact so the headline count and the resulting row list refer to the
-    // same set of clusters (everything in managed-clusters.yaml that isn't
+    // Keep the `?status=disconnected` deep-link from the Dashboard intact
+    // so the headline count and the resulting row list refer to the same
+    // set of clusters (everything in managed-clusters.yaml that isn't
     // currently "Connected" / "Successful" in ArgoCD).
     initialStatus === 'disconnected' ? 'disconnected' : 'all'
   );
@@ -159,19 +153,15 @@ export function ClustersOverview() {
   // ArgoCD unreachable detection
   const [argoCDUnreachable, setArgoCDUnreachable] = useState(false);
 
-  // BUG-041 helper: stable copy for the disabled-Test-button tooltip so all
-  // four render sites (managed-list table + grid, discovered table + grid)
-  // stay consistent.
-  // BUG-041: capability flag for the per-cluster Test button.
-  // /api/v1/health.cluster_test_available is true when a secrets backend
-  // (Vault / AWS Secrets Manager / file-store / ArgoCDProvider auto-default)
-  // is configured on the active connection. When false the backend returns
-  // 503 + error_code=no_secrets_backend for POST /clusters/{name}/test —
-  // so we render the button disabled with a tooltip explaining how to
-  // enable it, instead of leaving operators to discover the unavailability
-  // by clicking and getting a confusing error. Defaults to `true` so the
-  // first render before the /health fetch resolves doesn't flash a
-  // disabled state for installs that DO have a backend.
+  // Capability flag for the per-cluster Test button. Driven by
+  // /api/v1/health.cluster_test_available (true when a secrets backend —
+  // Vault / AWS Secrets Manager / file-store / ArgoCDProvider auto-default
+  // — is configured on the active connection). When false, the backend
+  // returns 503 + error_code=no_secrets_backend for POST
+  // /clusters/{name}/test, so we render the button disabled with a
+  // tooltip explaining how to enable it. Defaults to `true` so the first
+  // render before /health resolves doesn't flash a disabled state for
+  // installs that DO have a backend.
   const [clusterTestAvailable, setClusterTestAvailable] = useState(true);
   const TEST_BUTTON_DISABLED_TOOLTIP =
     'Cluster connectivity test is unavailable: no secrets backend (Vault / AWS Secrets Manager / file-store) is configured on the active connection. Configure one in Settings → Connections to enable.';
@@ -185,7 +175,7 @@ export function ClustersOverview() {
   const [addClusterRegion, setAddClusterRegion] = useState('');
   const [addClusterRoleArn, setAddClusterRoleArn] = useState('');
   const [addClusterSecretPath, setAddClusterSecretPath] = useState('');
-  // V125-1.1: kubeconfig YAML pasted by the user when provider === 'kubeconfig'.
+  // Kubeconfig YAML pasted by the user when provider === 'kubeconfig'.
   const [addClusterKubeconfig, setAddClusterKubeconfig] = useState('');
   const [addClusterSubmitting, setAddClusterSubmitting] = useState(false);
   const [addClusterError, setAddClusterError] = useState<string | null>(null);
@@ -221,19 +211,16 @@ export function ClustersOverview() {
         setLoading(true);
       }
       const response: ClustersResponse = await api.getClusters();
-      // Only clear `error` once we actually have fresh data in hand. Clearing
-      // pre-emptively (V124-2.3 bug) caused the page to flash blank when a
-      // background refresh kicked the prior ErrorState off-screen, then the
-      // refresh itself failed silently and left an empty cluster list with
-      // no error chrome.
+      // Only clear `error` once we actually have fresh data in hand.
+      // Clearing pre-emptively would let a failed background refresh kick
+      // the prior ErrorState off-screen and leave an empty cluster list
+      // with no error chrome.
       setError(null);
       setAllClusters(response.clusters);
       setHealthStats(response.health_stats ?? null);
-      // V125-1.5: default to [] so older servers that pre-date the field
-      // do not crash this view. Same nil-array regression guard as the
-      // backend's PendingRegistrations contract.
+      // Default to [] so a server that omits these fields doesn't crash
+      // this view (forward-compat).
       setPendingRegistrations(response.pending_registrations ?? []);
-      // V125-1-7: same forward-compat default for orphan_registrations.
       setOrphanRegistrations(response.orphan_registrations ?? []);
       // Detect ArgoCD unreachable: if all clusters have failed/unknown status or response is empty
       const hasArgoError = response.clusters.length === 0 ||
@@ -248,17 +235,13 @@ export function ClustersOverview() {
         setAllClusters([]);
         setHealthStats(null);
       } else {
-        // V124-2.3: a background refresh that fails MUST surface an error
-        // when there is no prior data to show. Otherwise the page would
-        // render an empty stat grid with no indication anything went wrong.
-        // If we already have data, keep it on screen and let the next refresh
-        // try to recover — the user still sees the last-good state.
-        //
-        // V124-3.1: read the prior length OUTSIDE any state updater. The
-        // previous code called setError/setHealthStats inside a setAllClusters
-        // updater function — a React anti-pattern that fires twice in
-        // StrictMode (updaters must be pure). Read via the ref so we see the
-        // current value without putting allClusters in fetchData's deps.
+        // A background refresh that fails MUST surface an error when
+        // there is no prior data to show — otherwise the page would
+        // render an empty stat grid with no indication anything went
+        // wrong. If we already have data, keep it on screen and let the
+        // next refresh try to recover. Read the prior length via the ref
+        // (NOT inside a state updater, which would violate purity in
+        // StrictMode).
         if (allClustersRef.current.length === 0) {
           setError(message);
           setHealthStats(null);
@@ -275,9 +258,9 @@ export function ClustersOverview() {
     void fetchData(true);
   }, [fetchData]);
 
-  // Keep allClustersRef in sync with allClusters so fetchData's catch block
-  // can check "did we have prior data on screen?" without depending on
-  // allClusters in its dep array (V124-3.1).
+  // Keep allClustersRef in sync with allClusters so fetchData's catch
+  // block can check "did we have prior data on screen?" without depending
+  // on allClusters in its dep array.
   useEffect(() => {
     allClustersRef.current = allClusters;
   }, [allClusters]);
@@ -286,13 +269,12 @@ export function ClustersOverview() {
     void fetchData();
   }, [fetchData]);
 
-  // BUG-041: fetch /health once to learn whether the cluster-connectivity
-  // test endpoint is available on this install (depends on a secrets
-  // backend being configured). The flag flips false only in the
-  // `--demo` / no-backend dev path; once available it does not change at
-  // runtime, so we don't poll. If /health fails we keep the optimistic
-  // default (button enabled) — we'd rather let the operator click and
-  // see the structured 503 than silently disable a feature.
+  // Fetch /health once to learn whether the cluster-connectivity test
+  // endpoint is available (depends on a secrets backend being configured).
+  // The flag does not change at runtime once a backend is wired, so we
+  // don't poll. If /health fails we keep the optimistic default — better
+  // to let the operator click and see the structured 503 than to silently
+  // disable a feature.
   useEffect(() => {
     let cancelled = false;
     void api
@@ -380,8 +362,8 @@ export function ClustersOverview() {
     setDryRunResult(null);
     setAddClusterError(null);
     try {
-      // V125-1.1: kubeconfig path sends a disjoint field set — server
-      // rejects AWS-shaped fields (region/secret_path/role_arn) when
+      // Kubeconfig path uses a disjoint field set — server rejects AWS-
+      // shaped fields (region/secret_path/role_arn) when
       // provider==='kubeconfig', so do NOT include them in the payload.
       const result = await registerCluster(
         provider === 'kubeconfig'
@@ -455,10 +437,10 @@ export function ClustersOverview() {
         setAddClusterOpen(false);
         void fetchData();
       } else {
-        // Direct registration. V125-1.1: kubeconfig path uses a disjoint
-        // payload — only `name`, `provider`, `kubeconfig`, `auto_merge`,
-        // `addons` are valid for the kubeconfig branch (server returns 400
-        // if region/secret_path/role_arn appear).
+        // Direct registration. Kubeconfig path uses a disjoint payload —
+        // only `name`, `provider`, `kubeconfig`, `auto_merge`, `addons`
+        // are valid for that branch (server returns 400 if
+        // region/secret_path/role_arn appear).
         const result = await registerCluster(
           provider === 'kubeconfig'
             ? {
@@ -480,11 +462,9 @@ export function ClustersOverview() {
         );
         const prUrl = result?.git?.pr_url || result?.pr_url || result?.pull_request_url;
         const merged = result?.git?.merged ?? autoMerge;
-        // V125-1.5 / BUG-050: manual-mode register opens a PR but the
-        // cluster is NOT actually registered until merge. The pre-V125-1.5
-        // toast said "Cluster registered" in both branches, which was a
-        // lie in the manual-merge case. Branch on `merged` so the message
-        // tells the user the truth.
+        // Manual-mode register opens a PR but the cluster is NOT actually
+        // registered until merge. Branch on `merged` so the toast tells
+        // the user the truth.
         if (merged) {
           // Auto-merge succeeded (or PR-merge was implicit). Cluster is
           // truly registered.
@@ -534,8 +514,8 @@ export function ClustersOverview() {
   /** Compact test result summary with expandable steps */
   const renderTestResult = useCallback((clusterName: string, testResult: typeof testResults[string], opts?: { showSuggestions?: boolean }) => {
     if (!testResult || testResult === 'testing') return null;
-    // BUG-035: render the "test unavailable" state distinctly — do NOT show
-    // the cluster as "Unreachable" when the test feature itself is unavailable.
+    // Render "test unavailable" distinctly — do NOT show the cluster as
+    // "Unreachable" when only the test feature itself is unavailable.
     if (isTestClusterUnavailable(testResult)) {
       return (
         <span className="inline-flex items-center gap-1 text-xs text-amber-700 dark:text-amber-300" title={testResult.error}>
@@ -634,12 +614,11 @@ export function ClustersOverview() {
     }
   }, [unadoptTarget, fetchData]);
 
-  // V125-1-7 / BUG-058 — orphan cluster Secret cleanup. Confirms via
-  // ConfirmationModal (the same destructive-action pattern used by
-  // unadopt + remove cluster). On success, refetch to drop the orphan
-  // row from the surface; on failure, surface the BE error message
-  // (the BE returns 400 with a remediation hint if the cluster turns
-  // out to be managed/pending in a TOCTOU race).
+  // Orphan cluster Secret cleanup. Confirms via ConfirmationModal (same
+  // destructive-action pattern as unadopt + remove cluster). On success,
+  // refetch to drop the orphan row; on failure, surface the BE error
+  // message (the BE returns 400 with a remediation hint if the cluster
+  // turns out to be managed/pending in a TOCTOU race).
   const handleDeleteOrphan = useCallback(async () => {
     if (!orphanDeleteTarget) return;
     setOrphanDeleteLoading(true);
@@ -692,11 +671,10 @@ export function ClustersOverview() {
             case 'connected':
               return cs === 'connected' || cs === 'successful';
             case 'disconnected':
-              // BUG-040: any managed cluster that ArgoCD does not currently
-              // report as "Successful" / "Connected" — this is the same
-              // definition the Dashboard uses for its headline count.
-              // Discovered / not_in_git clusters are NOT counted here (they
-              // are a separate lane in the Dashboard headline anyway).
+              // Any managed cluster that ArgoCD does not currently report
+              // as "Successful" / "Connected" — same definition the
+              // Dashboard uses for its headline count. Discovered /
+              // not_in_git clusters are NOT counted here.
               if (cluster.managed === false || cs === 'not_in_git') return false;
               return cs !== 'connected' && cs !== 'successful';
             case 'failed':
@@ -726,23 +704,18 @@ export function ClustersOverview() {
     [allClusters, statusFilter, filters],
   );
 
-  // V125-1.5 / BUG-051+052: cluster names that have an open registration
-  // PR but whose values-file changes have NOT yet merged. They must NEVER
-  // appear in the Managed or Discovered sections — that's what the
-  // "Pending Registrations" surface is for. The BE also strips these from
-  // the `not_in_git` lane (internal/api/clusters.go), but we re-apply the
-  // filter here so a stale BE response or a slow refresh window still
-  // can't surface the cluster in two places at once.
+  // Cluster names that have an open registration PR but whose values-file
+  // changes have NOT yet merged. They belong only in the "Pending
+  // Registrations" surface. The BE strips them from `not_in_git`; we
+  // re-apply the filter so a stale BE response or slow refresh can't
+  // surface the cluster in two places.
   const pendingNames = useMemo(
     () => new Set(pendingRegistrations.map((p) => p.cluster_name)),
     [pendingRegistrations],
   );
 
-  // V125-1-7 / BUG-058: same defence-in-depth for orphans. Orphan cluster
-  // names belong only in the "Cancelled / Orphan Registrations" section;
-  // the BE strips them from `not_in_git` too, but the FE re-applies the
-  // filter so a stale or in-flight refresh can never surface the same
-  // cluster in two places.
+  // Same defence-in-depth for orphans — they belong only in the
+  // "Cancelled / Orphan Registrations" section.
   const orphanNames = useMemo(
     () => new Set(orphanRegistrations.map((o) => o.cluster_name)),
     [orphanRegistrations],
@@ -979,7 +952,7 @@ export function ClustersOverview() {
                 </div>
                 {provider === 'kubeconfig' ? (
                   <>
-                    {/* V125-1.1: kubeconfig path — paste YAML inline. */}
+                    {/* Kubeconfig path — paste YAML inline. */}
                     <div>
                       <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
                         Kubeconfig <span className="text-red-500">*</span>
@@ -1177,14 +1150,9 @@ export function ClustersOverview() {
               </div>
             )}
 
-            {/* Auto-merge checkbox.
-              *
-              * V125-1.4: a `title` attribute on both the input and the label
-              * surfaces the gate criteria (admin-only, PR merges immediately
-              * vs waits for human review) without bloating the visible
-              * label. Plain HTML title — universal browser support, no JS,
-              * no portal complexity, and consistent with the other tooltip
-              * additions in this dialog. */}
+            {/* Auto-merge checkbox. Plain HTML `title` attribute surfaces
+              * the gate criteria (admin-only; merges immediately vs waits
+              * for human review) without bloating the visible label. */}
             <div className="flex items-center gap-2">
               <input
                 type="checkbox"
@@ -1211,17 +1179,11 @@ export function ClustersOverview() {
               )}
             </div>
 
-            {/* Dry-run preview panel.
-              *
-              * V125-1.4 (BUG-049): every array read is null-safe via `?? []`
-              * so any past, present, or future provider that returns a
-              * partial DryRunResult shape (missing field, null instead of
-              * [], JSON-tag mismatch like the original `files` vs
-              * `files_to_write`) renders a sensible panel instead of
-              * crashing the page with `Cannot read properties of null
-              * (reading 'length')`. Backend now also returns [] (not null)
-              * for both EKS and kubeconfig — defense in depth at both
-              * layers. */}
+            {/* Dry-run preview panel. Every array read is null-safe via
+              * `?? []` so a partial DryRunResult shape (missing field,
+              * null instead of [], JSON-tag mismatch like `files` vs
+              * `files_to_write`) renders sensibly instead of crashing
+              * with `Cannot read properties of null`. */}
             {dryRunResult && (
               <div className="rounded-md ring-2 ring-[#6aade0] bg-[#e8f4ff] p-3 dark:ring-gray-700 dark:bg-gray-900">
                 <h4 className="mb-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-200">Dry Run Preview</h4>
@@ -1265,15 +1227,9 @@ export function ClustersOverview() {
               <p className="text-sm text-red-600 dark:text-red-400">{addClusterError}</p>
             )}
           </div>
-          {/* Footer buttons.
-            *
-            * V125-1.4: native `title` tooltips on the action buttons explain
-            * what each does before the user clicks. Plain `title=` is used
-            * (not the shadcn <Tooltip>) because the rest of this dialog
-            * doesn't use the shadcn primitive — keeping it consistent and
-            * avoiding the portal/provider plumbing for a one-line hint.
-            * Cancel is left untouched (label is universally understood).
-            * A wider tooltip refactor across the app is V125+ scope. */}
+          {/* Footer buttons. Plain `title=` tooltips (not shadcn
+            * <Tooltip>) to stay consistent with the rest of this dialog
+            * and avoid portal/provider plumbing for one-line hints. */}
           <DialogFooter className="flex-wrap gap-2">
             <button
               type="button"
@@ -1320,10 +1276,10 @@ export function ClustersOverview() {
 
       {/* Registration success banner */}
       {addClusterResultMsg && (() => {
-        // V125-1.5 / BUG-050: pick banner styling + copy based on the
-        // tagged message marker (__merged__|<url> vs __pending__|<url>).
-        // The tag is set in handleAddCluster — we strip it here for
-        // rendering so external callers never see the marker characters.
+        // Pick banner styling + copy based on the tagged message marker
+        // (__merged__|<url> vs __pending__|<url>). The tag is set in
+        // handleAddCluster; we strip it here so external callers never
+        // see the marker characters.
         const isMergedTag = addClusterResultMsg.startsWith('__merged__|');
         const isPendingTag = addClusterResultMsg.startsWith('__pending__|');
         const taggedURL = isMergedTag
@@ -1548,12 +1504,10 @@ export function ClustersOverview() {
         )}
       </div>
 
-      {/* V125-1.5 / BUG-053 — Pending registration PRs.
-          The wizard closes after submitting and the values-file PR is
-          opened in Git but NOT merged. Without this surface, the user has
-          no way to see which clusters are mid-registration. Each row
-          links straight to the open PR. Cancel/close-PR action is
-          deferred to V125+. */}
+      {/* Pending registration PRs. The wizard closes after submitting
+          and the values-file PR is opened in Git but NOT merged; this
+          surface lets the user see which clusters are mid-registration
+          and links straight to the open PR. */}
       {pendingRegistrations.length > 0 && (
         <div className="space-y-3">
           <h3 className="flex items-center gap-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-200">
@@ -1611,16 +1565,13 @@ export function ClustersOverview() {
         </div>
       )}
 
-      {/* V125-1-7 / BUG-058 — Cancelled / Orphan Registrations.
-          ArgoCD cluster Secrets that have NO managed-clusters.yaml entry
-          AND no open registration PR. Typically a leftover from a
-          manual-mode register PR that was closed without merging
-          (orchestrator/cluster.go:408 pre-creates the Secret before the
-          PR opens). Per-row "Discard cancelled registration" button
-          removes the orphan Secret via DELETE
-          /api/v1/clusters/{name}/orphan. The amber/orange tint
-          signals "needs cleanup attention" — different from the blue
-          Pending Registrations and the teal Managed Clusters above. */}
+      {/* Cancelled / Orphan Registrations — ArgoCD cluster Secrets with
+          NO managed-clusters.yaml entry AND no open registration PR
+          (typically left over when a manual-mode register PR was closed
+          without merging; the orchestrator pre-creates the Secret before
+          the PR opens). Per-row "Discard cancelled registration" button
+          deletes the Secret via DELETE /api/v1/clusters/{name}/orphan.
+          Amber/orange tint signals "needs cleanup attention". */}
       {orphanRegistrations.length > 0 && (
         <div className="space-y-3">
           <h3 className="flex items-center gap-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-200">
@@ -1737,7 +1688,7 @@ export function ClustersOverview() {
                         <span className="inline-flex items-center gap-1.5">
                           {cluster.name}
                           {isInCluster && <Info className="h-4 w-4 text-blue-400" />}
-                          {/* V125-1-10.4: cosmetic type pill derived from server hostname. */}
+                          {/* Cosmetic type pill derived from server hostname. */}
                           <ClusterTypeBadge server={cluster.server_url} compact />
                         </span>
                       </td>
@@ -1823,7 +1774,7 @@ export function ClustersOverview() {
                       <span className="inline-flex flex-wrap items-center gap-1.5">
                         {cluster.name}
                         {isInCluster && <Info className="h-4 w-4 text-blue-400" />}
-                        {/* V125-1-10.4: cosmetic type pill derived from server hostname. */}
+                        {/* Cosmetic type pill derived from server hostname. */}
                         <ClusterTypeBadge server={cluster.server_url} compact />
                       </span>
                     </h3>
@@ -2111,7 +2062,7 @@ export function ClustersOverview() {
         loading={unadoptLoading}
       />
 
-      {/* V125-1-7 / BUG-058 — Orphan Delete Confirmation Modal */}
+      {/* Orphan Delete Confirmation Modal */}
       <ConfirmationModal
         open={orphanDeleteTarget !== null}
         onClose={() => setOrphanDeleteTarget(null)}

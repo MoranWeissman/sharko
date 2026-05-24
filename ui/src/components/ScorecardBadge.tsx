@@ -3,9 +3,8 @@ import { cn } from '@/lib/utils'
 import type { CatalogScore, CatalogSecurityTier } from '@/services/models'
 
 /**
- * ScorecardBadge — renders the OpenSSF Scorecard score + tier label that
- * accompanies every Marketplace tile (and, eventually, Search results +
- * Configure step). Tier mapping mirrors v1.21 design §4.6:
+ * Renders the OpenSSF Scorecard score + tier label that accompanies every
+ * Marketplace tile. Tier mapping:
  *
  *   ≥ 8.0 → Strong   (green)
  *   ≥ 5.0 → Moderate (amber)
@@ -30,11 +29,10 @@ export interface ScorecardBadgeProps {
   scorecardURL?: string
   size?: 'sm' | 'md'
   /**
-   * v1.21 QA Bundle 4 Fix #3d: when true, the badge renders nothing when the
-   * score is "unknown". Default false (legacy behaviour). Callers that render
-   * a Marketplace tile set this to true so the "Unknown" chip doesn't flood
-   * every card with placeholder metadata before the daily OpenSSF refresh
-   * job has populated real scores.
+   * When true, the badge renders nothing when the score is "unknown".
+   * Marketplace tiles set this to true so the "Unknown" chip doesn't
+   * flood every card with placeholder metadata before the daily OpenSSF
+   * refresh has populated real scores.
    */
   hideWhenUnknown?: boolean
 }
@@ -92,9 +90,6 @@ export function ScorecardBadge({
   const Icon = palette.icon
 
   const isUnknown = effectiveTier === 'unknown'
-  // v1.21 QA Bundle 4 Fix #3d: Marketplace tiles pass hideWhenUnknown=true
-  // so "Unknown" chips don't clutter every card during the initial refresh
-  // window. Detail view keeps the chip to avoid looking like data is missing.
   if (isUnknown && hideWhenUnknown) {
     return null
   }

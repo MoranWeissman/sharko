@@ -17,11 +17,9 @@ const inputCls =
   'mt-1 block w-full rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm text-[#0a2a4a] shadow-sm placeholder:text-[#3a6a8a] focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder:text-[#2a5a7a]'
 
 /**
- * "My Account" — user-scoped settings.
- *
- * Today this only houses the personal GitHub PAT used by the v1.20 tiered
- * attribution model: when set, Tier 2 (configuration) actions commit as the
- * user instead of the Sharko service account.
+ * "My Account" — user-scoped settings. Houses the personal GitHub PAT
+ * used by the tiered attribution model: when set, Tier 2 (configuration)
+ * actions commit as the user instead of the Sharko service account.
  */
 export function MyAccountSection() {
   const [me, setMe] = useState<MeResponse | null>(null)

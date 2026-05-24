@@ -1,16 +1,5 @@
 /**
- * useAddonStates — single source of truth for addon health/sync state
- * across the Sharko UI.
- *
- * Maintainer feedback (v1.21 Bundle 3):
- *   "sometimes, in different areas in sharko, I'll see that an addon is
- *    problematic since its in progressing state, but in other places it
- *    looks healthy. We need to make something clear here, a progressing
- *    state can be temporary and from various reasons. App can still be
- *    healthy but with a msg about it, with advisement to check it."
- *
- *   "state of app/cluster — make sure you take it once and all relevant
- *    places in the website are consuming this state."
+ * Single source of truth for addon health/sync state across the Sharko UI.
  *
  * Design:
  *   - One Provider mounted high in the tree polls /api/v1/dashboard/attention
@@ -30,7 +19,7 @@
  *                              show a small advisory chip with a link to
  *                              the addon-on-cluster page for investigation.
  *                              Treated as "operational" for dashboard
- *                              "apps with issues" counters — see Step 2.
+ *                              "apps with issues" counters.
  *   • 'degraded'             → Argo says Degraded / Suspended / Error.
  *                              Real failure. Red.
  *   • 'missing'              → Application missing in ArgoCD. Red.

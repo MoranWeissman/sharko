@@ -59,9 +59,9 @@ export function AIConfigSection() {
   const isEnabled = aiConfig?.current_provider && aiConfig.current_provider !== 'none' && aiConfig.current_provider !== ''
   const activeProvider = aiConfig?.available_providers.find((p: AIProviderInfo) => p.id === aiConfig.current_provider)
 
-  // V121-7.3: "Annotate values on generate" toggle. Default-true when AI
-  // is configured but the persisted blob has no explicit value (legacy
-  // configs from before V121-7); the backend reports the effective state.
+  // "Annotate values on generate" toggle. Default-true when AI is
+  // configured but the persisted blob has no explicit value — the backend
+  // reports the effective state.
   const annotateOnSeed = aiConfig?.annotate_on_seed ?? true
   const [annotateBusy, setAnnotateBusy] = useState(false)
   const handleToggleAnnotate = async (next: boolean) => {
@@ -215,10 +215,10 @@ export function AIConfigSection() {
         </div>
       )}
 
-      {/* V121-7.3: Annotate-on-generate toggle. Visible only when AI is
-          configured. Default-on when first enabled — flipping off skips
-          the LLM call on addon-add and refresh-from-upstream and emits
-          `# AI annotation: disabled` in the file header. */}
+      {/* Annotate-on-generate toggle. Visible only when AI is configured.
+          Default-on — flipping off skips the LLM call on addon-add and
+          refresh-from-upstream and emits `# AI annotation: disabled` in
+          the file header. */}
       {isEnabled && (
         <div className="mt-4 flex items-start justify-between gap-3 rounded-lg border border-purple-200 bg-purple-50/30 px-3 py-3 dark:border-purple-800 dark:bg-purple-950/20">
           <div className="flex-1">

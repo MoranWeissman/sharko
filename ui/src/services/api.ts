@@ -150,8 +150,8 @@ export async function registerCluster(data: {
   role_arn?: string;
   auto_merge?: boolean;
   dry_run?: boolean;
-  // V125-1.1: required when provider === 'kubeconfig'. Bearer-token
-  // authentication only — see internal/providers/kubeconfig_parser.go.
+  // Required when provider === 'kubeconfig'. Bearer-token authentication
+  // only — see internal/providers/kubeconfig_parser.go.
   kubeconfig?: string;
 }) {
   return postJSON<RegisterClusterResult>('/clusters', data)
@@ -168,31 +168,29 @@ export async function discoverEKSClusters(data: { role_arns: string[]; region?: 
  * gets a clear, action-oriented message instead of a generic "test failed".
  *
  * Codes:
- *  - `no_secrets_backend` (BUG-035 / PR #323): the active connection has no
- *    secrets backend configured (Vault / AWS Secrets Manager / file-store /
- *    ArgoCDProvider). Configure one in Settings → Connections.
+ *  - `no_secrets_backend`: the active connection has no secrets backend
+ *    configured (Vault / AWS Secrets Manager / file-store / ArgoCDProvider).
+ *    Configure one in Settings → Connections.
  *
- *  - `argocd_provider_iam_required` (V125-1-10.3): the active backend is the
- *    built-in ArgoCDProvider, the cluster's ArgoCD Secret has the AWS-IAM
- *    `awsAuthConfig` shape, and the Sharko pod has no AWS credentials. The
- *    test cannot exec aws-iam-authenticator from inside the pod. Production
- *    target is self-hosted K8s + AWS-managed clusters that authenticate via
- *    AWS IAM — the fix is to grant the Sharko pod's role the right
- *    permissions (IRSA / EC2 instance profile / Pod Identity).
+ *  - `argocd_provider_iam_required`: the active backend is the built-in
+ *    ArgoCDProvider, the cluster's ArgoCD Secret has the AWS-IAM
+ *    `awsAuthConfig` shape, and the Sharko pod has no AWS credentials.
+ *    The test cannot exec aws-iam-authenticator from inside the pod —
+ *    grant the Sharko pod's role the right permissions (IRSA / EC2
+ *    instance profile / Pod Identity).
  *
- *  - `argocd_provider_exec_unsupported` (V125-1-10.3): the cluster's ArgoCD
- *    Secret has an `execProviderConfig` shape — auth is provided by an
- *    external exec plugin (gcloud, azure-cli, aws-iam-authenticator, etc.).
- *    Sharko v1.x does not ship those plugins inside the pod and does not
- *    support exec-plugin auth. Tracked for v2.
+ *  - `argocd_provider_exec_unsupported`: the cluster's ArgoCD Secret has
+ *    an `execProviderConfig` shape — auth is provided by an external exec
+ *    plugin (gcloud, azure-cli, aws-iam-authenticator, etc.). Not
+ *    supported in v1.x; tracked for v2.
  *
- *  - `argocd_provider_unsupported_auth` (V125-1-10.3): the cluster's ArgoCD
- *    Secret has an unrecognized auth shape. Surface as "inspect the Secret
- *    manually in the argocd namespace" — there is no automatic remediation.
+ *  - `argocd_provider_unsupported_auth`: the cluster's ArgoCD Secret has
+ *    an unrecognized auth shape. Surface as "inspect the Secret manually
+ *    in the argocd namespace" — there is no automatic remediation.
  *
  * The backend may also return 503 with NO `error_code` for unexpected
- * failures; those are surfaced as a thrown Error (legacy behaviour) so the
- * UI's existing generic-error path renders them.
+ * failures; those are surfaced as a thrown Error so the UI's generic
+ * error path renders them.
  */
 export type TestClusterErrorCode =
   | 'no_secrets_backend'
@@ -239,13 +237,10 @@ export async function testClusterConnection(
     window.location.reload()
     throw new Error('Session expired')
   }
-  // V125-1-10.5: detect the structured 503 envelope and surface it as a typed
-  // "unavailable" result instead of throwing. Story 10.3 extended the codes
-  // beyond BUG-035's `no_secrets_backend` with three argocd_provider_* codes.
-  // Unknown / absent error_code on a 503 falls through to the generic
-  // throw-Error path so the UI shows whatever message the backend sent —
-  // this keeps pre-Story-10.3 servers (which only ever sent
-  // `no_secrets_backend`) and any future codes safe.
+  // Detect the structured 503 envelope and surface it as a typed
+  // "unavailable" result instead of throwing. Unknown / absent error_code
+  // on a 503 falls through to the generic throw-Error path so the UI shows
+  // whatever message the backend sent.
   if (res.status === 503) {
     const body = (await res.json().catch(() => ({}))) as {
       error?: string
@@ -305,12 +300,10 @@ export function createAuditStream(): EventSource {
   return new EventSource(url)
 }
 
-// BUG-039: the backend handler at `orchestrator.RemoveCluster` rejects
+// The backend handler at `orchestrator.RemoveCluster` rejects
 // confirmation-required operations with HTTP 400 "confirmation required:
 // set yes: true in request body" when the body doesn't include
-// `{"yes": true}`. The UI confirm modal previously sent an empty body so
-// the request always 400'd after the user clicked Yes. Wrap the DELETE in
-// a fetch that includes the confirmation flag in the request body.
+// `{"yes": true}`. Include the confirmation flag in the DELETE body.
 export async function deregisterCluster(name: string) {
   const res = await fetch(`${BASE_URL}/clusters/${encodeURIComponent(name)}`, {
     method: 'DELETE',
@@ -330,21 +323,16 @@ export async function deregisterCluster(name: string) {
 }
 
 export async function adoptClusters(data: { clusters: string[]; auto_merge?: boolean; dry_run?: boolean }) {
-  // BUG-039 audit note: AdoptClustersRequest on the backend does NOT have
-  // a `Yes` field — `cluster.adopt` is gated on RBAC + per-cluster Stage1
-  // verification, not on a confirmation flag. So we deliberately do NOT
-  // send `yes: true` here even though the AdoptClustersDialog is a
-  // confirmation flow from the user's perspective. Audited 2026-05-13.
+  // AdoptClustersRequest on the backend does NOT have a `Yes` field —
+  // `cluster.adopt` is gated on RBAC + per-cluster Stage1 verification,
+  // not on a confirmation flag. Do NOT send `yes: true` here even though
+  // the AdoptClustersDialog is a confirmation flow from the user's
+  // perspective.
   return postJSON<AdoptClustersResponse>('/clusters/adopt', data)
 }
 
-// BUG-039: the unadopt handler is `POST /clusters/{name}/unadopt` and
-// requires `yes: true` in the body. The legacy `DELETE
-// /clusters/{name}?unadopt=true` path that this function used would route
-// to `handleDeregisterCluster` (the DELETE handler) rather than to
-// `handleUnadoptCluster`, then 400 because the body lacked `yes: true`.
-// Rewrite the call to hit the canonical POST endpoint with the
-// confirmation flag included.
+// The unadopt handler is `POST /clusters/{name}/unadopt` and requires
+// `yes: true` in the body.
 export async function unadoptCluster(name: string) {
   return postJSON<{ status: string; pr_url?: string }>(
     `/clusters/${encodeURIComponent(name)}/unadopt`,
@@ -352,12 +340,11 @@ export async function unadoptCluster(name: string) {
   )
 }
 
-// V125-1-7 / BUG-058 — orphan cluster Secret cleanup. The BE returns
-// 204 No Content on success (no body), so we cannot use the generic
-// deleteJSON helper which assumes a JSON body. The BE refuses the
-// request with 400 if the cluster is genuinely managed (in git) or
-// pending (open register PR) — the FE caller surfaces the error message
-// in a toast.
+// Orphan cluster Secret cleanup. The BE returns 204 No Content on
+// success (no body), so we can't use the generic deleteJSON helper which
+// assumes a JSON body. The BE refuses with 400 if the cluster is
+// genuinely managed (in git) or pending (open register PR) — the caller
+// surfaces the error message in a toast.
 export async function deleteOrphanCluster(name: string): Promise<void> {
   const res = await fetch(`${BASE_URL}/clusters/${encodeURIComponent(name)}/orphan`, {
     method: 'DELETE',
@@ -390,8 +377,7 @@ export interface AddAddonResponse {
   branch?: string
   merged?: boolean
   attribution_warning?: 'no_per_user_pat'
-  // Legacy alias surfaced by the raw form before v1.20 — kept on the type so
-  // existing callers (AddonCatalog.tsx Add Addon dialog) compile cleanly.
+  // Legacy alias — kept on the type so existing callers compile cleanly.
   pull_request_url?: string
   // When attribution_warning is set, the orchestrator result is wrapped under `result`.
   result?: {
@@ -405,7 +391,7 @@ export interface AddAddonResponse {
 /**
  * Structured 409 body returned when the addon is already in the catalog.
  * The Marketplace Configure modal renders this inline (with a deep-link to
- * the existing addon page) instead of a generic toast. Backed by V121-5.1.
+ * the existing addon page) instead of a generic toast.
  */
 export interface AddonAlreadyExistsError extends Error {
   code: 'addon_already_exists'
@@ -430,7 +416,7 @@ export async function addAddon(data: {
   namespace?: string
   sync_wave?: number
   /**
-   * V121-5.2 / V121-4.1: identifies the originating UI flow.
+   * Identifies the originating UI flow.
    *   "marketplace" — Browse curated card → Configure
    *   "artifacthub" — Search tab → Configure (external pkg)
    *   "paste_url"   — Paste Helm URL tab → Configure
@@ -438,9 +424,9 @@ export async function addAddon(data: {
    */
   source?: 'marketplace' | 'artifacthub' | 'paste_url' | 'manual'
 }): Promise<AddAddonResponse> {
-  // Use raw fetch so we can detect the structured 409 body that V121-5.1
-  // returns when the addon already exists in the catalog. postJSON throws a
-  // plain Error with just `error` text and we'd lose `addon` / `existing_url`.
+  // Use raw fetch so we can detect the structured 409 body returned when
+  // the addon already exists. postJSON throws a plain Error with just
+  // `error` text and we'd lose `addon` / `existing_url`.
   const res = await fetch(`${BASE_URL}/addons`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -492,9 +478,8 @@ export async function configureAddon(
     additional_sources?: Record<string, unknown>[]
   },
 ) {
-  // NOTE: the backend handler is registered at PATCH /api/v1/addons/{name}
-  // (see internal/api/router.go). The earlier implementation posted to
-  // `.../configure` which 404s — fixed alongside the v1.20.1 catalog editor.
+  // The backend handler is registered at PATCH /api/v1/addons/{name}
+  // (see internal/api/router.go).
   return patchJSON<{
     status?: string
     pr_url?: string
@@ -562,20 +547,16 @@ export async function initRepo(data?: { bootstrap_argocd?: boolean; auto_merge?:
 }
 
 /**
- * V124-15 / BUG-033: typed error thrown by `getOperation` so the wizard can
- * distinguish a 401 (session expired — fatal, stop polling) from transient
- * network errors (swallow + retry).
+ * Typed error thrown by `getOperation` so the wizard can distinguish a 401
+ * (session expired — fatal, stop polling) from transient network errors
+ * (swallow + retry).
  *
- * We intentionally do NOT call `window.location.reload()` from `getOperation`
+ * `getOperation` intentionally does NOT call `window.location.reload()`
  * (unlike most other helpers in this file). The wizard polls every 2s; a
  * silent reload mid-init would interrupt the in-progress operation display
  * before the user understands what happened, and a queued reload during a
- * 401 storm produces the "wizard appears frozen" symptom that BUG-033
- * documents. The wizard owns the error UX instead.
- *
- * Rest of the UI keeps its existing 401 → reload behavior — this typed
- * error is opt-in and only used by `getOperation` today. Generalizing the
- * pattern is V125+ scope.
+ * 401 storm produces a "wizard appears frozen" symptom. The wizard owns
+ * the error UX instead.
  */
 export class OperationApiError extends Error {
   status: number
@@ -619,13 +600,11 @@ export async function operationHeartbeat(id: string): Promise<void> {
   })
 }
 
-// --- Tracked PRs (Story 5.3) ---
+// --- Tracked PRs ---
 
-// V125-1-6 extends the filter signature with `operation` (CSV string —
-// the BE accepts a comma-separated list of canonical Operation codes)
-// and `limit` (server-side cap; default 100, hard cap 500). The
-// PullRequestsPanel uses these for the new filter chips and the
-// "View all on GitHub →" escape hatch.
+// `operation` is a CSV string of canonical Operation codes; `limit` is the
+// server-side cap (default 100, hard cap 500). PullRequestsPanel uses
+// these for the filter chips and the "View all on GitHub →" escape hatch.
 export async function fetchTrackedPRs(filters?: {
   status?: string
   cluster?: string
@@ -655,7 +634,7 @@ export async function refreshPR(id: number) {
   return postJSON<{ status: string }>(`/prs/${id}/refresh`)
 }
 
-// ─── Merged PRs (v1.21 QA Bundle 3) ────────────────────────────────────────
+// ─── Merged PRs ────────────────────────────────────────────────────────────
 //
 // /api/v1/prs only returns OPEN PRs (the prtracker drops PRs once they merge).
 // /api/v1/prs/merged goes back to the Git provider directly and lists merged
@@ -689,15 +668,13 @@ export async function fetchMergedPRs(filters?: { cluster?: string; addon?: strin
 }
 
 // HealthResponse mirrors the shape returned by GET /api/v1/health.
-// BUG-041: `cluster_test_available` is the capability flag the UI uses
-// to gate the per-cluster Test button when no secrets backend is wired
-// up on the active connection.
+// `cluster_test_available` is the capability flag the UI uses to gate the
+// per-cluster Test button when no secrets backend is wired up on the
+// active connection.
 //
 // The index signature is intentional — existing callers (e.g.
 // settings/GitOpsSection.tsx) read ad-hoc fields like host_cluster_name
-// that aren't yet pinned into this contract. Keeping the signature open
-// lets the BUG-041 typed fields coexist with those legacy reads instead
-// of forcing a wider refactor on this hotfix bundle.
+// that aren't yet pinned into this contract.
 export interface HealthResponse {
   status: string
   version?: string
@@ -736,13 +713,12 @@ export const api = {
   deleteConnection: (name: string) => deleteJSON(`/connections/${encodeURIComponent(name)}`),
   setActiveConnection: (name: string) => postJSON('/connections/active', { connection_name: name }),
   testConnection: () => postJSON<{ git: { status: string }; argocd: { status: string } }>('/connections/test'),
-  // V124-19 / BUG-044: `data` may include `use_saved: true` along with `name`
-  // to instruct the backend to fetch the named saved connection's stored
-  // credentials and test with those (instead of the request body's tokens).
-  // Unlocks the wizard's "leave blank to keep, or enter new value to replace"
-  // contract end-to-end — Test Connection works on a blank token field when
-  // a saved connection exists. Backend returns 400 if use_saved=true but no
-  // matching saved connection.
+  // `data` may include `use_saved: true` + `name` to instruct the backend
+  // to fetch the named saved connection's stored credentials and test with
+  // those (instead of the request body's tokens). Unlocks the wizard's
+  // "leave blank to keep, or enter new value to replace" contract end-to-
+  // end. Backend returns 400 if use_saved=true but no matching saved
+  // connection.
   testCredentials: (data: unknown) => postJSON<{ git: { status: string; message?: string; auth?: string }; argocd: { status: string; message?: string; auth?: string } }>('/connections/test-credentials', data),
   discoverArgocd: (namespace?: string) => fetchJSON<{ server_url: string; has_env_token: boolean; namespace: string }>(`/connections/discover-argocd${namespace ? `?namespace=${namespace}` : ''}`),
 
@@ -779,13 +755,13 @@ export const api = {
   // Auth
   updatePassword: (currentPassword: string, newPassword: string) => postJSON<{ status: string }>('/auth/update-password', { current_password: currentPassword, new_password: newPassword }),
 
-  // My account (v1.20 — tiered attribution)
+  // My account (tiered attribution)
   getMe: () => fetchJSON<import('./models').MeResponse>('/users/me'),
   setMyGitHubToken: (token: string) => putJSON<{ status: string; has_github_token: boolean }>('/users/me/github-token', { token }),
   clearMyGitHubToken: () => deleteJSON<{ status: string; has_github_token: boolean }>('/users/me/github-token'),
   testMyGitHubToken: () => postJSON<{ status: string; github_login: string }>('/users/me/github-token/test', {}),
 
-  // Values editor (v1.20)
+  // Values editor
   getAddonValuesSchema: (addonName: string) =>
     fetchJSON<import('./models').AddonValuesSchemaResponse>(
       `/addons/${encodeURIComponent(addonName)}/values-schema`,
@@ -795,19 +771,19 @@ export const api = {
       `/addons/${encodeURIComponent(addonName)}/values`,
       { values: valuesYAML },
     ),
-  // V121-6.4: refresh-from-upstream uses the SAME endpoint as
-  // setAddonValues. Backend ignores `values` when `refresh_from_upstream`
-  // is true, fetches the chart's upstream values.yaml, runs the
-  // smart-values pipeline, and overwrites the global file.
+  // Refresh-from-upstream uses the SAME endpoint as setAddonValues.
+  // Backend ignores `values` when `refresh_from_upstream` is true,
+  // fetches the chart's upstream values.yaml, runs the smart-values
+  // pipeline, and overwrites the global file.
   refreshAddonValuesFromUpstream: (addonName: string) =>
     putJSON<import('./models').ValuesEditResult>(
       `/addons/${encodeURIComponent(addonName)}/values`,
       { values: '', refresh_from_upstream: true },
     ),
-  // v1.21 QA Bundle 4 Fix #4: preview an additive merge of upstream values
-  // into the user's current file. Returns a candidate body the UI can
-  // show in a diff modal; applying calls setAddonValues with that body
-  // (no dedicated "apply merge" endpoint — same PR flow as a manual edit).
+  // Preview an additive merge of upstream values into the user's current
+  // file. Returns a candidate body the UI shows in a diff modal; applying
+  // calls setAddonValues with that body (no dedicated "apply merge"
+  // endpoint — same PR flow as a manual edit).
   previewMergeAddonValues: (addonName: string) =>
     postJSON<import('./models').PreviewMergeResponse>(
       `/addons/${encodeURIComponent(addonName)}/values/preview-merge`,
@@ -823,12 +799,12 @@ export const api = {
       { values: valuesYAML },
     ),
 
-  // V121-7.4: manual AI annotate. Returns 200 with an AnnotateAddonValuesResponse,
-  // 422 with an AIAnnotateBlockedResponse when the secret guard fires, or
-  // 503 when AI is not configured. We use a dedicated wrapper (not the
-  // shared postJSON) so the caller can inspect the typed 422 body via
-  // `(err as { body }).body` — the shared wrapper drops the body to a
-  // plain message string which would lose the secret-leak match list.
+  // Manual AI annotate. Returns 200 (AnnotateAddonValuesResponse), 422
+  // (AIAnnotateBlockedResponse) when the secret guard fires, or 503 when
+  // AI is not configured. Uses a dedicated wrapper (not shared postJSON)
+  // so the caller can inspect the typed 422 body via `(err as { body }).body`
+  // — the shared wrapper drops the body to a plain message string which
+  // would lose the secret-leak match list.
   annotateAddonValues: async (addonName: string) => {
     const res = await fetch(`${BASE_URL}/addons/${encodeURIComponent(addonName)}/values/annotate`, {
       method: 'POST',
@@ -849,17 +825,17 @@ export const api = {
     }
     return body as import('./models').AnnotateAddonValuesResponse
   },
-  // V121-7.3: per-addon AI opt-out toggle. Idempotent — flipping to the
-  // current state returns 200 with `status: "noop"`.
+  // Per-addon AI opt-out toggle. Idempotent — flipping to the current
+  // state returns 200 with `status: "noop"`.
   setAddonAIOptOut: (addonName: string, optOut: boolean) =>
     putJSON<{ status: string; opt_out: boolean; addon: string; pr_url?: string; pr_id?: number; merged?: boolean }>(
       `/addons/${encodeURIComponent(addonName)}/values/ai-opt-out`,
       { opt_out: optOut },
     ),
 
-  // v1.21 Bundle 5: legacy `<addon>:` wrap migration. Pass `addon` to
-  // migrate a single file (used by the per-addon "Migrate this file"
-  // banner button). Omit it to migrate every wrapped file in the repo.
+  // Legacy `<addon>:` wrap migration. Pass `addon` to migrate a single
+  // file (used by the per-addon "Migrate this file" banner button); omit
+  // it to migrate every wrapped file in the repo.
   unwrapGlobalValues: (addonName?: string) => {
     const qs = addonName ? `?addon=${encodeURIComponent(addonName)}` : ''
     return postJSON<{
@@ -875,10 +851,6 @@ export const api = {
     }>(`/addons/unwrap-globals${qs}`, {})
   },
 
-  // Values editor extras (v1.20.1) — note: pullUpstreamValues was
-  // removed in v1.21 (Story V121-6.5) and replaced by
-  // refreshAddonValuesFromUpstream above, which calls the existing
-  // PUT /api/v1/addons/{name}/values handler with refresh_from_upstream=true.
   getAddonValuesRecentPRs: (addonName: string, limit = 5) =>
     fetchJSON<import('./models').RecentPRsResponse>(
       `/addons/${encodeURIComponent(addonName)}/values/recent-prs?limit=${limit}`,
@@ -888,8 +860,8 @@ export const api = {
       `/clusters/${encodeURIComponent(clusterName)}/addons/${encodeURIComponent(addonName)}/values/recent-prs?limit=${limit}`,
     ),
 
-  // Catalog editor (v1.20.1) — same endpoint as existing configureAddon() but
-  // a typed wrapper that understands the ValuesEditResult shape with the
+  // Catalog editor — same endpoint as existing configureAddon() but a
+  // typed wrapper that understands the ValuesEditResult shape with the
   // attribution_warning field.
   setAddonCatalog: (
     addonName: string,
@@ -936,14 +908,11 @@ export const api = {
   docsList: () => fetchJSON<{ slug: string; title: string; order: number }[]>('/docs/list'),
   docsGet: (slug: string) => fetchJSON<{ slug: string; content: string }>(`/docs/${encodeURIComponent(slug)}`),
 
-  // Providers
-  // V125-1-13.7 — `type` is narrowed to the generated `ProviderType` union
+  // Providers — `type` is narrowed to the generated `ProviderType` union
   // (sourced from internal/providers/provider.go via cmd/gen-provider-types)
   // so callers see a compile error if they accept a value the backend
-  // factory would reject. The backend may legally surface other values
-  // here (e.g. a third-party deployment that monkey-patched providers.New),
-  // so consumers that need to handle unknowns should narrow with a type
-  // guard rather than upcasting.
+  // factory would reject. Consumers that need to handle unknowns should
+  // narrow with a type guard rather than upcasting.
   getProviders: () =>
     fetchJSON<{
       configured_provider:
@@ -958,12 +927,11 @@ export const api = {
       available_types: import('./models').ProviderType[]
     }>('/providers'),
 
-  // Repo status — V124-22 / BUG-046: `bootstrap_synced` reports whether the
-  // canonical ArgoCD application `cluster-addons-bootstrap` exists AND is
-  // Sync=Synced AND Health=Healthy. App.tsx's wizard gate combines
+  // Repo status — `bootstrap_synced` reports whether the canonical ArgoCD
+  // application `cluster-addons-bootstrap` exists AND is Sync=Synced AND
+  // Health=Healthy. App.tsx's wizard gate combines
   // (!initialized || !bootstrap_synced) so a missing/degraded bootstrap
-  // auto-opens the wizard instead of dropping the user on a dashboard
-  // splattered with errors. Backend returns `bootstrap_synced=false`
+  // auto-opens the wizard. Backend returns `bootstrap_synced=false`
   // defensively whenever the ArgoCD client is unavailable or the probe
   // fails — the wizard exists to recover that state.
   getRepoStatus: () => fetchJSON<{ initialized: boolean; bootstrap_synced: boolean; reason?: string }>('/repo/status'),
@@ -980,7 +948,7 @@ export const api = {
 
   markAllNotificationsRead: () => postJSON<unknown>('/notifications/read-all'),
 
-  // ─── Curated catalog (v1.21 Marketplace) ────────────────────────────────
+  // ─── Curated catalog (Marketplace) ──────────────────────────────────────
   // Three reads:
   //   1. listCuratedCatalog       — Browse tab grid (server-side filters)
   //   2. getCuratedCatalogEntry   — single-entry detail (Configure modal)
@@ -1021,17 +989,17 @@ export const api = {
     ),
 
   /**
-   * V123-1.7: list configured catalog sources (embedded + third-party).
-   * Powers the source-badge tooltip (last-fetched / status) on Browse
-   * tiles and the "Source" section on the addon detail page.
+   * List configured catalog sources (embedded + third-party). Powers the
+   * source-badge tooltip (last-fetched / status) on Browse tiles and the
+   * "Source" section on the addon detail page.
    */
   listCatalogSources: () =>
     fetchJSON<import('./models').CatalogSourceRecord[]>('/catalog/sources'),
 
   /**
-   * V123-1.8: force-refresh all configured catalog sources. Tier-2 (admin);
-   * backend side emits an audit entry. Returns the fresh record list.
-   * Powers the "Refresh now" button in the Settings → Catalog Sources view.
+   * Force-refresh all configured catalog sources. Tier-2 (admin); backend
+   * emits an audit entry. Returns the fresh record list. Powers the
+   * "Refresh now" button in Settings → Catalog Sources.
    */
   refreshCatalogSources: () =>
     postJSON<import('./models').CatalogSourceRecord[]>('/catalog/sources/refresh', {}),
@@ -1051,9 +1019,10 @@ export const api = {
   },
 
   /**
-   * V121-4: Paste-URL validator. Confirms an arbitrary `<repo>/index.yaml` is
-   * reachable and contains the named chart. Returns 200 in both the happy and
-   * the structured-failure path — branch on `resp.valid` and `resp.error_code`.
+   * Paste-URL validator. Confirms an arbitrary `<repo>/index.yaml` is
+   * reachable and contains the named chart. Returns 200 in both the happy
+   * and structured-failure paths — branch on `resp.valid` and
+   * `resp.error_code`.
    */
   validateCatalogChart: (repo: string, chart: string) => {
     const params = new URLSearchParams({ repo, chart })
@@ -1063,10 +1032,10 @@ export const api = {
   },
 
   /**
-   * v1.21 QA Bundle 1: list every chart name in a Helm repo's index.yaml.
-   * Powers the chart-name dropdown in the manual "Add Addon" form. Same
-   * `valid` + `error_code` envelope as validateCatalogChart so the UI can
-   * reuse its existing error switch table.
+   * List every chart name in a Helm repo's index.yaml. Powers the chart-
+   * name dropdown in the manual "Add Addon" form. Same `valid` +
+   * `error_code` envelope as validateCatalogChart so the UI can reuse its
+   * existing error switch table.
    */
   listRepoCharts: (repo: string) => {
     const params = new URLSearchParams({ repo })
@@ -1075,7 +1044,7 @@ export const api = {
     )
   },
 
-  // ─── ArtifactHub proxy (V121-3 Search tab) ─────────────────────────────
+  // ─── ArtifactHub proxy (Search tab) ────────────────────────────────────
   // Server-side proxy: the browser never calls ArtifactHub directly. The
   // backend handles caching, rate-limit backoff, and stale-serve.
 
@@ -1103,11 +1072,11 @@ export const api = {
     ),
 
   /**
-   * v1.21 QA Bundle 2: README markdown for a curated catalog addon.
-   * The backend resolves the curated chart → ArtifactHub package
-   * (best-match heuristic), fetches the package detail, and returns
-   * just the README. Empty `readme` means the chart was found but
-   * doesn't ship a README — render an empty state, not an error.
+   * README markdown for a curated catalog addon. The backend resolves the
+   * curated chart → ArtifactHub package (best-match heuristic), fetches
+   * the package detail, and returns just the README. Empty `readme` means
+   * the chart was found but doesn't ship a README — render an empty
+   * state, not an error.
    */
   getCuratedCatalogReadme: (name: string) =>
     fetchJSON<import('./models').CatalogReadmeResponse>(

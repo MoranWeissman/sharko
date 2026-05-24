@@ -33,22 +33,17 @@ function PageLoader() {
 }
 
 /**
- * V124-22 / BUG-046: pure helper for the wizard gate. Returns true when
- * the wizard should auto-open at Step 4 because either the GitOps repo
- * isn't initialized yet, OR it is initialized but the cluster-side
- * ArgoCD bootstrap (`cluster-addons-bootstrap`) is missing/degraded —
- * V124-15 made the operation framework treat the latter as a real
- * failure, so leaving the user on a dashboard full of errors is the
- * asymmetry this closes.
+ * Pure helper for the wizard gate. Returns true when the wizard should auto-
+ * open at Step 4 because either the GitOps repo isn't initialized yet, OR it
+ * is initialized but the cluster-side ArgoCD bootstrap
+ * (`cluster-addons-bootstrap`) is missing/degraded.
  *
- * The `dismissed` argument is the V124-16 / BUG-035 escape hatch
- * (sessionStorage `sharko:dismiss-wizard=1`). When true, returning false
- * lets the user explore the (degraded) dashboard for the rest of the
- * session — a fresh tab brings the wizard back, so they can't permanently
- * skip recovery.
+ * `dismissed` is the session-scoped escape hatch (sessionStorage
+ * `sharko:dismiss-wizard=1`). When true, the user can explore the (degraded)
+ * dashboard for the rest of the session — a fresh tab brings the wizard back.
  *
- * Treats a null repoStatus (still loading or connection-less) as "don't
- * show the wizard yet" — the parent gate handles those upstream branches.
+ * A null repoStatus (still loading or connection-less) means "don't show the
+ * wizard yet" — the parent gate handles those upstream branches.
  */
 export function shouldShowSetupWizard(
   repoStatus: { initialized: boolean; bootstrap_synced?: boolean; reason?: string } | null,
@@ -69,7 +64,7 @@ function ConnectedApp() {
       if (connections.length > 0) {
         api.getRepoStatus()
           .then(data => setRepoStatus(data))
-          // V124-22: failed probe → degraded posture, route to wizard
+          // Failed probe → degraded posture, route to wizard
           // (bootstrap_synced=false makes the gate fire even if the
           // initialized flag is misreported elsewhere).
           .catch(() => setRepoStatus({ initialized: false, bootstrap_synced: false, reason: 'error' }))
@@ -94,7 +89,7 @@ function ConnectedApp() {
     return <FirstRunWizard />
   }
 
-  // V124-16 / BUG-035: dismiss-flag escape hatch. The wizard's X button writes
+  // Dismiss-flag escape hatch. The wizard's X button writes
   // `sharko:dismiss-wizard` into sessionStorage so a user who clicked X is
   // not immediately re-trapped here on the next render. Session-scoped on
   // purpose: a fresh tab / hard refresh brings the wizard back, so the user
@@ -102,12 +97,6 @@ function ConnectedApp() {
   // session to look around the app, run a CLI command, etc.
   const dismissed = sessionStorage.getItem('sharko:dismiss-wizard') === '1'
 
-  // V124-22 / BUG-046: wizard gate fires on either branch — repo not
-  // initialized OR initialized-but-bootstrap-degraded. The bootstrap_synced
-  // arm closes the V124-15 asymmetry (operation framework treats the
-  // partial-state as a failure, but App.tsx used to drop the user on a
-  // dashboard splattered with errors instead of opening the wizard).
-  // Helper is exported for shouldShowSetupWizard.test.ts.
   if (shouldShowSetupWizard(repoStatus, dismissed)) {
     return <FirstRunWizard initialStep={4} />
   }
@@ -118,10 +107,10 @@ function ConnectedApp() {
         <Route path="/" element={<Layout />}>
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="dashboard" element={<Dashboard />} />
-          {/* V124-2.3: wrap Clusters route in an ErrorBoundary so a transient
-              500 from /clusters that escapes the local error state never
-              leaves the page blank — the boundary renders a recoverable
-              fallback with a Try Again button. */}
+          {/* Wrap Clusters in an ErrorBoundary so a transient 500 from
+              /clusters that escapes the local error state never leaves the
+              page blank — the boundary renders a recoverable fallback with
+              a Try Again button. */}
           <Route
             path="clusters"
             element={

@@ -1,4 +1,4 @@
-// V125-1-13.7 — ProviderType is generated from the backend factory in
+// ProviderType is generated from the backend factory in
 // internal/providers/provider.go via cmd/gen-provider-types. Re-exported
 // here so non-UI consumers (api.ts, ConnectionResponse, etc.) can refer
 // to it without reaching across the @/generated/* path.
@@ -32,13 +32,12 @@ export interface PendingRegistration {
   opened_at: string
 }
 
-// V125-1-7 / BUG-058: ArgoCD cluster Secret with no managed-clusters.yaml
-// entry AND no open registration PR — typically a leftover from a manual-
-// mode register PR that was closed without merging. Surfaced in its own
-// "Cancelled / Orphan Registrations" section with a per-row Delete cluster
-// Secret button. last_seen_at is the resolver-call time on the BE (the
-// ArgoCD cluster Secret API has no stable creation timestamp); see the
-// resolver in internal/api/clusters_orphans.go for the contract.
+// ArgoCD cluster Secret with no managed-clusters.yaml entry AND no open
+// registration PR — typically a leftover from a manual-mode register PR
+// that was closed without merging. Surfaced in its own "Cancelled / Orphan
+// Registrations" section. last_seen_at is the resolver-call time on the
+// BE (the ArgoCD cluster Secret API has no stable creation timestamp);
+// see internal/api/clusters_orphans.go for the contract.
 export interface OrphanRegistration {
   cluster_name: string
   server_url: string
@@ -48,13 +47,12 @@ export interface OrphanRegistration {
 export interface ClustersResponse {
   clusters: Cluster[]
   health_stats?: ClusterHealthStats
-  // V125-1.5: open cluster-registration PRs whose values-file changes
-  // have NOT yet merged. Optional with `?` for defensive forward-compat —
-  // an older server that pre-dates this field must not crash a newer FE.
-  // The runtime code reads this defensively (`?? []`) at every callsite.
+  // Open cluster-registration PRs whose values-file changes have NOT yet
+  // merged. Optional with `?` for defensive forward-compat — runtime code
+  // reads this with `?? []` at every callsite.
   pending_registrations?: PendingRegistration[]
-  // V125-1-7: ArgoCD cluster Secrets with no git entry and no open PR.
-  // Same forward-compat contract as pending_registrations — read with `?? []`.
+  // ArgoCD cluster Secrets with no git entry and no open PR. Same
+  // forward-compat contract as pending_registrations.
   orphan_registrations?: OrphanRegistration[]
 }
 
@@ -154,9 +152,9 @@ export interface AddonCatalogItem {
   degraded_applications: number
   missing_applications: number
   /**
-   * V126-3.1 (DESIGN-02): paired counts that drive the tile-level
-   * "Running on N/M clusters" badge. Both default to 0 when the backend
-   * predates V126-3.1 — the badge falls through to "Not deployed anywhere".
+   * Paired counts that drive the tile-level "Running on N/M clusters"
+   * badge. Both default to 0 when the backend doesn't supply them — the
+   * badge falls through to "Not deployed anywhere".
    *
    * deployed_cluster_count (N): clusters where the ArgoCD Application for
    * this addon is BOTH Synced AND Healthy.
@@ -197,10 +195,10 @@ export interface ConnectionResponse {
   is_default: boolean
   is_active: boolean
   provider?: {
-    // V125-1-13.7 — ProviderType is the generated union of accepted
-    // provider Type strings (mirrors providers.New()'s switch arms).
-    // Typed instead of `string` so a future hand-edit can't accidentally
-    // ship a value the backend factory rejects.
+    // Generated union of accepted provider Type strings (mirrors
+    // providers.New()'s switch arms). Typed instead of `string` so a
+    // future hand-edit can't accidentally ship a value the backend factory
+    // rejects.
     type: _ProviderType
     region?: string
     prefix?: string
@@ -375,31 +373,30 @@ export interface AIProviderInfo {
 export interface AIConfigResponse {
   current_provider: string
   available_providers: AIProviderInfo[]
-  // V121-7.3 — global Settings toggle for "Annotate values on generate".
-  // Reported false when AI is not configured. Default-true on first install
-  // when AI is configured; the Save handler stamps the explicit value going
+  // Global Settings toggle for "Annotate values on generate". Reported
+  // false when AI is not configured. Default-true on first install when AI
+  // is configured; the Save handler stamps the explicit value going
   // forward so subsequent reads are authoritative.
   annotate_on_seed?: boolean
 }
 
-// V121-7.1 / 7.4: secret-leak guard match (redacted, never carries the
-// raw secret value).
+// Secret-leak guard match (redacted, never carries the raw secret value).
 export interface AISecretMatch {
   pattern: string
   field: string
   line: number
 }
 
-// V121-7.4: response from POST /addons/{name}/values/annotate when the
-// secret-leak guard hard-blocks the LLM call. UI matches on `code` to
-// render the dedicated banner.
+// Response from POST /addons/{name}/values/annotate when the secret-leak
+// guard hard-blocks the LLM call. UI matches on `code` to render the
+// dedicated banner.
 export interface AIAnnotateBlockedResponse {
   code: string // "secret_detected_blocked"
   message: string
   matches: AISecretMatch[]
 }
 
-// V121-7.4: success body for the manual annotate endpoint.
+// Success body for the manual annotate endpoint.
 export interface AnnotateAddonValuesResponse {
   pr_url?: string
   pr_id?: number
@@ -421,9 +418,9 @@ export interface AvailableVersionsResponse {
   versions: AvailableVersion[]
 }
 
-// --- Curated catalog (v1.21 Marketplace) ---
+// --- Curated catalog (Marketplace) ---
 //
-// Mirrors `internal/catalog.CatalogEntry` and the v1.21 catalog handlers.
+// Mirrors `internal/catalog.CatalogEntry` and the catalog handlers.
 // `security_score` may be the literal string `"unknown"` when ScoreValue.Known
 // is false on the backend; the UI handles both shapes.
 
@@ -454,8 +451,8 @@ export type CatalogCuratedBy =
 export type CatalogSecurityTier = 'Strong' | 'Moderate' | 'Weak' | ''
 
 /**
- * Optional cosign-keyless signature pointer on a CatalogEntry
- * (schema v1.1+; V123-2.1). Verified at load time by V123-2.2.
+ * Optional cosign-keyless signature pointer on a CatalogEntry (schema
+ * v1.1+). Verified at load time.
  */
 export interface CatalogEntrySignature {
   bundle: string  // https URL to a Sigstore bundle file
@@ -483,29 +480,29 @@ export interface CatalogEntry {
   deprecated?: boolean
   superseded_by?: string
   /**
-   * V123-1.4: origin of this entry — "embedded" for the binary-shipped
-   * catalog, or the full third-party catalog URL. Absent on older API
-   * responses — treat missing as embedded for backwards compat.
+   * Origin of this entry — "embedded" for the binary-shipped catalog, or
+   * the full third-party catalog URL. Absent on older API responses —
+   * treat missing as embedded for backwards compat.
    */
   source?: string
   /**
-   * Optional cosign-keyless attestation (schema v1.1+; V123-2.1).
-   * Present only when the entry was signed; absent on older catalogs.
+   * Optional cosign-keyless attestation. Present only when the entry was
+   * signed; absent on older catalogs.
    */
   signature?: CatalogEntrySignature
   /**
-   * V123-2.2: post-load cosign-verification outcome. True only when the
-   * entry had a valid `signature.bundle` whose Sigstore bundle verified
-   * against the configured trust policy AND whose OIDC subject matched
-   * a TrustPolicy.Identities regex. False for unsigned entries, fail-
-   * closed defaults, mismatches, untrusted identities, and infra failures.
+   * Post-load cosign-verification outcome. True only when the entry had a
+   * valid `signature.bundle` whose Sigstore bundle verified against the
+   * configured trust policy AND whose OIDC subject matched a
+   * TrustPolicy.Identities regex. False for unsigned entries, fail-closed
+   * defaults, mismatches, untrusted identities, and infra failures.
    * Computed on the backend; UI treats missing as `false` for forwards-compat.
    */
   verified?: boolean
   /**
-   * V123-2.2: OIDC subject (cert SAN) of the verified signer when
-   * `verified` is true. Empty/absent otherwise. Used by VerifiedBadge
-   * (V123-2.4) for the "Verified — signed by <identity>" tooltip.
+   * OIDC subject (cert SAN) of the verified signer when `verified` is
+   * true. Used by VerifiedBadge for the "Verified — signed by <identity>"
+   * tooltip.
    */
   signature_identity?: string
 }
@@ -513,7 +510,7 @@ export interface CatalogEntry {
 /**
  * Response shape of GET /api/v1/catalog/sources + POST
  * /api/v1/catalog/sources/refresh. Mirrors internal/api.catalogSourceRecord
- * from the Go side (V123-1.5 / V123-1.6).
+ * from the Go side.
  */
 export interface CatalogSourceRecord {
   url: string // "embedded" sentinel OR full third-party URL
@@ -545,8 +542,8 @@ export interface CatalogVersionsResponse {
   cached_at: string
 }
 
-// V121-4 — Paste Helm URL validator. The handler returns 200 in both the happy
-// and the structured-failure path; UI keys off `valid` and `error_code`.
+// Paste Helm URL validator. The handler returns 200 in both the happy and
+// structured-failure paths; UI keys off `valid` and `error_code`.
 export type CatalogValidateErrorCode =
   | 'invalid_input'
   | 'repo_unreachable'
@@ -569,11 +566,10 @@ export interface CatalogValidateResponse {
 }
 
 /**
- * v1.21 QA Bundle 1 — listing of all chart names in a Helm repo's index.yaml.
- * Returned by `GET /api/v1/catalog/repo-charts`. Used by the manual "Add
- * Addon" form to populate a chart-name dropdown after the operator
- * validates a repo URL. Same `valid` + `error_code` envelope as
- * /catalog/validate so the UI can reuse its existing switch table.
+ * Listing of all chart names in a Helm repo's index.yaml. Returned by
+ * `GET /api/v1/catalog/repo-charts`. Used by the manual "Add Addon" form
+ * to populate a chart-name dropdown after the operator validates a repo
+ * URL. Same `valid` + `error_code` envelope as /catalog/validate.
  */
 export interface CatalogRepoChartsResponse {
   valid: boolean
@@ -599,11 +595,10 @@ export interface CatalogListFilters {
   include_unknown_score?: boolean
 }
 
-// --- ArtifactHub proxy (V121-3 Search tab) ---
+// --- ArtifactHub proxy (Search tab) ---
 //
-// Mirrors the slimmed shapes the backend returns. We deliberately keep these
-// types narrow — the proxy hands us only the fields the UI renders, so the TS
-// definitions match.
+// Mirrors the slimmed shapes the backend returns. Types are deliberately
+// narrow — the proxy hands us only the fields the UI renders.
 
 export interface ArtifactHubRepo {
   repository_id?: string
@@ -687,15 +682,15 @@ export interface CatalogRemotePackageResponse {
 }
 
 /**
- * v1.21 QA Bundle 2: README payload for a curated catalog addon. The backend
- * resolves the curated entry to an ArtifactHub package and returns the
- * README markdown. `readme: ""` means the chart was located but doesn't
- * ship a README — the UI renders an empty state, not an error.
+ * README payload for a curated catalog addon. The backend resolves the
+ * curated entry to an ArtifactHub package and returns the README
+ * markdown. `readme: ""` means the chart was located but doesn't ship a
+ * README — the UI renders an empty state, not an error.
  */
 export interface CatalogReadmeResponse {
   readme: string
-  /** Source of the README — "artifacthub" today; "fallback" reserved for
-   *  v1.22's direct chart-tarball extractor. */
+  /** Source of the README — "artifacthub" today; "fallback" reserved
+   *  for a direct chart-tarball extractor. */
   source: string
   ah_repo?: string
   ah_chart?: string
@@ -741,14 +736,14 @@ export interface AuditEntry {
   request_id?: string
   detail?: string
   /**
-   * Tier-aware attribution mode for the resulting Git commit (v1.20+):
+   * Tier-aware attribution mode for the resulting Git commit:
    *  - "service"   service token, no user identity attached
    *  - "co_author" service token + Co-authored-by trailer for the user
    *  - "per_user"  per-user PAT — the user IS the commit author
    */
   attribution_mode?: 'service' | 'co_author' | 'per_user' | ''
   /**
-   * Tier of the originating endpoint (v1.20+):
+   * Tier of the originating endpoint:
    *  - "tier1"     operational (cluster/addon/PR/connection ops)
    *  - "tier2"     configuration (catalog metadata, values)
    *  - "personal"  self-service on caller's own profile
@@ -775,27 +770,25 @@ export interface AddonValuesSchemaResponse {
   current_values: string
   schema?: Record<string, unknown> | null
   /**
-   * v1.21 (Story V121-6.5): present when the chart version pinned in
-   * `addons-catalog.yaml` is ahead of the version stamped in the values
-   * file's smart-values header. The Values tab renders a yellow refresh
-   * banner. Absent on legacy files (no `# sharko: managed=true` header).
+   * Present when the chart version pinned in `addons-catalog.yaml` is
+   * ahead of the version stamped in the values file's smart-values header.
+   * The Values tab renders a yellow refresh banner. Absent on legacy files
+   * (no `# sharko: managed=true` header).
    */
   values_version_mismatch?: { catalog_version: string; values_version: string } | null
   /**
-   * V121-7.4: header-derived AI annotation state. Both default-false on
-   * legacy files. The Values tab uses these (with the global AI config
-   * state) to render the "AI not configured" banner and the per-addon
-   * opt-out toggle.
+   * Header-derived AI annotation state. Both default-false on legacy
+   * files. The Values tab uses these (with the global AI config state) to
+   * render the "AI not configured" banner and the per-addon opt-out toggle.
    */
   ai_annotated?: boolean
   ai_opt_out?: boolean
   /**
-   * v1.21 Bundle 5: true when the current values file is wrapped under a
-   * legacy `<addonName>:` (or `<chartName>:`) root key. Helm receives
-   * this file directly via `valueFiles:` in the ApplicationSet template
-   * and silently ignores everything nested under that root. The Values
-   * tab renders a yellow migration banner with a "Migrate this file"
-   * button when this is set.
+   * True when the current values file is wrapped under a legacy
+   * `<addonName>:` (or `<chartName>:`) root key. Helm receives this file
+   * directly via `valueFiles:` in the ApplicationSet template and silently
+   * ignores everything nested under that root. The Values tab renders a
+   * yellow migration banner with a "Migrate this file" button when set.
    */
   legacy_wrap_detected?: boolean
 }
@@ -850,10 +843,10 @@ export interface RecentPRsEntry {
 }
 
 /**
- * Response for POST /addons/{name}/values/preview-merge — v1.21 QA Bundle 4
- * Fix #4. Returns a candidate values body that adds NEW upstream keys to
- * the user's current file without touching keys the user already set.
- * Submitting goes through the existing PUT /addons/{name}/values endpoint.
+ * Response for POST /addons/{name}/values/preview-merge. Returns a
+ * candidate values body that adds NEW upstream keys to the user's current
+ * file without touching keys the user already set. Submitting goes through
+ * the existing PUT /addons/{name}/values endpoint.
  */
 export interface PreviewMergeResponse {
   current: string
@@ -949,9 +942,7 @@ export interface UpgradeRecommendations {
   recommended?: string
 }
 
-// --- Cluster Registration (Story 3.5) ---
-
-// --- Cluster Adoption (Story 4.4) ---
+// --- Cluster Adoption ---
 
 export interface AdoptResult {
   cluster: string
@@ -965,7 +956,7 @@ export interface AdoptClustersResponse {
   results: AdoptResult[]
 }
 
-// --- Tracked PRs (Story 5.3) ---
+// --- Tracked PRs ---
 
 export interface TrackedPR {
   pr_id: number
@@ -973,11 +964,11 @@ export interface TrackedPR {
   pr_branch: string
   pr_title: string
   cluster?: string
-  // V125-1-6: addon attribution surfaced for the per-row badge.
+  // Addon attribution surfaced for the per-row badge.
   addon?: string
-  // V125-1-6: canonical operation enum — see internal/prtracker/types.go
-  // for the full list. The dashboard PR-panel filter chips bucket
-  // operations into Clusters / Addons / Init / AI on the FE side.
+  // Canonical operation enum — see internal/prtracker/types.go for the
+  // full list. The dashboard PR-panel filter chips bucket operations into
+  // Clusters / Addons / Init / AI on the FE side.
   operation: string
   user: string
   source: string
@@ -988,12 +979,12 @@ export interface TrackedPR {
 
 export interface TrackedPRsResponse {
   prs: TrackedPR[]
-  // V125-1-6: server echoes the effective limit so the FE can render a
-  // "View all on GitHub →" escape hatch when the response is at the cap.
+  // Server echoes the effective limit so the FE can render a "View all on
+  // GitHub →" escape hatch when the response is at the cap.
   limit?: number
 }
 
-// --- Drift Alerts (Story 6.4) ---
+// --- Drift Alerts ---
 
 export interface DriftAlert {
   id: string
@@ -1003,11 +994,10 @@ export interface DriftAlert {
   status: 'pending' | 'resolved'
 }
 
-// V125-1.1: 'kubeconfig' is the inline-kubeconfig path enabled in v1.25.
-// 'gke' / 'aks' remain disabled options surfaced as "coming soon" — no
-// backend support yet (V125-1.x). The legacy 'generic' literal is kept
-// in the union for backwards compatibility with any persisted UI state
-// that might still reference it; the wizard no longer emits it.
+// 'kubeconfig' is the inline-kubeconfig provider path. 'gke' / 'aks' are
+// disabled options surfaced as "coming soon" — no backend support yet.
+// 'generic' is kept in the union for backwards compatibility with
+// persisted UI state; the wizard no longer emits it.
 export type ClusterProvider = 'eks' | 'gke' | 'aks' | 'generic' | 'kubeconfig'
 
 export interface DiscoveredClusterItem {
@@ -1029,16 +1019,13 @@ export interface DryRunFileEntry {
   action: 'create' | 'update'
 }
 
-// V125-1.4 (BUG-049): the Go DryRunResult struct serializes its slice
-// fields as `effective_addons`, `files_to_write`, and `secrets_to_create`.
-// All three are now `?: T[]` because some past payloads (V125-1.1
-// kubeconfig path with no addons) and some future provider paths can
-// return `null`/missing — the preview panel handles that with `?? []`
-// guards. We keep the legacy `files` alias because the FE has been
-// reading the wrong key since dry-run shipped (FE was always undefined
-// in production); both are supported here so a server roll-forward to
-// the corrected backend keeps the FE working without a coordinated
-// deploy.
+// The Go DryRunResult struct serializes its slice fields as
+// `effective_addons`, `files_to_write`, and `secrets_to_create`. All
+// three are `?: T[]` because some payloads return null/missing — the
+// preview panel handles that with `?? []` guards. The legacy `files`
+// alias is kept because the FE historically read the wrong key; both are
+// supported here so a backend roll-forward keeps the FE working without
+// a coordinated deploy.
 export interface DryRunResult {
   effective_addons?: string[]
   files_to_write?: DryRunFileEntry[]

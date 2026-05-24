@@ -16,23 +16,18 @@ import {
   type MarketplaceFiltersValue,
   type ScoreTierFilter,
 } from '@/components/MarketplaceFilters'
-// v1.21 QA Bundle 2: the Configure modal is gone — cards now navigate to
-// the in-page detail view (?mp_addon=<name>), which the parent
-// MarketplaceTab renders as a full-tab replacement. The Browse tab no
-// longer needs to manage modal state.
-
 /**
- * MarketplaceBrowseTab — the curated-only filterable grid (was the body of
- * MarketplaceTab through V121-2). Extracted in V121-3 so the parent
- * MarketplaceTab can host both Browse and Search subtabs.
+ * Curated-only filterable grid. Cards navigate to the in-page detail view
+ * (?mp_addon=<name>), which the parent MarketplaceTab renders as a full-tab
+ * replacement.
  *
- * URL state contract is unchanged so deep links keep working:
+ * URL state contract (deep-link safe):
  *   ?mp_q=<text>            search box
  *   ?mp_cat=a,b             category multi-select
  *   ?mp_curated=a,b         curated_by multi-select
  *   ?mp_lic=a,b             license multi-select
  *   ?mp_tier=any|strong|moderate|weak|unknown   OpenSSF tier
- *   ?mp_signed=1            V123-2.4 — show only cosign-verified entries
+ *   ?mp_signed=1            show only cosign-verified entries
  */
 
 const VALID_TIERS: ScoreTierFilter[] = [
@@ -121,14 +116,14 @@ export function MarketplaceBrowseTab() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  // v1.21 QA Bundle 1: load the user's installed catalog so each card can
-  // show an "in your catalog" badge + flip its click affordance to "View
-  // in your catalog" → AddonDetail. Failure is non-fatal — cards fall
-  // back to the default "Configure" behaviour.
+  // The user's installed catalog so each card can show an "in your catalog"
+  // badge + flip its click affordance to "View in your catalog" →
+  // AddonDetail. Failure is non-fatal — cards fall back to the default
+  // "Configure" behaviour.
   const [installedNames, setInstalledNames] = useState<Set<string>>(new Set())
 
-  // V123-1.7: per-source metadata (last_fetched / status) for the SourceBadge
-  // tooltip. One fetch at the tab level — cards look up their record by URL.
+  // Per-source metadata (last_fetched / status) for the SourceBadge tooltip.
+  // One fetch at the tab level — cards look up their record by URL.
   // Non-fatal on failure; tiles still render their badge, just without a
   // last-fetched line.
   const [sources, setSources] = useState<CatalogSourceRecord[]>([])
@@ -163,9 +158,9 @@ export function MarketplaceBrowseTab() {
     }
   }, [])
 
-  // v1.21 QA Bundle 1: pull the user's installed-addon list once when the
-  // tab mounts. Lower-cased compare to match catalog-name conventions
-  // (the same lower-casing the Configure modal does for duplicate guard).
+  // Pull the user's installed-addon list once on mount. Lower-cased compare
+  // to match catalog-name conventions (same approach as the duplicate
+  // guard on the add-addon path).
   useEffect(() => {
     let cancelled = false
     api
@@ -186,9 +181,9 @@ export function MarketplaceBrowseTab() {
     }
   }, [])
 
-  // V123-1.7: pull the configured catalog sources once so every tile can
-  // look up its matching record by URL. Non-fatal — tiles still render.
-  // Defensive — older test fixtures may not mock listCatalogSources.
+  // Pull the configured catalog sources once so every tile can look up its
+  // matching record by URL. Non-fatal — tiles still render. Defensive —
+  // older test fixtures may not mock listCatalogSources.
   useEffect(() => {
     if (typeof api.listCatalogSources !== 'function') return
     let cancelled = false
@@ -234,10 +229,10 @@ export function MarketplaceBrowseTab() {
         return false
       }
       if (!matchesScoreTier(e, filters.scoreTier)) return false
-      // V123-2.4 — "Signed only" pseudo-filter: keep only entries the
-      // backend has marked verified=true (cosign-keyless signature
-      // accepted by the configured trust policy). Older API responses
-      // that omit `verified` are treated as unsigned.
+      // "Signed only" pseudo-filter: keep only entries the backend has
+      // marked verified=true (cosign-keyless signature accepted by the
+      // configured trust policy). API responses that omit `verified` are
+      // treated as unsigned.
       if (filters.signedOnly && e.verified !== true) return false
       if (q) {
         const hay = [

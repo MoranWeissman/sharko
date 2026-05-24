@@ -17,10 +17,9 @@ import type {
 import { showToast } from '@/components/ToastNotification'
 import { MarketplaceCard } from '@/components/MarketplaceCard'
 
-// v1.21 QA Bundle 2: the Configure modal is gone. Both buckets now
-// navigate to the in-page detail view via ?mp_addon=<name> + ?mp_src=
-// (and ?mp_repo= for the AH bucket). The parent MarketplaceTab swaps
-// to <MarketplaceAddonDetail> when those params are set.
+// Both buckets navigate to the in-page detail view via ?mp_addon=<name>
+// + ?mp_src= (and ?mp_repo= for the AH bucket). The parent MarketplaceTab
+// swaps to <MarketplaceAddonDetail> when those params are set.
 
 /**
  * MarketplaceSearchTab — the discovery tab in the Marketplace.

@@ -1,9 +1,9 @@
 import type { CatalogSourceRecord } from '@/services/models'
 
 /**
- * SourceBadge — V123-1.7. A small pill that tells an operator whether a
- * marketplace entry came from the Sharko-shipped embedded catalog or from a
- * third-party catalog URL configured via `SHARKO_CATALOG_URLS`.
+ * Small pill that tells an operator whether a marketplace entry came from
+ * the Sharko-shipped embedded catalog or from a third-party catalog URL
+ * configured via `SHARKO_CATALOG_URLS`.
  *
  * - Embedded entries render a neutral blue "Internal" badge.
  * - Third-party entries render a deeper-blue badge containing the URL host
@@ -15,10 +15,6 @@ import type { CatalogSourceRecord } from '@/services/models'
  * auth tokens, and we don't want them leaking via Referer headers or
  * browser-history sync. Tooltip display is fine (the viewer is already
  * authenticated).
- *
- * Palette follows the Sharko blue family (`#d6eeff` / `#b4dcf5` / `#0a3a5a`
- * / `#2a5a7a` / `#c0ddf0`). No generic `gray-*` utilities — see
- * `.claude/team/frontend-expert.md`.
  */
 
 type SourceBadgeProps = {

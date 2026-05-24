@@ -1,32 +1,18 @@
 /**
- * PullRequestsPanel — dashboard PR panel with Pending/Merged tabs.
+ * Dashboard PR panel with Pending/Merged tabs. Universal pending-PR surface
+ * for every PR-creating operation (register-cluster, adopt-cluster, init-
+ * repo, addon-*, values-edit, ai-annotate, ai-tool-*).
  *
- * Maintainer feedback (v1.21 Bundle 3, item 5):
- *   "in dashboard we have 'Pending PRs' but i want also to be able to switch
- *    from there to see merged PRs with the PR description/user and etc and
- *    a link to github"
+ * Scannability features for orgs with many in-flight PRs:
+ *   - Per-row category badge (Clusters / Addons / Init / AI), colour-coded
+ *   - Filter chip row above the list (rendered on both tabs)
+ *   - Free-text search across title + cluster + addon + branch (client-side)
+ *   - "Showing N of M PRs" + "View all on GitHub →" escape hatch when the
+ *     server response is at the cap (default 100).
  *
- * V125-1-6 (BUG-056/057):
- *   The dashboard PR panel previously only saw addon-from-UI PRs because
- *   only those write-paths called TrackPR. The orchestrator funnel now
- *   tracks every PR-creating operation (register-cluster, adopt-cluster,
- *   init-repo, addon-*, values-edit, ai-annotate, ai-tool-*), so the
- *   panel is the universal pending-PR surface for the org.
- *
- *   To keep the panel scannable when an org has many in-flight PRs:
- *     - Per-row category badge (Clusters / Addons / Init / AI) — colour-
- *       coded so the eye picks the relevant rows out of a list of dozens.
- *     - Filter chip row above the list (also rendered on the Merged tab)
- *       so the user can narrow by operation category.
- *     - Free-text search across title + cluster + addon + branch
- *       (client-side over the already-filtered server response).
- *     - "Showing N of M PRs" count + "View all on GitHub →" escape hatch
- *       when the server response is at the limit cap (default 100).
- *
- * Design carried over from V121:
  *   - Tabs: Pending | Merged. Selection persists in the URL via
  *     `?prs_state=pending|merged` so deep-links work.
- *   - Cluster prop scopes the panel for ClusterDetail reuse.
+ *   - `cluster` prop scopes the panel for ClusterDetail reuse.
  *   - WCAG 2.1 AA: tab toggle uses role=tablist + role=tab + aria-selected,
  *     keyboard arrow-keys cycle.
  */
@@ -110,10 +96,10 @@ interface OperationBadgeMeta {
   classes: string
 }
 
-// V125-1-6: per-row category badge. The colour groups operations into
-// the same buckets as the filter chips so a user filtering by "Addons"
-// sees a wall of teal badges and can spot the outlier (a register-
-// cluster PR that snuck in via a label).
+// Per-row category badge. The colour groups operations into the same
+// buckets as the filter chips so a user filtering by "Addons" sees a wall
+// of teal badges and can spot the outlier (a register-cluster PR that
+// snuck in via a label).
 function operationBadge(op: string): OperationBadgeMeta {
   switch (op) {
     case 'register-cluster':
@@ -149,8 +135,8 @@ function operationBadge(op: string): OperationBadgeMeta {
     case 'ai-tool-update':
       return { label: 'AI assistant', classes: 'bg-purple-50 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400' }
     default:
-      // Unknown / pre-V125-1-6 operations land in a gray bucket so the
-      // panel doesn't visually break for upgrades-in-progress.
+      // Unknown operations land in a gray bucket so the panel doesn't
+      // visually break for upgrades-in-progress.
       return { label: op || 'Other', classes: 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300' }
   }
 }
@@ -184,7 +170,7 @@ function gitHubAllPRsURL(repoIdentifier: string | undefined, state: 'open' | 'cl
   const q = state === 'open' ? 'is%3Apr+is%3Aopen' : 'is%3Apr+is%3Aclosed'
   // Best-effort GitHub URL. Other providers (GitLab, Azure DevOps) get
   // the same /pulls path which won't 404, but the query string is
-  // ignored — that's acceptable for the V125 MVP.
+  // ignored — acceptable.
   return `https://github.com/${repoIdentifier}/pulls?q=${q}`
 }
 

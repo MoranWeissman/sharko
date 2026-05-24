@@ -5,24 +5,18 @@ import type { CatalogSourceRecord } from '@/services/models'
 import { SourceBadge } from '@/components/SourceBadge'
 
 /**
- * CatalogSourcesSection — V123-1.8. Settings → Catalog Sources. Admin-only,
- * read-only list of the catalogs Sharko loads entries from.
+ * Settings → Catalog Sources. Admin-only, read-only list of the catalogs
+ * Sharko loads entries from.
  *
- * V123-1.1 resolved the open design question as *env-only*: the list is
- * driven by the `SHARKO_CATALOG_URLS` environment variable on the Sharko
- * pod, not an editable ConfigMap. This section therefore has no add/remove
- * controls — the only mutating action is the Tier-2 "Refresh now" button
- * which forces `GET` of every configured URL and rebuilds the in-memory
- * merged catalog.
- *
- * Palette rules (frontend-expert.md):
- * - Sharko blue family (`#d6eeff` / `#0a3a5a` / `#2a5a7a` / `#b4dcf5` / …).
- * - Every light-mode color class has a `dark:` sibling.
- * - No `gray-*` utilities in light mode.
+ * The list is env-only — driven by the `SHARKO_CATALOG_URLS` environment
+ * variable on the Sharko pod, not an editable ConfigMap. This section has
+ * no add/remove controls; the only mutating action is the Tier-2 "Refresh
+ * now" button which forces `GET` of every configured URL and rebuilds the
+ * in-memory merged catalog.
  *
  * Security: the raw URL is rendered as *text*, never as an `<a href>`.
  * Paths may carry auth tokens and we don't want them leaking via Referer
- * headers or browser-history sync (same rationale as V123-1.7 SourceBadge).
+ * headers or browser-history sync.
  */
 export function CatalogSourcesSection() {
   const [records, setRecords] = useState<CatalogSourceRecord[] | null>(null)
@@ -35,8 +29,7 @@ export function CatalogSourcesSection() {
   const load = useCallback(async () => {
     setError(null)
     try {
-      // Defensive guard — matches V123-1.7 pattern in AddonDetail.tsx where
-      // legacy test mocks may not include the newer `api` method.
+      // Defensive guard — legacy test mocks may not include this api method.
       if (typeof api.listCatalogSources !== 'function') {
         setRecords([])
         return

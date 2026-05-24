@@ -44,10 +44,10 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 
-// V126-3.1 (DESIGN-02): the historical tab value `'installed'` was renamed to
-// `'catalog'` to remove the implication that an addon listed in the catalog
-// is necessarily running on a cluster. The tile badge now sources its copy
-// from deployed_cluster_count / total_target_cluster_count (see DeploymentBadge).
+// The tab value is `'catalog'` (not `'installed'`) because an addon listed
+// in the catalog is not necessarily running on a cluster. The tile badge
+// sources its copy from deployed_cluster_count /
+// total_target_cluster_count (see DeploymentBadge).
 type AddonsView = 'catalog' | 'marketplace'
 
 type FilterType = 'all' | 'healthy' | 'unhealthy' | 'git-only'
@@ -55,13 +55,10 @@ type SortBy = 'name' | 'applications'
 type PageSize = 15 | 30 | 60
 
 /**
- * AddonsTabBar — top-of-page tab control switching between the user's
- * "Catalog" (the historical AddonCatalog content; renamed from "Installed"
- * in V126-3.1 / DESIGN-02 so the tab name no longer implies the addons are
- * running on a cluster) and the v1.21 curated "Marketplace" tab.
- * Implemented as a real WAI-ARIA tablist so keyboard users get arrow-key
- * navigation for free via the browser's default radio-group behaviour on
- * the underlying buttons.
+ * Top-of-page tab control switching between the user's "Catalog" and the
+ * curated "Marketplace" tab. Implemented as a real WAI-ARIA tablist so
+ * keyboard users get arrow-key navigation for free via the browser's
+ * default radio-group behaviour on the underlying buttons.
  */
 function AddonsTabBar({
   tab,
@@ -159,22 +156,17 @@ function StatusChip({
 }
 
 /**
- * DeploymentBadge — V126-3.1 (DESIGN-02) tile badge.
- *
- * Replaces the historical "Installed" / "Catalog Only" headline + "Deployed
- * on N clusters" stats text that conflated two distinct ideas: being listed
- * in the catalog vs actually running on a cluster. Renders one of four
- * copies based on (deployed, target):
+ * Tile badge that distinguishes "in catalog" from "running on N clusters".
+ * Renders one of four copies based on (deployed, target):
  *
  *   target = 0           → "Not deployed anywhere"   (amber, no targets opted in)
  *   deployed = 0, M > 0  → "Not deployed yet"        (amber, opted-in but ArgoCD hasn't synced+healthy)
  *   0 < N < M            → "Running on N/M clusters" (project-blue, partial)
  *   N == M, M > 0        → "Running on N clusters"   (green, fully covered)
  *
- * The component reads deployed_cluster_count + total_target_cluster_count
- * from the addon row; both default to 0 if the backend is older than
- * V126-3.1, in which case the badge degrades gracefully to "Not deployed
- * anywhere" rather than crashing.
+ * Reads deployed_cluster_count + total_target_cluster_count from the addon
+ * row; both default to 0 when missing, degrading gracefully to "Not
+ * deployed anywhere" rather than crashing.
  */
 function DeploymentBadge({ addon }: { addon: AddonCatalogItem }) {
   const deployed = addon.deployed_cluster_count ?? 0
@@ -249,13 +241,6 @@ function AddonCard({ addon }: { addon: AddonCatalogItem }) {
             <p className="truncate text-xs text-[#2a5a7a] dark:text-gray-400">
               Namespace: {namespace}
             </p>
-            {/*
-             * V126-3.1 (DESIGN-02): the "Installed" badge that previously
-             * lived here ("X Active Applications" / "Catalog Only") was
-             * replaced with a single source-of-truth badge that distinguishes
-             * "in catalog" from "running on N clusters" — the old badge
-             * implied the addon was running whenever it was simply listed.
-             */}
             <DeploymentBadge addon={addon} />
           </div>
           <button
@@ -503,10 +488,9 @@ function AddonListTable({ addons }: { addons: AddonCatalogItem[] }) {
 
 export function AddonCatalog() {
   // Tab state — kept in URL so Marketplace deep links survive a refresh.
-  // Default tab is "catalog" (the renamed historical "installed" tab; V126-3.1
-  // / DESIGN-02). Stale `?tab=installed` links from bookmarks or external
-  // links are normalised to the new value via a one-shot redirect effect so
-  // they don't crash and so the URL stays canonical after navigation.
+  // Default tab is "catalog". Stale `?tab=installed` links from old
+  // bookmarks are normalised to the new value via a one-shot redirect
+  // effect so they don't crash and the URL stays canonical.
   // Marketplace is opt-in via ?tab=marketplace or the tab control.
   const [searchParams, setSearchParams] = useSearchParams()
   const initialTab: AddonsView =
@@ -545,9 +529,9 @@ export function AddonCatalog() {
   const [pageSize, setPageSize] = useState<PageSize>(15)
   const [page, setPage] = useState(1)
 
-  // Add Addon dialog state. v1.21 QA Bundle 1 dropped the sync_wave input
-  // (operators set it on the addon's ArgoCD App Options tab after the
-  // addon exists) and added auto-validate + chart/version dropdowns.
+  // Add Addon dialog state. No sync_wave input — operators set it on the
+  // addon's ArgoCD App Options tab after the addon exists. The dialog
+  // auto-validates the repo URL and offers chart/version dropdowns.
   const [addAddonOpen, setAddAddonOpen] = useState(false)
   const [addonForm, setAddonForm] = useState({
     name: '',
@@ -758,7 +742,7 @@ export function AddonCatalog() {
         version: addonForm.version.trim(),
         namespace: addonForm.namespace.trim() || undefined,
         // sync_wave intentionally omitted — operators set it on the
-        // addon's ArgoCD App Options tab after creation. v1.21 QA Bundle 1.
+        // addon's ArgoCD App Options tab after creation.
       })
       const prUrl = result?.pr_url || result?.pull_request_url
       const addonName = addonForm.name.trim()
@@ -964,11 +948,9 @@ export function AddonCatalog() {
       </div>
 
       {/* Add Addon Dialog — manual flow for charts NOT in the curated
-          Marketplace. v1.21 QA Bundle 1 reworked the form: auto-validate
-          repo URL, chart-name dropdown after a valid repo, version
-          dropdown shared with the Marketplace Configure modal, sync wave
-          field removed (operators set it on the addon page after
-          creation). */}
+          Marketplace. Form auto-validates the repo URL, then offers a
+          chart-name dropdown and a version dropdown. No sync-wave field;
+          operators set it on the addon page after creation. */}
       <Dialog
         open={addAddonOpen}
         onOpenChange={(v) => {

@@ -1075,26 +1075,26 @@ export function AddonDetail() {
   const [valuesYaml, setValuesYaml] = useState<string | null>(null)
   const [argocdBaseURL, setArgocdBaseURL] = useState<string>('')
 
-  // Values editor (v1.20) — schema + the user's per-user PAT signal for the
-  // proactive AttributionNudge. We fetch lazily when the user opens the tab.
+  // Values editor — schema + the user's per-user PAT signal for the
+  // proactive AttributionNudge. Fetched lazily when the user opens the tab.
   const [valuesSchema, setValuesSchema] = useState<AddonValuesSchemaResponse | null>(null)
   const [valuesSchemaLoading, setValuesSchemaLoading] = useState(false)
   const [me, setMe] = useState<MeResponse | null>(null)
   const [gitRepoBase, setGitRepoBase] = useState<string>('')
   const [gitDefaultBranch, setGitDefaultBranch] = useState<string>('main')
 
-  // V123-1.7: catalog-entry lookup so we can render a Source badge/section
-  // in the Overview. AddonCatalogItem (deployed) has no source field; we
-  // fetch the matching CatalogEntry (curated catalog) by name. Missing
-  // entry (e.g. addon added via Paste URL before the catalog was loaded)
-  // is non-fatal — we just render nothing.
+  // Catalog-entry lookup so we can render a Source badge/section in the
+  // Overview. AddonCatalogItem (deployed) has no source field; we fetch
+  // the matching CatalogEntry (curated catalog) by name. Missing entry
+  // (e.g. addon added via Paste URL before the catalog was loaded) is
+  // non-fatal — we just render nothing.
   const [catalogEntry, setCatalogEntry] = useState<CatalogEntry | null>(null)
   const [catalogSources, setCatalogSources] = useState<CatalogSourceRecord[]>([])
 
-  // V121-7.4: AI configuration. Pulled once for the Values + Catalog tabs
-  // to render the "AI not configured" banner and the per-addon opt-out
-  // toggle. We don't refresh — Settings changes are infrequent and the
-  // user can soft-refresh to pick up changes.
+  // AI configuration. Pulled once for the Values + Catalog tabs to render
+  // the "AI not configured" banner and the per-addon opt-out toggle.
+  // Not refreshed — Settings changes are infrequent and the user can
+  // soft-refresh to pick up changes.
   const [aiEnabled, setAIEnabled] = useState<boolean>(false)
   useEffect(() => {
     // Defensive — older test fixtures may not mock getAIConfig.
@@ -1104,9 +1104,9 @@ export function AddonDetail() {
       .catch(() => setAIEnabled(false))
   }, [])
 
-  // V123-1.7: look up the matching catalog entry so we can show source
-  // attribution in the Overview. Failure is non-fatal — older test
-  // fixtures may not mock getCuratedCatalogEntry / listCatalogSources.
+  // Look up the matching catalog entry so we can show source attribution
+  // in the Overview. Failure is non-fatal — older test fixtures may not
+  // mock getCuratedCatalogEntry / listCatalogSources.
   useEffect(() => {
     if (!name) return
     if (typeof api.getCuratedCatalogEntry !== 'function') return
@@ -1735,10 +1735,10 @@ export function AddonDetail() {
                       </a>
                     </div>
                   )}
-                  {/* V123-1.7 — catalog source attribution. Only shown when
-                      we were able to look up a matching curated catalog
-                      entry. Source URL is rendered as TEXT (never a
-                      clickable link — paths may carry auth tokens). */}
+                  {/* Catalog source attribution. Only shown when we were
+                      able to look up a matching curated catalog entry.
+                      Source URL is rendered as TEXT (never a clickable
+                      link — paths may carry auth tokens). */}
                   {catalogEntry && (
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-wide text-[#5a8aaa] dark:text-[#5a8aaa]/60">Source</p>
@@ -1766,9 +1766,9 @@ export function AddonDetail() {
                       )}
                     </div>
                   )}
-                  {/* V123-2.4 — cosign signature attribution row. Mirrors
-                      the Source row layout. The badge handles defensive
-                      defaults (missing verified === Unsigned). */}
+                  {/* Cosign signature attribution row. Mirrors the Source
+                      row layout. The badge handles defensive defaults
+                      (missing verified === Unsigned). */}
                   {catalogEntry && (
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-wide text-[#5a8aaa] dark:text-[#5a8aaa]/60">Verified</p>
@@ -1905,10 +1905,8 @@ export function AddonDetail() {
                 </div>
               )}
 
-              {/* Advanced Configuration — moved to the ArgoCD App Options
-                  tab in v1.21 QA Bundle 1 to remove the duplicate section.
-                  Overview now just points the operator to the canonical
-                  home so they don't have to hunt for it. */}
+              {/* Advanced Configuration lives in the ArgoCD App Options
+                  tab — Overview just points the operator there. */}
               <div className="rounded-lg bg-[#e8f4ff] p-4 text-sm text-[#2a5a7a] ring-1 ring-[#c0ddf0] dark:bg-gray-800 dark:text-gray-300 dark:ring-gray-700">
                 <p className="flex flex-wrap items-center gap-1">
                   <span className="font-medium text-[#0a2a4a] dark:text-gray-100">
@@ -1925,12 +1923,6 @@ export function AddonDetail() {
                 </p>
               </div>
 
-              {/* The full Advanced Configuration form (sync wave, self-heal,
-                  sync options, ignore differences, extra Helm values,
-                  additional sources) lived here through v1.20. It was
-                  removed in v1.21 QA Bundle 1 because the same form lives
-                  in the ArgoCD App Options tab — the duplicate confused
-                  testers. The pointer card above takes them there. */}
             </>
           )}
 
@@ -2219,7 +2211,7 @@ export function AddonDetail() {
                       : null
                   }
                   onRefreshFromUpstream={async () => {
-                    // V121-6.4: same endpoint as setAddonValues, with
+                    // Same endpoint as setAddonValues, with
                     // refresh_from_upstream: true. Backend regenerates the
                     // values file via the smart-values pipeline.
                     const result = await api.refreshAddonValuesFromUpstream(addon.addon_name)
@@ -2232,14 +2224,14 @@ export function AddonDetail() {
                     }
                     return result
                   }}
-                  // v1.21 QA Bundle 4 Fix #4: additive merge. The editor
-                  // owns the modal and the apply-through-onSubmit path;
-                  // we just plug in the preview API call.
+                  // Additive merge — the editor owns the modal and the
+                  // apply-through-onSubmit path; we just plug in the
+                  // preview API call.
                   onPreviewMerge={() => api.previewMergeAddonValues(addon.addon_name)}
-                  // v1.21 Bundle 5: legacy `<addon>:` wrap migration. The
-                  // backend's values-schema endpoint flags wrapped files;
-                  // the editor renders a yellow banner with a "Migrate
-                  // this file" action that opens a Tier 2 PR.
+                  // Legacy `<addon>:` wrap migration. The backend's
+                  // values-schema endpoint flags wrapped files; the editor
+                  // renders a yellow banner with a "Migrate this file"
+                  // action that opens a Tier 2 PR.
                   legacyWrapDetected={!!valuesSchema?.legacy_wrap_detected}
                   onMigrateLegacyWrap={async () => {
                     try {
@@ -2267,7 +2259,7 @@ export function AddonDetail() {
                       load={() => api.getAddonValuesRecentPRs(addon.addon_name, 5)}
                     />
                   )}
-                  // V121-7.4: AI banner / annotate-now wiring.
+                  // AI banner / annotate-now wiring:
                   // - "AI not configured" banner: when the file's header
                   //   says annotation is disabled AND the global AI
                   //   provider is `none`.
