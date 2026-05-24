@@ -94,8 +94,8 @@ jobs:
             exit 1
           fi
 
-  # V125-1-13.7 — drift gate for the Go-generated TypeScript provider-type
-  # union. The generator (cmd/gen-provider-types) parses
+  # Drift gate for the Go-generated TypeScript provider-type union.
+  # The generator (cmd/gen-provider-types) parses
   # internal/providers/provider.go's New() switch and writes
   # ui/src/generated/provider-types.ts. If any contributor edits the
   # backend factory without regenerating, this job fails the PR with a
@@ -123,19 +123,19 @@ jobs:
             exit 1
           fi
 
-  # V125-1-9.3 + 9.4 — drift gate for the JSON Schema envelope.
+  # Drift gate for the JSON Schema envelope.
   # cmd/schema-gen reflects the Go envelope types
   # (internal/models.ManagedClustersSpec + internal/config.AddonCatalogSpec)
   # via invopop/jsonschema and writes the same bytes to TWO locations:
   #   docs/schemas/managed-clusters.v1.json     (human-facing copy)
   #   docs/schemas/addon-catalog.v1.json        (human-facing copy)
-  #   internal/schema/managed-clusters.v1.json  (V125-1-9.4 embed source)
-  #   internal/schema/addon-catalog.v1.json     (V125-1-9.4 embed source)
+  #   internal/schema/managed-clusters.v1.json  (embed source)
+  #   internal/schema/addon-catalog.v1.json     (embed source)
   #
-  # The internal/schema/ copies exist because Story 9.4's runtime
-  # validator (internal/schema/validator.go) loads schemas via go:embed
-  # and Go's embed package rejects `..` parent-directory paths. Keeping
-  # both locations in lock-step is enforced here — any contributor who
+  # The internal/schema/ copies exist because the runtime validator
+  # (internal/schema/validator.go) loads schemas via go:embed and Go's
+  # embed package rejects `..` parent-directory paths. Keeping both
+  # locations in lock-step is enforced here — any contributor who
   # changes the envelope types without re-running the generator OR who
   # hand-edits one location without the other gets a red build.
   # Mirrors the swagger-check + provider-types-up-to-date shape.
@@ -162,7 +162,7 @@ jobs:
             exit 1
           fi
 
-  # V125-1-9.5 — PR-time Sharko YAML validation.
+  # PR-time Sharko YAML validation.
   # On every pull request, this job builds the sharko CLI binary and
   # runs `sharko validate-config` against every changed *.yaml / *.yml
   # file in the PR diff. The CLI itself decides which files are Sharko-

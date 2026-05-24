@@ -7,13 +7,7 @@ spec:
   # Cluster Addons Registry — managed by Sharko
   # See docs: https://moranweissman.github.io/sharko/user-guide/clusters/
   #
-  # V125-1-9.5: clusters MUST be an array (even when empty). The JSON
-  # Schema (https://sharko.io/schemas/managed-clusters.v1.json) requires
-  # spec.clusters to be of type "array"; YAML's bare `clusters:` parses
-  # to null and fails schema validation. Keep the `[]` even when there
-  # are no clusters — `sharko add-cluster` and the UI both append to
-  # this list in-place.
-
+  # Must be an array (even when empty) — JSON Schema rejects null.
   clusters: []
   # Example with all available fields (uncomment + remove the `[]` above):
   # clusters:

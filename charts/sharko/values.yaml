@@ -27,7 +27,7 @@ rbac:
   argocdNamespace: argocd
 
 # ---------------------------------------------------------------------------
-# Cluster-Test Provider (V125-1-11.4)
+# Cluster-Test Provider
 # ---------------------------------------------------------------------------
 # Configures the backend Sharko uses to fetch CONNECTIVITY credentials for a
 # target cluster — i.e. the kubeconfig used to verify a cluster is reachable
@@ -35,28 +35,17 @@ rbac:
 # state). Today only the "argocd" backend is supported: it reads ArgoCD's
 # cluster Secret from the namespace where ArgoCD is installed.
 #
-# For the end-to-end story on Sharko's 3-mechanism provider split (this knob
-# is part of the v1.25 split that replaced the field-overloaded
-# providers.Config struct), see:
-#   docs/site/operator/configuration.md#provider-3mech
-#   docs/site/operator/cluster-connectivity-model.md
-#   docs/site/release-notes.md (v1.25 section)
+# See: docs/site/operator/configuration.md and cluster-connectivity-model.md
 #
-# clusterTest.argocdNamespace is the CANONICAL replacement for the V125-1-10.8
-# SHARKO_ARGOCD_NAMESPACE env-var workaround. When set, it is the single
-# authoritative source for the ArgoCD namespace ArgoCDProvider reads from.
-#
-# Precedence (matches resolveArgoCDNamespaceTyped in internal/providers/argocd_provider.go):
+# Precedence for the ArgoCD namespace:
 #   1. clusterTest.argocdNamespace (this value, when non-empty)
-#   2. SHARKO_ARGOCD_NAMESPACE env var — DEPRECATED, emits slog.Warn at startup;
-#      removal slated for v1.26 per V125-1-11 planning doc OQ #4
+#   2. SHARKO_ARGOCD_NAMESPACE env var — DEPRECATED, emits slog.Warn at startup
 #   3. hardcoded "argocd" default (matches the standard ArgoCD install location)
 #
 # NOTE: rbac.argocdNamespace below is a SEPARATE knob — it controls the
 # Role/RoleBinding the chart creates in the ArgoCD namespace so Sharko's
 # in-cluster service account can read ArgoCD Secrets. The two namespaces are
-# almost always the same value on standard installs; leaving clusterTest.argocdNamespace
-# empty falls back to env/default and continues to work as before.
+# almost always the same value on standard installs.
 clusterTest:
   # K8s namespace where ArgoCD stores its cluster Secrets. Leave empty to fall
   # back to SHARKO_ARGOCD_NAMESPACE env var (deprecated) or the "argocd" default.
@@ -142,8 +131,6 @@ bootstrapAdmin:
   # The next reset-admin will recreate it. To prevent recreation entirely,
   # set this value to false — in opt-out mode reset-admin only deletes any
   # stale secret and does NOT recreate one.
-  #
-  # V124-6.3 / BUG-023; rotation behavior added in V124-7.1 / BUG-025.
   writeInitialSecret: true
 
 # ---------------------------------------------------------------------------
@@ -154,22 +141,22 @@ gitops:
     enabled: false  # Set to true to enable write operations (PR creation)
 
 # ---------------------------------------------------------------------------
-# Cluster Registration Source (V125-1-11.5 pre-wire)
+# Cluster Registration Source
 # ---------------------------------------------------------------------------
-# Pre-wire for the V125-1-8 cluster reconciler. No consumer today; safe
-# defaults. When V125-1-8 ships, setting `type: argocd` will cause Sharko to
-# write ArgoCD cluster Secrets into `argocdNamespace` based on the contents
-# of managed-clusters.yaml. Leaving both empty preserves today's behavior
+# Pre-wire for the cluster reconciler. No consumer today; safe defaults.
+# When enabled, setting `type: argocd` causes Sharko to write ArgoCD cluster
+# Secrets into `argocdNamespace` based on the contents of
+# managed-clusters.yaml. Leaving both empty preserves today's behavior
 # (operators register clusters via ArgoCD UI or `kubectl apply` directly).
 #
 # Conceptually distinct from clusterTest.argocdNamespace above: clusterTest
 # READS from the ArgoCD namespace (where ArgoCD's own cluster Secrets live);
-# clusterRegSource WRITES to it (where Sharko's future reconciler will create
+# clusterRegSource WRITES to it (where Sharko's reconciler will create
 # registration Secrets). On standard installs both values point at "argocd".
-# See docs/site/operator/configuration.md#provider-3mech for details.
+# See docs/site/operator/configuration.md for details.
 clusterRegSource:
-  type: ""              # "" → no reconciler; "argocd" → V125-1-8 writes to ArgoCD cluster Secrets
-  argocdNamespace: ""   # "" → defaults to "argocd" when V125-1-8 ships
+  type: ""              # "" → no reconciler; "argocd" → write to ArgoCD cluster Secrets
+  argocdNamespace: ""   # "" → defaults to "argocd"
 
 # ---------------------------------------------------------------------------
 # AI Provider (optional)
@@ -314,65 +301,13 @@ extraEnv: []
 #    value: "my-value"
 
 # ---------------------------------------------------------------------------
-# Corporate TLS MITM / SSL inspection (BUG-043) — informational only
+# Corporate TLS MITM / SSL inspection — informational only
 # ---------------------------------------------------------------------------
-# Some corporate networks intercept TLS to inspect traffic, re-signing
-# certificates with a corporate root CA that public CAs do not trust. In
-# those environments argocd-repo-server fails to fetch public Git repos
-# (e.g. github.com) with:
-#
-#   x509: certificate signed by unknown authority
-#
-# Sharko does NOT package the ArgoCD chart as a subchart — ArgoCD is
-# installed separately, ahead of Sharko (see Prerequisites in the operator
-# installation guide). The fix therefore lives in your ArgoCD Helm values,
-# NOT in this file. Sharko has no key that injects volumes into the
-# argocd-repo-server pod, and no such key would be safe because Sharko
-# does not own the ArgoCD release.
-#
-# Mechanism chosen: ConfigMap-backed extra volume mounted into
-# argocd-repo-server + SSL_CERT_DIR env var pointing OpenSSL at it. We
-# pick this over `configs.tls.certificates` (which is for ArgoCD's own
-# inbound TLS, not outbound git fetches) and over baking the CA into a
-# custom image (operationally heavier).
-#
-# Workaround in three steps (full runbook:
-# docs/site/operator/corporate-mitm-tls.md):
-#
-#   1. Capture the corporate root CA:
-#        openssl s_client -connect github.com:443 -showcerts < /dev/null 2>/dev/null \
-#          | awk '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/' \
-#          > corporate-ca.crt
-#
-#   2. Create a ConfigMap in the argocd namespace:
-#        kubectl create configmap sharko-extra-ca-bundle -n argocd \
-#          --from-file=ca.crt=corporate-ca.crt
-#
-#   3. In your ArgoCD Helm values (NOT in this Sharko values file),
-#      add the block below and run `helm upgrade` on the ArgoCD release:
-#
-#        # values for the argo-cd Helm chart (chart name: argo-cd)
-#        repoServer:
-#          volumes:
-#            - name: extra-ca-bundle
-#              configMap:
-#                name: sharko-extra-ca-bundle
-#          volumeMounts:
-#            - name: extra-ca-bundle
-#              mountPath: /etc/ssl/certs/corporate-ca.crt
-#              subPath: ca.crt
-#              readOnly: true
-#          env:
-#            - name: SSL_CERT_DIR
-#              value: /etc/ssl/certs
-#
-# After applying, restart argocd-repo-server and verify the x509 errors
-# are gone:
-#
-#   kubectl rollout restart deployment/argocd-repo-server -n argocd
-#   kubectl logs -n argocd deploy/argocd-repo-server | grep -i x509
-#
-# (empty output after ~30s = workaround applied)
+# On networks that intercept TLS with a corporate root CA, argocd-repo-server
+# fails to fetch public Git repos with "x509: certificate signed by unknown
+# authority". The fix lives in your ArgoCD Helm values (Sharko does not own
+# the ArgoCD release), not in this file. Full runbook:
+#   docs/site/operator/corporate-mitm-tls.md
 
 # ---------------------------------------------------------------------------
 # E2E TEST HARNESS ONLY — DO NOT SET IN PRODUCTION DEPLOYMENTS.

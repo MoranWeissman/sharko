@@ -1,11 +1,6 @@
 # yaml-language-server: $schema=https://sharko.io/schemas/addon-catalog.v1.json
 # Addon Catalog — managed by Sharko
 # See docs: https://moranweissman.github.io/sharko/user-guide/addons/
-#
-# V125-1-9: this file uses the self-describing sharko.io/v1 envelope so that
-# editors can validate it inline against the schema (yaml-language-server
-# directive above) and Sharko's reconciler can fail-loudly on malformed input
-# instead of silently dropping entries.
 
 apiVersion: sharko.io/v1
 kind: AddonCatalog
