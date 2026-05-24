@@ -159,14 +159,14 @@ definitions:
         allOf:
         - $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_catalog.Signature'
         description: |-
-          Signature is the optional cosign-keyless attestation pointer
-          (schema v1.1+; V123-2.1). nil when the entry is unsigned.
+          Signature is the optional cosign-keyless attestation pointer.
+          nil when the entry is unsigned.
       signature_identity:
         description: |-
           SignatureIdentity is the OIDC subject (cert SAN) of the verified
           signer when Verified is true. Empty otherwise. Powers the UI's
-          "Verified by <issuer>" pill (V123-2.4). Same forgery-resistant
-          `yaml:"-"` posture as Source/Verified.
+          "Verified by <issuer>" pill. Same forgery-resistant `yaml:"-"`
+          posture as Source/Verified.
         type: string
       source:
         description: |-
@@ -183,14 +183,14 @@ definitions:
         type: string
       verified:
         description: |-
-          Verified is the post-load cosign-verification outcome (V123-2.2).
-          True only when the entry had a valid `signature.bundle` URL whose
-          fetched Sigstore bundle verified against the configured trust
-          policy AND whose OIDC subject matched a TrustPolicy.Identities
-          regex. False for unsigned entries, fail-closed defaults, sig
-          mismatches, untrusted identities, and infrastructure failures
-          fetching the bundle. Computed at load via LoadBytesWithVerifier;
-          never persisted to YAML (`yaml:"-"` matches the Source pattern).
+          Verified is the post-load cosign-verification outcome. True only
+          when the entry had a valid `signature.bundle` URL whose fetched
+          Sigstore bundle verified against the configured trust policy
+          AND whose OIDC subject matched a TrustPolicy.Identities regex.
+          False for unsigned entries, fail-closed defaults, sig mismatches,
+          untrusted identities, and infrastructure failures fetching the
+          bundle. Computed at load via LoadBytesWithVerifier; never
+          persisted to YAML.
         type: boolean
     type: object
   github_com_MoranWeissman_sharko_internal_catalog.ScoreValue:
@@ -253,14 +253,14 @@ definitions:
         type: integer
       deployed_cluster_count:
         description: |-
-          V126-3.1 (DESIGN-02): paired counts that drive the tile-level
-          "Running on N/M clusters" badge. N = clusters where the ArgoCD
-          Application for this addon is Synced + Healthy.
-          M = clusters where the addon is labelled enabled in
-          managed-clusters.yaml. These are kept separate from the existing
+          Paired counts that drive the tile-level "Running on N/M clusters"
+          badge. N = clusters where the ArgoCD Application for this addon
+          is Synced + Healthy. M = clusters where the addon is labelled
+          enabled in managed-clusters.yaml. Kept separate from the existing
           HealthyApplications / EnabledClusters fields so the tile copy can
-          distinguish "addon is in catalog" from "addon is actually running"
-          without changing the historical stat semantics other tiles depend on.
+          distinguish "addon is in catalog" from "addon is actually
+          running" without changing the historical stat semantics other
+          tiles depend on.
         type: integer
       enabled_clusters:
         type: integer
@@ -369,7 +369,7 @@ definitions:
           handler to look up the saved connection by Name and test using its
           stored credentials instead of the request body. Returns 400 if no
           saved connection with the given name exists. Ignored by Create /
-          Update. V124-19 / BUG-044.
+          Update.
         type: boolean
     type: object
   github_com_MoranWeissman_sharko_internal_models.GitOpsSettings:
@@ -781,10 +781,10 @@ definitions:
         type: object
       auto_merge:
         description: |-
-          AutoMerge is the per-request auto-merge decision (BUG-031). nil
-          means "fall back to the connection-level PRAutoMerge default";
-          a non-nil value overrides the default for this operation only.
-          Resolved via resolveAutoMerge — never mutate o.gitops.PRAutoMerge.
+          AutoMerge is the per-request auto-merge decision. nil means "fall
+          back to the connection-level PRAutoMerge default"; a non-nil
+          value overrides the default for this operation only. Resolved via
+          resolveAutoMerge — never mutate o.gitops.PRAutoMerge.
         type: boolean
       dry_run:
         type: boolean
@@ -1047,16 +1047,15 @@ definitions:
     properties:
       annotate_on_seed:
         description: |-
-          AnnotateOnSeed (v1.21 Story V121-7.3) is the global Settings toggle
-          for "Annotate values on generate". When the AI provider is `none`
-          the field is reported as false regardless of the persisted value —
-          the UI uses this to gate the toggle row visibility.
+          AnnotateOnSeed is the global Settings toggle for "Annotate values
+          on generate". When the AI provider is `none` the field is
+          reported as false regardless of the persisted value — the UI uses
+          this to gate the toggle row visibility.
 
           Default-true semantics: on a fresh install with a configured AI
-          provider but no explicit AnnotateOnSeed value (older config blobs
-          from before V121-7), the field reports `true`. The Save handler
-          stamps the explicit value on every persist so subsequent reads are
-          authoritative.
+          provider but no explicit value (legacy config blobs), the field
+          reports `true`. The Save handler stamps the explicit value on
+          every persist so subsequent reads are authoritative.
         type: boolean
       available_providers:
         items:
@@ -1190,9 +1189,7 @@ definitions:
         description: |-
           Verified reports whether the sidecar signature was validated
           against the trust policy. True for the embedded row ("the binary
-          trusts its own bundled catalog") — this is not a cosign statement
-          (V123-2.5 owns signing of the embedded catalog). False for
-          third-party until V123-2.2 wires the verifier.
+          trusts its own bundled catalog") — not a cosign statement.
         type: boolean
     type: object
   internal_api.catalogValidateResponse:
@@ -1481,7 +1478,7 @@ definitions:
     properties:
       annotate_on_seed:
         description: |-
-          AnnotateOnSeed (V121-7.3) is a tri-state via the *bool sentinel:
+          AnnotateOnSeed is a tri-state via the *bool sentinel:
             nil  → caller didn't pass the field; preserve the current value
                    (or fall through to default-true if no current value exists).
             *false → explicit OFF.
@@ -2179,11 +2176,11 @@ paths:
   /addons/{name}/values/annotate:
     post:
       description: Fetches the chart's upstream values.yaml at the catalog-pinned
-        version, runs the V121-7 AI annotate pass (one-line `# description` comments
-        + LLM-suggested cluster-specific paths unioned with the heuristic), and opens
-        a Tier 2 PR with the result. Hard-blocked when the secret-leak guard matches;
-        in that case returns 422 with redacted matches and no PR. Skipped when AI
-        is not configured or the addon is opted out.
+        version, runs the AI annotate pass (one-line `# description` comments + LLM-suggested
+        cluster-specific paths unioned with the heuristic), and opens a Tier 2 PR
+        with the result. Hard-blocked when the secret-leak guard matches; in that
+        case returns 422 with redacted matches and no PR. Skipped when AI is not configured
+        or the addon is opted out.
       parameters:
       - description: Addon name
         in: path
@@ -3289,9 +3286,8 @@ paths:
       description: 'Returns one record per catalog source — the embedded binary catalog
         (url="embedded", always first) plus each configured third-party URL from SHARKO_CATALOG_URLS.
         Per-source fields: url, status (ok|stale|failed), last_fetched (RFC3339 or
-        null), entry_count, verified (cosign-verified, currently always true for embedded
-        and false for third-party until V123-2.2 lands), and optional issuer when
-        verified. Read-only; requires authentication.'
+        null), entry_count, verified (cosign-verified), and optional issuer when verified.
+        Read-only; requires authentication.'
       produces:
       - application/json
       responses:
@@ -3429,7 +3425,7 @@ paths:
         Registers a new cluster in ArgoCD and creates its GitOps configuration.
         Pass "dry_run": true to preview what would happen without making changes.
         Provider may be "eks" (default; uses configured secrets provider) or
-        "kubeconfig" (V125-1.1; caller supplies kubeconfig YAML inline via the
+        "kubeconfig" (caller supplies kubeconfig YAML inline via the
         "kubeconfig" field — bearer-token auth only).
       parameters:
       - description: Cluster registration request (supports dry_run + kubeconfig fields)
@@ -3477,8 +3473,7 @@ paths:
             additionalProperties: true
             type: object
         "503":
-          description: Credentials provider not configured (V124-4.1; eks provider
-            only)
+          description: Credentials provider not configured (eks provider only)
           schema:
             additionalProperties: true
             type: object
@@ -4022,7 +4017,7 @@ paths:
         entry and no open registration PR. Refuses to delete a cluster that is genuinely
         managed (in git), pending (has an open register PR), or NOT owned by Sharko
         (missing the app.kubernetes.io/managed-by=sharko label) — externally-owned
-        Secrets are V125-2 Adopt territory.
+        Secrets are Adopt territory.
       parameters:
       - description: Cluster name
         in: path
@@ -4113,7 +4108,7 @@ paths:
             additionalProperties: true
             type: object
         "503":
-          description: Credentials provider not configured (V124-4.1)
+          description: Credentials provider not configured
           schema:
             additionalProperties: true
             type: object
@@ -4155,7 +4150,7 @@ paths:
             additionalProperties: true
             type: object
         "503":
-          description: Credentials provider not configured (V124-4.1)
+          description: Credentials provider not configured
           schema:
             additionalProperties: true
             type: object
@@ -4197,7 +4192,7 @@ paths:
             additionalProperties: true
             type: object
         "503":
-          description: Credentials provider not configured (V124-4.1)
+          description: Credentials provider not configured
           schema:
             additionalProperties: true
             type: object
@@ -4412,7 +4407,7 @@ paths:
             additionalProperties: true
             type: object
         "503":
-          description: Credentials provider not configured (V124-4.1)
+          description: Credentials provider not configured
           schema:
             additionalProperties: true
             type: object
@@ -4463,7 +4458,7 @@ paths:
             additionalProperties: true
             type: object
         "503":
-          description: Credentials provider not configured (V124-4.1)
+          description: Credentials provider not configured
           schema:
             additionalProperties: true
             type: object

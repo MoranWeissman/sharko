@@ -5,7 +5,7 @@
 // This file is the single source of truth for the set of provider Type
 // strings the backend factories accept. The Settings → SecretsProviderSection
 // dropdown imports VALID_PROVIDER_TYPES so it cannot drift from the two
-// canonical factories — see V125-1-13.7 + V125-1-11.6.
+// canonical factories.
 
 export const VALID_PROVIDER_TYPES = [
   "argocd",
