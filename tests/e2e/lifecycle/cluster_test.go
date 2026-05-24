@@ -159,33 +159,43 @@ func TestClusterLifecycle(t *testing.T) {
 			}
 		}
 
-		// V125-1-13.y.3 / BUG-189-final: the in-process Sharko's
-		// orchestrator argocd_register step (Step 6 in
-		// orchestrator/cluster.go RegisterCluster) will return
-		// status=partial because the kubeconfig server URL it stores
-		// in the ArgoCD cluster Secret is the *host-reachable*
-		// 127.0.0.1:<host-port> URL — necessary so Sharko's own
-		// verify.Stage1 (running on the host) can reach the kind API
-		// server, but unusable for the ArgoCD Pod inside the kind
-		// cluster, whose own loopback that URL resolves to has
-		// nothing listening. The result.Message documents this:
-		// "Register the cluster manually."
+		// ZG2-1 / V125-1-8.3 follow-up: the orchestrator's old Step 6
+		// (synchronous argocd.RegisterCluster API call pre-merge) was
+		// retired by V125-1-8 — the new internal/clusterreconciler is
+		// the sole owner of the ArgoCD cluster-Secret lifecycle. In a
+		// real deployment the reconciler picks the new cluster up via
+		// either the post-merge prTracker trigger or the 30s safety-net
+		// tick, so PATCH /clusters/{name} (which looks the cluster up
+		// via argocd.ListClusters) finds it shortly after registration.
 		//
-		// We do exactly that — call registerClusterInArgoCDDirect to
-		// land the cluster Secret in ArgoCD using the Docker-network
-		// IP that IS reachable from inside the Pod. The end-state is
-		// identical to what a Linux-host run would produce when the
-		// bridge IP was used end-to-end (the dual-perspective gap
-		// only matters on macOS Docker Desktop, but compensating
-		// unconditionally keeps the test cross-platform-stable).
+		// The in-process e2e harness deliberately does NOT wire the
+		// cluster reconciler (startSharkoInProcess avoids every optional
+		// subsystem — see sharko.go), so without an explicit compensation
+		// the cluster never lands in ArgoCD's view and every downstream
+		// subtest that resolves through ArgoCD (PatchClusterLabels,
+		// Test, Refresh, Diagnose, secret-path PATCH) 404s.
+		//
+		// Before ZG2-1 this compensation was gated on
+		//   result.Status == "partial" && result.FailedStep == "argocd_register"
+		// — the pre-V125-1-8 marker that the synchronous register step
+		// failed. That gate is now dead (the step no longer exists, so
+		// the register flow always returns status="success"), which is
+		// what caused the nightly e2e PatchClusterLabels regression on
+		// main (run 26354008904).
+		//
+		// We now compensate UNCONDITIONALLY: the in-process harness has
+		// no reconciler, so the direct ArgoCD POST is the only path that
+		// lands a cluster Secret in argocd-ns. The end-state mirrors what
+		// a real in-cluster Sharko would produce after the reconciler's
+		// first post-merge tick — the kubeconfig server URL written here
+		// uses the Docker-network IP that's reachable from inside the
+		// kind cluster's ArgoCD pod (necessary on macOS Docker Desktop;
+		// no-op on Linux).
 		//
 		// Downstream subtests (PatchClusterLabels, Comparison,
-		// ConfigDiff, Values) now find the cluster in ArgoCD as
-		// expected.
-		if result.Status == "partial" && result.FailedStep == "argocd_register" {
-			t.Logf("compensating for partial argocd_register: %s", result.Message)
-			registerClusterInArgoCDDirect(t, argoAccess, target1, managedClusterName)
-		}
+		// ConfigDiff, Values) find the cluster in ArgoCD as expected.
+		t.Logf("compensating for unwired reconciler (in-process harness): direct ArgoCD register for %q", managedClusterName)
+		registerClusterInArgoCDDirect(t, argoAccess, target1, managedClusterName)
 
 		// Confirm sharko's view: ListClusters must surface the new
 		// cluster with Managed=true.
