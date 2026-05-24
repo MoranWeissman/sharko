@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://sharko.io/schemas/addon-catalog.v1.json",
+  "$id": "https://sharko.io/schemas/addons-catalog.v1.json",
   "properties": {
     "apiVersion": {
       "const": "sharko.io/v1"
@@ -164,5 +164,5 @@
     "spec"
   ],
   "title": "Sharko AddonCatalog",
-  "description": "addon-catalog.yaml — the catalog of addons (ApplicationSets) Sharko can deploy to managed clusters."
+  "description": "addons-catalog.yaml — the catalog of addons (ApplicationSets) Sharko can deploy to managed clusters."
 }

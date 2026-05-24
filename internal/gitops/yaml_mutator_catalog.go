@@ -1,6 +1,6 @@
 // Package gitops — catalog-side mutators.
 //
-// Catalog-side addon-catalog.yaml mutators use parse-mutate-marshal
+// Catalog-side addons-catalog.yaml mutators use parse-mutate-marshal
 // via config.NewParser().ParseAddonsCatalog + config.MarshalAddonCatalog
 // (the envelope reader/writer). The envelope sits list items under
 // `spec.applicationsets:` at indent 4 — line-level scanners would
@@ -52,7 +52,7 @@ import (
 // instance is fine and avoids a per-call allocation.
 var catalogParser = config.NewParser()
 
-// loadCatalogOrBootstrap parses an existing addon-catalog.yaml body or
+// loadCatalogOrBootstrap parses an existing addons-catalog.yaml body or
 // returns an empty entries slice when the body is empty / whitespace-only.
 // Mirrors loadOrBootstrap in yaml_mutator_cluster.go.
 func loadCatalogOrBootstrap(data []byte) ([]models.AddonCatalogEntry, error) {

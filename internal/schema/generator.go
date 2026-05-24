@@ -79,10 +79,10 @@ import (
 const ManagedClustersSchemaID = "https://sharko.io/schemas/managed-clusters.v1.json"
 
 // AddonCatalogSchemaID is the public URL embedded in every generated
-// addon-catalog.v1.json file's $id. Mirrors ManagedClustersSchemaID for the
+// addons-catalog.v1.json file's $id. Mirrors ManagedClustersSchemaID for the
 // addon-catalog kind. The literal value matches AddonCatalogSchemaHeader in
 // internal/config/parser.go.
-const AddonCatalogSchemaID = "https://sharko.io/schemas/addon-catalog.v1.json"
+const AddonCatalogSchemaID = "https://sharko.io/schemas/addons-catalog.v1.json"
 
 // SchemaDialect is the JSON Schema dialect URL emitted as $schema in every
 // generated file. Story 9.4's runtime validator (santhosh-tekuri/jsonschema

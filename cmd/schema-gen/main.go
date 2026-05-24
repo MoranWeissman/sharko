@@ -10,9 +10,9 @@
 // locations, overwritten if they exist):
 //
 //	docs/schemas/managed-clusters.v1.json
-//	docs/schemas/addon-catalog.v1.json
+//	docs/schemas/addons-catalog.v1.json
 //	internal/schema/managed-clusters.v1.json   (embed source)
-//	internal/schema/addon-catalog.v1.json      (embed source)
+//	internal/schema/addons-catalog.v1.json      (embed source)
 //
 // The two locations exist for different consumers:
 //
@@ -20,7 +20,7 @@
 //     editor `# yaml-language-server: $schema=...` headers and the docs
 //     site links.
 //   - internal/schema/ is the build-time copy. internal/schema/embed.go
-//     declares `//go:embed managed-clusters.v1.json addon-catalog.v1.json`
+//     declares `//go:embed managed-clusters.v1.json addons-catalog.v1.json`
 //     so the runtime validator compiles schemas from the binary, not
 //     from disk. Embedding from docs/schemas/ would require a `..` path
 //     which Go forbids.
@@ -145,18 +145,18 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 
-	// addon-catalog.v1.json
+	// addons-catalog.v1.json
 	acBytes, err := schema.GenerateSchema(
 		&addonCatalogDoc{},
 		schema.AddonCatalogSchemaID,
 		"Sharko AddonCatalog",
-		"addon-catalog.yaml — the catalog of addons (ApplicationSets) Sharko can deploy to managed clusters.",
+		"addons-catalog.yaml — the catalog of addons (ApplicationSets) Sharko can deploy to managed clusters.",
 		schema.KindAddonCatalog,
 	)
 	if err != nil {
-		return fmt.Errorf("generating addon-catalog schema: %w", err)
+		return fmt.Errorf("generating addons-catalog schema: %w", err)
 	}
-	acDocsPath, acEmbedPath, err := writeSchemaToBoth("addon-catalog.v1.json", acBytes)
+	acDocsPath, acEmbedPath, err := writeSchemaToBoth("addons-catalog.v1.json", acBytes)
 	if err != nil {
 		return err
 	}
@@ -164,10 +164,10 @@ func run(logger *slog.Logger) error {
 	logger.Info("generated 2 schemas (mirrored to 2 locations each)",
 		"managed_clusters_docs", mcDocsPath,
 		"managed_clusters_embed", mcEmbedPath,
-		"addon_catalog_docs", acDocsPath,
-		"addon_catalog_embed", acEmbedPath,
+		"addons_catalog_docs", acDocsPath,
+		"addons_catalog_embed", acEmbedPath,
 	)
-	fmt.Printf("generated 2 schemas to %s + %s: managed-clusters.v1.json, addon-catalog.v1.json\n",
+	fmt.Printf("generated 2 schemas to %s + %s: managed-clusters.v1.json, addons-catalog.v1.json\n",
 		docsOutputDir, embedOutputDir)
 	return nil
 }

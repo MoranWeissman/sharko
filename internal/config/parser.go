@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,22 +13,17 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// File-naming constants for the addon catalog. The singular
-// `addon-catalog.yaml` is canonical; the plural `addons-catalog.yaml` is
-// kept as a read-only alias for one release.
+// File-naming constants for the addon catalog. `addons-catalog.yaml`
+// (plural) is the single canonical name across the codebase.
 const (
-	// AddonCatalogFilename is the canonical (singular) addon-catalog filename.
-	// All Sharko writers emit to this name.
-	AddonCatalogFilename = "addon-catalog.yaml"
-
-	// AddonCatalogLegacyFilename is the original plural filename. Readers
-	// continue to accept it until the next major release removes the alias.
-	AddonCatalogLegacyFilename = "addons-catalog.yaml"
+	// AddonCatalogFilename is the canonical addon-catalog filename. All
+	// Sharko readers and writers use this name.
+	AddonCatalogFilename = "addons-catalog.yaml"
 
 	// AddonCatalogSchemaHeader is the editor schema directive emitted as the
-	// first line of every Sharko-written addon-catalog.yaml. yaml-language-server
+	// first line of every Sharko-written addons-catalog.yaml. yaml-language-server
 	// (VS Code / IntelliJ) uses it for inline validation + autocomplete.
-	AddonCatalogSchemaHeader = "# yaml-language-server: $schema=https://sharko.io/schemas/addon-catalog.v1.json"
+	AddonCatalogSchemaHeader = "# yaml-language-server: $schema=https://sharko.io/schemas/addons-catalog.v1.json"
 )
 
 // clusterAddonsFile represents the legacy bare-YAML structure of
@@ -57,7 +51,7 @@ type clusterEntry struct {
 	Region     string      `yaml:"region,omitempty"`
 }
 
-// AddonCatalogSpec is the spec body of an enveloped addon-catalog.yaml.
+// AddonCatalogSpec is the spec body of an enveloped addons-catalog.yaml.
 // It holds the same payload as the legacy bare-YAML file (the
 // `applicationsets` list of AddonCatalogEntry). The envelope wraps this
 // struct in an apiVersion/kind/metadata frame so the file can be
@@ -197,10 +191,10 @@ func parseLabels(raw interface{}) map[string]string {
 	}
 }
 
-// ParseAddonsCatalog parses an addon-catalog.yaml (or legacy
-// addons-catalog.yaml) document. The reader accepts both the legacy
-// bare-YAML shape (top-level `applicationsets:` array) AND the
-// enveloped shape (apiVersion/kind/metadata/spec — see internal/schema).
+// ParseAddonsCatalog parses an addons-catalog.yaml document. The reader
+// accepts both the legacy bare-YAML shape (top-level `applicationsets:`
+// array) AND the enveloped shape (apiVersion/kind/metadata/spec — see
+// internal/schema).
 //
 // Detection is byte-level via schema.IsEnveloped, which only inspects the
 // top-level apiVersion field. When the body declares an apiVersion of
@@ -215,7 +209,7 @@ func parseLabels(raw interface{}) map[string]string {
 // needed.
 //
 // On the ENVELOPED branch, the body is JSON-Schema-validated against
-// docs/schemas/addon-catalog.v1.json BEFORE yaml.Unmarshal. Validation
+// docs/schemas/addons-catalog.v1.json BEFORE yaml.Unmarshal. Validation
 // failures return *schema.ValidationFailure to the caller and emit a
 // slog.Error with the full violation list. Legacy bare YAML is NOT
 // validated — same back-compat contract as ParseClusterAddons.
@@ -247,9 +241,9 @@ func (p *Parser) ParseAddonsCatalog(data []byte) ([]models.AddonCatalogEntry, er
 			if err := validator.Validate(schema.KindAddonCatalog, data); err != nil {
 				var vf *schema.ValidationFailure
 				if errors.As(err, &vf) {
-					schema.LogValidationFailure("addon-catalog.yaml", vf)
+					schema.LogValidationFailure("addons-catalog.yaml", vf)
 				}
-				return nil, fmt.Errorf("validating addon-catalog envelope: %w", err)
+				return nil, fmt.Errorf("validating addons-catalog envelope: %w", err)
 			}
 		}
 		return doc.Spec.ApplicationSets, nil
@@ -311,42 +305,20 @@ func MarshalAddonCatalog(metadataName string, entries []models.AddonCatalogEntry
 // ResolveAddonCatalogPath returns the on-disk path Sharko should read for the
 // addon catalog under `configDir` (typically `<repo>/configuration`).
 //
-// Precedence rules:
-//
-//   - If `addon-catalog.yaml` exists, return it. If the legacy
-//     `addons-catalog.yaml` ALSO exists, emit a WARN log line so operators
-//     know the alias is being ignored.
-//   - Otherwise, if `addons-catalog.yaml` exists, return it (the legacy
-//     alias is still honoured through V125).
-//   - Otherwise, return ("", os.ErrNotExist) so callers can fall back to
-//     whatever default-creation logic they already have.
+// Returns the canonical `addons-catalog.yaml` path if the file exists, or
+// ("", os.ErrNotExist) otherwise so callers can fall back to whatever
+// default-creation logic they already have.
 //
 // The signature returns the resolved absolute-or-relative path string rather
 // than the bytes so callers that care about audit logging / commit messages
 // can name the actual file they read.
 func ResolveAddonCatalogPath(configDir string) (string, error) {
-	newPath := filepath.Join(configDir, AddonCatalogFilename)
-	legacyPath := filepath.Join(configDir, AddonCatalogLegacyFilename)
-
-	_, newErr := os.Stat(newPath)
-	_, legacyErr := os.Stat(legacyPath)
-
-	switch {
-	case newErr == nil && legacyErr == nil:
-		slog.Warn(
-			"addon-catalog: both filenames present, using new singular name; legacy file is ignored",
-			"new", newPath,
-			"legacy_ignored", legacyPath,
-		)
-		return newPath, nil
-	case newErr == nil:
-		return newPath, nil
-	case legacyErr == nil:
-		return legacyPath, nil
-	default:
-		// Return the canonical missing-file error so callers can use errors.Is.
-		return "", os.ErrNotExist
+	path := filepath.Join(configDir, AddonCatalogFilename)
+	if _, err := os.Stat(path); err == nil {
+		return path, nil
 	}
+	// Return the canonical missing-file error so callers can use errors.Is.
+	return "", os.ErrNotExist
 }
 
 // ParseClusterValues parses a per-cluster values file and extracts global values.

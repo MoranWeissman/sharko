@@ -4,7 +4,7 @@ Sharko v1.25 introduces a self-describing schema envelope for the two YAML
 files Sharko writes into your bootstrap repo:
 
 - `managed-clusters.yaml` (registry of clusters Sharko manages)
-- `addon-catalog.yaml`     (was `addons-catalog.yaml` before v1.25 — see [Filename rename](#3-filename-rename))
+- `addons-catalog.yaml`   (catalog of addons Sharko can deploy)
 
 This page is a runbook: what changed, why, what it means for you, and how
 to get inline schema validation in your editor.
@@ -25,7 +25,7 @@ authoring config.
 
 ### 1. Envelope shape
 
-Both `managed-clusters.yaml` and `addon-catalog.yaml` now wrap their
+Both `managed-clusters.yaml` and `addons-catalog.yaml` now wrap their
 content in a CRD-shaped envelope:
 
 ```yaml
@@ -39,7 +39,7 @@ spec:
 ```
 
 ```yaml
-# yaml-language-server: $schema=https://sharko.io/schemas/addon-catalog.v1.json
+# yaml-language-server: $schema=https://sharko.io/schemas/addons-catalog.v1.json
 apiVersion: sharko.io/v1
 kind: AddonCatalog
 metadata:
@@ -74,19 +74,6 @@ automatically and give you:
 
 No setup beyond installing the extension. See [Editor setup](#editor-setup)
 below for the per-editor walk-through.
-
-### 3. Filename rename
-
-The catalog file was renamed from `addons-catalog.yaml` (plural) to
-`addon-catalog.yaml` (singular) for consistency with the schema kind name
-(`AddonCatalog`).
-
-The legacy filename remains an alias through v1.25 — if a bootstrap repo
-still has `addons-catalog.yaml`, Sharko's reader picks it up unchanged.
-The alias is scheduled for removal in v1.26 (see [Deprecation
-timeline](#deprecation-timeline)).
-
-`managed-clusters.yaml` was already correctly named and is unchanged.
 
 ---
 
@@ -132,7 +119,7 @@ Five guarantees, in priority order:
    state.
 4. **Reads in the server hot path are schema-validated.** Sharko's
    reader code paths (loaders for `managed-clusters.yaml`,
-   `addon-catalog.yaml`, and per-cluster addons overrides) all run the
+   `addons-catalog.yaml`, and per-cluster addons overrides) all run the
    embedded JSON Schema validator on every load and reject malformed
    files with a structured error rather than logging-and-continuing.
    This is invisible to you when the YAML is valid; it surfaces a clear
@@ -150,8 +137,8 @@ see [Manual migration](#manual-migration) below.
 
 | Version | What happens |
 |---------|--------------|
-| **v1.25** (current) | Both shapes work. New writes emit the envelope shape. Both filenames (`addons-catalog.yaml`, `addon-catalog.yaml`) work. |
-| **v1.26** (planned) | Legacy reader removed — files MUST have the envelope. `addons-catalog.yaml` filename alias removed — file MUST be `addon-catalog.yaml`. Sharko reads of legacy-shape files will fail at startup with a "migrate to v1.25 envelope" error pointing back at this page. |
+| **v1.25** (current) | Both shapes work. New writes emit the envelope shape. |
+| **v1.26** (planned) | Legacy reader removed — files MUST have the envelope. Sharko reads of legacy-shape files will fail at startup with a "migrate to v1.25 envelope" error pointing back at this page. |
 | **v2.x+** | Operator-mode graduation (CRD-backed) reuses the same `sharko.io/v1` envelope. Bootstrap repos that adopted the envelope in v1.25 are forward-compatible to operator mode without further edits. |
 
 Cutover plan: before upgrading to v1.26, run `sharko validate-config` (or
@@ -172,7 +159,7 @@ one-time-per-machine.
 
 1. Install the Red Hat YAML extension
    (publisher: `redhat.vscode-yaml`).
-2. Open `managed-clusters.yaml` or `addon-catalog.yaml`.
+2. Open `managed-clusters.yaml` or `addons-catalog.yaml`.
 3. The extension reads the `# yaml-language-server: $schema=...` line on
    open and fetches the schema. Subsequent opens hit a local cache.
 
@@ -195,7 +182,7 @@ Mappings`:
 - Schema URL: `https://sharko.io/schemas/managed-clusters.v1.json`
 - File pattern: `managed-clusters.yaml`
 
-(Repeat with `addon-catalog.v1.json` and `addon-catalog.yaml`.)
+(Repeat with `addons-catalog.v1.json` and `addons-catalog.yaml`.)
 
 ### Neovim
 
@@ -211,7 +198,7 @@ require('lspconfig').yamlls.setup {
     yaml = {
       schemas = {
         ["https://sharko.io/schemas/managed-clusters.v1.json"] = "**/managed-clusters.yaml",
-        ["https://sharko.io/schemas/addon-catalog.v1.json"]    = "**/addon-catalog.yaml",
+        ["https://sharko.io/schemas/addons-catalog.v1.json"]   = "**/addons-catalog.yaml",
       },
     },
   },
@@ -252,9 +239,8 @@ shape, you can edit the files by hand. The procedure for each file:
    For `managed-clusters.yaml`: the old top-level `clusters:` list moves
    verbatim under `spec.clusters:`.
 
-   For `addon-catalog.yaml`: the old top-level `applicationsets:` list
-   moves verbatim under `spec.applicationsets:`. If your file was named
-   `addons-catalog.yaml`, also rename it.
+   For `addons-catalog.yaml`: the old top-level `applicationsets:` list
+   moves verbatim under `spec.applicationsets:`.
 
 3. **Validate locally** with the CLI:
 
@@ -275,7 +261,7 @@ shape, you can edit the files by hand. The procedure for each file:
 If you have a worked example: the bootstrap templates that ship with
 v1.25 are the canonical reference shape — see
 `templates/bootstrap/configuration/managed-clusters.yaml` and
-`templates/bootstrap/configuration/addon-catalog.yaml` in the Sharko
+`templates/bootstrap/configuration/addons-catalog.yaml` in the Sharko
 repo.
 
 ---
@@ -323,4 +309,4 @@ lines and shows only failures + the summary count.
   Not part of the published docs site.
 - Source of truth schemas:
     - [`managed-clusters.v1.json`](https://sharko.io/schemas/managed-clusters.v1.json)
-    - [`addon-catalog.v1.json`](https://sharko.io/schemas/addon-catalog.v1.json)
+    - [`addons-catalog.v1.json`](https://sharko.io/schemas/addons-catalog.v1.json)

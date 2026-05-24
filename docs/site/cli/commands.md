@@ -80,7 +80,7 @@ Exits 0 on valid, 1 on schema errors (printed to stderr).
 
 Validate Sharko configuration YAML against the committed JSON Schema. Auto-detects the schema
 from the file's top-level `apiVersion: sharko.io/v1` + `kind:` fields, validates against the
-embedded `managed-clusters.v1.json` or `addon-catalog.v1.json`, and prints a human-readable
+embedded `managed-clusters.v1.json` or `addons-catalog.v1.json`, and prints a human-readable
 violation list with a direct link to the schema URL on failure.
 
 This is the CLI front end for the same read-time validator that `sharko serve` runs against
@@ -119,9 +119,8 @@ into, so `sharko validate-config .` in the repo root stays fast.
 **Example output (success):**
 
 ```
-✓ templates/bootstrap/configuration/addon-catalog.yaml
+✓ templates/bootstrap/configuration/addons-catalog.yaml
 ✓ templates/bootstrap/configuration/managed-clusters.yaml
-skip: templates/bootstrap/configuration/addons-catalog.yaml (not a Sharko-enveloped file)
 skip: templates/bootstrap/configuration/bootstrap-config.yaml (not a Sharko-enveloped file)
 ```
 

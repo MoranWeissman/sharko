@@ -407,7 +407,7 @@ clusters:
 }
 
 // ---------------------------------------------------------------------------
-// V125-1-9.2: addon-catalog envelope reader/writer + filename precedence
+// V125-1-9.2: addons-catalog envelope reader/writer
 // ---------------------------------------------------------------------------
 
 // legacyBareCatalogYAML is the pre-V125-1-9 on-disk shape — the bare
@@ -424,7 +424,7 @@ const legacyBareCatalogYAML = `applicationsets:
 // envelopedCatalogYAML mirrors legacyBareCatalogYAML wrapped in the
 // sharko.io/v1 envelope. Used to assert that the same logical content
 // round-trips through the enveloped reader path.
-const envelopedCatalogYAML = `# yaml-language-server: $schema=https://sharko.io/schemas/addon-catalog.v1.json
+const envelopedCatalogYAML = `# yaml-language-server: $schema=https://sharko.io/schemas/addons-catalog.v1.json
 apiVersion: sharko.io/v1
 kind: AddonCatalog
 metadata:
@@ -438,43 +438,10 @@ spec:
       namespace: cert-manager
 `
 
-// TestLoadCatalog_LegacyBareYAML_OldFilename_Accept proves back-compat: a
-// repo that has not yet migrated continues to deserialize through the
-// pre-V125-1-9 path. Same parser entry-point, same returned shape.
-func TestLoadCatalog_LegacyBareYAML_OldFilename_Accept(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	path := filepath.Join(dir, AddonCatalogLegacyFilename)
-	if err := os.WriteFile(path, []byte(legacyBareCatalogYAML), 0o600); err != nil {
-		t.Fatalf("seed legacy catalog: %v", err)
-	}
-
-	resolved, err := ResolveAddonCatalogPath(dir)
-	if err != nil {
-		t.Fatalf("ResolveAddonCatalogPath: %v", err)
-	}
-	if resolved != path {
-		t.Fatalf("resolved=%q want %q", resolved, path)
-	}
-
-	data, err := os.ReadFile(resolved)
-	if err != nil {
-		t.Fatalf("read resolved: %v", err)
-	}
-	entries, err := NewParser().ParseAddonsCatalog(data)
-	if err != nil {
-		t.Fatalf("ParseAddonsCatalog: %v", err)
-	}
-	if len(entries) != 1 || entries[0].Name != "cert-manager" {
-		t.Fatalf("unexpected entries: %#v", entries)
-	}
-}
-
-// TestLoadCatalog_LegacyBareYAML_NewFilename_Accept covers the transitional
-// state where an operator has renamed the file to the singular form but not
-// yet wrapped the body in the envelope. Reader must accept both axes
-// independently.
-func TestLoadCatalog_LegacyBareYAML_NewFilename_Accept(t *testing.T) {
+// TestLoadCatalog_LegacyBareYAML_Accept proves back-compat: a pre-envelope
+// repo continues to deserialize through the legacy bare-YAML path. Same
+// parser entry-point, same returned shape.
+func TestLoadCatalog_LegacyBareYAML_Accept(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, AddonCatalogFilename)
@@ -503,10 +470,10 @@ func TestLoadCatalog_LegacyBareYAML_NewFilename_Accept(t *testing.T) {
 	}
 }
 
-// TestLoadCatalog_EnvelopedYAML_NewFilename_Accept is the new happy path —
-// new filename + new envelope. Asserts the spec body deserializes losslessly
+// TestLoadCatalog_EnvelopedYAML_Accept is the new happy path — envelope shape
+// at the canonical filename. Asserts the spec body deserializes losslessly
 // into the same AddonCatalogEntry slice the legacy path returns.
-func TestLoadCatalog_EnvelopedYAML_NewFilename_Accept(t *testing.T) {
+func TestLoadCatalog_EnvelopedYAML_Accept(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, AddonCatalogFilename)
@@ -537,7 +504,7 @@ func TestLoadCatalog_EnvelopedYAML_NewFilename_Accept(t *testing.T) {
 }
 
 // TestLoadCatalog_EnvelopedWrongKind_Reject guards against accidentally
-// pointing the addon-catalog reader at a ManagedClusters envelope (or any
+// pointing the addons-catalog reader at a ManagedClusters envelope (or any
 // other Sharko kind). A foreign envelope is a structural bug — failing
 // loudly here prevents silent reconcile drift in V125-1-8.
 func TestLoadCatalog_EnvelopedWrongKind_Reject(t *testing.T) {
@@ -558,64 +525,21 @@ spec:
 	}
 }
 
-// TestLoadCatalog_BothFilenames_PrefersNew enforces the precedence rule from
-// the dispatch: when both filenames are present, the new singular name wins
-// and the legacy file is ignored with a WARN log line. The presence of the
-// warning is verified by capturing slog output (the message must mention
-// both paths so an operator can audit the divergence).
-func TestLoadCatalog_BothFilenames_PrefersNew(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	newPath := filepath.Join(dir, AddonCatalogFilename)
-	legacyPath := filepath.Join(dir, AddonCatalogLegacyFilename)
-
-	if err := os.WriteFile(newPath, []byte(envelopedCatalogYAML), 0o600); err != nil {
-		t.Fatalf("seed new: %v", err)
-	}
-	// Deliberately seed a DIFFERENT body at the legacy path so we can tell
-	// from the parsed result which file was actually read.
-	legacyBody := strings.Replace(legacyBareCatalogYAML, "cert-manager", "legacy-entry-should-be-ignored", 2)
-	if err := os.WriteFile(legacyPath, []byte(legacyBody), 0o600); err != nil {
-		t.Fatalf("seed legacy: %v", err)
-	}
-
-	resolved, err := ResolveAddonCatalogPath(dir)
-	if err != nil {
-		t.Fatalf("ResolveAddonCatalogPath: %v", err)
-	}
-	if resolved != newPath {
-		t.Fatalf("precedence broken: resolved=%q, want %q (new singular name)", resolved, newPath)
-	}
-
-	data, _ := os.ReadFile(resolved)
-	entries, err := NewParser().ParseAddonsCatalog(data)
-	if err != nil {
-		t.Fatalf("ParseAddonsCatalog: %v", err)
-	}
-	if entries[0].Name != "cert-manager" {
-		t.Fatalf("read wrong file: entries[0].Name=%q (legacy bled through)", entries[0].Name)
-	}
-}
-
-// TestSaveCatalog_AlwaysEmitsNewFilename + TestSaveCatalog_EmitsEnveloped
+// TestSaveCatalog_AlwaysEmitsCanonicalFilename + TestSaveCatalog_EmitsEnveloped
 // together prove the writer contract. The writer is a single function
 // (MarshalAddonCatalog) — there is no on-disk write path in this package,
 // so the filename guarantee is asserted at the constant level (every
 // caller spells out the constant rather than a string literal), and the
 // envelope shape is asserted on the marshalled bytes.
 
-func TestSaveCatalog_AlwaysEmitsNewFilename(t *testing.T) {
+func TestSaveCatalog_AlwaysEmitsCanonicalFilename(t *testing.T) {
 	t.Parallel()
 	// Static invariant — the canonical filename constant must remain the
-	// singular form. Drift here would mean writers landed an undocumented
+	// plural form. Drift here would mean writers landed an undocumented
 	// alias.
-	if AddonCatalogFilename != "addon-catalog.yaml" {
+	if AddonCatalogFilename != "addons-catalog.yaml" {
 		t.Fatalf("AddonCatalogFilename drifted: got %q, want %q",
-			AddonCatalogFilename, "addon-catalog.yaml")
-	}
-	if AddonCatalogLegacyFilename != "addons-catalog.yaml" {
-		t.Fatalf("AddonCatalogLegacyFilename drifted: got %q, want %q",
-			AddonCatalogLegacyFilename, "addons-catalog.yaml")
+			AddonCatalogFilename, "addons-catalog.yaml")
 	}
 }
 
@@ -779,7 +703,7 @@ spec:
 	if !strings.Contains(logOut, `"msg":"schema_validation_failed"`) {
 		t.Errorf("audit log missing schema_validation_failed event:\n%s", logOut)
 	}
-	if !strings.Contains(logOut, `"resource":"addon-catalog.yaml"`) {
+	if !strings.Contains(logOut, `"resource":"addons-catalog.yaml"`) {
 		t.Errorf("audit log missing resource field:\n%s", logOut)
 	}
 }

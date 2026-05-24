@@ -13,7 +13,7 @@ import (
 // ZG1-A.264.1 round-trip tests below — schema header on line 1,
 // apiVersion/kind/metadata/spec envelope, and one cert-manager entry the
 // complex-fields path can mutate.
-const envelopedKedaCatalog = `# yaml-language-server: $schema=https://sharko.io/schemas/addon-catalog.v1.json
+const envelopedKedaCatalog = `# yaml-language-server: $schema=https://sharko.io/schemas/addons-catalog.v1.json
 apiVersion: sharko.io/v1
 kind: AddonCatalog
 metadata:
@@ -29,8 +29,8 @@ spec:
 
 // catalogSchemaHeaderLine pins the canonical line-1 emission for the
 // shape-pinning regression test. Anything else here would break editor
-// inline validation against docs/schemas/addon-catalog.v1.json.
-const catalogSchemaHeaderLine = "# yaml-language-server: $schema=https://sharko.io/schemas/addon-catalog.v1.json"
+// inline validation against docs/schemas/addons-catalog.v1.json.
+const catalogSchemaHeaderLine = "# yaml-language-server: $schema=https://sharko.io/schemas/addons-catalog.v1.json"
 
 // assertEnvelopedComplexUpdate is the shared post-condition every
 // complex-fields update must satisfy after ZG1-A.264.1: schema header on
@@ -146,7 +146,7 @@ func TestConfigureAddon_AdditionalSources(t *testing.T) {
 // Before A.264.1 the complex-fields path (SyncOptions / AdditionalSources /
 // IgnoreDifferences / ExtraHelmValues) did its own bare yaml.Unmarshal +
 // yaml.Marshal cycle that silently stripped the V125-1-9.2 envelope
-// (apiVersion / kind / metadata / spec) from addon-catalog.yaml on every
+// (apiVersion / kind / metadata / spec) from addons-catalog.yaml on every
 // UPDATE — leaving the next reconciler read failing the IsEnveloped check.
 // The fix routes the branch through config.NewParser().ParseAddonsCatalog
 // and config.MarshalAddonCatalog so the envelope is preserved on read AND

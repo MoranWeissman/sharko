@@ -40,14 +40,10 @@ func (p *MockGitProvider) seedFiles() {
 	// external tooling pointed at it still resolve.
 	p.files["configuration/cluster-addons.yaml"] = []byte(clusterAddonsYAML)
 
-	// addon-catalog.yaml — the addon catalog (applicationsets format).
-	// The canonical filename is addon-catalog.yaml (singular) wrapped
-	// in the sharko.io/v1 envelope. The plural addons-catalog.yaml is
-	// a read-only alias; the stub below mirrors the bootstrap
-	// template's "MOVED" placeholder so any caller pointed at the old
-	// path resolves to a helpful message rather than 404.
-	p.files["configuration/addon-catalog.yaml"] = []byte(addonsCatalogYAML)
-	p.files["configuration/addons-catalog.yaml"] = []byte(addonsCatalogLegacyStub)
+	// addons-catalog.yaml — the addon catalog (applicationsets format).
+	// The canonical filename is addons-catalog.yaml (plural) wrapped
+	// in the sharko.io/v1 envelope.
+	p.files["configuration/addons-catalog.yaml"] = []byte(addonsCatalogYAML)
 
 	// Global values stubs
 	p.files["configuration/addons-global-values/cert-manager.yaml"] = []byte(`replicaCount: 1
@@ -374,21 +370,11 @@ spec:
         kube-prometheus-stack-version: "55.5.0"
 `
 
-// addonsCatalogLegacyStub is the body seeded at the legacy plural path
-// (configuration/addons-catalog.yaml) so demo callers that scripted against
-// the old filename hit a helpful "moved" placeholder instead of an error.
-// Matches the bootstrap template stub.
-const addonsCatalogLegacyStub = `# MOVED: this file is now at addon-catalog.yaml (singular).
-# The legacy filename remains a read-only alias through V125;
-# the alias will be removed in V126. Operators should rename
-# their local copy to addon-catalog.yaml at their convenience.
-`
-
-// addonsCatalogYAML is the fake configuration/addon-catalog.yaml in the
+// addonsCatalogYAML is the fake configuration/addons-catalog.yaml in the
 // sharko.io/v1 envelope shape. The applicationsets payload itself is
 // unchanged; only the wrapping frame and the editor schema header are
 // new.
-const addonsCatalogYAML = `# yaml-language-server: $schema=https://sharko.io/schemas/addon-catalog.v1.json
+const addonsCatalogYAML = `# yaml-language-server: $schema=https://sharko.io/schemas/addons-catalog.v1.json
 apiVersion: sharko.io/v1
 kind: AddonCatalog
 metadata:
