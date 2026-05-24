@@ -20,8 +20,7 @@ import (
 // initialAdminSecretName is the canonical name of the dedicated bootstrap
 // admin secret. Mirrors `internal/auth.InitialAdminSecretName`. We duplicate
 // the literal here (rather than importing internal/auth) to keep the
-// reset-admin CLI free of the auth package's transitive dependencies — the
-// same trade-off V124-6.3 made for resetGeneratePassword / resetDetectNamespace.
+// reset-admin CLI free of the auth package's transitive dependencies.
 const initialAdminSecretName = "sharko-initial-admin-secret"
 
 // envWriteInitialAdminSecret mirrors auth.EnvWriteInitialAdminSecret. We
@@ -95,11 +94,6 @@ type resetAdminResult struct {
 // per opt-out) the dedicated `sharko-initial-admin-secret` so kubectl-based
 // retrieval of the bootstrap password persists across rotations.
 //
-// V124-7.1 / BUG-025: previously this only deleted the dedicated secret on
-// rotation, which forced operators back to log-grep for every subsequent
-// rotation. We now rotate (delete-then-rewrite) so the secret continues to
-// reflect the CURRENT initial admin plaintext.
-//
 // Replace, not patch: we explicitly delete the old secret before writing a
 // new one (rather than patching `data.password`) so no stale fields, labels,
 // or annotations from a previous version of Sharko survive the rotation.
@@ -134,9 +128,9 @@ func runResetAdmin(ctx context.Context, clientset kubernetes.Interface, namespac
 
 	// Rotate (or delete-only, per opt-out) the dedicated initial-admin-secret.
 	if resetWriteInitialAdminSecretEnabled() {
-		// V124-7.1: rotate via delete-then-rewrite. This guarantees no stale
-		// fields (labels, annotations, extra data keys from a previous
-		// Sharko version) survive across the rotation — replace, not patch.
+		// Rotate via delete-then-rewrite so no stale fields (labels,
+		// annotations, extra data keys from a previous Sharko version)
+		// survive across the rotation — replace, not patch.
 		if err := deleteInitialAdminSecret(ctx, clientset, namespace); err != nil {
 			return result, fmt.Errorf("rotate initial-admin-secret (delete step): %w", err)
 		}
@@ -146,9 +140,8 @@ func runResetAdmin(ctx context.Context, clientset kubernetes.Interface, namespac
 		result.RewroteInitialAdminSecret = true
 	} else {
 		// Opt-out path: operator disabled the dedicated secret via
-		// `bootstrapAdmin.writeInitialSecret: false` (Helm). Preserve V124-6.3
-		// cleanup behavior — delete any stale secret but DO NOT recreate.
-		// Idempotent if the secret was never created.
+		// `bootstrapAdmin.writeInitialSecret: false` (Helm). Delete any
+		// stale secret but DO NOT recreate. Idempotent if never created.
 		err := clientset.CoreV1().Secrets(namespace).Delete(ctx, initialAdminSecretName, metav1.DeleteOptions{})
 		switch {
 		case err == nil:
@@ -168,9 +161,8 @@ func runResetAdmin(ctx context.Context, clientset kubernetes.Interface, namespac
 }
 
 // deleteInitialAdminSecret removes the dedicated bootstrap admin secret.
-// Idempotent on missing — V124-7 invariant: reset-admin always rotates,
-// so callers can rely on this returning nil whether or not the secret
-// previously existed.
+// Idempotent on missing — reset-admin always rotates, so callers can rely
+// on this returning nil whether or not the secret previously existed.
 func deleteInitialAdminSecret(ctx context.Context, clientset kubernetes.Interface, namespace string) error {
 	err := clientset.CoreV1().Secrets(namespace).Delete(ctx, initialAdminSecretName, metav1.DeleteOptions{})
 	if err == nil || errors.IsNotFound(err) {
@@ -184,16 +176,16 @@ func deleteInitialAdminSecret(ctx context.Context, clientset kubernetes.Interfac
 // (kept in sync deliberately — see initialAdminSecretName comment for why we
 // duplicate rather than import).
 //
-// The annotation `sharko.io/initial-secret: "rotated-on-reset-admin"` reflects
-// V124-7 behavior: the secret persists across `sharko reset-admin` rotations,
-// each rotation rewriting `data.password` to the new plaintext. Operators who
-// no longer need it can `kubectl delete` it manually at any time.
+// The annotation `sharko.io/initial-secret: "rotated-on-reset-admin"` marks
+// that the secret persists across `sharko reset-admin` rotations, each
+// rotation rewriting `data.password` to the new plaintext. Operators who no
+// longer need it can `kubectl delete` it manually at any time.
 //
 // This helper assumes the previous version (if any) has already been deleted
-// — callers in V124-7 do delete-then-write to enforce replace-not-patch
-// semantics. If a Create returns AlreadyExists (e.g. a racing reconciler
-// recreated it), we fall back to Update so reset-admin remains idempotent
-// against transient races.
+// — callers do delete-then-write to enforce replace-not-patch semantics. If
+// a Create returns AlreadyExists (e.g. a racing reconciler recreated it),
+// we fall back to Update so reset-admin remains idempotent against
+// transient races.
 func writeInitialAdminSecretCLI(ctx context.Context, clientset kubernetes.Interface, namespace, password string) error {
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
@@ -220,7 +212,7 @@ func writeInitialAdminSecretCLI(ctx context.Context, clientset kubernetes.Interf
 		}
 		// Race fallback: someone (or the auth-store reconciler) recreated the
 		// secret between our Delete and our Create. Update it instead so we
-		// still end up with the new plaintext + V124-7 annotation/labels.
+		// still end up with the new plaintext + annotation/labels.
 		existing, getErr := clientset.CoreV1().Secrets(namespace).Get(ctx, initialAdminSecretName, metav1.GetOptions{})
 		if getErr != nil {
 			return fmt.Errorf("get existing %s/%s for update: %w", namespace, initialAdminSecretName, getErr)

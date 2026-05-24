@@ -3,9 +3,8 @@
 // shared GitFake type in a real *http.Server so the same git-protocol
 // surface can be deployed as a Pod inside a kind cluster.
 //
-// Story: V125-1-13.x.1 — containerize the gitfake harness binary. Used by
-// downstream stories (13.x.2 onward) to give the Sharko pod a real
-// in-cluster git endpoint that the git-host allowlist can permit.
+// Used to give the Sharko pod a real in-cluster git endpoint that the
+// git-host allowlist can permit.
 //
 // Configuration via environment variables (all optional):
 //

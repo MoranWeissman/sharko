@@ -21,7 +21,7 @@ import (
 type GCPSecretManagerProvider struct{}
 
 // NewGCPSecretManagerProviderFromAddonConfig creates a provider backed by GCP
-// Secret Manager from the canonical AddonSecretProviderConfig (V125-1-11.3+).
+// Secret Manager from the canonical AddonSecretProviderConfig.
 // This function always returns an error — the provider is not yet implemented.
 // Community contributions welcome at https://github.com/MoranWeissman/sharko
 func NewGCPSecretManagerProviderFromAddonConfig(cfg AddonSecretProviderConfig) (*GCPSecretManagerProvider, error) {

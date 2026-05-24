@@ -36,10 +36,10 @@ func (s *ObservabilityService) GetOverview(ctx context.Context, ac *argocd.Clien
 	if err != nil {
 		return nil, fmt.Errorf("listing clusters: %w", err)
 	}
-	// BUG-038: filter out the host/management cluster (in-cluster) from
-	// observability. Sharko itself runs there; it is the control plane,
-	// not a workload target. Listing it as a "monitored cluster" misled
-	// operators into thinking the host was being managed by Sharko.
+	// Filter out the host/management cluster (in-cluster) from
+	// observability. Sharko itself runs there; it is the control
+	// plane, not a workload target. Listing it as a "monitored
+	// cluster" would mislead operators.
 	clusters := filterInClusterEntries(rawClusters)
 
 	clusterNames := make(map[string]bool)
@@ -450,8 +450,8 @@ func parseDuration(start, end string) time.Duration {
 // "in-cluster" OR by the in-cluster API server URL "https://kubernetes.default.svc".
 // Matching both axes keeps the filter robust against installations that
 // rename the in-cluster secret. Exported intentionally — the observability
-// service is the only consumer today (BUG-038), but the dashboard service
-// and any future "monitored clusters" listing should reuse this helper
+// service is the only consumer today, but the dashboard service and
+// any future "monitored clusters" listing should reuse this helper
 // rather than re-inventing the predicate.
 func isInClusterEntry(c models.ArgocdCluster) bool {
 	if c.Name == "in-cluster" {

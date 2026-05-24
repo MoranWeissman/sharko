@@ -19,8 +19,8 @@
 //     name, the alphabetically-smallest source URL wins. Reason
 //     recorded as ReasonAlphabeticalURLTiebreak.
 //  3. Defensive skip: snapshots whose Status is not StatusOK are
-//     ignored — even if they carry retained prior entries (see
-//     V123-1.2 §AC #3). The merger exposes only fresh data.
+//     ignored — even if they carry retained prior entries. The merger
+//     exposes only fresh data.
 //
 // Determinism: input order never affects output. Entries and
 // Conflicts are both sorted by Name; Losers within a Conflict are
@@ -55,7 +55,7 @@ const (
 // MergedCatalog is the effective in-memory index the API/UI handlers
 // read from. Entries is the sorted, de-duplicated list exposed to
 // callers; Conflicts is a diagnostic list surfaced on the future
-// /catalog/sources endpoint (V123-1.5).
+// /catalog/sources endpoint.
 type MergedCatalog struct {
 	// Entries are sorted by Name, deterministic.
 	Entries []MergedEntry

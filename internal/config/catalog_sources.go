@@ -25,9 +25,9 @@
 // Refresh interval bounds: minimum 1m (avoid hammering upstreams), maximum
 // 24h (keep freshness sane). Default 1h when unset.
 //
-// Consumers (landing in V123-1.2): read *CatalogSourcesConfig and build a
-// fetch loop. This package is intentionally stateless — it parses once at
-// startup and returns an immutable config.
+// Consumers read *CatalogSourcesConfig and build a fetch loop. This
+// package is intentionally stateless — it parses once at startup and
+// returns an immutable config.
 package config
 
 import (
@@ -43,8 +43,8 @@ import (
 
 // CatalogSource is a single third-party catalog URL configured by the
 // operator. Additional fields (e.g. optional sidecar URL, auth token ref)
-// may be added in later stories without breaking existing consumers — the
-// V123-1.1 contract is intentionally minimal.
+// may be added later without breaking existing consumers — the contract
+// here is intentionally minimal.
 type CatalogSource struct {
 	// URL is the canonical form of the HTTPS URL (lower-cased host,
 	// trailing slash on bare paths stripped).

@@ -14,22 +14,20 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Story V125-1-13.x.2 — In-cluster gitfake Deployment + Service primitive
+// In-cluster gitfake Deployment + Service primitive.
 //
-// installGitfakeIntoKind is the harness primitive that deploys a
-// gitfake-server Pod inside a kind cluster so the Sharko Pod can clone /
-// push against a git endpoint reachable from within the cluster network
-// (Service DNS). This unblocks helm-mode lifecycle tests whose git-host
-// allowlist would otherwise refuse the test's loopback or host.docker.internal
-// URL.
+// installGitfakeIntoKind deploys a gitfake-server Pod inside a kind
+// cluster so the Sharko Pod can clone / push against a git endpoint
+// reachable from within the cluster network (Service DNS). This
+// unblocks helm-mode lifecycle tests whose git-host allowlist would
+// otherwise refuse the test's loopback or host.docker.internal URL.
 //
-// The companion image is built by V125-1-13.x.1's `make build-gitfake-image`
-// target (Dockerfile at tests/e2e/harness/gitfake/Dockerfile, binary at
+// The companion image is built by `make build-gitfake-image`
+// (Dockerfile at tests/e2e/harness/gitfake/Dockerfile, binary at
 // tests/e2e/harness/gitfake/cmd/gitfake-server/). The Makefile pins
-// `SHARKO_GITFAKE_IMAGE_TAG ?= e2e-<git-short-sha>` so a fresh commit forces
-// a rebuild and a re-run on the same commit reuses the cached image. This
-// file mirrors that convention exactly so make-built images are reused by
-// installGitfakeIntoKind without surprise re-tagging.
+// `SHARKO_GITFAKE_IMAGE_TAG ?= e2e-<git-short-sha>` so a fresh commit
+// forces a rebuild and a re-run on the same commit reuses the cached
+// image.
 //
 // Implementation pattern intentionally mirrors installSharkoHelm in
 // sharko_helm.go: shell out to docker / kind / kubectl via exec.CommandContext,
@@ -52,7 +50,7 @@ const (
 
 // GitfakeInstallConfig declares knobs for installGitfakeIntoKind.
 //
-// Zero-value defaults match the V125-1-13.x.1 Makefile + binary defaults:
+// Zero-value defaults match the Makefile + binary defaults:
 // image tag from SHARKO_GITFAKE_IMAGE_TAG (or e2e-<short-sha>), default
 // namespace, service name "gitfake", repo "sharko-e2e" (the .git suffix is
 // applied by callers — RepoURL includes it; the binary accepts both forms).

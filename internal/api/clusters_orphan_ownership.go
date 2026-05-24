@@ -13,28 +13,27 @@ import (
 	"github.com/MoranWeissman/sharko/internal/clusterreconciler"
 )
 
-// V125-1-8.2 / V125-1-7 tightening — ownership-label gate helpers shared
-// between the orphan resolver (clusters_orphans.go) and the orphan-delete
-// handler (clusters_orphan_delete.go).
+// Ownership-label gate helpers shared between the orphan resolver
+// (clusters_orphans.go) and the orphan-delete handler
+// (clusters_orphan_delete.go).
 //
 // The canonical "Sharko owns this Secret" signal is the
-// `app.kubernetes.io/managed-by: sharko` label written by the Story 8.1
-// reconciler on every Secret it creates. Story 8.2 closes the V125-1-7
-// safety gap where the orphan surfaces double-claimed externally-created
-// Secrets that V125-2's Adopt flow will own.
+// `app.kubernetes.io/managed-by: sharko` label written by the
+// reconciler on every Secret it creates. Unlabeled Secrets are Adopt
+// territory and must NOT surface as orphans.
 //
 // Two helpers live here:
 //
 //  1. listSharkoOwnedSecretNames — read the set of sharko-labeled Secret
 //     names from the argocd namespace via the k8s client wired into the
 //     Server at startup. The orphan list resolver uses this to filter its
-//     output: only Secrets carrying the sharko label may surface as
-//     orphans (unlabeled = V125-2 Adopt territory).
+//     output.
 //
 //  2. getSecretIfPresent — fetch a named Secret so the orphan-delete
 //     handler can re-check the ownership label one final time before
-//     mutating live state. Returns (nil, nil) for NotFound so callers can
-//     branch cleanly on "Secret is gone" without unwrapping apierrors.
+//     mutating live state. Returns (nil, nil) for NotFound so callers
+//     can branch cleanly on "Secret is gone" without unwrapping
+//     apierrors.
 //
 // Both helpers are k8s-client-availability-aware: when the server has no
 // wired k8s client (test fixtures without argoReconcilerConfig, or a dev
@@ -50,15 +49,13 @@ import (
 // than proceeding with the delete sans label check.
 var errNoK8sClient = fmt.Errorf("no k8s client wired (argoReconcilerConfig is nil); cannot verify ownership label")
 
-// k8sClientAndNamespace pulls the K8s client + argocd namespace out of the
-// Server's argoReconcilerConfig. Returns (nil, "", false) when the config
-// is not wired — callers must branch on the returned bool.
+// k8sClientAndNamespace pulls the K8s client + argocd namespace out of
+// the Server's argoReconcilerConfig. Returns (nil, "", false) when the
+// config is not wired — callers must branch on the returned bool.
 //
-// The reason for the indirection: argoReconcilerConfig is the existing
-// startup-time wiring (see SetArgoReconcilerConfig + cmd/sharko/serve.go)
-// that holds both the k8s clientset and the argocd namespace. Story 8.2
-// deliberately reuses that wiring rather than introducing a new Server
-// field — fewer plumbing changes, and the two fields naturally co-vary.
+// argoReconcilerConfig is the existing startup-time wiring that holds
+// both the k8s clientset and the argocd namespace — reusing it avoids
+// adding a new Server field for two values that naturally co-vary.
 func (s *Server) k8sClientAndNamespace() (kubernetes.Interface, string, bool) {
 	if s.argoReconcilerConfig == nil || s.argoReconcilerConfig.K8sClient == nil {
 		return nil, "", false
@@ -80,9 +77,8 @@ func (s *Server) k8sClientAndNamespace() (kubernetes.Interface, string, bool) {
 // the same way (no surfaceable orphans), but the distinction matters for
 // the log line so operators see WHY the surface is empty.
 //
-// A list-API error degrades to nil + warn log (V125-1.5 dignified-
-// degrade pattern) — a transient k8s blip MUST NOT 500 the entire
-// /clusters page.
+// A list-API error degrades to nil + warn log (dignified-degrade pattern)
+// — a transient k8s blip MUST NOT 500 the entire /clusters page.
 func listSharkoOwnedSecretNames(ctx context.Context, k8sClient kubernetes.Interface, namespace string) map[string]struct{} {
 	if k8sClient == nil {
 		slog.Warn("[orphan] no k8s client wired — cannot enumerate sharko-owned Secrets",

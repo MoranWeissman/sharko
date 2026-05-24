@@ -37,10 +37,10 @@ package harness
 //   - "raw" wrappers (suffix `Raw`): return *http.Response so tests can
 //     assert the no-active-connection contract (502 / 503 + body shape)
 //     without the JSON helper turning the failure into a t.Fatalf. These
-//     are the tests that lock in the V124-4.3 / BUG-019 contract: every
-//     write endpoint validates its request body BEFORE dialling an
-//     upstream connection, so an empty/invalid POST returns 400 and a
-//     well-formed POST returns 502 with `no active <…> connection: …`.
+//     are the tests that lock in the validate-before-dial contract:
+//     every write endpoint validates its request body BEFORE dialling
+//     an upstream connection, so an empty/invalid POST returns 400 and
+//     a well-formed POST returns 502 with `no active <…> connection`.
 //
 // Once a downstream story (≥ 7-1.10) wires up an ArgoCD fake the raw
 // wrappers can be promoted to typed-result variants without touching the
@@ -139,7 +139,7 @@ func (c *Client) UnwrapGlobalsRaw(t *testing.T) *http.Response {
 }
 
 // UpgradeBatchRaw POSTs /api/v1/addons/upgrade-batch with the upgrades
-// map. Validation happens before the upstream dial (V124-4.5).
+// map. Validation happens before the upstream dial.
 func (c *Client) UpgradeBatchRaw(t *testing.T, upgrades map[string]string) *http.Response {
 	t.Helper()
 	body := map[string]any{"upgrades": upgrades}

@@ -21,7 +21,7 @@ import (
 type AzureKeyVaultProvider struct{}
 
 // NewAzureKeyVaultProviderFromAddonConfig creates a provider backed by Azure
-// Key Vault from the canonical AddonSecretProviderConfig (V125-1-11.3+).
+// Key Vault from the canonical AddonSecretProviderConfig.
 // This function always returns an error — the provider is not yet implemented.
 // Community contributions welcome at https://github.com/MoranWeissman/sharko
 func NewAzureKeyVaultProviderFromAddonConfig(cfg AddonSecretProviderConfig) (*AzureKeyVaultProvider, error) {

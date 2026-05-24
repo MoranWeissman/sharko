@@ -1,10 +1,9 @@
 package api
 
-// catalog_sources_refresh.go — V123-1.6: Tier-2 force-refresh of all
-// configured catalog sources. Synchronously re-fetches every third-party
-// catalog URL (from SHARKO_CATALOG_URLS) without waiting for the next
-// cadence tick, then returns the same response shape as
-// GET /catalog/sources.
+// catalog_sources_refresh.go — Tier-2 force-refresh of all configured
+// catalog sources. Synchronously re-fetches every third-party catalog
+// URL (from SHARKO_CATALOG_URLS) without waiting for the next cadence
+// tick, then returns the same response shape as GET /catalog/sources.
 //
 // Used by an admin verifying that a newly added source is reachable
 // without having to restart the process or wait for the ticker. The
@@ -43,12 +42,9 @@ const refreshCtxTimeout = 60 * time.Second
 // @Failure 503 {object} map[string]interface{} "Catalog not loaded"
 // @Router /catalog/sources/refresh [post]
 func (s *Server) handleRefreshCatalogSources(w http.ResponseWriter, r *http.Request) {
-	// V123-2.4 / B2 BLOCKER fix: catalog source refresh is Tier-2
-	// (admin-only, audit-logged). The handler historically lacked the
-	// authz gate, letting any authenticated operator/viewer drive a
-	// force-refresh — out of line with the documented tier classification.
-	// Gate first, before the catalog-loaded check, so callers without
-	// the role get a clean 403 regardless of catalog state.
+	// Catalog source refresh is Tier-2 (admin-only, audit-logged). Gate
+	// first, before the catalog-loaded check, so callers without the
+	// role get a clean 403 regardless of catalog state.
 	if !authz.RequireWithResponse(w, r, "catalog.sources.refresh") {
 		return
 	}

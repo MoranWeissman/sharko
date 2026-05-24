@@ -13,12 +13,6 @@ type argoManagerAdapter struct {
 	mgr *argosecrets.Manager
 }
 
-// V125-1-8.3 retirement: the previous Ensure method on this adapter was
-// removed alongside the orchestrator.ArgoSecretManager.Ensure interface
-// method. The concrete argosecrets.Manager.Ensure remains the single
-// owner of cluster-Secret writes — it is now invoked by the V125-1-8
-// reconciler (internal/clusterreconciler), not by orchestrator handlers.
-
 // SetAnnotation delegates to the real Manager.
 func (a *argoManagerAdapter) SetAnnotation(ctx context.Context, name, key, value string) error {
 	return a.mgr.SetAnnotation(ctx, name, key, value)

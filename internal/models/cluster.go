@@ -10,18 +10,16 @@ import (
 	"github.com/MoranWeissman/sharko/internal/schema"
 )
 
-// ManagedClustersSchemaHeader is the yaml-language-server header line written
-// as the first line of every Sharko-emitted managed-clusters.yaml file. The
-// URL is the V125-1-9 locked schema URL (see
-// docs/design/2026-05-12-v125-architectural-todos.md §4 and the V125-1-9
-// epic's "Schema URL hosting" locked OQ for the two-track redirect plan).
+// ManagedClustersSchemaHeader is the yaml-language-server header line
+// written as the first line of every Sharko-emitted
+// managed-clusters.yaml file.
 const ManagedClustersSchemaHeader = "# yaml-language-server: $schema=https://sharko.io/schemas/managed-clusters.v1.json"
 
 // ManagedClusterEntry is one row in the spec.clusters array of a
 // managed-clusters.yaml document. Field semantics:
 //
-//   - Name: required cluster identifier; matches the ArgoCD cluster Secret
-//     name (cluster-<Name>) the V125-1-8 reconciler will manage.
+//   - Name: required cluster identifier; matches the ArgoCD cluster
+//     Secret name (cluster-<Name>) the reconciler manages.
 //   - SecretPath: optional explicit path to the cluster's credentials in the
 //     credentials provider (e.g. Vault path, AWS Secrets Manager path). When
 //     empty, the credentials provider derives a default path from Name.
@@ -62,43 +60,33 @@ type ManagedClustersDoc = schema.Envelope[ManagedClustersSpec]
 // ManagedClustersMetadataName is the conventional metadata.name value
 // emitted by SaveManagedClusters. It mirrors the example envelope in
 // docs/design/2026-05-12-v125-architectural-todos.md lines 100-114. The
-// V125-1-9 reader does not enforce the value — any non-empty name passes
-// the structural read — but the writer always emits this constant so that
+// reader does not enforce the value — any non-empty name passes the
+// structural read — but the writer always emits this constant so that
 // freshly-rendered files are byte-identical regardless of which Sharko
 // installation rendered them.
 const ManagedClustersMetadataName = "managed-clusters"
 
 // LoadManagedClusters parses the on-disk bytes of a managed-clusters.yaml
-// document and returns its spec. The function accepts BOTH shapes during
-// the V125-1-9 → V126 transition window:
+// document and returns its spec. The function accepts BOTH shapes:
 //
 //   - **Legacy bare YAML** (no apiVersion) — unmarshalled directly as a
-//     ManagedClustersSpec. This is the shape every pre-V125-1-9 Sharko
-//     installation has on disk; the reader stays back-compat until the
-//     V126 cleanup (see the V125-1-9 epic's "Filename alias removal
-//     window" locked OQ). Legacy bodies SKIP JSON Schema validation —
-//     the V125-1-9 design contract is that pre-envelope files keep
-//     working as-is; introducing validation on the legacy path would
-//     break every existing user repo on upgrade day.
+//     ManagedClustersSpec. Legacy bodies SKIP JSON Schema validation;
+//     pre-envelope files keep working as-is.
 //   - **Enveloped YAML** (apiVersion: sharko.io/v1, kind: ManagedClusters)
-//     — JSON-Schema-validated against docs/schemas/managed-clusters.v1.json
-//     (Story 9.4), then unmarshalled into ManagedClustersDoc; the spec
-//     field is returned. An envelope whose kind is not ManagedClusters
-//     (e.g. the wrong file handed to the wrong loader) returns an
-//     explicit error so the caller surfaces "wrong document type"
-//     instead of silently treating it as an empty clusters list.
+//     — JSON-Schema-validated against docs/schemas/managed-clusters.v1.json,
+//     then unmarshalled into ManagedClustersDoc; the spec field is
+//     returned. An envelope whose kind is not ManagedClusters (e.g.
+//     the wrong file handed to the wrong loader) returns an explicit
+//     error so the caller surfaces "wrong document type" instead of
+//     silently treating it as an empty clusters list.
 //
 // Detection is delegated to schema.IsEnveloped so the two reader paths
-// (managed-clusters and addon-catalog, the latter landing in Story 9.2)
-// share one routing primitive.
+// (managed-clusters and addon-catalog) share one routing primitive.
 //
-// Read-time JSON Schema validation (V125-1-9.4): the enveloped branch
-// runs the body through schema.DefaultValidator().Validate before
-// unmarshal. A validation failure returns the *schema.ValidationFailure
-// to the caller and emits a slog.Error with the full violation list
-// (via schema.LogValidationFailure) so an operator who has corrupted
-// the file sees the same audit-log entry the reconciler would have
-// emitted on a silent failure. Per the design doc §4 line 167: malformed
+// Read-time JSON Schema validation: the enveloped branch runs the body
+// through schema.DefaultValidator().Validate before unmarshal. A
+// validation failure returns the *schema.ValidationFailure to the
+// caller and emits a slog.Error with the full violation list. Malformed
 // files are rejected with an audit-logged error rather than a silent
 // reconcile failure.
 func LoadManagedClusters(body []byte) (ManagedClustersSpec, error) {
@@ -113,14 +101,13 @@ func LoadManagedClusters(body []byte) (ManagedClustersSpec, error) {
 	}
 
 	if enveloped {
-		// Peek the kind BEFORE schema validation. Story 9.4 contract:
-		// the wrong-kind guard (an envelope with apiVersion sharko.io/v1
-		// but a kind other than ManagedClusters) emits the SAME
-		// actionable error message the pre-9.4 reader produced — the
-		// V125-1-9.1 tests pin the format and downstream consumers
-		// (Story 9.5's CLI, V125-1-8's reconciler audit log) depend
-		// on it. Running validation first would surface the generic
-		// "kind: value must be ..." schema violation instead.
+		// Peek the kind BEFORE schema validation. The wrong-kind guard
+		// (an envelope with apiVersion sharko.io/v1 but a kind other
+		// than ManagedClusters) must emit the canonical actionable
+		// error message that downstream consumers (validate-config
+		// CLI, reconciler audit log) depend on — running validation
+		// first would surface the generic "kind: value must be ..."
+		// schema violation instead.
 		var doc ManagedClustersDoc
 		if err := yaml.Unmarshal(body, &doc); err != nil {
 			return ManagedClustersSpec{}, fmt.Errorf("parsing managed-clusters envelope: %w", err)
@@ -132,18 +119,16 @@ func LoadManagedClusters(body []byte) (ManagedClustersSpec, error) {
 			)
 		}
 
-		// Story 9.4 — JSON Schema validation on the enveloped path
-		// only, AFTER the wrong-kind check so the error precedence
-		// matches the pre-9.4 reader. Legacy bare YAML deliberately
-		// skips this step (see docstring back-compat contract).
+		// JSON Schema validation on the enveloped path only, AFTER the
+		// wrong-kind check so the error precedence is stable. Legacy
+		// bare YAML deliberately skips this step.
 		//
 		// If DefaultValidator returned an error (embed assets failed
-		// to compile — a build-time bug, not a runtime data problem),
-		// we deliberately do NOT block the read: the upstream
-		// envelope/structural checks already fired above, and a
-		// panic-on-read would brick the server on a corrupt build.
-		// The build-time invariant (TestNewValidator passes) is the
-		// actual gate.
+		// to compile — a build-time bug, not runtime data), we
+		// deliberately do NOT block the read: upstream
+		// envelope/structural checks already fired and a panic-on-read
+		// would brick the server on a corrupt build. The build-time
+		// invariant (TestNewValidator) is the actual gate.
 		if validator, vErr := schema.DefaultValidator(); vErr == nil && validator != nil {
 			if err := validator.Validate(schema.KindManagedClusters, body); err != nil {
 				var vf *schema.ValidationFailure
@@ -159,7 +144,7 @@ func LoadManagedClusters(body []byte) (ManagedClustersSpec, error) {
 	// Legacy bare YAML: unmarshal directly as a spec. The legacy shape's
 	// top-level keys are exactly ManagedClustersSpec's yaml-tagged fields
 	// (clusters:), so the same struct shape works for both paths.
-	// SKIPS Story 9.4's JSON Schema validation by design.
+	// SKIPS JSON Schema validation by design.
 	var spec ManagedClustersSpec
 	if err := yaml.Unmarshal(body, &spec); err != nil {
 		return ManagedClustersSpec{}, fmt.Errorf("parsing managed-clusters: %w", err)
@@ -182,11 +167,11 @@ func LoadManagedClusters(body []byte) (ManagedClustersSpec, error) {
 // existing line-level mutators in internal/gitops/yaml_mutator.go are NOT
 // replaced by this function in Story 9.1 — they continue to perform
 // in-place edits that preserve comments and authoring formatting. The
-// reconciler-driven design landing in V125-1-8 will retire those mutator
+// The reconciler-driven design will eventually retire those mutator
 // paths; until then, Sharko's read side handles both shapes (via
-// LoadManagedClusters) and write side picks the appropriate tool for the
-// edit (whole-file regenerate → SaveManagedClusters; in-place mutate →
-// gitops mutator).
+// LoadManagedClusters) and the write side picks the appropriate tool
+// for the edit (whole-file regenerate → SaveManagedClusters; in-place
+// mutate → gitops mutator).
 func SaveManagedClusters(spec ManagedClustersSpec) ([]byte, error) {
 	doc := ManagedClustersDoc{
 		APIVersion: schema.APIVersion,
@@ -237,15 +222,13 @@ type ClusterHealthStats struct {
 // opened but not yet merged. The cluster itself is NOT in
 // managed-clusters.yaml (and may or may not yet be in ArgoCD), so it must be
 // surfaced as a distinct lifecycle state — neither "managed" nor
-// "discovered/not_in_git" — to avoid the V125-1.5 family of UX bugs
-// (BUG-050..055) where a pending-PR cluster appeared as if it half-existed
-// across multiple unrelated panels.
+// "discovered/not_in_git" — to avoid the UX bugs where a pending-PR
+// cluster appeared as if it half-existed across multiple panels.
 //
-// V125-1.5: ClusterName/PRURL/Branch are populated from the GitHub provider's
-// open-PRs list, filtered by the registration-PR title pattern emitted by
-// the orchestrator (see internal/orchestrator/git_helpers.go's
-// findOpenPRForCluster — same matching contract). OpenedAt is the upstream
-// PR's createdAt timestamp (RFC3339 string from the provider).
+// ClusterName/PRURL/Branch are populated from the GitHub provider's
+// open-PRs list, filtered by the registration-PR title pattern emitted
+// by the orchestrator (see findOpenPRForCluster — same matching
+// contract). OpenedAt is the upstream PR's createdAt timestamp.
 type PendingRegistration struct {
 	ClusterName string `json:"cluster_name"`
 	PRURL       string `json:"pr_url"`
@@ -258,16 +241,14 @@ type PendingRegistration struct {
 // — i.e. a cluster Secret left behind in the live argocd ns after a
 // registration PR was closed without merging (or after some other
 // abandonment path). Surfaced as its own lifecycle state so the user has a
-// recovery action ("delete the orphan Secret"); see V125-1-7 / BUG-058.
+// recovery action ("delete the orphan Secret").
 //
-// Production diagnosis: internal/orchestrator/cluster.go:408's manual-mode
-// register path falls through to a direct ArgoCD API RegisterCluster call
-// when argoSecretManager is nil + PRAutoMerge is false, which writes the
-// cluster Secret BEFORE the PR opens. Closing the PR without merging
-// leaves that Secret behind. V125-1-5's pending-PR filter masked it while
-// the PR was open; once closed, it surfaced in `not_in_git`. V125-1-8
-// closes the bug class architecturally by deferring the ArgoCD register
-// until post-PR-merge — this struct is the MVP unblock recovery surface.
+// Background: an older manual-mode register path would fall through to
+// a direct ArgoCD API RegisterCluster call, writing the cluster Secret
+// BEFORE the PR opened. Closing the PR without merging left that
+// Secret behind. The current reconciler defers the ArgoCD register
+// until post-PR-merge so new orphans should not be created — this
+// struct remains as the recovery surface for any orphans that exist.
 //
 // LastSeenAt is the response time of the orphan resolver call (i.e. "now"
 // at API-handler time). The ArgoCD cluster Secret API exposes no stable
@@ -284,17 +265,16 @@ type OrphanRegistration struct {
 // ClustersResponse is the API response for listing clusters.
 //
 // PendingRegistrations and OrphanRegistrations are always non-nil slices
-// (default `[]`) — V125-1.4 hit a nil-array crash on the frontend's
-// similar dry-run path; we do not repeat the lesson here. An empty slice
-// means there are no matching items (or the underlying provider call
-// degraded; see the handler for the V124-22 dignified-degrade pattern).
+// (default `[]`) — never let a nil array reach the FE. An empty slice
+// means no matching items (or the underlying provider call degraded;
+// see the handler for the dignified-degrade pattern).
 type ClustersResponse struct {
 	Clusters             []Cluster             `json:"clusters"`
 	HealthStats          *ClusterHealthStats   `json:"health_stats,omitempty"`
 	PendingRegistrations []PendingRegistration `json:"pending_registrations"`
-	// OrphanRegistrations: V125-1-7 / BUG-058. ArgoCD cluster Secrets that
-	// have no managed-clusters.yaml entry AND no open registration PR. The
-	// FE renders these in a dedicated "Cancelled / Orphan Registrations"
+	// OrphanRegistrations: ArgoCD cluster Secrets that have no
+	// managed-clusters.yaml entry AND no open registration PR. The FE
+	// renders these in a dedicated "Cancelled / Orphan Registrations"
 	// section with a per-row Delete cluster Secret button.
 	OrphanRegistrations []OrphanRegistration `json:"orphan_registrations"`
 }

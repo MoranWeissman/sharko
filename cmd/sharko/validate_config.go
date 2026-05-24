@@ -1,34 +1,13 @@
-// V125-1-9 Story 9.5 — `sharko validate-config` CLI subcommand.
+// `sharko validate-config` CLI subcommand — operator-facing front end for the
+// read-time JSON Schema validator (internal/schema/validator.go).
 //
-// This file is the operator-facing front end for the read-time JSON Schema
-// validator that landed in Story 9.4 (internal/schema/validator.go). The
-// command serves two related use cases:
-//
-//  1. Interactive: an operator authoring a managed-clusters.yaml or
-//     addon-catalog.yaml file locally wants to know "is this valid?"
-//     BEFORE they commit + push and discover the answer in a CI failure
-//     three minutes later.
-//
-//  2. Automated: the validate-sharko-config GitHub Actions job (see
-//     .github/workflows/ci.yml) shells out to this binary on every
-//     changed YAML file in a PR diff. Per-file auto-skip of non-Sharko
-//     YAML means the CI job doesn't have to maintain its own
-//     allow/block list — the binary itself decides what's Sharko-owned.
-//
-// Naming: this command is deliberately NOT a rename of the existing
-// `sharko validate` (cmd/sharko/validate.go), which is a legacy
-// pre-envelope validator over the bare-YAML shape. The two coexist
-// during V125 so users with old workflows don't break; the legacy
-// command will be removed in V126 alongside the legacy reader path
-// (per Story 9.6 migration runbook).
-//
-// Exit codes follow the standard CLI contract:
+// Exit codes:
 //
 //	0 = all inputs validated (or were correctly skipped as non-Sharko)
 //	1 = at least one input failed validation
 //
-// Any internal error (validator construction failure, unreadable path)
-// is wrapped through cobra's RunE → Execute() → os.Exit(1) chain.
+// Note: this command is distinct from the legacy `sharko validate`
+// (cmd/sharko/validate.go), which is a bare-YAML pre-envelope validator.
 package main
 
 import (

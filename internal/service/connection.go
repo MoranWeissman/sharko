@@ -23,15 +23,13 @@ import (
 // service), so it's safe to expose and tells the user exactly which input
 // to fix.
 //
-// Closes V124-3.3 (M4 — connections validation should be 400, not 500).
-//
 // Currently wrapped at:
 //   - Create / Update — when ParseRepoURL fails (bad git URL)
 //
-// Add new wrap sites whenever a method validates user input and returns an
-// error the operator can act on (missing field, malformed value, bad enum,
-// etc.). DO NOT wrap upstream-service errors with it — those have their own
-// classification path (writeUpstreamError, V124-3.2).
+// Add new wrap sites whenever a method validates user input and returns
+// an error the operator can act on (missing field, malformed value, bad
+// enum, etc.). DO NOT wrap upstream-service errors with it — those have
+// their own classification path (writeUpstreamError).
 var ErrValidation = errors.New("validation failed")
 
 // ConnectionService manages connections and provides active provider instances.
@@ -39,7 +37,7 @@ type ConnectionService struct {
 	store               config.Store
 	devMode             bool // when true, falls back to env vars for missing credentials
 	gitProviderOverride gitprovider.GitProvider     // when set, returned by GetActiveGitProvider (demo mode)
-	argocdClientOverride orchestrator.ArgocdClient  // when set, returned by GetActiveOrchestratorArgocdClient (test seam — V124-22)
+	argocdClientOverride orchestrator.ArgocdClient  // when set, returned by GetActiveOrchestratorArgocdClient (test seam)
 }
 
 // NewConnectionService creates a new ConnectionService.
@@ -66,25 +64,16 @@ func (s *ConnectionService) List() (*models.ConnectionsListResponse, error) {
 
 	responses := make([]models.ConnectionResponse, 0, len(connections))
 	for _, c := range connections {
-		// V124-4.2 / BUG-017 defensive read-side guard, broadened by V124-6.2 /
-		// BUG-022. Pre-V124-4 the Create path persisted entries with missing
-		// required fields on `POST {}`. Those are now rejected at write time
-		// (validateConnectionRequest), but stores that already contain such
-		// garbage (e.g. the maintainer's demo cluster from the BUG-017
-		// reproducer) would still surface them via List.
-		//
-		// V124-4.2 only checked `Name == ""`, which let through a record with
-		// a non-empty name but empty git.provider / repo identifiers — exactly
-		// the case the maintainer's 2026-05-08 walkthrough reproduced. We now
-		// run the full required-field check (mirrors the create-time validator
-		// — see validateConnection) and skip ANY connection missing a required
-		// field, with a structured log naming the missing fields so operators
-		// can diagnose without grep-archaeology.
-		//
-		// No destructive on-disk migration — pure read-time filter. A future
-		// operator-driven cleanup remains possible.
+		// Defensive read-side guard. Write-time validation
+		// (validateConnectionRequest) rejects entries with missing
+		// required fields, but stores may already contain such legacy
+		// records. We run the full required-field check (mirrors the
+		// create-time validator — see validateConnection) and skip
+		// ANY connection missing a required field, with a structured
+		// log naming the missing fields. No destructive on-disk
+		// migration — pure read-time filter.
 		if missing := missingRequiredConnectionFields(c); len(missing) > 0 {
-			slog.Warn("connection skipped: required fields empty (legacy garbage from pre-V124-4 store)",
+			slog.Warn("connection skipped: required fields empty (legacy store entry)",
 				"name", c.Name,
 				"missing", missing,
 				"component", "connection-service")
@@ -103,15 +92,14 @@ func (s *ConnectionService) List() (*models.ConnectionsListResponse, error) {
 //
 // Validation errors (currently: malformed Git URL) are wrapped with
 // ErrValidation so the API layer can surface them as HTTP 400 with the
-// underlying message visible to the operator (V124-3.3 / M4). Wrapping
-// preserves the original error chain — callers can still errors.As for
-// the concrete cause if they need it.
+// underlying message visible to the operator. Wrapping preserves the
+// original error chain — callers can still errors.As for the concrete
+// cause if they need it.
 func (s *ConnectionService) Create(req models.CreateConnectionRequest) error {
-	// V124-10 / BUG-028: auto-derive git.provider from the URL host when the
-	// caller didn't supply one. The FirstRunWizard's payload only carries
-	// repo_url + token (no provider field), so without this every wizard
-	// submission would fall straight into V124-4.2's required-field gate
-	// with "git.provider is required".
+	// Auto-derive git.provider from the URL host when the caller didn't
+	// supply one. The FirstRunWizard's payload only carries repo_url +
+	// token (no provider field); without this every wizard submission
+	// would fail the required-field gate with "git.provider is required".
 	//
 	// Operator-supplied value wins — derivation only runs when Provider is
 	// empty. An explicit-but-unsupported value (e.g. "gitlab") still falls
@@ -126,9 +114,9 @@ func (s *ConnectionService) Create(req models.CreateConnectionRequest) error {
 		req.Git.Provider = models.GitProviderType(derived)
 	}
 
-	// V124-4.2 / BUG-017: required-field validation runs before any other
-	// processing so an empty `{}` body fails fast with a 400 instead of
-	// persisting a name="default" placeholder with no usable Git config.
+	// Required-field validation runs before any other processing so an
+	// empty `{}` body fails fast with a 400 instead of persisting a
+	// name="default" placeholder with no usable Git config.
 	//
 	// "Required" here is the minimum a connection needs to be useful:
 	// a Git provider type AND a way to identify the repo (either an
@@ -159,10 +147,10 @@ func (s *ConnectionService) Create(req models.CreateConnectionRequest) error {
 // deriveProviderFromURL returns the canonical Sharko Git provider name
 // ("github" or "azuredevops") inferred from the host portion of repoURL.
 //
-// V124-10 / BUG-028: the FirstRunWizard sends only repo_url + token in its
-// payload (no provider field). Without auto-derivation the create flow hits
-// V124-4.2's required-field gate ("git.provider is required") and the
-// wizard wedges at the step 3 → 4 transition.
+// The FirstRunWizard sends only repo_url + token in its payload (no
+// provider field). Without auto-derivation the create flow hits the
+// required-field gate ("git.provider is required") and the wizard
+// wedges at the step 3 → 4 transition.
 //
 // Why a separate helper rather than reusing models.GitRepoConfig.ParseRepoURL:
 // ParseRepoURL treats every non-Azure host as GitHub Enterprise, so
@@ -175,14 +163,12 @@ func (s *ConnectionService) Create(req models.CreateConnectionRequest) error {
 //   - GitHub:      github.com, *.github.com (GitHub Enterprise w/ subdomain)
 //   - Azure DevOps: dev.azure.com, *.visualstudio.com (legacy ADO host)
 //
-// V125-1-13.x.3 — test-only escape hatch:
-// Hosts listed in the SHARKO_E2E_GIT_HOSTS_ALLOWLIST env var (comma-separated,
-// whitespace-trimmed, case-insensitive, exact match — no wildcards) are
-// accepted and resolved to GitProviderGitHub. This unblocks helm-mode e2e
-// tests that need to point at an in-cluster gitfake URL (e.g.
-// gitfake.default.svc.cluster.local) without hardcoding that hostname into
-// the production whitelist. Empty/unset env = zero behavior change: the
-// codepath short-circuits before any string ops.
+// Test-only escape hatch: Hosts listed in SHARKO_E2E_GIT_HOSTS_ALLOWLIST
+// (comma-separated, whitespace-trimmed, case-insensitive, exact match —
+// no wildcards) are accepted and resolved to GitProviderGitHub. This
+// unblocks helm-mode e2e tests that need to point at an in-cluster
+// gitfake URL without hardcoding that hostname into the production
+// whitelist. Empty/unset env = zero behavior change.
 //
 // All errors wrap ErrValidation so the API handler returns 400.
 func deriveProviderFromURL(repoURL string) (string, error) {
@@ -198,8 +184,8 @@ func deriveProviderFromURL(repoURL string) (string, error) {
 		return string(models.GitProviderAzureDevOps), nil
 	}
 
-	// V125-1-13.x.3 — test-only opt-in env-var allowlist. Short-circuit on
-	// empty/unset so the steady-state (production) path does zero work.
+	// Test-only opt-in env-var allowlist. Short-circuit on empty/unset
+	// so the steady-state (production) path does zero work.
 	if extra := os.Getenv("SHARKO_E2E_GIT_HOSTS_ALLOWLIST"); extra != "" {
 		for _, h := range strings.Split(extra, ",") {
 			h = strings.TrimSpace(strings.ToLower(h))
@@ -217,8 +203,7 @@ func deriveProviderFromURL(repoURL string) (string, error) {
 // minimum fields needed for a usable connection. All errors are wrapped with
 // ErrValidation so handlers surface them as 400 with the underlying message.
 //
-// Rules (V124-4.2 / BUG-017, broadened internally by V124-6.2 / BUG-022 to
-// share the missing-fields helper with the read-side guard):
+// Rules (shares the missing-fields helper with the read-side guard):
 //   - git.provider must be set (so we know which Git backend to use)
 //   - git.provider must be one of the supported values
 //   - either git.repo_url is set (parsed downstream) OR the per-provider
@@ -278,22 +263,18 @@ func MissingRequiredConnectionFieldsForTest(c models.Connection) []string {
 // for a Connection, in canonical order. Used by both:
 //
 //   - validateConnectionRequest (write-time, returns ErrValidation)
-//   - List() defensive read-side guard (V124-4.2 + V124-6.2 / BUG-022)
+//   - List() defensive read-side guard
 //
-// Returning a list (rather than a single error) lets the read-side guard log
-// every missing field at once — operators tracing pre-V124-4 garbage records
-// see the full picture without re-running the check repeatedly.
+// Returning a list (rather than a single error) lets the read-side
+// guard log every missing field at once — operators see the full
+// picture without re-running the check repeatedly.
 //
-// "Required" mirrors what V124-4.2 made required at write time. We do NOT add
-// new required fields here without also adding them to the create-time
+// "Required" mirrors what the create-time validator enforces. Do NOT
+// add new required fields here without also adding them to the
 // validator — that would split the read-side and write-side contracts.
 //
-// V124-6.2 SCOPE NOTE: connection.Name is NOT in this list because the
-// read-side caller (`List()`) already filtered empty-name entries via this
-// helper's predecessor (V124-4.2). We keep that contract — empty-name is one
-// of the missing-fields conditions, surfaced under the canonical key
-// "name". Callers can treat "name" specially if they need to keep the old
-// wording (e.g., for backward-compatible logs).
+// connection.Name is INCLUDED in this list: empty-name surfaces under
+// the canonical key "name", which the caller can treat specially.
 func missingRequiredConnectionFields(c models.Connection) []string {
 	var missing []string
 
@@ -400,10 +381,10 @@ func (s *ConnectionService) GetActiveArgocdClient() (*argocd.Client, error) {
 	return s.buildArgocdClient(conn)
 }
 
-// SetArgocdClientOverride installs a fake orchestrator.ArgocdClient returned
-// by GetActiveOrchestratorArgocdClient. Used by repo-status tests (V124-22 /
-// BUG-046) to inject a mock ArgoCD probe without spinning up a real client.
-// Production code never sets this; in tests it's the analogue of
+// SetArgocdClientOverride installs a fake orchestrator.ArgocdClient
+// returned by GetActiveOrchestratorArgocdClient. Used by repo-status
+// tests to inject a mock ArgoCD probe without spinning up a real
+// client. Production code never sets this; it's the analogue of
 // SetGitProviderOverride.
 func (s *ConnectionService) SetArgocdClientOverride(c orchestrator.ArgocdClient) {
 	s.argocdClientOverride = c
@@ -414,10 +395,10 @@ func (s *ConnectionService) SetArgocdClientOverride(c orchestrator.ArgocdClient)
 // tests can inject a fake without going through buildArgocdClient (which
 // requires a real ArgoCD URL + token).
 //
-// V124-22 / BUG-046: separated from GetActiveArgocdClient (which returns
-// the concrete *argocd.Client used by every other handler) to avoid
-// changing every existing call site for one new caller (the
-// /repo/status handler's bootstrap-health probe).
+// Separated from GetActiveArgocdClient (which returns the concrete
+// *argocd.Client used by every other handler) to avoid changing every
+// existing call site for one new caller (the /repo/status handler's
+// bootstrap-health probe).
 func (s *ConnectionService) GetActiveOrchestratorArgocdClient() (orchestrator.ArgocdClient, error) {
 	if s.argocdClientOverride != nil {
 		return s.argocdClientOverride, nil

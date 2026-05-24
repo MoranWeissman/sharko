@@ -27,7 +27,7 @@ var validClusterNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]*$`)
 // @Description Registers a new cluster in ArgoCD and creates its GitOps configuration.
 // @Description Pass "dry_run": true to preview what would happen without making changes.
 // @Description Provider may be "eks" (default; uses configured secrets provider) or
-// @Description "kubeconfig" (V125-1.1; caller supplies kubeconfig YAML inline via the
+// @Description "kubeconfig" (caller supplies kubeconfig YAML inline via the
 // @Description "kubeconfig" field — bearer-token auth only).
 // @Tags clusters
 // @Accept json
@@ -41,7 +41,7 @@ var validClusterNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]*$`)
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 409 {object} map[string]interface{} "Cluster already exists"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
-// @Failure 503 {object} map[string]interface{} "Credentials provider not configured (V124-4.1; eks provider only)"
+// @Failure 503 {object} map[string]interface{} "Credentials provider not configured (eks provider only)"
 // @Router /clusters [post]
 // handleRegisterCluster handles POST /api/v1/clusters — register a new cluster.
 func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
@@ -49,11 +49,9 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// V124-4.5 (BUG-019 class): decode + validate request body BEFORE any
-	// upstream call. Pre-V124-4 the handler resolved ArgoCD + Git provider
-	// connections first, so an empty body burned external API quota and
-	// returned a confusing upstream-error message instead of the field-
-	// specific validation message.
+	// Decode + validate request body BEFORE any upstream call so that
+	// an empty body doesn't burn external API quota or return a
+	// confusing upstream-error message.
 	var req orchestrator.RegisterClusterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
@@ -68,12 +66,12 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// V125-1.1: provider-scoped field validation.
+	// Provider-scoped field validation.
 	//
 	// The two registration paths use disjoint sets of request fields and
 	// must reject cross-provider field bleed (a kubeconfig request that
 	// also fills in role_arn is almost certainly a UI bug; an EKS request
-	// that pastes a kubeconfig wants the kubeconfig path).  Catching this
+	// that pastes a kubeconfig wants the kubeconfig path). Catching this
 	// at the handler edge keeps the orchestrator branch logic
 	// straightforward and gives the caller a clear, field-specific 400.
 	switch req.Provider {
@@ -97,9 +95,8 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// EKS path still needs the secrets provider configured at
-		// runtime; preserve the original V124-4.1 503 response.  The
-		// kubeconfig path explicitly does NOT require credProvider —
-		// that's the whole point of the inline path for kind users.
+		// runtime — return 503. The kubeconfig path explicitly does
+		// NOT require credProvider (the whole point of the inline path).
 		if s.credProvider == nil {
 			writeMissingProviderError(w)
 			return
@@ -161,8 +158,8 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusMultiStatus
 	}
 
-	// V125-1.1: distinct audit event for the kubeconfig registration path
-	// so audit history can tell EKS-via-AWS-SM from inline-kubeconfig
+	// Distinct audit event for the kubeconfig registration path so
+	// audit history can tell EKS-via-AWS-SM from inline-kubeconfig
 	// registrations without parsing the resource string.
 	auditEvent := "cluster_registered"
 	if req.Provider == "kubeconfig" {
@@ -316,9 +313,8 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// BUG-031: promoted from an anonymous struct to a named type
-	// (orchestrator.UpdateClusterAddonsRequest) so the per-request
-	// auto_merge override can flow through without losing field tags.
+	// Decode body into the named type so the per-request auto_merge
+	// override flows through with stable field tags.
 	var req orchestrator.UpdateClusterAddonsRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
@@ -376,10 +372,9 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 			return
 		}
 
-		// V125-1-6: secret_path update bypasses orchestrator.commitChanges
-		// (it's a metadata-only change), so the dashboard PR-tracker write
-		// is performed inline. Skipped silently when no tracker is wired
-		// (test seam / no in-cluster cmstore).
+		// secret_path update bypasses orchestrator.commitChanges
+		// (metadata-only), so the dashboard PR-tracker write is
+		// performed inline. Skipped silently when no tracker is wired.
 		if s.prTracker != nil && pr != nil {
 			user := r.Header.Get("X-Sharko-User")
 			if user == "" {
@@ -400,10 +395,10 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 			})
 		}
 
-		// Auto-merge if configured. BUG-031: per-request override wins
-		// over the connection-level default. BUG-032: clean up the
-		// source branch after a successful merge — best-effort, never
-		// fail the operation on DeleteBranch error.
+		// Auto-merge if configured. The per-request override wins over
+		// the connection-level default. Clean up the source branch
+		// after a successful merge — best-effort, never fail the
+		// operation on DeleteBranch error.
 		if pr != nil {
 			autoMerge := req.AutoMerge
 			if autoMerge == nil {
@@ -440,7 +435,7 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 	orch.SetSecretManagement(s.addonSecretDefs, s.secretFetcher, remoteclient.NewClientFromKubeconfig)
 	// Region is empty — PATCH only updates addon labels, not cluster metadata.
 	// Region is set during RegisterCluster and not exposed via the update API.
-	// BUG-031: pass per-request auto_merge override (nil = fall back to
+	// Pass per-request auto_merge override (nil = fall back to
 	// connection-level PRAutoMerge). The orchestrator forwards it to
 	// commitChangesWithMeta via PRMetadata.AutoMergeOverride.
 	result, err := orch.UpdateClusterAddons(ctx, name, serverURL, "", req.Addons, req.AutoMerge)
@@ -484,7 +479,7 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 404 {object} map[string]interface{} "Cluster not found"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
-// @Failure 503 {object} map[string]interface{} "Credentials provider not configured (V124-4.1)"
+// @Failure 503 {object} map[string]interface{} "Credentials provider not configured"
 // @Router /clusters/{name}/refresh [post]
 // handleRefreshClusterCredentials handles POST /api/v1/clusters/{name}/refresh.
 func (s *Server) handleRefreshClusterCredentials(w http.ResponseWriter, r *http.Request) {

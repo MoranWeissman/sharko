@@ -1,12 +1,11 @@
 // Package signing implements per-entry cosign-keyless verification.
-// trust.go owns the SHARKO_CATALOG_TRUSTED_IDENTITIES parser (V123-2.3).
+// trust.go owns the SHARKO_CATALOG_TRUSTED_IDENTITIES parser.
 //
-// The parser is a startup-time helper — operators set the env var, Sharko
-// validates and compiles every regex pattern, and the resulting
-// sources.TrustPolicy is handed to the verifier built in V123-2.2. The
-// posture mirrors the V123-1.1 SHARKO_CATALOG_URLS parser: validate hard
-// at startup so the operator notices a broken policy immediately rather
-// than later when an entry mysteriously refuses to verify.
+// The parser is a startup-time helper — operators set the env var,
+// Sharko validates and compiles every regex pattern, and the resulting
+// sources.TrustPolicy is handed to the verifier. Validation runs hard
+// at startup so the operator notices a broken policy immediately
+// rather than later when an entry mysteriously refuses to verify.
 package signing
 
 import (
@@ -46,22 +45,21 @@ func SetTrustLoggerForTest(l *slog.Logger) func() {
 const EnvTrustedIdentities = "SHARKO_CATALOG_TRUSTED_IDENTITIES"
 
 // EnvTrustedWorkflowRef is the env var operators set to override the
-// default workflow_ref claim assertion (V124-1.4 — defense-in-depth
-// layered on top of EnvTrustedIdentities). The verifier compares the
-// configured regex against the cert's GitHub workflow_ref claim AFTER
-// the SAN regex check passes. Unset / empty falls back to
+// default workflow_ref claim assertion (defense-in-depth layered on
+// top of EnvTrustedIdentities). The verifier compares the configured
+// regex against the cert's GitHub workflow_ref claim AFTER the SAN
+// regex check passes. Unset / empty falls back to
 // DefaultTrustedWorkflowRef.
 const EnvTrustedWorkflowRef = "SHARKO_CATALOG_TRUSTED_WORKFLOW_REF"
 
-// DefaultTrustedWorkflowRef (V124-1.4) is the conservative default
-// regex applied to the cert's GitHub workflow_ref claim. Sharko's own
-// release.yml is gated to only sign on tag refs (the
-// `if: startsWith(workflow_run.head_branch, 'v')` guard), and Fulcio
-// records that ref as the cert's workflow_ref extension. Anchoring the
-// default to `^refs/tags/v.*$` cryptographically asserts the
-// already-policy behaviour: an attacker who matched the SAN regex must
-// ALSO have come from a tag-built workflow, not a feature-branch CI run
-// whose trigger guard was bypassed.
+// DefaultTrustedWorkflowRef is the conservative default regex applied
+// to the cert's GitHub workflow_ref claim. Sharko's own release.yml is
+// gated to only sign on tag refs, and Fulcio records that ref as the
+// cert's workflow_ref extension. Anchoring the default to
+// `^refs/tags/v.*$` cryptographically asserts the already-policy
+// behaviour: an attacker who matched the SAN regex must ALSO have come
+// from a tag-built workflow, not a feature-branch CI run whose trigger
+// guard was bypassed.
 //
 // Operators with non-tag-driven release pipelines override via
 // EnvTrustedWorkflowRef.
@@ -78,10 +76,10 @@ const DefaultsToken = "<defaults>"
 //   - CNCF org workflows (any project, any workflow file). Sharko's
 //     positioning targets CNCF-curated addons, so trusting any signed
 //     CNCF workflow is a reasonable conservative default.
-//   - Sharko's own release workflow (signs the embedded catalog under
-//     V123-2.5). Without this default, fresh installs would see the
-//     embedded catalog as Unverified once the release pipeline starts
-//     signing entries.
+//   - Sharko's own release workflow (signs the embedded catalog).
+//     Without this default, fresh installs would see the embedded
+//     catalog as Unverified once the release pipeline starts signing
+//     entries.
 //
 // Important — why the Sharko default ends in `@refs/heads/main` rather
 // than the triggering tag's ref: Sigstore Fulcio mints certs whose SAN
@@ -118,7 +116,7 @@ var DefaultTrustedIdentities = []string{
 //     stay deterministic. Multiple "<defaults>" tokens expand at each
 //     occurrence (rare but well-defined).
 //   - Any pattern fails to compile -> non-nil error (intended fatal at
-//     startup; same posture as the V123-1.1 SHARKO_CATALOG_URLS parser).
+//     startup; same posture as the SHARKO_CATALOG_URLS parser).
 //   - Operators who literally want "trust nothing" set the env to "^$"
 //     (a regex that matches no string).
 //
@@ -185,8 +183,8 @@ func LoadTrustPolicyFromEnv() (sources.TrustPolicy, error) {
 		}
 	}
 
-	// V124-1.4: load the workflow_ref claim assertion. Unset / empty
-	// falls back to DefaultTrustedWorkflowRef — secure default. An
+	// Load the workflow_ref claim assertion. Unset / empty falls back
+	// to DefaultTrustedWorkflowRef — secure default. An
 	// operator who explicitly wants to disable the claim assertion (e.g.
 	// to verify entries signed by a non-GitHub-Actions issuer that
 	// doesn't mint a workflow_ref extension at all) sets the env var to

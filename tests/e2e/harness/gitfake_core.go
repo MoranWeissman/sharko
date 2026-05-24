@@ -9,9 +9,9 @@
 // FileAt/ListBranches helpers live in gitfake.go behind the `e2e` build
 // tag. Both files share the same `GitFake` type defined here.
 //
-// V125-1-13.x.1: split out of gitfake.go so the in-process API stays
-// stable while a parallel pod-mode (Story 13.x.2) can serve the same
-// git-protocol surface from a kind Pod.
+// Split out of gitfake.go so the in-process API stays stable while a
+// parallel pod-mode can serve the same git-protocol surface from a
+// kind Pod.
 package harness
 
 import (

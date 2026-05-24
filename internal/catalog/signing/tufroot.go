@@ -1,18 +1,12 @@
-// tufroot.go owns the production trust-root loader (V123-2.4 + B1
-// blocker fix). The loader fetches the Sigstore public-good
-// `trusted_root.json` via the standard TUF client and parses it into a
-// root.TrustedMaterial that the verifier accepts via WithTrustedMaterial.
+// tufroot.go owns the production trust-root loader. The loader fetches
+// the Sigstore public-good `trusted_root.json` via the standard TUF
+// client and parses it into a root.TrustedMaterial that the verifier
+// accepts via WithTrustedMaterial.
 //
-// Why this lives here:
-//   - cmd/sharko/serve.go must construct the verifier with a real trust
-//     root or every signed catalog entry will surface Verified=false
-//     against the fail-closed staticTrust{} default. Pre-V123-2.4 the
-//     verifier was constructed without WithTrustedMaterial — that wiring
-//     is the B1 BLOCKER from .bmad/output/v1.23-PRE-TAG-TODO.md.
-//   - serve.go must NOT learn the TUF API. Keeping the helper one
-//     function call wide (`signing.LoadProductionTrustedRoot(ctx)`)
-//     means the call site in serve.go stays a one-liner and the TUF
-//     coupling is contained inside the signing package.
+// The helper is one function call wide
+// (`signing.LoadProductionTrustedRoot(ctx)`) so serve.go does not have
+// to learn the TUF API and the TUF coupling stays contained in this
+// package.
 //
 // Failure mode:
 //   - TUF fetches reach out to https://tuf-repo-cdn.sigstore.dev. An

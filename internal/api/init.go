@@ -154,17 +154,10 @@ func (s *Server) runInitOperation(
 
 	s.opsStore.Start(sessionID)
 
-	// V124-15 / BUG-034: when the bootstrap root-app YAML is already present
-	// on the base branch, the user is retrying an already-completed init. The
-	// previous behavior — Fail with "repo already initialized" — is wrong
-	// when the cluster reality is healthy: the wizard then renders red and
-	// the user assumes setup broke, when in fact everything is fine.
-	//
-	// V124-20 / BUG-045: probe path comes from orchestrator.BootstrapRootAppPath
-	// — the same constant CollectBootstrapFiles emits to. Pre-V124-20 this
-	// hardcoded "bootstrap/root-app.yaml" while the orchestrator commits the
-	// file as "root-app.yaml" at repo root, so the check silently 404'd
-	// forever and runInitOperation never saw an already-initialized repo.
+	// When the bootstrap root-app YAML is already present on the base
+	// branch, the user is retrying an already-completed init. The probe
+	// path comes from orchestrator.BootstrapRootAppPath — the same
+	// constant CollectBootstrapFiles emits to.
 	//
 	// Probe ArgoCD to disambiguate:
 	//   * Synced + Healthy   → idempotent success. Mark every step
@@ -224,9 +217,8 @@ func (s *Server) runInitOperation(
 	}
 	s.opsStore.UpdateStep(sessionID, operations.StatusCompleted, gitResult.PRUrl)
 
-	// Step 4: Wait for PR merge.
-	// BUG-031: per-request auto_merge override (req.AutoMerge != nil) wins over
-	// the connection-level PRAutoMerge default. nil means "fall back to default".
+	// Step 4: Wait for PR merge. Per-request auto_merge override wins
+	// over the connection-level PRAutoMerge default; nil falls back.
 	shouldAutoMerge := orchestrator.ResolveAutoMerge(req.AutoMerge, gitopsCfg.PRAutoMerge)
 	if shouldAutoMerge {
 		if mergeErr := gp.MergePullRequest(ctx, gitResult.PRID); mergeErr != nil {
@@ -235,9 +227,9 @@ func (s *Server) runInitOperation(
 			return
 		}
 		s.opsStore.UpdateStep(sessionID, operations.StatusCompleted, "PR merged (auto)")
-		// BUG-032: clean up branch after merge (best-effort). DeleteBranch
-		// failures (e.g. AzureDevOps "not yet implemented", branch already
-		// deleted) are logged but never fail the operation.
+		// Clean up branch after merge (best-effort). DeleteBranch
+		// failures (e.g. AzureDevOps "not yet implemented", branch
+		// already deleted) are logged but never fail the operation.
 		if delErr := gp.DeleteBranch(ctx, branch); delErr != nil {
 			slog.Warn("failed to delete branch after merge", "branch", branch, "error", delErr)
 		}
@@ -284,20 +276,18 @@ func (s *Server) runInitOperation(
 		}
 		s.opsStore.UpdateStep(sessionID, operations.StatusCompleted, "ArgoCD bootstrapped")
 
-		// Step 6: Wait for sync.
-		// V124-14 / BUG-031: poll the canonical bootstrap app name. The
-		// constant is verified by templates_test.go to match the value of
-		// metadata.name in templates/bootstrap/root-app.yaml — drift in
-		// either direction breaks first-run init.
+		// Step 6: Wait for sync. The canonical bootstrap app name is
+		// verified by templates_test.go to match metadata.name in
+		// templates/bootstrap/root-app.yaml — drift breaks first-run init.
 		syncStatus, syncErr := orch.WaitForSync(ctx, orchestrator.BootstrapRootAppName, 2*time.Minute)
 		detail := syncStatus
 		if syncErr != "" {
 			detail = syncStatus + ": " + syncErr
 		}
 		if syncStatus != "synced" {
-			// V124-14 / BUG-032: a sync timeout/failure must Fail the
-			// operation, not Complete it. The wizard treats `completed` as
-			// success and would otherwise show "Repository initialized
+			// A sync timeout/failure must Fail the operation, not
+			// Complete it. The wizard treats `completed` as success
+			// and would otherwise show "Repository initialized
 			// successfully" while ArgoCD silently never reached Synced.
 			s.opsStore.UpdateStep(sessionID, operations.StatusFailed, detail)
 			s.opsStore.Fail(sessionID, fmt.Sprintf(
@@ -325,12 +315,12 @@ func (s *Server) runInitOperation(
 	})
 }
 
-// pollPRMergeInterval is the cadence at which pollPRMerge probes the base
-// branch for the merged bootstrap file. V124-17 / BUG-041 tightened this from
-// 10s to 5s — the probe is a single GitHub file-read per cycle so there's no
-// rate-limit risk, and the 10s value made the manual-merge → wizard-advance
-// gap feel ~10-25s long. Exposed as a package var (not const) so tests can
-// inject a smaller value; production code never assigns to it.
+// pollPRMergeInterval is the cadence at which pollPRMerge probes the
+// base branch for the merged bootstrap file. The probe is a single
+// GitHub file-read per cycle so there's no rate-limit risk; 5s keeps
+// the manual-merge → wizard-advance gap snappy. Exposed as a package
+// var (not const) so tests can inject a smaller value; production code
+// never assigns to it.
 var pollPRMergeInterval = 5 * time.Second
 
 // isPRMerged returns true when the bootstrap root-app YAML is readable from
@@ -339,17 +329,11 @@ var pollPRMergeInterval = 5 * time.Second
 // by 1–2s in practice, and the file-presence probe is what the next
 // orchestrator step (BootstrapArgoCD) actually depends on.
 //
-// V124-20 / BUG-045: the probe path is orchestrator.BootstrapRootAppPath —
-// the same constant CollectBootstrapFiles emits to. Pre-V124-20 this
-// hardcoded "bootstrap/root-app.yaml" while the orchestrator commits to
-// "root-app.yaml" at repo root, so the poll 404'd silently every 5s
-// (the github provider only logs on 200) and the wizard hung forever
-// on "Waiting for PR merge".
-//
-// Extracted as a helper in V124-17 / BUG-041 so pollPRMerge can run an
-// immediate first probe before entering the ticker loop. Without this, the
-// first check happened ticker-interval later (10s pre-V124-17, 5s now),
-// which made an already-merged PR look like the wizard was hanging.
+// The probe path is orchestrator.BootstrapRootAppPath — the same
+// constant CollectBootstrapFiles emits to. The helper exists so
+// pollPRMerge can run an immediate first probe before entering the
+// ticker loop; otherwise an already-merged PR would look like the
+// wizard was hanging for the first ticker interval.
 func isPRMerged(ctx context.Context, gp gitprovider.GitProvider, baseBranch string) bool {
 	_, err := gp.GetFileContent(ctx, orchestrator.BootstrapRootAppPath, baseBranch)
 	return err == nil
@@ -359,11 +343,12 @@ func isPRMerged(ctx context.Context, gp gitprovider.GitProvider, baseBranch stri
 // file appears on the base branch. Returns true if merged, false if timed out
 // or the session was abandoned/cancelled.
 //
-// V124-17 / BUG-041: do an immediate file-presence check before entering the
-// ticker loop. If the user merged the PR before pollPRMerge even started —
-// or auto-merge raced ahead of the goroutine — we return true with no
-// ticker wait. The ticker (5s, see pollPRMergeInterval) drives subsequent
-// checks plus the heartbeat / cancellation / deadline guards.
+// We do an immediate file-presence check before entering the ticker
+// loop. If the user merged the PR before pollPRMerge even started — or
+// auto-merge raced ahead of the goroutine — we return true with no
+// ticker wait. The ticker (5s, see pollPRMergeInterval) drives
+// subsequent checks plus the heartbeat / cancellation / deadline
+// guards.
 func (s *Server) pollPRMerge(ctx context.Context, sessionID string, gp gitprovider.GitProvider, baseBranch string) bool {
 	// Immediate first probe — skip the ticker wait if the file is already
 	// on the base branch. Most-common paths this protects:
@@ -421,12 +406,11 @@ func (s *Server) pollPRMerge(ctx context.Context, sessionID string, gp gitprovid
 // status is anything other than "Synced", or the health status is
 // anything other than "Healthy".
 //
-// Originally introduced by V124-15 / BUG-034 to disambiguate "repo file
-// exists" between idempotent-success and partial-state on first-run init
-// retry. V124-22 / BUG-046 exports it so the /repo/status handler can
-// reuse the same probe semantics — the wizard gate now reads
-// `bootstrap_synced` from /repo/status to auto-open the wizard when the
-// bootstrap is missing/degraded (closes the V124-15 asymmetry).
+// Used to disambiguate "repo file exists" between idempotent-success
+// and partial-state on first-run init retry. Exported so the
+// /repo/status handler can reuse the same probe semantics — the wizard
+// gate reads `bootstrap_synced` from /repo/status to auto-open the
+// wizard when the bootstrap is missing/degraded.
 func ProbeBootstrapApp(ctx context.Context, ac orchestrator.ArgocdClient) (status, detail string) {
 	if ac == nil {
 		return "unhealthy", "no ArgoCD client configured"

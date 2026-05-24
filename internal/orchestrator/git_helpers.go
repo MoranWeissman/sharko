@@ -46,10 +46,8 @@ func (o *Orchestrator) detectConflicts(ctx context.Context, files map[string][]b
 
 // commitChanges creates a PR for the given file changes WITHOUT tracking it
 // in the prtracker. Use commitChangesWithMeta when the call site has the
-// canonical operation code, cluster, and addon — which is the new default
-// for V125-1-6. Kept as a thin wrapper for paths that genuinely cannot
-// supply metadata (none currently expected — every commitChanges caller
-// has been migrated to commitChangesWithMeta in V125-1-6).
+// canonical operation code, cluster, and addon (the default). Kept as a
+// thin wrapper for paths that genuinely cannot supply metadata.
 func (o *Orchestrator) commitChanges(ctx context.Context, files map[string][]byte, deletePaths []string, operation string) (*GitResult, error) {
 	return o.commitChangesWithMeta(ctx, files, deletePaths, operation, PRMetadata{})
 }
@@ -60,11 +58,8 @@ func (o *Orchestrator) commitChanges(ctx context.Context, files map[string][]byt
 // operations across concurrent requests. If PRAutoMerge is enabled, the
 // PR is merged immediately after creation.
 //
-// V125-1-6: this is the funnel that ensures every Sharko-created PR
-// surfaces on the dashboard PR panel — previously, only ad-hoc handler-
-// level TrackPR calls did, so register-cluster, adopt-cluster, init,
-// batch-register, and 5 orchestrator addon ops were silently missing
-// from the dashboard.
+// This is the funnel that ensures every Sharko-created PR surfaces on
+// the dashboard PR panel.
 func (o *Orchestrator) commitChangesWithMeta(ctx context.Context, files map[string][]byte, deletePaths []string, operation string, meta PRMetadata) (*GitResult, error) {
 	if o.gitMu != nil {
 		o.gitMu.Lock()
@@ -112,10 +107,10 @@ func (o *Orchestrator) commitChangesWithMeta(ctx context.Context, files map[stri
 		Branch: branchName,
 	}
 
-	// Track the PR centrally (V125-1-6). Best-effort — a tracker write
-	// failure must not fail the operation; the user-visible PR has
-	// already been created at this point. nil tracker (test seam) and
-	// empty OperationCode (legacy commitChanges path) are silent skips.
+	// Track the PR centrally. Best-effort — a tracker write failure must
+	// not fail the operation; the user-visible PR has already been
+	// created at this point. nil tracker (test seam) and empty
+	// OperationCode (legacy commitChanges path) are silent skips.
 	if o.prTracker != nil && meta.OperationCode != "" {
 		title := meta.Title
 		if title == "" {
@@ -145,9 +140,9 @@ func (o *Orchestrator) commitChangesWithMeta(ctx context.Context, files map[stri
 		})
 	}
 
-	// Auto-merge if configured. BUG-031: a per-request AutoMergeOverride
-	// wins over the connection-level default — resolveAutoMerge centralises
-	// the precedence rule so every call site uses the same semantics.
+	// Auto-merge if configured. A per-request AutoMergeOverride wins over
+	// the connection-level default — resolveAutoMerge centralises the
+	// precedence rule so every call site uses the same semantics.
 	autoMerge := resolveAutoMerge(meta.AutoMergeOverride, o.gitops.PRAutoMerge)
 	if autoMerge {
 		if mergeErr := o.git.MergePullRequest(ctx, pr.ID); mergeErr != nil {
@@ -156,9 +151,9 @@ func (o *Orchestrator) commitChangesWithMeta(ctx context.Context, files map[stri
 			return result, fmt.Errorf("PR created but merge failed: %w", mergeErr)
 		}
 		result.Merged = true
-		// BUG-032: clean up the source branch after every Sharko-merged
-		// PR. Best-effort — a DeleteBranch failure (e.g. AzureDevOps's
-		// "not yet implemented", branch already deleted, transient API
+		// Clean up the source branch after every Sharko-merged PR.
+		// Best-effort — a DeleteBranch failure (e.g. AzureDevOps's "not
+		// yet implemented", branch already deleted, transient API
 		// hiccup) is logged but never fails the merge operation. The
 		// branch is hygienic, not load-bearing.
 		if delErr := o.git.DeleteBranch(ctx, branchName); delErr != nil {
@@ -180,7 +175,7 @@ func (o *Orchestrator) commitChangesWithMeta(ctx context.Context, files map[stri
 //
 // Exported so the init handler (and any other non-orchestrator callers
 // of MergePullRequest) can reuse the same precedence rule without
-// reimplementing it. See BUG-031.
+// reimplementing it.
 func ResolveAutoMerge(reqAutoMerge *bool, connDefault bool) bool {
 	if reqAutoMerge != nil {
 		return *reqAutoMerge

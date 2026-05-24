@@ -22,7 +22,7 @@ var HandlerTier = map[string]audit.Tier{
 	// Cluster lifecycle and operations
 	"handleRegisterCluster":            audit.Tier1,
 	"handleDeregisterCluster":          audit.Tier1,
-	"handleDeleteOrphanCluster":        audit.Tier1, // V125-1-7 / BUG-058
+	"handleDeleteOrphanCluster":        audit.Tier1, // orphan-cluster Secret cleanup
 	"handleUpdateClusterAddons":        audit.Tier1,
 	"handleRefreshClusterCredentials":  audit.Tier1,
 	"handleTestCluster":                audit.Tier1,
@@ -88,33 +88,29 @@ var HandlerTier = map[string]audit.Tier{
 	"handleCreateAddonSecret":          audit.Tier2,
 	"handleDeleteAddonSecret":          audit.Tier2,
 
-	// Values editor (v1.20) — Tier 2: changes WHAT gets deployed.
-	// In v1.21 (Story V121-6.4) the same handler also services the
-	// `refresh_from_upstream` flow that used to live on the now-removed
-	// `pull-upstream` endpoint.
+	// Values editor — Tier 2: changes WHAT gets deployed. The same
+	// handler also services the `refresh_from_upstream` flow.
 	"handleSetAddonValues":             audit.Tier2,
 	"handleSetClusterAddonValues":      audit.Tier2,
 
-	// V121-7.4: AI annotate + per-addon opt-out — both regenerate the
-	// global values file (header + body), opening a Tier 2 PR.
+	// AI annotate + per-addon opt-out — both regenerate the global
+	// values file (header + body), opening a Tier 2 PR.
 	"handleAnnotateAddonValues":        audit.Tier2,
 	"handleSetAddonAIOptOut":           audit.Tier2,
 
-	// v1.21 Bundle 5: legacy `<addon>:` wrap migration. Tier 2 because
-	// it rewrites every global values file in the repo and opens a PR.
+	// Legacy `<addon>:` wrap migration. Tier 2 because it rewrites
+	// every global values file in the repo and opens a PR.
 	"handleUnwrapGlobalValues":         audit.Tier2,
 
-	// V123-1.6 — force-refresh third-party catalog sources. Tier 2
-	// because this is a configuration-time admin action (verifying a
-	// newly added SHARKO_CATALOG_URLS entry) rather than a cluster
-	// operation.
+	// Force-refresh third-party catalog sources. Tier 2 because this
+	// is a configuration-time admin action (verifying a newly added
+	// SHARKO_CATALOG_URLS entry) rather than a cluster operation.
 	"handleRefreshCatalogSources":      audit.Tier2,
 
-	// v1.21 QA Bundle 4 (Fix #4): preview-merge is read-only — it returns
-	// a candidate body but does not write Git. Classified TierPersonal so
-	// it doesn't count as a real mutation in audit attribution. The actual
-	// mutation happens through the existing PUT /addons/{name}/values
-	// handler (already Tier 2) when the user clicks "Apply changes".
+	// preview-merge is read-only — it returns a candidate body but does
+	// not write Git. Classified TierPersonal so it doesn't count as a
+	// real mutation in audit attribution. The actual mutation happens
+	// through the existing PUT /addons/{name}/values handler.
 	"handlePreviewMergeAddonValues":    audit.TierPersonal,
 
 	// ─── Personal: self-service on caller's own profile ─────────────────────
@@ -124,7 +120,7 @@ var HandlerTier = map[string]audit.Tier{
 	"handleLogin":                      audit.TierAuth,
 	"handleLogout":                     audit.TierAuth,
 	"handleHashPassword":               audit.TierAuth,
-	"handleStaleLoginRoute":            audit.TierAuth, // V124-6.1: dead-route 404 stub
+	"handleStaleLoginRoute":            audit.TierAuth, // dead-route 404 stub
 
 	// ─── Webhook: inbound signed payload, no user identity ──────────────────
 	"handleGitWebhook":                 audit.TierWebhook,

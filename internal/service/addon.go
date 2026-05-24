@@ -146,10 +146,10 @@ func (s *AddonService) GetCatalog(ctx context.Context, gp gitprovider.GitProvide
 		// Check which clusters have this addon
 		deployments := make([]models.AddonDeploymentInfo, 0)
 		enabledCount, healthyCount, degradedCount, missingCount := 0, 0, 0, 0
-		// V126-3.1 (DESIGN-02): N = clusters where the ArgoCD Application is
-		// BOTH Synced AND Healthy. Stricter than the existing healthyCount
-		// (which only checks HealthStatus) so the "Running on N/M clusters"
-		// tile badge means "actually serving traffic", not "is healthy but
+		// N = clusters where the ArgoCD Application is BOTH Synced AND
+		// Healthy. Stricter than the existing healthyCount (which only
+		// checks HealthStatus) so the "Running on N/M clusters" tile
+		// badge means "actually serving traffic", not "is healthy but
 		// possibly out of sync".
 		deployedCount := 0
 
@@ -217,9 +217,9 @@ func (s *AddonService) GetCatalog(ctx context.Context, gp gitprovider.GitProvide
 		item.HealthyApplications = healthyCount
 		item.DegradedApplications = degradedCount
 		item.MissingApplications = missingCount
-		// V126-3.1 (DESIGN-02): tile badge sources.
-		// M = clusters where the addon is labelled enabled.
-		// N = clusters where the addon's ArgoCD Application is Synced + Healthy.
+		// Tile badge sources:
+		//   M = clusters where the addon is labelled enabled.
+		//   N = clusters where the addon's ArgoCD Application is Synced + Healthy.
 		item.TotalTargetClusterCount = enabledCount
 		item.DeployedClusterCount = deployedCount
 		item.Applications = deployments
@@ -281,20 +281,14 @@ func (s *AddonService) GetAddonDetail(ctx context.Context, addonName string, gp 
 
 // GetVersionMatrix returns a version matrix showing addon versions and health across all clusters.
 //
-// V124-23 / BUG-048: when managed-clusters.yaml or addons-catalog.yaml is
-// missing (e.g. fresh-install gitops repo with no clusters yet) the matrix
-// degrades to an empty response rather than propagating a 500 with the
-// raw filesystem error string. Same pattern as ClusterService.ListClusters
-// (V124-2.2): isGitFileNotFound uses errors.Is on gitprovider.ErrFileNotFound
-// (and fs.ErrNotExist) so legitimate auth/branch/perm errors that happen to
-// mention "404" or "not found" still surface as real 5xx — only the
-// genuinely missing-file path short-circuits.
-//
-// The previous strings.Contains(err.Error(), "404") check was the same
-// substring-matching anti-pattern review finding H2 fixed for /clusters in
-// V124-2.12, and the maintainer's empty-repo logs ("op=get_version_matrix
-// status=500 error=reading managed-clusters.yaml: ... file not found")
-// confirmed it never actually fired against the real github provider.
+// When managed-clusters.yaml or addons-catalog.yaml is missing (e.g.
+// fresh-install gitops repo with no clusters yet) the matrix degrades
+// to an empty response rather than propagating a 500 with the raw
+// filesystem error string. Same pattern as
+// ClusterService.ListClusters: isGitFileNotFound uses errors.Is on
+// gitprovider.ErrFileNotFound (and fs.ErrNotExist) so legitimate
+// auth/branch/perm errors that happen to mention "404" still surface
+// as real 5xx — only the genuinely missing-file path short-circuits.
 func (s *AddonService) GetVersionMatrix(ctx context.Context, gp gitprovider.GitProvider, ac *argocd.Client) (*models.VersionMatrixResponse, error) {
 	clusterData, err := gp.GetFileContent(ctx, s.managedClustersPath, "main")
 	if err != nil {

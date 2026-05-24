@@ -1,24 +1,15 @@
-// Package orchestrator — secret-leak guard for the AI annotation path
-// (v1.21 Epic V121-7, Story 7.1 / FR-V121-19 / NFR-V121-12).
+// Package orchestrator — secret-leak guard for the AI annotation path.
 //
-// Locked decision (Moran, 2026-04-19): the LLM call is HARD-BLOCKED on any
-// secret-like pattern match in the values payload — there is no
-// "send anyway" override. False-positive bias is intentional. If a chart
-// values.yaml contains anything that looks even a little like a key, the
-// guard refuses to send it upstream and the pipeline falls back to the
-// heuristic-only smart-values output (no annotation, banner shown).
+// The LLM call is HARD-BLOCKED on any secret-like pattern match in the
+// values payload — there is no "send anyway" override. False-positive
+// bias is intentional. If a chart values.yaml contains anything that
+// looks even a little like a key, the guard refuses to send it upstream
+// and the pipeline falls back to the heuristic-only smart-values output
+// (no annotation, banner shown).
 //
-// Why this lives in the orchestrator package, not internal/catalog: the
-// epic notes mention `internal/catalog/ai_guard.go` but Sharko's catalog
-// package is for ArtifactHub discovery, not the smart-values pipeline.
-// The guard is called from the AddAddon seed flow (orchestrator) and from
-// the V121-7.4 manual annotate endpoint (api → orchestrator). Co-locating
-// it with smart_values.go keeps the import graph clean and makes the
-// pure-function nature of the scanner obvious.
-//
-// The pattern list mirrors the Story 7.1 AC: AWS keys, GitHub PATs,
-// generic API key/secret/password assignments, JWTs, SSH/TLS PEM blocks,
-// Slack tokens, Google API keys, generic high-entropy base64 blobs near
+// The pattern list covers: AWS keys, GitHub PATs, generic API
+// key/secret/password assignments, JWTs, SSH/TLS PEM blocks, Slack
+// tokens, Google API keys, generic high-entropy base64 blobs near
 // secret-keyword headers. Every regex is anchored to the kind of context
 // you actually find in a Helm chart values.yaml — assignment lines and
 // PEM block markers — to keep false positives sane while still being

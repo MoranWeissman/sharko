@@ -1,4 +1,4 @@
-// Package orchestrator — smart values layer (v1.21 Epic V121-6).
+// Package orchestrator — smart values layer.
 //
 // The smart values layer turns an upstream Helm chart's `values.yaml` into
 // two things in a single Sharko-managed file:
@@ -321,9 +321,9 @@ type SmartValuesInput struct {
 	AIOptOut       bool   // true if the user opted out per-addon
 
 	// ExtraClusterSpecificPaths is the optional union-additive set of
-	// dotted paths the AI annotator returned (V121-7 Story 7.2). These
-	// paths are merged into the heuristic's classification — never
-	// subtractive. Empty when AI was skipped.
+	// dotted paths the AI annotator returned. These paths are merged
+	// into the heuristic's classification — never subtractive. Empty
+	// when AI was skipped.
 	ExtraClusterSpecificPaths []string
 }
 
@@ -346,25 +346,23 @@ type SmartValuesOutput struct {
 //  4. Stamp the self-describing header on the front.
 //
 // The function is pure: no I/O, no AI call. AI annotation is layered
-// orthogonally by the caller (Epic V121-7 plumbs that in via the same
-// header flag); for v1.21 the heuristic-only path ships first.
+// orthogonally by the caller.
 //
-// Root-cause fix (v1.21 QA Bundle 4, Fix #6 — Velero double-wrap):
-// some upstream chart values.yaml files (Velero, a few Bitnami-style
+// Some upstream chart values.yaml files (Velero, a few Bitnami-style
 // charts) put all of their settings under a single top-level key that
-// matches the chart name (`velero:`). Sharko's wrapper used to add
+// matches the chart name (`velero:`). Without unwrapping, we'd add
 // another `<addon>:` line on top, producing `velero:\n  velero:\n    …`.
-// We now detect that case textually (single non-comment top-level key
-// equal to the addon or chart name) and unwrap one level of indentation
+// We detect that case textually (single non-comment top-level key equal
+// to the addon or chart name) and unwrap one level of indentation
 // before re-wrapping.
 func SplitUpstreamValues(in SmartValuesInput) SmartValuesOutput {
 	in.UpstreamValues = unwrapChartNameRoot(in.UpstreamValues, in.AddonName, in.Chart)
 	clusterPaths := ClassifyClusterSpecificFields(in.UpstreamValues)
 
-	// V121-7.2 union: merge AI-suggested cluster-specific paths into the
-	// heuristic set. We require the path to actually exist as a leaf in
-	// the upstream values (via walkLeafPaths) before honoring it — the
-	// LLM occasionally hallucinates paths and we don't want to inject
+	// Union AI-suggested cluster-specific paths into the heuristic set.
+	// We require the path to actually exist as a leaf in the upstream
+	// values (via walkLeafPaths) before honoring it — the LLM
+	// occasionally hallucinates paths and we don't want to inject
 	// `<cluster-specific>` markers under keys that aren't there.
 	if len(in.ExtraClusterSpecificPaths) > 0 {
 		valid := map[string]struct{}{}
@@ -594,8 +592,8 @@ func renderTemplateLine(dottedPath string) string {
 // test the splitter.
 //
 // `extraClusterPaths` is the optional set of LLM-suggested dotted paths
-// to UNION with the heuristic's classification (V121-7 Story 7.2). Pass
-// nil for the heuristic-only path (no AI, AI skipped, etc.).
+// to UNION with the heuristic's classification. Pass nil for the
+// heuristic-only path (no AI, AI skipped, etc.).
 func GenerateGlobalValuesFile(addonName, chart, version, repoURL string, upstream []byte, aiAnnotated, aiOptOut bool, extraClusterPaths ...string) []byte {
 	out := SplitUpstreamValues(SmartValuesInput{
 		AddonName:                 addonName,

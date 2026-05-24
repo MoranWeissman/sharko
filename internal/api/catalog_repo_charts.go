@@ -80,7 +80,7 @@ func (s *Server) handleListRepoCharts(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	// SSRF guard — same policy as /catalog/validate (Story V121-8.2).
+	// SSRF guard — same policy as /catalog/validate.
 	if err := security.ValidateExternalURL(repo); err != nil {
 		writeJSON(w, http.StatusOK, repoChartsResponse{
 			Valid:     false,

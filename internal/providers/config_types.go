@@ -1,33 +1,24 @@
 package providers
 
-// This file holds the three sibling ProviderConfig types introduced by the
-// V125-1-11 sprint (BUG-OVERLOAD-DIAGNOSIS.md Section 4). They replaced the
-// field-overloaded providers.Config struct that V125-1-10.8 had to work
-// around with the SHARKO_ARGOCD_NAMESPACE env hack. Each type addresses
-// exactly one mechanism — addon-secret material, cluster-test connectivity,
-// or cluster-registration sink — so the compiler enforces the separation
-// that field-level overload could not.
+// Three sibling ProviderConfig types — addon-secret material, cluster-
+// test connectivity, and cluster-registration sink. Each addresses
+// exactly one mechanism so the compiler enforces the separation that
+// field-level overload could not.
 //
-// V125-1-11.6 retired the old providers.Config struct + the providers.New /
-// providers.NewSecretProvider compat dispatchers. These three types are now
-// the only ProviderConfig shapes in the codebase. The canonical factories
-// are: NewAddonSecretProvider(AddonSecretProviderConfig) and
-// NewClusterTestProvider(ClusterTestProviderConfig). The
-// ClusterRegistrationSourceConfig is still consumer-less in v1.25 — V125-1-8
-// reconciler will materialize it.
+// Canonical factories: NewAddonSecretProvider(AddonSecretProviderConfig)
+// and NewClusterTestProvider(ClusterTestProviderConfig). The
+// ClusterRegistrationSourceConfig is reserved for the cluster
+// reconciler wiring.
 
 // AddonSecretProviderConfig configures the backend that supplies addon-secret
 // material for credential rotation + tiered git flow. ONE OF the configured
 // backend types reads/decrypts secrets and pushes them into Sharko-managed
 // remote-cluster K8s Secrets via the secrets reconciler.
 //
-// Mechanism scope (V125-1-11 split): addon-secrets ONLY. Does NOT serve
-// cluster-connectivity-test creds (use ClusterTestProviderConfig) nor cluster-
-// registration sink config (use ClusterRegistrationSourceConfig).
-//
-// Field semantics intentionally do NOT overlap with the other two configs —
-// the 3-type split exists precisely so the compiler enforces this separation
-// (closing the V125-1-10.8 ProviderConfig.Namespace cross-contamination smell).
+// Mechanism scope: addon-secrets ONLY. Does NOT serve cluster-connectivity
+// test creds (use ClusterTestProviderConfig) nor cluster-registration
+// sink config (use ClusterRegistrationSourceConfig). Field semantics
+// intentionally do NOT overlap with the other two configs.
 type AddonSecretProviderConfig struct {
 	// Type selects the backend. Valid values:
 	//   "vault"                          — HashiCorp Vault (future; current code has no vault factory)
@@ -64,45 +55,37 @@ type AddonSecretProviderConfig struct {
 // cluster is reachable + auth works + RBAC is sufficient (the POST
 // /api/v1/clusters/{name}/test surface, the dashboard "Verified" state).
 //
-// V125-1-11 scope: argocd-only. Sharko's canonical cluster-connectivity
-// backend reads ArgoCD's cluster Secret in the argocd namespace (the same
-// secret the V125-1-8 reconciler will write). Legacy aws-sm / k8s-secrets /
-// gcp-sm / azure-kv cluster-credentials backends (per provider.go's deprecated
-// doc comment) are retired in Story 11.6 along with the providers.New compat
-// shim — one cycle earlier than the doc comment promised, but acceptable in
-// v1.25 pre-release per planning doc OQ #6.
+// Scope: argocd-only. Sharko's canonical cluster-connectivity backend
+// reads ArgoCD's cluster Secret in the argocd namespace (the same
+// secret the reconciler writes). Legacy aws-sm / k8s-secrets / gcp-sm /
+// azure-kv cluster-credentials backends are retired here; addon-secret
+// consumers of those backends remain via NewAddonSecretProvider.
 //
-// Future post-v1.x: IAMRoleARN (EKS IAM token minting on the cluster-test
-// side), ExecPluginAllowList (when/if exec-plugin auth becomes supported).
+// Future: IAMRoleARN (EKS IAM token minting), ExecPluginAllowList
+// (when/if exec-plugin auth becomes supported).
 type ClusterTestProviderConfig struct {
 	// Type selects the backend. Valid values:
 	//   "argocd"  — ArgoCDProvider (reads cluster Secrets from ArgoCD namespace)
 	//   ""        — auto-default: argocd when running in-cluster, error otherwise
 	Type string
 
-	// ArgoCDNamespace is the canonical replacement for the V125-1-10.8
-	// SHARKO_ARGOCD_NAMESPACE env-var workaround. Used ONLY by the "argocd"
-	// backend. When empty, falls back to:
+	// ArgoCDNamespace is the typed source for the argocd namespace.
+	// Used ONLY by the "argocd" backend. When empty, falls back to:
 	//   1. SHARKO_ARGOCD_NAMESPACE env var (DEPRECATED — emits slog.Warn,
-	//      removal slated for v1.26 per planning doc OQ #4)
+	//      removal slated for the next minor release)
 	//   2. hardcoded "argocd" default
 	ArgoCDNamespace string
 }
 
-// ClusterRegistrationSourceConfig configures where Sharko WRITES cluster
-// registration material. Today vestigial — V125-1-8 will materialize the
-// reconciler that consumes this config. Story 11.5 pre-wires the parsing +
-// stash so V125-1-8 doesn't need to re-touch ProviderConfig.
-//
-// V125-1-11 scope: parsing + Helm chart values.yaml block only. No consumer
-// wired this sprint; the struct exists, gets parsed from env, and is stashed
-// on the application context. Default behavior (Type:"") is "no cluster
-// registration sink configured" — identical to pre-V125-1-11 behavior since
-// the reconciler doesn't exist yet.
+// ClusterRegistrationSourceConfig configures where Sharko WRITES
+// cluster registration material. The struct exists, gets parsed from
+// env, and is stashed on the application context for the cluster
+// reconciler. Default behavior (Type:"") is "no cluster registration
+// sink configured".
 type ClusterRegistrationSourceConfig struct {
 	// Type selects the registration sink. Valid values:
 	//   "argocd"  — ArgoCD cluster Secrets in ArgoCDNamespace
-	//   ""        — none (pre-V125-1-8 behavior; reconciler doesn't exist yet)
+	//   ""        — none (no reconciler wired)
 	Type string
 
 	// ArgoCDNamespace is the K8s namespace where Sharko writes ArgoCD cluster

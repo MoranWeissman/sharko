@@ -18,8 +18,8 @@ import (
 )
 
 func init() {
-	// --server lives on rootCmd as a persistent flag (V124-3.5 / BUG-010);
-	// loginCmd inherits it. We only define the login-specific flags here.
+	// --server lives on rootCmd as a persistent flag and is inherited here;
+	// we only define the login-specific flags below.
 	loginCmd.Flags().String("username", "", "Username (skips interactive prompt)")
 	loginCmd.Flags().String("password", "", "Password (skips interactive prompt, use with --username)")
 	rootCmd.AddCommand(loginCmd)
@@ -194,12 +194,10 @@ func readPasswordSafeWithReader(reader *bufio.Reader, prompt string) (string, er
 // signal that bypasses normal defer semantics, or if a future refactor
 // replaces ReadPassword with a non-restoring primitive).
 //
-// If GetState fails (M3 — review finding), this returns an error
-// immediately rather than continuing. The previous behaviour (silently
-// skipping the defer registration when GetState failed) defeated the entire
-// purpose of the BUG-006 fix — if we can't snapshot the state, we have no
-// safety net should ReadPassword leave the TTY in raw mode. Better to fail
-// loudly than to leave the shell broken.
+// If GetState fails this returns an error immediately rather than
+// continuing — without a snapshot we have no safety net should
+// ReadPassword leave the TTY in raw mode, so it's better to fail loudly
+// than leave the shell broken.
 func readPasswordSafeWith(tio terminalIO, prompt string) (string, error) {
 	return readPasswordSafeWithAndReader(tio, nil, prompt)
 }

@@ -18,9 +18,9 @@ import (
 )
 
 // supportedProviders enumerates the cluster-provider values RegisterCluster
-// accepts.  V125-1.1 adds "kubeconfig" — the inline-kubeconfig path used by
-// the wizard's "Generic K8s (kubeconfig)" option.  GKE / AKS / exec-plugin
-// auth remain V125-1.x material.
+// accepts. "kubeconfig" is the inline-kubeconfig path used by the wizard's
+// "Generic K8s (kubeconfig)" option. GKE / AKS / exec-plugin auth are not
+// yet supported.
 var supportedProviders = map[string]bool{
 	"eks":        true,
 	"kubeconfig": true,
@@ -32,8 +32,8 @@ var ErrClusterAlreadyExists = errors.New("cluster already exists")
 
 var validClusterName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]*$`)
 
-// RegisterCluster orchestrates cluster registration via the V125-1-8
-// reconciler-owned model:
+// RegisterCluster orchestrates cluster registration via the reconciler-
+// owned model:
 //
 //  1. Validate input
 //  1b. Merge default addons
@@ -42,17 +42,13 @@ var validClusterName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]*$`)
 //  3a. Verify connectivity via Stage 1 (UX win — fail fast on bad creds)
 //  4. Create addon secrets on remote cluster (if configured)
 //  5. Generate values file + commit via PR (create + auto-merge if configured)
-//  6. Trigger the reconciler (V125-1-8.4 wires reconciler.Trigger) so the
-//     ArgoCD cluster Secret is created/updated immediately post-merge
-//     rather than waiting for the 30s safety-net tick.
+//  6. Trigger the reconciler so the ArgoCD cluster Secret is created/updated
+//     immediately post-merge rather than waiting for the 30s safety-net tick.
 //
-// V125-1-8.3 retirement: the old Step 3b (`argoSecretManager.Ensure`
-// pre-merge) and old Step 6 (direct `argocd.RegisterCluster` API call
-// pre-merge) were deleted. The reconciler now owns the entire ArgoCD
-// cluster-Secret lifecycle — see design doc §12 V125-1-8 step 5. The
-// register flow no longer creates anything in the argocd namespace
-// before the managed-clusters.yaml PR merges, closing the orphan-on-PR-close
-// bug class (BUG-058) at the architectural level.
+// The register flow never writes anything in the argocd namespace before
+// the managed-clusters.yaml PR merges — the reconciler owns the entire
+// ArgoCD cluster-Secret lifecycle, which closes the orphan-on-PR-close
+// bug class at the architectural level.
 func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterRequest) (*RegisterClusterResult, error) {
 	// Step 1: Validate input.
 	if req.Name == "" {
@@ -63,9 +59,8 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	}
 
 	// Step 1a: Validate provider against the supported set.
-	// V125-1.1 widens this to accept "kubeconfig" alongside the original
-	// "eks" path. Empty provider remains valid for backward-compat with
-	// pre-V125 callers (treated as the EKS path via credProvider).
+	// "kubeconfig" and "eks" are accepted; empty provider is treated as
+	// the EKS path via credProvider for backward compat.
 	if req.Provider != "" && !supportedProviders[req.Provider] {
 		return nil, fmt.Errorf("provider %q not yet implemented; supported: eks, kubeconfig", req.Provider)
 	}
@@ -102,11 +97,11 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	var steps []string
 
 	// Step 3: Acquire credentials.
-	// V125-1.1: when Provider == "kubeconfig" the caller supplies the
-	// kubeconfig YAML inline on the request, so we parse it directly and
-	// skip o.credProvider.GetCredentials (the credProvider may legitimately
-	// be nil in this path — generic-K8s registration must not require an
-	// AWS-SM/k8s-secrets backend to be configured).  For every other
+	// When Provider == "kubeconfig" the caller supplies the kubeconfig YAML
+	// inline on the request, so we parse it directly and skip
+	// o.credProvider.GetCredentials (the credProvider may legitimately be
+	// nil in this path — generic-K8s registration must not require an
+	// AWS-SM/k8s-secrets backend to be configured). For every other
 	// provider we keep the original credProvider lookup.
 	var creds *providers.Kubeconfig
 	if req.Provider == "kubeconfig" {
@@ -155,15 +150,13 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		slog.Info("Stage 1 verification passed", "cluster", req.Name, "version", verifyResult.ServerVersion)
 	}
 
-	// Dry-run exit point: return a preview of what would happen, with zero side effects.
+	// Dry-run exit point: return a preview of what would happen, with zero
+	// side effects.
 	//
-	// V125-1.4 (BUG-049): all slice fields are initialized to non-nil empty
-	// slices when there is no data, so the JSON response carries `[]` (not
-	// `null`) for every field. The ClustersOverview preview panel reads
-	// `.length` on these arrays and crashed (caught by the ErrorBoundary)
-	// when the V125-1.1 kubeconfig path with no addons selected returned
-	// nil arrays. Both providers now share the same result-construction
-	// shape — see TestRegisterCluster_DryRun_Kubeconfig_ShapeParity.
+	// All slice fields are initialized to non-nil empty slices when there
+	// is no data, so the JSON response carries `[]` (not `null`) for every
+	// field. The UI's ClustersOverview preview panel reads `.length` on
+	// these arrays — see TestRegisterCluster_DryRun_Kubeconfig_ShapeParity.
 	if req.DryRun {
 		// Compute effective addon names — start from a non-nil empty slice
 		// so a request with no enabled addons still serializes as `[]`.
@@ -221,17 +214,10 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		return result, nil
 	}
 
-	// V125-1-8.3 retirement: the old Step 3b — `argoSecretManager.Ensure`
-	// pre-merge cluster-Secret creation — was deleted. The
-	// V125-1-8 reconciler (internal/clusterreconciler) is the single
-	// owner of ArgoCD cluster-Secret lifecycle. We no longer write
-	// anything in the argocd namespace before the managed-clusters.yaml
-	// PR is merged; the reconciler picks the new cluster up via either
-	// the post-merge trigger (V125-1-8.4 wires prTracker.SetOnMergeFn)
-	// or the periodic 30s safety-net tick. See design doc §12
-	// V125-1-8 step 5 — this closes the BUG-058 orphan-on-PR-close bug
-	// class architecturally rather than via the V125-1-7 recovery
-	// surface alone.
+	// We no longer write anything in the argocd namespace before the
+	// managed-clusters.yaml PR is merged; the reconciler picks the new
+	// cluster up via either the post-merge trigger or the periodic 30s
+	// safety-net tick.
 
 	// Step 4: Create addon secrets on remote cluster (if configured).
 	// Uses partial-success semantics: individual failures are tracked but don't stop the flow.
@@ -340,7 +326,7 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		OperationCode:     "register-cluster",
 		Cluster:           req.Name,
 		Title:             fmt.Sprintf("Register cluster %s", req.Name),
-		AutoMergeOverride: req.AutoMerge, // BUG-031: per-request override
+		AutoMergeOverride: req.AutoMerge, // per-request override
 	})
 	if err != nil {
 		if gitResult != nil {
@@ -355,12 +341,9 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 			result.Git = gitResult
 			return result, nil
 		}
-		// Complete Git failure (couldn't even create PR).
-		// V125-1-13.y.3: surface the underlying error so operators can
-		// distinguish branch-create / batch-write / PR-create failures
-		// without a full debug build. Previously the failure mode was
-		// invisible — the response carries it in result.Error but the
-		// server logs were silent, masking diagnosis during e2e triage.
+		// Complete Git failure (couldn't even create PR). Surface the
+		// underlying error so operators can distinguish branch-create /
+		// batch-write / PR-create failures without a debug build.
 		slog.Error("RegisterCluster: git commit failed",
 			"cluster", req.Name, "error", err)
 		result.Status = "partial"
@@ -378,13 +361,11 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 			"cluster", req.Name, "pr", gitResult.PRUrl)
 	}
 
-	// V125-1-8.3 retirement: the old Step 6 — direct
-	// `o.argocd.RegisterCluster(...)` pre-merge API call — was deleted.
-	// The reconciler now owns ArgoCD-side registration. The adoption
-	// short-circuit is preserved as a no-op log line (the cluster is
+	// The reconciler owns ArgoCD-side registration. The adoption
+	// short-circuit is preserved as a no-op log line — the cluster is
 	// already in ArgoCD; the reconciler will mark it managed-by sharko
 	// on its next tick via the adoption code path in
-	// argosecrets.Manager.Ensure).
+	// argosecrets.Manager.Ensure.
 	if alreadyInArgoCD {
 		slog.Info("cluster already in ArgoCD — reconciler will adopt on next tick", "cluster", req.Name)
 		steps = append(steps, "argocd_adopt")
@@ -392,13 +373,10 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		steps = append(steps, "reconciler_handoff")
 	}
 
-	// V125-1-8.3: nudge the reconciler so post-merge convergence happens
-	// immediately rather than waiting for the 30s safety-net tick. When
-	// auto-merge is off the PR is still open — the nudge is harmless
-	// (reconciler's poll will find no new managed-clusters.yaml entry
-	// until the user merges). The seam is wired in V125-1-8.4 via
-	// cmd/sharko/serve.go calling SetReconcilerTrigger; tests inject a
-	// counter to assert it fires on every register path.
+	// Nudge the reconciler so post-merge convergence happens immediately
+	// rather than waiting for the 30s safety-net tick. When auto-merge is
+	// off the PR is still open — the nudge is harmless (the reconciler's
+	// poll will find no new managed-clusters.yaml entry until merge).
 	o.fireReconcilerTrigger()
 
 	result.CompletedSteps = steps
@@ -522,8 +500,8 @@ func (o *Orchestrator) DeregisterCluster(ctx context.Context, name string, serve
 //  4. Update values file via PR
 //  5. Update ArgoCD labels (all at once — LAST, after secrets and values exist)
 //
-// BUG-031: autoMergeOverride is the per-request auto-merge decision (nil =
-// fall back to o.gitops.PRAutoMerge). Passed through to commitChangesWithMeta
+// autoMergeOverride is the per-request auto-merge decision (nil = fall
+// back to o.gitops.PRAutoMerge). Passed through to commitChangesWithMeta
 // via PRMetadata.AutoMergeOverride — never mutates o.gitops.PRAutoMerge.
 func (o *Orchestrator) UpdateClusterAddons(ctx context.Context, name string, serverURL string, region string, addons map[string]bool, autoMergeOverride *bool) (*RegisterClusterResult, error) {
 	result := &RegisterClusterResult{
@@ -584,7 +562,7 @@ func (o *Orchestrator) UpdateClusterAddons(ctx context.Context, name string, ser
 		OperationCode:     "update-cluster",
 		Cluster:           name,
 		Title:             fmt.Sprintf("Update addons for cluster %s", name),
-		AutoMergeOverride: autoMergeOverride, // BUG-031: per-request override
+		AutoMergeOverride: autoMergeOverride, // per-request override
 	})
 	if err != nil {
 		if gitResult != nil {
@@ -635,17 +613,11 @@ func (o *Orchestrator) UpdateClusterAddons(ctx context.Context, name string, ser
 }
 
 // RefreshClusterCredentials validates that fresh credentials are reachable
-// in the credentials provider and nudges the V125-1-8 reconciler so the
-// ArgoCD cluster Secret is updated immediately rather than on the next
-// 30s safety-net tick.
-//
-// V125-1-8.3 retirement: the previous implementation called
-// o.argocd.RegisterCluster directly to upsert the Secret with fresh
-// CAData/Token. That direct write is now owned by the reconciler — when
-// it picks the cluster up, it re-fetches credentials via the same
-// credProvider this function probes and writes the new Secret payload
-// via argosecrets.Manager.Ensure. The probe is kept so the API endpoint
-// can fail fast (404 / 401) without dispatching a no-op reconcile.
+// in the credentials provider and nudges the reconciler so the ArgoCD
+// cluster Secret is updated immediately rather than on the next 30s
+// safety-net tick. The reconciler owns the direct Secret write — this
+// probe is kept so the API endpoint can fail fast (404 / 401) without
+// dispatching a no-op reconcile.
 func (o *Orchestrator) RefreshClusterCredentials(_ context.Context, name string, _ string) error {
 	if o.credProvider == nil {
 		// No credProvider configured (e.g. kubeconfig-only deployment) —

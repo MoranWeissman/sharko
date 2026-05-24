@@ -134,12 +134,11 @@ func (o *Orchestrator) InitRepo(ctx context.Context, req InitRepoRequest) (*Init
 		result.ArgoCD.SyncStatus = syncStatus
 		result.ArgoCD.SyncError = syncErr
 		if syncStatus != "synced" {
-			// V124-14 / BUG-032: a sync timeout/failure must surface as a
-			// non-nil error so the operations framework marks the operation
-			// as `failed` and the first-run wizard renders the actual cause
-			// instead of "Repository initialized successfully." The caller
-			// may still inspect `result` for partial info — the error
-			// message itself carries enough detail for the wizard.
+			// A sync timeout/failure must surface as a non-nil error so the
+			// operations framework marks the operation as `failed` and the
+			// first-run wizard renders the actual cause instead of a
+			// generic success message. The caller may still inspect
+			// `result` for partial info.
 			result.Status = "syncing"
 			detail := syncStatus
 			if syncErr != "" {
@@ -303,13 +302,13 @@ func (o *Orchestrator) CommitBootstrapFiles(ctx context.Context, files map[strin
 	return branchName, nil
 }
 
-// CreateInitPR opens a pull request for the given branch against the base branch.
-// The caller is responsible for merging (or waiting for a human to merge).
+// CreateInitPR opens a pull request for the given branch against the base
+// branch. The caller is responsible for merging (or waiting for a human
+// to merge).
 //
-// V125-1-6: this path does NOT go through commitChanges (the bootstrap
-// branch was already created by CommitBootstrapFiles), so the dashboard
-// PR-tracker write is performed inline. Skipped silently when no tracker
-// is wired (test seam).
+// This path does NOT go through commitChanges (the bootstrap branch was
+// already created by CommitBootstrapFiles), so the dashboard PR-tracker
+// write is performed inline. Skipped silently when no tracker is wired.
 func (o *Orchestrator) CreateInitPR(ctx context.Context, branch string) (*GitResult, error) {
 	title := fmt.Sprintf("%s initialize repository", o.gitops.CommitPrefix)
 	pr, err := o.git.CreatePullRequest(ctx, title, "initialize repository", branch, o.gitops.BaseBranch)

@@ -40,17 +40,15 @@ type GitRepoConfig struct {
 //   - https://dev.azure.com/org/project/_git/repo
 //   - https://org.visualstudio.com/project/_git/repo
 //
-// V126-4.1 / BUG-189: explicit-fields override. When the URL path cannot
-// be parsed into the canonical owner/repo (or org/project/repo) shape but
-// the caller has already populated the explicit identifier fields, the
-// explicit fields win and the URL is treated as opaque (Provider is still
-// set from host detection). Rejection only fires when BOTH path-parse fails
-// AND the explicit identifier fields are empty. This unblocks self-hosted
-// Gitea behind a non-standard path, corporate Git proxies, in-cluster
-// gitfake URLs (e.g. http://gitfake.default.svc.cluster.local/<repo>.git),
+// Explicit-fields override. When the URL path cannot be parsed into
+// the canonical owner/repo (or org/project/repo) shape but the caller
+// has already populated the explicit identifier fields, the explicit
+// fields win and the URL is treated as opaque (Provider is still set
+// from host detection). Rejection only fires when BOTH path-parse fails
+// AND the explicit identifier fields are empty. This unblocks
+// self-hosted Gitea, corporate Git proxies, in-cluster gitfake URLs,
 // and any other deployment whose URL shape doesn't match a public-SaaS
-// path layout. The Owner/Repo (or Org/Project/Repository) the caller
-// passed in is the source of truth in that case.
+// layout.
 func (g *GitRepoConfig) ParseRepoURL() error {
 	if g.RepoURL == "" {
 		return nil // nothing to parse, fields must be set directly
@@ -67,9 +65,9 @@ func (g *GitRepoConfig) ParseRepoURL() error {
 	// Azure DevOps: dev.azure.com/org/project/_git/repo
 	if host == "dev.azure.com" {
 		if len(parts) < 4 || parts[2] != "_git" {
-			// V126-4.1: accept when the caller already populated the
-			// explicit Azure DevOps identifier fields. Path parsing is
-			// best-effort in that case — the explicit fields are the
+			// Accept when the caller already populated the explicit
+			// Azure DevOps identifier fields. Path parsing is best-
+			// effort in that case — the explicit fields are the
 			// source of truth.
 			if g.Organization != "" && g.Project != "" && g.Repository != "" {
 				g.Provider = GitProviderAzureDevOps
@@ -98,9 +96,9 @@ func (g *GitRepoConfig) ParseRepoURL() error {
 			g.Project = parts[0]
 			g.Repository = parts[2]
 		} else {
-			// V126-4.1: accept when the caller already populated the
-			// explicit Azure DevOps Project + Repository fields. Host
-			// gave us Organization for free.
+			// Accept when the caller already populated the explicit
+			// Azure DevOps Project + Repository fields. Host gave us
+			// Organization for free.
 			if g.Project != "" && g.Repository != "" {
 				if g.Token != "" && g.PAT == "" {
 					g.PAT = g.Token
@@ -118,10 +116,10 @@ func (g *GitRepoConfig) ParseRepoURL() error {
 	// GitHub (github.com or any other host = GitHub Enterprise).
 	g.Provider = GitProviderGitHub
 	if len(parts) < 2 {
-		// V126-4.1 / BUG-189: explicit-fields override. The URL path lacks
-		// the owner/repo segments the path-parser needs, but if the caller
-		// already populated Owner + Repo directly, treat the URL as opaque
-		// and use the explicit fields as-is.
+		// Explicit-fields override. The URL path lacks the owner/repo
+		// segments the path-parser needs, but if the caller already
+		// populated Owner + Repo directly, treat the URL as opaque and
+		// use the explicit fields as-is.
 		if g.Owner != "" && g.Repo != "" {
 			return nil
 		}
@@ -202,12 +200,11 @@ type ConnectionsListResponse struct {
 //
 // The `UseSaved` field is honored ONLY by the test-credentials endpoint
 // (POST /connections/test-credentials). The Create / Update handlers ignore
-// it — they always read credentials from the request body / saved store as
-// usual. See V124-19 / BUG-044 for the full contract: when `use_saved=true`
-// is sent to test-credentials, the handler fetches the named connection's
-// credentials server-side and tests with those, so the wizard can honor
-// the "leave blank to keep, or enter new value to replace" placeholder
-// (V124-17 / BUG-040) end-to-end.
+// it — they always read credentials from the request body / saved
+// store as usual. When `use_saved=true` is sent to test-credentials,
+// the handler fetches the named connection's credentials server-side
+// and tests with those, so the wizard can honor the "leave blank to
+// keep, or enter new value to replace" placeholder end-to-end.
 type CreateConnectionRequest struct {
 	Name         string          `json:"name"`
 	Description  string          `json:"description,omitempty"`
@@ -220,7 +217,7 @@ type CreateConnectionRequest struct {
 	// handler to look up the saved connection by Name and test using its
 	// stored credentials instead of the request body. Returns 400 if no
 	// saved connection with the given name exists. Ignored by Create /
-	// Update. V124-19 / BUG-044.
+	// Update.
 	UseSaved bool `json:"use_saved,omitempty"`
 }
 

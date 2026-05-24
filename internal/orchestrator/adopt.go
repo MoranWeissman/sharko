@@ -135,7 +135,7 @@ func (o *Orchestrator) AdoptClusters(ctx context.Context, req AdoptClustersReque
 		}
 
 		// Phase 2: Atomic adoption — create values file + add to managed-clusters.yaml in one PR.
-		// BUG-031: AutoMerge is now *bool; nil means "fall back to connection default".
+		// AutoMerge is *bool; nil means "fall back to connection default".
 		adoptResult := o.adoptSingleCluster(ctx, clusterName, serverURL, req.AutoMerge)
 		// Preserve Phase 1 verification result.
 		if cr.Verification != nil {
@@ -147,13 +147,12 @@ func (o *Orchestrator) AdoptClusters(ctx context.Context, req AdoptClustersReque
 	return result, nil
 }
 
-// adoptSingleCluster performs the Git + ArgoCD secret operations for a single cluster.
-//
-// BUG-031: autoMergeOverride is the per-request auto-merge decision (nil =
-// fall back to o.gitops.PRAutoMerge). Plumbed into commitChangesWithMeta
-// via PRMetadata.AutoMergeOverride — replaces the pre-BUG-031 pattern that
-// mutated o.gitops.PRAutoMerge in-place (a race against concurrent ops on
-// the shared connection-level config).
+// adoptSingleCluster performs the Git + ArgoCD secret operations for a
+// single cluster. autoMergeOverride is the per-request auto-merge
+// decision (nil = fall back to o.gitops.PRAutoMerge). Plumbed into
+// commitChangesWithMeta via PRMetadata.AutoMergeOverride — never mutates
+// o.gitops.PRAutoMerge, which would race against concurrent ops on the
+// shared connection-level config.
 func (o *Orchestrator) adoptSingleCluster(ctx context.Context, name, serverURL string, autoMergeOverride *bool) AdoptClusterResult {
 	cr := AdoptClusterResult{Name: name}
 
@@ -202,11 +201,10 @@ func (o *Orchestrator) adoptSingleCluster(ctx context.Context, name, serverURL s
 		files[clusterAddonsPath] = updatedClusterAddons
 	}
 
-	// BUG-031: per-request auto-merge override flows through PRMetadata
-	// rather than mutating o.gitops.PRAutoMerge (which would race against
-	// concurrent ops on the shared connection-level config). nil here
-	// means "fall back to the connection default" — preserves back-compat
-	// for clients that don't send auto_merge.
+	// Per-request auto-merge override flows through PRMetadata rather than
+	// mutating o.gitops.PRAutoMerge (which would race against concurrent
+	// ops on the shared connection-level config). nil here means "fall
+	// back to the connection default".
 	gitResult, gitErr := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("adopt cluster %s", name), PRMetadata{
 		OperationCode:     "adopt-cluster",
 		Cluster:           name,

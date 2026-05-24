@@ -35,13 +35,9 @@ func (s *Server) handleAddAddon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// V124-4.3 / BUG-019: validate request body BEFORE any upstream call.
-	// Pre-V124-4 the handler dialled out to ArgoCD + the Git provider
-	// (potentially via per-user PAT verification) before checking that the
-	// payload had the required fields, so an empty `{}` POST returned a
-	// confusing 502 (`no active ArgoCD connection: …`) AND burned external
-	// API quota on every empty/invalid attempt. Decoding + required-field
-	// validation are O(1) work and must run first.
+	// Validate request body BEFORE any upstream call so an empty `{}`
+	// POST doesn't burn external API quota and doesn't surface a
+	// confusing upstream-connection error.
 	var req orchestrator.AddAddonRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
@@ -78,13 +74,11 @@ func (s *Server) handleAddAddon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// V121-6 smart-values seeding: best-effort pre-fetch of the chart's
-	// upstream values.yaml so AddAddon can write an annotated global values
-	// file with a per-cluster template. On any fetch failure (network,
-	// chart unreachable, version not found) we silently fall back to the
-	// pre-v1.21 minimal stub — the user can always Refresh from upstream
-	// later via V121-6.4 once connectivity is restored. This decision
-	// keeps Add Addon non-blocking on flaky upstream registries.
+	// Smart-values seeding: best-effort pre-fetch of the chart's upstream
+	// values.yaml so AddAddon can write an annotated global values file
+	// with a per-cluster template. On any fetch failure we silently fall
+	// back to the minimal stub — the user can Refresh from upstream
+	// later. This keeps Add Addon non-blocking on flaky registries.
 	if req.RepoURL != "" && req.Chart != "" && req.Version != "" {
 		if upstream, ferr := helm.NewFetcher().FetchValues(ctx, req.RepoURL, req.Chart, req.Version); ferr == nil {
 			req.UpstreamValues = []byte(upstream)
@@ -94,14 +88,12 @@ func (s *Server) handleAddAddon(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// V121-7 AI annotate: when AI is configured AND the global Settings
-	// toggle is on AND the per-addon opt-out is NOT set, run the LLM
-	// pass to (a) inject inline `# description` comments and (b) augment
-	// the heuristic's cluster-specific path set. Hard secret-leak guard
+	// AI annotate: when AI is configured AND the global Settings toggle
+	// is on AND the per-addon opt-out is NOT set, run the LLM pass to
+	// (a) inject inline `# description` comments and (b) augment the
+	// heuristic's cluster-specific path set. The hard secret-leak guard
 	// runs first; on a match the call is blocked and the seed continues
-	// with heuristic-only output (the UI surfaces the block via the
-	// returned `secret_detected_blocked` warning so the user knows their
-	// chart values look secret-bearing).
+	// with heuristic-only output.
 	//
 	// Failure modes are graceful — see ai_annotate.go. AI is best-effort
 	// and never fails the addon-add. The only error we surface to the
@@ -118,9 +110,9 @@ func (s *Server) handleAddAddon(w http.ResponseWriter, r *http.Request) {
 					"addon", req.Name, "chart", req.Chart, "version", req.Version,
 					"matches", len(secretBlock.Matches),
 				)
-				// Story V121-8.5: emit a dedicated `secret_leak_blocked`
-				// audit entry alongside the eventual `addon_added` entry so
-				// security review can grep one stable token across the log.
+				// Emit a dedicated `secret_leak_blocked` audit entry
+				// alongside the eventual `addon_added` entry so
+				// security review can grep one stable token.
 				s.emitSecretLeakAuditBlock(ctx, "addon_add", req.Name, req.Chart, req.Version, secretBlock.Matches)
 			}
 		}
@@ -135,11 +127,10 @@ func (s *Server) handleAddAddon(w http.ResponseWriter, r *http.Request) {
 	s.attachPRTracker(orch)
 	result, err := orch.AddAddon(ctx, req)
 	if err != nil {
-		// Surface "already in catalog" as 409 with a structured body so the
-		// Marketplace Configure modal can render a friendly inline error and
-		// link to the existing addon. Locked decision (V121-5.1): the
-		// duplicate path stays inside the existing handler — no separate
-		// pre-flight endpoint.
+		// Surface "already in catalog" as 409 with a structured body so
+		// the Marketplace Configure modal can render a friendly inline
+		// error and link to the existing addon (duplicate-handling stays
+		// inside this handler; no separate pre-flight endpoint).
 		if strings.Contains(err.Error(), "already exists in catalog") {
 			source := req.Source
 			if source == "" {
@@ -162,16 +153,11 @@ func (s *Server) handleAddAddon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// V125-1-6: TrackPR is now centralized inside orchestrator.AddAddon
-	// via commitChangesWithMeta — the handler-level call has been removed
-	// to avoid double-tracking. Operation=addon-add and Addon=req.Name are
-	// set automatically by the orchestrator.
-
-	// Audit detail uses key=value to stay grep-friendly. `source` defaults to
-	// "manual" when the request body doesn't include it (raw Add Addon form
-	// or older clients) and is "marketplace" when submitted via the V121-5
-	// Configure modal. Locked decision 2026-04-19 (Moran): no new event name —
-	// the source field on `addon_added` is the discriminator.
+	// Audit detail uses key=value to stay grep-friendly. `source` defaults
+	// to "manual" when the request body doesn't include it (raw Add Addon
+	// form or older clients) and is "marketplace" when submitted via the
+	// Configure modal. The source field on `addon_added` is the
+	// discriminator — there is no separate event name.
 	source := req.Source
 	if source == "" {
 		source = "manual"

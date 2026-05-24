@@ -1,6 +1,6 @@
 package api
 
-// catalog_remote.go — V121-3.3: per-package detail proxy.
+// catalog_remote.go — per-package detail proxy.
 //
 //   GET /api/v1/catalog/remote/{repo}/{name}
 //

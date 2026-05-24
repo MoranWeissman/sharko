@@ -22,9 +22,8 @@ func (s *Server) Catalog() *catalog.Catalog {
 	return s.catalog
 }
 
-// SetCatalogSources stashes the parsed third-party catalog source config
-// (v1.23 / Story V123-1.1). The V123-1.2 fetcher is the primary consumer;
-// for now this is write-only from startup.
+// SetCatalogSources stashes the parsed third-party catalog source config.
+// The fetcher is the primary consumer; this is write-only from startup.
 func (s *Server) SetCatalogSources(cfg *config.CatalogSourcesConfig) {
 	s.catalogSources = cfg
 }
@@ -37,11 +36,10 @@ func (s *Server) CatalogSources() *config.CatalogSourcesConfig {
 	return s.catalogSources
 }
 
-// SetSourcesFetcher wires the V123-1.2 third-party catalog fetcher onto
-// the Server. The fetcher is the authoritative source for merged
-// snapshots consumed by V123-1.3 (merge under embedded catalog),
-// V123-1.5 (GET /api/v1/catalog/sources), and V123-1.6 (force-refresh).
-// Nil is accepted — embedded-only mode keeps this unset.
+// SetSourcesFetcher wires the third-party catalog fetcher onto the
+// Server. The fetcher is the authoritative source for merged snapshots
+// consumed by the merge layer, GET /api/v1/catalog/sources, and
+// force-refresh. Nil is accepted — embedded-only mode keeps this unset.
 func (s *Server) SetSourcesFetcher(f *sources.Fetcher) {
 	s.sourcesFetcher = f
 }
@@ -113,10 +111,11 @@ func (s *Server) handleListCatalogAddons(w http.ResponseWriter, r *http.Request)
 		q.IncludeDeprecated = v
 	}
 
-	// V123-1.4: filter the merged embedded + third-party view (not the raw
+	// Filter the merged embedded + third-party view (not the raw
 	// s.catalog). In embedded-only deployments this is identical to
-	// s.catalog.List(q); when SHARKO_CATALOG_URLS is configured, third-party
-	// entries are included and every entry carries a `source` field.
+	// s.catalog.List(q); when SHARKO_CATALOG_URLS is configured,
+	// third-party entries are included and every entry carries a
+	// `source` field.
 	entries := catalog.ListFrom(s.mergedCatalogEntries(), q)
 	writeJSON(w, http.StatusOK, catalogListResponse{
 		Addons: entries,
@@ -146,13 +145,10 @@ func (s *Server) handleGetCatalogAddon(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "addon name is required")
 		return
 	}
-	// V123-1.4: look up against the merged embedded + third-party view so
-	// third-party entries are surfaceable under their `name`. Linear scan
-	// is fine — the embedded catalog is ~60 entries and third-party feeds
-	// are expected to stay small. If profiling ever shows this matters, a
-	// per-request map build is trivial; preserving the existing behaviour
-	// (404 on unknown, 503 when the embedded catalog never loaded) is the
-	// contract we care about.
+	// Look up against the merged embedded + third-party view so
+	// third-party entries are surfaceable under their `name`. Linear
+	// scan is fine for the expected size; the contract is 404 on
+	// unknown and 503 when the embedded catalog never loaded.
 	var entry catalog.CatalogEntry
 	var ok bool
 	for _, e := range s.mergedCatalogEntries() {

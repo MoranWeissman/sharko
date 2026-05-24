@@ -1,4 +1,4 @@
-// Package orchestrator — generated-file header (Story V121-6.3).
+// Package orchestrator — generated-file header.
 //
 // Every file the smart-values layer writes carries a self-describing
 // header that downstream code (the version-mismatch banner, the AI
@@ -15,9 +15,8 @@
 //
 //	# sharko: ai-annotate=off
 //
-// Backwards compatibility: existing values files written before v1.21
-// have no header. The version-mismatch banner suppresses itself when
-// `sharko: managed=true` is missing, so legacy files keep working.
+// Legacy values files with no header are tolerated: the version-mismatch
+// banner suppresses itself when `sharko: managed=true` is missing.
 
 package orchestrator
 

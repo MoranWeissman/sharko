@@ -46,14 +46,10 @@ func (s *DashboardService) GetStats(ctx context.Context, gp gitprovider.GitProvi
 
 	// Parse Git config.
 	//
-	// V124-23 / BUG-048: missing file (fresh-install gitops repo) degrades
-	// to empty stats rather than propagating a 500 with the raw filesystem
-	// error string. Same isGitFileNotFound (errors.Is) pattern as
-	// ClusterService.ListClusters (V124-2.2). The previous 404-substring
-	// check matched the H2 anti-pattern that V124-2.12 already fixed for
-	// /clusters and never actually fired against real providers — the
-	// maintainer's empty-repo logs ("op=dashboard_stats status=500
-	// error=reading managed-clusters.yaml: ... file not found") confirmed.
+	// Missing file (fresh-install gitops repo) degrades to empty stats
+	// rather than propagating a 500 with the raw filesystem error
+	// string. Same isGitFileNotFound (errors.Is) pattern as
+	// ClusterService.ListClusters.
 	clusterData, err := gp.GetFileContent(ctx, s.managedClustersPath, "main")
 	if err != nil {
 		if isGitFileNotFound(err) {

@@ -33,19 +33,17 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 	resp, err := s.clusterSvc.ListClusters(r.Context(), gp, ac)
 	if err != nil {
 		// Upstream call (Git provider + ArgoCD): classify so a Git timeout
-		// reads as 504 and a refused TCP connection reads as 502 (V124-3.2).
+		// reads as 504 and a refused TCP connection reads as 502.
 		writeUpstreamError(w, "list_clusters", err)
 		return
 	}
 
-	// V125-1.5 — resolve pending-registration PRs and prune any
-	// pending-cluster names from the `not_in_git` cluster set. The Sharko
-	// argosecrets reconciler can create the ArgoCD cluster secret BEFORE
-	// the values-file PR merges (see internal/orchestrator/cluster.go),
-	// which makes the pending cluster appear in ArgoCD's cluster list.
-	// Without this prune, the FE would render the same cluster in both the
-	// new "Pending registrations" surface AND the "Discovered clusters /
-	// not_in_git" surface — BUG-052.
+	// Resolve pending-registration PRs and prune any pending-cluster
+	// names from the `not_in_git` cluster set. Without this prune, the
+	// FE would render the same cluster in both the "Pending
+	// registrations" surface AND the "Discovered clusters / not_in_git"
+	// surface (the argosecrets reconciler can create the ArgoCD cluster
+	// secret BEFORE the values-file PR merges).
 	pending := resolvePendingRegistrations(r.Context(), gp, s.gitopsCfg.CommitPrefix)
 	resp.PendingRegistrations = pending
 	pendingNames := make(map[string]struct{}, len(pending))
@@ -53,28 +51,23 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 		pendingNames[p.ClusterName] = struct{}{}
 	}
 
-	// V125-1-7 / BUG-058 — resolve orphan ArgoCD cluster Secrets (in
-	// ArgoCD, not in git, no open register PR). Mirrors the V125-1.5
-	// dignified-degrade pattern: a transient ArgoCD blip returns an empty
-	// slice + warn, never a 500. We need the git-managed cluster names
-	// (resp.Clusters with Managed==true) plus the pending names; build
-	// them now and pass to the resolver. Note resp.Clusters at this point
-	// already contains both managed (Managed==true) AND not_in_git
-	// clusters — the resolver only consumes Managed entries via name
-	// match, so passing the full slice is correct.
+	// Resolve orphan ArgoCD cluster Secrets (in ArgoCD, not in git, no
+	// open register PR). Dignified-degrade: a transient ArgoCD blip
+	// returns an empty slice + warn, never a 500. Pass the git-managed
+	// cluster names (resp.Clusters with Managed==true) plus the
+	// pending names to the resolver.
 	gitManaged := make([]models.Cluster, 0, len(resp.Clusters))
 	for _, c := range resp.Clusters {
 		if c.Managed {
 			gitManaged = append(gitManaged, c)
 		}
 	}
-	// V125-1-8.2 — ownership-label gate. Pull the set of Secret names in
-	// the argocd namespace carrying app.kubernetes.io/managed-by=sharko so
-	// the resolver only surfaces Sharko-owned orphans (unlabeled = V125-2
-	// Adopt territory). Returns nil when the k8s client is not wired — the
-	// resolver disables the gate in that case so dev-mode without K8s does
-	// not silently lose the orphan surface (see resolveOrphanRegistrations
-	// doc-comment safety-valve rationale).
+	// Ownership-label gate. Pull the set of Secret names in the argocd
+	// namespace carrying app.kubernetes.io/managed-by=sharko so the
+	// resolver only surfaces Sharko-owned orphans (unlabeled = Adopt
+	// territory). Returns nil when the k8s client is not wired — the
+	// resolver disables the gate in that case so dev-mode without K8s
+	// does not silently lose the orphan surface.
 	var sharkoOwnedNames map[string]struct{}
 	if k8sClient, namespace, ok := s.k8sClientAndNamespace(); ok {
 		sharkoOwnedNames = listSharkoOwnedSecretNames(r.Context(), k8sClient, namespace)
@@ -89,8 +82,7 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 	// Filter the `not_in_git` lane to remove BOTH pending and orphan
 	// cluster names. A pending cluster belongs in PendingRegistrations
 	// only; an orphan belongs in OrphanRegistrations only. Without this
-	// prune the same cluster could appear in two surfaces at once
-	// (BUG-052 for pending, BUG-058 for orphans).
+	// prune the same cluster could appear in two surfaces at once.
 	if len(pendingNames) > 0 || len(orphanNames) > 0 {
 		filtered := resp.Clusters[:0]
 		for _, c := range resp.Clusters {
@@ -214,7 +206,7 @@ func (s *Server) handleGetCluster(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := s.clusterSvc.GetClusterDetail(r.Context(), name, gp, ac)
 	if err != nil {
-		// Upstream call (Git provider + ArgoCD): classify (V124-3.2).
+		// Upstream call (Git provider + ArgoCD): classify.
 		writeUpstreamError(w, "get_cluster", err)
 		return
 	}
@@ -253,7 +245,7 @@ func (s *Server) handleGetClusterValues(w http.ResponseWriter, r *http.Request) 
 
 	resp, err := s.clusterSvc.GetClusterValues(r.Context(), name, gp)
 	if err != nil {
-		// Upstream call (Git provider): classify (V124-3.2).
+		// Upstream call (Git provider): classify.
 		writeUpstreamError(w, "get_cluster_values", err)
 		return
 	}
@@ -288,7 +280,7 @@ func (s *Server) handleGetConfigDiff(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := s.clusterSvc.GetConfigDiff(r.Context(), name, gp)
 	if err != nil {
-		// Upstream call (Git provider): classify (V124-3.2).
+		// Upstream call (Git provider): classify.
 		writeUpstreamError(w, "get_cluster_config_diff", err)
 		return
 	}
@@ -330,7 +322,7 @@ func (s *Server) handleGetClusterComparison(w http.ResponseWriter, r *http.Reque
 
 	resp, err := s.clusterSvc.GetClusterComparison(r.Context(), name, gp, ac)
 	if err != nil {
-		// Upstream call (Git provider + ArgoCD): classify (V124-3.2).
+		// Upstream call (Git provider + ArgoCD): classify.
 		writeUpstreamError(w, "get_cluster_comparison", err)
 		return
 	}

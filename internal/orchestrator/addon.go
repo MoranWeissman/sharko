@@ -83,14 +83,13 @@ func (o *Orchestrator) AddAddon(ctx context.Context, req AddAddonRequest) (*GitR
 
 	// Generate the global values file. Two paths:
 	//
-	//  - Smart-values pipeline (V121-6): when the caller supplied raw
-	//    upstream chart values, run the heuristic splitter + per-cluster
-	//    template generator + self-describing header. Used by the
-	//    marketplace path and any caller that has the upstream bytes.
+	//  - Smart-values pipeline: when the caller supplied raw upstream
+	//    chart values, run the heuristic splitter + per-cluster template
+	//    generator + self-describing header. Used by the marketplace path
+	//    and any caller that has the upstream bytes.
 	//
-	//  - Legacy stub: when no upstream is supplied, fall back to the
-	//    pre-v1.21 minimal `<name>:\n  enabled: false` payload. Keeps
-	//    older clients (raw API callers, legacy CLIs) working.
+	//  - Stub: when no upstream is supplied, fall back to the minimal
+	//    `<name>:\n  enabled: false` payload.
 	//
 	// Skip-on-existing: if the file is already present in the user's
 	// repo (re-add or partial-failure retry) we keep what's there. This

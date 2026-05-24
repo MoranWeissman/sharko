@@ -209,40 +209,30 @@ var serveCmd = &cobra.Command{
 		srv.SetVersion(version)                 // Propagate ldflags-injected version to health endpoint
 		srv.SetTemplateFS(templates.TemplateFS) // Always available — init doesn't need a provider
 
-		// Construct the cosign-keyless verifier (V123-2.2 / Subsystem B).
-		// The verifier is shared between two callers:
+		// Construct the cosign-keyless verifier, shared between:
 		//
-		//   1. The third-party catalog fetcher — uses it as a
-		//      sources.SidecarVerifier when a `.bundle` sidecar is
-		//      discovered next to a fetched YAML.
-		//   2. The embedded-catalog loader — uses VerifyEntryFunc to
-		//      verify per-entry signatures at load time.
+		//   1. The third-party catalog fetcher — as a sources.SidecarVerifier
+		//      when a `.bundle` sidecar is discovered next to a fetched YAML.
+		//   2. The embedded-catalog loader — VerifyEntryFunc to verify
+		//      per-entry signatures at load time.
 		//
-		// V123-2.3 has landed the SHARKO_CATALOG_TRUSTED_IDENTITIES env
-		// var parser. Unset / empty falls back to a conservative default
-		// list (CNCF org workflows + Sharko's own release workflow).
-		// Operators extend the defaults via the literal "<defaults>"
-		// magic token, override entirely with their own regexes, or set
-		// "^$" for the explicit "trust nothing" escape hatch. Full doc:
-		// docs/site/operator/catalog-trust-policy.md.
+		// SHARKO_CATALOG_TRUSTED_IDENTITIES configures trusted identities;
+		// unset / empty falls back to a conservative default (CNCF org
+		// workflows + Sharko's own release workflow). Operators extend via
+		// the literal "<defaults>" magic token, override entirely with their
+		// own regexes, or set "^$" for the explicit "trust nothing" escape
+		// hatch. See docs/site/operator/catalog-trust-policy.md.
 		//
-		// Failure to parse (e.g., a malformed regex) is fatal — the
-		// operator notices at startup instead of shipping a broken trust
-		// policy that silently rejects every signature.
+		// Failure to parse a regex is fatal — the operator notices at startup
+		// instead of shipping a broken trust policy that silently rejects
+		// every signature.
 		//
-		// V123-2.4 / B1 BLOCKER fix: load the Sigstore public-good trust
-		// root via TUF (`signing.LoadProductionTrustedRoot`) and wire it
-		// into the verifier with WithTrustedMaterial. Pre-V123-2.4 the
-		// verifier was constructed without a trust root, which made the
-		// fail-closed staticTrust{} default reject every signature at
-		// runtime — the entire signed-entry feature was DOA.
-		//
-		// TUF fetch failures are non-fatal: an air-gapped Sharko
-		// deployment cannot reach `tuf-repo-cdn.sigstore.dev` and must
-		// still boot. We log a WARN and continue with the unconfigured
-		// verifier (every signed entry surfaces Verified=false, which is
-		// the correct conservative outcome offline). Operators see the
-		// degraded state in logs without losing the catalog.
+		// We load the Sigstore public-good trust root via TUF and wire it
+		// into the verifier with WithTrustedMaterial. TUF fetch failures are
+		// non-fatal so air-gapped deployments still boot — we log a WARN and
+		// continue with the unconfigured verifier (every signed entry then
+		// surfaces Verified=false, which is the correct conservative outcome
+		// offline).
 		//
 		// nil http.Client means the verifier uses a sane 30s default for
 		// bundle fetches.
@@ -263,15 +253,11 @@ var serveCmd = &cobra.Command{
 		slog.Info("catalog trust policy loaded",
 			"identity_count", len(catalogTrustPolicy.Identities))
 
-		// Load the embedded curated catalog (v1.21). Failure here is fatal —
-		// a malformed catalog indicates a build-time regression, not a
-		// runtime problem operators can work around.
-		//
-		// V123-2.2: the embedded catalog is loaded through
+		// Load the embedded curated catalog. Failure here is fatal — a
+		// malformed catalog indicates a build-time regression, not a runtime
+		// problem operators can work around. The catalog is loaded through
 		// LoadBytesWithVerifier so that any future signing of embedded
-		// entries (V123-2.5 release pipeline) lights up the verified
-		// path automatically. Today's embedded entries are unsigned, so
-		// every entry surfaces Verified=false — which is correct.
+		// entries lights up the verified path automatically.
 		cat, err := catalog.LoadBytesWithVerifier(
 			context.Background(),
 			catalogembed.AddonsYAML(),
@@ -283,16 +269,13 @@ var serveCmd = &cobra.Command{
 		slog.Info("curated catalog loaded", "entries", cat.Len())
 		srv.SetCatalog(cat)
 
-		// Third-party catalog sources (v1.23 Subsystem A / Story V123-1.1).
-		// Parses SHARKO_CATALOG_URLS + SHARKO_CATALOG_REFRESH_INTERVAL; a
-		// misconfiguration is fatal so the operator notices at startup
-		// instead of shipping a broken fetch loop. Empty env = embedded-only
-		// mode — no error, no fetcher.
+		// Third-party catalog sources. Parses SHARKO_CATALOG_URLS +
+		// SHARKO_CATALOG_REFRESH_INTERVAL; a misconfiguration is fatal so the
+		// operator notices at startup. Empty env = embedded-only mode.
 		//
 		// URLs are deliberately NOT logged — a third-party catalog URL may
-		// encode an auth token in the path. Count is enough to confirm the
-		// config landed; the /api/v1/catalog/sources endpoint (V123-1.2)
-		// will surface the authoritative list to authenticated operators.
+		// encode an auth token in the path. Authenticated operators can
+		// retrieve the authoritative list via /api/v1/catalog/sources.
 		catSources, err := config.LoadCatalogSourcesFromEnv()
 		if err != nil {
 			return fmt.Errorf("load catalog sources: %w", err)
@@ -310,35 +293,25 @@ var serveCmd = &cobra.Command{
 				slog.Warn("SHARKO_CATALOG_URLS_ALLOW_PRIVATE is enabled — SSRF guard disabled; only safe on trusted networks")
 			}
 
-			// Start the third-party catalog fetch loop (v1.23 Story V123-1.2).
-			// V123-2.2 wires the cosign verifier into the fetcher so that
-			// when a `.bundle` sidecar is discovered next to a fetched
-			// catalog YAML, the snapshot's Verified + Issuer fields are
-			// populated by signing.Verifier.Verify. The trust policy is
-			// the same fail-closed-empty default as the per-entry path
-			// above — V123-2.3 lands the env var that supplies real
-			// identities. Nil clock — use the production wall clock.
-			// Fetcher.Start is non-blocking; supervisor goroutine fans
-			// out one fetch per URL per tick. Fetcher.Stop drains
-			// in-flight fetches at shutdown.
+			// Start the third-party catalog fetch loop. The cosign verifier
+			// is wired into the fetcher so when a `.bundle` sidecar is
+			// discovered next to a fetched catalog YAML, the snapshot's
+			// Verified + Issuer fields are populated by
+			// signing.Verifier.Verify. Nil clock = production wall clock.
+			// Fetcher.Start is non-blocking; supervisor goroutine fans out
+			// one fetch per URL per tick. Fetcher.Stop drains in-flight
+			// fetches at shutdown.
 			sourcesFetcher := sources.NewFetcher(catSources, catalogVerifier, nil /* clock */)
-			// V123-2.4 / B3 BLOCKER fix: per-entry verification on
-			// third-party feeds. Pre-fix the fetcher called
-			// catalog.LoadBytes which silently retained any
-			// `signature.bundle` URL on entries without verifying it,
-			// letting a compromised third-party curator flip an entry
-			// and have Sharko serve it as if signed. Wiring an explicit
-			// VerifyEntryFunc closes the gap: each entry with a
-			// signature.bundle is run through the same trust policy
-			// that gates the embedded catalog.
+			// Per-entry verification on third-party feeds. Each entry with
+			// a signature.bundle is run through the same trust policy that
+			// gates the embedded catalog — without this, a compromised
+			// third-party curator could flip an entry and have Sharko serve
+			// it as if signed.
 			sourcesFetcher.SetEntryVerifyFunc(catalogVerifier.VerifyEntryFunc(catalogTrustPolicy))
-			// V123-PR-F1 / M5: install the canonical trust policy on
-			// the fetcher so its sidecar verifier (which receives the
-			// policy via Verify(... TrustPolicy)) shares the same
-			// trusted-identity list as the embedded catalog. Pre-fix
-			// the fetcher loaded the policy itself from
-			// SHARKO_CATALOG_TRUSTED_IDENTITIES with no <defaults>
-			// expansion — diverging from signing.LoadTrustPolicyFromEnv.
+			// Install the canonical trust policy on the fetcher so its
+			// sidecar verifier (which receives the policy via
+			// Verify(... TrustPolicy)) shares the same trusted-identity
+			// list as the embedded catalog.
 			sourcesFetcher.SetTrustPolicy(catalogTrustPolicy)
 			srv.SetSourcesFetcher(sourcesFetcher)
 			sourcesFetcher.Start(context.Background())
@@ -437,7 +410,6 @@ var serveCmd = &cobra.Command{
 
 		// Provider + Orchestrator write-API deps (optional — only if provider is configured).
 		//
-		// V125-1-11.6: the single field-overloaded *providers.Config is retired.
 		// The connection-level Provider block fans out at parse time into TWO
 		// typed configs — AddonSecretProviderConfig (rich addon-secret fields)
 		// and ClusterTestProviderConfig (cluster-test, argocd-only) — that
@@ -452,26 +424,23 @@ var serveCmd = &cobra.Command{
 			namespace = "sharko"
 		}
 
-		// V125-1-10.7 / V125-1-11.6: Always resolve a provider config and call
-		// the cluster-test factory, even when the active connection's
-		// provider.type is empty. The auto-default path added in V125-1-10.2
-		// only fires inside the factory — gating the call on Type != ""
-		// silently bypasses the default and leaves credProvider nil, which
-		// then trips the BUG-035 "no_secrets_backend" surface in the Test
+		// Always resolve a provider config and call the cluster-test factory,
+		// even when the active connection's provider.type is empty. The
+		// auto-default path fires inside the factory — gating the call on
+		// Type != "" silently bypasses the default and leaves credProvider
+		// nil, which then trips the "no_secrets_backend" surface in the Test
 		// handler instead of the intended argocd auto-default.
 		//
 		// When in-cluster + Type == "":  NewClusterTestProvider returns ArgoCDProvider.
 		// When Type == "argocd":          NewClusterTestProvider returns ArgoCDProvider.
 		// When out-of-cluster + Type=="": NewClusterTestProvider returns the
-		//                                 legacy "no provider configured" error
-		//                                 → log + leave credProvider nil →
-		//                                 existing BUG-035 surface (unchanged).
-		// When Type ∈ {aws-sm, k8s-secrets, ...}: cluster-test rejects the type
-		//                                          (legacy cluster-creds arms
-		//                                          retired in V125-1-11.6); the
-		//                                          addon-secret reconciler still
-		//                                          wires those backends via
-		//                                          NewAddonSecretProvider.
+		//                                 "no provider configured" error → log
+		//                                 + leave credProvider nil → existing
+		//                                 no_secrets_backend surface.
+		// When Type ∈ {aws-sm, k8s-secrets, ...}: cluster-test rejects the type;
+		//                                          the addon-secret reconciler
+		//                                          still wires those backends
+		//                                          via NewAddonSecretProvider.
 		var resolvedAddonCfg providers.AddonSecretProviderConfig
 		var resolvedTestCfg providers.ClusterTestProviderConfig
 		{
@@ -490,17 +459,17 @@ var serveCmd = &cobra.Command{
 					Namespace: ns,
 					RoleARN:   connProv.RoleARN,
 				}
-				// V125-1-11.7-fix: cluster-test fans only the connection-level
-				// Type into the typed config when it's argocd — NEVER
-				// connProv.Namespace, which is the addon-secrets-shaped slot.
-				// Copying connProv.Namespace into ArgoCDNamespace recreates
-				// the V125-1-10.8 cross-contamination via a different code
-				// path (e.g. connProv.Namespace="sharko" leftover from a prior
-				// k8s-secrets selection would make ArgoCDProvider look for
-				// cluster Secrets in "sharko" instead of "argocd"). Empty
-				// ArgoCDNamespace lets resolveArgoCDNamespaceTyped fall back
-				// through cfg.ArgoCDNamespace → SHARKO_ARGOCD_NAMESPACE env →
-				// "argocd" default — the canonical correct behavior.
+				// Cluster-test fans only the connection-level Type into the
+				// typed config when it's argocd — NEVER connProv.Namespace,
+				// which is the addon-secrets-shaped slot. Copying
+				// connProv.Namespace into ArgoCDNamespace would cross-
+				// contaminate (e.g. connProv.Namespace="sharko" leftover
+				// from a prior k8s-secrets selection would make
+				// ArgoCDProvider look for cluster Secrets in "sharko"
+				// instead of "argocd"). Empty ArgoCDNamespace lets
+				// resolveArgoCDNamespaceTyped fall back through
+				// cfg.ArgoCDNamespace → SHARKO_ARGOCD_NAMESPACE env →
+				// "argocd" default.
 				if connProv.Type == "argocd" {
 					resolvedTestCfg = providers.ClusterTestProviderConfig{
 						Type:            "argocd",
@@ -520,11 +489,10 @@ var serveCmd = &cobra.Command{
 		{
 			cp, err := providers.NewClusterTestProvider(resolvedTestCfg)
 			if err != nil {
-				// Out-of-cluster + no explicit type lands here (legacy "no
-				// provider configured" error preserved verbatim by
-				// NewClusterTestProvider). credProvider stays nil and the
-				// existing BUG-035 path in the Test handler surfaces the
-				// structured 503 with no_secrets_backend — unchanged behavior.
+				// Out-of-cluster + no explicit type lands here (the "no
+				// provider configured" error from NewClusterTestProvider).
+				// credProvider stays nil and the Test handler surfaces the
+				// structured 503 with no_secrets_backend.
 				slog.Info("[serve] no credentials provider configured", "reason", err)
 			} else {
 				credProvider = cp
@@ -550,33 +518,26 @@ var serveCmd = &cobra.Command{
 			}
 		}
 
-		// V125-1-11.5: Pre-wire ClusterRegistrationSourceConfig for V125-1-8 reconciler.
-		// No consumer today — the future V125-1-8 cluster reconciler will read this off
-		// the application context (or wherever the orchestrator stashes provider configs
-		// at startup) and use it to write ArgoCD cluster Secrets to the configured
-		// namespace based on managed-clusters.yaml content. Until then this block just
-		// surfaces the config knob: env vars are new (default empty) so existing
-		// deployments are unaffected. See BUG-OVERLOAD-DIAGNOSIS.md §4 + §6.
+		// Pre-wire ClusterRegistrationSourceConfig for the cluster reconciler.
+		// SHARKO_CLUSTER_REG_TYPE: "" → no reconciler; "argocd" → write ArgoCD
+		// cluster Secrets.
+		// SHARKO_CLUSTER_REG_ARGOCD_NAMESPACE: "" → defaults to "argocd".
 		clusterRegCfg := providers.ClusterRegistrationSourceConfig{
-			// SHARKO_CLUSTER_REG_TYPE — "" → no reconciler (today's behavior);
-			// "argocd" → V125-1-8 writes to ArgoCD cluster Secrets.
-			Type: os.Getenv("SHARKO_CLUSTER_REG_TYPE"),
-			// SHARKO_CLUSTER_REG_ARGOCD_NAMESPACE — "" → V125-1-8 will default to
-			// "argocd" (the standard ArgoCD install namespace).
+			Type:            os.Getenv("SHARKO_CLUSTER_REG_TYPE"),
 			ArgoCDNamespace: os.Getenv("SHARKO_CLUSTER_REG_ARGOCD_NAMESPACE"),
 		}
-		slog.Info("cluster registration source config parsed (pre-wire — no consumer until V125-1-8)",
+		slog.Info("cluster registration source config parsed",
 			"type", clusterRegCfg.Type,
 			"argocdNamespace", clusterRegCfg.ArgoCDNamespace,
 		)
-		_ = clusterRegCfg // intentionally unused — V125-1-8 reconciler will consume
+		_ = clusterRegCfg // intentionally unused — reserved for the cluster reconciler wiring
 
 		// Always wire write-API deps — credProvider may be nil if no provider is configured.
 		srv.SetWriteAPIDeps(credProvider, addonCfgPtr, clusterTestCfgPtr, repoPaths, gitopsCfg)
 
 		// Secret reconciler — reconciles addon secrets on remote clusters.
-		// V125-1-11.6: consumes the canonical AddonSecretProviderConfig that
-		// the connection-parsing layer fanned out into above; no translation.
+		// Consumes the canonical AddonSecretProviderConfig that the
+		// connection-parsing layer fanned out above; no translation.
 		if credProvider != nil && addonCfgPtr != nil {
 			secretProvider, spErr := providers.NewAddonSecretProvider(*addonCfgPtr)
 			if spErr != nil {
@@ -647,11 +608,10 @@ var serveCmd = &cobra.Command{
 				if k8sErr != nil {
 					slog.Warn("could not create in-cluster k8s client, skipping argocd secrets reconciler", "error", k8sErr)
 				} else {
-					// V125-1-11.4 / V125-1-11.6: the canonical source for the
-				// argocd namespace is the typed ClusterTestProviderConfig
-				// (when populated from the connection). The
-				// SHARKO_ARGOCD_NAMESPACE env var remains a deprecated
-				// compat alias for one release (slated for removal in v1.26).
+					// Canonical source for the argocd namespace is the typed
+				// ClusterTestProviderConfig (when populated from the
+				// connection). SHARKO_ARGOCD_NAMESPACE remains a deprecated
+				// compat alias for one release.
 				argocdNamespace := ""
 				if clusterTestCfgPtr != nil && clusterTestCfgPtr.ArgoCDNamespace != "" {
 					argocdNamespace = clusterTestCfgPtr.ArgoCDNamespace
@@ -739,25 +699,23 @@ var serveCmd = &cobra.Command{
 			}
 		}
 
-		// PR Tracker — polls Git provider for PR status changes and emits audit events.
-		// Uses a ConfigMap to persist tracking state across restarts.
-		//
-		// V125-1-8.4: this block is also the production wiring site for the
-		// new internal/clusterreconciler.Reconciler. The K8s clientset built
-		// here is shared between prtracker's ConfigMap store and the cluster
-		// reconciler's ArgoCD-Secret CRUD path; the prTracker.OnMergeFn fans
-		// out into BOTH the legacy argosecrets reconciler trigger AND the
-		// new cluster reconciler trigger so sub-5s post-merge convergence
-		// works regardless of which writer is in charge during the
-		// V125-1-8 transition window.
+		// PR Tracker — polls Git provider for PR status changes and emits
+		// audit events. Uses a ConfigMap to persist tracking state across
+		// restarts. This block is also the wiring site for the cluster
+		// reconciler: the K8s clientset built here is shared between
+		// prtracker's ConfigMap store and the cluster reconciler's
+		// ArgoCD-Secret CRUD path; prTracker.OnMergeFn fans out into BOTH
+		// the legacy argosecrets reconciler trigger AND the new cluster
+		// reconciler trigger so sub-5s post-merge convergence works
+		// regardless of which writer is in charge.
 		{
 			prNamespace := os.Getenv("SHARKO_NAMESPACE")
 			if prNamespace == "" {
 				prNamespace = "sharko"
 			}
 
-			// Build K8s client for cmstore — in-cluster or skip if not available.
-			// V125-1-8.4: the SAME clientset is reused for the cluster
+			// Build K8s client for cmstore — in-cluster or skip if not
+			// available. The SAME clientset is reused for the cluster
 			// reconciler (same in-cluster credentials, same RBAC surface).
 			var prCMStore *cmstore.Store
 			var inClusterK8sClient kubernetes.Interface
@@ -776,16 +734,15 @@ var serveCmd = &cobra.Command{
 				}
 			}
 
-			// V125-1-8.4: construct + start the cluster Secret reconciler
-			// alongside the prtracker so its post-merge fan-out can nudge
-			// the reconciler immediately. The reconciler requires the same
-			// preconditions as the prtracker (in-cluster K8s clientset for
-			// argocd Secret API access; an active git provider eventually
-			// becomes available via connSvc lazy getter) PLUS credProvider
-			// for vault credential resolution at create time. When any
+			// Construct + start the cluster Secret reconciler alongside the
+			// prtracker so its post-merge fan-out can nudge the reconciler
+			// immediately. The reconciler requires the same preconditions
+			// as the prtracker (in-cluster K8s clientset for argocd Secret
+			// API access; an active git provider eventually becomes
+			// available via connSvc lazy getter) PLUS credProvider for
+			// vault credential resolution at create time. When any
 			// precondition is missing we log + skip — the legacy
-			// argosecrets reconciler still runs above and covers the gap
-			// during the transition window.
+			// argosecrets reconciler still runs above and covers the gap.
 			var clusterRecon *clusterreconciler.Reconciler
 			if prCMStore != nil && inClusterK8sClient != nil && credProvider != nil {
 				clusterReconNamespace := getEnvDefault("SHARKO_ARGOCD_NAMESPACE", "argocd")
@@ -821,8 +778,8 @@ var serveCmd = &cobra.Command{
 				})
 				// Wire the trigger onto the Server BEFORE Start() so the
 				// first request to the per-request orchestrator helper
-				// (attachPRTracker, broadened in V125-1-8.4) immediately
-				// sees the nudge fn — no startup race.
+				// (attachPRTracker) immediately sees the nudge fn — no
+				// startup race.
 				srv.SetReconcilerTrigger(clusterRecon.Trigger)
 				clusterRecon.Start(context.Background())
 				// Server-lifetime: shutdown is signal-driven via Stop().
@@ -859,14 +816,13 @@ var serveCmd = &cobra.Command{
 					auditLog.Add(e)
 				})
 
-				// V125-1-8.4: post-merge fan-out hits BOTH triggers so
-				// either reconciler converges sub-5s after a PR merge.
-				//   - srv.ArgoSecretReconciler(): the legacy writer (will
-				//     be retired once V125-1-8 supersedes it).
-				//   - clusterRecon.Trigger(): the new writer added by
-				//     V125-1-8.4. Idempotent + lock-free Trigger() means
-				//     it is safe to call even when no reconciler is wired
-				//     (the buffered-1 channel drops the redundant nudge).
+				// Post-merge fan-out hits BOTH triggers so either reconciler
+				// converges sub-5s after a PR merge.
+				//   - srv.ArgoSecretReconciler(): the legacy writer.
+				//   - clusterRecon.Trigger(): the new writer. Idempotent +
+				//     lock-free Trigger() means it is safe to call even
+				//     when no reconciler is wired (the buffered-1 channel
+				//     drops the redundant nudge).
 				if srv.ArgoSecretReconciler() != nil || clusterRecon != nil {
 					prTracker.SetOnMergeFn(func(pr prtracker.PRInfo) {
 						if r := srv.ArgoSecretReconciler(); r != nil {

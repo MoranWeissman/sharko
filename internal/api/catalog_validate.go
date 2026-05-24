@@ -1,8 +1,8 @@
 package api
 
-// catalog_validate.go — V121-4.1: power-user "Paste Helm URL" validation
-// endpoint. Confirms that an arbitrary `<repo>/index.yaml` is reachable, that
-// the named chart exists in it, and returns the available versions + a few
+// catalog_validate.go — power-user "Paste Helm URL" validation endpoint.
+// Confirms that an arbitrary `<repo>/index.yaml` is reachable, that the
+// named chart exists in it, and returns the available versions + a few
 // metadata fields the Configure modal pre-fills (description, icon).
 //
 // Distinct from /catalog/addons/{name}/versions:
@@ -11,9 +11,8 @@ package api
 //   • This endpoint takes the repo URL + chart name straight from the user;
 //     we validate the URL shape, classify failures, and never write anything.
 //
-// Failure taxonomy (mirrored from the V121-3 ArtifactHub proxy contract — keep
-// the strings stable so the UI's switch table doesn't need to change per
-// release):
+// Failure taxonomy (kept stable so the UI's switch table doesn't need to
+// change per release):
 //
 //   invalid_input    — repo or chart missing / empty / not a URL
 //   repo_unreachable — DNS, connection refused, TLS, non-200 from index.yaml
@@ -55,7 +54,7 @@ const (
 	// loopback, link-local, IPv6 ULA) or is not in SHARKO_URL_ALLOWLIST.
 	// Defense in depth — the network policy fronting a production Sharko
 	// pod should already block these, but for self-hosted installs the
-	// guard is the sole line of defense (Story V121-8.2).
+	// guard is the sole line of defense.
 	validateErrSSRFBlocked validateErrorCode = "ssrf_blocked"
 )
 
@@ -108,7 +107,7 @@ func (s *Server) handleValidateCatalogChart(w http.ResponseWriter, r *http.Reque
 	// link-local / IPv6 ULA, or that aren't in the optional allowlist
 	// SHARKO_URL_ALLOWLIST. Returns 200 + structured failure (matches the
 	// rest of the validation taxonomy) so the UI's switch table doesn't
-	// need to branch on HTTP status. Story V121-8.2.
+	// need to branch on HTTP status.
 	if err := security.ValidateExternalURL(repo); err != nil {
 		writeJSON(w, http.StatusOK, catalogValidateResponse{
 			Valid:     false,

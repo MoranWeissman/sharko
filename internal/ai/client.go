@@ -43,12 +43,11 @@ type Config struct {
 	// via Client.SetConfig.
 	//
 	// Default-true is enforced via the companion AnnotateOnSeedSet
-	// sentinel: if Provider != none and AnnotateOnSeedSet is false (the
-	// user has never explicitly toggled the field — typical state for
-	// legacy configs from before V121-7), the effective value reported
-	// by AnnotateOnSeedEnabled is `true`. Once the user clicks Save the
-	// SaveAIConfig handler stamps both fields and the explicit value
-	// becomes authoritative.
+	// sentinel: if Provider != none and AnnotateOnSeedSet is false
+	// (legacy config blob, user never toggled the field), the effective
+	// value reported by AnnotateOnSeedEnabled is `true`. Once the user
+	// clicks Save the SaveAIConfig handler stamps both fields and the
+	// explicit value becomes authoritative.
 	AnnotateOnSeed    bool `yaml:"annotate_on_seed" json:"annotate_on_seed"`
 	AnnotateOnSeedSet bool `yaml:"annotate_on_seed_set" json:"annotate_on_seed_set"`
 }

@@ -18,9 +18,9 @@ import (
 	"k8s.io/client-go/rest"
 )
 
-// Aliases to keep the V124-6.3 helpers readable while letting the import
-// list stay narrow. corev1Secret is the K8s Secret type; the Type field
-// uses corev1.SecretTypeOpaque (Opaque is the standard label-free type).
+// Aliases to keep the bootstrap-secret helpers readable while letting
+// the import list stay narrow. corev1Secret is the K8s Secret type; the
+// Type field uses corev1.SecretTypeOpaque (label-free standard type).
 type (
 	corev1Secret = corev1.Secret
 )
@@ -58,8 +58,6 @@ const EnvBootstrapAdminPassword = "SHARKO_BOOTSTRAP_ADMIN_PASSWORD"
 // The toggle has NO effect on the operator-supplied paths (Helm value
 // `password` set, or `existingSecret.name` set) — Sharko NEVER writes the
 // initial-admin-secret in those cases.
-//
-// V124-6.3 / BUG-023.
 const EnvWriteInitialAdminSecret = "SHARKO_WRITE_INITIAL_ADMIN_SECRET"
 
 // InitialAdminSecretName is the canonical name of the dedicated
@@ -637,10 +635,10 @@ func (s *Store) MaybeLogBootstrapCredential() {
 	slog.Info("This is the only time this credential will be shown. Store it securely.")
 	slog.Info("=== END BOOTSTRAP ADMIN CREDENTIAL ===")
 
-	// V124-6.3 / BUG-023: also write a dedicated `sharko-initial-admin-secret`
-	// for operator retrieval (mirrors ArgoCD's argocd-initial-admin-secret
-	// pattern). The log path remains the source of truth — the dedicated
-	// secret is convenience for operators who missed the log window.
+	// Also write a dedicated `sharko-initial-admin-secret` for operator
+	// retrieval (mirrors ArgoCD's argocd-initial-admin-secret pattern).
+	// The log path remains the source of truth — the dedicated secret
+	// is convenience for operators who missed the log window.
 	//
 	// Skipped when SHARKO_WRITE_INITIAL_ADMIN_SECRET=false (Helm
 	// `bootstrapAdmin.writeInitialSecret: false`). NEVER written on the
@@ -701,13 +699,10 @@ func writeInitialAdminSecretEnabled() bool {
 //     username: <base64('admin')>
 //     password: <base64(plaintext)>
 //
-// The annotation wording was updated in V124-7 from
-// "delete-after-first-password-change" to "rotated-on-reset-admin" to reflect
-// the actual lifecycle: the secret persists across `sharko reset-admin`
-// invocations, each rotation rewriting `data.password` to the new plaintext
-// (operators can `kubectl delete` it manually whenever they want it gone).
-//
-// V124-6.3 / BUG-023; annotation updated in V124-7.1 / BUG-025.
+// The annotation value "rotated-on-reset-admin" reflects the actual
+// lifecycle: the secret persists across `sharko reset-admin`
+// invocations, each rotation rewriting `data.password` to the new
+// plaintext (operators can `kubectl delete` it manually).
 func (s *Store) writeInitialAdminSecret(ctx context.Context, password string) error {
 	secret := &corev1Secret{
 		ObjectMeta: metav1.ObjectMeta{
@@ -771,10 +766,8 @@ func (s *Store) writeInitialAdminSecret(ctx context.Context, password string) er
 //
 // Idempotent: returns nil if the secret does not exist (no error to log,
 // no error to return). If the secret exists but deletion fails for an
-// unexpected reason (RBAC, transient API error), returns the wrapped error
-// so the caller can decide whether to surface it.
-//
-// V124-6.3 / BUG-023.
+// unexpected reason (RBAC, transient API error), returns the wrapped
+// error so the caller can decide whether to surface it.
 func (s *Store) DeleteInitialAdminSecret(ctx context.Context) error {
 	if s.mode != ModeK8s || s.clientset == nil {
 		return nil

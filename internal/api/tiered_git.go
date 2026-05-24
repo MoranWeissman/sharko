@@ -131,15 +131,14 @@ func (s *Server) serviceTokenForConnection(conn *models.Connection) string {
 // resolved token differs from the connection's service token (Tier 2 happy
 // path with per-user PAT).
 //
-// V125-1-13.y.2 / BUG-189-real: honour the ConnectionService.GitProviderOverride()
-// before constructing a concrete per-request provider. SharkoConfig.GitProvider
-// (test/demo mode) installs that hook via ConnectionService.SetGitProviderOverride.
-// Without the short-circuit here, the override is only consulted on the
-// no-token fallback paths below (which delegate to GetActiveGitProvider) —
-// every Tier 2 happy path that arrives with a non-empty token (per-user PAT
-// or service token) constructs gitprovider.NewGitHubProvider / NewAzureDevOpsProvider
-// directly and bypasses the mock, causing tests to hit real api.github.com.
-// Production never installs an override; this is a no-op for prod.
+// Honour the ConnectionService.GitProviderOverride() before constructing
+// a concrete per-request provider. SharkoConfig.GitProvider (test/demo
+// mode) installs that hook via ConnectionService.SetGitProviderOverride.
+// Without the short-circuit here, every Tier 2 happy path that arrives
+// with a non-empty token constructs gitprovider.NewGitHubProvider /
+// NewAzureDevOpsProvider directly and bypasses the mock, causing tests
+// to hit the real provider API. Production never installs an override;
+// this is a no-op for prod.
 //
 // Attribution semantics: callers (GitProviderForTier) compute TokenResolution
 // (including AttributionFallback / AttributionMode) BEFORE calling this

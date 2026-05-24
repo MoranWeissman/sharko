@@ -46,12 +46,12 @@ func (c *Catalog) List(q Query) []CatalogEntry {
 // to an arbitrary []CatalogEntry slice and returns a freshly-allocated,
 // name-sorted result.
 //
-// Introduced for V123-1.4: the API layer needs to filter the merged
-// (embedded + third-party) catalog view, which is not owned by any single
-// *Catalog. Keeping the filter body behind a pure function means the
-// merged-view handler can reuse the same predicate logic the in-memory
-// embedded catalog uses — so filter semantics cannot drift between the
-// embedded-only and third-party-enabled deployments.
+// Exists so the API layer can filter the merged (embedded + third-party)
+// catalog view, which is not owned by any single *Catalog. Keeping the
+// filter body behind a pure function means the merged-view handler can
+// reuse the same predicate logic the in-memory embedded catalog uses —
+// filter semantics cannot drift between embedded-only and
+// third-party-enabled deployments.
 //
 // Nil or empty input returns a nil slice (not an empty non-nil slice) so
 // callers that check `if out == nil` keep working.

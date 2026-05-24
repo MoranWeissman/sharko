@@ -33,7 +33,7 @@ func (s *Server) handleAdoptClusters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// V124-4.5 (BUG-019 class): validate body BEFORE any upstream call.
+	// Validate body BEFORE any upstream call.
 	var req orchestrator.AdoptClustersRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
@@ -147,7 +147,7 @@ func (s *Server) handleUnadoptCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// V124-4.5 (BUG-019 class): decode + validate body BEFORE upstream call.
+	// Decode + validate body BEFORE upstream call.
 	var req orchestrator.UnadoptClusterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())

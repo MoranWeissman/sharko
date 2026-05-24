@@ -37,8 +37,8 @@ func (g *GitHubProvider) getContentsRaw(ctx context.Context, path, ref string) (
 //   - 404 Not Found  — the requested ref does not exist (e.g., default branch
 //     differs from the configured base branch on a populated repo).
 //   - 409 Conflict with "Git Repository is empty." — the repo exists but has
-//     never received a commit (V124-11 — the wizard step 4 / Initialize bug
-//     where freshly-created GitHub repos blocked first-run setup).
+//     never received a commit (freshly-created GitHub repos with no
+//     initial commit hit this path during first-run init).
 //
 // Both are routed through initEmptyRepo, which seeds an initial README
 // commit on fromRef via the Contents API; the new commit's SHA is then used

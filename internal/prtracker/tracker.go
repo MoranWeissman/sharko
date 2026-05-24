@@ -21,10 +21,10 @@ import (
 
 // GitProvider is the subset of gitprovider.GitProvider needed by the tracker.
 //
-// BUG-032: DeleteBranch is included so the tracker can clean up the source
+// DeleteBranch is included so the tracker can clean up the source
 // branch when it observes a PR's status flipping to "merged" (e.g. an
-// external user merged a Sharko-opened PR via the GitHub UI). Best-effort:
-// failures here are logged but never block the tracker loop.
+// external user merged a Sharko-opened PR via the GitHub UI).
+// Best-effort: failures here are logged but never block the loop.
 type GitProvider interface {
 	GetPullRequestStatus(ctx context.Context, prNumber int) (string, error)
 	DeleteBranch(ctx context.Context, branchName string) error
@@ -147,7 +147,7 @@ func (t *Tracker) GetPR(ctx context.Context, prID int) (*PRInfo, error) {
 
 // ListPRs returns all tracked PRs, optionally filtered.
 //
-// V125-1-6: callers that need to filter by Operation should use
+// Callers that need to filter by Operation should use
 // ListPRsFiltered, which takes an additional operations slice. ListPRs
 // is preserved for backward compatibility (no Operation filter applied).
 func (t *Tracker) ListPRs(ctx context.Context, status, cluster, addon, user string) ([]PRInfo, error) {
@@ -262,11 +262,10 @@ func (t *Tracker) PollOnce(ctx context.Context) {
 				Source:   "prtracker",
 				Result:   "success",
 			})
-			// BUG-032: delete the source branch on observed-merge. Skip
-			// silently when the tracker has no branch on file (older
-			// state-store entries from before V125-1-6 may lack PRBranch).
-			// Best-effort: a DeleteBranch error is logged but never
-			// blocks the tracker loop.
+			// Delete the source branch on observed-merge. Skip silently
+			// when the tracker has no branch on file (legacy state-store
+			// entries may lack PRBranch). Best-effort: a DeleteBranch
+			// error is logged but never blocks the tracker loop.
 			if pr.PRBranch != "" {
 				if delErr := gp.DeleteBranch(ctx, pr.PRBranch); delErr != nil {
 					slog.Warn("[prtracker] failed to delete branch after observed merge",
@@ -342,7 +341,7 @@ func (t *Tracker) PollSinglePR(ctx context.Context, prID int) (*PRInfo, error) {
 				Source:   "prtracker",
 				Result:   "success",
 			})
-			// BUG-032: delete the source branch on observed-merge.
+			// Delete the source branch on observed-merge.
 			// Best-effort: log on failure, never block the poll.
 			if pr.PRBranch != "" {
 				if delErr := gp.DeleteBranch(ctx, pr.PRBranch); delErr != nil {

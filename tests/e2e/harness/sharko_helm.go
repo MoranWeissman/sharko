@@ -19,11 +19,10 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Story V125-1-13.1 — Helm-install harness primitive
+// Helm-install harness primitive.
 //
 // installSharkoHelm boots a real Sharko pod inside a kind cluster via the
-// chart at charts/sharko/. This is the foundation that Story 13.3 wires into
-// SharkoModeHelm in sharko.go to replace today's t.Skip stub.
+// chart at charts/sharko/. SharkoModeHelm in sharko.go wires this in.
 //
 // Implementation pattern: shell out via exec.CommandContext to docker / kind /
 // helm / kubectl. This matches the existing harness convention (kind.go,
@@ -95,11 +94,10 @@ type HelmHandle struct {
 	// deletion does not depend on the test's kubeconfig environment.
 	Kubeconfig string
 	// GitfakeInClusterURL is the in-cluster Service URL of the gitfake
-	// Pod that installSharkoHelm provisions alongside Sharko (Story
-	// V125-1-13.x.5). Sharko's git-host allowlist is set to the gitfake
-	// hostname via --set e2e.gitHostsAllowlist=... so the Pod can clone
-	// the gitfake repo without a real-world git host. Mirrors
-	// GitfakeHandle.InClusterURL.
+	// Pod that installSharkoHelm provisions alongside Sharko. Sharko's
+	// git-host allowlist is set to the gitfake hostname via --set
+	// e2e.gitHostsAllowlist=... so the Pod can clone the gitfake repo
+	// without a real-world git host. Mirrors GitfakeHandle.InClusterURL.
 	GitfakeInClusterURL string
 	// GitfakeRepoURL is the full git remote URL on the in-cluster
 	// gitfake — InClusterURL + "/<repo>.git". Tests hand this to Sharko
@@ -263,9 +261,8 @@ func installSharkoHelm(t *testing.T, kindCluster *KindCluster, cfg HelmInstallCo
 	// 3. ALWAYS load into kind — fresh per-test clusters start with an
 	// empty containerd image store. `kind load docker-image` is fast
 	// (~5-10s) and idempotent, so unconditional loading is the safe
-	// default; conditional skipping was the source of V125-1-13.1's
-	// ImagePullBackOff bug (the probe checked the wrong containerd and
-	// the cache always reported a false hit).
+	// default — conditional skipping is prone to ImagePullBackOff
+	// because the probe can check the wrong containerd cache.
 	t.Logf("harness: kind load docker-image sharko:%s into %s", tag, kindCluster.Name)
 	loadCtx, loadCancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer loadCancel()
@@ -273,7 +270,7 @@ func installSharkoHelm(t *testing.T, kindCluster *KindCluster, cfg HelmInstallCo
 		return nil, fmt.Errorf("installSharkoHelm: kind load docker-image: %w", err)
 	}
 
-	// 3b. Install the in-cluster gitfake Pod (V125-1-13.x.5). Done BEFORE
+	// 3b. Install the in-cluster gitfake Pod. Done BEFORE
 	// the Sharko helm install so:
 	//   - gitfake's t.Cleanup registers BEFORE Sharko's → LIFO runs
 	//     Sharko's uninstall first (consumer), then gitfake's (producer),
@@ -297,8 +294,8 @@ func installSharkoHelm(t *testing.T, kindCluster *KindCluster, cfg HelmInstallCo
 	//
 	// e2e.gitHostsAllowlist is set to the gitfake in-cluster DNS name so
 	// the Sharko Pod's git-host whitelist (internal/service/connection.go,
-	// honouring SHARKO_E2E_GIT_HOSTS_ALLOWLIST per V125-1-13.x.3 +
-	// V125-1-13.x.4) permits clones from the test gitfake.
+	// honouring SHARKO_E2E_GIT_HOSTS_ALLOWLIST) permits clones from
+	// the test gitfake.
 	helmCtx, helmCancel := context.WithTimeout(context.Background(), defaultHelmInstallWait)
 	defer helmCancel()
 	if err := helmUpgradeInstall(helmCtx, t, cfg, kindCluster.Kubeconfig, chartPath, ns, tag, gitfakeAllowlistHost); err != nil {
@@ -392,13 +389,12 @@ func uninstallSharkoHelm(t *testing.T, h *HelmHandle) {
 // local Docker host, we generate a fresh e2e-<sha> tag (or reuse the env
 // tag) and rebuild.
 //
-// Predecessor bug (V125-1-13.1): the probe shelled into the kind node and
-// ran `crictl images -q <ref>` — but the positional ref arg to that
-// command does NOT filter (it returns every image in the cluster). The
-// cache always reported a hit, the load step was skipped, and pods sat
-// in ImagePullBackOff until helm --wait timed out at 180s. Fixed by
-// probing the local Docker host (which is what the env var actually
-// certifies) and by always loading into kind regardless of cache state.
+// Why probe the local Docker host: shelling into the kind node and
+// running `crictl images -q <ref>` does NOT actually filter (the
+// positional ref arg returns every image in the cluster), so the
+// cache would always report a hit and the load step would be skipped.
+// Always loading into kind regardless of cache state avoids the
+// resulting ImagePullBackOff loop.
 func resolveImageTag(t *testing.T, cfg HelmInstallConfig) (string, bool, error) {
 	t.Helper()
 	if v := strings.TrimSpace(os.Getenv("SHARKO_E2E_IMAGE_TAG")); v != "" {
@@ -509,9 +505,9 @@ func kindLoadImage(ctx context.Context, t *testing.T, kindClusterName, imageRef 
 //   - image.repository=sharko       (matches the locally-built image)
 //   - image.tag=<resolved tag>
 //   - image.pullPolicy=IfNotPresent (the image is in containerd, never pull)
-//   - e2e.gitHostsAllowlist=<gitfakeAllowlistHost> (V125-1-13.x.5 — allows
-//     Sharko to clone from the in-cluster gitfake whose hostname is not in
-//     the default git-host whitelist)
+//   - e2e.gitHostsAllowlist=<gitfakeAllowlistHost> — allows Sharko to
+//     clone from the in-cluster gitfake whose hostname is not in the
+//     default git-host whitelist
 //
 // Caller overrides via cfg.SetValues are appended AFTER the always-on
 // flags, so they win on conflict (helm honours last --set wins). A caller
@@ -682,7 +678,7 @@ func randHex8() (string, error) {
 }
 
 // ---------------------------------------------------------------------------
-// V125-1-13 hotfix — host-loopback URL rewrite for Pod-reachability
+// Host-loopback URL rewrite for Pod-reachability
 // ---------------------------------------------------------------------------
 
 // hostLoopbackNames is the set of hostnames that mean "localhost on the test

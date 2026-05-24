@@ -5,22 +5,15 @@
 // document against a versioned JSON Schema before handing it to the
 // domain-specific loader.
 //
-// V125-1-9 Wave A0 scaffold-only.
-//
-// This package is intentionally minimal in this commit:
+// Layout:
 //
 //   - The envelope types and the IsEnveloped detector live here so that
-//     Stories 9.1 (internal/models/cluster.go reader/writer compat) and 9.2
-//     (internal/catalog/loader.go reader/writer compat) can both depend on a
-//     single shared definition.
-//   - Story 9.3 will add a JSON Schema generator that introspects these
-//     types.
-//   - Story 9.4 will add a Validate(filename, body []byte) error function
-//     alongside this file that compiles the generated schemas and validates
-//     bodies at read time.
+//     the models cluster reader and the catalog loader can both depend
+//     on a single shared definition.
+//   - JSON Schema generation (cmd/schema-gen) and the read-time
+//     validator (validator.go) introspect these same types.
 //
-// The envelope shape mirrors the example in
-// docs/design/2026-05-12-v125-architectural-todos.md lines 100-114:
+// The envelope shape:
 //
 //	# yaml-language-server: $schema=https://sharko.io/schemas/managed-clusters.v1.json
 //	apiVersion: sharko.io/v1

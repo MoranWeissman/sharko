@@ -55,11 +55,11 @@ type ClusterInfo struct {
 // this var.
 var inClusterConfigFn = rest.InClusterConfig
 
-// NewAddonSecretProvider creates the appropriate SecretProvider for the given
-// AddonSecretProviderConfig. This is the canonical (V125-1-11+) factory for
-// addon-secret backends — it consumes the typed config introduced in Story
-// 11.2 so the compiler enforces single-mechanism scope (closes the V125-1-10.8
-// ProviderConfig.Namespace cross-contamination smell).
+// NewAddonSecretProvider creates the appropriate SecretProvider for the
+// given AddonSecretProviderConfig. This is the canonical factory for
+// addon-secret backends — it consumes the typed config so the compiler
+// enforces single-mechanism scope (no cross-contamination between
+// addon-secret and cluster-test).
 //
 // Note: Type "argocd" is REJECTED on purpose. ArgoCDProvider is a
 // cluster-credentials-only provider; it does NOT serve addon-secret VALUES.
@@ -83,30 +83,23 @@ func NewAddonSecretProvider(cfg AddonSecretProviderConfig) (SecretProvider, erro
 	}
 }
 
-// NewClusterTestProvider creates the appropriate ClusterCredentialsProvider
-// for the given ClusterTestProviderConfig. This is the canonical (V125-1-11+)
-// factory for cluster-connectivity-test backends — it consumes the typed
-// config introduced in Story 11.2 so the compiler enforces single-mechanism
-// scope (closes the V125-1-10.8 ProviderConfig.Namespace cross-contamination
-// smell).
+// NewClusterTestProvider creates the appropriate
+// ClusterCredentialsProvider for the given ClusterTestProviderConfig.
+// This is the canonical factory for cluster-connectivity-test backends
+// — it consumes the typed config so the compiler enforces
+// single-mechanism scope.
 //
-// Auto-default behavior (V125-1-10.2, retained): when cfg.Type is empty,
-// NewClusterTestProvider probes for in-cluster K8s access via inClusterConfigFn
-// (rest.InClusterConfig). On success, it returns an ArgoCDProvider so dev
-// installs work out of the box without an explicit provider configured. When
-// the probe returns rest.ErrNotInCluster (running outside K8s), the legacy
-// "no secrets provider configured" error is preserved verbatim so existing
-// out-of-cluster callers still get an actionable message. Other probe errors
-// (malformed in-cluster config) are surfaced as today.
+// Auto-default behavior: when cfg.Type is empty, NewClusterTestProvider
+// probes for in-cluster K8s access via inClusterConfigFn. On success it
+// returns an ArgoCDProvider so dev installs work out of the box. When
+// the probe returns rest.ErrNotInCluster, the "no secrets provider
+// configured" error is returned so out-of-cluster callers get an
+// actionable message.
 //
-// V125-1-11.6: the legacy aws-sm / k8s-secrets / gcp-sm / azure-kv cluster-
-// credentials switch arms are RETIRED — one cycle earlier than the doc-comment
-// promise of "remove in V125-2" — per BUG-OVERLOAD-DIAGNOSIS.md §6 verdict.
-// Existing deployments that had explicitly configured one of those backends
-// for cluster-creds must migrate to "argocd" (the auto-default since
-// V125-1-10.2). Addon-secret consumers of those backends remain fully
-// functional via NewAddonSecretProvider — only the legacy cluster-creds usage
-// is killed.
+// Only argocd + "" (auto-default) are accepted. Legacy aws-sm /
+// k8s-secrets / gcp-sm / azure-kv cluster-credentials arms are
+// retired; addon-secret consumers of those backends remain fully
+// functional via NewAddonSecretProvider.
 func NewClusterTestProvider(cfg ClusterTestProviderConfig) (ClusterCredentialsProvider, error) {
 	switch cfg.Type {
 	case "argocd":
@@ -117,7 +110,7 @@ func NewClusterTestProvider(cfg ClusterTestProviderConfig) (ClusterCredentialsPr
 		// to NewArgoCDProviderWithRESTConfigFromConfig so the test seam
 		// (inClusterConfigFn) flows end-to-end. Calling NewArgoCDProviderFromConfig
 		// here would re-probe rest.InClusterConfig directly and bypass the seam
-		// (V125-1-10.9).
+		// directly and bypass the test seam.
 		if restCfg, err := inClusterConfigFn(); err == nil {
 			slog.Info("[provider] auto-defaulting to argocd (no provider configured + in-cluster K8s detected)", "namespace", "argocd")
 			return NewArgoCDProviderWithRESTConfigFromConfig(cfg, restCfg)

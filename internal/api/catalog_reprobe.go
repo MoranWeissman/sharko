@@ -1,6 +1,6 @@
 package api
 
-// catalog_reprobe.go — V121-3.4: force-clear the ArtifactHub circuit breaker.
+// catalog_reprobe.go — force-clear the ArtifactHub circuit breaker.
 //
 //   POST /api/v1/catalog/reprobe
 //
