@@ -1,6 +1,6 @@
 # Sharko — Makefile
 
-.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e test-e2e test-e2e-fast test-e2e-domain test-e2e-helm test-e2e-clean test-e2e-coverage test-e2e-fast-coverage test-e2e-junit test-e2e-report install-test-tools kind-up kind-down catalog-scan catalog-scan-pr generate-provider-types generate-schemas build-gitfake-image
+.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e test-e2e test-e2e-fast test-e2e-domain test-e2e-helm test-e2e-perf test-e2e-clean test-e2e-coverage test-e2e-fast-coverage test-e2e-junit test-e2e-report install-test-tools kind-up kind-down catalog-scan catalog-scan-pr generate-provider-types generate-schemas build-gitfake-image
 
 PORT ?= 8080
 
@@ -22,6 +22,7 @@ help: ## Show available targets
 	@echo "    make test-e2e              Full e2e suite (kind + real argocd, ~10-15 min)"
 	@echo "    make test-e2e-domain       Run a single domain (DOMAIN=Cluster|Catalog|...)"
 	@echo "    make test-e2e-helm         Wave-D Helm-mode subset (~5-8 min, requires docker+kind+helm)"
+	@echo "    make test-e2e-perf         V2-1 perf baselines (~2-5 min in-process; cluster path needs kind)"
 	@echo "    make test-e2e-clean        Force-delete every sharko-e2e-* kind cluster (manual recovery)"
 	@echo "    make test-e2e-coverage     Full e2e + coverage HTML in _dist/"
 	@echo "    make test-e2e-fast-coverage  Fast e2e + coverage HTML in _dist/"
@@ -193,6 +194,25 @@ test-e2e-helm: ## Run the Wave-D Helm-mode E2E subset (~5-8 min, requires docker
 	 GOTMPDIR=/tmp \
 	 go test -tags=e2e -timeout=20m -v \
 	 -run '^(TestClusterTest_ArgoCDProvider|TestClusterTest_ProviderAutoDefault_HappyPath|TestClusterTest_ProviderCrossContamination_NamespaceSwitch)$$' \
+	 ./tests/e2e/lifecycle/...
+
+# V2-1.1 + V2-1.2 — perf baseline harness.
+#
+# Build-tag combo `e2e perf` opts in to tests/e2e/lifecycle/perf_test.go,
+# which loops each of the 4 locked critical paths (see
+# tests/e2e/harness/phases.go) perfIterations=30 times and emits
+# structured JSON timing lines per (path, phase, iteration). Each subtest
+# logs a rolled-up p50/p95/p99 table to the test output; the canonical
+# numbers live in docs/site/operator/perf-baselines.md (refreshed
+# manually by re-running this target and pasting the table updates).
+#
+# The cluster_registration subtest is kind-backed and skip-graceful when
+# kind / docker / kubectl are absent; the other three subtests run
+# fully in-process and complete in <2 minutes on a developer laptop.
+test-e2e-perf: ## V2-1 perf baselines (~2-5 min in-process; cluster path needs kind).
+	@echo "==> Running V2-1 perf baseline harness (30+ iterations per path)"
+	GOTMPDIR=/tmp go test -tags='e2e perf' -timeout=20m -v \
+	 -run '^TestPerf$$' \
 	 ./tests/e2e/lifecycle/...
 
 # V126-4.1 / task #188 — Manual recovery for leaked e2e kind clusters.

@@ -457,7 +457,11 @@ func registerClusterInArgoCDDirect(t *testing.T, argoAccess *argocdAccess, targe
 	}
 
 	// 4. POST to ArgoCD via the test's existing port-forward + admin JWT.
-	url := argoAccess.URL + "/api/v1/clusters"
+	//    upsert=true (ArgoCD honours this only as a query parameter, not as
+	//    a body field) lets the V2-1 perf-loop register the same server URL
+	//    repeatedly with fresh SA tokens without ArgoCD complaining that the
+	//    cluster spec is different from the previous registration.
+	url := argoAccess.URL + "/api/v1/clusters?upsert=true"
 	httpClient := &http.Client{Timeout: 30 * time.Second, Transport: insecureTransport()}
 	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(string(body)))
 	if err != nil {

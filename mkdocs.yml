@@ -72,6 +72,7 @@ nav:
     - AWS IAM Cluster Auth: operator/aws-iam-cluster-auth.md
     - Audit Log: operator/audit-log.md
     - Corporate TLS MITM: operator/corporate-mitm-tls.md
+    - Perf Baselines: operator/perf-baselines.md
     - Troubleshooting: operator/troubleshooting.md
   - CLI Reference:
     - Overview: cli/overview.md
@@ -87,6 +88,7 @@ nav:
     - Catalog Scan Runbook: developer-guide/catalog-scan-runbook.md
     - Testing Guide: developer-guide/testing-guide.md
     - End-to-End Testing: developer-guide/e2e-testing.md
+    - Perf Harness: developer-guide/perf-harness.md
     - Personal Smoke Runbook: developer-guide/personal-smoke-runbook.md
 
 markdown_extensions:
