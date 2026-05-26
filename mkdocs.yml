@@ -73,6 +73,7 @@ nav:
     - Audit Log: operator/audit-log.md
     - Corporate TLS MITM: operator/corporate-mitm-tls.md
     - Perf Baselines: operator/perf-baselines.md
+    - SLOs: operator/slos.md
     - Troubleshooting: operator/troubleshooting.md
   - CLI Reference:
     - Overview: cli/overview.md
