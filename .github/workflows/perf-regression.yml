@@ -1,0 +1,129 @@
+---
+name: Perf Regression Gate
+
+# V2-1.4 — Perf regression CI gate.
+#
+# Runs the V2-1 perf harness on every PR (labeled/opened/synchronize)
+# and fails the build if any phase's measured p99 regresses more than
+# 20% over the recorded baselines in docs/site/operator/perf-baselines.yaml.
+#
+# Triggers:
+#   - pull_request {labeled, opened, synchronize}: every PR pays the
+#     perf tax unless explicitly opted out via the `skip-perf-gate`
+#     label (see "label escape hatch" below).
+#   - workflow_dispatch: manual ad-hoc runs from the Actions tab.
+#
+# NOT triggered on push to main — mirrors .github/workflows/e2e.yml.
+# The gate is a PR-time check, not a post-merge audit; merge-time
+# regression catching is the baseline-refresh workflow's job (which
+# proposes a doc PR rather than blocking merges).
+#
+# Label escape hatch:
+#   A PR can carry the label `skip-perf-gate` to short-circuit this
+#   gate when the regression is INTENTIONAL (e.g. a deliberate
+#   trade-off that ships latency for a correctness/security fix). The
+#   correct sequence post-merge is to trigger the perf-baseline-refresh
+#   workflow so the new floor becomes the recorded baseline. The label
+#   is the escape, NOT a permanent disable — every PR is re-evaluated.
+#
+# Required labels (set once per repo):
+#   gh label create skip-perf-gate \
+#     --color FBCA04 \
+#     --description "Skip the perf-regression CI gate (intentional regression — refresh baselines after merge)"
+#
+# Mirrors the kind+ArgoCD setup from .github/workflows/e2e.yml. The
+# duplication is intentional pre-V2.0.0: a shared composite action
+# adds indirection that's not worth the maintenance until a third
+# workflow needs the same boot.
+
+on:
+  pull_request:
+    types: [labeled, opened, synchronize]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # dorny/test-reporter needs these to post the verdict block to the PR
+  # check-run UI; without them the action errors out.
+  checks: write
+  pull-requests: write
+
+concurrency:
+  group: perf-regression-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  perf-regression:
+    name: Perf Regression Gate (p99 +20% threshold)
+    # Skip the job when the PR carries the `skip-perf-gate` label.
+    # contains() on a labels array short-circuits on first match; an
+    # empty PR (no labels) returns false. workflow_dispatch always
+    # runs (no PR context).
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      !contains(github.event.pull_request.labels.*.name, 'skip-perf-gate')
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Mirrors .github/workflows/e2e.yml — kind + kubectl are needed for
+      # the cluster_registration subtest of the perf harness. The other
+      # three subtests (addon_cycle, catalog_scan, dashboard_read) run
+      # fully in-process and don't need kind, but the harness self-
+      # detects kind availability and skips gracefully, so installing
+      # everything keeps the gate consistent across runs.
+      - name: Install kind + kubectl
+        run: |
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+          curl -Lo ./kubectl "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x ./kubectl
+          sudo mv ./kubectl /usr/local/bin/kubectl
+          kind --version
+          kubectl version --client=true
+
+      - name: Build perf-baseline-compare
+        # Build ahead of running the harness so a compile failure in the
+        # comparator surfaces before the ~10-minute perf run, not after.
+        run: go build -o _dist/perf-baseline-compare ./cmd/perf-baseline-compare
+
+      - name: Run perf harness + capture timings
+        env:
+          GOTMPDIR: /tmp
+          # E2E_OFFLINE mirrors the e2e.yml lane — kept "0" so the
+          # harness can pull ArgoCD manifests when cluster_registration
+          # provisions a kind cluster.
+          E2E_OFFLINE: "0"
+        run: make test-e2e-perf-capture
+
+      - name: Compare against baselines (>20% p99 = fail)
+        # The make target invokes cmd/perf-baseline-compare with the
+        # canonical baselines YAML. Exit 2 = at least one phase
+        # regressed, exit 0 = OK. Make propagates the exit code so the
+        # job fails naturally on regression.
+        run: make test-e2e-perf-compare
+
+      - name: Upload captured timings
+        # `if: always()` so a failed gate still surfaces the raw
+        # timings for triage. The artifact is small (one JSON line per
+        # phase × ~120 phase samples ≈ <100 KB).
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-timings-${{ github.run_number }}
+          path: _dist/perf-timings.jsonl
+          retention-days: 30
+
+      - name: Cleanup stale kind clusters
+        if: always()
+        run: |
+          kind get clusters 2>/dev/null | grep "^sharko-e2e-" | \
+            xargs -I{} kind delete cluster --name {} || true
