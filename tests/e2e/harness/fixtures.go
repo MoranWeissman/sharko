@@ -236,18 +236,26 @@ func CreateServiceAccountToken(t *testing.T, cluster KindCluster, saName string)
 		"create", "sa", saName, "--dry-run=client", "-o", "yaml"); err != nil {
 		t.Fatalf("CreateServiceAccountToken: dry-run sa: %v", err)
 	}
-	if out, _, err := runCmd(15*time.Second, "kubectl", "--kubeconfig", kc,
-		"create", "sa", saName); err != nil && !strings.Contains(out, "already exists") {
-		t.Fatalf("CreateServiceAccountToken: create sa: %v\n%s", err, out)
+	// kubectl writes the "already exists" message to STDERR (not stdout)
+	// — check both so the idempotency contract holds when the SA was
+	// created by a previous call (e.g. perf-loop iterations reusing the
+	// same SA name).
+	if out, errOut, err := runCmd(15*time.Second, "kubectl", "--kubeconfig", kc,
+		"create", "sa", saName); err != nil &&
+		!strings.Contains(out, "already exists") &&
+		!strings.Contains(errOut, "already exists") {
+		t.Fatalf("CreateServiceAccountToken: create sa: %v\nstdout=%s\nstderr=%s", err, out, errOut)
 	}
 
-	// Bind cluster-admin (idempotent).
+	// Bind cluster-admin (idempotent — same stderr handling as above).
 	bindingName := saName + "-admin"
-	if out, _, err := runCmd(15*time.Second, "kubectl", "--kubeconfig", kc,
+	if out, errOut, err := runCmd(15*time.Second, "kubectl", "--kubeconfig", kc,
 		"create", "clusterrolebinding", bindingName,
 		"--clusterrole=cluster-admin", "--serviceaccount=default:"+saName,
-	); err != nil && !strings.Contains(out, "already exists") {
-		t.Fatalf("CreateServiceAccountToken: create binding: %v\n%s", err, out)
+	); err != nil &&
+		!strings.Contains(out, "already exists") &&
+		!strings.Contains(errOut, "already exists") {
+		t.Fatalf("CreateServiceAccountToken: create binding: %v\nstdout=%s\nstderr=%s", err, out, errOut)
 	}
 
 	// Mint token.
