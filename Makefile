@@ -1,6 +1,6 @@
 # Sharko — Makefile
 
-.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e test-e2e test-e2e-fast test-e2e-domain test-e2e-helm test-e2e-perf test-e2e-clean test-e2e-coverage test-e2e-fast-coverage test-e2e-junit test-e2e-report install-test-tools kind-up kind-down catalog-scan catalog-scan-pr generate-provider-types generate-schemas build-gitfake-image
+.PHONY: help demo dev build test test-go test-ui lint ui-build ui-install clean build-go release e2e test-e2e test-e2e-fast test-e2e-domain test-e2e-helm test-e2e-perf test-e2e-perf-capture test-e2e-perf-compare test-e2e-clean test-e2e-coverage test-e2e-fast-coverage test-e2e-junit test-e2e-report install-test-tools kind-up kind-down catalog-scan catalog-scan-pr generate-provider-types generate-schemas build-gitfake-image
 
 PORT ?= 8080
 
@@ -23,6 +23,8 @@ help: ## Show available targets
 	@echo "    make test-e2e-domain       Run a single domain (DOMAIN=Cluster|Catalog|...)"
 	@echo "    make test-e2e-helm         Wave-D Helm-mode subset (~5-8 min, requires docker+kind+helm)"
 	@echo "    make test-e2e-perf         V2-1 perf baselines (~2-5 min in-process; cluster path needs kind)"
+	@echo "    make test-e2e-perf-capture Run perf harness + capture timings to _dist/perf-timings.jsonl (CI)"
+	@echo "    make test-e2e-perf-compare Compare captured timings against baselines YAML — exits 2 on >20% p99 regression"
 	@echo "    make test-e2e-clean        Force-delete every sharko-e2e-* kind cluster (manual recovery)"
 	@echo "    make test-e2e-coverage     Full e2e + coverage HTML in _dist/"
 	@echo "    make test-e2e-fast-coverage  Fast e2e + coverage HTML in _dist/"
@@ -214,6 +216,41 @@ test-e2e-perf: ## V2-1 perf baselines (~2-5 min in-process; cluster path needs k
 	GOTMPDIR=/tmp go test -tags='e2e perf' -timeout=20m -v \
 	 -run '^TestPerf$$' \
 	 ./tests/e2e/lifecycle/...
+
+# V2-1.4 — perf-regression CI gate plumbing.
+#
+# Two targets:
+#
+#   test-e2e-perf-capture — runs the perf harness AND tees the test log to
+#     _dist/perf-timings.jsonl. The harness's PhaseTimer emissions land on
+#     stderr alongside slog noise; the comparator's loader is robust to
+#     that mix (lines that don't start with `{` are dropped). Used by
+#     .github/workflows/perf-regression.yml.
+#
+#   test-e2e-perf-compare — invokes cmd/perf-baseline-compare against the
+#     captured timings + the canonical baselines YAML, returning non-zero
+#     when any p99 regresses >20%. The workflow's `make` invocation thus
+#     fails the job naturally, no awk needed on the workflow side.
+#
+# These targets are intentionally additive — `make test-e2e-perf` retains
+# its developer-laptop shape (no capture file, no comparator). Capture +
+# compare only matters when the gate is the consumer.
+
+test-e2e-perf-capture: ## Run the perf harness and capture timings to _dist/perf-timings.jsonl (V2-1.4 CI input).
+	@mkdir -p _dist
+	@echo "==> Running V2-1 perf harness and capturing timings to _dist/perf-timings.jsonl"
+	@# The harness writes PhaseTimer emissions to stderr (default sink).
+	@# We tee combined output to the capture file; cmd/perf-baseline-compare
+	@# ignores non-JSON lines, so slog noise from the test process is fine.
+	@GOTMPDIR=/tmp go test -tags='e2e perf' -timeout=30m -v \
+	 -run '^TestPerf$$' \
+	 ./tests/e2e/lifecycle/... 2>&1 | tee _dist/perf-timings.jsonl
+	@echo "==> Captured: _dist/perf-timings.jsonl"
+
+test-e2e-perf-compare: ## Compare _dist/perf-timings.jsonl against docs/site/operator/perf-baselines.yaml (V2-1.4 gate).
+	@go run ./cmd/perf-baseline-compare \
+	 -timings _dist/perf-timings.jsonl \
+	 -baselines docs/site/operator/perf-baselines.yaml
 
 # V126-4.1 / task #188 — Manual recovery for leaked e2e kind clusters.
 #

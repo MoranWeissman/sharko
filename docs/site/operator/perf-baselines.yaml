@@ -1,0 +1,135 @@
+# Perf Baselines — machine-readable copy (V2-1.4).
+#
+# This file is the canonical input to the V2-1.4 CI regression gate
+# (cmd/perf-baseline-compare). The sibling perf-baselines.md is the
+# human-facing rendering of the same data; both are regenerated
+# together by .github/workflows/perf-baseline-refresh.yml so they
+# never drift.
+#
+# Do NOT hand-edit. To update: trigger the perf-baseline-refresh
+# workflow (workflow_dispatch only, NEVER auto on merge — drift
+# would be invisible). The workflow runs the harness, recomputes
+# p50/p95/p99 per phase per path, rewrites this file + the .md
+# sibling, and opens a chore PR for review.
+#
+# Schema:
+#   environment:
+#     date: <YYYY-MM-DD>
+#     sharko_version: <semver>
+#     runner: <free text — developer workstation OR ci runner spec>
+#     sample_count: <int — default iterations per phase per path>
+#   paths:
+#     <path_id>:
+#       phases:
+#         <phase_id>:
+#           n: <samples actually captured (may be less than sample_count for skip-graceful)>
+#           p50_ms: <float64>
+#           p95_ms: <float64>
+#           p99_ms: <float64>
+#           min_ms: <float64>
+#           max_ms: <float64>
+#
+# Path + phase identifiers are LOCKED — see tests/e2e/harness/phases.go.
+# Renaming either field invalidates baselines and breaks the CI gate.
+environment:
+  date: "2026-05-26"
+  sharko_version: "1.25.0-pre.0"
+  runner: "Developer workstation — Apple Silicon (arm64), Docker Desktop 28.3.2, 4 CPUs, 15.6 GiB; macOS 26.4.1; kind v0.20.0 (kindest/node:v1.31.0); kubectl v1.30.1; ArgoCD upstream stable; go1.26.1 darwin/arm64; SharkoModeInProcess httptest; kind topology + ArgoCD reused; sharko re-booted per iteration"
+  sample_count: 30
+
+paths:
+  cluster_registration:
+    phases:
+      ui_submit:
+        n: 30
+        p50_ms: 21.630
+        p95_ms: 57.694
+        p99_ms: 2150.869
+        min_ms: 14.697
+        max_ms: 2997.429
+      argocd_secret_created:
+        n: 30
+        p50_ms: 443.628
+        p95_ms: 731.372
+        p99_ms: 916.858
+        min_ms: 386.539
+        max_ms: 965.908
+      argocd_application_reachable:
+        n: 20
+        p50_ms: 13.208
+        p95_ms: 32.146
+        p99_ms: 37.715
+        min_ms: 8.719
+        max_ms: 39.107
+
+  addon_cycle:
+    phases:
+      enable_dry_run:
+        n: 30
+        p50_ms: 0.249
+        p95_ms: 0.331
+        p99_ms: 0.375
+        min_ms: 0.222
+        max_ms: 0.377
+      disable_dry_run:
+        n: 30
+        p50_ms: 0.243
+        p95_ms: 0.345
+        p99_ms: 0.403
+        min_ms: 0.222
+        max_ms: 0.421
+      upgrade_global:
+        n: 30
+        p50_ms: 0.296
+        p95_ms: 0.411
+        p99_ms: 0.641
+        min_ms: 0.276
+        max_ms: 0.733
+
+  catalog_scan:
+    phases:
+      catalog_load:
+        n: 30
+        p50_ms: 0.962
+        p95_ms: 1.314
+        p99_ms: 1.515
+        min_ms: 0.917
+        max_ms: 1.582
+      list_addons:
+        n: 30
+        p50_ms: 0.599
+        p95_ms: 0.788
+        p99_ms: 1.091
+        min_ms: 0.543
+        max_ms: 1.204
+      sources_refresh:
+        n: 30
+        p50_ms: 0.411
+        p95_ms: 0.500
+        p99_ms: 0.593
+        min_ms: 0.358
+        max_ms: 0.629
+
+  dashboard_read:
+    phases:
+      pull_requests:
+        n: 30
+        p50_ms: 0.140
+        p95_ms: 0.215
+        p99_ms: 0.365
+        min_ms: 0.118
+        max_ms: 0.426
+      fleet_status:
+        n: 30
+        p50_ms: 0.177
+        p95_ms: 0.271
+        p99_ms: 0.479
+        min_ms: 0.149
+        max_ms: 0.564
+      repo_status:
+        n: 30
+        p50_ms: 0.142
+        p95_ms: 0.215
+        p99_ms: 0.281
+        min_ms: 0.107
+        max_ms: 0.296
