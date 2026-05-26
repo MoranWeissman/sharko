@@ -1,0 +1,257 @@
+---
+name: Perf Baseline Refresh
+
+# V2-1.4 Part B — human-triggered baseline refresh.
+#
+# This is the COMPLEMENT to the perf-regression gate
+# (.github/workflows/perf-regression.yml). The gate fails PRs whose
+# measured p99 regresses >20% over the recorded baselines; this
+# workflow is how the recorded baselines get re-measured and rolled
+# forward when a deliberate change (perf optimisation OR an accepted
+# regression) lands.
+#
+# ## Why workflow_dispatch ONLY
+#
+# This workflow MUST NOT auto-run on push / pull_request. Silent
+# baseline updates on every merge would defeat the regression gate:
+# any perf regression that slipped through (or was waved past with
+# `skip-perf-gate`) would silently become the new floor, and the gate
+# would never catch the next round of drift.
+#
+# Refresh is a DELIBERATE operator action. The triage flow is:
+#
+#   1. Gate fires on a PR.
+#   2. Operator decides: legitimate regression (fix it) OR accepted
+#      trade-off (label with `skip-perf-gate`, document why in PR
+#      body, then trigger this workflow).
+#   3. This workflow re-runs the harness on CI, recomputes
+#      p50/p95/p99 per phase per path, and opens a chore PR that
+#      rewrites perf-baselines.{yaml,md} with the new floor.
+#   4. The chore PR's body shows per-phase delta (old p99 → new p99
+#      → delta %) so the reviewer can sanity-check the new floor at
+#      a glance before merging.
+#
+# ## kind + ArgoCD setup
+#
+# Mirrors .github/workflows/perf-regression.yml step-for-step. Pre-
+# V2.0.0 a shared composite action adds indirection that's not worth
+# the maintenance until a third workflow needs the same boot (same
+# stance as PR #364's brief).
+#
+# ## Go helper approach (A vs B from V2-1.4 Part B brief)
+#
+# Option A chosen: EXTEND cmd/perf-baseline-compare with a `refresh`
+# mode (already shipped in Part A) + a `-markdown` flag (Part B). The
+# refresh mode already loads timings + parses YAML; adding the
+# markdown rewrite + delta summary is minimal incremental complexity
+# and reuses the same JSON-Lines loader, the same quantile math, and
+# the same on-disk struct layout as the compare path. A separate
+# cmd/perf-baseline-refresh/ binary would have meant duplicating
+# loadMeasured + the baselinesFile struct for zero benefit.
+#
+# The bare `perf-baseline-compare -mode refresh` flow still leaves
+# the markdown alone — the Part A invariant that the markdown is
+# human-curated unless explicitly opted in is preserved. This
+# workflow opts in via -markdown <path>.
+
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Why is the baseline being refreshed? Free text — appears in the chore-PR body for audit trail.'
+        required: false
+        type: string
+        default: 'scheduled refresh'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  # Don't cancel an in-flight refresh — the harness takes ~10 min on
+  # CI and cancelling halfway wastes the kind boot. A second click
+  # waits for the first to finish (or to time out).
+  group: perf-baseline-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh-baselines:
+    name: Refresh perf baselines + open chore PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Mirrors .github/workflows/perf-regression.yml + e2e.yml. The
+      # cluster_registration subtest of the perf harness needs kind +
+      # kubectl; the other three subtests run fully in-process and
+      # don't need them, but installing everything keeps the refresh
+      # consistent with the gate.
+      - name: Install kind + kubectl
+        run: |
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+          curl -Lo ./kubectl "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x ./kubectl
+          sudo mv ./kubectl /usr/local/bin/kubectl
+          kind --version
+          kubectl version --client=true
+
+      - name: Build perf-baseline-compare
+        # Build ahead of running the harness so a compile failure
+        # surfaces before the ~10 min perf run, not after.
+        run: go build -o _dist/perf-baseline-compare ./cmd/perf-baseline-compare
+
+      # Snapshot the existing baselines BEFORE the refresh so the
+      # delta summary in the PR body can reference the pre-refresh
+      # numbers. The comparator's `refresh` path also loads the
+      # existing baselines internally, but the on-disk snapshot is
+      # used as the OLD side of the delta summary written below.
+      - name: Snapshot pre-refresh baselines
+        run: |
+          mkdir -p _dist
+          cp docs/site/operator/perf-baselines.yaml _dist/perf-baselines.before.yaml
+
+      - name: Run perf harness + capture timings
+        env:
+          GOTMPDIR: /tmp
+          # Mirrors perf-regression.yml — kept "0" so the harness can
+          # pull ArgoCD manifests when cluster_registration provisions
+          # a kind cluster.
+          E2E_OFFLINE: "0"
+        run: make test-e2e-perf-capture
+
+      # Detect the sharko version from version.txt so the YAML's
+      # `sharko_version` field tracks the version that produced the
+      # numbers. The fallback `git rev-parse --short HEAD` covers a
+      # workspace whose version.txt is somehow empty.
+      - name: Detect sharko version
+        id: ver
+        run: |
+          if [ -s version.txt ]; then
+            v=$(cat version.txt | head -n1 | tr -d '[:space:]')
+          else
+            v=$(git rev-parse --short HEAD)
+          fi
+          echo "version=${v}" >> "$GITHUB_OUTPUT"
+          echo "Sharko version for refresh: ${v}"
+
+      - name: Refresh perf-baselines.{yaml,md} + emit delta summary
+        # -mode refresh    → recompute p50/p95/p99 per (path, phase)
+        # -baselines       → rewrite the canonical machine-readable file
+        # -markdown        → opt in to rewriting the human-facing sibling
+        # -sharko-version  → recorded in the YAML + Markdown env block
+        # -runner          → free-text runner description
+        # -delta-out       → write a Markdown table of old/new/delta for the PR body
+        run: |
+          ./_dist/perf-baseline-compare \
+            -mode refresh \
+            -timings _dist/perf-timings.jsonl \
+            -baselines docs/site/operator/perf-baselines.yaml \
+            -markdown docs/site/operator/perf-baselines.md \
+            -sharko-version "${{ steps.ver.outputs.version }}" \
+            -runner "GitHub Actions ubuntu-latest — kind ${{ runner.os }} ${{ runner.arch }}; perf-baseline-refresh workflow run ${{ github.run_number }}" \
+            -delta-out _dist/perf-baseline-deltas.md
+
+      # Compose the chore-PR body. The delta summary is the heart of
+      # the body; the reason input + run URL give the audit trail.
+      - name: Compose PR body
+        id: body
+        run: |
+          d=$(date -u +%Y-%m-%d)
+          {
+            echo "## Why"
+            echo
+            echo "${{ github.event.inputs.reason }}"
+            echo
+            echo "## Refresh details"
+            echo
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| **Run** | [\`${{ github.run_number }}\`](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |"
+            echo "| **Trigger** | \`workflow_dispatch\` by @${{ github.actor }} |"
+            echo "| **Date (UTC)** | ${d} |"
+            echo "| **Sharko version** | \`${{ steps.ver.outputs.version }}\` |"
+            echo "| **Runner** | \`ubuntu-latest\` |"
+            echo
+            echo "## Per-phase p99 delta (old → new)"
+            echo
+            if [ -s _dist/perf-baseline-deltas.md ]; then
+              cat _dist/perf-baseline-deltas.md
+            else
+              echo "_No delta summary produced — check the workflow logs._"
+            fi
+            echo
+            echo "## Review checklist"
+            echo
+            echo "- [ ] Deltas above are within expected range (no surprise +50% regression hiding in the table)"
+            echo "- [ ] If any phase shows _new_ — confirm the YAML schema change was intentional and the new phase was added to \`tests/e2e/harness/phases.go\`"
+            echo "- [ ] If any phase shows _gone_ — confirm the YAML schema change was intentional and the dropped phase was removed from \`tests/e2e/harness/phases.go\`"
+            echo "- [ ] Markdown sibling (\`docs/site/operator/perf-baselines.md\`) renders correctly under \`mkdocs serve\`"
+            echo
+            echo "---"
+            echo "_Generated by \`.github/workflows/perf-baseline-refresh.yml\` (V2-1.4 Part B)._"
+          } > _dist/pr-body.md
+          # Render to step summary too for ad-hoc inspection without
+          # opening the PR.
+          cat _dist/pr-body.md >> "$GITHUB_STEP_SUMMARY"
+
+      # Open the chore PR. peter-evans/create-pull-request handles
+      # branch creation + commit + push + PR open in one step. v6 is
+      # the stable major as of 2026; bump in lockstep with other
+      # repos when the team is ready to absorb the change.
+      - name: Create chore PR
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: chore/perf-baselines-refresh-${{ github.run_number }}
+          base: main
+          # The bot author for the commit; the PR itself is opened by
+          # github-actions[bot] (the action's default).
+          commit-message: |
+            chore(perf): refresh baselines (${{ steps.ver.outputs.version }})
+
+            Automated refresh by the perf-baseline-refresh workflow.
+            Reason: ${{ github.event.inputs.reason }}
+            Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          author: 'github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>'
+          committer: 'github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>'
+          title: "chore(perf): refresh baselines (${{ github.event.inputs.reason }})"
+          body-path: _dist/pr-body.md
+          labels: |
+            chore
+            perf-baselines
+          delete-branch: true
+          # Only the perf-baseline files change; never let an
+          # accidental working-tree edit (e.g. swagger drift) sneak
+          # into a baseline-refresh PR.
+          add-paths: |
+            docs/site/operator/perf-baselines.yaml
+            docs/site/operator/perf-baselines.md
+
+      - name: Upload captured timings
+        # `if: always()` so a failed refresh still surfaces the raw
+        # timings for triage.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-baseline-refresh-timings-${{ github.run_number }}
+          path: |
+            _dist/perf-timings.jsonl
+            _dist/perf-baseline-deltas.md
+            _dist/perf-baselines.before.yaml
+            _dist/pr-body.md
+          retention-days: 30
+
+      - name: Cleanup stale kind clusters
+        if: always()
+        run: |
+          kind get clusters 2>/dev/null | grep "^sharko-e2e-" | \
+            xargs -I{} kind delete cluster --name {} || true

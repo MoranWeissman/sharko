@@ -349,7 +349,7 @@ paths:
 		t.Fatalf("seed jsonl: %v", err)
 	}
 
-	if err := refresh(jsonlPath, yamlPath, "", "1.25.0-pre.X", "ci runner"); err != nil {
+	if err := refresh(jsonlPath, yamlPath, "", "1.25.0-pre.X", "ci runner", ""); err != nil {
 		t.Fatalf("refresh: %v", err)
 	}
 
@@ -427,7 +427,7 @@ paths:
 		t.Fatalf("seed jsonl: %v", err)
 	}
 
-	if err := refresh(jsonlPath, yamlPath, "", "", ""); err != nil {
+	if err := refresh(jsonlPath, yamlPath, "", "", "", ""); err != nil {
 		t.Fatalf("refresh: %v", err)
 	}
 
@@ -469,5 +469,404 @@ func TestPick(t *testing.T) {
 	}
 	if pick("", "") != "" {
 		t.Fatal("both blank should yield blank")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// MARKDOWN REWRITE — V2-1.4 Part B
+//
+// The refresh workflow's chore PR keeps perf-baselines.{yaml,md} in
+// sync. The Markdown rewrite is opt-in via -markdown so the bare
+// refresh flow stays YAML-only (Part A's invariant). These tests
+// cover: per-path table rewrite, env-table date/version rewrite,
+// prose preservation, phase-order preservation, new-phase append,
+// and yaml-only phase drop.
+// ---------------------------------------------------------------------------
+
+func TestRewriteMarkdownBaselines_PhaseTableRewrite(t *testing.T) {
+	src := `# Perf Baselines
+
+Header prose preserved verbatim.
+
+## Measurement environment
+
+| Field | Value |
+|-------|-------|
+| **Date captured** | 2026-05-26 |
+| **Sharko version** | ` + "`1.0.0`" + ` |
+| **Hardware** | Apple Silicon (arm64) |
+
+### 1. ` + "`addon_cycle`" + `
+
+Per-cluster addon enable/disable.
+
+| Phase | N | p50 (ms) | p95 (ms) | p99 (ms) | min (ms) | max (ms) |
+|-------|---|----------|----------|----------|----------|----------|
+| ` + "`enable_dry_run`" + `   | 30 |    0.249 |    0.331 |    0.375 |    0.222 |    0.377 |
+| ` + "`disable_dry_run`" + `  | 30 |    0.243 |    0.345 |    0.403 |    0.222 |    0.421 |
+
+Skip notes preserved verbatim.
+`
+
+	fresh := &baselinesFile{
+		Environment: baselineEnv{
+			Date:          "2099-01-02",
+			SharkoVersion: "9.9.9",
+			Runner:        "ci runner",
+			SampleCount:   30,
+		},
+		Paths: map[string]baselinePath{
+			"addon_cycle": {Phases: map[string]baselinePhase{
+				"enable_dry_run":  {N: 25, P50Ms: 0.500, P95Ms: 0.700, P99Ms: 0.800, MinMs: 0.400, MaxMs: 0.900},
+				"disable_dry_run": {N: 25, P50Ms: 0.600, P95Ms: 0.800, P99Ms: 0.900, MinMs: 0.500, MaxMs: 1.000},
+			}},
+		},
+	}
+
+	got, err := rewriteMarkdownBaselines(src, fresh)
+	if err != nil {
+		t.Fatalf("rewrite: %v", err)
+	}
+
+	// Env table — Date + Sharko version updated.
+	if !strings.Contains(got, "| **Date captured** | 2099-01-02 |") {
+		t.Errorf("Date row not refreshed; got:\n%s", got)
+	}
+	if !strings.Contains(got, "| **Sharko version** | `9.9.9` |") {
+		t.Errorf("Sharko version row not refreshed; got:\n%s", got)
+	}
+	// Env table — Hardware preserved verbatim.
+	if !strings.Contains(got, "| **Hardware** | Apple Silicon (arm64) |") {
+		t.Errorf("Hardware row should be preserved verbatim; got:\n%s", got)
+	}
+	// Header + skip-notes prose preserved.
+	if !strings.Contains(got, "Header prose preserved verbatim.") {
+		t.Errorf("Header prose not preserved")
+	}
+	if !strings.Contains(got, "Skip notes preserved verbatim.") {
+		t.Errorf("Skip notes prose not preserved")
+	}
+	// Per-path data rows refreshed with new numbers.
+	if !strings.Contains(got, "0.500") || !strings.Contains(got, "0.800") {
+		t.Errorf("phase rows not refreshed with fresh quantiles; got:\n%s", got)
+	}
+	// Old numbers gone.
+	if strings.Contains(got, "0.249") || strings.Contains(got, "0.331") {
+		t.Errorf("old phase numbers should be replaced; got:\n%s", got)
+	}
+	// Phase ORDER preserved (enable_dry_run first, disable_dry_run second).
+	enableIdx := strings.Index(got, "`enable_dry_run`")
+	disableIdx := strings.Index(got, "`disable_dry_run`")
+	if enableIdx == -1 || disableIdx == -1 || enableIdx > disableIdx {
+		t.Errorf("phase order not preserved; enable=%d disable=%d", enableIdx, disableIdx)
+	}
+}
+
+func TestRewriteMarkdownBaselines_NewPhaseAppended(t *testing.T) {
+	// Markdown only mentions enable_dry_run; YAML adds a new phase.
+	src := `### 1. ` + "`addon_cycle`" + `
+
+| Phase | N | p50 (ms) | p95 (ms) | p99 (ms) | min (ms) | max (ms) |
+|-------|---|----------|----------|----------|----------|----------|
+| ` + "`enable_dry_run`" + `   | 30 |    0.249 |    0.331 |    0.375 |    0.222 |    0.377 |
+
+Footer.
+`
+	fresh := &baselinesFile{
+		Environment: baselineEnv{Date: "2099-01-02"},
+		Paths: map[string]baselinePath{
+			"addon_cycle": {Phases: map[string]baselinePhase{
+				"enable_dry_run": {N: 30, P50Ms: 0.5, P95Ms: 0.7, P99Ms: 0.8, MinMs: 0.4, MaxMs: 0.9},
+				"new_phase":      {N: 30, P50Ms: 1.0, P95Ms: 1.5, P99Ms: 2.0, MinMs: 0.8, MaxMs: 2.5},
+			}},
+		},
+	}
+
+	got, err := rewriteMarkdownBaselines(src, fresh)
+	if err != nil {
+		t.Fatalf("rewrite: %v", err)
+	}
+
+	if !strings.Contains(got, "`enable_dry_run`") {
+		t.Errorf("existing phase missing")
+	}
+	if !strings.Contains(got, "`new_phase`") {
+		t.Errorf("new phase not appended; got:\n%s", got)
+	}
+	// New phase appears AFTER enable_dry_run (existing order preserved, leftovers at end).
+	enableIdx := strings.Index(got, "`enable_dry_run`")
+	newIdx := strings.Index(got, "`new_phase`")
+	if enableIdx == -1 || newIdx == -1 || enableIdx > newIdx {
+		t.Errorf("new phase should appear AFTER existing phases; enable=%d new=%d", enableIdx, newIdx)
+	}
+}
+
+func TestRewriteMarkdownBaselines_PhaseInMarkdownButNotYAMLIsDropped(t *testing.T) {
+	src := `### 1. ` + "`addon_cycle`" + `
+
+| Phase | N | p50 (ms) | p95 (ms) | p99 (ms) | min (ms) | max (ms) |
+|-------|---|----------|----------|----------|----------|----------|
+| ` + "`enable_dry_run`" + `   | 30 |    0.249 |    0.331 |    0.375 |    0.222 |    0.377 |
+| ` + "`removed_phase`" + `    | 30 |    9.999 |    9.999 |    9.999 |    9.999 |    9.999 |
+`
+	fresh := &baselinesFile{
+		Paths: map[string]baselinePath{
+			"addon_cycle": {Phases: map[string]baselinePhase{
+				"enable_dry_run": {N: 30, P50Ms: 0.5, P95Ms: 0.7, P99Ms: 0.8, MinMs: 0.4, MaxMs: 0.9},
+			}},
+		},
+	}
+
+	got, err := rewriteMarkdownBaselines(src, fresh)
+	if err != nil {
+		t.Fatalf("rewrite: %v", err)
+	}
+
+	if strings.Contains(got, "`removed_phase`") {
+		t.Errorf("phase missing from YAML should be dropped; got:\n%s", got)
+	}
+	if !strings.Contains(got, "`enable_dry_run`") {
+		t.Errorf("surviving phase missing")
+	}
+}
+
+func TestRewriteMarkdownBaselines_UnknownPathHeadingPassesThrough(t *testing.T) {
+	// A `###` heading mentioning a backtick id that's NOT in the YAML
+	// should not bind a table — the following phase-table is left alone.
+	src := `### Future work — ` + "`unsupported_yet`" + `
+
+| Phase | N | p50 (ms) | p95 (ms) | p99 (ms) | min (ms) | max (ms) |
+|-------|---|----------|----------|----------|----------|----------|
+| ` + "`example`" + `   | 30 |    0.249 |    0.331 |    0.375 |    0.222 |    0.377 |
+`
+	fresh := &baselinesFile{Paths: map[string]baselinePath{}}
+	got, err := rewriteMarkdownBaselines(src, fresh)
+	if err != nil {
+		t.Fatalf("rewrite: %v", err)
+	}
+	// Unchanged.
+	if !strings.Contains(got, "`example`") || !strings.Contains(got, "0.249") {
+		t.Errorf("unbound table should pass through unchanged; got:\n%s", got)
+	}
+}
+
+func TestWriteBaselinesMarkdown_RoundTrip(t *testing.T) {
+	// Stub clock.
+	originalNow := timeNow
+	timeNow = func() time.Time { return time.Date(2099, 1, 2, 0, 0, 0, 0, time.UTC) }
+	t.Cleanup(func() { timeNow = originalNow })
+
+	tmp := t.TempDir()
+	yamlPath := filepath.Join(tmp, "perf-baselines.yaml")
+	mdPath := filepath.Join(tmp, "perf-baselines.md")
+	jsonlPath := filepath.Join(tmp, "timings.jsonl")
+
+	seedYAML := `# header
+environment:
+  date: "2026-05-26"
+  sharko_version: "1.0.0"
+  runner: "dev workstation"
+  sample_count: 30
+paths:
+  addon_cycle:
+    phases:
+      enable_dry_run:
+        n: 30
+        p50_ms: 0.25
+        p95_ms: 0.33
+        p99_ms: 0.38
+        min_ms: 0.22
+        max_ms: 0.40
+`
+	seedMD := `# Perf Baselines
+
+## Measurement environment
+
+| Field | Value |
+|-------|-------|
+| **Date captured** | 2026-05-26 |
+| **Sharko version** | ` + "`1.0.0`" + ` |
+
+### 1. ` + "`addon_cycle`" + `
+
+| Phase | N | p50 (ms) | p95 (ms) | p99 (ms) | min (ms) | max (ms) |
+|-------|---|----------|----------|----------|----------|----------|
+| ` + "`enable_dry_run`" + `   | 30 |    0.249 |    0.331 |    0.375 |    0.222 |    0.377 |
+
+Footer prose.
+`
+	if err := os.WriteFile(yamlPath, []byte(seedYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mdPath, []byte(seedMD), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	jsonl := strings.Join([]string{
+		`{"path":"addon_cycle","phase":"enable_dry_run","duration_ms":0.5}`,
+		`{"path":"addon_cycle","phase":"enable_dry_run","duration_ms":0.6}`,
+		`{"path":"addon_cycle","phase":"enable_dry_run","duration_ms":0.7}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(jsonlPath, []byte(jsonl), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := refresh(jsonlPath, yamlPath, mdPath, "9.9.9", "ci runner", ""); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+
+	got, err := os.ReadFile(mdPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(got)
+
+	if !strings.Contains(s, "| **Date captured** | 2099-01-02 |") {
+		t.Errorf("Date not refreshed; got:\n%s", s)
+	}
+	if !strings.Contains(s, "| **Sharko version** | `9.9.9` |") {
+		t.Errorf("Sharko version not refreshed; got:\n%s", s)
+	}
+	if !strings.Contains(s, "Footer prose.") {
+		t.Errorf("Footer prose lost; got:\n%s", s)
+	}
+	// 0.5/0.6/0.7 → p50=0.6 p99 closer to 0.7. Check fresh number present, old gone.
+	if !strings.Contains(s, "0.700") {
+		t.Errorf("fresh p99 (0.700) not present; got:\n%s", s)
+	}
+	if strings.Contains(s, "0.375") {
+		t.Errorf("old p99 (0.375) still present; got:\n%s", s)
+	}
+}
+
+func TestRefresh_DefaultModeDoesNotTouchMarkdown(t *testing.T) {
+	// Part A invariant: bare `refresh` (no -markdown) leaves the .md
+	// alone. The Markdown rewrite is opt-in.
+	originalNow := timeNow
+	timeNow = func() time.Time { return time.Date(2099, 1, 2, 0, 0, 0, 0, time.UTC) }
+	t.Cleanup(func() { timeNow = originalNow })
+
+	tmp := t.TempDir()
+	yamlPath := filepath.Join(tmp, "y.yaml")
+	mdPath := filepath.Join(tmp, "m.md")
+	jsonlPath := filepath.Join(tmp, "t.jsonl")
+
+	seedYAML := `# header
+environment:
+  date: "2026-05-26"
+  sharko_version: "1.0.0"
+  runner: "dev"
+  sample_count: 30
+paths:
+  addon_cycle:
+    phases:
+      enable_dry_run:
+        n: 30
+        p50_ms: 0.25
+        p95_ms: 0.33
+        p99_ms: 0.38
+        min_ms: 0.22
+        max_ms: 0.40
+`
+	originalMD := "ORIGINAL UNTOUCHED MARKDOWN\n"
+	if err := os.WriteFile(yamlPath, []byte(seedYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mdPath, []byte(originalMD), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(jsonlPath, []byte(`{"path":"addon_cycle","phase":"enable_dry_run","duration_ms":0.5}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Bare refresh (no -markdown flag).
+	if err := refresh(jsonlPath, yamlPath, "", "", "", ""); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+
+	got, err := os.ReadFile(mdPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != originalMD {
+		t.Errorf("Markdown file should be untouched when -markdown is empty; got:\n%s", string(got))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// DELTA SUMMARY — used by the refresh workflow's PR body.
+// ---------------------------------------------------------------------------
+
+func TestWriteDeltaSummary_OldVsNew(t *testing.T) {
+	old := &baselinesFile{
+		Paths: map[string]baselinePath{
+			"addon_cycle": {Phases: map[string]baselinePhase{
+				"enable_dry_run":  {P99Ms: 1.000},
+				"disable_dry_run": {P99Ms: 2.000},
+				"old_dropped":     {P99Ms: 5.000},
+			}},
+		},
+	}
+	fresh := &baselinesFile{
+		Paths: map[string]baselinePath{
+			"addon_cycle": {Phases: map[string]baselinePhase{
+				"enable_dry_run":  {P99Ms: 1.200}, // +20%
+				"disable_dry_run": {P99Ms: 1.500}, // -25%
+				"brand_new":       {P99Ms: 3.000}, // new
+			}},
+		},
+	}
+
+	tmp := t.TempDir()
+	out := filepath.Join(tmp, "delta.md")
+	if err := writeDeltaSummary(out, old, fresh); err != nil {
+		t.Fatalf("writeDeltaSummary: %v", err)
+	}
+	raw, _ := os.ReadFile(out)
+	s := string(raw)
+
+	// +20% delta — column format "%+6.2f%%" renders 20.00 with leading
+	// blank padding when shorter than 6 chars.
+	if !strings.Contains(s, "+20.00%") {
+		t.Errorf("+20%% delta missing; got:\n%s", s)
+	}
+	// Negative deltas should render with -.
+	if !strings.Contains(s, "-25.00%") {
+		t.Errorf("-25%% delta missing; got:\n%s", s)
+	}
+	// New phase callout.
+	if !strings.Contains(s, "`brand_new`") || !strings.Contains(s, "_new_") {
+		t.Errorf("new-phase callout missing; got:\n%s", s)
+	}
+	// Dropped phase callout.
+	if !strings.Contains(s, "`old_dropped`") || !strings.Contains(s, "_gone_") {
+		t.Errorf("dropped-phase callout missing; got:\n%s", s)
+	}
+}
+
+func TestExtractFirstCell(t *testing.T) {
+	if got := extractFirstCell("| foo | bar |"); got != "foo" {
+		t.Errorf("foo: got %q", got)
+	}
+	if got := extractFirstCell("|  `enable_dry_run`  | 30 |"); got != "`enable_dry_run`" {
+		t.Errorf("backticked: got %q", got)
+	}
+	if got := extractFirstCell("not a row"); got != "" {
+		t.Errorf("non-table: got %q", got)
+	}
+}
+
+func TestIsMarkdownTableSeparator(t *testing.T) {
+	if !isMarkdownTableSeparator("|---|---|") {
+		t.Error("simple separator")
+	}
+	if !isMarkdownTableSeparator("|---|:---:|---:|") {
+		t.Error("aligned separator")
+	}
+	if isMarkdownTableSeparator("| foo | bar |") {
+		t.Error("data row should not match")
+	}
+	if isMarkdownTableSeparator("not a table") {
+		t.Error("non-table should not match")
 	}
 }
