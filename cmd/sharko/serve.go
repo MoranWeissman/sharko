@@ -26,6 +26,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/demo"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
+	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/metrics"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/notifications"
@@ -64,6 +65,12 @@ var serveCmd = &cobra.Command{
 	Short: "Start the Sharko API server",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Configure structured logging from SHARKO_LOG_LEVEL env var (default: info).
+		//
+		// Handler chain order matters: the RedactHandler wraps the base
+		// JSON handler so credential-shape values (tokens, kubeconfigs,
+		// JWTs, base64 blobs >100 chars) are scrubbed BEFORE any
+		// downstream sink serializes them. Wrapping last would let a
+		// misconfigured sink emit the raw value.
 		logLevel := getEnvDefault("SHARKO_LOG_LEVEL", "info")
 		var level slog.Level
 		switch strings.ToLower(logLevel) {
@@ -76,7 +83,8 @@ var serveCmd = &cobra.Command{
 		default:
 			level = slog.LevelInfo
 		}
-		slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})))
+		baseHandler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})
+		slog.SetDefault(slog.New(logging.NewRedactHandler(baseHandler)))
 
 		port, _ := cmd.Flags().GetInt("port")
 		configPath, _ := cmd.Flags().GetString("config")
