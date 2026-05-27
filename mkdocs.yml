@@ -91,6 +91,8 @@ nav:
     - End-to-End Testing: developer-guide/e2e-testing.md
     - Perf Harness: developer-guide/perf-harness.md
     - Personal Smoke Runbook: developer-guide/personal-smoke-runbook.md
+    - Logging: developer-guide/logging.md
+    - Logging Audit Punch List: developer-guide/logging-audit-punchlist.md
 
 markdown_extensions:
   - admonition
