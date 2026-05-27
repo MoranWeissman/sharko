@@ -1,0 +1,63 @@
+name: Feature Request
+description: Propose a new capability or enhancement for Sharko
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for proposing a feature! Before filing, please:
+
+        - Check [existing issues](https://github.com/MoranWeissman/sharko/issues?q=is%3Aissue) for prior requests
+        - Review the [settled decisions](https://github.com/MoranWeissman/sharko/blob/main/.claude/team/product-manager.md) — some directions are intentionally not on the table (e.g. "Flux support", "standalone CLI mode"). If your proposal conflicts with one of these, please make the case for revisiting it explicitly.
+        - For larger proposals, consider opening a [GitHub Discussion](https://github.com/MoranWeissman/sharko/discussions) first to gather input before formalizing as an issue.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What problem does this feature solve? Who is affected and how?
+      placeholder: "As a platform engineer managing N clusters, I cannot currently ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: Describe the feature or change you'd like. Be as concrete as possible — CLI command shape, API endpoint, UI flow, etc.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What other approaches did you consider, and why did you prefer the proposed one?
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: What is in scope for this proposal, and what is out of scope? This helps prevent feature creep during implementation.
+      placeholder: |
+        In scope:
+        - ...
+
+        Out of scope:
+        - ...
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Mockups, links to similar features in other tools, related issues, etc.
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Code of Conduct
+      description: By submitting this issue, you agree to follow our [Code of Conduct](https://github.com/MoranWeissman/sharko/blob/main/CODE_OF_CONDUCT.md).
+      options:
+        - label: I agree to follow this project's Code of Conduct
+          required: true
