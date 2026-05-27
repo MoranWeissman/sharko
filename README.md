@@ -295,6 +295,21 @@ swag init -g cmd/sharko/serve.go -o docs/swagger --parseDependency --parseIntern
 | [User Guide](docs/user-guide.md) | End-to-end guide: install, configure, manage clusters and addons |
 | [Developer Guide](docs/developer-guide.md) | Project structure, coding patterns, testing, adding new features |
 
+## Community
+
+Sharko is an open project building toward [CNCF Sandbox](https://github.com/cncf/sandbox) acceptance. Contributions, adopters, and feedback are all welcome.
+
+| Resource | Description |
+|----------|-------------|
+| [CONTRIBUTING.md](CONTRIBUTING.md) | How to file issues, open PRs, run tests, and sign your commits (DCO) |
+| [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Contributor Covenant v2.1 — our community standards |
+| [GOVERNANCE.md](GOVERNANCE.md) | Project governance, decision-making, and the BDFL → steering-committee transition plan |
+| [MAINTAINERS.md](MAINTAINERS.md) | Current maintainers and how to become one |
+| [SECURITY.md](SECURITY.md) | Responsible security disclosure process |
+| [ADOPTERS.md](ADOPTERS.md) | Organizations using Sharko — add yours! |
+
+For project Q&A and design discussion, please use [GitHub Discussions](https://github.com/MoranWeissman/sharko/discussions) (once enabled by the maintainers). For bug reports and feature requests, use the [issue tracker](https://github.com/MoranWeissman/sharko/issues/new/choose). For security issues, follow [SECURITY.md](SECURITY.md) — please do not file security reports as public issues.
+
 ## License
 
 [MIT](LICENSE)
