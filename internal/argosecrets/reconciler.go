@@ -6,14 +6,22 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
-	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/providers"
 )
+
+// argosecretsSyntheticTickID returns the canonical per-tick correlation ID
+// for the legacy argosecrets reconciler. Distinguished from the V125-1-8
+// canonical reconciler's `recon-<unix_ts>` so the operator can tell which
+// reconciler emitted a given line.
+func argosecretsSyntheticTickID() string {
+	return fmt.Sprintf("argosecrets-%d", time.Now().Unix())
+}
 
 // GitReader abstracts the read-only Git operations needed by the reconciler.
 // Defined locally (not imported from internal/secrets) per anti-pattern rules.
@@ -119,17 +127,20 @@ func NewReconciler(
 // Start launches the background reconcile loop. Runs one reconcile immediately,
 // then repeats on every tick or Trigger() call.
 // Stopped by cancelling ctx or calling Stop().
+//
+// Each tick gets a fresh synthetic correlation ID (`argosecrets-<unix_ts>`)
+// attached to the per-tick context. V2-2.2.
 func (r *Reconciler) Start(ctx context.Context) {
 	go func() {
-		r.ReconcileOnce(ctx)
+		r.ReconcileOnce(logging.WithRequestID(ctx, argosecretsSyntheticTickID()))
 		ticker := time.NewTicker(r.interval)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
-				r.ReconcileOnce(ctx)
+				r.ReconcileOnce(logging.WithRequestID(ctx, argosecretsSyntheticTickID()))
 			case <-r.triggerCh:
-				r.ReconcileOnce(ctx)
+				r.ReconcileOnce(logging.WithRequestID(ctx, argosecretsSyntheticTickID()))
 			case <-ctx.Done():
 				return
 			case <-r.stopCh:
@@ -159,23 +170,24 @@ func (r *Reconciler) Trigger() {
 // testable. Concurrent calls are supported by the caller's single-goroutine loop
 // in Start(); this method itself is not safe for concurrent execution.
 func (r *Reconciler) ReconcileOnce(ctx context.Context) {
+	log := logging.LoggerFromContext(ctx)
 	start := time.Now()
 	stats := ReconcileStats{}
 	var errors []string
 
-	slog.Info("[argosecrets] reconcile started")
+	log.Info("[argosecrets] reconcile started")
 
 	// 1. Get Git reader — bail early when no connection is configured.
 	gr := r.gitReader()
 	if gr == nil {
-		slog.Warn("[argosecrets] no Git connection — skipping reconcile")
+		log.Warn("[argosecrets] no Git connection — skipping reconcile")
 		return
 	}
 
 	// 2. Read managed-clusters.yaml from Git.
 	clusterData, err := gr.GetFileContent(ctx, r.managedClustersPath, r.baseBranch)
 	if err != nil {
-		slog.Error("[argosecrets] failed to read managed-clusters.yaml", "error", err, "path", r.managedClustersPath)
+		log.Error("[argosecrets] failed to read managed-clusters.yaml", "error", err, "path", r.managedClustersPath)
 		return
 	}
 
@@ -185,14 +197,14 @@ func (r *Reconciler) ReconcileOnce(ctx context.Context) {
 	lastHash := r.lastContentHash
 	r.mu.RUnlock()
 	if contentHash == lastHash {
-		slog.Debug("[argosecrets] managed-clusters.yaml unchanged, skipping reconcile")
+		log.Debug("[argosecrets] managed-clusters.yaml unchanged, skipping reconcile")
 		return
 	}
 
 	// 4. Parse clusters from YAML.
 	clusters, err := r.parser.ParseClusterAddons(clusterData)
 	if err != nil {
-		slog.Error("[argosecrets] failed to parse managed-clusters.yaml", "error", err)
+		log.Error("[argosecrets] failed to parse managed-clusters.yaml", "error", err)
 		return
 	}
 
@@ -216,7 +228,7 @@ func (r *Reconciler) ReconcileOnce(ctx context.Context) {
 			stats.Errors++
 			errMsg := fmt.Sprintf("cluster=%s: %v", cluster.Name, err)
 			errors = append(errors, errMsg)
-			slog.Error("[argosecrets] reconcile failed",
+			log.Error("[argosecrets] reconcile failed",
 				"cluster", cluster.Name, "error", err,
 			)
 			continue // skip-and-continue — never block the rest
@@ -237,7 +249,7 @@ func (r *Reconciler) ReconcileOnce(ctx context.Context) {
 	// the previous pass. This gives an in-flight PR time to merge before the
 	// reconciler treats the adopted secret as an orphan and deletes it.
 	if listErr != nil {
-		slog.Error("[argosecrets] failed to list managed secrets", "error", listErr)
+		log.Error("[argosecrets] failed to list managed secrets", "error", listErr)
 	} else {
 		currentOrphans := make(map[string]bool)
 		for _, name := range existingManaged {
@@ -256,15 +268,15 @@ func (r *Reconciler) ReconcileOnce(ctx context.Context) {
 				if delErr := r.manager.Delete(ctx, name); delErr != nil {
 					stats.Errors++
 					errors = append(errors, fmt.Sprintf("delete orphan %s: %v", name, delErr))
-					slog.Error("[argosecrets] orphan delete failed",
+					log.Error("[argosecrets] orphan delete failed",
 						"cluster", name, "error", delErr,
 					)
 				} else {
 					stats.Deleted++
-					slog.Info("[argosecrets] orphan secret deleted", "cluster", name)
+					log.Info("[argosecrets] orphan secret deleted", "cluster", name)
 				}
 			} else {
-				slog.Info("[argosecrets] orphan detected, deferring deletion to next cycle", "cluster", name)
+				log.Info("[argosecrets] orphan detected, deferring deletion to next cycle", "cluster", name)
 			}
 		}
 
@@ -290,7 +302,7 @@ func (r *Reconciler) ReconcileOnce(ctx context.Context) {
 	r.lastErrors = errors
 	r.mu.Unlock()
 
-	slog.Info("[argosecrets] reconcile complete",
+	log.Info("[argosecrets] reconcile complete",
 		"checked", stats.Checked,
 		"created", stats.Created,
 		"updated", stats.Updated,

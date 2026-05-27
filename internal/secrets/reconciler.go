@@ -5,12 +5,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"log/slog"
 	"sort"
 	"sync"
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/providers"
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
@@ -175,6 +175,10 @@ func (r *Reconciler) GetErrors() []string {
 
 // reconcile is the main reconcile cycle. It is safe to call concurrently but
 // will run sequentially via the single-goroutine loop in Start().
+//
+// Each pass gets a synthetic correlation ID (`secrets-<unix_ts>`) attached to
+// the per-pass context so every slog line emitted carries the same
+// request_id. V2-2.2.
 func (r *Reconciler) reconcile() {
 	start := time.Now()
 	stats := ReconcileStats{}
@@ -182,25 +186,27 @@ func (r *Reconciler) reconcile() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
+	ctx = logging.WithRequestID(ctx, fmt.Sprintf("secrets-%d", time.Now().Unix()))
+	log := logging.LoggerFromContext(ctx)
 
-	slog.Info("[secrets] reconcile started")
+	log.Info("[secrets] reconcile started")
 
 	// 1. Get Git reader — bail early when no connection is configured.
 	gr := r.gitReader()
 	if gr == nil {
-		slog.Warn("[secrets] no Git connection — skipping reconcile")
+		log.Warn("[secrets] no Git connection — skipping reconcile")
 		return
 	}
 
 	// 2. Read catalog.
 	catalogData, err := gr.GetFileContent(ctx, "configuration/addons-catalog.yaml", r.baseBranch)
 	if err != nil {
-		slog.Warn("[secrets] failed to read catalog", "error", err)
+		log.Warn("[secrets] failed to read catalog", "error", err)
 		return
 	}
 	catalog, err := r.parser.ParseAddonsCatalog(catalogData)
 	if err != nil {
-		slog.Warn("[secrets] failed to parse catalog", "error", err)
+		log.Warn("[secrets] failed to parse catalog", "error", err)
 		return
 	}
 
@@ -216,19 +222,19 @@ func (r *Reconciler) reconcile() {
 		}
 	}
 	if len(secretAddons) == 0 {
-		slog.Info("[secrets] no addons with secret definitions — nothing to reconcile")
+		log.Info("[secrets] no addons with secret definitions — nothing to reconcile")
 		return
 	}
 
 	// 4. Read managed-clusters.yaml.
 	clusterData, err := gr.GetFileContent(ctx, r.managedClustersPath, r.baseBranch)
 	if err != nil {
-		slog.Warn("[secrets] failed to read managed-clusters", "error", err, "path", r.managedClustersPath)
+		log.Warn("[secrets] failed to read managed-clusters", "error", err, "path", r.managedClustersPath)
 		return
 	}
 	clusters, err := r.parser.ParseClusterAddons(clusterData)
 	if err != nil {
-		slog.Warn("[secrets] failed to parse managed-clusters", "error", err)
+		log.Warn("[secrets] failed to parse managed-clusters", "error", err)
 		return
 	}
 
@@ -252,7 +258,7 @@ func (r *Reconciler) reconcile() {
 					errMsg := fmt.Sprintf("cluster=%s addon=%s secret=%s: %v",
 						cluster.Name, as.addon.Name, secretRef.SecretName, err)
 					errors = append(errors, errMsg)
-					slog.Error("[secrets] reconcile failed",
+					log.Error("[secrets] reconcile failed",
 						"cluster", cluster.Name,
 						"addon", as.addon.Name,
 						"secret", secretRef.SecretName,
@@ -272,7 +278,7 @@ func (r *Reconciler) reconcile() {
 	r.lastErrors = errors
 	r.mu.Unlock()
 
-	slog.Info("[secrets] reconcile complete",
+	log.Info("[secrets] reconcile complete",
 		"checked", stats.Checked,
 		"created", stats.Created,
 		"updated", stats.Updated,
@@ -296,8 +302,9 @@ func (r *Reconciler) reconcileSecret(
 	clusterName, addonName string,
 	ref models.AddonSecretRef,
 ) error {
+	log := logging.LoggerFromContext(ctx)
 	// Get kubeconfig for the cluster.
-	slog.Info("[reconciler] connecting to cluster", "cluster", clusterName)
+	log.Info("[reconciler] connecting to cluster", "cluster", clusterName)
 	creds, err := r.credProvider.GetCredentials(clusterName)
 	if err != nil {
 		return fmt.Errorf("getting credentials: %w", err)
@@ -327,7 +334,7 @@ func (r *Reconciler) reconcileSecret(
 			return fmt.Errorf("checking existing secret: %w", err)
 		}
 		// Secret doesn't exist — create it.
-		slog.Info("[secrets] creating secret",
+		log.Info("[secrets] creating secret",
 			"cluster", clusterName, "addon", addonName,
 			"secret", ref.SecretName, "namespace", ref.Namespace,
 		)
@@ -335,7 +342,7 @@ func (r *Reconciler) reconcileSecret(
 			return fmt.Errorf("creating secret: %w", createErr)
 		}
 		stats.Created++
-		slog.Info("[secrets] secret created",
+		log.Info("[secrets] secret created",
 			"cluster", clusterName, "addon", addonName, "secret", ref.SecretName,
 		)
 		return nil
@@ -343,13 +350,13 @@ func (r *Reconciler) reconcileSecret(
 
 	// Secret exists — compare hashes to decide whether an update is needed.
 	existingHash := hashSecretData(existing.Data)
-	slog.Debug("[reconciler] hash comparison",
+	log.Debug("[reconciler] hash comparison",
 		"cluster", clusterName,
 		"secret", ref.SecretName,
 		"match", desiredHash == existingHash,
 	)
 	if existingHash == desiredHash {
-		slog.Info("[secrets] secret up-to-date",
+		log.Info("[secrets] secret up-to-date",
 			"cluster", clusterName, "addon", addonName, "secret", ref.SecretName,
 		)
 		stats.Skipped++
@@ -357,14 +364,14 @@ func (r *Reconciler) reconcileSecret(
 	}
 
 	// Hashes differ — rotate.
-	slog.Warn("[secrets] secret rotated, updating",
+	log.Warn("[secrets] secret rotated, updating",
 		"cluster", clusterName, "addon", addonName, "secret", ref.SecretName,
 	)
 	if updateErr := remoteclient.EnsureSecret(ctx, client, ref.Namespace, ref.SecretName, desiredData); updateErr != nil {
 		return fmt.Errorf("updating secret: %w", updateErr)
 	}
 	stats.Updated++
-	slog.Info("[secrets] secret updated",
+	log.Info("[secrets] secret updated",
 		"cluster", clusterName, "addon", addonName, "secret", ref.SecretName,
 	)
 	return nil

@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/MoranWeissman/sharko/internal/logging"
 )
 
 // ChatMessage represents a message in the conversation.
@@ -234,6 +236,7 @@ func (a *Agent) initContext() {
 // Chat sends a user message and returns the assistant's response.
 // It handles tool calling loops internally (max 5 iterations).
 func (a *Agent) Chat(ctx context.Context, userMessage string) (string, error) {
+	log := logging.LoggerFromContext(ctx)
 	if !a.client.IsEnabled() {
 		return "", fmt.Errorf("AI not configured")
 	}
@@ -254,7 +257,7 @@ func (a *Agent) Chat(ctx context.Context, userMessage string) (string, error) {
 		// If no tool calls, we have the final response
 		if len(resp.ToolCalls) == 0 {
 			a.messages = append(a.messages, ChatMessage{Role: "assistant", Content: resp.Content})
-			slog.Info("agent chat completed", "iterations", i+1, "duration", time.Since(chatStart))
+			log.Info("agent chat completed", "iterations", i+1, "duration", time.Since(chatStart))
 			return resp.Content, nil
 		}
 
@@ -266,7 +269,7 @@ func (a *Agent) Chat(ctx context.Context, userMessage string) (string, error) {
 		})
 
 		for _, tc := range resp.ToolCalls {
-			slog.Info("agent tool call", "tool", tc.Function.Name)
+			log.Info("agent tool call", "tool", tc.Function.Name)
 			result, err := a.executor.ExecuteTool(ctx, tc.Function.Name, tc.Function.Arguments)
 			if err != nil {
 				result = fmt.Sprintf("Error executing %s: %v", tc.Function.Name, err)

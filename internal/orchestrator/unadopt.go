@@ -3,9 +3,9 @@ package orchestrator
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"path"
 
+	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/gitops"
 )
 
@@ -15,6 +15,7 @@ import (
 //  3. Delete Sharko-created addon secrets from the remote cluster.
 //  4. Create PR to remove from managed-clusters.yaml and delete values file.
 func (o *Orchestrator) UnadoptCluster(ctx context.Context, name string, req UnadoptClusterRequest) (*UnadoptClusterResult, error) {
+	log := logging.LoggerFromContext(ctx)
 	if name == "" {
 		return nil, fmt.Errorf("cluster name is required")
 	}
@@ -57,7 +58,7 @@ func (o *Orchestrator) UnadoptCluster(ctx context.Context, name string, req Unad
 		if err := o.argoSecretManager.Unadopt(ctx, name); err != nil {
 			return nil, fmt.Errorf("removing managed-by label from ArgoCD secret for cluster %q: %w", name, err)
 		}
-		slog.Info("ArgoCD secret unadopted — labels removed", "cluster", name)
+		log.Info("ArgoCD secret unadopted — labels removed", "cluster", name)
 	}
 
 	// Step 3: Delete Sharko-created addon secrets from remote cluster (best-effort).
@@ -66,7 +67,7 @@ func (o *Orchestrator) UnadoptCluster(ctx context.Context, name string, req Unad
 		if credErr == nil {
 			o.deleteAllAddonSecrets(ctx, creds.Raw) // best-effort
 		} else {
-			slog.Warn("could not fetch credentials for remote secret cleanup", "cluster", name, "error", credErr)
+			log.Warn("could not fetch credentials for remote secret cleanup", "cluster", name, "error", credErr)
 		}
 	}
 
@@ -80,7 +81,7 @@ func (o *Orchestrator) UnadoptCluster(ctx context.Context, name string, req Unad
 	// Read and update managed-clusters.yaml.
 	clusterAddonsData, err := o.git.GetFileContent(ctx, clusterAddonsPath, o.gitops.BaseBranch)
 	if err != nil {
-		slog.Warn("managed-clusters.yaml not found — skipping removal", "cluster", name)
+		log.Warn("managed-clusters.yaml not found — skipping removal", "cluster", name)
 	}
 
 	var files map[string][]byte
@@ -89,7 +90,7 @@ func (o *Orchestrator) UnadoptCluster(ctx context.Context, name string, req Unad
 	if clusterAddonsData != nil {
 		updatedData, removeErr := gitops.RemoveClusterEntry(clusterAddonsData, name)
 		if removeErr != nil {
-			slog.Warn("failed to remove cluster entry from managed-clusters.yaml",
+			log.Warn("failed to remove cluster entry from managed-clusters.yaml",
 				"cluster", name, "error", removeErr)
 		} else {
 			files = map[string][]byte{

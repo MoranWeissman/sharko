@@ -3,11 +3,11 @@ package service
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
@@ -24,10 +24,11 @@ func NewObservabilityService() *ObservabilityService {
 
 // GetOverview returns the full observability dashboard data.
 func (s *ObservabilityService) GetOverview(ctx context.Context, ac *argocd.Client, gp gitprovider.GitProvider) (*models.ObservabilityOverviewResponse, error) {
+	log := logging.LoggerFromContext(ctx)
 	// 1. Get ArgoCD version info
 	versionInfo, err := ac.GetVersion(ctx)
 	if err != nil {
-		slog.Warn("could not fetch argocd version", "error", err)
+		log.Warn("could not fetch argocd version", "error", err)
 		versionInfo = map[string]string{}
 	}
 
@@ -80,7 +81,7 @@ func (s *ObservabilityService) GetOverview(ctx context.Context, ac *argocd.Clien
 	for _, app := range addonApps {
 		detail, err := ac.GetApplication(ctx, app.Name)
 		if err != nil {
-			slog.Warn("could not fetch detail for app", "app", app.Name, "error", err)
+			log.Warn("could not fetch detail for app", "app", app.Name, "error", err)
 			fullApps = append(fullApps, app) // fall back to summary
 			continue
 		}

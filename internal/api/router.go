@@ -32,6 +32,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/catalog/sources"
 	"github.com/MoranWeissman/sharko/internal/config"
 	_ "github.com/MoranWeissman/sharko/docs/swagger" // swagger docs
+	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/metrics"
 	"github.com/MoranWeissman/sharko/internal/notifications"
 	"github.com/MoranWeissman/sharko/internal/observations"
@@ -848,9 +849,13 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	// Wrap with middleware
 	// Wrapping order (innermost → outermost): mux → maxBodySize → writeRateLimiter
 	// → auditMiddleware (reads user from header set by basicAuth) → basicAuthMiddleware
-	// → cors → securityHeaders → metrics → logging.
-	// Execution order reverses: logging → metrics → securityHeaders → cors →
-	// basicAuth → auditMiddleware → writeRateLimiter → maxBodySize → mux.
+	// → cors → securityHeaders → metrics → logging → requestID.
+	// Execution order reverses: requestID → logging → metrics → securityHeaders →
+	// cors → basicAuth → auditMiddleware → writeRateLimiter → maxBodySize → mux.
+	//
+	// requestID is outermost so the request_id stamped on the context is
+	// visible to every downstream layer (logging, metrics, audit, handlers,
+	// orchestrator, gitops, ...). V2-2.2.
 	var handler http.Handler = mux
 	handler = maxBodySize(handler, 1<<20)                     // 1MB request body limit
 	handler = writeRateLimiter(30, 1*time.Minute)(handler)    // 30 writes/min per IP
@@ -860,6 +865,7 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	handler = securityHeadersMiddleware(handler)
 	handler = metrics.Middleware(handler)                      // Prometheus request metrics
 	handler = loggingMiddleware(handler)
+	handler = requestIDMiddleware(handler)                     // attach correlation ID at the boundary
 
 	return handler
 }
@@ -1455,7 +1461,41 @@ func loggingMiddleware(next http.Handler) http.Handler {
 		start := time.Now()
 		sr := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
 		next.ServeHTTP(sr, r)
-		slog.Info("request completed", "method", r.Method, "path", r.URL.Path, "status", sr.statusCode, "duration", time.Since(start))
+		slog.Info("request completed",
+			"request_id", logging.RequestID(r.Context()),
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", sr.statusCode,
+			"duration", time.Since(start))
+	})
+}
+
+// requestIDMiddleware honours an inbound X-Request-ID header when present
+// (so a caller — UI, CLI, upstream service — can trace its own request
+// through Sharko's logs) and otherwise generates a fresh `req-<hex>` ID.
+// The ID is attached to the request context via logging.WithRequestID so
+// every downstream layer (logging, audit, handlers, orchestrator, gitops)
+// can stamp it on its slog output.
+//
+// The chosen ID is also echoed back as X-Request-ID on the response, which
+// makes operator-driven correlation ("here's the curl output, find the
+// log line") trivial. V2-2.2.
+func requestIDMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimSpace(r.Header.Get("X-Request-ID"))
+		if id == "" {
+			id = logging.NewRequestID()
+		}
+		// Cap inbound header length to a sensible bound so a malicious or
+		// buggy client can't propagate an arbitrarily large ID through the
+		// log pipeline. 128 bytes leaves room for upstream tracing systems
+		// (e.g. trace-id + span-id concatenation) while preventing abuse.
+		if len(id) > 128 {
+			id = id[:128]
+		}
+		ctx := logging.WithRequestID(r.Context(), id)
+		w.Header().Set("X-Request-ID", id)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 

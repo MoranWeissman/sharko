@@ -3,10 +3,10 @@ package service
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strconv"
 	"strings"
 
+	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/advisories"
 	"github.com/MoranWeissman/sharko/internal/ai"
 	"github.com/MoranWeissman/sharko/internal/config"
@@ -176,6 +176,7 @@ func (s *UpgradeService) ListVersions(ctx context.Context, addonName string, gp 
 
 // CheckUpgrade performs an upgrade impact analysis comparing current and target chart versions.
 func (s *UpgradeService) CheckUpgrade(ctx context.Context, addonName, targetVersion string, gp gitprovider.GitProvider) (*models.UpgradeCheckResponse, error) {
+	log := logging.LoggerFromContext(ctx)
 	// Get addon info from catalog
 	catalogData, err := gp.GetFileContent(ctx, "configuration/addons-catalog.yaml", "main")
 	if err != nil {
@@ -211,17 +212,17 @@ func (s *UpgradeService) CheckUpgrade(ctx context.Context, addonName, targetVers
 	// available version or proceed without a baseline comparison.
 	oldValues, err := s.fetcher.FetchValues(ctx, addon.RepoURL, addon.Chart, currentVersion)
 	if err != nil {
-		slog.Warn("current version not available in Helm repo, searching for fallback",
+		log.Warn("current version not available in Helm repo, searching for fallback",
 			"addon", addonName, "version", currentVersion, "error", err)
 
 		// Try to find the nearest available version.
 		nearestVersion, findErr := s.fetcher.FindNearestVersion(ctx, addon.RepoURL, addon.Chart, currentVersion)
 		if findErr == nil && nearestVersion != "" {
-			slog.Info("using fallback version for upgrade baseline",
+			log.Info("using fallback version for upgrade baseline",
 				"addon", addonName, "original", currentVersion, "fallback", nearestVersion)
 			oldValues, err = s.fetcher.FetchValues(ctx, addon.RepoURL, addon.Chart, nearestVersion)
 			if err != nil {
-				slog.Warn("fallback version fetch also failed", "version", nearestVersion, "error", err)
+				log.Warn("fallback version fetch also failed", "version", nearestVersion, "error", err)
 				oldValues = ""
 				baselineUnavailable = true
 				baselineNote = fmt.Sprintf("Current version %s is not available in the Helm repository. "+
@@ -288,11 +289,11 @@ func (s *UpgradeService) CheckUpgrade(ctx context.Context, addonName, targetVers
 		globalValuesPath := fmt.Sprintf("configuration/addons-global-values/%s.yaml", addonName)
 		globalData, globalErr := gp.GetFileContent(ctx, globalValuesPath, "main")
 		if globalErr != nil {
-			slog.Warn("could not fetch global values", "addon", addonName, "error", globalErr)
+			log.Warn("could not fetch global values", "addon", addonName, "error", globalErr)
 		} else {
 			conflicts, conflictErr := helm.FindConflicts(string(globalData), oldValues, newValues)
 			if conflictErr != nil {
-				slog.Warn("conflict check failed for global values", "error", conflictErr)
+				log.Warn("conflict check failed for global values", "error", conflictErr)
 			} else {
 				for _, c := range conflicts {
 					allConflicts = append(allConflicts, models.ConflictCheckEntry{
@@ -313,11 +314,11 @@ func (s *UpgradeService) CheckUpgrade(ctx context.Context, addonName, targetVers
 			clusterErr = nil
 		}
 		if clusterErr != nil {
-			slog.Warn("could not fetch cluster addons config", "error", clusterErr)
+			log.Warn("could not fetch cluster addons config", "error", clusterErr)
 		} else {
 			clusters, parseErr := s.parser.ParseClusterAddons(clusterData)
 			if parseErr != nil {
-				slog.Warn("could not parse cluster addons", "error", parseErr)
+				log.Warn("could not parse cluster addons", "error", parseErr)
 			} else {
 				for _, cluster := range clusters {
 					labelVal, hasAddon := cluster.Labels[addonName]
@@ -333,7 +334,7 @@ func (s *UpgradeService) CheckUpgrade(ctx context.Context, addonName, targetVers
 
 					conflicts, conflictErr := helm.FindConflicts(string(clusterValuesData), oldValues, newValues)
 					if conflictErr != nil {
-						slog.Warn("conflict check failed for cluster", "cluster", cluster.Name, "error", conflictErr)
+						log.Warn("conflict check failed for cluster", "cluster", cluster.Name, "error", conflictErr)
 						continue
 					}
 
@@ -571,13 +572,14 @@ func semverGreater(a, b semverParts) bool {
 // fetchAdvisoryMap retrieves advisory data and returns a map of version → Advisory.
 // Errors are logged and an empty map is returned so recommendations still work offline.
 func (s *UpgradeService) fetchAdvisoryMap(ctx context.Context, repoURL, chart string) map[string]advisories.Advisory {
+	log := logging.LoggerFromContext(ctx)
 	result := make(map[string]advisories.Advisory)
 	if s.advisories == nil {
 		return result
 	}
 	advList, err := s.advisories.Get(ctx, repoURL, chart)
 	if err != nil {
-		slog.Warn("advisories fetch failed, proceeding without security data",
+		log.Warn("advisories fetch failed, proceeding without security data",
 			"repo_url", repoURL, "chart", chart, "err", err)
 		return result
 	}

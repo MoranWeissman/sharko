@@ -40,10 +40,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
+	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/ai"
 	"github.com/MoranWeissman/sharko/internal/metrics"
 )
@@ -92,6 +92,7 @@ type AnnotateResult struct {
 // users who want async annotation can disable the global toggle and run
 // the manual annotate action later.
 func AnnotateValues(ctx context.Context, valuesYAML []byte, chartName, chartVersion string, aiClient *ai.Client) (AnnotateResult, error) {
+	log := logging.LoggerFromContext(ctx)
 	start := time.Now()
 	res := AnnotateResult{AnnotatedYAML: valuesYAML}
 
@@ -109,7 +110,7 @@ func AnnotateValues(ctx context.Context, valuesYAML []byte, chartName, chartVers
 	if len(valuesYAML) > AnnotateMaxBytes {
 		res.SkipReason = "oversize"
 		recordAnnotate(res.SkipReason, time.Since(start))
-		slog.Info("ai annotate skipped: values.yaml exceeds token budget",
+		log.Info("ai annotate skipped: values.yaml exceeds token budget",
 			"chart", chartName, "version", chartVersion,
 			"bytes", len(valuesYAML), "max_bytes", AnnotateMaxBytes,
 		)
@@ -123,7 +124,7 @@ func AnnotateValues(ctx context.Context, valuesYAML []byte, chartName, chartVers
 	if matches := ScanForSecrets(valuesYAML); len(matches) > 0 {
 		res.SkipReason = "secret_blocked"
 		recordAnnotate(res.SkipReason, time.Since(start))
-		slog.Warn("ai annotate hard-blocked: secret-leak pattern matched",
+		log.Warn("ai annotate hard-blocked: secret-leak pattern matched",
 			"chart", chartName, "version", chartVersion,
 			"match_count", len(matches),
 		)
@@ -147,7 +148,7 @@ func AnnotateValues(ctx context.Context, valuesYAML []byte, chartName, chartVers
 		}
 		res.SkipReason = reason
 		recordAnnotate(reason, time.Since(start))
-		slog.Info("ai annotate fell through to heuristic-only",
+		log.Info("ai annotate fell through to heuristic-only",
 			"chart", chartName, "version", chartVersion,
 			"reason", reason, "error", err,
 		)
@@ -160,7 +161,7 @@ func AnnotateValues(ctx context.Context, valuesYAML []byte, chartName, chartVers
 	if parseErr != nil {
 		res.SkipReason = "parse_error"
 		recordAnnotate(res.SkipReason, time.Since(start))
-		slog.Info("ai annotate response parse failed; using heuristic only",
+		log.Info("ai annotate response parse failed; using heuristic only",
 			"chart", chartName, "version", chartVersion, "error", parseErr,
 		)
 		return res, nil

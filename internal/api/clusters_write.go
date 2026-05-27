@@ -14,6 +14,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/gitops"
+	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/prtracker"
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
@@ -149,6 +150,7 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 	if result.Verification != nil && s.obsStore != nil {
 		if err := s.obsStore.RecordTestResult(ctx, req.Name, *result.Verification); err != nil {
 			slog.Error("failed to record verification observation during registration",
+				"request_id", logging.RequestID(ctx),
 				"cluster", req.Name, "error", err)
 		}
 	}
@@ -409,6 +411,7 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 				if mergeErr := git.MergePullRequest(ctx, pr.ID); mergeErr == nil {
 					if delErr := git.DeleteBranch(ctx, branchName); delErr != nil {
 						slog.Warn("failed to delete branch after secret_path merge",
+							"request_id", logging.RequestID(ctx),
 							"branch", branchName, "error", delErr)
 					}
 				}

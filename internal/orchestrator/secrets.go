@@ -3,8 +3,8 @@ package orchestrator
 import (
 	"context"
 	"fmt"
-	"log/slog"
 
+	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -58,6 +58,7 @@ type secretCreationResult struct {
 // Uses partial-success semantics: individual failures are recorded but do not stop the loop.
 // Returns a secretCreationResult with both created and failed secret names.
 func (o *Orchestrator) createAddonSecrets(ctx context.Context, kubeconfig []byte, addons map[string]bool) (*secretCreationResult, error) {
+	log := logging.LoggerFromContext(ctx)
 	if o.remoteClientFn == nil || o.secretDefs == nil || o.secretFetcher == nil {
 		return &secretCreationResult{}, nil // no secret management configured
 	}
@@ -76,7 +77,7 @@ func (o *Orchestrator) createAddonSecrets(ctx context.Context, kubeconfig []byte
 		return &secretCreationResult{}, nil
 	}
 
-	slog.Info("[secrets] createAddonSecrets called", "addonCount", len(toCreate))
+	log.Info("[secrets] createAddonSecrets called", "addonCount", len(toCreate))
 
 	client, err := o.remoteClientFn(kubeconfig)
 	if err != nil {
@@ -88,7 +89,7 @@ func (o *Orchestrator) createAddonSecrets(ctx context.Context, kubeconfig []byte
 		data := make(map[string][]byte)
 		var fetchFailed bool
 		for key, providerPath := range def.Keys {
-			slog.Info("[secrets] fetching secret value", "addon", def.AddonName, "key", key, "path", providerPath)
+			log.Info("[secrets] fetching secret value", "addon", def.AddonName, "key", key, "path", providerPath)
 			val, fetchErr := o.secretFetcher.GetSecretValue(ctx, providerPath)
 			if fetchErr != nil {
 				result.Failed = append(result.Failed, SecretError{
@@ -104,9 +105,9 @@ func (o *Orchestrator) createAddonSecrets(ctx context.Context, kubeconfig []byte
 			continue
 		}
 
-		slog.Info("[secrets] pushing secret to cluster", "addon", def.AddonName, "secret", def.SecretName, "namespace", def.Namespace)
+		log.Info("[secrets] pushing secret to cluster", "addon", def.AddonName, "secret", def.SecretName, "namespace", def.Namespace)
 		if err := remoteclient.EnsureSecret(ctx, client, def.Namespace, def.SecretName, data); err != nil {
-			slog.Error("[secrets] failed to create secret, continuing", "addon", def.AddonName, "error", err)
+			log.Error("[secrets] failed to create secret, continuing", "addon", def.AddonName, "error", err)
 			result.Failed = append(result.Failed, SecretError{
 				Name:  def.SecretName,
 				Error: fmt.Sprintf("creating secret for addon %s: %v", def.AddonName, err),
@@ -138,6 +139,7 @@ func (o *Orchestrator) listSecretsToCreate(addons map[string]bool) []string {
 
 // deleteAddonSecrets deletes Sharko-managed secrets for specific addons from a remote cluster.
 func (o *Orchestrator) deleteAddonSecrets(ctx context.Context, kubeconfig []byte, addons map[string]bool) ([]string, error) {
+	log := logging.LoggerFromContext(ctx)
 	if o.remoteClientFn == nil || o.secretDefs == nil {
 		return nil, nil
 	}
@@ -160,9 +162,9 @@ func (o *Orchestrator) deleteAddonSecrets(ctx context.Context, kubeconfig []byte
 		err = client.CoreV1().Secrets(def.Namespace).Delete(ctx, def.SecretName, metav1.DeleteOptions{})
 		if err != nil {
 			if apierrors.IsNotFound(err) {
-				slog.Info("secret already gone", "addon", addonName, "secret", def.SecretName)
+				log.Info("secret already gone", "addon", addonName, "secret", def.SecretName)
 			} else {
-				slog.Warn("failed to delete secret", "addon", addonName, "secret", def.SecretName, "error", err)
+				log.Warn("failed to delete secret", "addon", addonName, "secret", def.SecretName, "error", err)
 			}
 			continue
 		}
@@ -174,6 +176,7 @@ func (o *Orchestrator) deleteAddonSecrets(ctx context.Context, kubeconfig []byte
 // deleteAllAddonSecrets deletes all known addon secrets from a remote cluster (used during deregister).
 // Best-effort: continues on individual delete failures, logs errors but doesn't abort.
 func (o *Orchestrator) deleteAllAddonSecrets(ctx context.Context, kubeconfig []byte) ([]string, error) {
+	log := logging.LoggerFromContext(ctx)
 	if o.remoteClientFn == nil || o.secretDefs == nil {
 		return nil, nil
 	}
@@ -189,9 +192,9 @@ func (o *Orchestrator) deleteAllAddonSecrets(ctx context.Context, kubeconfig []b
 		err = client.CoreV1().Secrets(def.Namespace).Delete(ctx, def.SecretName, metav1.DeleteOptions{})
 		if err != nil {
 			if apierrors.IsNotFound(err) {
-				slog.Info("secret already gone", "addon", def.AddonName, "secret", def.SecretName)
+				log.Info("secret already gone", "addon", def.AddonName, "secret", def.SecretName)
 			} else {
-				slog.Warn("failed to delete secret", "addon", def.AddonName, "secret", def.SecretName, "error", err)
+				log.Warn("failed to delete secret", "addon", def.AddonName, "secret", def.SecretName, "error", err)
 			}
 			continue
 		}

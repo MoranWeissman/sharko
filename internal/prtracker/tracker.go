@@ -17,7 +17,16 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/cmstore"
+	"github.com/MoranWeissman/sharko/internal/logging"
 )
+
+// syntheticTickID returns the canonical "prtrack-<unix_ts>" correlation ID
+// for a single PR-tracker poll tick. The unix timestamp is captured at the
+// tick boundary so every slog line emitted during the tick shares the same
+// ID — searchable and clearly non-request-driven. V2-2.2.
+func syntheticTickID() string {
+	return fmt.Sprintf("prtrack-%d", time.Now().Unix())
+}
 
 // GitProvider is the subset of gitprovider.GitProvider needed by the tracker.
 //
@@ -77,17 +86,21 @@ func (t *Tracker) SetOnMergeFn(fn func(PRInfo)) {
 
 // Start launches the background poll loop. Runs one reconcile immediately,
 // then repeats on every tick or Trigger() call.
+//
+// Every tick gets a fresh synthetic correlation ID (`prtrack-<unix_ts>`)
+// attached to the per-tick context so every slog line emitted by PollOnce
+// in that pass carries the same request_id. V2-2.2.
 func (t *Tracker) Start(ctx context.Context) {
 	go func() {
-		t.PollOnce(ctx)
+		t.PollOnce(logging.WithRequestID(ctx, syntheticTickID()))
 		ticker := time.NewTicker(t.interval)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
-				t.PollOnce(ctx)
+				t.PollOnce(logging.WithRequestID(ctx, syntheticTickID()))
 			case <-t.triggerCh:
-				t.PollOnce(ctx)
+				t.PollOnce(logging.WithRequestID(ctx, syntheticTickID()))
 			case <-ctx.Done():
 				return
 			case <-t.stopCh:
@@ -212,16 +225,21 @@ func (t *Tracker) ListPRsFiltered(ctx context.Context, status, cluster, addon, u
 // PollOnce performs a single poll pass: for each tracked PR, queries
 // the Git provider for status, updates ConfigMap on change, and emits
 // audit events on merge or close.
+//
+// All slog lines emitted within a single poll pass carry the request_id
+// attached to ctx (synthetic `prtrack-<unix_ts>` when called from the tick
+// loop, inbound request_id when called from a handler).
 func (t *Tracker) PollOnce(ctx context.Context) {
+	log := logging.LoggerFromContext(ctx)
 	gp := t.gitProvider()
 	if gp == nil {
-		slog.Debug("[prtracker] no Git provider — skipping poll")
+		log.Debug("[prtracker] no Git provider — skipping poll")
 		return
 	}
 
 	data, err := t.cmStore.Read(ctx)
 	if err != nil {
-		slog.Error("[prtracker] failed to read state", "error", err)
+		log.Error("[prtracker] failed to read state", "error", err)
 		return
 	}
 
@@ -236,7 +254,7 @@ func (t *Tracker) PollOnce(ctx context.Context) {
 	for id, pr := range prs {
 		status, err := gp.GetPullRequestStatus(ctx, pr.PRID)
 		if err != nil {
-			slog.Warn("[prtracker] failed to poll PR", "pr_id", pr.PRID, "error", err)
+			log.Warn("[prtracker] failed to poll PR", "pr_id", pr.PRID, "error", err)
 			continue
 		}
 
@@ -252,15 +270,16 @@ func (t *Tracker) PollOnce(ctx context.Context) {
 		changed = true
 
 		if status == "merged" {
-			slog.Info("[prtracker] PR merged", "pr_id", pr.PRID, "cluster", pr.Cluster, "operation", pr.Operation)
+			log.Info("[prtracker] PR merged", "pr_id", pr.PRID, "cluster", pr.Cluster, "operation", pr.Operation)
 			t.auditFn(audit.Entry{
-				Level:    "info",
-				Event:    "pr_merged",
-				User:     pr.User,
-				Action:   pr.Operation,
-				Resource: fmt.Sprintf("pr:%d cluster:%s", pr.PRID, pr.Cluster),
-				Source:   "prtracker",
-				Result:   "success",
+				Level:     "info",
+				Event:     "pr_merged",
+				User:      pr.User,
+				Action:    pr.Operation,
+				Resource:  fmt.Sprintf("pr:%d cluster:%s", pr.PRID, pr.Cluster),
+				Source:    "prtracker",
+				Result:    "success",
+				RequestID: logging.RequestID(ctx),
 			})
 			// Delete the source branch on observed-merge. Skip silently
 			// when the tracker has no branch on file (legacy state-store
@@ -268,7 +287,7 @@ func (t *Tracker) PollOnce(ctx context.Context) {
 			// error is logged but never blocks the tracker loop.
 			if pr.PRBranch != "" {
 				if delErr := gp.DeleteBranch(ctx, pr.PRBranch); delErr != nil {
-					slog.Warn("[prtracker] failed to delete branch after observed merge",
+					log.Warn("[prtracker] failed to delete branch after observed merge",
 						"branch", pr.PRBranch, "pr_id", pr.PRID, "error", delErr)
 				}
 			}
@@ -277,15 +296,16 @@ func (t *Tracker) PollOnce(ctx context.Context) {
 			}
 			toRemove = append(toRemove, id)
 		} else if status == "closed" {
-			slog.Info("[prtracker] PR closed without merge", "pr_id", pr.PRID, "cluster", pr.Cluster)
+			log.Info("[prtracker] PR closed without merge", "pr_id", pr.PRID, "cluster", pr.Cluster)
 			t.auditFn(audit.Entry{
-				Level:    "warn",
-				Event:    "pr_closed_without_merge",
-				User:     pr.User,
-				Action:   pr.Operation,
-				Resource: fmt.Sprintf("pr:%d cluster:%s", pr.PRID, pr.Cluster),
-				Source:   "prtracker",
-				Result:   "failure",
+				Level:     "warn",
+				Event:     "pr_closed_without_merge",
+				User:      pr.User,
+				Action:    pr.Operation,
+				Resource:  fmt.Sprintf("pr:%d cluster:%s", pr.PRID, pr.Cluster),
+				Source:    "prtracker",
+				Result:    "failure",
+				RequestID: logging.RequestID(ctx),
 			})
 			toRemove = append(toRemove, id)
 		}
@@ -300,13 +320,14 @@ func (t *Tracker) PollOnce(ctx context.Context) {
 		if err := t.cmStore.ReadModifyWrite(ctx, func(data map[string]interface{}) error {
 			return t.encodePRs(data, prs)
 		}); err != nil {
-			slog.Error("[prtracker] failed to write state", "error", err)
+			log.Error("[prtracker] failed to write state", "error", err)
 		}
 	}
 }
 
 // PollSinglePR polls a single PR by ID and updates its status.
 func (t *Tracker) PollSinglePR(ctx context.Context, prID int) (*PRInfo, error) {
+	log := logging.LoggerFromContext(ctx)
 	gp := t.gitProvider()
 	if gp == nil {
 		return nil, fmt.Errorf("no Git provider available")
@@ -333,19 +354,20 @@ func (t *Tracker) PollSinglePR(ctx context.Context, prID int) (*PRInfo, error) {
 
 		if status == "merged" {
 			t.auditFn(audit.Entry{
-				Level:    "info",
-				Event:    "pr_merged",
-				User:     pr.User,
-				Action:   pr.Operation,
-				Resource: fmt.Sprintf("pr:%d cluster:%s", pr.PRID, pr.Cluster),
-				Source:   "prtracker",
-				Result:   "success",
+				Level:     "info",
+				Event:     "pr_merged",
+				User:      pr.User,
+				Action:    pr.Operation,
+				Resource:  fmt.Sprintf("pr:%d cluster:%s", pr.PRID, pr.Cluster),
+				Source:    "prtracker",
+				Result:    "success",
+				RequestID: logging.RequestID(ctx),
 			})
 			// Delete the source branch on observed-merge.
 			// Best-effort: log on failure, never block the poll.
 			if pr.PRBranch != "" {
 				if delErr := gp.DeleteBranch(ctx, pr.PRBranch); delErr != nil {
-					slog.Warn("[prtracker] failed to delete branch after observed merge",
+					log.Warn("[prtracker] failed to delete branch after observed merge",
 						"branch", pr.PRBranch, "pr_id", pr.PRID, "error", delErr)
 				}
 			}
@@ -355,13 +377,14 @@ func (t *Tracker) PollSinglePR(ctx context.Context, prID int) (*PRInfo, error) {
 			delete(prs, key)
 		} else if status == "closed" {
 			t.auditFn(audit.Entry{
-				Level:    "warn",
-				Event:    "pr_closed_without_merge",
-				User:     pr.User,
-				Action:   pr.Operation,
-				Resource: fmt.Sprintf("pr:%d cluster:%s", pr.PRID, pr.Cluster),
-				Source:   "prtracker",
-				Result:   "failure",
+				Level:     "warn",
+				Event:     "pr_closed_without_merge",
+				User:      pr.User,
+				Action:    pr.Operation,
+				Resource:  fmt.Sprintf("pr:%d cluster:%s", pr.PRID, pr.Cluster),
+				Source:    "prtracker",
+				Result:    "failure",
+				RequestID: logging.RequestID(ctx),
 			})
 			delete(prs, key)
 		}
@@ -378,7 +401,8 @@ func (t *Tracker) PollSinglePR(ctx context.Context, prID int) (*PRInfo, error) {
 // ReconcileOnStartup reads persisted state and reconciles any PRs that
 // changed while the server was down.
 func (t *Tracker) ReconcileOnStartup(ctx context.Context) {
-	slog.Info("[prtracker] reconciling on startup")
+	ctx = logging.WithRequestID(ctx, "prtrack-startup-"+strconv.FormatInt(time.Now().Unix(), 10))
+	logging.LoggerFromContext(ctx).Info("[prtracker] reconciling on startup")
 	t.PollOnce(ctx)
 }
 

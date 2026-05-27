@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
+	"github.com/MoranWeissman/sharko/internal/logging"
 )
 
 // auditMiddleware emits an audit.Entry for every mutating API request.
@@ -97,6 +98,7 @@ func (s *Server) auditMiddleware(next http.Handler) http.Handler {
 			DurationMs:      duration.Milliseconds(),
 			Tier:            tier,
 			AttributionMode: mode,
+			RequestID:       logging.RequestID(ctx),
 		})
 	})
 }

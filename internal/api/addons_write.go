@@ -11,6 +11,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/helm"
+	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
@@ -84,6 +85,7 @@ func (s *Server) handleAddAddon(w http.ResponseWriter, r *http.Request) {
 			req.UpstreamValues = []byte(upstream)
 		} else {
 			slog.Info("smart-values pre-fetch failed; falling back to minimal stub",
+				"request_id", logging.RequestID(ctx),
 				"addon", req.Name, "chart", req.Chart, "version", req.Version, "error", ferr)
 		}
 	}
@@ -107,6 +109,7 @@ func (s *Server) handleAddAddon(w http.ResponseWriter, r *http.Request) {
 			// error is returned.
 			if errors.As(annErr, &secretBlock) {
 				slog.Warn("addon-add: ai annotate hard-blocked by secret guard; proceeding with heuristic-only",
+					"request_id", logging.RequestID(ctx),
 					"addon", req.Name, "chart", req.Chart, "version", req.Version,
 					"matches", len(secretBlock.Matches),
 				)

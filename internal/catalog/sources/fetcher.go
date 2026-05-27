@@ -53,6 +53,7 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/catalog"
 	"github.com/MoranWeissman/sharko/internal/config"
+	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/metrics"
 )
 
@@ -467,7 +468,10 @@ func (f *Fetcher) supervise(ctx context.Context) {
 
 	// Initial fetch — happens immediately, not after the first tick,
 	// so a freshly-started server has entries as soon as possible.
-	f.fetchAll(ctx)
+	// Each tick gets its own `catscan-<unix_ts>` synthetic correlation ID
+	// so every slog line emitted during the fanout shares the same
+	// request_id (V2-2.2).
+	f.fetchAll(logging.WithRequestID(ctx, fmt.Sprintf("catscan-%d", time.Now().Unix())))
 
 	interval := f.cfg.RefreshInterval
 	if interval <= 0 {
@@ -493,7 +497,7 @@ func (f *Fetcher) supervise(ctx context.Context) {
 				return
 			default:
 			}
-			f.fetchAll(ctx)
+			f.fetchAll(logging.WithRequestID(ctx, fmt.Sprintf("catscan-%d", time.Now().Unix())))
 		}
 	}
 }
@@ -637,6 +641,11 @@ func (f *Fetcher) fetchMany(ctx context.Context, urls []string) {
 func (f *Fetcher) fetchOne(ctx context.Context, rawURL string) {
 	startAt := f.clock.Now()
 	fingerprint := urlFingerprint(rawURL)
+	// Per-fetch contextual logger. Each per-URL fetch within a tick
+	// fanout shares the same `catscan-<unix_ts>` request_id (attached
+	// at supervise() entry), so a single log query surfaces every URL
+	// touched by that tick. V2-2.2.
+	log := f.log.With(logging.RequestIDField(), logging.RequestID(ctx))
 
 	// Runtime SSRF guard. Startup validated the URL was not resolving
 	// to a private IP at boot; a public hostname can re-resolve to an
@@ -647,7 +656,7 @@ func (f *Fetcher) fetchOne(ctx context.Context, rawURL string) {
 	if !f.cfg.AllowPrivate {
 		ips, err := runtimeSSRFCheckResolvedIPs(rawURL)
 		if err != nil {
-			f.log.Warn("catalog source blocked by runtime SSRF guard",
+			log.Warn("catalog source blocked by runtime SSRF guard",
 				"source_fp", fingerprint, "err", err.Error())
 			f.recordFailure(rawURL, startAt, err)
 			return
@@ -669,7 +678,7 @@ func (f *Fetcher) fetchOne(ctx context.Context, rawURL string) {
 		body, err = f.httpGet(ctx, rawURL)
 	}
 	if err != nil {
-		f.log.Warn("catalog source fetch failed",
+		log.Warn("catalog source fetch failed",
 			"source_fp", fingerprint, "err", err.Error())
 		f.recordFailure(rawURL, startAt, err)
 		return
@@ -696,7 +705,7 @@ func (f *Fetcher) fetchOne(ctx context.Context, rawURL string) {
 	}
 	if err != nil {
 		validationErr := fmt.Errorf("schema validation: %w", err)
-		f.log.Warn("catalog source schema validation failed",
+		log.Warn("catalog source schema validation failed",
 			"source_fp", fingerprint, "err", validationErr.Error())
 		f.recordSchemaFailure(rawURL, startAt, validationErr)
 		return
@@ -716,7 +725,7 @@ func (f *Fetcher) fetchOne(ctx context.Context, rawURL string) {
 		if sidecarURL, found := f.findSidecar(ctx, rawURL); found {
 			v, iss, verr := f.verifier.Verify(ctx, body, sidecarURL, f.trustPolicy)
 			if verr != nil {
-				f.log.Warn("catalog source sidecar verification errored",
+				log.Warn("catalog source sidecar verification errored",
 					"source_fp", fingerprint, "err", verr.Error())
 			} else {
 				verified = v

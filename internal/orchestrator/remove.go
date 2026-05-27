@@ -3,9 +3,9 @@ package orchestrator
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"path"
 
+	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/gitops"
 )
 
@@ -22,6 +22,7 @@ import (
 //  2. Create PR: remove managed-clusters entry + delete values file (except cleanup=none).
 //  3. If cleanup=all: delete addon secrets from remote cluster + delete ArgoCD cluster secret.
 func (o *Orchestrator) RemoveCluster(ctx context.Context, req RemoveClusterRequest) (*RemoveClusterResult, error) {
+	log := logging.LoggerFromContext(ctx)
 	if req.Name == "" {
 		return nil, fmt.Errorf("cluster name is required")
 	}
@@ -86,7 +87,7 @@ func (o *Orchestrator) RemoveCluster(ctx context.Context, req RemoveClusterReque
 	// Step 1: Create PR to remove from managed-clusters.yaml and optionally delete values file.
 	clusterAddonsData, err := o.git.GetFileContent(ctx, clusterAddonsPath, o.gitops.BaseBranch)
 	if err != nil {
-		slog.Warn("managed-clusters.yaml not found — skipping removal from it", "cluster", req.Name)
+		log.Warn("managed-clusters.yaml not found — skipping removal from it", "cluster", req.Name)
 	}
 
 	var files map[string][]byte
@@ -95,7 +96,7 @@ func (o *Orchestrator) RemoveCluster(ctx context.Context, req RemoveClusterReque
 	if clusterAddonsData != nil {
 		updatedData, removeErr := gitops.RemoveClusterEntry(clusterAddonsData, req.Name)
 		if removeErr != nil {
-			slog.Warn("failed to remove cluster entry from managed-clusters.yaml",
+			log.Warn("failed to remove cluster entry from managed-clusters.yaml",
 				"cluster", req.Name, "error", removeErr)
 		} else {
 			files = map[string][]byte{
@@ -149,7 +150,7 @@ func (o *Orchestrator) RemoveCluster(ctx context.Context, req RemoveClusterReque
 				steps = append(steps, "delete_remote_secrets")
 			}
 		} else {
-			slog.Warn("could not fetch credentials for remote secret cleanup",
+			log.Warn("could not fetch credentials for remote secret cleanup",
 				"cluster", req.Name, "error", credErr)
 		}
 	}
@@ -162,7 +163,7 @@ func (o *Orchestrator) RemoveCluster(ctx context.Context, req RemoveClusterReque
 			for _, c := range clusters {
 				if c.Name == req.Name {
 					if delErr := o.argocd.DeleteCluster(ctx, c.Server); delErr != nil {
-						slog.Error("failed to delete ArgoCD cluster during removal",
+						log.Error("failed to delete ArgoCD cluster during removal",
 							"cluster", req.Name, "error", delErr)
 						result.Status = "partial"
 						result.FailedStep = "delete_argocd_cluster"

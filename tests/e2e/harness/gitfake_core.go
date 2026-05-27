@@ -91,7 +91,8 @@ type GitFake struct {
 // sharko's git client finds a HEAD.
 //
 // Unlike StartGitFake, this constructor returns errors instead of calling
-// t.Fatalf — the binary main() decides how to react (typically log.Fatal).
+// t.Fatalf — the binary main() decides how to react (typically slog.Error +
+// os.Exit(1)).
 func NewGitFakeForServer(repoName, defaultBranch string) (*GitFake, error) {
 	if repoName == "" {
 		repoName = defaultRepoName

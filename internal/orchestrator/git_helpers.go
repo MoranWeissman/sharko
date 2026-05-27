@@ -5,10 +5,10 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
+	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 )
 
@@ -29,6 +29,7 @@ func (o *Orchestrator) fileAction(ctx context.Context, filePath string) string {
 // A proper conflict will be caught by GitHub's PR merge check anyway; this
 // gives an early, human-readable signal in the server logs.
 func (o *Orchestrator) detectConflicts(ctx context.Context, files map[string][]byte) {
+	log := logging.LoggerFromContext(ctx)
 	for path, localContent := range files {
 		remoteContent, err := o.git.GetFileContent(ctx, path, o.gitops.BaseBranch)
 		if err != nil {
@@ -36,7 +37,7 @@ func (o *Orchestrator) detectConflicts(ctx context.Context, files map[string][]b
 			continue
 		}
 		if string(remoteContent) != string(localContent) {
-			slog.Warn("Possible write conflict detected: file has changed on base branch since read",
+			log.Warn("Possible write conflict detected: file has changed on base branch since read",
 				"file", path,
 				"base_branch", o.gitops.BaseBranch,
 			)
@@ -157,7 +158,8 @@ func (o *Orchestrator) commitChangesWithMeta(ctx context.Context, files map[stri
 		// hiccup) is logged but never fails the merge operation. The
 		// branch is hygienic, not load-bearing.
 		if delErr := o.git.DeleteBranch(ctx, branchName); delErr != nil {
-			slog.Warn("failed to delete branch after merge", "branch", branchName, "error", delErr)
+			logging.LoggerFromContext(ctx).Warn("failed to delete branch after merge",
+				"branch", branchName, "error", delErr)
 		}
 	}
 

@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"path"
 	"regexp"
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/gitops"
+	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/providers"
 	"github.com/MoranWeissman/sharko/internal/verify"
@@ -50,6 +50,7 @@ var validClusterName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]*$`)
 // ArgoCD cluster-Secret lifecycle, which closes the orphan-on-PR-close
 // bug class at the architectural level.
 func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterRequest) (*RegisterClusterResult, error) {
+	log := logging.LoggerFromContext(ctx)
 	// Step 1: Validate input.
 	if req.Name == "" {
 		return nil, fmt.Errorf("cluster name is required")
@@ -147,7 +148,7 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 				req.Name, verifyResult.ErrorCode, verifyResult.ErrorMessage)
 		}
 		steps = append(steps, "verify_stage1")
-		slog.Info("Stage 1 verification passed", "cluster", req.Name, "version", verifyResult.ServerVersion)
+		log.Info("Stage 1 verification passed", "cluster", req.Name, "version", verifyResult.ServerVersion)
 	}
 
 	// Dry-run exit point: return a preview of what would happen, with zero
@@ -244,7 +245,7 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	// If so, skip PR creation and return the existing PR info.
 	existingPR, existingPRErr := o.findOpenPRForCluster(ctx, req.Name, "register")
 	if existingPRErr == nil && existingPR != nil {
-		slog.Info("Found existing open PR for cluster registration — skipping PR creation",
+		log.Info("Found existing open PR for cluster registration — skipping PR creation",
 			"cluster", req.Name, "pr", existingPR.URL)
 		gitResult := &GitResult{
 			PRUrl:  existingPR.URL,
@@ -264,7 +265,7 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	valuesExist := false
 	if _, valuesCheckErr := o.git.GetFileContent(ctx, valuesPath, o.gitops.BaseBranch); valuesCheckErr == nil {
 		valuesExist = true
-		slog.Info("Values file already exists — will update instead of create",
+		log.Info("Values file already exists — will update instead of create",
 			"cluster", req.Name, "path", valuesPath)
 	}
 	_ = valuesExist // Used for logging; file is always (re)generated to ensure correctness.
@@ -285,7 +286,7 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	clusterAddonsData, clusterAddonsErr := o.git.GetFileContent(ctx, clusterAddonsPath, o.gitops.BaseBranch)
 	if clusterAddonsErr != nil {
 		// File doesn't exist yet — bootstrap a minimal document.
-		slog.Info("managed-clusters.yaml not found, bootstrapping", "cluster", req.Name)
+		log.Info("managed-clusters.yaml not found, bootstrapping", "cluster", req.Name)
 		clusterAddonsData = []byte("clusters:\n")
 	}
 
@@ -308,7 +309,7 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		Labels:     clusterLabels,
 	})
 	if addEntryErr != nil {
-		slog.Error("failed to add cluster entry to cluster-addons.yaml — continuing with values file only",
+		log.Error("failed to add cluster entry to cluster-addons.yaml — continuing with values file only",
 			"cluster", req.Name, "error", addEntryErr,
 		)
 		// Non-fatal: fall back to values-file-only commit so registration still proceeds.
@@ -331,7 +332,7 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	if err != nil {
 		if gitResult != nil {
 			// PR created but merge failed — partial success with PR info.
-			slog.Error("RegisterCluster: PR opened but auto-merge failed",
+			log.Error("RegisterCluster: PR opened but auto-merge failed",
 				"cluster", req.Name, "pr_url", gitResult.PRUrl, "error", err)
 			result.Status = "partial"
 			result.CompletedSteps = steps
@@ -344,7 +345,7 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		// Complete Git failure (couldn't even create PR). Surface the
 		// underlying error so operators can distinguish branch-create /
 		// batch-write / PR-create failures without a debug build.
-		slog.Error("RegisterCluster: git commit failed",
+		log.Error("RegisterCluster: git commit failed",
 			"cluster", req.Name, "error", err)
 		result.Status = "partial"
 		result.CompletedSteps = steps
@@ -357,7 +358,7 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	gitResult.ValuesFile = valuesPath
 
 	if gitResult != nil && !gitResult.Merged {
-		slog.Info("PR created but not auto-merged — cluster will appear as managed after PR is merged",
+		log.Info("PR created but not auto-merged — cluster will appear as managed after PR is merged",
 			"cluster", req.Name, "pr", gitResult.PRUrl)
 	}
 
@@ -367,7 +368,7 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	// on its next tick via the adoption code path in
 	// argosecrets.Manager.Ensure.
 	if alreadyInArgoCD {
-		slog.Info("cluster already in ArgoCD — reconciler will adopt on next tick", "cluster", req.Name)
+		log.Info("cluster already in ArgoCD — reconciler will adopt on next tick", "cluster", req.Name)
 		steps = append(steps, "argocd_adopt")
 	} else {
 		steps = append(steps, "reconciler_handoff")
