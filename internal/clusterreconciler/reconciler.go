@@ -45,9 +45,26 @@ import (
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/cmstore"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
+	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/providers"
 )
+
+// syntheticTickID returns the canonical "recon-<unix_ts>" correlation ID
+// for a single reconciler tick. The unix timestamp is captured at the tick
+// boundary so every slog line emitted during the tick shares the same ID.
+// V2-2.2.
+func syntheticTickID() string {
+	return fmt.Sprintf("recon-%d", time.Now().Unix())
+}
+
+// syntheticFanoutID returns the canonical "recon-fanout-<unix_ts>"
+// correlation ID for the post-merge fanout triggered by prtracker observing
+// a Sharko-opened PR being merged. Distinguishes a low-latency nudge from
+// the routine 30s drift safety-net tick. V2-2.2.
+func syntheticFanoutID() string {
+	return fmt.Sprintf("recon-fanout-%d", time.Now().Unix())
+}
 
 const (
 	// DefaultTickInterval is the reconciler's safety-net poll cadence.
@@ -243,6 +260,12 @@ func (r *Reconciler) Trigger() {
 }
 
 // run is the reconcile loop. Internal — the only entry point is Start.
+//
+// Each tick (whether ticker-driven or trigger-driven) gets a fresh synthetic
+// correlation ID attached to the per-tick context. Ticker ticks use
+// `recon-<unix_ts>`, trigger ticks use `recon-fanout-<unix_ts>` so operators
+// can distinguish the routine drift safety-net from the low-latency post-
+// merge nudge in log queries. V2-2.2.
 func (r *Reconciler) run(ctx context.Context) {
 	ticker := time.NewTicker(r.tickInterval)
 	defer ticker.Stop()
@@ -253,9 +276,9 @@ func (r *Reconciler) run(ctx context.Context) {
 		case <-r.stopCh:
 			return
 		case <-ticker.C:
-			r.pollFn(ctx)
+			r.pollFn(logging.WithRequestID(ctx, syntheticTickID()))
 		case <-r.triggerCh:
-			r.pollFn(ctx)
+			r.pollFn(logging.WithRequestID(ctx, syntheticFanoutID()))
 		}
 	}
 }
@@ -291,6 +314,7 @@ type reconcileStats struct {
 // The final summary entry fires unconditionally so an operator can tell
 // at a glance whether the tick was a no-op or did meaningful work.
 func (r *Reconciler) pollOnce(ctx context.Context) {
+	log := logging.LoggerFromContext(ctx)
 	stats := reconcileStats{}
 
 	// Step 0: dependency precondition. The reconciler is wired into the
@@ -298,22 +322,22 @@ func (r *Reconciler) pollOnce(ctx context.Context) {
 	// active connection on first boot is normal — wait for the operator
 	// to configure one). This branch matches secrets.Reconciler's idiom.
 	if r.deps.GitProvider == nil {
-		slog.Warn("[clusterreconciler] no GitProvider getter configured, skipping reconcile")
+		log.Warn("[clusterreconciler] no GitProvider getter configured, skipping reconcile")
 		return
 	}
 	gp := r.deps.GitProvider()
 	if gp == nil {
-		slog.Debug("[clusterreconciler] no active git provider, skipping reconcile",
+		log.Debug("[clusterreconciler] no active git provider, skipping reconcile",
 			"managed_clusters_path", r.managedClustersPath,
 		)
 		return
 	}
 	if r.deps.ArgoClient == nil {
-		slog.Warn("[clusterreconciler] no ArgoClient (k8s clientset) configured, skipping reconcile")
+		log.Warn("[clusterreconciler] no ArgoClient (k8s clientset) configured, skipping reconcile")
 		return
 	}
 	if r.deps.Vault == nil {
-		slog.Warn("[clusterreconciler] no Vault (cluster-credentials provider) configured, skipping reconcile")
+		log.Warn("[clusterreconciler] no Vault (cluster-credentials provider) configured, skipping reconcile")
 		return
 	}
 
@@ -329,27 +353,28 @@ func (r *Reconciler) pollOnce(ctx context.Context) {
 		// would log noise on every tick and a sharko-labeled Secret
 		// orphaned in argocd would never be cleaned up.
 		if errors.Is(err, gitprovider.ErrFileNotFound) {
-			slog.Info("[clusterreconciler] managed-clusters.yaml not in git — treating as empty desired state",
+			log.Info("[clusterreconciler] managed-clusters.yaml not in git — treating as empty desired state",
 				"path", r.managedClustersPath, "branch", r.branch,
 			)
 			// fall through with body == nil; LoadManagedClusters([]byte{})
 			// would still error, so short-circuit to empty spec instead.
 			r.reconcileDiff(ctx, nil, &stats)
-			r.emitSummaryAudit(stats)
+			r.emitSummaryAudit(ctx, stats)
 			return
 		}
-		slog.Error("[clusterreconciler] git read failed — aborting tick (no state mutated)",
+		log.Error("[clusterreconciler] git read failed — aborting tick (no state mutated)",
 			"path", r.managedClustersPath, "branch", r.branch, "error", err,
 		)
 		r.audit(audit.Entry{
-			Level:    "error",
-			Event:    "cluster_secret_reconcile",
-			User:     "sharko",
-			Action:   "git_read",
-			Resource: fmt.Sprintf("file:%s ref:%s", r.managedClustersPath, r.branch),
-			Source:   "reconciler",
-			Result:   "failure",
-			Error:    err.Error(),
+			Level:     "error",
+			Event:     "cluster_secret_reconcile",
+			User:      "sharko",
+			Action:    "git_read",
+			Resource:  fmt.Sprintf("file:%s ref:%s", r.managedClustersPath, r.branch),
+			Source:    "reconciler",
+			Result:    "failure",
+			Error:     err.Error(),
+			RequestID: logging.RequestID(ctx),
 		})
 		return
 	}
@@ -361,24 +386,25 @@ func (r *Reconciler) pollOnce(ctx context.Context) {
 		// full violation list inside LoadManagedClusters; mirror it onto
 		// the audit log so the rejection is visible alongside other
 		// reconciler events.
-		slog.Error("[clusterreconciler] managed-clusters.yaml rejected — aborting tick (no state mutated)",
+		log.Error("[clusterreconciler] managed-clusters.yaml rejected — aborting tick (no state mutated)",
 			"path", r.managedClustersPath, "error", err,
 		)
 		r.audit(audit.Entry{
-			Level:    "error",
-			Event:    "cluster_secret_reconcile",
-			User:     "sharko",
-			Action:   "schema_validation",
-			Resource: fmt.Sprintf("file:%s", r.managedClustersPath),
-			Source:   "reconciler",
-			Result:   "failure",
-			Error:    err.Error(),
+			Level:     "error",
+			Event:     "cluster_secret_reconcile",
+			User:      "sharko",
+			Action:    "schema_validation",
+			Resource:  fmt.Sprintf("file:%s", r.managedClustersPath),
+			Source:    "reconciler",
+			Result:    "failure",
+			Error:     err.Error(),
+			RequestID: logging.RequestID(ctx),
 		})
 		return
 	}
 
 	r.reconcileDiff(ctx, &spec, &stats)
-	r.emitSummaryAudit(stats)
+	r.emitSummaryAudit(ctx, stats)
 }
 
 // reconcileDiff drives the create / delete decisions from the parsed
@@ -403,18 +429,19 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 	// List the actual set (in-argocd, sharko-labeled only).
 	existing, err := r.listManagedSecrets(ctx)
 	if err != nil {
-		slog.Error("[clusterreconciler] listing managed cluster Secrets failed — aborting tick",
+		logging.LoggerFromContext(ctx).Error("[clusterreconciler] listing managed cluster Secrets failed — aborting tick",
 			"namespace", r.namespace, "error", err,
 		)
 		r.audit(audit.Entry{
-			Level:    "error",
-			Event:    "cluster_secret_reconcile",
-			User:     "sharko",
-			Action:   "list_secrets",
-			Resource: fmt.Sprintf("namespace:%s", r.namespace),
-			Source:   "reconciler",
-			Result:   "failure",
-			Error:    err.Error(),
+			Level:     "error",
+			Event:     "cluster_secret_reconcile",
+			User:      "sharko",
+			Action:    "list_secrets",
+			Resource:  fmt.Sprintf("namespace:%s", r.namespace),
+			Source:    "reconciler",
+			Result:    "failure",
+			Error:     err.Error(),
+			RequestID: logging.RequestID(ctx),
 		})
 		return
 	}
@@ -474,42 +501,45 @@ func (r *Reconciler) listManagedSecrets(ctx context.Context) (map[string]*corev1
 // design doc §9: an unlabeled Secret is Adopt territory; this
 // reconciler must not silently overwrite it.
 func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterEntry, stats *reconcileStats) {
+	log := logging.LoggerFromContext(ctx)
 	// Defensive: a same-name Secret may already exist without our label
 	// (operator-created, or adopted-by-another-tool). The list step
 	// filtered those out, so we re-check via Get before we Create.
 	existing, getErr := r.deps.ArgoClient.CoreV1().Secrets(r.namespace).Get(ctx, entry.Name, metav1.GetOptions{})
 	if getErr != nil && !apierrors.IsNotFound(getErr) {
 		stats.Errors++
-		slog.Error("[clusterreconciler] pre-create Get failed — skipping cluster",
+		log.Error("[clusterreconciler] pre-create Get failed — skipping cluster",
 			"cluster", entry.Name, "namespace", r.namespace, "error", getErr,
 		)
 		r.audit(audit.Entry{
-			Level:    "error",
-			Event:    "cluster_secret_create",
-			User:     "sharko",
-			Action:   "get_secret",
-			Resource: fmt.Sprintf("cluster:%s", entry.Name),
-			Source:   "reconciler",
-			Result:   "failure",
-			Error:    getErr.Error(),
+			Level:     "error",
+			Event:     "cluster_secret_create",
+			User:      "sharko",
+			Action:    "get_secret",
+			Resource:  fmt.Sprintf("cluster:%s", entry.Name),
+			Source:    "reconciler",
+			Result:    "failure",
+			Error:     getErr.Error(),
+			RequestID: logging.RequestID(ctx),
 		})
 		return
 	}
 	if getErr == nil && !IsManagedBySharko(existing) {
 		// Adopt territory — do not touch.
 		stats.SkippedUnlabeled++
-		slog.Info("[clusterreconciler] same-name Secret exists without sharko label — skipping (Adopt territory)",
+		log.Info("[clusterreconciler] same-name Secret exists without sharko label — skipping (Adopt territory)",
 			"cluster", entry.Name, "namespace", r.namespace,
 		)
 		r.audit(audit.Entry{
-			Level:    "warn",
-			Event:    "cluster_secret_skip_unlabeled",
-			User:     "sharko",
-			Action:   "skip",
-			Resource: fmt.Sprintf("cluster:%s", entry.Name),
-			Source:   "reconciler",
-			Result:   "partial",
-			Detail:   "unlabeled Secret exists in argocd namespace; defer to Adopt flow",
+			Level:     "warn",
+			Event:     "cluster_secret_skip_unlabeled",
+			User:      "sharko",
+			Action:    "skip",
+			Resource:  fmt.Sprintf("cluster:%s", entry.Name),
+			Source:    "reconciler",
+			Result:    "partial",
+			Detail:    "unlabeled Secret exists in argocd namespace; defer to Adopt flow",
+			RequestID: logging.RequestID(ctx),
 		})
 		return
 	}
@@ -525,18 +555,19 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 	creds, vaultErr := r.deps.Vault.GetCredentials(credKey)
 	if vaultErr != nil {
 		stats.Errors++
-		slog.Error("[clusterreconciler] vault GetCredentials failed — skipping cluster (others still reconcile)",
+		log.Error("[clusterreconciler] vault GetCredentials failed — skipping cluster (others still reconcile)",
 			"cluster", entry.Name, "cred_key", credKey, "error", vaultErr,
 		)
 		r.audit(audit.Entry{
-			Level:    "error",
-			Event:    "cluster_secret_create",
-			User:     "sharko",
-			Action:   "get_credentials",
-			Resource: fmt.Sprintf("cluster:%s", entry.Name),
-			Source:   "reconciler",
-			Result:   "failure",
-			Error:    vaultErr.Error(),
+			Level:     "error",
+			Event:     "cluster_secret_create",
+			User:      "sharko",
+			Action:    "get_credentials",
+			Resource:  fmt.Sprintf("cluster:%s", entry.Name),
+			Source:    "reconciler",
+			Result:    "failure",
+			Error:     vaultErr.Error(),
+			RequestID: logging.RequestID(ctx),
 		})
 		return
 	}
@@ -558,18 +589,19 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 	secret, buildErr := buildClusterSecret(spec, r.namespace)
 	if buildErr != nil {
 		stats.Errors++
-		slog.Error("[clusterreconciler] building Secret payload failed — skipping cluster",
+		log.Error("[clusterreconciler] building Secret payload failed — skipping cluster",
 			"cluster", entry.Name, "error", buildErr,
 		)
 		r.audit(audit.Entry{
-			Level:    "error",
-			Event:    "cluster_secret_create",
-			User:     "sharko",
-			Action:   "build_payload",
-			Resource: fmt.Sprintf("cluster:%s", entry.Name),
-			Source:   "reconciler",
-			Result:   "failure",
-			Error:    buildErr.Error(),
+			Level:     "error",
+			Event:     "cluster_secret_create",
+			User:      "sharko",
+			Action:    "build_payload",
+			Resource:  fmt.Sprintf("cluster:%s", entry.Name),
+			Source:    "reconciler",
+			Result:    "failure",
+			Error:     buildErr.Error(),
+			RequestID: logging.RequestID(ctx),
 		})
 		return
 	}
@@ -581,34 +613,36 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 
 	if _, createErr := r.deps.ArgoClient.CoreV1().Secrets(r.namespace).Create(ctx, secret, metav1.CreateOptions{}); createErr != nil {
 		stats.Errors++
-		slog.Error("[clusterreconciler] Secret Create failed — skipping cluster",
+		log.Error("[clusterreconciler] Secret Create failed — skipping cluster",
 			"cluster", entry.Name, "namespace", r.namespace, "error", createErr,
 		)
 		r.audit(audit.Entry{
-			Level:    "error",
-			Event:    "cluster_secret_create",
-			User:     "sharko",
-			Action:   "create",
-			Resource: fmt.Sprintf("cluster:%s", entry.Name),
-			Source:   "reconciler",
-			Result:   "failure",
-			Error:    createErr.Error(),
+			Level:     "error",
+			Event:     "cluster_secret_create",
+			User:      "sharko",
+			Action:    "create",
+			Resource:  fmt.Sprintf("cluster:%s", entry.Name),
+			Source:    "reconciler",
+			Result:    "failure",
+			Error:     createErr.Error(),
+			RequestID: logging.RequestID(ctx),
 		})
 		return
 	}
 
 	stats.Created++
-	slog.Info("[clusterreconciler] cluster Secret created",
+	log.Info("[clusterreconciler] cluster Secret created",
 		"cluster", entry.Name, "namespace", r.namespace, "server", creds.Server,
 	)
 	r.audit(audit.Entry{
-		Level:    "info",
-		Event:    "cluster_secret_create",
-		User:     "sharko",
-		Action:   "create",
-		Resource: fmt.Sprintf("cluster:%s", entry.Name),
-		Source:   "reconciler",
-		Result:   "success",
+		Level:     "info",
+		Event:     "cluster_secret_create",
+		User:      "sharko",
+		Action:    "create",
+		Resource:  fmt.Sprintf("cluster:%s", entry.Name),
+		Source:    "reconciler",
+		Result:    "success",
+		RequestID: logging.RequestID(ctx),
 	})
 }
 
@@ -618,10 +652,11 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 // delete) — paranoia is cheap and the design doc §9 invariant is
 // "Sharko never touches what it doesn't own."
 func (r *Reconciler) deleteOne(ctx context.Context, name string, cached *corev1.Secret, stats *reconcileStats) {
+	log := logging.LoggerFromContext(ctx)
 	if !IsManagedBySharko(cached) {
 		// Should be impossible (LabelSelector pre-filtered), but the
 		// invariant is too important to trust the pre-filter. Skip + log.
-		slog.Warn("[clusterreconciler] cached secret missing sharko label between list and delete — skipping (invariant guard)",
+		log.Warn("[clusterreconciler] cached secret missing sharko label between list and delete — skipping (invariant guard)",
 			"cluster", name, "namespace", r.namespace,
 		)
 		return
@@ -630,40 +665,42 @@ func (r *Reconciler) deleteOne(ctx context.Context, name string, cached *corev1.
 	if err := r.deps.ArgoClient.CoreV1().Secrets(r.namespace).Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
 		if apierrors.IsNotFound(err) {
 			// Already gone (concurrent delete by an operator). Idempotent.
-			slog.Info("[clusterreconciler] orphan Secret already deleted",
+			log.Info("[clusterreconciler] orphan Secret already deleted",
 				"cluster", name, "namespace", r.namespace,
 			)
 			return
 		}
 		stats.Errors++
-		slog.Error("[clusterreconciler] orphan Secret delete failed — continuing to next",
+		log.Error("[clusterreconciler] orphan Secret delete failed — continuing to next",
 			"cluster", name, "namespace", r.namespace, "error", err,
 		)
 		r.audit(audit.Entry{
-			Level:    "error",
-			Event:    "cluster_secret_delete",
-			User:     "sharko",
-			Action:   "delete",
-			Resource: fmt.Sprintf("cluster:%s", name),
-			Source:   "reconciler",
-			Result:   "failure",
-			Error:    err.Error(),
+			Level:     "error",
+			Event:     "cluster_secret_delete",
+			User:      "sharko",
+			Action:    "delete",
+			Resource:  fmt.Sprintf("cluster:%s", name),
+			Source:    "reconciler",
+			Result:    "failure",
+			Error:     err.Error(),
+			RequestID: logging.RequestID(ctx),
 		})
 		return
 	}
 
 	stats.Deleted++
-	slog.Info("[clusterreconciler] orphan Secret deleted",
+	log.Info("[clusterreconciler] orphan Secret deleted",
 		"cluster", name, "namespace", r.namespace,
 	)
 	r.audit(audit.Entry{
-		Level:    "info",
-		Event:    "cluster_secret_delete",
-		User:     "sharko",
-		Action:   "delete",
-		Resource: fmt.Sprintf("cluster:%s", name),
-		Source:   "reconciler",
-		Result:   "success",
+		Level:     "info",
+		Event:     "cluster_secret_delete",
+		User:      "sharko",
+		Action:    "delete",
+		Resource:  fmt.Sprintf("cluster:%s", name),
+		Source:    "reconciler",
+		Result:    "success",
+		RequestID: logging.RequestID(ctx),
 	})
 }
 
@@ -671,7 +708,7 @@ func (r *Reconciler) deleteOne(ctx context.Context, name string, cached *corev1.
 // effect (counts of created / deleted / skipped / errors). Operationally
 // critical per design doc §10 — the operator's only signal that the
 // reconciler is alive AND making (or refusing to make) decisions.
-func (r *Reconciler) emitSummaryAudit(stats reconcileStats) {
+func (r *Reconciler) emitSummaryAudit(ctx context.Context, stats reconcileStats) {
 	level := "info"
 	result := "success"
 	if stats.Errors > 0 {
@@ -685,8 +722,9 @@ func (r *Reconciler) emitSummaryAudit(stats reconcileStats) {
 		Action: "reconcile",
 		Resource: fmt.Sprintf("created:%d deleted:%d skipped_unlabeled:%d errors:%d",
 			stats.Created, stats.Deleted, stats.SkippedUnlabeled, stats.Errors),
-		Source: "reconciler",
-		Result: result,
+		Source:    "reconciler",
+		Result:    result,
+		RequestID: logging.RequestID(ctx),
 	})
 }
 

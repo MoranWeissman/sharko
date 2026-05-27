@@ -6,12 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"log/slog"
 	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
@@ -68,6 +68,7 @@ func NewClusterService(managedClustersPath string) *ClusterService {
 
 // ListClusters returns all clusters with health stats from Git + ArgoCD.
 func (s *ClusterService) ListClusters(ctx context.Context, gp gitprovider.GitProvider, ac *argocd.Client) (*models.ClustersResponse, error) {
+	log := logging.LoggerFromContext(ctx)
 	// Fetch Git config
 	clusterData, err := gp.GetFileContent(ctx, s.managedClustersPath, "main")
 	if err != nil {
@@ -86,7 +87,7 @@ func (s *ClusterService) ListClusters(ctx context.Context, gp gitprovider.GitPro
 	// Fetch ArgoCD clusters for health stats
 	argocdClusters, err := ac.ListClusters(ctx)
 	if err != nil {
-		slog.Warn("could not fetch argocd clusters", "error", err)
+		log.Warn("could not fetch argocd clusters", "error", err)
 		// Continue without ArgoCD data. PendingRegistrations defaults to
 		// a non-nil empty slice — never let a nil array reach the FE.
 		return &models.ClustersResponse{
@@ -149,6 +150,7 @@ func (s *ClusterService) ListClusters(ctx context.Context, gp gitprovider.GitPro
 
 // GetClusterDetail returns detail for a single cluster.
 func (s *ClusterService) GetClusterDetail(ctx context.Context, clusterName string, gp gitprovider.GitProvider, ac *argocd.Client) (*models.ClusterDetailResponse, error) {
+	log := logging.LoggerFromContext(ctx)
 	clusterData, err := gp.GetFileContent(ctx, s.managedClustersPath, "main")
 	if err != nil {
 		if isGitFileNotFound(err) {
@@ -191,7 +193,7 @@ func (s *ClusterService) GetClusterDetail(ctx context.Context, clusterName strin
 	argocdSvc := argocd.NewService(ac)
 	apps, err := argocdSvc.GetClusterApplications(ctx, clusterName)
 	if err != nil {
-		slog.Warn("could not fetch argocd apps for cluster", "cluster", clusterName, "error", err)
+		log.Warn("could not fetch argocd apps for cluster", "cluster", clusterName, "error", err)
 	} else {
 		appMap := make(map[string]models.ArgocdApplication)
 		for _, app := range apps {
@@ -224,6 +226,7 @@ func (s *ClusterService) GetClusterDetail(ctx context.Context, clusterName strin
 
 // GetClusterComparison returns Git vs ArgoCD comparison for a cluster.
 func (s *ClusterService) GetClusterComparison(ctx context.Context, clusterName string, gp gitprovider.GitProvider, ac *argocd.Client) (*models.ClusterComparisonResponse, error) {
+	log := logging.LoggerFromContext(ctx)
 	clusterData, err := gp.GetFileContent(ctx, s.managedClustersPath, "main")
 	if err != nil {
 		if isGitFileNotFound(err) {
@@ -265,7 +268,7 @@ func (s *ClusterService) GetClusterComparison(ctx context.Context, clusterName s
 	argocdSvc := argocd.NewService(ac)
 	argocdApps, err := argocdSvc.GetClusterApplications(ctx, clusterName)
 	if err != nil {
-		slog.Warn("could not fetch argocd apps", "error", err)
+		log.Warn("could not fetch argocd apps", "error", err)
 		argocdApps = nil
 	}
 
@@ -377,7 +380,7 @@ func (s *ClusterService) GetClusterComparison(ctx context.Context, clusterName s
 
 	connStatus, connMessage, connErr := argocdSvc.GetClusterConnectionInfo(ctx, clusterName)
 	if connErr != nil {
-		slog.Warn("could not fetch argocd connection info", "cluster", clusterName, "error", connErr)
+		log.Warn("could not fetch argocd connection info", "cluster", clusterName, "error", connErr)
 		if connStatus == "" {
 			connStatus = "Unknown"
 		}
@@ -409,6 +412,7 @@ func (s *ClusterService) GetClusterComparison(ctx context.Context, clusterName s
 
 // GetConfigDiff returns the diff between a cluster's addon values and global defaults.
 func (s *ClusterService) GetConfigDiff(ctx context.Context, clusterName string, gp gitprovider.GitProvider) (*models.ConfigDiffResponse, error) {
+	log := logging.LoggerFromContext(ctx)
 	// Fetch cluster values file
 	clusterValuesPath := fmt.Sprintf("configuration/addons-clusters-values/%s.yaml", clusterName)
 	clusterValuesData, err := gp.GetFileContent(ctx, clusterValuesPath, "main")
@@ -450,7 +454,7 @@ func (s *ClusterService) GetConfigDiff(ctx context.Context, clusterName string, 
 		// Marshal cluster addon values to YAML
 		clusterYAML, err := yaml.Marshal(addonSection)
 		if err != nil {
-			slog.Warn("could not marshal cluster values for addon", "addon", addonName, "error", err)
+			log.Warn("could not marshal cluster values for addon", "addon", addonName, "error", err)
 			continue
 		}
 
@@ -459,7 +463,7 @@ func (s *ClusterService) GetConfigDiff(ctx context.Context, clusterName string, 
 		globalData, err := gp.GetFileContent(ctx, globalPath, "main")
 		globalYAML := ""
 		if err != nil {
-			slog.Info("no global defaults found for addon", "addon", addonName, "error", err)
+			log.Info("no global defaults found for addon", "addon", addonName, "error", err)
 		} else {
 			globalYAML = string(globalData)
 		}
@@ -544,6 +548,7 @@ func (s *ClusterService) GetClusterValues(ctx context.Context, clusterName strin
 // Schema lookup mirrors AddonService.GetAddonValuesAndSchema — best-effort
 // read of `configuration/addons-global-values/<addon>.schema.json`.
 func (s *ClusterService) GetClusterAddonValues(ctx context.Context, clusterName, addonName string, gp gitprovider.GitProvider) (*models.ClusterAddonValuesResponse, error) {
+	log := logging.LoggerFromContext(ctx)
 	if clusterName == "" {
 		return nil, fmt.Errorf("cluster name is required")
 	}
@@ -560,7 +565,7 @@ func (s *ClusterService) GetClusterAddonValues(ctx context.Context, clusterName,
 	if data, err := gp.GetFileContent(ctx, clusterPath, "main"); err == nil && len(data) > 0 {
 		root := map[string]interface{}{}
 		if uerr := yaml.Unmarshal(data, &root); uerr != nil {
-			slog.Warn("could not parse cluster overrides file", "cluster", clusterName, "error", uerr)
+			log.Warn("could not parse cluster overrides file", "cluster", clusterName, "error", uerr)
 		} else if section, ok := root[addonName]; ok {
 			if marshalled, merr := yaml.Marshal(section); merr == nil {
 				resp.CurrentOverrides = string(marshalled)
@@ -572,7 +577,7 @@ func (s *ClusterService) GetClusterAddonValues(ctx context.Context, clusterName,
 	if schemaData, err := gp.GetFileContent(ctx, schemaPath, "main"); err == nil && len(schemaData) > 0 {
 		var schema map[string]interface{}
 		if jerr := json.Unmarshal(schemaData, &schema); jerr != nil {
-			slog.Warn("ignoring unparseable values schema", "addon", addonName, "error", jerr)
+			log.Warn("ignoring unparseable values schema", "addon", addonName, "error", jerr)
 		} else {
 			resp.Schema = schema
 		}

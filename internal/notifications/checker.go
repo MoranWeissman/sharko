@@ -3,11 +3,12 @@ package notifications
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/MoranWeissman/sharko/internal/logging"
 )
 
 // VersionInfo contains addon version data used by the Checker.
@@ -75,10 +76,11 @@ func (c *Checker) Stop() {
 func (c *Checker) check() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	ctx = logging.WithRequestID(ctx, fmt.Sprintf("notifcheck-%d", time.Now().Unix()))
 
 	infos, err := c.provider.GetVersionInfo(ctx)
 	if err != nil {
-		slog.Error("notification check failed", "error", err, "component", "notifications")
+		logging.LoggerFromContext(ctx).Error("notification check failed", "error", err, "component", "notifications")
 		return
 	}
 

@@ -4,11 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"os"
 	"sort"
 	"strings"
 
+	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
@@ -94,6 +94,7 @@ func (s *AddonService) ListAddons(ctx context.Context, gp gitprovider.GitProvide
 
 // GetCatalog returns the full addon catalog with deployment stats across clusters.
 func (s *AddonService) GetCatalog(ctx context.Context, gp gitprovider.GitProvider, ac *argocd.Client) (*models.AddonCatalogResponse, error) {
+	log := logging.LoggerFromContext(ctx)
 	clusterData, err := gp.GetFileContent(ctx, s.managedClustersPath, "main")
 	if err != nil {
 		if strings.Contains(err.Error(), "404") {
@@ -121,7 +122,7 @@ func (s *AddonService) GetCatalog(ctx context.Context, gp gitprovider.GitProvide
 	argocdSvc := argocd.NewService(ac)
 	allApps, err := ac.ListApplications(ctx)
 	if err != nil {
-		slog.Warn("could not fetch argocd applications", "error", err)
+		log.Warn("could not fetch argocd applications", "error", err)
 	}
 
 	appMap := make(map[string]models.ArgocdApplication)
@@ -243,6 +244,7 @@ func (s *AddonService) GetCatalog(ctx context.Context, gp gitprovider.GitProvide
 
 // GetAddonDetail returns detailed information about a specific addon.
 func (s *AddonService) GetAddonDetail(ctx context.Context, addonName string, gp gitprovider.GitProvider, ac *argocd.Client) (*models.AddonDetailResponse, error) {
+	log := logging.LoggerFromContext(ctx)
 	catalog, err := s.GetCatalog(ctx, gp, ac)
 	if err != nil {
 		return nil, err
@@ -269,7 +271,7 @@ func (s *AddonService) GetAddonDetail(ctx context.Context, addonName string, gp 
 				}
 				resp.ApplicationSet = info
 			} else {
-				slog.Warn("could not fetch applicationset status", "addon", addonName, "error", err)
+				log.Warn("could not fetch applicationset status", "addon", addonName, "error", err)
 			}
 
 			return resp, nil
@@ -290,6 +292,7 @@ func (s *AddonService) GetAddonDetail(ctx context.Context, addonName string, gp 
 // auth/branch/perm errors that happen to mention "404" still surface
 // as real 5xx — only the genuinely missing-file path short-circuits.
 func (s *AddonService) GetVersionMatrix(ctx context.Context, gp gitprovider.GitProvider, ac *argocd.Client) (*models.VersionMatrixResponse, error) {
+	log := logging.LoggerFromContext(ctx)
 	clusterData, err := gp.GetFileContent(ctx, s.managedClustersPath, "main")
 	if err != nil {
 		if isGitFileNotFound(err) {
@@ -316,7 +319,7 @@ func (s *AddonService) GetVersionMatrix(ctx context.Context, gp gitprovider.GitP
 	// Fetch ArgoCD applications once and build a lookup map
 	allApps, err := ac.ListApplications(ctx)
 	if err != nil {
-		slog.Warn("could not fetch argocd applications", "error", err)
+		log.Warn("could not fetch argocd applications", "error", err)
 	}
 
 	appMap := make(map[string]models.ArgocdApplication)
@@ -424,6 +427,7 @@ func (s *AddonService) GetAddonValues(ctx context.Context, addonName string, gp 
 // than an error) when the file does not exist yet, so the editor can still
 // open with a blank document for first-time configuration.
 func (s *AddonService) GetAddonValuesAndSchema(ctx context.Context, addonName string, gp gitprovider.GitProvider) (*models.AddonValuesSchemaResponse, error) {
+	log := logging.LoggerFromContext(ctx)
 	if addonName == "" {
 		return nil, fmt.Errorf("addon name is required")
 	}
@@ -433,7 +437,7 @@ func (s *AddonService) GetAddonValuesAndSchema(ctx context.Context, addonName st
 	if data, err := gp.GetFileContent(ctx, valuesPath, "main"); err == nil {
 		current = string(data)
 	} else {
-		slog.Info("global values file missing — opening editor blank", "addon", addonName, "path", valuesPath)
+		log.Info("global values file missing — opening editor blank", "addon", addonName, "path", valuesPath)
 	}
 
 	resp := &models.AddonValuesSchemaResponse{
@@ -445,7 +449,7 @@ func (s *AddonService) GetAddonValuesAndSchema(ctx context.Context, addonName st
 	if schemaData, err := gp.GetFileContent(ctx, schemaPath, "main"); err == nil && len(schemaData) > 0 {
 		schema, perr := parseJSONObject(schemaData)
 		if perr != nil {
-			slog.Warn("ignoring unparseable values schema", "addon", addonName, "error", perr)
+			log.Warn("ignoring unparseable values schema", "addon", addonName, "error", perr)
 		} else {
 			resp.Schema = schema
 		}

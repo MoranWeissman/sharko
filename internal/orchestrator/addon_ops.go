@@ -3,10 +3,10 @@ package orchestrator
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"path"
 
 	"github.com/MoranWeissman/sharko/internal/gitops"
+	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/models"
 )
 
@@ -25,6 +25,7 @@ import (
 //  4. Create single PR with both changes.
 //  5. If cleanup=all, delete addon secrets from remote cluster.
 func (o *Orchestrator) DisableAddon(ctx context.Context, req DisableAddonRequest) (*DisableAddonResult, error) {
+	log := logging.LoggerFromContext(ctx)
 	if req.Cluster == "" {
 		return nil, fmt.Errorf("cluster name is required")
 	}
@@ -116,7 +117,7 @@ func (o *Orchestrator) DisableAddon(ctx context.Context, req DisableAddonRequest
 	if cleanup != "none" && clusterAddonsData != nil {
 		updatedClusterAddons, labelErr := gitops.DisableAddonLabel(clusterAddonsData, req.Cluster, req.Addon)
 		if labelErr != nil {
-			slog.Warn("failed to disable addon label in managed-clusters.yaml",
+			log.Warn("failed to disable addon label in managed-clusters.yaml",
 				"cluster", req.Cluster, "addon", req.Addon, "error", labelErr)
 		} else {
 			files[clusterAddonsPath] = updatedClusterAddons
@@ -161,7 +162,7 @@ func (o *Orchestrator) DisableAddon(ctx context.Context, req DisableAddonRequest
 				steps = append(steps, "delete_remote_secrets")
 			}
 		} else {
-			slog.Warn("could not fetch credentials for remote secret cleanup",
+			log.Warn("could not fetch credentials for remote secret cleanup",
 				"cluster", req.Cluster, "addon", req.Addon, "error", credErr)
 		}
 	}
@@ -180,6 +181,7 @@ func (o *Orchestrator) DisableAddon(ctx context.Context, req DisableAddonRequest
 //  4. Create single PR with both changes.
 //  5. If the cluster has a credential provider, create addon secrets on remote cluster (best-effort).
 func (o *Orchestrator) EnableAddon(ctx context.Context, req EnableAddonRequest) (*EnableAddonResult, error) {
+	log := logging.LoggerFromContext(ctx)
 	if req.Cluster == "" {
 		return nil, fmt.Errorf("cluster name is required")
 	}
@@ -264,7 +266,7 @@ func (o *Orchestrator) EnableAddon(ctx context.Context, req EnableAddonRequest) 
 	if clusterAddonsData != nil {
 		updatedClusterAddons, labelErr := gitops.EnableAddonLabel(clusterAddonsData, req.Cluster, req.Addon)
 		if labelErr != nil {
-			slog.Warn("failed to enable addon label in managed-clusters.yaml",
+			log.Warn("failed to enable addon label in managed-clusters.yaml",
 				"cluster", req.Cluster, "addon", req.Addon, "error", labelErr)
 		} else {
 			files[clusterAddonsPath] = updatedClusterAddons
@@ -309,7 +311,7 @@ func (o *Orchestrator) EnableAddon(ctx context.Context, req EnableAddonRequest) 
 				steps = append(steps, "create_remote_secrets")
 			}
 		} else {
-			slog.Warn("could not fetch credentials for remote secret creation",
+			log.Warn("could not fetch credentials for remote secret creation",
 				"cluster", req.Cluster, "addon", req.Addon, "error", credErr)
 		}
 	}

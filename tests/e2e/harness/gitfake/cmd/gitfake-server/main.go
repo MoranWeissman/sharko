@@ -24,7 +24,7 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -42,22 +42,24 @@ func main() {
 	seedFile := strings.TrimSpace(os.Getenv("SEED_FILE"))
 	seedContent := os.Getenv("SEED_CONTENT")
 
-	log.Printf("gitfake-server: starting (listen=%s, repo=%s.git, branch=%s)",
-		listenAddr, repoName, seedBranch)
+	slog.Info("gitfake-server: starting",
+		"listen", listenAddr, "repo", repoName+".git", "branch", seedBranch)
 
 	gf, err := harness.NewGitFakeForServer(repoName, seedBranch)
 	if err != nil {
-		log.Fatalf("gitfake-server: init gitfake: %v", err)
+		slog.Error("gitfake-server: init gitfake failed", "error", err)
+		os.Exit(1)
 	}
 	defer gf.Close()
 
 	if seedFile != "" {
 		hash, err := gf.SeedFile(seedFile, seedContent, "seed: initial file from SEED_FILE/SEED_CONTENT")
 		if err != nil {
-			log.Fatalf("gitfake-server: seed %q: %v", seedFile, err)
+			slog.Error("gitfake-server: seed failed", "seed_file", seedFile, "error", err)
+			os.Exit(1)
 		}
-		log.Printf("gitfake-server: seeded %s (%d bytes) @ %s",
-			seedFile, len(seedContent), hash)
+		slog.Info("gitfake-server: seeded",
+			"path", seedFile, "bytes", len(seedContent), "hash", hash)
 	}
 
 	mux := http.NewServeMux()
@@ -78,8 +80,8 @@ func main() {
 	// permission denied, etc.) — those exit non-zero immediately.
 	errCh := make(chan error, 1)
 	go func() {
-		log.Printf("gitfake-server: listening on %s (repo URL: http://<host>/%s.git)",
-			listenAddr, repoName)
+		slog.Info("gitfake-server: listening",
+			"addr", listenAddr, "repo_url_template", "http://<host>/"+repoName+".git")
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
@@ -90,19 +92,20 @@ func main() {
 
 	select {
 	case sig := <-sigCh:
-		log.Printf("gitfake-server: received %s, shutting down (5s timeout)", sig)
+		slog.Info("gitfake-server: shutting down", "signal", sig.String(), "timeout", "5s")
 	case err := <-errCh:
-		log.Fatalf("gitfake-server: listener failed: %v", err)
+		slog.Error("gitfake-server: listener failed", "error", err)
+		os.Exit(1)
 	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Printf("gitfake-server: graceful shutdown error: %v", err)
+		slog.Warn("gitfake-server: graceful shutdown error", "error", err)
 		// Best-effort close — Shutdown timed out and forcibly closes
 		// listeners on context expiry. Nothing further to do.
 	}
-	log.Printf("gitfake-server: stopped")
+	slog.Info("gitfake-server: stopped")
 }
 
 // loggingMiddleware emits a one-line request log per inbound HTTP call.
@@ -112,8 +115,11 @@ func loggingMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		next(w, r)
-		log.Printf("gitfake-server: %s %s%s (%s)",
-			r.Method, r.URL.Path, queryForLog(r.URL.RawQuery), time.Since(start))
+		slog.Info("gitfake-server: request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"query", queryForLog(r.URL.RawQuery),
+			"duration", time.Since(start))
 	}
 }
 

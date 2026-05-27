@@ -3,9 +3,9 @@ package orchestrator
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"path"
 
+	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/gitops"
 	"github.com/MoranWeissman/sharko/internal/verify"
 )
@@ -22,6 +22,7 @@ const AnnotationAdopted = "sharko.sharko.io/adopted"
 //   - Rejects clusters that have a managed-by label set to something other than "sharko" (FR-4.6).
 //   - Sets the adopted annotation on the ArgoCD secret after PR merge.
 func (o *Orchestrator) AdoptClusters(ctx context.Context, req AdoptClustersRequest) (*AdoptClustersResult, error) {
+	log := logging.LoggerFromContext(ctx)
 	if len(req.Clusters) == 0 {
 		return nil, fmt.Errorf("at least one cluster name is required")
 	}
@@ -56,7 +57,7 @@ func (o *Orchestrator) AdoptClusters(ctx context.Context, req AdoptClustersReque
 		if o.argoSecretManager != nil {
 			managedBy, labelErr := o.argoSecretManager.GetManagedByLabel(ctx, clusterName)
 			if labelErr != nil {
-				slog.Warn("could not read managed-by label — proceeding with adoption",
+				log.Warn("could not read managed-by label — proceeding with adoption",
 					"cluster", clusterName, "error", labelErr)
 			} else if managedBy != "" && managedBy != "sharko" {
 				cr.Status = "failed"
@@ -121,7 +122,7 @@ func (o *Orchestrator) AdoptClusters(ctx context.Context, req AdoptClustersReque
 		// Idempotency (Story 6.3): check if an open PR already exists for this cluster adoption.
 		existingPR, existingPRErr := o.findOpenPRForCluster(ctx, clusterName, "adopt")
 		if existingPRErr == nil && existingPR != nil {
-			slog.Info("Found existing open PR for cluster adoption — skipping",
+			log.Info("Found existing open PR for cluster adoption — skipping",
 				"cluster", clusterName, "pr", existingPR.URL)
 			cr.Status = "success"
 			cr.Git = &GitResult{
@@ -154,6 +155,7 @@ func (o *Orchestrator) AdoptClusters(ctx context.Context, req AdoptClustersReque
 // o.gitops.PRAutoMerge, which would race against concurrent ops on the
 // shared connection-level config.
 func (o *Orchestrator) adoptSingleCluster(ctx context.Context, name, serverURL string, autoMergeOverride *bool) AdoptClusterResult {
+	log := logging.LoggerFromContext(ctx)
 	cr := AdoptClusterResult{Name: name}
 
 	// Generate values file (empty addons for adopted clusters — user can update later).
@@ -173,7 +175,7 @@ func (o *Orchestrator) adoptSingleCluster(ctx context.Context, name, serverURL s
 	}
 	clusterAddonsData, err := o.git.GetFileContent(ctx, clusterAddonsPath, o.gitops.BaseBranch)
 	if err != nil {
-		slog.Info("managed-clusters.yaml not found, bootstrapping", "cluster", name)
+		log.Info("managed-clusters.yaml not found, bootstrapping", "cluster", name)
 		clusterAddonsData = []byte("clusters:\n")
 	}
 
@@ -191,7 +193,7 @@ func (o *Orchestrator) adoptSingleCluster(ctx context.Context, name, serverURL s
 		Labels: clusterLabels,
 	})
 	if addEntryErr != nil {
-		slog.Error("failed to add cluster entry", "cluster", name, "error", addEntryErr)
+		log.Error("failed to add cluster entry", "cluster", name, "error", addEntryErr)
 	}
 
 	files := map[string][]byte{
@@ -231,7 +233,7 @@ func (o *Orchestrator) adoptSingleCluster(ctx context.Context, name, serverURL s
 	// set the adopted annotation on the ArgoCD cluster secret.
 	if o.argoSecretManager != nil && gitResult.Merged {
 		if annotErr := o.argoSecretManager.SetAnnotation(ctx, name, AnnotationAdopted, "true"); annotErr != nil {
-			slog.Error("failed to set adopted annotation on ArgoCD secret — reconciler will retry",
+			log.Error("failed to set adopted annotation on ArgoCD secret — reconciler will retry",
 				"cluster", name, "error", annotErr)
 			cr.Status = "partial"
 			cr.Error = annotErr.Error()
