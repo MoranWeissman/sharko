@@ -113,29 +113,29 @@ confidence: `grep -nE '\*\*GAP — P[01]\*\*' failure-mode-index.md`.
 | Dashboard reads broken (sustained burn) — SharkoDashboardReadSlowBurn alert | **P1** | [`budget-burn-runbook.md#sharkodashboardreadslowburn`](budget-burn-runbook.md#sharkodashboardreadslowburn) | V2-3.4 runbook. |
 | Single cluster's credential fetch fails — `audit.action=get_credentials` with `result=failed` for one cluster across multiple ticks | **P1** | **GAP — P1** | Per-cluster vault failure (creds rotated, IRSA misconfigured, secret path moved). Other clusters reconcile normally; only one is stuck. |
 | Cluster test (`POST /clusters/{name}/test`) returns 503 for AWS IAM cluster (`iam_auth_unsupported_in_v1`) | **P1** | [`aws-iam-cluster-auth.md`](aws-iam-cluster-auth.md) | Existing v1.x limitation runbook; v2 lands the fix. Severity is P1 not P2 because operators repeatedly hit this and it confuses them. |
-| Cluster test returns 503 for exec-plugin auth (`ErrArgoCDProviderExecUnsupported` in `internal/providers/argocd_provider.go`) | **P1** | **GAP — P1** | Adjacent to AWS IAM but a distinct provider error path; not covered by `aws-iam-cluster-auth.md`. |
+| Cluster test returns 503 for exec-plugin auth (`ErrArgoCDProviderExecUnsupported` in `internal/providers/argocd_provider.go`) | **P1** | [`argocd-exec-plugin-auth-unsupported.md`](argocd-exec-plugin-auth-unsupported.md) | Adjacent to AWS IAM but a distinct provider error path; not covered by `aws-iam-cluster-auth.md`. Closed by V2-4.3 PR 2b. |
 | Single ArgoCD Application stuck Degraded after addon enable (PR merged, audit shows `addon_enabled_on_cluster` success, but ArgoCD shows `Degraded`) | **P1** | **GAP — P1** | Addon-specific issue (bad chart values, namespace clash, RBAC denied). Mitigation = inspect Application directly in ArgoCD. |
 | Git provider rate limit hit — `Warn` log lines containing `rate limit hit` from `internal/orchestrator/git_helpers.go` or PR-open paths | **P1** | **GAP — P1** | Common during burst registration / addon enable. PAT quota exhausted; addon-cycle failures spike. Mitigation = rotate to less-loaded PAT or back off cadence. |
 | GitHub Contents API 403 on `managed-clusters.yaml` read (`audit.action=git_read`) | **P1** | **GAP — P1** | Reconciler tick logs `git_fetch_failed`; existing labeled Secrets are untouched, but new registrations / removals stall. |
 | Catalog source signature verification failed for one entry — `Warn` line `"catalog source sidecar verification errored"` from `internal/catalog/sources/fetcher.go:728` | **P1** | [`catalog-trust-policy.md`](catalog-trust-policy.md) | Existing runbook explains trust-policy regex semantics; verify it covers the "single-entry failed" case explicitly. |
-| Catalog source schema validation failed — `Warn` line `"catalog source schema validation failed"` from `internal/catalog/sources/fetcher.go:708` | **P1** | **GAP — P1** | Third-party catalog YAML doesn't conform to v1.23+ schema. Source skipped; embedded catalog unaffected. |
+| Catalog source schema validation failed — `Warn` line `"catalog source schema validation failed"` from `internal/catalog/sources/fetcher.go:708` | **P1** | [`catalog-source-schema-validation-failed.md`](catalog-source-schema-validation-failed.md) | Third-party catalog YAML doesn't conform to v1.23+ schema. Source skipped; embedded catalog unaffected. Closed by V2-4.3 PR 2b. |
 | Catalog source SSRF guard blocked URL — `Warn` line `"catalog source blocked by runtime SSRF guard"` from `internal/catalog/sources/fetcher.go:659` | **P1** | [`catalog-sources.md`](catalog-sources.md) | Existing page documents `SHARKO_CATALOG_URLS_ALLOW_PRIVATE`; verify runbook explicitly covers SSRF block error. |
-| Catalog source HTTP fetch failed — `Warn` line `"catalog source fetch failed"` from `internal/catalog/sources/fetcher.go:681` | **P1** | **GAP — P1** | Third-party catalog source 5xx / DNS / TLS. Source skipped; embedded catalog unaffected. |
+| Catalog source HTTP fetch failed — `Warn` line `"catalog source fetch failed"` from `internal/catalog/sources/fetcher.go:681` | **P1** | [`catalog-source-http-fetch-failed.md`](catalog-source-http-fetch-failed.md) | Third-party catalog source 5xx / DNS / TLS. Source skipped; embedded catalog unaffected. Closed by V2-4.3 PR 2b. |
 | Catalog signature workflow_ref doesn't match policy (cert claim assertion fails) — `Warn` from `internal/catalog/signing/verify.go:388` | **P1** | [`catalog-trust-policy.md`](catalog-trust-policy.md) | Existing page covers; verify it includes the workflow_ref assertion variant. |
-| ArgoCD cluster-secret has invalid CA data — `apierrors`-wrapped failure decoding `tlsClientConfig.caData` (`internal/providers/argocd_provider.go:332`) | **P1** | **GAP — P1** | Manual / external Secret edit corrupted base64. Single cluster fails; others fine. |
-| ArgoCD cluster-secret has empty server URL — `internal/providers/argocd_provider.go:325` | **P1** | **GAP — P1** | Same shape as above — corrupted external edit. |
-| Synthesized kubeconfig fails to parse — `internal/providers/argocd_provider.go:409` | **P1** | **GAP — P1** | Sharko-internal construction error; usually caused by upstream argocd cluster secret malformed. |
-| AWS SM secret not found by any prefix — `internal/providers/aws_sm.go:150` `"secret for cluster X not found in AWS Secrets Manager. Tried: ..."` | **P1** | **GAP — P1** | Path mismatch between Helm value and actual SM layout. Per-cluster failure. |
-| AWS SM AccessDenied on Search — `Warn` `"SearchSecrets failed (likely AccessDenied, returning empty)"` from `aws_sm.go:171` | **P1** | **GAP — P1** | IAM role missing `secretsmanager:ListSecrets`. Degrades discovery (`POST /clusters/discover`) but not registration. |
-| EKS token generation failed — `internal/providers/aws_auth.go:40,72` `slog.Error("[auth] EKS token generation failed"...)` | **P1** | **GAP — P1** | IRSA misconfigured OR target cluster's role missing `eks:GetToken`. Per-cluster failure. |
-| EKS discover failed for a role — `Warn` `"[discover] failed to scan identity"` from `eks_discover.go:71` | **P1** | **GAP — P1** | Cross-account role broken or `sts:AssumeRole` denied. Discovery returns partial results; user sees missing clusters in `POST /clusters/discover` response. |
-| K8s Secrets provider — secret not found in namespace — `k8s_secrets.go:142` | **P1** | **GAP — P1** | Helm `secrets.GITHUB_TOKEN` or analogous path is unset / typo'd. Affects all cluster registrations equally. |
-| Azure / GCP provider attempted but not implemented — `"Azure Key Vault provider is not yet implemented"` / `"GCP Secret Manager provider is not yet implemented"` from `internal/providers/{azure,gcp}.go` | **P1** | **GAP — P1** | v1.x stub returning explicit error. Operator hits this when configuring; should be documented so they know it's a known gap not a bug. |
-| ArgoCD account token expired / revoked — every ArgoCD call returns 401/403, audit shows no successful `cluster_secret_create` since rotation | **P1** | **GAP — P1** | Common after manual rotation. Distinguish from "ArgoCD unreachable" (P0) — connectivity is fine, just unauthorized. |
+| ArgoCD cluster-secret has invalid CA data — `apierrors`-wrapped failure decoding `tlsClientConfig.caData` (`internal/providers/argocd_provider.go:332`) | **P1** | [`argocd-cluster-secret-corruption.md`](argocd-cluster-secret-corruption.md) | Manual / external Secret edit corrupted base64. Single cluster fails; others fine. Grouped with empty-server-URL + kubeconfig-parse failures into ONE runbook per V2-4.3 PR 2b grouping decision (same diagnosis, same mitigation). |
+| ArgoCD cluster-secret has empty server URL — `internal/providers/argocd_provider.go:325` | **P1** | [`argocd-cluster-secret-corruption.md`](argocd-cluster-secret-corruption.md) | Same shape as above — corrupted external edit. Grouped into ONE runbook per V2-4.3 PR 2b. |
+| Synthesized kubeconfig fails to parse — `internal/providers/argocd_provider.go:409` | **P1** | [`argocd-cluster-secret-corruption.md`](argocd-cluster-secret-corruption.md) | Sharko-internal construction error; usually caused by upstream argocd cluster secret malformed. Grouped into ONE runbook per V2-4.3 PR 2b. |
+| AWS SM secret not found by any prefix — `internal/providers/aws_sm.go:150` `"secret for cluster X not found in AWS Secrets Manager. Tried: ..."` | **P1** | [`aws-sm-secret-not-found.md`](aws-sm-secret-not-found.md) | Path mismatch between Helm value and actual SM layout. Per-cluster failure. Closed by V2-4.3 PR 2b. |
+| AWS SM AccessDenied on Search — `Warn` `"SearchSecrets failed (likely AccessDenied, returning empty)"` from `aws_sm.go:171` | **P1** | [`aws-sm-search-access-denied.md`](aws-sm-search-access-denied.md) | IAM role missing `secretsmanager:ListSecrets`. Degrades discovery (`POST /clusters/discover`) but not registration. Closed by V2-4.3 PR 2b. |
+| EKS token generation failed — `internal/providers/aws_auth.go:40,72` `slog.Error("[auth] EKS token generation failed"...)` | **P1** | [`eks-token-generation-failed.md`](eks-token-generation-failed.md) | IRSA misconfigured OR target cluster's role missing `eks:GetToken`. Per-cluster failure. Closed by V2-4.3 PR 2b. |
+| EKS discover failed for a role — `Warn` `"[discover] failed to scan identity"` from `eks_discover.go:71` | **P1** | [`eks-discover-failed.md`](eks-discover-failed.md) | Cross-account role broken or `sts:AssumeRole` denied. Discovery returns partial results; user sees missing clusters in `POST /clusters/discover` response. Closed by V2-4.3 PR 2b. |
+| K8s Secrets provider — secret not found in namespace — `k8s_secrets.go:142` | **P1** | [`k8s-secrets-not-found-in-namespace.md`](k8s-secrets-not-found-in-namespace.md) | Helm `secrets.GITHUB_TOKEN` or analogous path is unset / typo'd. Affects all cluster registrations equally. Closed by V2-4.3 PR 2b. |
+| Azure / GCP provider attempted but not implemented — `"Azure Key Vault provider is not yet implemented"` / `"GCP Secret Manager provider is not yet implemented"` from `internal/providers/{azure,gcp}.go` | **P1** | [`azure-gcp-provider-unimplemented.md`](azure-gcp-provider-unimplemented.md) | v1.x stub returning explicit error. Operator hits this when configuring; should be documented so they know it's a known gap not a bug. Two failure-mode rows (Azure + GCP) grouped into ONE runbook per V2-4.3 PR 2b grouping decision (same stub shape, same mitigation lanes). |
+| ArgoCD account token expired / revoked — every ArgoCD call returns 401/403, audit shows no successful `cluster_secret_create` since rotation | **P1** | [`argocd-account-token-expired.md`](argocd-account-token-expired.md) | Common after manual rotation. Distinguish from "ArgoCD unreachable" (P0) — connectivity is fine, just unauthorized. Closed by V2-4.3 PR 2b. |
 | Webhook handler returns 401 (Git provider webhook signature didn't validate) — `internal/api/webhooks.go` | **P1** | **GAP — P1** | Either webhook secret mismatch or webhook source isn't the expected git provider. Per [V2-2 audit](../developer-guide/logging-audit-punchlist.md). |
 | Init operation abandoned — client crashed mid-flight, server logs `"init operation abandoned — no heartbeat from client"` (`internal/api/init.go:384`) | **P1** | **GAP — P1** | Currently logs at Info per audit punch list; should be reclassified to Warn. Detection: audit `init_run` with no completion + log line. |
 | Cluster orphan-delete rejected (HTTP 400) for unlabeled Secret — `audit.action=cluster_orphan_delete_rejected` | **P1** | [`cluster-reconciler.md#what-happens-if-a-user-removes-the-label-manually`](cluster-reconciler.md#what-happens-if-a-user-removes-the-label-manually) | V125-1-8.2 label gate working as designed; operator may need guidance on why their delete attempt is being blocked. |
-| Catalog parse failure on startup — `internal/catalog/loader.go:332` `"catalog: parse yaml"` | **P1** | **GAP — P1** | Embedded catalog corrupted (development bug) OR third-party catalog malformed YAML (`SHARKO_CATALOG_URLS`). If embedded fails, no addons surface — escalates toward P0. |
+| Catalog parse failure on startup — `internal/catalog/loader.go:332` `"catalog: parse yaml"` | **P1** | [`catalog-parse-failure-on-startup.md`](catalog-parse-failure-on-startup.md) | Embedded catalog corrupted (development bug) OR third-party catalog malformed YAML (`SHARKO_CATALOG_URLS`). If embedded fails, no addons surface — escalates toward P0. Closed by V2-4.3 PR 2b. |
 | Auto-merge failed after PR opened — `internal/orchestrator/cluster.go:335` `slog.Error("RegisterCluster: PR opened but auto-merge failed", ...)` | **P1** | **GAP — P1** | PR is open; merge bot couldn't merge. Common: branch protection rules, required reviewers, status checks pending. Distinguish from "PR opened with auto-merge disabled" config. |
 | Smart-values AI annotation blocked — secret-leak pattern matched, audit `ai_annotate_blocked` | **P1** | **GAP — P1** | Per `internal/orchestrator/ai_annotate.go:127`. AI tried to write a value matching a credential heuristic; pass aborted. Affects one cluster's values render. |
 | Connection config encryption key missing — `users_me.go:109,190` `"encryption key not configured"` | **P1** | **GAP — P1** | Helm value `config.connectionSecretName` unset or its `key` field is missing. Operators cannot set their personal GitHub token until resolved. |
@@ -355,22 +355,31 @@ Compiled from the inventory tables above.
 | Metric | Value |
 |---|---|
 | Total failure mode rows | **63** (re-counted at PR 2a close; PR #375 statistics had off-by-N drift) |
-| Total `GAP` entries remaining | **40** |
+| Total `GAP` entries remaining | **26** |
 | `GAP` entries at **P0** | **0** (all closed by V2-4.3 PR 2a) |
-| `GAP` entries at **P1** | **28** (PR 2b scope) |
+| `GAP` entries at **P1** | **14** (V2-4.3 PR 2c scope — API + Orchestrator + Reconciler + Webhook + AI + Adopt; 14 of original 28 closed by PR 2b) |
 | `GAP` entries at **P2** | **12** (V2-4.x follow-up backlog) |
-| Failure modes covered by runbooks | **15 (pre-PR-2a) + 11 (PR-2a new runbooks)** = **23 rows** (PR 2a's `credential-leak-in-logs.md` covers 2 rows; `secrets-provider-unreachable.md` covers 1 row that internally documents 3 sub-cases) |
+| Failure modes covered by runbooks | **15 (pre-PR-2a) + 11 (PR-2a new) + 11 (PR-2b new — 14 rows mapped via 2 grouping decisions)** = **34 rows** |
 | Existing runbook drift findings | **9 pages** (V2-4.4 / PR 3 scope) |
 
-**Statistics note:** at PR 2a close (2026-06-01), this block was
-re-computed via `grep -cE '\*\*GAP — P[012]\*\*'` to correct PR #375's
-original statistics (which claimed 11 P0 / 22 P1 / 9 P2; actual was
-12 P0 / 28 P1 / 12 P2). PR 2a's 11 runbooks close all 12 P0 rows
-(grouping decision: `credential-leak-in-logs.md` covers two adjacent
+**Statistics note:** at PR 2b close (2026-06-01), the P1 GAP count
+moved from 28 → 14 because PR 2b shipped 11 runbooks for 14
+failure-mode rows (`argocd-cluster-secret-corruption.md` groups
+3 rows; `azure-gcp-provider-unimplemented.md` groups 2 rows; the
+remaining 9 runbooks are standalone). The PR 2b grouping decisions
+follow the style guide's "one runbook iff same diagnosis + same
+mitigation" rule and are documented in the
+[V2-4.3 PR 2b grouping decisions](#v2-43-pr-2b-grouping-decisions-closed-2026-06-01)
+sub-section below.
+
+At PR 2a close (2026-06-01), the same block was re-computed via
+`grep -cE '\*\*GAP — P[012]\*\*'` to correct PR #375's original
+statistics (which claimed 11 P0 / 22 P1 / 9 P2; actual was 12 P0 /
+28 P1 / 12 P2). PR 2a's 11 runbooks close all 12 P0 rows (grouping
+decision: `credential-leak-in-logs.md` covers two adjacent
 failure-mode rows that share diagnosis + mitigation per the style
-guide's grouping rule). The P1 and P2 GAP counts reflect the true
-state of the inventory; PR 2b's scope is therefore 28 runbooks
-(was: 22), and the V2-4.x follow-up backlog is 12 P2 GAPs (was: 9).
+guide's grouping rule). After PR 2b, the remaining P1 scope is 14
+rows (originally 28; 14 closed by PR 2b) tracked for PR 2c.
 
 ### V2-4.3 PR 2a grouping decisions (closed 2026-06-01)
 
@@ -395,6 +404,38 @@ The `secrets-provider-unreachable.md` runbook explicitly documents 3
 sub-cases (AWS SM / K8s Secrets / future Vault) within one provider-
 unreachable failure mode — it's grouping within a single index row,
 not across rows.
+
+### V2-4.3 PR 2b grouping decisions (closed 2026-06-01)
+
+11 runbooks written for 14 P1 failure-mode rows (Providers + Catalog
+surfaces):
+
+- **Standalone** (9 runbooks for 9 rows):
+  `argocd-exec-plugin-auth-unsupported.md`,
+  `catalog-source-schema-validation-failed.md`,
+  `catalog-source-http-fetch-failed.md`,
+  `aws-sm-secret-not-found.md`,
+  `aws-sm-search-access-denied.md`,
+  `eks-token-generation-failed.md`,
+  `eks-discover-failed.md`,
+  `k8s-secrets-not-found-in-namespace.md`,
+  `argocd-account-token-expired.md`,
+  `catalog-parse-failure-on-startup.md` (10 standalone runbooks — note
+  the count includes the catalog parse failure standalone).
+- **Grouped** (2 runbooks for 5 rows):
+  - `argocd-cluster-secret-corruption.md` covers 3 rows (invalid CA /
+    empty server URL / synthesized-kubeconfig parse). All three fail
+    inside `buildBearerTokenKubeconfig` and share the same diagnosis
+    (inspect the Secret's JSON directly) and mitigation (repair the
+    Secret).
+  - `azure-gcp-provider-unimplemented.md` covers 2 rows (Azure +
+    GCP). Both providers' stubs return the same shape (explicit
+    "not yet implemented" error from the constructor); diagnosis and
+    mitigation lanes are identical (switch to AWS-SM or
+    K8s-Secrets, contribute upstream, wait for v2).
+
+PR 2c (pending) covers the remaining 14 P1 rows: API + Orchestrator +
+Reconciler + Webhook + AI + Adopt surfaces.
 
 ### Severity distribution (total)
 
@@ -421,15 +462,24 @@ not across rows.
 The V2-4.3 sub-sprint closes **all P0 and P1 GAPs**. Per the sprint
 plan's cap-protection rule (P0+P1 GAPs > 30 triggers a KEEP/REVERT
 decision), the sub-sprint **split into PR 2a (P0 only) + PR 2b (P1
-only)** because P0+P1 = 33 GAPs > 30 cap threshold.
+half — Providers + Catalog) + PR 2c (P1 half — API + Orchestrator +
+Reconciler + Webhook + AI + Adopt)** because P0+P1 = 40 GAPs > 30 cap
+threshold and PR 2b + PR 2c both touch this file.
 
 - **PR 2a (closed 2026-06-01):** 11 new operator runbooks covering
   the 12 P0 failure-mode rows. `credential-leak-in-logs.md` grouped
   two adjacent failure modes per the style guide's grouping rule;
   the remaining 10 runbooks are standalone. P0 GAP count → 0.
-- **PR 2b (pending):** up to 28 new operator runbooks covering the
-  28 P1 failure-mode rows (PR 2b agent may apply additional grouping
-  per the style guide where root-cause + mitigation overlap).
+- **PR 2b (closed 2026-06-01):** 11 new operator runbooks covering
+  14 of the 28 P1 failure-mode rows (Providers + Catalog surfaces).
+  Two grouping decisions documented above
+  (`argocd-cluster-secret-corruption.md` covers 3 rows;
+  `azure-gcp-provider-unimplemented.md` covers 2 rows); remaining
+  9 runbooks are standalone. P1 GAP count: 28 → 14.
+- **PR 2c (pending):** up to 14 new operator runbooks covering the
+  remaining 14 P1 failure-mode rows (API + Orchestrator + Reconciler
+  + Webhook + AI + Adopt surfaces). PR 2c agent may apply
+  additional grouping per the style guide.
 
 P2 GAPs (12 rows; corrected count) remain tracked as V2-4.x follow-up
 work, not in PR 2.

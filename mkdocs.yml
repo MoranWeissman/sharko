@@ -89,6 +89,18 @@ nav:
     - 'P0 Runbook — Reconciler Crash Loop': operator/reconciler-crash-loop.md
     - 'P0 Runbook — Secret Push Silently Failed': operator/secret-push-silently-failed.md
     - 'P0 Runbook — Secrets Provider Unreachable': operator/secrets-provider-unreachable.md
+    - 'P1 Runbook — ArgoCD Account Token Expired': operator/argocd-account-token-expired.md
+    - 'P1 Runbook — ArgoCD Cluster-Secret Corruption': operator/argocd-cluster-secret-corruption.md
+    - 'P1 Runbook — ArgoCD Exec-Plugin Auth Unsupported': operator/argocd-exec-plugin-auth-unsupported.md
+    - 'P1 Runbook — AWS-SM Search AccessDenied': operator/aws-sm-search-access-denied.md
+    - 'P1 Runbook — AWS-SM Secret Not Found': operator/aws-sm-secret-not-found.md
+    - 'P1 Runbook — Azure / GCP Provider Not Yet Implemented': operator/azure-gcp-provider-unimplemented.md
+    - 'P1 Runbook — Catalog Parse Failure on Startup': operator/catalog-parse-failure-on-startup.md
+    - 'P1 Runbook — Catalog Source HTTP Fetch Failed': operator/catalog-source-http-fetch-failed.md
+    - 'P1 Runbook — Catalog Source Schema Validation Failed': operator/catalog-source-schema-validation-failed.md
+    - 'P1 Runbook — EKS Discover Failed for a Role': operator/eks-discover-failed.md
+    - 'P1 Runbook — EKS Token Generation Failed': operator/eks-token-generation-failed.md
+    - 'P1 Runbook — K8s Secrets Not Found in Namespace': operator/k8s-secrets-not-found-in-namespace.md
     - Troubleshooting: operator/troubleshooting.md
   - CLI Reference:
     - Overview: cli/overview.md
