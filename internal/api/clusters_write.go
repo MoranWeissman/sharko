@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/gitops"
 	"github.com/MoranWeissman/sharko/internal/logging"
+	"github.com/MoranWeissman/sharko/internal/metrics"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/prtracker"
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
@@ -49,6 +51,21 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "cluster.register") {
 		return
 	}
+
+	// V2-3 SLO surface: cluster_registration. End-to-end timing only
+	// for PR 1; per-phase wiring deferred to V2-3.x. Status code is
+	// captured via the responseStatusRecorder below.
+	start := time.Now()
+	rec := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
+	w = rec
+	defer func() {
+		code := strconv.Itoa(rec.statusCode)
+		metrics.Observe(metrics.PathClusterRegistration, "total", time.Since(start).Seconds(), logging.RequestID(r.Context()))
+		metrics.IncTotal(metrics.PathClusterRegistration, code)
+		if rec.statusCode >= 400 {
+			metrics.IncError(metrics.PathClusterRegistration, code)
+		}
+	}()
 
 	// Decode + validate request body BEFORE any upstream call so that
 	// an empty body doesn't burn external API quota or return a

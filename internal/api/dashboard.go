@@ -3,8 +3,31 @@ package api
 import (
 	"context"
 	"net/http"
+	"strconv"
 	"time"
+
+	"github.com/MoranWeissman/sharko/internal/logging"
+	"github.com/MoranWeissman/sharko/internal/metrics"
 )
+
+// observeDashboardRead is the V2-3 SLO instrumentation shared across the
+// three dashboard read endpoints. phase matches a V2-1.2 baseline phase
+// id where possible (fleet_status, pull_requests) so histogram
+// dimensions line up with the baselines that sized the buckets in
+// internal/metrics/buckets.go.
+func observeDashboardRead(r *http.Request, w *http.ResponseWriter, phase string) func() {
+	start := time.Now()
+	rec := &statusRecorder{ResponseWriter: *w, statusCode: http.StatusOK}
+	*w = rec
+	return func() {
+		code := strconv.Itoa(rec.statusCode)
+		metrics.Observe(metrics.PathDashboardRead, phase, time.Since(start).Seconds(), logging.RequestID(r.Context()))
+		metrics.IncTotal(metrics.PathDashboardRead, code)
+		if rec.statusCode >= 400 {
+			metrics.IncError(metrics.PathDashboardRead, code)
+		}
+	}
+}
 
 // handleGetDashboardStats handles GET /api/v1/dashboard/stats
 //
@@ -16,6 +39,8 @@ import (
 // @Success 200 {object} map[string]interface{}
 // @Router /dashboard/stats [get]
 func (s *Server) handleGetDashboardStats(w http.ResponseWriter, r *http.Request) {
+	defer observeDashboardRead(r, &w, "fleet_status")()
+
 	gp, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
 		writeServerError(w, http.StatusServiceUnavailable, "get_active_git_provider", err)
@@ -50,6 +75,8 @@ func (s *Server) handleGetDashboardStats(w http.ResponseWriter, r *http.Request)
 // @Failure 503 {object} map[string]interface{} "Service unavailable"
 // @Router /dashboard/attention [get]
 func (s *Server) handleGetAttentionItems(w http.ResponseWriter, r *http.Request) {
+	defer observeDashboardRead(r, &w, "attention")()
+
 	ac, err := s.connSvc.GetActiveArgocdClient()
 	if err != nil {
 		writeServerError(w, http.StatusServiceUnavailable, "get_active_argocd_client", err)
@@ -125,6 +152,8 @@ func (s *Server) handleGetAttentionItems(w http.ResponseWriter, r *http.Request)
 // @Failure 503 {object} map[string]interface{} "Service unavailable"
 // @Router /dashboard/pull-requests [get]
 func (s *Server) handleGetPullRequests(w http.ResponseWriter, r *http.Request) {
+	defer observeDashboardRead(r, &w, "pull_requests")()
+
 	gp, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
 		writeServerError(w, http.StatusServiceUnavailable, "get_active_git_provider", err)
