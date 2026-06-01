@@ -61,6 +61,7 @@ nav:
     - Installation: operator/installation.md
     - Configuration: operator/configuration.md
     - YAML Schema Migration: operator/yaml-schema-migration.md
+    - Migrating from v1.x to v2.0.0: operator/migration-v1-to-v2.md
     - Cluster Reconciler: operator/cluster-reconciler.md
     - AI Configuration: operator/ai-config.md
     - Security: operator/security.md
