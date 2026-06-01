@@ -77,6 +77,7 @@ nav:
     - SLOs: operator/slos.md
     - Metrics Naming: operator/metrics-naming.md
     - Budget-Burn Runbook: operator/budget-burn-runbook.md
+    - Failure Mode Index: operator/failure-mode-index.md
     - Troubleshooting: operator/troubleshooting.md
   - CLI Reference:
     - Overview: cli/overview.md
@@ -96,6 +97,7 @@ nav:
     - Personal Smoke Runbook: developer-guide/personal-smoke-runbook.md
     - Logging: developer-guide/logging.md
     - Logging Audit Punch List: developer-guide/logging-audit-punchlist.md
+    - Runbook Style Guide: developer-guide/runbook-style-guide.md
 
 markdown_extensions:
   - admonition
