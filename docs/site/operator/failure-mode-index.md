@@ -84,24 +84,24 @@ confidence: `grep -nE '\*\*GAP — P[01]\*\*' failure-mode-index.md`.
 
 | Failure mode | Severity | Runbook URL | Notes |
 |---|---|---|---|
-| ArgoCD upstream unreachable (any handler that calls ArgoCD returns 502 / `"no active ArgoCD connection"`) | **P0** | **GAP — P0** | Surfaces from every cluster, addon, and dashboard handler. Single root cause (ArgoCD outage / token revoked / network policy block); shared mitigation. Group as ONE runbook. |
-| Git provider upstream unreachable (any handler that opens a PR returns 502 / `"no active Git connection"`) | **P0** | **GAP — P0** | Surfaces from every cluster + addon write handler. Single root cause; shared mitigation. Group as ONE runbook. |
+| ArgoCD upstream unreachable (any handler that calls ArgoCD returns 502 / `"no active ArgoCD connection"`) | **P0** | [`argocd-upstream-unreachable.md`](argocd-upstream-unreachable.md) | Surfaces from every cluster, addon, and dashboard handler. Single root cause (ArgoCD outage / token revoked / network policy block); shared mitigation. Grouped as ONE runbook (V2-4.3 PR 2a). |
+| Git provider upstream unreachable (any handler that opens a PR returns 502 / `"no active Git connection"`) | **P0** | [`git-provider-unreachable.md`](git-provider-unreachable.md) | Surfaces from every cluster + addon write handler. Single root cause; shared mitigation. Grouped as ONE runbook (V2-4.3 PR 2a). |
 | Cluster registration broken — SharkoClusterRegistrationFastBurn alert | **P0** | [`budget-burn-runbook.md#sharkoclusterregistrationfastburn`](budget-burn-runbook.md#sharkoclusterregistrationfastburn) | V2-3.4 runbook already covers; alert wired to anchor. |
 | Addon enable / disable / upgrade cycle broken — SharkoAddonCycleFastBurn alert | **P0** | [`budget-burn-runbook.md#sharkoaddoncyclefastburn`](budget-burn-runbook.md#sharkoaddoncyclefastburn) | V2-3.4 runbook. |
 | Catalog scan broken — SharkoCatalogScanFastBurn alert | **P0** | [`budget-burn-runbook.md#sharkocatalogscanfastburn`](budget-burn-runbook.md#sharkocatalogscanfastburn) | V2-3.4 runbook. |
 | Dashboard reads broken — SharkoDashboardReadFastBurn alert | **P0** | [`budget-burn-runbook.md#sharkodashboardreadfastburn`](budget-burn-runbook.md#sharkodashboardreadfastburn) | V2-3.4 runbook. |
-| Cluster reconciler crash loop (`Reconciler.pollOnce` panics or returns from `Start` unexpectedly; goroutine exits) | **P0** | **GAP — P0** | Reconciler is the canonical ArgoCD-secret writer; if the goroutine dies, fleet drifts silently. Detection: absence of `recon-<ts>` request_ids in the log. |
+| Cluster reconciler crash loop (`Reconciler.pollOnce` panics or returns from `Start` unexpectedly; goroutine exits) | **P0** | [`reconciler-crash-loop.md`](reconciler-crash-loop.md) | Reconciler is the canonical ArgoCD-secret writer; if the goroutine dies, fleet drifts silently. Detection: absence of `recon-<ts>` request_ids in the log. |
 | `managed-clusters.yaml` schema validation failed — reconciler refuses to act (`audit.action=schema_validation`, `audit.event=cluster_secret_reconcile`) | **P0** | [`cluster-reconciler.md#what-if-managed-clustersyaml-has-a-schema-validation-error`](cluster-reconciler.md#what-if-managed-clustersyaml-has-a-schema-validation-error) | Existing coverage. Severity is P0 because **all** reconciliation halts, not just one cluster. |
-| Secret push to remote cluster silently failed (orchestrator logs `Error "failed to create secret, continuing"` in `secrets.go:110`) | **P0** | **GAP — P0** | Per [`logging-audit-punchlist.md`](../developer-guide/logging-audit-punchlist.md), the "continuing" path is silent data loss — user thinks credential was pushed; actually wasn't. Cluster will fail downstream. |
-| Orchestrator PR merged but ArgoCD never converges (addon cycle audit shows `pr_merged` then no `cluster_secret_create` / sync event) | **P0** | **GAP — P0** | Indicates either reconciler is stuck OR ArgoCD application controller is degraded. Diagnosis path: distinguish which side. |
-| Auth bypass — `/api/v1/auth/login` returns 200 for invalid credentials, or session cookie is honored after expiry | **P0** | **GAP — P0** | Pure security failure. Detection: audit `login_failed` count drops to zero while traffic continues. Includes the V125-1-7 token-leak class. |
-| Bootstrap admin password leak — admin password visible in pod logs as plain-text attribute (`auth/store.go:634`) | **P0** | **GAP — P0** | V2-2.4 RedactHandler now collapses to `[REDACTED]` but call site is still wrong (per [`logging-audit-punchlist.md`](../developer-guide/logging-audit-punchlist.md) headline finding). Treat as P0 because regression would re-expose admin creds. |
-| Kubeconfig / token leak in logs (any credential-shaped value bypasses RedactHandler heuristics) | **P0** | **GAP — P0** | RedactHandler in `internal/logging/redact.go` is defense-in-depth; failure mode is "a new sink bypasses the wrapper, or a value evades all three detectors." Detection: scan logs for `eyJ`-prefixed JWTs, kubeconfig contexts, or base64 blobs >100 chars. |
+| Secret push to remote cluster silently failed (orchestrator logs `Error "failed to create secret, continuing"` in `secrets.go:110`) | **P0** | [`secret-push-silently-failed.md`](secret-push-silently-failed.md) | Per [`logging-audit-punchlist.md`](../developer-guide/logging-audit-punchlist.md), the "continuing" path is silent data loss — user thinks credential was pushed; actually wasn't. Cluster will fail downstream. |
+| Orchestrator PR merged but ArgoCD never converges (addon cycle audit shows `pr_merged` then no `cluster_secret_create` / sync event) | **P0** | [`argocd-pr-merge-no-converge.md`](argocd-pr-merge-no-converge.md) | Indicates either reconciler is stuck OR ArgoCD application controller is degraded. Diagnosis path: distinguish which side. |
+| Auth bypass — `/api/v1/auth/login` returns 200 for invalid credentials, or session cookie is honored after expiry | **P0** | [`auth-bypass.md`](auth-bypass.md) | Pure security failure. Detection: audit `login_failed` count drops to zero while traffic continues. Includes the V125-1-7 token-leak class. |
+| Bootstrap admin password leak — admin password visible in pod logs as plain-text attribute (`auth/store.go:634`) | **P0** | [`credential-leak-in-logs.md`](credential-leak-in-logs.md) | V2-2.4 RedactHandler now collapses to `[REDACTED]` but call site is still wrong (per [`logging-audit-punchlist.md`](../developer-guide/logging-audit-punchlist.md) headline finding). Treat as P0 because regression would re-expose admin creds. Grouped with the broader credential-leak failure mode in V2-4.3 PR 2a (shared diagnosis + mitigation). |
+| Kubeconfig / token leak in logs (any credential-shaped value bypasses RedactHandler heuristics) | **P0** | [`credential-leak-in-logs.md`](credential-leak-in-logs.md) | RedactHandler in `internal/logging/redact.go` is defense-in-depth; failure mode is "a new sink bypasses the wrapper, or a value evades all three detectors." Detection: scan logs for `eyJ`-prefixed JWTs, kubeconfig contexts, or base64 blobs >100 chars. Grouped with bootstrap-admin-password leak in V2-4.3 PR 2a. |
 | ArgoCD cluster-secret out-of-band deletion not self-healed (labeled Secret deleted; next reconciler tick does NOT recreate within 30s) | **P0** | [`cluster-reconciler.md#what-if-a-labeled-secret-is-accidentally-deleted-kubectl-delete`](cluster-reconciler.md#what-if-a-labeled-secret-is-accidentally-deleted-kubectl-delete) | Existing coverage; the P0 case is when self-heal *fails*, not the routine self-heal. Verify the runbook covers the failure case explicitly. |
-| Secrets provider (AWS SM / K8s Secrets / Vault) completely unreachable — `health.Check` returns non-nil for the active provider | **P0** | **GAP — P0** | Affects every cluster registration AND every reconciler tick. Single root cause per provider; group by provider (3 sub-cases: AWS / k8s / vault). |
-| Catalog signing trust root unavailable — `internal/catalog/signing/verify.go` cannot load `trusted_root.json` from TUF | **P0** | **GAP — P0** | Every verified-catalog entry fails verification; the marketplace surfaces every entry as Unverified. Per the [catalog-trust-policy](catalog-trust-policy.md) runbook context. |
-| Init operation deadlocked (`POST /api/v1/init` returns 202, operation_id never reaches terminal state, heartbeat stops) | **P0** | **GAP — P0** | The documented async exception; if init wedges, the bootstrap repo is in an unknown state. Detection: audit shows `init_run` start but no completion. |
-| OOM kill / process restart loop (Sharko pod restarting >3× / 5min) | **P0** | **GAP — P0** | Kubernetes CrashLoopBackoff state. Not Sharko-emitted; detected via `kubectl get pod` Restarts column. |
+| Secrets provider (AWS SM / K8s Secrets / Vault) completely unreachable — `health.Check` returns non-nil for the active provider | **P0** | [`secrets-provider-unreachable.md`](secrets-provider-unreachable.md) | Affects every cluster registration AND every reconciler tick. Single root cause per provider; grouped as one runbook covering all 3 sub-cases (AWS / k8s / vault) in V2-4.3 PR 2a. |
+| Catalog signing trust root unavailable — `internal/catalog/signing/verify.go` cannot load `trusted_root.json` from TUF | **P0** | [`catalog-trust-root-unavailable.md`](catalog-trust-root-unavailable.md) | Every verified-catalog entry fails verification; the marketplace surfaces every entry as Unverified. Per the [catalog-trust-policy](catalog-trust-policy.md) runbook context. |
+| Init operation deadlocked (`POST /api/v1/init` returns 202, operation_id never reaches terminal state, heartbeat stops) | **P0** | [`init-operation-deadlocked.md`](init-operation-deadlocked.md) | The documented async exception; if init wedges, the bootstrap repo is in an unknown state. Detection: audit shows `init_run` start but no completion. |
+| OOM kill / process restart loop (Sharko pod restarting >3× / 5min) | **P0** | [`oom-restart-loop.md`](oom-restart-loop.md) | Kubernetes CrashLoopBackoff state. Not Sharko-emitted; detected via `kubectl get pod` Restarts column. |
 
 ### P1 (file ticket; fix next business day)
 
@@ -354,13 +354,47 @@ Compiled from the inventory tables above.
 
 | Metric | Value |
 |---|---|
-| Total failure modes inventoried | **57** |
-| Total `GAP` entries (no runbook exists yet) | **42** |
-| `GAP` entries at **P0** | **11** |
-| `GAP` entries at **P1** | **22** |
-| `GAP` entries at **P2** | **9** |
-| Failure modes covered by existing runbooks (no `GAP`) | **15** |
-| Existing runbook drift findings | **9 pages** |
+| Total failure mode rows | **63** (re-counted at PR 2a close; PR #375 statistics had off-by-N drift) |
+| Total `GAP` entries remaining | **40** |
+| `GAP` entries at **P0** | **0** (all closed by V2-4.3 PR 2a) |
+| `GAP` entries at **P1** | **28** (PR 2b scope) |
+| `GAP` entries at **P2** | **12** (V2-4.x follow-up backlog) |
+| Failure modes covered by runbooks | **15 (pre-PR-2a) + 11 (PR-2a new runbooks)** = **23 rows** (PR 2a's `credential-leak-in-logs.md` covers 2 rows; `secrets-provider-unreachable.md` covers 1 row that internally documents 3 sub-cases) |
+| Existing runbook drift findings | **9 pages** (V2-4.4 / PR 3 scope) |
+
+**Statistics note:** at PR 2a close (2026-06-01), this block was
+re-computed via `grep -cE '\*\*GAP — P[012]\*\*'` to correct PR #375's
+original statistics (which claimed 11 P0 / 22 P1 / 9 P2; actual was
+12 P0 / 28 P1 / 12 P2). PR 2a's 11 runbooks close all 12 P0 rows
+(grouping decision: `credential-leak-in-logs.md` covers two adjacent
+failure-mode rows that share diagnosis + mitigation per the style
+guide's grouping rule). The P1 and P2 GAP counts reflect the true
+state of the inventory; PR 2b's scope is therefore 28 runbooks
+(was: 22), and the V2-4.x follow-up backlog is 12 P2 GAPs (was: 9).
+
+### V2-4.3 PR 2a grouping decisions (closed 2026-06-01)
+
+11 runbooks written for 12 P0 failure-mode rows:
+
+- **Standalone** (10 runbooks for 10 rows): `argocd-upstream-unreachable.md`,
+  `git-provider-unreachable.md`, `reconciler-crash-loop.md`,
+  `secret-push-silently-failed.md`, `argocd-pr-merge-no-converge.md`,
+  `auth-bypass.md`, `secrets-provider-unreachable.md`,
+  `catalog-trust-root-unavailable.md`, `init-operation-deadlocked.md`,
+  `oom-restart-loop.md`.
+- **Grouped** (1 runbook for 2 rows): `credential-leak-in-logs.md`
+  covers both "Bootstrap admin password leak" and "Kubeconfig / token
+  leak in logs" — same diagnosis path (grep logs for credential
+  shapes; identify call site; check RedactHandler wiring), same
+  mitigation steps (rotate credential, purge log destinations, fix
+  emission site, verify wrapper wiring). Per the style guide's "one
+  runbook covers multiple failure modes IF AND ONLY IF they share
+  the same diagnosis path AND the same mitigation steps" rule.
+
+The `secrets-provider-unreachable.md` runbook explicitly documents 3
+sub-cases (AWS SM / K8s Secrets / future Vault) within one provider-
+unreachable failure mode — it's grouping within a single index row,
+not across rows.
 
 ### Severity distribution (total)
 
@@ -384,16 +418,21 @@ Compiled from the inventory tables above.
 
 ### V2-4.3 (PR 2) scope
 
-The V2-4.3 sub-sprint closes **all P0 and P1 GAPs**: **33 new
-runbooks** (11 P0 + 22 P1). P2 GAPs are tracked as V2-4.x follow-up
-work, not in PR 2.
+The V2-4.3 sub-sprint closes **all P0 and P1 GAPs**. Per the sprint
+plan's cap-protection rule (P0+P1 GAPs > 30 triggers a KEEP/REVERT
+decision), the sub-sprint **split into PR 2a (P0 only) + PR 2b (P1
+only)** because P0+P1 = 33 GAPs > 30 cap threshold.
 
-Per the sprint plan's cap-protection rule (P0+P1 GAPs > 30 triggers a
-KEEP/REVERT decision), PR 2 is **just above the cap**. PR 2 agent
-should surface the decision to the orchestrator: ship as one PR vs.
-split into PR 2a (P0 only, 11 runbooks) + PR 2b (P1 only, 22
-runbooks). Recommendation: split — P0 GAPs are the urgent ones and
-benefit from earlier review.
+- **PR 2a (closed 2026-06-01):** 11 new operator runbooks covering
+  the 12 P0 failure-mode rows. `credential-leak-in-logs.md` grouped
+  two adjacent failure modes per the style guide's grouping rule;
+  the remaining 10 runbooks are standalone. P0 GAP count → 0.
+- **PR 2b (pending):** up to 28 new operator runbooks covering the
+  28 P1 failure-mode rows (PR 2b agent may apply additional grouping
+  per the style guide where root-cause + mitigation overlap).
+
+P2 GAPs (12 rows; corrected count) remain tracked as V2-4.x follow-up
+work, not in PR 2.
 
 ### V2-4.4 (PR 3) scope
 

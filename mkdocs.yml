@@ -78,6 +78,17 @@ nav:
     - Metrics Naming: operator/metrics-naming.md
     - Budget-Burn Runbook: operator/budget-burn-runbook.md
     - Failure Mode Index: operator/failure-mode-index.md
+    - 'P0 Runbook — ArgoCD Upstream Unreachable': operator/argocd-upstream-unreachable.md
+    - 'P0 Runbook — ArgoCD PR Merge No Converge': operator/argocd-pr-merge-no-converge.md
+    - 'P0 Runbook — Auth Bypass': operator/auth-bypass.md
+    - 'P0 Runbook — Catalog Trust Root Unavailable': operator/catalog-trust-root-unavailable.md
+    - 'P0 Runbook — Credential Leak in Logs': operator/credential-leak-in-logs.md
+    - 'P0 Runbook — Git Provider Unreachable': operator/git-provider-unreachable.md
+    - 'P0 Runbook — Init Operation Deadlocked': operator/init-operation-deadlocked.md
+    - 'P0 Runbook — OOM / Restart Loop': operator/oom-restart-loop.md
+    - 'P0 Runbook — Reconciler Crash Loop': operator/reconciler-crash-loop.md
+    - 'P0 Runbook — Secret Push Silently Failed': operator/secret-push-silently-failed.md
+    - 'P0 Runbook — Secrets Provider Unreachable': operator/secrets-provider-unreachable.md
     - Troubleshooting: operator/troubleshooting.md
   - CLI Reference:
     - Overview: cli/overview.md
