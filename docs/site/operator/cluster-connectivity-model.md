@@ -1,5 +1,17 @@
 # Cluster Connectivity Model
 
+> **Reference page, not a runbook.** This page explains the credential
+> selection model behind the **Test cluster** feature: which
+> kubeconfig shapes Sharko handles today (bearer token, AWS IAM, exec
+> plugin), what the V125-1-10 `argocd` provider auto-default added, and
+> where the v1.x limitations live. If you are diagnosing a specific
+> failure mode (Test returns 503, exec-plugin auth refused, IAM token
+> minting failed), search
+> [`failure-mode-index.md`](failure-mode-index.md) or jump directly to
+> [`aws-iam-cluster-auth.md`](aws-iam-cluster-auth.md) /
+> [`argocd-exec-plugin-auth-unsupported.md`](argocd-exec-plugin-auth-unsupported.md)
+> / [`eks-token-generation-failed.md`](eks-token-generation-failed.md).
+
 How Sharko picks credentials for the **Test cluster** feature, what just works, and what needs additional setup.
 
 ## What V125-1-10 changed

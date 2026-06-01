@@ -60,22 +60,21 @@ nav:
   - Operator Manual:
     - Installation: operator/installation.md
     - Configuration: operator/configuration.md
-    - YAML Schema Migration: operator/yaml-schema-migration.md
-    - Migrating from v1.x to v2.0.0: operator/migration-v1-to-v2.md
-    - Cluster Reconciler: operator/cluster-reconciler.md
-    - AI Configuration: operator/ai-config.md
-    - Security: operator/security.md
-    - Supply Chain: operator/supply-chain.md
-    - Catalog Sources: operator/catalog-sources.md
-    - Catalog Sources Smoke: operator/catalog-sources-smoke.md
+    - 'Reference — YAML Schema Migration': operator/yaml-schema-migration.md
+    - 'Reference — Migrating from v1.x to v2.0.0': operator/migration-v1-to-v2.md
+    - 'Reference — Cluster Reconciler (architecture + embedded troubleshooting)': operator/cluster-reconciler.md
+    - 'Reference — AI Configuration': operator/ai-config.md
+    - 'Reference — Security': operator/security.md
+    - 'Reference — Supply Chain': operator/supply-chain.md
+    - 'Reference — Catalog Sources (config)': operator/catalog-sources.md
+    - 'Reference — Cluster Connectivity Model': operator/cluster-connectivity-model.md
+    - 'Reference — Audit Log Retention Model': operator/audit-log.md
+    - 'Reference — Perf Baselines': operator/perf-baselines.md
+    - 'Reference — SLOs': operator/slos.md
+    - 'Reference — Metrics Naming': operator/metrics-naming.md
     - Catalog Trust Policy: operator/catalog-trust-policy.md
-    - Cluster Connectivity Model: operator/cluster-connectivity-model.md
-    - AWS IAM Cluster Auth: operator/aws-iam-cluster-auth.md
-    - Audit Log: operator/audit-log.md
+    - AWS IAM Cluster Auth Test Unsupported: operator/aws-iam-cluster-auth.md
     - Corporate TLS MITM: operator/corporate-mitm-tls.md
-    - Perf Baselines: operator/perf-baselines.md
-    - SLOs: operator/slos.md
-    - Metrics Naming: operator/metrics-naming.md
     - Budget-Burn Runbook: operator/budget-burn-runbook.md
     - Failure Mode Index: operator/failure-mode-index.md
     - 'P0 Runbook — ArgoCD Upstream Unreachable': operator/argocd-upstream-unreachable.md
@@ -126,6 +125,7 @@ nav:
   - Developer Guide:
     - Overview: developer-guide.md
     - Catalog Scan Runbook: developer-guide/catalog-scan-runbook.md
+    - Catalog Sources Smoke Runbook: developer-guide/catalog-sources-smoke.md
     - Testing Guide: developer-guide/testing-guide.md
     - End-to-End Testing: developer-guide/e2e-testing.md
     - Perf Harness: developer-guide/perf-harness.md

@@ -171,17 +171,57 @@ confidence: `grep -nE '\*\*GAP — P[01]\*\*' failure-mode-index.md`.
 
 ## Drift findings appendix
 
+**V2-4.4 status: COMPLETE — 9 pages addressed
+(3 COMPLY / 3 RECLASSIFY / 1 MOVE / 2 RECLASSIFY-OVERRIDE).**
+
+Override note: PR 3's dispatch recommended SPLIT for both
+`cluster-reconciler.md` and `troubleshooting.md`. PR 3 agent
+overrode both:
+
+- `cluster-reconciler.md` was reclassified as a Reference page (with
+  embedded troubleshooting subsections retained) instead of split.
+  Rationale: the failure-mode-index and existing PR 2 runbooks
+  (`single-cluster-credential-fetch-failed.md`,
+  `oom-restart-loop.md`) deep-link to specific anchors inside
+  `cluster-reconciler.md`
+  (`#what-if-managed-clustersyaml-has-a-schema-validation-error`,
+  `#what-if-a-labeled-secret-is-accidentally-deleted-kubectl-delete`,
+  `#what-happens-if-a-user-removes-the-label-manually`). Splitting
+  would break those anchors; PR 2 runbooks would need re-authoring.
+  Net effect: reference framing + retained anchors.
+- `troubleshooting.md` was rewritten as a thin redirector page with
+  a symptom → runbook map. Rationale: each H2 section was already
+  covered by an existing P0/P1 runbook shipped by V2-4.3 (PR 2a /
+  2b / 2c) or by an adjacent reference (`installation.md`,
+  `configuration.md`). Splitting would create 7+ new runbook files
+  duplicating content already in the V2-4.3 runbooks, blowing
+  through the 500-line cap protection without adding new content.
+
 Per V2-4.2 deliverable: each runbook-shaped operator page below was
 audited against the
 [runbook style guide](../developer-guide/runbook-style-guide.md)
-compliance checklist. Findings are listed verbatim; **fixes are V2-4.4
-(PR 3) scope, not addressed in this audit PR.**
+compliance checklist. **PR 3 (V2-4.4) addressed each per its inline
+status marker.**
 
 `docs/site/operator/budget-burn-runbook.md` is **exempt** — V2-3.4
 authored it after the style guide was drafted and it already
 conforms.
 
-### `aws-iam-cluster-auth.md`
+### `aws-iam-cluster-auth.md` — **FIXED (COMPLY)**
+
+PR 3 (V2-4.4) status: rewritten to V2-4.1 style guide. Page now has
+the full required-section set (Severity P1, Verified-by-execution
+header, Symptoms before Diagnosis, Mitigation as numbered list with
+4 steps, Root-cause patterns with 3 named causes, Prevention with
+3 measures, Related runbooks, Escalation, compliance checklist). The
+intro explicitly justifies under-floor length per the style guide's
+brevity carve-out ("entire mitigation is wait for v2 or verify
+manually outside Sharko"). Cross-linked to
+`argocd-exec-plugin-auth-unsupported.md`,
+`cluster-connectivity-model.md`, `eks-token-generation-failed.md`,
+and `migration-v1-to-v2.md`. Page line count grew from 41 to ~340.
+
+Drift findings (resolved):
 
 - **Length:** 41 lines (well under 300-line floor). Justifies its
   brevity in the intro ("v1.x does not ship the cloud-creds plumbing;
@@ -207,7 +247,19 @@ conforms.
   `Mitigation`; "What's needed (when v2 lands)" → consolidate into
   `Root-cause patterns` + `Prevention`.
 
-### `audit-log.md`
+### `audit-log.md` — **RECLASSIFIED (Reference)**
+
+PR 3 (V2-4.4) status: reclassified as a Reference page under the
+Operator Manual nav (renamed to "Reference — Audit Log Retention
+Model"). Intro now opens with a clarifier block calling out that the
+page documents the retention model and routing operators with a
+specific failure to the failure-mode index. No other content changes;
+the page was already correctly scoped as a reference, just
+mis-classified in the nav. No new failure modes shipped as
+standalone runbooks — the P2 audit-log buffer-wrapped failure mode
+remains a tracked P2 GAP (V2-4.x follow-up backlog).
+
+Drift findings (resolved by reclassification):
 
 - **Length:** 81 lines (under 300-line floor). This is a
   **reference page, not a runbook** — it documents the audit-log
@@ -225,7 +277,18 @@ conforms.
 
 ### `aws-iam-cluster-auth.md` (already covered above)
 
-### `catalog-sources.md`
+### `catalog-sources.md` — **RECLASSIFIED (Reference)**
+
+PR 3 (V2-4.4) status: reclassified as a Reference page under the
+Operator Manual nav (renamed to "Reference — Catalog Sources
+(config)"). Intro now opens with a clarifier routing diagnosing
+operators to the per-failure-mode runbooks shipped in V2-4.3 PR 2b
+(`catalog-source-http-fetch-failed.md`,
+`catalog-source-schema-validation-failed.md`). No other content
+changes; the page was already correctly scoped as configuration
+reference, just mis-classified in the nav.
+
+Drift findings (resolved by reclassification):
 
 - **Length:** 125 lines (under 300-line floor). Configuration
   reference, not a failure-mode runbook. Reclassify or restructure.
@@ -237,7 +300,18 @@ conforms.
   failure-mode runbook (e.g. "Third-party catalog source not
   loading") that depends on this reference.
 
-### `catalog-sources-smoke.md`
+### `catalog-sources-smoke.md` — **MOVED to developer-guide/**
+
+PR 3 (V2-4.4) status: moved from
+`docs/site/operator/catalog-sources-smoke.md` to
+`docs/site/developer-guide/catalog-sources-smoke.md` and re-linked in
+mkdocs nav under Developer Guide. Internal relative links to
+`catalog-sources.md` and `catalog-trust-policy.md` updated to
+point at `../operator/...` from the new location. The page remains a
+smoke procedure (developer-shaped, not operator on-call shaped); no
+content rewrite needed.
+
+Drift findings (resolved by move):
 
 - **Length:** 301 lines (within range).
 - **Section order:** Smoke procedure, not a failure-mode runbook —
@@ -250,7 +324,24 @@ conforms.
   runbook ("Catalog source onboarding failed") or move to
   developer-guide and skip the runbook checklist.
 
-### `catalog-trust-policy.md`
+### `catalog-trust-policy.md` — **FIXED (COMPLY)**
+
+PR 3 (V2-4.4) status: restructured with runbook half at the top
+(Severity P1, Verified-by-execution header, Symptoms, Diagnosis,
+Mitigation as numbered list with 5 steps, Root-cause patterns with
+4 named causes, Prevention with 4 measures, Related runbooks,
+Escalation, compliance checklist) and the original reference content
+preserved below a "Reference — env vars and policy semantics"
+section divider. The duplicate "Troubleshooting" tail section was
+consolidated into the new Diagnosis + Mitigation sections (its three
+sub-cases are 1:1 matched). Page line count grew from 294 to ~650.
+Cross-linked to `catalog-trust-root-unavailable.md`,
+`catalog-source-schema-validation-failed.md`,
+`catalog-source-http-fetch-failed.md`,
+`catalog-parse-failure-on-startup.md`, `catalog-sources.md`, and
+`../developer-guide/catalog-scan-runbook.md`.
+
+Drift findings (resolved):
 
 - **Length:** 294 lines (just under floor — borderline).
 - **Section order:** Currently configuration-reference-shaped;
@@ -265,13 +356,53 @@ conforms.
   add an operator-on-call lead-in: "If you're here because the
   marketplace shows entries as Unverified, jump to Mitigation."
 
-### `cluster-connectivity-model.md`
+### `cluster-connectivity-model.md` — **RECLASSIFIED (Reference)**
+
+PR 3 (V2-4.4) status: reclassified as a Reference page under the
+Operator Manual nav (renamed to "Reference — Cluster Connectivity
+Model"). Intro now opens with a clarifier routing diagnosing
+operators to the per-failure-mode runbooks (`aws-iam-cluster-auth.md`,
+`argocd-exec-plugin-auth-unsupported.md`,
+`eks-token-generation-failed.md`). No other content changes.
+
+Drift findings (resolved by reclassification):
 
 - **Length:** 84 lines (under 300-line floor). This is a
   **reference page**, not a runbook — explains the connectivity
   model. Reclassify and exclude from runbook checklist.
 
-### `cluster-reconciler.md`
+### `cluster-reconciler.md` — **RECLASSIFIED (Reference + embedded troubleshooting) — OVERRIDE**
+
+PR 3 (V2-4.4) status: reclassified as a Reference page (architecture
++ embedded troubleshooting) under the Operator Manual nav, instead
+of being SPLIT as PR 1 recommended. Intro now opens with a clarifier
+explicitly marking the page as reference with embedded
+troubleshooting, and naming the load-bearing anchors that the
+failure-mode-index and PR 2 runbooks deep-link into.
+
+OVERRIDE rationale: SPLITting cluster-reconciler.md would break the
+following anchor deep-links that already shipped in V2-4.3 PR 2a/2b/2c
+and in the failure-mode-index P0 rows:
+
+- `cluster-reconciler.md#what-if-managed-clustersyaml-has-a-schema-validation-error`
+  — referenced from failure-mode-index P0 row and from
+  `oom-restart-loop.md`
+- `cluster-reconciler.md#what-if-a-labeled-secret-is-accidentally-deleted-kubectl-delete`
+  — referenced from failure-mode-index P0 row and from
+  `single-cluster-credential-fetch-failed.md`
+- `cluster-reconciler.md#what-happens-if-a-user-removes-the-label-manually`
+  — referenced from failure-mode-index P1 row
+
+Standalone reconciler failure runbooks for distinct failure modes
+(crash loop, missing dependency) already exist:
+[`reconciler-crash-loop.md`](reconciler-crash-loop.md) and
+[`cluster-reconciler-dependency-missing.md`](cluster-reconciler-dependency-missing.md).
+The embedded troubleshooting sub-sections on this page cover the
+remaining failure-mode-index rows that benefit from architectural
+context (the diagnosis path needs to discuss ownership labels and
+cadence first). Net effect: no anchor breakage, no PR 2 re-authoring.
+
+Drift findings (resolved by reclassification + override):
 
 - **Length:** 363 lines (in range).
 - **Section order:** Overview / Ownership / Cadence / Two-direction
@@ -294,7 +425,20 @@ conforms.
   failure-mode-named runbooks per the index (e.g.
   `reconciler-cluster-secret-create-failed.md`).
 
-### `corporate-mitm-tls.md`
+### `corporate-mitm-tls.md` — **FIXED (COMPLY)**
+
+PR 3 (V2-4.4) status: rewritten to V2-4.1 style guide. Page now has
+the full required-section set (Severity P2, Verified-by-execution
+header, Symptoms before Diagnosis with exact log line, Diagnosis
+with 3 concrete checks, Mitigation as numbered list with 5 steps
+(Capture CA / Create ConfigMap / Patch values / Apply+restart /
+Verify), Root-cause patterns with 3 named causes including the
+`HTTPS_PROXY` lookalike and the `configs.tls.certificates`
+misconfiguration, Prevention with 3 measures, Related runbooks,
+Escalation, compliance checklist). Page line count grew from 123 to
+~329.
+
+Drift findings (resolved):
 
 - **Length:** 123 lines (under floor).
 - **Section order:** Symptom → Cause → "When you need this" → Scope →
@@ -314,7 +458,25 @@ conforms.
   **reference page** for release signing — not a failure-mode
   runbook. Reclassify and exclude from runbook checklist.
 
-### `troubleshooting.md`
+### `troubleshooting.md` — **RECLASSIFIED (Thin redirector) — OVERRIDE**
+
+PR 3 (V2-4.4) status: rewritten as a thin redirector page with a
+symptom → runbook map table, instead of being SPLIT into 7+ new
+runbook files as PR 1 recommended.
+
+OVERRIDE rationale: each H2 section was already covered by an
+existing P0/P1 runbook shipped by V2-4.3 (PR 2a/2b/2c) or by an
+adjacent reference (`installation.md`, `configuration.md`,
+`audit-log.md`). Splitting would create new runbook files
+duplicating content already in the V2-4.3 runbooks, blowing through
+the 500-line cap protection without adding new content. The
+redirector preserves the inbound URL (existing cross-links from
+`corporate-mitm-tls.md` and `audit-log.md`, plus external blog posts
+and prior Sharko releases) and routes operators to the correct
+runbook based on symptom. Net effect: -90 lines, no new files, every
+symptom routes to existing coverage.
+
+Drift findings (resolved by redirector):
 
 - **Length:** 150 lines (under floor).
 - **Section structure:** This is a **catch-all troubleshooting

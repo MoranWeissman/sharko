@@ -1,144 +1,70 @@
 # Troubleshooting
 
-Common issues and how to resolve them.
+> **Redirector page.** This page used to be a catch-all troubleshooting
+> grab bag with multiple unrelated failure modes glued together. After
+> V2-4, each failure mode has its own runbook in `docs/site/operator/`
+> following the
+> [runbook style guide](../developer-guide/runbook-style-guide.md). The
+> [`failure-mode-index.md`](failure-mode-index.md) is the master
+> inventory — start there, Ctrl-F your error message, and follow the
+> Runbook URL column to the specific page.
 
-## "Connection refused" When Accessing the UI
+This page now exists only to keep the old `/operator/troubleshooting/`
+URL alive (existing inbound links from external blog posts, prior
+Sharko releases, and the user-guide pages still resolve here) and to
+route operators to the right runbook based on their symptom.
 
-**Symptom:** Browser shows "Connection refused" or times out when opening the Sharko URL.
+## Where to start
 
-**Causes and fixes:**
+1. **Ctrl-F your symptom** in
+   [`failure-mode-index.md`](failure-mode-index.md). The index maps
+   every operator-facing failure mode (HTTP status, log line, alert
+   name) to the runbook that covers it.
+2. **If your error is a P0 burn-rate alert**, jump to
+   [`budget-burn-runbook.md`](budget-burn-runbook.md) — the alert's
+   `runbook_url` annotation lands you on the right anchor directly.
+3. **If your error is a 502 from any handler that touches ArgoCD**,
+   jump to
+   [`argocd-upstream-unreachable.md`](argocd-upstream-unreachable.md).
+4. **If your error is a 502 from any handler that opens a PR**, jump
+   to [`git-provider-unreachable.md`](git-provider-unreachable.md).
 
-1. **Port-forward not running** — Start a port-forward:
-   ```bash
-   kubectl port-forward svc/sharko -n sharko 8080:80
-   ```
+## Common symptoms → runbook map
 
-2. **Service type is ClusterIP** — The service is not exposed externally by default. Either use port-forward or configure an Ingress:
-   ```bash
-   kubectl get svc -n sharko
-   # If TYPE is ClusterIP, use port-forward or add ingress
-   ```
+The H2 sections this page used to contain are now standalone runbooks
+or covered by adjacent runbooks. The mapping:
 
-3. **Pod not running** — Check pod status:
-   ```bash
-   kubectl get pods -n sharko
-   kubectl describe pod -n sharko -l app.kubernetes.io/name=sharko
-   kubectl logs -n sharko -l app.kubernetes.io/name=sharko
-   ```
+| Symptom (legacy section title)                          | Runbook today                                                                                                            |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| "Connection refused" reaching the Sharko UI             | Not a Sharko-emitted failure (port-forward / Ingress setup) — see [Installation](installation.md)                        |
+| "401 Unauthorized" on API or CLI                        | If credentials are valid but sessions are rejected, jump to [`auth-bypass.md`](auth-bypass.md). For routine "session expired" cases, log in again. |
+| "502 Bad Gateway" from any handler                      | [`argocd-upstream-unreachable.md`](argocd-upstream-unreachable.md) (for ArgoCD-touching paths) or [`git-provider-unreachable.md`](git-provider-unreachable.md) (for PR-opening paths). |
+| `sharko init` fails on empty repository                 | [`init-operation-deadlocked.md`](init-operation-deadlocked.md) (for stuck operations); for repository-not-found errors, create the repo and push at least one commit before re-running `sharko init`. |
+| "gitopsCfg not initialized" on write operations         | [`encryption-key-not-configured.md`](encryption-key-not-configured.md) or [`cluster-reconciler-dependency-missing.md`](cluster-reconciler-dependency-missing.md) depending on which dependency is missing. |
+| Addon drift detection shows every cluster as drifted    | [`addon-application-stuck-degraded.md`](addon-application-stuck-degraded.md) for per-cluster cases; for fleet-wide drift, the root cause is usually [`argocd-upstream-unreachable.md`](argocd-upstream-unreachable.md) or a misconfigured ArgoCD ApplicationSet. |
+| Pod crashes with "read-only filesystem" error           | Not a Sharko bug — Sharko's `securityContext` sets `readOnlyRootFilesystem: true`. Any component writing to local FS needs a `tmpfs` mount or PVC. See [Configuration](configuration.md). |
+| Pod restart loop / CrashLoopBackoff                     | [`oom-restart-loop.md`](oom-restart-loop.md).                                                                            |
+| ArgoCD Application stays Degraded after addon enable    | [`addon-application-stuck-degraded.md`](addon-application-stuck-degraded.md).                                            |
+| Audit log "earliest entry truncated" warning            | [`audit-log.md`](audit-log.md) (reference for retention model + ring buffer cap).                                        |
+| Catalog entries show as Unverified                      | [`catalog-trust-policy.md`](catalog-trust-policy.md).                                                                    |
+| Third-party catalog source not loading                  | [`catalog-source-http-fetch-failed.md`](catalog-source-http-fetch-failed.md) / [`catalog-source-schema-validation-failed.md`](catalog-source-schema-validation-failed.md). |
+| Corporate-proxy TLS interception breaks `argocd-repo-server` | [`corporate-mitm-tls.md`](corporate-mitm-tls.md).                                                                  |
+| Test cluster returns 503 on EKS                         | [`aws-iam-cluster-auth.md`](aws-iam-cluster-auth.md) (IAM-auth limitation) or [`argocd-exec-plugin-auth-unsupported.md`](argocd-exec-plugin-auth-unsupported.md) (exec-plugin shape). |
+| AWS Secrets Manager: secret not found / access denied   | [`aws-sm-secret-not-found.md`](aws-sm-secret-not-found.md) / [`aws-sm-search-access-denied.md`](aws-sm-search-access-denied.md). |
+| K8s Secrets provider — token not found                  | [`k8s-secrets-not-found-in-namespace.md`](k8s-secrets-not-found-in-namespace.md).                                        |
+| Auto-merge failed after PR opened                       | [`auto-merge-failed-after-pr-opened.md`](auto-merge-failed-after-pr-opened.md).                                          |
+| Git provider rate limited                               | [`git-provider-rate-limited.md`](git-provider-rate-limited.md).                                                          |
+| Webhook handler errors                                  | [`webhook-handler-failures.md`](webhook-handler-failures.md).                                                            |
+| Reconciler stopped / not converging                     | [`reconciler-crash-loop.md`](reconciler-crash-loop.md) / [`cluster-reconciler.md`](cluster-reconciler.md) (architecture reference + embedded troubleshooting). |
+| Credential leak suspected in pod logs                   | [`credential-leak-in-logs.md`](credential-leak-in-logs.md).                                                              |
+| Init operation deadlocked or abandoned                  | [`init-operation-deadlocked.md`](init-operation-deadlocked.md) / [`init-operation-abandoned.md`](init-operation-abandoned.md). |
 
-## "401 Unauthorized"
+## General-purpose commands
 
-**Symptom:** `401 Unauthorized` responses from the API or CLI.
+Operators who used to land here for the "show me the logs" copy-paste
+block:
 
-**Causes and fixes:**
-
-1. **Session token expired** — Log in again:
-   ```bash
-   sharko login --server https://sharko.your-domain.com
-   ```
-
-2. **Wrong credentials** — Verify the admin password:
-   ```bash
-   kubectl get secret sharko -n sharko \
-     -o jsonpath='{.data.admin\.initialPassword}' | base64 -d
-   ```
-
-3. **API key revoked** — If using an API key, verify it still exists:
-   ```bash
-   sharko token list
-   ```
-
-4. **No users configured** — If the `sharko-users` ConfigMap is empty or missing, authentication falls back and may fail unexpectedly:
-   ```bash
-   kubectl get configmap sharko-users -n sharko -o yaml
-   ```
-
-## "502 Bad Gateway"
-
-**Symptom:** Sharko UI loads but data requests fail with 502 errors, or the UI shows "ArgoCD unreachable".
-
-**Causes and fixes:**
-
-1. **ArgoCD URL misconfigured** — Check the ArgoCD connection in **Settings → Connections**. The URL must be reachable from within the Sharko pod (not from your laptop):
-   ```bash
-   # Test connectivity from the Sharko pod
-   kubectl exec -n sharko deploy/sharko -- \
-     wget -qO- https://argocd-server.argocd.svc.cluster.local/api/v1/applications
-   ```
-
-2. **ArgoCD token expired** — Regenerate the ArgoCD account token and update the connection in Settings.
-
-3. **TLS certificate issues** — If ArgoCD uses a self-signed certificate, add a `hostAliases` entry and disable TLS verification (not recommended for production).
-
-## Init Fails on Empty Repository
-
-**Symptom:** `sharko init` returns an error like "repository not found" or "failed to clone".
-
-**Cause:** The Git repository must exist before running `sharko init`. Sharko clones the repo and commits the initial structure — it does not create the repository.
-
-**Fix:**
-1. Create the repository in GitHub (or Azure DevOps) if it does not exist yet
-2. Push at least one commit (e.g., an initial `README.md`) so the repo is not completely empty
-3. Re-run `sharko init`
-
-## GitOps Errors: "gitopsCfg not initialized"
-
-**Symptom:** Write operations (add-cluster, add-addon, upgrade) fail with errors about missing GitOps configuration.
-
-**Cause:** GitOps actions require environment variables that are not set.
-
-**Fix:** Ensure the following are configured:
-
-| Env Var | Required For | Set Via |
-|---------|-------------|---------|
-| `GITHUB_TOKEN` | GitHub PR creation | `secrets.GITHUB_TOKEN` in Helm values |
-| `SHARKO_GITOPS_REPO_URL` | Init and PR target | `config.repoURL` in Helm values |
-
-Also verify that `gitops.actions.enabled: true` is set in your Helm values.
-
-Check current configuration:
-
-```bash
-kubectl exec -n sharko deploy/sharko -- env | grep -E "GITHUB|SHARKO_GITOPS"
-```
-
-## Addon Drift Detection Shows All Clusters Out of Sync
-
-**Symptom:** The version matrix shows every cluster as "drifted" even after recent upgrades.
-
-**Causes and fixes:**
-
-1. **ArgoCD not synced** — Check ArgoCD app sync status:
-   ```bash
-   kubectl get applications -n argocd
-   ```
-
-2. **Git connection inactive** — Navigate to **Settings → Connections** and verify the Git connection is active and the repo URL matches your addons repository.
-
-3. **ApplicationSet not generated** — Verify the ApplicationSet exists in ArgoCD:
-   ```bash
-   kubectl get applicationset -n argocd
-   ```
-
-## Pod Crashes with "read-only filesystem" Error
-
-**Symptom:** Pod logs show write errors like "read-only file system".
-
-**Cause:** Sharko's security context sets `readOnlyRootFilesystem: true`. Any component writing to the local filesystem (e.g., temporary files) must use a `tmpfs` mount or a PVC.
-
-**Fix:** Enable persistence for migration state if needed:
-
-```yaml
-persistence:
-  enabled: true
-  size: 1Gi
-```
-
-Or add an `emptyDir` mount via `extraEnv` and a custom deployment patch.
-
-## Checking Logs
-
-```bash
+```sh
 # Live logs
 kubectl logs -f -n sharko -l app.kubernetes.io/name=sharko
 
@@ -147,4 +73,36 @@ kubectl logs -n sharko -l app.kubernetes.io/name=sharko --previous
 
 # Events
 kubectl get events -n sharko --sort-by='.lastTimestamp'
+
+# Filter by request_id (V2-2.2 correlation pattern — every Sharko log
+# line carries one; a single request_id joins lines across middleware,
+# service, orchestrator, reconciler, and audit)
+kubectl logs -n sharko deploy/sharko --tail=2000 \
+  | jq 'select(.request_id == "req-<id>")'
 ```
+
+The full correlation pattern lives in
+[`../developer-guide/logging.md`](../developer-guide/logging.md).
+
+## Why this page is a redirector now
+
+Pre-V2-4, this page was a catch-all troubleshooting bag glued together
+from multiple unrelated failure modes. Each mini-section was a tiny
+runbook ("Connection refused", "401 Unauthorized", "502 Bad Gateway",
+etc.) without symptoms / diagnosis / mitigation / root-cause /
+prevention separation. After V2-4 the failure-mode index and the
+per-failure runbooks shipped, and each of those mini-sections has a
+proper runbook now. Keeping this page as a catch-all would duplicate
+content and let it drift; keeping it as a redirector preserves the
+inbound URL without the duplication.
+
+## Related runbooks
+
+- [`failure-mode-index.md`](failure-mode-index.md) — master inventory
+  of every operator-facing failure mode in Sharko.
+- [`../developer-guide/runbook-style-guide.md`](../developer-guide/runbook-style-guide.md)
+  — the rubric every runbook in
+  `docs/site/operator/` follows.
+- [`../developer-guide/logging.md`](../developer-guide/logging.md) —
+  the V2-2.2 `request_id` correlation pattern used in diagnosis steps
+  across every runbook.
