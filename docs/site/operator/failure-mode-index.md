@@ -111,12 +111,12 @@ confidence: `grep -nE '\*\*GAP — P[01]\*\*' failure-mode-index.md`.
 | Addon cycle broken (sustained burn) — SharkoAddonCycleSlowBurn alert | **P1** | [`budget-burn-runbook.md#sharkoaddoncycleslowburn`](budget-burn-runbook.md#sharkoaddoncycleslowburn) | V2-3.4 runbook. |
 | Catalog scan broken (sustained burn) — SharkoCatalogScanSlowBurn alert | **P1** | [`budget-burn-runbook.md#sharkocatalogscanslowburn`](budget-burn-runbook.md#sharkocatalogscanslowburn) | V2-3.4 runbook. |
 | Dashboard reads broken (sustained burn) — SharkoDashboardReadSlowBurn alert | **P1** | [`budget-burn-runbook.md#sharkodashboardreadslowburn`](budget-burn-runbook.md#sharkodashboardreadslowburn) | V2-3.4 runbook. |
-| Single cluster's credential fetch fails — `audit.action=get_credentials` with `result=failed` for one cluster across multiple ticks | **P1** | **GAP — P1** | Per-cluster vault failure (creds rotated, IRSA misconfigured, secret path moved). Other clusters reconcile normally; only one is stuck. |
+| Single cluster's credential fetch fails — `audit.action=get_credentials` with `result=failed` for one cluster across multiple ticks | **P1** | [`single-cluster-credential-fetch-failed.md`](single-cluster-credential-fetch-failed.md) | Per-cluster vault failure (creds rotated, IRSA misconfigured, secret path moved). Other clusters reconcile normally; only one is stuck. Closed by V2-4.3 PR 2c. |
 | Cluster test (`POST /clusters/{name}/test`) returns 503 for AWS IAM cluster (`iam_auth_unsupported_in_v1`) | **P1** | [`aws-iam-cluster-auth.md`](aws-iam-cluster-auth.md) | Existing v1.x limitation runbook; v2 lands the fix. Severity is P1 not P2 because operators repeatedly hit this and it confuses them. |
 | Cluster test returns 503 for exec-plugin auth (`ErrArgoCDProviderExecUnsupported` in `internal/providers/argocd_provider.go`) | **P1** | [`argocd-exec-plugin-auth-unsupported.md`](argocd-exec-plugin-auth-unsupported.md) | Adjacent to AWS IAM but a distinct provider error path; not covered by `aws-iam-cluster-auth.md`. Closed by V2-4.3 PR 2b. |
-| Single ArgoCD Application stuck Degraded after addon enable (PR merged, audit shows `addon_enabled_on_cluster` success, but ArgoCD shows `Degraded`) | **P1** | **GAP — P1** | Addon-specific issue (bad chart values, namespace clash, RBAC denied). Mitigation = inspect Application directly in ArgoCD. |
-| Git provider rate limit hit — `Warn` log lines containing `rate limit hit` from `internal/orchestrator/git_helpers.go` or PR-open paths | **P1** | **GAP — P1** | Common during burst registration / addon enable. PAT quota exhausted; addon-cycle failures spike. Mitigation = rotate to less-loaded PAT or back off cadence. |
-| GitHub Contents API 403 on `managed-clusters.yaml` read (`audit.action=git_read`) | **P1** | **GAP — P1** | Reconciler tick logs `git_fetch_failed`; existing labeled Secrets are untouched, but new registrations / removals stall. |
+| Single ArgoCD Application stuck Degraded after addon enable (PR merged, audit shows `addon_enabled_on_cluster` success, but ArgoCD shows `Degraded`) | **P1** | [`addon-application-stuck-degraded.md`](addon-application-stuck-degraded.md) | Addon-specific issue (bad chart values, namespace clash, RBAC denied). Mitigation = inspect Application directly in ArgoCD. Closed by V2-4.3 PR 2c. |
+| Git provider rate limit hit — `Warn` log lines containing `rate limit hit` from `internal/orchestrator/git_helpers.go` or PR-open paths | **P1** | [`git-provider-rate-limited.md`](git-provider-rate-limited.md) | Common during burst registration / addon enable. PAT quota exhausted; addon-cycle failures spike. Mitigation = rotate to less-loaded PAT or back off cadence. Grouped with GitHub Contents API 403 below into ONE runbook per V2-4.3 PR 2c grouping decision (same root cause, same mitigation). |
+| GitHub Contents API 403 on `managed-clusters.yaml` read (`audit.action=git_read`) | **P1** | [`git-provider-rate-limited.md`](git-provider-rate-limited.md) | Reconciler tick logs `git_fetch_failed`; existing labeled Secrets are untouched, but new registrations / removals stall. Grouped into ONE runbook per V2-4.3 PR 2c. |
 | Catalog source signature verification failed for one entry — `Warn` line `"catalog source sidecar verification errored"` from `internal/catalog/sources/fetcher.go:728` | **P1** | [`catalog-trust-policy.md`](catalog-trust-policy.md) | Existing runbook explains trust-policy regex semantics; verify it covers the "single-entry failed" case explicitly. |
 | Catalog source schema validation failed — `Warn` line `"catalog source schema validation failed"` from `internal/catalog/sources/fetcher.go:708` | **P1** | [`catalog-source-schema-validation-failed.md`](catalog-source-schema-validation-failed.md) | Third-party catalog YAML doesn't conform to v1.23+ schema. Source skipped; embedded catalog unaffected. Closed by V2-4.3 PR 2b. |
 | Catalog source SSRF guard blocked URL — `Warn` line `"catalog source blocked by runtime SSRF guard"` from `internal/catalog/sources/fetcher.go:659` | **P1** | [`catalog-sources.md`](catalog-sources.md) | Existing page documents `SHARKO_CATALOG_URLS_ALLOW_PRIVATE`; verify runbook explicitly covers SSRF block error. |
@@ -132,18 +132,18 @@ confidence: `grep -nE '\*\*GAP — P[01]\*\*' failure-mode-index.md`.
 | K8s Secrets provider — secret not found in namespace — `k8s_secrets.go:142` | **P1** | [`k8s-secrets-not-found-in-namespace.md`](k8s-secrets-not-found-in-namespace.md) | Helm `secrets.GITHUB_TOKEN` or analogous path is unset / typo'd. Affects all cluster registrations equally. Closed by V2-4.3 PR 2b. |
 | Azure / GCP provider attempted but not implemented — `"Azure Key Vault provider is not yet implemented"` / `"GCP Secret Manager provider is not yet implemented"` from `internal/providers/{azure,gcp}.go` | **P1** | [`azure-gcp-provider-unimplemented.md`](azure-gcp-provider-unimplemented.md) | v1.x stub returning explicit error. Operator hits this when configuring; should be documented so they know it's a known gap not a bug. Two failure-mode rows (Azure + GCP) grouped into ONE runbook per V2-4.3 PR 2b grouping decision (same stub shape, same mitigation lanes). |
 | ArgoCD account token expired / revoked — every ArgoCD call returns 401/403, audit shows no successful `cluster_secret_create` since rotation | **P1** | [`argocd-account-token-expired.md`](argocd-account-token-expired.md) | Common after manual rotation. Distinguish from "ArgoCD unreachable" (P0) — connectivity is fine, just unauthorized. Closed by V2-4.3 PR 2b. |
-| Webhook handler returns 401 (Git provider webhook signature didn't validate) — `internal/api/webhooks.go` | **P1** | **GAP — P1** | Either webhook secret mismatch or webhook source isn't the expected git provider. Per [V2-2 audit](../developer-guide/logging-audit-punchlist.md). |
-| Init operation abandoned — client crashed mid-flight, server logs `"init operation abandoned — no heartbeat from client"` (`internal/api/init.go:384`) | **P1** | **GAP — P1** | Currently logs at Info per audit punch list; should be reclassified to Warn. Detection: audit `init_run` with no completion + log line. |
+| Webhook handler returns 401 (Git provider webhook signature didn't validate) — `internal/api/webhooks.go` | **P1** | [`webhook-handler-failures.md`](webhook-handler-failures.md) | Either webhook secret mismatch or webhook source isn't the expected git provider. Per [V2-2 audit](../developer-guide/logging-audit-punchlist.md). Grouped with "Webhook receive error (any code path)" below into ONE runbook per V2-4.3 PR 2c grouping decision (shared diagnosis tree). |
+| Init operation abandoned — client crashed mid-flight, server logs `"init operation abandoned — no heartbeat from client"` (`internal/api/init.go:384`) | **P1** | [`init-operation-abandoned.md`](init-operation-abandoned.md) | Currently logs at Info per audit punch list; should be reclassified to Warn. Detection: audit `init_run` with no completion + log line. Closed by V2-4.3 PR 2c. |
 | Cluster orphan-delete rejected (HTTP 400) for unlabeled Secret — `audit.action=cluster_orphan_delete_rejected` | **P1** | [`cluster-reconciler.md#what-happens-if-a-user-removes-the-label-manually`](cluster-reconciler.md#what-happens-if-a-user-removes-the-label-manually) | V125-1-8.2 label gate working as designed; operator may need guidance on why their delete attempt is being blocked. |
 | Catalog parse failure on startup — `internal/catalog/loader.go:332` `"catalog: parse yaml"` | **P1** | [`catalog-parse-failure-on-startup.md`](catalog-parse-failure-on-startup.md) | Embedded catalog corrupted (development bug) OR third-party catalog malformed YAML (`SHARKO_CATALOG_URLS`). If embedded fails, no addons surface — escalates toward P0. Closed by V2-4.3 PR 2b. |
-| Auto-merge failed after PR opened — `internal/orchestrator/cluster.go:335` `slog.Error("RegisterCluster: PR opened but auto-merge failed", ...)` | **P1** | **GAP — P1** | PR is open; merge bot couldn't merge. Common: branch protection rules, required reviewers, status checks pending. Distinguish from "PR opened with auto-merge disabled" config. |
-| Smart-values AI annotation blocked — secret-leak pattern matched, audit `ai_annotate_blocked` | **P1** | **GAP — P1** | Per `internal/orchestrator/ai_annotate.go:127`. AI tried to write a value matching a credential heuristic; pass aborted. Affects one cluster's values render. |
-| Connection config encryption key missing — `users_me.go:109,190` `"encryption key not configured"` | **P1** | **GAP — P1** | Helm value `config.connectionSecretName` unset or its `key` field is missing. Operators cannot set their personal GitHub token until resolved. |
-| Cluster reconciler dependency missing — Warn `"no GitProvider getter configured, skipping reconcile"` / `"no ArgoClient (k8s clientset) configured"` / `"no Vault (cluster-credentials provider) configured"` from `reconciler.go:325-340` | **P1** | **GAP — P1** | Misconfiguration at startup; reconciler runs but is a no-op. Detection: reconciler audit ticks present but `reconcile` action result is `skipped`. |
-| Adopt flow: managed-by label could not be read on existing Secret — `Warn` `"could not read managed-by label — proceeding with adoption"` from `internal/orchestrator/adopt.go:60` | **P1** | **GAP — P1** | RBAC issue reading the Secret. Adopt proceeds (idempotent label add) but operator should know. |
-| Adopt flow: cluster entry write to managed-clusters.yaml failed — `Error` `"failed to add cluster entry"` from `internal/orchestrator/adopt.go:196` | **P1** | **GAP — P1** | Git write failed mid-adoption. State is inconsistent: ArgoCD Secret is labeled, but git declaration is missing the entry. Next reconciler tick will try to delete the Secret. |
-| AI provider misconfigured — agent calls fail with `503` from `internal/api/system.go:125` `"no provider configured"` or per-provider auth error | **P1** | **GAP — P1** | Operator hasn't set `ai.apiKey` or the configured provider rejected the request. Affects AI features only; core flows unaffected. |
-| Webhook receive error (any code path) | **P1** | **GAP — P1** | Git provider webhook delivery succeeded but Sharko handler returned non-2xx. PR-tracker state diverges from reality until next poll. |
+| Auto-merge failed after PR opened — `internal/orchestrator/cluster.go:335` `slog.Error("RegisterCluster: PR opened but auto-merge failed", ...)` | **P1** | [`auto-merge-failed-after-pr-opened.md`](auto-merge-failed-after-pr-opened.md) | PR is open; merge bot couldn't merge. Common: branch protection rules, required reviewers, status checks pending. Distinguish from "PR opened with auto-merge disabled" config. Closed by V2-4.3 PR 2c. |
+| Smart-values AI annotation blocked — secret-leak pattern matched, audit `ai_annotate_blocked` | **P1** | [`ai-annotation-secret-blocked.md`](ai-annotation-secret-blocked.md) | Per `internal/orchestrator/ai_annotate.go:127`. AI tried to write a value matching a credential heuristic; pass aborted. Affects one cluster's values render. Closed by V2-4.3 PR 2c. |
+| Connection config encryption key missing — `users_me.go:109,190` `"encryption key not configured"` | **P1** | [`encryption-key-not-configured.md`](encryption-key-not-configured.md) | Helm value `config.connectionSecretName` unset or its `key` field is missing. Operators cannot set their personal GitHub token until resolved. Closed by V2-4.3 PR 2c. |
+| Cluster reconciler dependency missing — Warn `"no GitProvider getter configured, skipping reconcile"` / `"no ArgoClient (k8s clientset) configured"` / `"no Vault (cluster-credentials provider) configured"` from `reconciler.go:325-340` | **P1** | [`cluster-reconciler-dependency-missing.md`](cluster-reconciler-dependency-missing.md) | Misconfiguration at startup; reconciler runs but is a no-op. Detection: reconciler audit ticks present but `reconcile` action result is `skipped`. Closed by V2-4.3 PR 2c. |
+| Adopt flow: managed-by label could not be read on existing Secret — `Warn` `"could not read managed-by label — proceeding with adoption"` from `internal/orchestrator/adopt.go:60` | **P1** | [`adopt-managed-by-label-read-failed.md`](adopt-managed-by-label-read-failed.md) | RBAC issue reading the Secret. Adopt proceeds (idempotent label add) but operator should know. Closed by V2-4.3 PR 2c. |
+| Adopt flow: cluster entry write to managed-clusters.yaml failed — `Error` `"failed to add cluster entry"` from `internal/orchestrator/adopt.go:196` | **P1** | [`adopt-cluster-entry-write-failed.md`](adopt-cluster-entry-write-failed.md) | Git write failed mid-adoption. State is inconsistent: ArgoCD Secret is labeled, but git declaration is missing the entry. Next reconciler tick will try to delete the Secret. Closed by V2-4.3 PR 2c. |
+| AI provider misconfigured — agent calls fail with `503` from `internal/api/system.go:125` `"no provider configured"` or per-provider auth error | **P1** | [`ai-provider-misconfigured.md`](ai-provider-misconfigured.md) | Operator hasn't set `ai.apiKey` or the configured provider rejected the request. Affects AI features only; core flows unaffected. Closed by V2-4.3 PR 2c. |
+| Webhook receive error (any code path) | **P1** | [`webhook-handler-failures.md`](webhook-handler-failures.md) | Git provider webhook delivery succeeded but Sharko handler returned non-2xx. PR-tracker state diverges from reality until next poll. Grouped into ONE runbook per V2-4.3 PR 2c. |
 
 ### P2 (next sprint)
 
@@ -355,22 +355,33 @@ Compiled from the inventory tables above.
 | Metric | Value |
 |---|---|
 | Total failure mode rows | **63** (re-counted at PR 2a close; PR #375 statistics had off-by-N drift) |
-| Total `GAP` entries remaining | **26** |
+| Total `GAP` entries remaining | **12** |
 | `GAP` entries at **P0** | **0** (all closed by V2-4.3 PR 2a) |
-| `GAP` entries at **P1** | **14** (V2-4.3 PR 2c scope — API + Orchestrator + Reconciler + Webhook + AI + Adopt; 14 of original 28 closed by PR 2b) |
+| `GAP` entries at **P1** | **0** (all 28 closed: 14 by PR 2b, 14 by PR 2c) |
 | `GAP` entries at **P2** | **12** (V2-4.x follow-up backlog) |
-| Failure modes covered by runbooks | **15 (pre-PR-2a) + 11 (PR-2a new) + 11 (PR-2b new — 14 rows mapped via 2 grouping decisions)** = **34 rows** |
+| Failure modes covered by runbooks | **15 (pre-PR-2a) + 11 (PR-2a new) + 11 (PR-2b new) + 12 (PR-2c new — 14 rows mapped via 2 grouping decisions)** = **49 rows** |
 | Existing runbook drift findings | **9 pages** (V2-4.4 / PR 3 scope) |
 
-**Statistics note:** at PR 2b close (2026-06-01), the P1 GAP count
-moved from 28 → 14 because PR 2b shipped 11 runbooks for 14
-failure-mode rows (`argocd-cluster-secret-corruption.md` groups
+**V2-4.3 (PR 2a + 2b + 2c) — COMPLETE. All P0 (12) + P1 (28) GAPs
+closed. P2 GAPs (12) tracked as V2-4.x follow-up backlog. PR 3
+(V2-4.4 existing-runbook style compliance) is the final V2-4
+sub-sprint.**
+
+**Statistics note:** at PR 2c close (2026-06-01), the P1 GAP count
+moved from 14 → 0 because PR 2c shipped 12 runbooks for 14
+failure-mode rows (`git-provider-rate-limited.md` groups 2 rows;
+`webhook-handler-failures.md` groups 2 rows; the remaining 10
+runbooks are standalone). At PR 2b close (2026-06-01), the P1 GAP
+count had moved from 28 → 14 because PR 2b shipped 11 runbooks for
+14 failure-mode rows (`argocd-cluster-secret-corruption.md` groups
 3 rows; `azure-gcp-provider-unimplemented.md` groups 2 rows; the
-remaining 9 runbooks are standalone). The PR 2b grouping decisions
+remaining 9 runbooks are standalone). The grouping decisions
 follow the style guide's "one runbook iff same diagnosis + same
 mitigation" rule and are documented in the
 [V2-4.3 PR 2b grouping decisions](#v2-43-pr-2b-grouping-decisions-closed-2026-06-01)
-sub-section below.
+and
+[V2-4.3 PR 2c grouping decisions](#v2-43-pr-2c-grouping-decisions-closed-2026-06-01)
+sub-sections below.
 
 At PR 2a close (2026-06-01), the same block was re-computed via
 `grep -cE '\*\*GAP — P[012]\*\*'` to correct PR #375's original
@@ -434,8 +445,47 @@ surfaces):
     mitigation lanes are identical (switch to AWS-SM or
     K8s-Secrets, contribute upstream, wait for v2).
 
-PR 2c (pending) covers the remaining 14 P1 rows: API + Orchestrator +
-Reconciler + Webhook + AI + Adopt surfaces.
+PR 2c (closed 2026-06-01) covers the remaining 14 P1 rows: API +
+Orchestrator + Reconciler + Webhook + AI + Adopt surfaces. See
+[V2-4.3 PR 2c grouping decisions](#v2-43-pr-2c-grouping-decisions-closed-2026-06-01)
+below.
+
+### V2-4.3 PR 2c grouping decisions (closed 2026-06-01)
+
+12 runbooks written for 14 P1 failure-mode rows (API + Orchestrator
++ Reconciler + Webhook + AI + Adopt surfaces):
+
+- **Standalone** (10 runbooks for 10 rows):
+  `single-cluster-credential-fetch-failed.md`,
+  `addon-application-stuck-degraded.md`,
+  `init-operation-abandoned.md`,
+  `auto-merge-failed-after-pr-opened.md`,
+  `ai-annotation-secret-blocked.md`,
+  `encryption-key-not-configured.md`,
+  `cluster-reconciler-dependency-missing.md`,
+  `adopt-managed-by-label-read-failed.md`,
+  `adopt-cluster-entry-write-failed.md`,
+  `ai-provider-misconfigured.md`.
+- **Grouped** (2 runbooks for 4 rows):
+  - `git-provider-rate-limited.md` covers 2 rows ("Git provider
+    rate limit hit" + "GitHub Contents API 403 on
+    `managed-clusters.yaml` read"). Both share the same root
+    cause (PAT quota exhausted), the same diagnosis (inspect
+    `X-RateLimit-*` headers), and the same mitigation lanes
+    (rotate PAT or back off cadence).
+  - `webhook-handler-failures.md` covers 2 rows ("Webhook handler
+    returns 401" + "Webhook receive error (any code path)"). Both
+    share the same diagnosis tree (is the webhook reaching us?
+    signature? payload?) and the same mitigation lanes (rotate
+    secret, narrow subscription, fix proxy).
+
+Both groupings follow the style guide's "one runbook covers
+multiple failure modes IF AND ONLY IF they share the same diagnosis
+path AND the same mitigation steps" rule. The adopt-flow rows
+(`adopt-managed-by-label-read-failed.md` and
+`adopt-cluster-entry-write-failed.md`) were considered for grouping
+but kept separate because their mitigations differ materially
+(RBAC fix vs. managed-clusters.yaml repair PR).
 
 ### Severity distribution (total)
 
@@ -476,10 +526,13 @@ threshold and PR 2b + PR 2c both touch this file.
   (`argocd-cluster-secret-corruption.md` covers 3 rows;
   `azure-gcp-provider-unimplemented.md` covers 2 rows); remaining
   9 runbooks are standalone. P1 GAP count: 28 → 14.
-- **PR 2c (pending):** up to 14 new operator runbooks covering the
-  remaining 14 P1 failure-mode rows (API + Orchestrator + Reconciler
-  + Webhook + AI + Adopt surfaces). PR 2c agent may apply
-  additional grouping per the style guide.
+- **PR 2c (closed 2026-06-01):** 12 new operator runbooks covering
+  the remaining 14 P1 failure-mode rows (API + Orchestrator +
+  Reconciler + Webhook + AI + Adopt surfaces). Two grouping
+  decisions (`git-provider-rate-limited.md` covers 2 rows;
+  `webhook-handler-failures.md` covers 2 rows); remaining 10
+  runbooks are standalone. P1 GAP count: 14 → 0. V2-4.3 sub-sprint
+  is now COMPLETE.
 
 P2 GAPs (12 rows; corrected count) remain tracked as V2-4.x follow-up
 work, not in PR 2.
