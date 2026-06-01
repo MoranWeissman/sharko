@@ -124,6 +124,7 @@ nav:
     - Repository Structure: architecture/repo-structure.md
   - Developer Guide:
     - Overview: developer-guide.md
+    - API Stability Contract: developer-guide/api-stability.md
     - Catalog Scan Runbook: developer-guide/catalog-scan-runbook.md
     - Catalog Sources Smoke Runbook: developer-guide/catalog-sources-smoke.md
     - Testing Guide: developer-guide/testing-guide.md
@@ -133,6 +134,8 @@ nav:
     - Logging: developer-guide/logging.md
     - Logging Audit Punch List: developer-guide/logging-audit-punchlist.md
     - Runbook Style Guide: developer-guide/runbook-style-guide.md
+  - Community:
+    - Roadmap: community/roadmap.md
 
 markdown_extensions:
   - admonition
