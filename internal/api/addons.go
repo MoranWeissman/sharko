@@ -3,8 +3,12 @@ package api
 import (
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
+	"github.com/MoranWeissman/sharko/internal/logging"
+	"github.com/MoranWeissman/sharko/internal/metrics"
 	"github.com/MoranWeissman/sharko/internal/models"
 )
 
@@ -63,6 +67,24 @@ func (s *Server) handleListAddons(w http.ResponseWriter, r *http.Request) {
 // @Failure 503 {object} map[string]interface{} "Service unavailable"
 // @Router /addons/catalog [get]
 func (s *Server) handleGetAddonCatalog(w http.ResponseWriter, r *http.Request) {
+	// V2-3 SLO surface: catalog_scan. End-to-end timing only for PR 1;
+	// per-phase wiring (catalog_load / list_addons / sources_refresh) is
+	// deferred to V2-3.x because the existing service.GetCatalog call
+	// composes the three phases internally and per-phase instrumentation
+	// would require restructuring AddonService — explicitly out of scope
+	// for this PR.
+	start := time.Now()
+	rec := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
+	w = rec
+	defer func() {
+		code := strconv.Itoa(rec.statusCode)
+		metrics.Observe(metrics.PathCatalogScan, "total", time.Since(start).Seconds(), logging.RequestID(r.Context()))
+		metrics.IncTotal(metrics.PathCatalogScan, code)
+		if rec.statusCode >= 400 {
+			metrics.IncError(metrics.PathCatalogScan, code)
+		}
+	}()
+
 	gp, err := s.connSvc.GetActiveGitProvider()
 	if err != nil {
 		writeServerError(w, http.StatusServiceUnavailable, "get_active_git_provider", err)

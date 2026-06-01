@@ -4,9 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
+	"github.com/MoranWeissman/sharko/internal/logging"
+	"github.com/MoranWeissman/sharko/internal/metrics"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
 )
@@ -36,6 +40,22 @@ func (s *Server) handleEnableAddon(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "addon.enable") {
 		return
 	}
+
+	// V2-3 SLO surface: addon_cycle (enable side). End-to-end timing
+	// only for PR 1; the full async PR -> merge -> reconciler -> ArgoCD
+	// sync timeline is deferred to V2-3.x once perf-baselines.yaml
+	// covers the real cycle (currently it only captures dry-run phases).
+	start := time.Now()
+	rec := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
+	w = rec
+	defer func() {
+		code := strconv.Itoa(rec.statusCode)
+		metrics.Observe(metrics.PathAddonCycle, "enable", time.Since(start).Seconds(), logging.RequestID(r.Context()))
+		metrics.IncTotal(metrics.PathAddonCycle, code)
+		if rec.statusCode >= 400 {
+			metrics.IncError(metrics.PathAddonCycle, code)
+		}
+	}()
 
 	clusterName := r.PathValue("name")
 	addonName := r.PathValue("addon")
@@ -139,6 +159,20 @@ func (s *Server) handleDisableAddon(w http.ResponseWriter, r *http.Request) {
 	if !authz.RequireWithResponse(w, r, "addon.disable") {
 		return
 	}
+
+	// V2-3 SLO surface: addon_cycle (disable side). See handleEnableAddon
+	// for the per-phase wiring follow-up note.
+	start := time.Now()
+	rec := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
+	w = rec
+	defer func() {
+		code := strconv.Itoa(rec.statusCode)
+		metrics.Observe(metrics.PathAddonCycle, "disable", time.Since(start).Seconds(), logging.RequestID(r.Context()))
+		metrics.IncTotal(metrics.PathAddonCycle, code)
+		if rec.statusCode >= 400 {
+			metrics.IncError(metrics.PathAddonCycle, code)
+		}
+	}()
 
 	clusterName := r.PathValue("name")
 	addonName := r.PathValue("addon")

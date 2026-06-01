@@ -19,7 +19,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	httpSwagger "github.com/swaggo/http-swagger"
 	"golang.org/x/crypto/bcrypt"
 	"k8s.io/client-go/kubernetes"
@@ -551,8 +550,10 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 		httpSwagger.URL("/swagger/doc.json"),
 	))
 
-	// Prometheus metrics (no auth — protected via ingress or separate port)
-	mux.Handle("GET /metrics", promhttp.Handler())
+	// Prometheus metrics (no auth — protected via ingress or separate port).
+	// Composes the default registry (legacy promauto metrics) with the
+	// V2-3 SLO-surface custom registry — see internal/api/metrics.go.
+	mux.Handle("GET /metrics", metricsHandler())
 
 	// Health
 	mux.HandleFunc("GET /api/v1/health", srv.handleHealth)
