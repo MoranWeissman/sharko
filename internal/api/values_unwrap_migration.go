@@ -3,11 +3,14 @@
 // Endpoint: POST /api/v1/addons/unwrap-globals
 // Tier:     Tier 2 (configuration — opens a PR)
 //
-// Background: pre-Bundle-5 versions of Sharko wrote each addon's global
+// Background: pre-Bundle-5 dev installs of Sharko wrote each addon's global
 // values file under an `<addonName>:` (or `<chartName>:`) root key. The
 // ApplicationSet template passes those files directly to Helm via
 // `valueFiles:`, so Helm silently ignored every value in the file. Bundle 5
-// fixes the writer; this endpoint migrates legacy files in place.
+// fixes the writer; this endpoint migrates pre-Bundle-5 files in place for
+// the rare dev install that needs it. v2.0.0 is the first production release,
+// so no production operator should ever hit this — the endpoint stays as a
+// safety net for the development line.
 //
 // Behaviour:
 //   1. Walk every `*.yaml` file under `configuration/addons-global-values/`

@@ -1,5 +1,82 @@
 # Release Notes
 
+<!--
+Format for v2.x release-notes entries:
+## vX.Y.Z — <theme>
+### Breaking changes
+### What's new
+### Removed
+### Security
+### Bug fixes
+
+Each bullet: one-liner summary + (PR #N) link. Detailed body lives in
+the PR. Append new releases at the TOP of the v2.x stream so the most
+recent release is the first thing readers see.
+-->
+
+## v2.0.0 — Production launch
+
+**Status:** in progress (release date TBD; epic V2-4 + V2-5 + final retrospective pending)
+
+### Breaking changes
+
+*To be filled as V2-4, V2-5, and V2-6.3 ship.*
+
+### What's new
+
+- **Performance baselines + SLO targets per critical path** — p50 / p95 / p99
+  measurements per phase per surface across cluster registration, addon
+  cycle, catalog scan, and dashboard read paths; SLO targets + error
+  budgets + burn-rate thresholds documented; a workflow_dispatch
+  perf-baseline-refresh job and a comparator binary with `-emit` mode
+  gate every PR against the committed baselines.
+  (V2-1: PRs [#362](https://github.com/MoranWeissman/sharko/pull/362),
+  [#363](https://github.com/MoranWeissman/sharko/pull/363),
+  [#364](https://github.com/MoranWeissman/sharko/pull/364),
+  [#365](https://github.com/MoranWeissman/sharko/pull/365))
+- **100% slog logging with correlation IDs and sensitive-field redaction** —
+  all internal callers migrated from stdlib `log` to `log/slog`;
+  `request_id` propagated across middleware, reconciler, prtracker,
+  orchestrator, and API handlers; a slog.Handler wrapper redacts tokens,
+  kubeconfigs, and secret bodies before they hit any sink.
+  (V2-2: PRs [#367](https://github.com/MoranWeissman/sharko/pull/367),
+  [#368](https://github.com/MoranWeissman/sharko/pull/368),
+  [#369](https://github.com/MoranWeissman/sharko/pull/369))
+- **Prometheus telemetry for SLO surfaces** — histogram + counter
+  exposition with V2-1.2-sized buckets, OpenTelemetry-conventional
+  metric naming, exemplars carrying `request_id`, a Helm-shipped
+  PrometheusRule template with multi-window multi-burn-rate alerting
+  rules, and an operator runbook covering every alert.
+  (V2-3: PRs [#371](https://github.com/MoranWeissman/sharko/pull/371),
+  [#372](https://github.com/MoranWeissman/sharko/pull/372),
+  [#373](https://github.com/MoranWeissman/sharko/pull/373))
+- **CNCF foundation docs and GitHub config** — `MAINTAINERS`,
+  `GOVERNANCE`, `CODE_OF_CONDUCT` (Contributor Covenant 2.1),
+  `CONTRIBUTING`, `SECURITY`, and `ADOPTERS` at the repo root; DCO
+  `Signed-off-by` enforcement; YAML issue templates (bug / feature /
+  docs / security); GitHub Discussions enabled with a Roadmap input
+  category.
+  (V2-6 subset: PR [#366](https://github.com/MoranWeissman/sharko/pull/366))
+
+### Removed
+
+*No production compat shims to retire. v2.0.0 is the first production
+release, so there is no prior production line to drop compat code for.
+V2-5.1's compat-shim audit found zero production shims and zero
+`// Deprecated:` comments in Go source — only test-file regression
+guards from V125-1-11, which stay.*
+
+### Security
+
+*To be filled if V2-6.5 threat model ships before v2.0.0; otherwise
+reserved for security fixes during V2-4 + V2-5.*
+
+### Bug fixes
+
+*Reserved for bug-only PRs landed alongside V2 epics.*
+
+---
+
 ## v1.25.0-pre.0 — Schema envelope + cluster reconciler + DX bundle (2026-05-21)
 
 This pre-release ships two architectural epics that together make YAML the operational source of truth for cluster management: V125-1-9 introduces a schema envelope + JSON Schema + read-time validation + a `sharko validate-config` CLI; V125-1-8 ships the cluster reconciler that converges ArgoCD cluster secrets from the validated YAML. It also folds in the V125-1-10 / -11 / -13.x / -13.y provider + e2e fixes that landed on `main` between v1.23.0-pre.0 and now, plus the V126-* polish + DX bundle (BUG-033, DESIGN-01, DESIGN-02, e2e QoL, `sharko-dev.sh` upgrade subcommand). Chart bumped 1.19.0 → 1.25.0-pre.0 — the chart was stale relative to the tag stream; last shipped tag was `v1.23.0-pre.0`.
