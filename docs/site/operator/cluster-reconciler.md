@@ -1,5 +1,23 @@
 # Cluster Reconciler (V1.25)
 
+> **Reference page (architecture) + embedded troubleshooting
+> mini-runbooks.** The first two-thirds of this page documents the
+> reconciler's ownership semantics, cadence, two-direction policy, and
+> recovery scenarios. The Troubleshooting section near the bottom
+> contains the failure-specific lanes that
+> [`failure-mode-index.md`](failure-mode-index.md) deep-links into —
+> the section anchors there (`#what-if-managed-clustersyaml-has-a-schema-validation-error`,
+> `#what-if-a-labeled-secret-is-accidentally-deleted-kubectl-delete`,
+> `#what-happens-if-a-user-removes-the-label-manually`) are
+> load-bearing. Standalone P0 / P1 runbooks for distinct reconciler
+> failures live at
+> [`reconciler-crash-loop.md`](reconciler-crash-loop.md) and
+> [`cluster-reconciler-dependency-missing.md`](cluster-reconciler-dependency-missing.md);
+> this page is the architecture reference operators read once to
+> understand the reconciler and the embedded troubleshooting
+> sub-sections are the inline mitigations for the specific failures
+> the index points at.
+
 Sharko v1.25 introduces an in-Pod **cluster-secret reconciler** that owns
 the lifecycle of ArgoCD cluster Secrets. This page is the operator
 runbook: ownership semantics, reconcile cadence, the two-direction

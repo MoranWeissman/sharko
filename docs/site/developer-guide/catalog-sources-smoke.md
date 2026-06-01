@@ -15,7 +15,7 @@ operational alerting. This page is the one-time "did I wire it up
 right?" check.
 
 If you have not configured the env vars yet, read
-[Catalog Sources](catalog-sources.md) first for the env-var
+[Catalog Sources](../operator/catalog-sources.md) first for the env-var
 reference, the HTTPS-only rule, and the SSRF guard.
 
 ## What you need
@@ -42,7 +42,7 @@ reference, the HTTPS-only rule, and the SSRF guard.
 
 Create a one-entry catalog file. The schema is the same Sharko uses
 internally — `catalog.yaml` is a list of `addons:` entries; see the
-[catalog scan runbook](../developer-guide/catalog-scan-runbook.md) for
+[catalog scan runbook](catalog-scan-runbook.md) for
 the full schema. A minimum smoke entry:
 
 ```yaml
@@ -92,7 +92,7 @@ Re-apply / restart Sharko so the new env reaches the pod.
 
 !!! warning "URLs are not logged"
     Sharko never logs the configured URLs (they may encode auth
-    tokens — see the [Catalog Sources](catalog-sources.md) page).
+    tokens — see the [Catalog Sources](../operator/catalog-sources.md) page).
     Confirmation that the config landed comes from a single startup
     line that reports the **count**, not the URLs, plus the
     `/api/v1/catalog/sources` API response which is what this
@@ -202,7 +202,7 @@ Field reference (from `internal/api/catalog_sources.go`):
 | `status` | string | `"ok"` = most recent fetch parsed cleanly. `"stale"` = most recent fetch failed but a previous one succeeded; entries are last-known-good. `"failed"` = fresh-start failure or schema violation; entries may be empty. Always `"ok"` for the embedded row. |
 | `last_fetched` | string \| null | RFC3339 timestamp of the most recent **successful** fetch (not the most recent attempt). `null` when never succeeded. Always `null` for the embedded row. |
 | `entry_count` | integer | Number of addon entries this source contributes to the merged catalog. |
-| `verified` | boolean | Whether the source's sidecar signature passed trust-policy verification. Always `true` for the embedded row (binary trusts itself). For third-party rows this is `false` unless a `.bundle` sidecar exists at `<url>.bundle` and the signing identity matches the trust policy — see [Catalog Trust Policy](catalog-trust-policy.md). |
+| `verified` | boolean | Whether the source's sidecar signature passed trust-policy verification. Always `true` for the embedded row (binary trusts itself). For third-party rows this is `false` unless a `.bundle` sidecar exists at `<url>.bundle` and the signing identity matches the trust policy — see [Catalog Trust Policy](../operator/catalog-trust-policy.md). |
 | `issuer` | string (optional) | Human-readable OIDC subject of the signer when `verified: true`. Omitted when empty. |
 
 **Success means:**
@@ -284,13 +284,13 @@ catalog source if you want a heartbeat.
 
 ## What this runbook does **not** cover
 
-- **Signature verification** — covered by [Catalog Trust Policy](catalog-trust-policy.md).
+- **Signature verification** — covered by [Catalog Trust Policy](../operator/catalog-trust-policy.md).
   To produce a `verified: true` third-party row you need a
   `.bundle` sidecar next to your catalog YAML and the signing
   identity in `SHARKO_CATALOG_TRUSTED_IDENTITIES`. Signing the
   smoke YAML is out of scope for "did the fetcher wire up?".
 - **Multi-source merge ordering** — covered by the design notes in
-  [Catalog Sources](catalog-sources.md). The embedded entry always
+  [Catalog Sources](../operator/catalog-sources.md). The embedded entry always
   wins on a name collision; this runbook uses a unique entry id
   (`smoke-test-addon`) to keep the smoke pass independent of merge
   semantics.

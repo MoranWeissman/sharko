@@ -1,5 +1,13 @@
 # Audit log — retention model
 
+> **Reference page, not a runbook.** This page documents the audit
+> log retention model — two streams (in-memory ring buffer + structured
+> stdout), how to wire long-term retention to your log aggregator, and
+> what "wiped on pod restart" means. If you are looking for a specific
+> failure to diagnose (audit buffer wrapped, SSE stream dropped, etc.),
+> search [`failure-mode-index.md`](failure-mode-index.md) by your error
+> message instead.
+
 Sharko emits an audit record for every mutating API call (cluster registration, addon add/remove/upgrade, secret reconciliation, init runs, webhook events). The same record is delivered to **two streams** with very different lifetimes — operators need to understand both.
 
 ## Two streams, one record

@@ -1,5 +1,17 @@
 # Third-party Catalog Sources
 
+> **Reference page, not a runbook.** This page documents the
+> third-party catalog source configuration surface
+> (`SHARKO_CATALOG_URLS`, the SSRF guard, refresh cadence). If you are
+> diagnosing a fetcher failure, search
+> [`failure-mode-index.md`](failure-mode-index.md) — the failures that
+> surface during catalog source fetch are covered by
+> [`catalog-source-http-fetch-failed.md`](catalog-source-http-fetch-failed.md),
+> [`catalog-source-schema-validation-failed.md`](catalog-source-schema-validation-failed.md),
+> and the SSRF-blocked variant tracked in the index. For the trust-policy
+> half of catalog sources, see
+> [`catalog-trust-policy.md`](catalog-trust-policy.md).
+
 Sharko ships with an embedded curated addon catalog. Starting with **v1.23**
 operators can extend it with one or more private HTTPS-served catalog
 YAML files — for internal charts, partner catalogs, or org-specific
