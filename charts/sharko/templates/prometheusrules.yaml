@@ -1,0 +1,349 @@
+{{- if .Values.monitoring.prometheusRules.enabled }}
+# Sharko SLO recording + alerting rules (V2-3.3).
+#
+# These rules are derived from the four V2-3 SLO surfaces defined in
+# internal/metrics/slo.go and documented in
+# docs/site/operator/metrics-naming.md. The metric family names
+# (sharko_<path>_duration_seconds, sharko_<path>_total,
+# sharko_<path>_errors_total) must stay in lock-step with the Go package —
+# renaming one without the other silently breaks the recording rules.
+#
+# Recording rules: one group per SLO path with five derived series each
+# (request rate, error rate, success rate, p95 latency, p99 latency over
+# 5m windows; group evaluation interval 30s).
+#
+# Alerting rules: multi-window multi-burn-rate per the Google SRE book.
+# Each path has a fast-burn (page, 1h window, 14.4x rate) and slow-burn
+# (ticket, 6h window, 6x rate) pair. The burn-rate thresholds assume an
+# SLO target of 99.9% per path (error budget = 0.001). To tune a path to
+# a different SLO target, change the numeric constant in the alert
+# expression (search for "0.001" in this file).
+#
+# Multi-window discipline: an alert fires only when BOTH the short-window
+# burn rate AND the long-window burn rate exceed threshold. This prevents
+# transient spikes from paging while still catching sustained burn.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "sharko.fullname" . }}-slo
+  namespace: {{ default .Release.Namespace .Values.monitoring.prometheusRules.namespace }}
+  labels:
+    {{- include "sharko.labels" . | nindent 4 }}
+    {{- with .Values.monitoring.prometheusRules.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+  # ---------------------------------------------------------------------
+  # Recording rules — cluster_registration
+  # ---------------------------------------------------------------------
+  - name: sharko.slo.recording.cluster_registration
+    interval: 30s
+    rules:
+    - record: sharko:cluster_registration:request_rate_5m
+      expr: sum(rate(sharko_cluster_registration_total[5m]))
+    - record: sharko:cluster_registration:error_rate_5m
+      expr: sum(rate(sharko_cluster_registration_errors_total[5m]))
+    - record: sharko:cluster_registration:success_rate_5m
+      expr: |
+        1 - (
+          sharko:cluster_registration:error_rate_5m
+          /
+          clamp_min(sharko:cluster_registration:request_rate_5m, 1e-9)
+        )
+    - record: sharko:cluster_registration:latency_p95_5m
+      expr: histogram_quantile(0.95, sum(rate(sharko_cluster_registration_duration_seconds_bucket[5m])) by (le, phase))
+    - record: sharko:cluster_registration:latency_p99_5m
+      expr: histogram_quantile(0.99, sum(rate(sharko_cluster_registration_duration_seconds_bucket[5m])) by (le, phase))
+
+  # ---------------------------------------------------------------------
+  # Recording rules — addon_cycle
+  # ---------------------------------------------------------------------
+  - name: sharko.slo.recording.addon_cycle
+    interval: 30s
+    rules:
+    - record: sharko:addon_cycle:request_rate_5m
+      expr: sum(rate(sharko_addon_cycle_total[5m]))
+    - record: sharko:addon_cycle:error_rate_5m
+      expr: sum(rate(sharko_addon_cycle_errors_total[5m]))
+    - record: sharko:addon_cycle:success_rate_5m
+      expr: |
+        1 - (
+          sharko:addon_cycle:error_rate_5m
+          /
+          clamp_min(sharko:addon_cycle:request_rate_5m, 1e-9)
+        )
+    - record: sharko:addon_cycle:latency_p95_5m
+      expr: histogram_quantile(0.95, sum(rate(sharko_addon_cycle_duration_seconds_bucket[5m])) by (le, phase))
+    - record: sharko:addon_cycle:latency_p99_5m
+      expr: histogram_quantile(0.99, sum(rate(sharko_addon_cycle_duration_seconds_bucket[5m])) by (le, phase))
+
+  # ---------------------------------------------------------------------
+  # Recording rules — catalog_scan
+  # ---------------------------------------------------------------------
+  - name: sharko.slo.recording.catalog_scan
+    interval: 30s
+    rules:
+    - record: sharko:catalog_scan:request_rate_5m
+      expr: sum(rate(sharko_catalog_scan_total[5m]))
+    - record: sharko:catalog_scan:error_rate_5m
+      expr: sum(rate(sharko_catalog_scan_errors_total[5m]))
+    - record: sharko:catalog_scan:success_rate_5m
+      expr: |
+        1 - (
+          sharko:catalog_scan:error_rate_5m
+          /
+          clamp_min(sharko:catalog_scan:request_rate_5m, 1e-9)
+        )
+    - record: sharko:catalog_scan:latency_p95_5m
+      expr: histogram_quantile(0.95, sum(rate(sharko_catalog_scan_duration_seconds_bucket[5m])) by (le, phase))
+    - record: sharko:catalog_scan:latency_p99_5m
+      expr: histogram_quantile(0.99, sum(rate(sharko_catalog_scan_duration_seconds_bucket[5m])) by (le, phase))
+
+  # ---------------------------------------------------------------------
+  # Recording rules — dashboard_read
+  # ---------------------------------------------------------------------
+  - name: sharko.slo.recording.dashboard_read
+    interval: 30s
+    rules:
+    - record: sharko:dashboard_read:request_rate_5m
+      expr: sum(rate(sharko_dashboard_read_total[5m]))
+    - record: sharko:dashboard_read:error_rate_5m
+      expr: sum(rate(sharko_dashboard_read_errors_total[5m]))
+    - record: sharko:dashboard_read:success_rate_5m
+      expr: |
+        1 - (
+          sharko:dashboard_read:error_rate_5m
+          /
+          clamp_min(sharko:dashboard_read:request_rate_5m, 1e-9)
+        )
+    - record: sharko:dashboard_read:latency_p95_5m
+      expr: histogram_quantile(0.95, sum(rate(sharko_dashboard_read_duration_seconds_bucket[5m])) by (le, phase))
+    - record: sharko:dashboard_read:latency_p99_5m
+      expr: histogram_quantile(0.99, sum(rate(sharko_dashboard_read_duration_seconds_bucket[5m])) by (le, phase))
+
+  # ---------------------------------------------------------------------
+  # Alerting rules — cluster_registration
+  # SLO target: 99.9% (error budget 0.001). Fast burn = 14.4x consumes
+  # ~2% budget in 1h (page). Slow burn = 6x consumes ~5% budget in 6h
+  # (ticket).
+  # ---------------------------------------------------------------------
+  - name: sharko.slo.alerts.cluster_registration
+    rules:
+    - alert: SharkoClusterRegistrationFastBurn
+      expr: |
+        (
+          sum(rate(sharko_cluster_registration_errors_total[5m]))
+          /
+          clamp_min(sum(rate(sharko_cluster_registration_total[5m])), 1e-9)
+        ) > (14.4 * 0.001)
+        and
+        (
+          sum(rate(sharko_cluster_registration_errors_total[1h]))
+          /
+          clamp_min(sum(rate(sharko_cluster_registration_total[1h])), 1e-9)
+        ) > (14.4 * 0.001)
+      for: 2m
+      labels:
+        severity: page
+        sharko_path: cluster_registration
+        burn_rate: fast
+      annotations:
+        summary: "cluster_registration error budget burning fast (14.4x, 1h window)"
+        description: |
+          Sharko cluster_registration is consuming its 99.9% error budget at >14.4x the sustainable rate
+          over both a 5m and 1h window. At this pace the entire monthly error budget is consumed in ~2 days.
+          Investigate ArgoCD reachability, kube-apiserver health, secret store backend, and the
+          managed-clusters reconciler. Join logs by request_id exemplar (V2-2.2 correlation ID).
+        runbook_url: "https://moranweissman.github.io/sharko/operator/budget-burn-runbook/#sharkoclusterregistrationfastburn"
+    - alert: SharkoClusterRegistrationSlowBurn
+      expr: |
+        (
+          sum(rate(sharko_cluster_registration_errors_total[30m]))
+          /
+          clamp_min(sum(rate(sharko_cluster_registration_total[30m])), 1e-9)
+        ) > (6 * 0.001)
+        and
+        (
+          sum(rate(sharko_cluster_registration_errors_total[6h]))
+          /
+          clamp_min(sum(rate(sharko_cluster_registration_total[6h])), 1e-9)
+        ) > (6 * 0.001)
+      for: 15m
+      labels:
+        severity: ticket
+        sharko_path: cluster_registration
+        burn_rate: slow
+      annotations:
+        summary: "cluster_registration error budget burning slowly (6x, 6h window)"
+        description: |
+          Sharko cluster_registration is consuming its 99.9% error budget at >6x the sustainable rate
+          over both a 30m and 6h window. At this pace the monthly budget is consumed in ~5 days.
+          File a ticket and investigate during business hours.
+        runbook_url: "https://moranweissman.github.io/sharko/operator/budget-burn-runbook/#sharkoclusterregistrationslowburn"
+
+  # ---------------------------------------------------------------------
+  # Alerting rules — addon_cycle
+  # ---------------------------------------------------------------------
+  - name: sharko.slo.alerts.addon_cycle
+    rules:
+    - alert: SharkoAddonCycleFastBurn
+      expr: |
+        (
+          sum(rate(sharko_addon_cycle_errors_total[5m]))
+          /
+          clamp_min(sum(rate(sharko_addon_cycle_total[5m])), 1e-9)
+        ) > (14.4 * 0.001)
+        and
+        (
+          sum(rate(sharko_addon_cycle_errors_total[1h]))
+          /
+          clamp_min(sum(rate(sharko_addon_cycle_total[1h])), 1e-9)
+        ) > (14.4 * 0.001)
+      for: 2m
+      labels:
+        severity: page
+        sharko_path: addon_cycle
+        burn_rate: fast
+      annotations:
+        summary: "addon_cycle error budget burning fast (14.4x, 1h window)"
+        description: |
+          Sharko addon_cycle is consuming its 99.9% error budget at >14.4x the sustainable rate.
+          Investigate Git provider connectivity, PR merge automation, reconciler convergence, and
+          ArgoCD sync status. Recent secret-rotation or RBAC changes commonly trigger this.
+        runbook_url: "https://moranweissman.github.io/sharko/operator/budget-burn-runbook/#sharkoaddoncyclefastburn"
+    - alert: SharkoAddonCycleSlowBurn
+      expr: |
+        (
+          sum(rate(sharko_addon_cycle_errors_total[30m]))
+          /
+          clamp_min(sum(rate(sharko_addon_cycle_total[30m])), 1e-9)
+        ) > (6 * 0.001)
+        and
+        (
+          sum(rate(sharko_addon_cycle_errors_total[6h]))
+          /
+          clamp_min(sum(rate(sharko_addon_cycle_total[6h])), 1e-9)
+        ) > (6 * 0.001)
+      for: 15m
+      labels:
+        severity: ticket
+        sharko_path: addon_cycle
+        burn_rate: slow
+      annotations:
+        summary: "addon_cycle error budget burning slowly (6x, 6h window)"
+        description: |
+          Sharko addon_cycle is consuming its 99.9% error budget at >6x the sustainable rate.
+          File a ticket for daytime investigation.
+        runbook_url: "https://moranweissman.github.io/sharko/operator/budget-burn-runbook/#sharkoaddoncycleslowburn"
+
+  # ---------------------------------------------------------------------
+  # Alerting rules — catalog_scan
+  # ---------------------------------------------------------------------
+  - name: sharko.slo.alerts.catalog_scan
+    rules:
+    - alert: SharkoCatalogScanFastBurn
+      expr: |
+        (
+          sum(rate(sharko_catalog_scan_errors_total[5m]))
+          /
+          clamp_min(sum(rate(sharko_catalog_scan_total[5m])), 1e-9)
+        ) > (14.4 * 0.001)
+        and
+        (
+          sum(rate(sharko_catalog_scan_errors_total[1h]))
+          /
+          clamp_min(sum(rate(sharko_catalog_scan_total[1h])), 1e-9)
+        ) > (14.4 * 0.001)
+      for: 2m
+      labels:
+        severity: page
+        sharko_path: catalog_scan
+        burn_rate: fast
+      annotations:
+        summary: "catalog_scan error budget burning fast (14.4x, 1h window)"
+        description: |
+          Sharko catalog_scan is consuming its 99.9% error budget at >14.4x the sustainable rate.
+          Investigate catalog source connectivity (CNCF Landscape, EKS Blueprints), signing-bundle
+          fetch, and trust-policy regex evaluation.
+        runbook_url: "https://moranweissman.github.io/sharko/operator/budget-burn-runbook/#sharkocatalogscanfastburn"
+    - alert: SharkoCatalogScanSlowBurn
+      expr: |
+        (
+          sum(rate(sharko_catalog_scan_errors_total[30m]))
+          /
+          clamp_min(sum(rate(sharko_catalog_scan_total[30m])), 1e-9)
+        ) > (6 * 0.001)
+        and
+        (
+          sum(rate(sharko_catalog_scan_errors_total[6h]))
+          /
+          clamp_min(sum(rate(sharko_catalog_scan_total[6h])), 1e-9)
+        ) > (6 * 0.001)
+      for: 15m
+      labels:
+        severity: ticket
+        sharko_path: catalog_scan
+        burn_rate: slow
+      annotations:
+        summary: "catalog_scan error budget burning slowly (6x, 6h window)"
+        description: |
+          Sharko catalog_scan is consuming its 99.9% error budget at >6x the sustainable rate.
+          File a ticket for daytime investigation.
+        runbook_url: "https://moranweissman.github.io/sharko/operator/budget-burn-runbook/#sharkocatalogscanslowburn"
+
+  # ---------------------------------------------------------------------
+  # Alerting rules — dashboard_read
+  # ---------------------------------------------------------------------
+  - name: sharko.slo.alerts.dashboard_read
+    rules:
+    - alert: SharkoDashboardReadFastBurn
+      expr: |
+        (
+          sum(rate(sharko_dashboard_read_errors_total[5m]))
+          /
+          clamp_min(sum(rate(sharko_dashboard_read_total[5m])), 1e-9)
+        ) > (14.4 * 0.001)
+        and
+        (
+          sum(rate(sharko_dashboard_read_errors_total[1h]))
+          /
+          clamp_min(sum(rate(sharko_dashboard_read_total[1h])), 1e-9)
+        ) > (14.4 * 0.001)
+      for: 2m
+      labels:
+        severity: page
+        sharko_path: dashboard_read
+        burn_rate: fast
+      annotations:
+        summary: "dashboard_read error budget burning fast (14.4x, 1h window)"
+        description: |
+          Sharko dashboard_read is consuming its 99.9% error budget at >14.4x the sustainable rate.
+          User-facing surface — page on-call. Investigate ArgoCD list API latency, in-memory
+          cache health, and the fleet_status / attention / pull_requests aggregation handlers.
+        runbook_url: "https://moranweissman.github.io/sharko/operator/budget-burn-runbook/#sharkodashboardreadfastburn"
+    - alert: SharkoDashboardReadSlowBurn
+      expr: |
+        (
+          sum(rate(sharko_dashboard_read_errors_total[30m]))
+          /
+          clamp_min(sum(rate(sharko_dashboard_read_total[30m])), 1e-9)
+        ) > (6 * 0.001)
+        and
+        (
+          sum(rate(sharko_dashboard_read_errors_total[6h]))
+          /
+          clamp_min(sum(rate(sharko_dashboard_read_total[6h])), 1e-9)
+        ) > (6 * 0.001)
+      for: 15m
+      labels:
+        severity: ticket
+        sharko_path: dashboard_read
+        burn_rate: slow
+      annotations:
+        summary: "dashboard_read error budget burning slowly (6x, 6h window)"
+        description: |
+          Sharko dashboard_read is consuming its 99.9% error budget at >6x the sustainable rate.
+          File a ticket for daytime investigation.
+        runbook_url: "https://moranweissman.github.io/sharko/operator/budget-burn-runbook/#sharkodashboardreadslowburn"
+{{- end }}

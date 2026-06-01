@@ -310,6 +310,27 @@ extraEnv: []
 #   docs/site/operator/corporate-mitm-tls.md
 
 # ---------------------------------------------------------------------------
+# Monitoring (V2-3 — Prometheus telemetry)
+# ---------------------------------------------------------------------------
+# Optional PrometheusRule CR shipping Sharko's V2-3 SLO recording + alerting
+# rules. Opt-in because not every cluster runs prometheus-operator; when
+# enabled, the rules cover the four SLO surfaces (cluster_registration,
+# addon_cycle, catalog_scan, dashboard_read) with multi-window multi-burn-rate
+# alerts per the Google SRE book.
+#
+# Metric names referenced by these rules are defined in internal/metrics/slo.go
+# and documented in docs/site/operator/metrics-naming.md.
+monitoring:
+  prometheusRules:
+    # Render the PrometheusRule CR. Requires prometheus-operator CRDs installed.
+    enabled: false
+    # Namespace for the PrometheusRule CR. Empty = release namespace.
+    namespace: ""
+    # Extra labels added to the PrometheusRule CR (commonly used to match a
+    # Prometheus resource's spec.ruleSelector, e.g. {prometheus: kube-prometheus, role: alert-rules}).
+    labels: {}
+
+# ---------------------------------------------------------------------------
 # E2E TEST HARNESS ONLY — DO NOT SET IN PRODUCTION DEPLOYMENTS.
 #
 # These keys exist to wire test-only behavior. They MUST remain empty/default
