@@ -198,6 +198,10 @@ When a user performs a Tier 2 action without a personal PAT configured, the resp
 
 For the full design rationale and the V2.x roadmap that builds on this foundation, see `docs/design/2026-04-16-attribution-and-permissions-model.md`.
 
+## v2.0.0 threat model
+
+The structured threat model for the v2.0.0 production-launch baseline lives at [`docs/design/2026-06-02-threat-model-v2.md`](https://github.com/MoranWeissman/sharko/blob/main/docs/design/2026-06-02-threat-model-v2.md). It documents the seven assets, six primary trust boundaries (with STRIDE per boundary), OWASP Top 10 (2021) mapping, CNCF / SLSA supply-chain analysis, the comprehensive 40-row existing-mitigation table, and the 11 known gaps tracked for v3+. The companion review-prep bundle scoped for an external security consultant is tracked in `.bmad/output/reviews/v2-security-review-prep.md`.
+
 ## SSRF guard on URL-fetching endpoints
 
 Several endpoints fetch from a user-supplied URL (e.g. `GET /api/v1/catalog/validate` pulls `<repo>/index.yaml` from a Helm repo URL the user pastes into the Marketplace). To prevent an authenticated user from coaxing the server into hitting cluster-internal addresses (the K8s API, ArgoCD, the cloud-provider metadata service), Sharko ships a built-in SSRF guard that runs in front of every such handler.
