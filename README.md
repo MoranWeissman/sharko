@@ -18,7 +18,7 @@
 
 ---
 
-> ⚠️ **Pre-release — not production-ready.** Sharko is in active pre-production development. All `v1.x` tags are pre-release builds intended for evaluation, testing, and early adoption feedback. The first production-ready release will be **`v2.0.0`**, which has not shipped yet. Use at your own risk, pin to specific patch tags, and expect breaking changes between minor versions until GA.
+> **v2.0.0 — first production release.** Sharko v2.0.0 is the first production release. Earlier `v1.x` tags were pre-release development builds. From v2.0.0 onward, breaking changes only land in MAJOR version bumps per the [API stability contract](docs/site/developer-guide/api-stability.md).
 
 Sharko is a server that runs in your Kubernetes cluster, next to ArgoCD, and manages the lifecycle of addons across your fleet. Install it with a single Helm command, and a guided wizard walks you through connecting your Git repo, ArgoCD instance, and optional secrets provider — no config files, no env vars to set by hand.
 
@@ -26,26 +26,26 @@ Sharko is a server that runs in your Kubernetes cluster, next to ArgoCD, and man
 
 - **Wizard-based setup** — first run opens a step-by-step wizard: Git connection, ArgoCD connection, secrets provider, and repo initialization
 - **Fleet dashboard** — cluster health cards with sync status, addon counts, and connection indicators; managed and discovered clusters in separate sections
-- **Curated marketplace** — 45 vetted Helm addons with OpenSSF Scorecard signals, server-side ArtifactHub search, and smart values seeding (heuristic + optional LLM annotation) — every Add still goes through a Git PR
-- **Third-party catalogs (v1.23)** — operators set `SHARKO_CATALOG_URLS=...` to extend the embedded catalog with internal/partner addons; embedded entries win on conflicts
-- **Signed catalog entries (v1.23)** — every embedded entry is cosign-keyless-signed against Sigstore's public-good root; the UI shows a **Verified** badge for entries whose signing identity matches the operator's trust policy
-- **Trusted-source scanning bot (v1.23)** — daily GitHub Action scans CNCF Landscape + AWS EKS Blueprints and opens draft PRs proposing additions/updates to the embedded catalog
+- **Curated marketplace** — 45 vetted Helm addons. Each entry shows its open-source security score from the [OpenSSF Scorecard](https://securityscorecards.dev/) project. Sharko's backend searches the [ArtifactHub](https://artifacthub.io/) marketplace so the UI doesn't talk to it directly. When you add an addon, Sharko pre-fills the values file from the chart's defaults — and, if you've configured an AI provider, optionally annotates each field with what it does. Every Add still goes through a Git PR.
+- **Third-party catalogs** — operators point `SHARKO_CATALOG_URLS=...` at internal or partner catalogs to extend the built-in one. If the same addon appears in both, the built-in entry wins.
+- **Signed catalog entries** — every built-in entry is cryptographically signed using [cosign](https://docs.sigstore.dev/cosign/overview/) and Sigstore's public-good signing root, with no long-lived keys. The UI shows a **Verified** badge when the signing identity matches the operator's trust policy.
+- **Daily catalog scanner** — a daily GitHub Action scans the CNCF Landscape and AWS EKS Blueprints, then opens draft PRs proposing additions or updates to the built-in catalog.
 - **Addon catalog** — version matrix across every cluster, drift detection, and contextual help on all advanced config fields
 - **GitOps-native** — every write operation creates a PR (auto-merge optional); branches cleaned up after merge
 - **Managed vs discovered clusters** — Sharko surfaces all ArgoCD clusters; adopt discovered clusters into full management in one click
-- **Secrets provider** — deliver addon credentials to remote clusters via AWS Secrets Manager or Kubernetes Secrets (no ESO required)
-- **AI assistant** — context-aware troubleshooting panel with resizable panel and error-aware pre-filled prompts; supports OpenAI, Claude, Gemini, Ollama, and any OpenAI-compatible API
+- **Secrets provider** — deliver addon credentials to remote clusters via AWS Secrets Manager or Kubernetes Secrets (no External Secrets Operator required)
+- **AI assistant** — side panel that knows which page you're on. When an error is visible, the prompt is pre-filled with the error text so the user can just hit send. The panel is resizable. Supports OpenAI, Claude, Gemini, Ollama, and any OpenAI-compatible API.
 - **API keys** — long-lived tokens for Backstage, Terraform, and CI/CD integrations
 - **Unified API** — CLI, UI, and external integrations all use the same REST API
-- **Upgrade management** — security-aware upgrade recommendation cards (ArtifactHub advisories, security/breaking-change flags, scored best-path), analyze-before-upgrade enforcement, step-by-step progress, batch multi-addon upgrades
+- **Upgrade management** — upgrade recommendation cards that pull advisories from ArtifactHub, flag security fixes and breaking changes, and score the safest upgrade path. Analyze-before-upgrade is enforced. Each upgrade shows step-by-step progress; multiple addons can be upgraded in a single batch.
 - **ArgoCD diagnostics** — ArgoCD connection state surfaced per cluster; bootstrap app health shown on dashboard and observability view
 - **Auto-refresh** — dashboard, cluster detail, cluster overview, and addon detail pages refresh automatically (30s); addon catalog refreshes every 60s
 
 - **Addon dependency ordering** — declare `dependsOn` in the catalog to enforce deployment order; cycle detection prevents invalid graphs
 - **AI addon summaries** — AI-generated summaries of each addon's purpose and release notes, shown in the addon detail view
 - **Audit log** — every write operation recorded with actor, action, result, and timestamp; queryable via `GET /api/v1/audit`
-- **Multi-cloud provider stubs** — GCP and Azure provider stubs define the interface for community contributions
-- **E2E test framework** — test against a real ArgoCD + Kind cluster (`make e2e-setup && make e2e`)
+- **Multi-cloud provider stubs** — interface stubs for GCP and Azure so contributors can fill in those providers without redesigning the secrets layer
+- **End-to-end test framework** — test against a real ArgoCD + Kind cluster (`make e2e-setup && make e2e`)
 
 ## Demo
 
@@ -68,7 +68,7 @@ helm install sharko oci://ghcr.io/moranweissman/sharko/sharko \
   --namespace sharko --create-namespace
 ```
 
-If using AWS Secrets Manager for cluster credentials, add the IRSA annotation:
+If using AWS Secrets Manager for cluster credentials, add the IAM Roles for Service Accounts (IRSA) annotation so the pod can assume an AWS role:
 
 ```bash
 helm install sharko oci://ghcr.io/moranweissman/sharko/sharko \
@@ -78,10 +78,14 @@ helm install sharko oci://ghcr.io/moranweissman/sharko/sharko \
 
 ### 2. Get the Admin Password
 
+On first start, Sharko prints the auto-generated admin password to stdout (visible in `kubectl logs`) and writes it to a dedicated Kubernetes Secret for later retrieval:
+
 ```bash
-kubectl get secret sharko -n sharko \
-  -o jsonpath='{.data.admin\.initialPassword}' | base64 -d
+kubectl -n sharko get secret sharko-initial-admin-secret \
+  -o jsonpath='{.data.password}' | base64 -d
 ```
+
+The password is shown on stdout once at first start; the Secret retrieval works any time before the operator changes the admin password.
 
 ### 3. Open the UI
 
@@ -250,10 +254,10 @@ Sharko uses a pluggable provider to fetch cluster kubeconfigs:
 
 | Provider | Description |
 |----------|-------------|
-| `aws-sm` | AWS Secrets Manager (IRSA for auth — no static credentials) |
+| `aws-sm` | AWS Secrets Manager. Auth via IAM Roles for Service Accounts (IRSA) — no static credentials. |
 | `k8s-secrets` | Kubernetes Secrets (no cloud dependency) |
 
-Configure in **Settings → Secrets Provider**. Supports structured JSON secrets in AWS SM (individual keys instead of raw kubeconfig YAML) and STS EKS token generation via IRSA.
+Configure in **Settings → Secrets Provider**. Supports structured JSON secrets in AWS Secrets Manager (individual keys instead of raw kubeconfig YAML) and EKS token generation via IRSA + STS.
 
 ## Development
 
