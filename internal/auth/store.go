@@ -589,8 +589,11 @@ func getEnvDefault(key, fallback string) string {
 	return fallback
 }
 
-// MaybeLogBootstrapCredential logs the auto-generated bootstrap admin
-// credential exactly once on first boot, when all of the following hold:
+// MaybeLogBootstrapCredential displays the auto-generated bootstrap admin
+// credential ONCE on stdout at first start, and mirrors it to the
+// `sharko-initial-admin-secret` Kubernetes Secret for later retrieval.
+//
+// It runs only when all of the following hold:
 //
 //   - The store is running in K8s mode.
 //   - The bootstrap admin password was NOT supplied by the operator
@@ -599,15 +602,31 @@ func getEnvDefault(key, fallback string) string {
 //     Helm chart writes only on first install when no operator-supplied
 //     password is configured.
 //
-// The credential is logged in a clearly-marked block so operators can
-// recover it from `kubectl logs -n sharko deployment/sharko | grep -A4 BOOTSTRAP`.
-// After logging, the `admin.initialPassword` key is removed from the Secret
-// so subsequent restarts do not re-emit the credential.
+// The credential is INTENTIONALLY OMITTED from structured (slog) output to
+// prevent exfiltration via log scrapers. The banner is written to os.Stdout
+// via fmt.Fprintln, OUT of the structured-log shape, so a human watching
+// `kubectl logs` at first start still sees it. A separate audit event
+// ("bootstrap admin generated", username only) IS emitted via slog so log
+// scrapers can grep for the event timestamp without the password.
 //
-// SECURITY: this function MUST NOT log when the operator supplied a
-// password (env var path). Operator-supplied passwords are never logged
-// anywhere — see SeedBootstrapAdminFromEnv. This invariant is exercised
-// by TestMaybeLogBootstrapCredential_OperatorSuppliedNotLogged.
+// Operators who miss the stdout window retrieve the credential from the
+// dedicated `sharko-initial-admin-secret` Secret (mirrors ArgoCD's
+// `argocd-initial-admin-secret` pattern):
+//
+//	kubectl -n <namespace> get secret sharko-initial-admin-secret \
+//	    -o jsonpath='{.data.password}' | base64 -d
+//
+// After display, the `admin.initialPassword` key is removed from the source
+// Secret so subsequent restarts do not re-emit the credential.
+//
+// SECURITY: this function MUST NOT emit anything (banner or audit event)
+// when the operator supplied a password (env var path). Operator-supplied
+// passwords are never logged anywhere — see SeedBootstrapAdminFromEnv.
+// This invariant is exercised by
+// TestMaybeLogBootstrapCredential_OperatorSuppliedNotLogged. The defense-
+// in-depth invariant that the password never appears in structured slog
+// output is exercised by
+// TestMaybeLogBootstrapCredential_PasswordNotInStructuredLog.
 func (s *Store) MaybeLogBootstrapCredential() {
 	if s.mode != ModeK8s || s.clientset == nil {
 		return
@@ -630,10 +649,21 @@ func (s *Store) MaybeLogBootstrapCredential() {
 	}
 	password := string(pwBytes)
 
-	slog.Info("=== BOOTSTRAP ADMIN CREDENTIAL ===")
-	slog.Info("bootstrap admin generated", "username", "admin", "password", password)
-	slog.Info("This is the only time this credential will be shown. Store it securely.")
-	slog.Info("=== END BOOTSTRAP ADMIN CREDENTIAL ===")
+	// Banner goes to stdout, NOT through slog. Operators watching
+	// `kubectl logs` at first start see the credential here; log scrapers
+	// (which key off structured slog lines) do not. The audit event below
+	// records that the bootstrap fired, without leaking the value.
+	fmt.Fprintln(os.Stdout, "=== BOOTSTRAP ADMIN CREDENTIAL ===")
+	fmt.Fprintln(os.Stdout, "username: admin")
+	fmt.Fprintln(os.Stdout, "password:", password)
+	fmt.Fprintln(os.Stdout, "This is the only time this credential will be shown. Store it securely.")
+	fmt.Fprintln(os.Stdout, "Retrieve later via: kubectl -n <ns> get secret sharko-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d")
+	fmt.Fprintln(os.Stdout, "=== END BOOTSTRAP ADMIN CREDENTIAL ===")
+
+	// Audit event: username only. NEVER include the password attr here —
+	// the V2-2.4 RedactHandler wrapper would catch it, but defense-in-depth
+	// requires the credential never enter the structured-log shape at all.
+	slog.Info("bootstrap admin generated", "username", "admin")
 
 	// Also write a dedicated `sharko-initial-admin-secret` for operator
 	// retrieval (mirrors ArgoCD's argocd-initial-admin-secret pattern).

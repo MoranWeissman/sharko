@@ -29,6 +29,16 @@ Issues are filed here, **not fixed in V2-2.3**; the V2-2.3 gate is
 
 ### auth/store.go:634 — bootstrap admin password logged in plain text
 
+**Status: RESOLVED 2026-06-03**
+
+Fixed in V2-cleanup-1: `password` attr removed from slog emission at the
+call site; banner routed to stdout via `fmt.Fprintln(os.Stdout, ...)`;
+doc comment updated to point at `sharko-initial-admin-secret` retrieval
+path; regression test added at
+`internal/auth/store_bootstrap_log_test.go`.
+
+Original finding (preserved for context):
+
 ```go
 slog.Info("bootstrap admin generated", "username", "admin", "password", password)
 ```
@@ -158,9 +168,9 @@ The V2-2.4 RedactHandler wrapper catches all of these. The **call sites
 are still wrong** for the defense-in-depth reasons documented in
 [`logging.md`](logging.md#critical-rule).
 
-- [ ] **`internal/auth/store.go:634`** — `"password"` attribute holds
-  the raw bootstrap admin password. See [headline finding](#headline-finding-marquee)
-  above.
+- [x] **`internal/auth/store.go:634`** — `"password"` attribute holds
+  the raw bootstrap admin password. **RESOLVED 2026-06-03** in V2-cleanup-1.
+  See [headline finding](#headline-finding-marquee) above.
 - [ ] `internal/ai/memory.go:84` —
   `slog.Info("agent memory saved", "content", content, "category", category)`.
   The `content` attribute is the raw memory entry — likely user-supplied
