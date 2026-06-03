@@ -16,7 +16,7 @@ recent release is the first thing readers see.
 
 ## v2.0.0 — Production launch
 
-**Status:** in progress (release date TBD; epic V2-4 + V2-5 + final retrospective pending)
+**Status:** released 2026-06-03
 
 ### Breaking changes
 
@@ -57,6 +57,40 @@ No breaking changes — v2.0.0 is the first production release of Sharko. The v1
   docs / security); GitHub Discussions enabled with a Roadmap input
   category.
   (V2-6 subset: PR [#366](https://github.com/MoranWeissman/sharko/pull/366))
+- **Operator runbook coverage for the 57 inventoried failure modes** —
+  runbook style guide + failure-mode index (57 modes: P0=12, P1=28,
+  P2=12) shipped first; 35 new runbooks landed in 3 sequential PRs
+  (12 P0 + 11 P1 Providers/Catalog + 14 P1
+  API/Orchestrator/Reconciler/Webhook/AI/Adopt); a style-compliance
+  refresh closed the gap on 9 existing pages. Every operator-facing
+  failure mode in the P0+P1 tiers now has a Symptoms → Diagnosis →
+  Mitigation → Root cause → Prevention runbook.
+  (V2-4: PRs [#375](https://github.com/MoranWeissman/sharko/pull/375),
+  [#376](https://github.com/MoranWeissman/sharko/pull/376),
+  [#377](https://github.com/MoranWeissman/sharko/pull/377),
+  [#378](https://github.com/MoranWeissman/sharko/pull/378),
+  [#379](https://github.com/MoranWeissman/sharko/pull/379))
+- **Clean cut from v1.x to v2.0.0** — V125-1-11 compat shim verified
+  fully retired in production code (only test-file regression guards
+  remain); a v1-to-v2 migration stub documents the reinstall path; the
+  v2.0.0 release-notes scaffold replaces ad-hoc placeholders.
+  (V2-5: PR [#374](https://github.com/MoranWeissman/sharko/pull/374))
+- **Public roadmap + API stability contract** — a community roadmap
+  page captures the v3+ trajectory (fine-grained RBAC, SSO,
+  multi-ArgoCD, operator mode, rule-based auto-merge); an API
+  stability page tiers all 128 endpoints (95 stable / 26 beta / 7
+  alpha) with a deprecation policy (1 MINOR version lead time,
+  `// Deprecated:` doc-comment + release-notes entry + WARN log +
+  removal in subsequent minor).
+  (V2-6.3: PR [#380](https://github.com/MoranWeissman/sharko/pull/380))
+- **v2.0.0 threat model + 3rd-party security review bundle** — a
+  STRIDE-per-trust-boundary threat model covering 6 primary boundaries
+  × 6 STRIDE categories (36 cells), 40 mitigations (~95% citing
+  V2-shipped artifacts), and 11 residual-risk gaps; a
+  security-review-prep bundle ready for an external consultant
+  (CNCF-coordinated or directly contracted). Disclosure SLO formalized:
+  5 business days acknowledgment, 30-day HIGH fix, 90-day MEDIUM.
+  (V2-6.5: PR [#381](https://github.com/MoranWeissman/sharko/pull/381))
 
 ### Removed
 
@@ -68,12 +102,28 @@ guards from V125-1-11, which stay.*
 
 ### Security
 
-*To be filled if V2-6.5 threat model ships before v2.0.0; otherwise
-reserved for security fixes during V2-4 + V2-5.*
+- **Bootstrap admin credential no longer in structured logs** — the
+  auto-generated bootstrap admin password is now displayed on stdout at
+  first start (visible to operators watching `kubectl logs`) but is
+  structurally absent from slog emissions. The
+  `sharko-initial-admin-secret` Kubernetes Secret remains the
+  authoritative retrieval path. Defense-in-depth: a regression test
+  asserts the password field cannot appear in the structured-log buffer
+  even if the V2-2.4 RedactHandler wrapper is bypassed in a future
+  refactor.
+  ([#382](https://github.com/MoranWeissman/sharko/pull/382))
+- **STRIDE threat model published** — see the V2-6.5 entry under
+  "What's new" for the full surface analysis, mitigation inventory,
+  and residual-risk gap catalogue.
+  ([#381](https://github.com/MoranWeissman/sharko/pull/381))
 
 ### Bug fixes
 
-*Reserved for bug-only PRs landed alongside V2 epics.*
+- **`internal/auth/store.go::MaybeLogBootstrapCredential` no longer
+  emits the bootstrap admin password as a structured slog attribute.**
+  See the entry under "Security" for the full fix shape and
+  defense-in-depth regression contract.
+  ([#382](https://github.com/MoranWeissman/sharko/pull/382))
 
 ---
 
