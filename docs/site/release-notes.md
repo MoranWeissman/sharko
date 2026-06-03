@@ -20,7 +20,7 @@ recent release is the first thing readers see.
 
 ### Breaking changes
 
-*To be filled as V2-4, V2-5, and V2-6.3 ship.*
+No breaking changes — v2.0.0 is the first production release of Sharko. The v1.x development line was pre-production; v1.x installs should reinstall fresh per the [migration guide](operator/migration-v1-to-v2.md).
 
 ### What's new
 
