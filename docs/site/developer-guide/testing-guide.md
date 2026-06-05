@@ -299,7 +299,7 @@ Prefer `getByRole` over `getByTestId`. If a query fails, the failure tells you w
 
 ### Pattern — accessibility with axe-core
 
-`ui/src/__tests__/a11y.test.tsx` is the reference. New pages should add a `describe(...)` block that renders the page and asserts zero `axe` violations. WCAG 2.1 AA is the target for everything shipped from v1.21 onward.
+`ui/src/__tests__/a11y.test.tsx` is the reference. New pages should add a `describe(...)` block that renders the page and asserts zero `axe` violations. WCAG 2.1 AA is the target for every new UI surface.
 
 ```tsx
 import { axe, toHaveNoViolations } from "vitest-axe";
@@ -477,13 +477,13 @@ Hurl exits non-zero if any assertion fails; CI integration is just `hurl --test`
 3. Wire it into `scripts/smoke/local-docker.sh` (Layer 5) so a single command boots Sharko + runs the suite + tears down.
 4. Once stable, add a CI job (likely the `e2e.yml` workflow) that runs the Hurl pack against the kind-cluster Sharko.
 
-Target for the pack: 5–10 contract tests covering the v1.23 catalog-extensibility surface (`/api/v1/catalog/sources`, `/api/v1/catalog/validate`, signed-entry verification), then expand from there.
+Target for the pack: 5–10 contract tests covering the catalog-extensibility surface (`/api/v1/catalog/sources`, `/api/v1/catalog/validate`, signed-entry verification), then expand from there.
 
 ---
 
 ## Layer 5 — Local Docker smoke
 
-The throwaway-tag verification pattern Moran already used during the v1.23 rc.0–rc.3 cycle, formalized into a script anyone can run.
+The throwaway-tag verification pattern used during early release-candidate cycles, formalized into a script anyone can run.
 
 ### What you need
 
@@ -779,11 +779,11 @@ ArgoCD's E2E harness has ~5 years of accumulated test infrastructure (cluster se
 
 Concrete, sequenced. This is the plan, not a wishlist.
 
-1. **Personal smoke pass — this week.** Moran himself walks Layer 5 end-to-end against the v1.23 image. Document any rough edges in a follow-up issue. This is the gate before V2.0.0 work begins.
-2. **V124-1.3 — CI roundtrip test for cosign sign/verify.** Already planned in the v1.24 polish bundle. Adds an automated verification that signed catalog entries verify after a release.
-3. **Adopt Hurl for `tests/api/`.** Add 5–10 contract tests covering the v1.23 catalog-extensibility surface (`/api/v1/catalog/sources`, `/api/v1/catalog/validate`, signed-entry verification, source merging). Wire into Layer 5 so `make smoke` runs the pack.
-4. **Flip `e2e.yml` from manual to PR-triggered.** Prerequisite: 3 more E2E flows (`TestRegisterCluster`, `TestAddAddon_AppearsInArgoCD`, `TestArgoCDSyncCompletes`) so the suite has real coverage. Target: V124 or V125.
-5. **Defer to V2 hardening.** Playwright UI E2E, k6 load tests, chaos / disruption tests, multi-version ArgoCD compatibility matrix. None of these block V2.0.0 GA — they're V2.x maturity work for the CNCF incubation push.
+1. **Personal smoke pass on every release candidate.** Walk Layer 5 end-to-end against the candidate image; document any rough edges in a follow-up issue.
+2. **CI roundtrip test for cosign sign/verify.** Adds an automated verification that signed catalog entries verify after a release.
+3. **Adopt Hurl for `tests/api/`.** Add 5–10 contract tests covering the catalog-extensibility surface (`/api/v1/catalog/sources`, `/api/v1/catalog/validate`, signed-entry verification, source merging). Wire into Layer 5 so `make smoke` runs the pack.
+4. **Flip `e2e.yml` from manual to PR-triggered.** Prerequisite: 3 more E2E flows (`TestRegisterCluster`, `TestAddAddon_AppearsInArgoCD`, `TestArgoCDSyncCompletes`) so the suite has real coverage.
+5. **Maturity work for CNCF incubation.** Playwright UI E2E, k6 load tests, chaos / disruption tests, multi-version ArgoCD compatibility matrix.
 
 ---
 

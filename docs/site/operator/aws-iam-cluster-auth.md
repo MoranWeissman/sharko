@@ -201,11 +201,10 @@ present in the v2 deployment:
   before the Test API call.
 
 Once all three are in place, **Test cluster** works for IAM-auth
-EKS clusters identically to bearer-token clusters. The v2 PRD
-includes this as a tracked deliverable; see the architecture
-roadmap and the v1 → v2 migration runbook
-([`migration-v1-to-v2.md`](migration-v1-to-v2.md)) for the upgrade
-sequence.
+EKS clusters identically to bearer-token clusters. The v2.0.0
+production release shipped this path; see the architecture
+roadmap and the [`eks-token-generation-failed.md`](eks-token-generation-failed.md)
+runbook for IRSA misconfiguration in v2.0.0+.
 
 ### 4. Last resort — re-register the cluster as bearer-token
 
@@ -269,24 +268,15 @@ different surface across versions.
 
 How to make this failure mode less likely going forward.
 
-- **Upgrade to v2.0.0** — the single most effective preventative
-  measure. v2 ships the IAM-auth Test path with IRSA-backed token
-  minting. See
-  [`migration-v1-to-v2.md`](migration-v1-to-v2.md) for the
-  step-by-step upgrade procedure.
-- **Document the v1.x limitation in your on-boarding runbook.**
-  Operators on-boarding EKS clusters into Sharko v1.x should be
-  warned up-front that the Test button does not work for IAM-auth
-  clusters; the cluster will still register and ArgoCD will still
-  deploy addons. This eliminates the "did my registration fail?"
-  triage spiral.
-- **Pre-stage IRSA before v2 upgrade.** Operators planning the v2
-  upgrade can pre-create the IRSA role and IAM policy before
-  upgrading Sharko. After the v2 image rolls, annotate the
-  `sharko` ServiceAccount with the IRSA role-ARN, restart the
-  Sharko pod, and the Test path immediately works for every
-  previously-registered IAM-auth cluster without re-registration.
-  Documented in the v1 → v2 migration runbook.
+- **Run v2.0.0 or later** — v2 ships the IAM-auth Test path with
+  IRSA-backed token minting. Operators still on a pre-v2 install
+  should upgrade.
+- **Pre-stage IRSA on upgrade.** Operators upgrading to v2 can
+  pre-create the IRSA role and IAM policy before swapping the image.
+  After the v2 image rolls, annotate the `sharko` ServiceAccount
+  with the IRSA role-ARN, restart the Sharko pod, and the Test path
+  immediately works for every previously-registered IAM-auth cluster
+  without re-registration.
 
 ---
 
@@ -300,8 +290,6 @@ How to make this failure mode less likely going forward.
   and what v2 adds.
 - [`eks-token-generation-failed.md`](eks-token-generation-failed.md)
   — the v2.0.0+ equivalent failure when IRSA is misconfigured.
-- [`migration-v1-to-v2.md`](migration-v1-to-v2.md) — v1 → v2 upgrade
-  path including IRSA pre-staging for the IAM-auth Test fix.
 - [`failure-mode-index.md`](failure-mode-index.md) — master inventory.
 
 ## Escalation

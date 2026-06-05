@@ -12,10 +12,7 @@ describes the maintainer's **intent**. This page describes the
 
 ## Why this contract exists
 
-Sharko has been an internal / pre-release project across the entire
-v1.x development cycle. v2.0.0 is the first production release (see
-[`migration-v1-to-v2.md`](../operator/migration-v1-to-v2.md) for the
-"there is no migration; reinstall fresh" framing) and the first time
+v2.0.0 is the first production release of Sharko and the first time
 the API has stability commitments behind it. Before this page,
 integrators had no formal way to know which endpoints they could
 build against safely; the answer was "ask the maintainer." That does
@@ -223,7 +220,7 @@ flow.
 | POST | `/addons/{name}/upgrade` | `stable` | Surface default. |
 | POST | `/addons/upgrade-batch` | `stable` | Surface default. |
 | GET | `/addons/version-matrix` | `beta` | Newer aggregated read; shape may evolve as fleets grow. |
-| POST | `/addons/unwrap-globals` | `beta` | v1.21 migration endpoint; intended for sunset once all installs have migrated. |
+| POST | `/addons/unwrap-globals` | `beta` | Legacy migration endpoint; intended for sunset once unused. |
 | POST | `/addons/{name}/values/annotate` | `beta` | AI annotate; shape evolves with AI providers. |
 | PUT | `/addons/{name}/values/ai-opt-out` | `beta` | AI opt-out directive; shape evolves with AI. |
 
@@ -509,8 +506,6 @@ be needed to cross-check the policy itself.
   rough timeframe; describes intent.
 - [Release notes](../release-notes.md) — what actually shipped in
   each release; the authoritative changelog.
-- [Migrating from v1.x to v2.0.0](../operator/migration-v1-to-v2.md)
-  — why pre-v2.0.0 versions are NOT covered by this contract.
 - [Logging](logging.md) — the slog-based logging that the
   deprecation-warning runtime log lines hook into; explains
   `request_id` correlation.

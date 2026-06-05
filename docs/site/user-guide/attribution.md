@@ -1,6 +1,6 @@
 # Git Attribution
 
-Every change Sharko makes lands as a Git commit in your GitOps repo. Starting in **v1.20**, Sharko surfaces who triggered each change in three ways: the commit author, a `Co-authored-by:` trailer, and an attribution icon in the audit log.
+Every change Sharko makes lands as a Git commit in your GitOps repo. Sharko surfaces who triggered each change in three ways: the commit author, a `Co-authored-by:` trailer, and an attribution icon in the audit log.
 
 ## How it works
 

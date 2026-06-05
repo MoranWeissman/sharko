@@ -365,18 +365,17 @@ entry after the fix lands).
 
 ### Schema drift between V125-1-9 envelope and bare-YAML
 
-The V125-1-9 envelope is the canonical shape; bare-YAML
-`managed-clusters.yaml` files are "legacy-compat only during V125
-and removed in V126" per the
-[yaml-schema-migration runbook](yaml-schema-migration.md). If the
-existing file is the legacy shape, the AddClusterEntry path may fail
-to round-trip cleanly.
+The schema envelope (`apiVersion: sharko.io/v1`) is the canonical
+shape for `managed-clusters.yaml`. If the existing file is a legacy
+bare-YAML shape, the AddClusterEntry path may fail to round-trip
+cleanly.
 
 Diagnostic signature: Diagnosis step 2 shows `unmarshal errors`. The
-file lacks the V125-1-9 envelope (`apiVersion: sharko.io/v1`).
+file lacks the envelope (`apiVersion: sharko.io/v1`).
 
-Fix lane: migrate `managed-clusters.yaml` to the envelope shape per
-the migration runbook, then re-attempt the adopt.
+Fix lane: edit `managed-clusters.yaml` to wrap content in the
+envelope shape and re-run `sharko validate-config configuration/`
+to confirm the schema passes, then re-attempt the adopt.
 
 ### Idempotent re-adoption of an already-listed cluster
 
@@ -448,8 +447,6 @@ levers:
 - [`cluster-reconciler.md`](cluster-reconciler.md) — the two-direction
   policy that turns the partial state into Secret deletion 30s after
   the adopt.
-- [`yaml-schema-migration.md`](yaml-schema-migration.md) — the
-  V125-1-9 envelope migration; explains schema-drift root cause.
 - [`secret-push-silently-failed.md`](secret-push-silently-failed.md)
   — the P0 sibling "Warn-but-proceed silently" pattern in the
   orchestrator. Both flagged in the logging audit punch list.

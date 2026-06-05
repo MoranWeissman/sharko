@@ -70,13 +70,6 @@ cluster registration, values edits). The Dashboard's PR panel has two tabs:
   underlying endpoint (`GET /api/v1/prs/merged?limit=50`, max 100) if you
   need to see further back.
 
-  **Note (v1.21 QA Bundle 4):** a bug meant GitHub's list-PRs response
-  was reporting merged PRs as plain `closed`, which left this tab empty
-  until a new PR was merged through the GitHub API directly. Fixed by
-  keying on GitHub's `merged_at` timestamp instead of the (unreliable-in-
-  list-responses) `merged` boolean. Upgrade to 1.21 or later for the
-  Merged tab to populate.
-
 The current tab is preserved in the URL (`?prs_state=merged`) so deep-links
 work — share a dashboard URL with `?prs_state=merged` to land on the merged
 view directly.

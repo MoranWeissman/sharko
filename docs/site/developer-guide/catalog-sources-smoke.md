@@ -1,11 +1,10 @@
 # Third-party Catalog Source Smoke Runbook
 
 Operator-facing smoke procedure for the third-party catalog fetcher
-(shipped in **v1.23** under `SHARKO_CATALOG_URLS`, hardened across
-V123-1.x and V123-2.x). Walk this once on a fresh Sharko deployment
-when you first turn the feature on — it confirms that the fetcher
-runs, the API surfaces your source, and the Browse UI renders the
-merged entries with the correct source badges.
+configured via `SHARKO_CATALOG_URLS`. Walk this once on a fresh Sharko
+deployment when you first turn the feature on — it confirms that the
+fetcher runs, the API surfaces your source, and the Browse UI renders
+the merged entries with the correct source badges.
 
 It is **not** a continuous monitoring procedure — the Prometheus
 metrics emitted by the fetcher (`sharko_catalog_source_fetch_total`,

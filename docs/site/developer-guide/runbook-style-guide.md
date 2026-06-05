@@ -474,8 +474,8 @@ version is vague handwaving.
   credentials for the Sharko pod's role to enable Test."` on the
   Cluster detail page when the operator clicks "Test cluster"
 - API: `POST /api/v1/clusters/{name}/test` returns `503 Service
-  Unavailable` with body `{"error": "iam_auth_unsupported_in_v1"}`
-- No specific alert fires (v1.x limitation, not a runtime failure)
+  Unavailable` with body `{"error": "iam_auth_unsupported"}`
+- No specific alert fires (known limitation, not a runtime failure)
 ```
 
 **Bad:**
@@ -532,15 +532,15 @@ common root causes and an extensive monitoring section can run to ~900
 lines and still be the right shape. A trivially-bounded failure mode
 (e.g.
 [`aws-iam-cluster-auth.md`](../operator/aws-iam-cluster-auth.md))
-can run to ~150 lines because the entire fix is "wait for v2"; that
-page is honest about its scope and does not need to pad to 300.
+can run to ~150 lines because the entire fix is a single workaround;
+that page is honest about its scope and does not need to pad to 300.
 
 If you're outside the target range, **say so explicitly** in the
 runbook's intro:
 
-> This page is short because the entire mitigation is "wait for v2."
-> If you need a workaround in v1.x, see <link>; everything else is
-> tracked under <epic>.
+> This page is short because the entire mitigation is a single config
+> change. If you need a workaround for the underlying limitation, see
+> <link>; everything else is tracked under <epic>.
 
 Or:
 

@@ -2,7 +2,7 @@
 
 The **Marketplace** is Sharko's curated catalog of community Helm charts that you can add to your cluster fleet without leaving the UI. It surfaces the projects we've vetted (CNCF graduates, AWS EKS Blueprints, Bitnami baseline picks, and a small set of vendor-curated charts) along with an OpenSSF Scorecard signal so you can pick safer-by-default options first.
 
-The Marketplace is a **read-only browse experience**. Submitting an addon goes through the same v1.20 GitOps PR flow as every other Sharko mutation — nothing lands in your `addons-catalog.yaml` until a pull request opens (and, if your active connection has `pr_auto_merge` enabled, merges automatically).
+The Marketplace is a **read-only browse experience**. Submitting an addon goes through the same GitOps PR flow as every other Sharko mutation — nothing lands in your `addons-catalog.yaml` until a pull request opens (and, if your active connection has `pr_auto_merge` enabled, merges automatically).
 
 ## Overview — three ways to add an addon
 
@@ -15,8 +15,6 @@ Sharko gives you three discovery paths. Pick the one that matches what you alrea
 | **Manual Add Addon** | You're installing a chart that isn't in our catalog and isn't on ArtifactHub — internal repos, vendor charts hosted on a homepage CDN, custom forks. | Catalog tab → **Add Addon** button — see [Managing Addons](addons.md#adding-an-addon-to-the-catalog) |
 
 All three paths land in the same place: a PR against your `addons-catalog.yaml`, a generated `addons-global-values/<addon>.yaml`, and an audited `addon_added` event with a `source` detail field that records which path you used.
-
-> The Paste-Helm-URL tab that early v1.21 builds shipped was retired in QA so the Marketplace stays focused on discovery — manual Add Addon now auto-validates the repo URL and lists the available chart names, replacing what Paste URL did.
 
 ## Browsing the catalog
 
@@ -59,7 +57,7 @@ Clicking a Marketplace card swaps the Marketplace grid for an **in-page addon de
 2. **Add to your catalog** — an embedded form (NOT a popup) with an explainer:
    > This creates an ArgoCD ApplicationSet for `<addon>` and adds an entry to your `addons-catalog.yaml`. The addon will be available to deploy on any cluster afterwards.
    Fields are **Display name** (defaults to the chart name), **Namespace** (defaults to the chart's recommended namespace), and **Chart version** (top-10 stable picker; tick **Show pre-releases** to expand). The submit button is labelled **Add to catalog**. There is no sync-wave field — you set sync wave on the addon page after the PR merges (see [Editing ArgoCD App Options](argocd-app-options.md)).
-3. **README** — two tabs, **Helm Chart** (default) and **Project**. The Helm Chart tab renders the upstream chart README fetched from ArtifactHub. The Project tab (added in v1.21 QA Bundle 4) fetches the upstream project's README from GitHub (resolved server-side via the chart's `source_url` or `homepage`) — use this when the chart README is a thin install blurb and you want the tool's own docs. The Project tab lazy-loads on click so we don't pay GitHub API round-trips for users who never open it. When `source_url` isn't a GitHub URL or the repo has no `README.md`, the Project tab shows a "Project README not available" empty state. A **View on ArtifactHub** / **View on GitHub** link sits in the section header depending on which tab is active. The README panel reserves a stable scrollbar gutter so the scroll track stays visible on long READMEs (argo-cd is a good test subject). The detail view is constrained to `max-w-5xl` so paragraphs don't stretch to unreadable widths on desktop.
+3. **README** — two tabs, **Helm Chart** (default) and **Project**. The Helm Chart tab renders the upstream chart README fetched from ArtifactHub. The Project tab fetches the upstream project's README from GitHub (resolved server-side via the chart's `source_url` or `homepage`) — use this when the chart README is a thin install blurb and you want the tool's own docs. The Project tab lazy-loads on click so we don't pay GitHub API round-trips for users who never open it. When `source_url` isn't a GitHub URL or the repo has no `README.md`, the Project tab shows a "Project README not available" empty state. A **View on ArtifactHub** / **View on GitHub** link sits in the section header depending on which tab is active. The README panel reserves a stable scrollbar gutter so the scroll track stays visible on long READMEs (argo-cd is a good test subject). The detail view is constrained to `max-w-5xl` so paragraphs don't stretch to unreadable widths on desktop.
 4. **Footer** — Helm chart name, repo URL, docs URL, source URL, and the maintainer list.
 
 Click **← Back to Marketplace** at the top to return to the grid; your filter state is preserved on the URL so you land back where you came from.
@@ -74,7 +72,7 @@ For full step-by-step coverage of the manual path, see [Managing Addons → Addi
 
 ## What happens after you click Add
 
-When you click **Add to catalog** (Marketplace) or **Add Addon** (manual), Sharko calls the existing `POST /api/v1/addons` endpoint. The handler reuses v1.20's tiered Git plumbing and v1.21's smart-values pipeline. End-to-end:
+When you click **Add to catalog** (Marketplace) or **Add Addon** (manual), Sharko calls the existing `POST /api/v1/addons` endpoint. The handler runs through the tiered Git attribution model and the smart-values pipeline. End-to-end:
 
 1. **Tier 2 attribution.** The endpoint is registered as a Tier 2 (configuration) mutation, so Sharko prefers your personal GitHub PAT when one is configured (Settings → My Account). Without a PAT, the change is committed by the Sharko service account with a `Co-authored-by:` trailer for you, and an inline **AttributionNudge** banner appears next to the submit button explaining the fallback. See [Git Attribution](attribution.md) for the model.
 2. **ApplicationSet + catalog entry.** A branch is created (default prefix `sharko/`), Sharko commits two things atomically:

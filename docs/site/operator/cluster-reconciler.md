@@ -226,8 +226,8 @@ again. The fix is to correct the YAML via a follow-up PR; the next
 tick after the fix converges normally.
 
 This is the operational-safety guarantee V125-1-9 was built to
-provide. See the [YAML schema migration runbook](./yaml-schema-migration.md)
-for the validator surface.
+provide. Run `sharko validate-config configuration/` locally to
+exercise the same validator surface before opening a PR.
 
 ### What if git is rate-limited or unreachable?
 
@@ -368,11 +368,8 @@ V125-2 polish.
 
 ## Related reading
 
-- [YAML schema migration (V125-1-9)](./yaml-schema-migration.md) —
-  the schema envelope contract the reconciler reads against.
 - [Configuration reference](./configuration.md) — Helm values surface
-  (the reconciler is on-by-default in v1.25; no operator opt-in
-  required).
+  (the reconciler is on-by-default; no operator opt-in required).
 - [Audit log](./audit-log.md) — query syntax for the events listed
   above.
 - Architecture decision: cluster reconciler — the design discussion
