@@ -5,10 +5,12 @@ builds:
     binary: sharko
     env:
       - CGO_ENABLED=0
+    # Windows dropped in V2-cleanup-6 (cross-platform syscall blocker:
+    # cmd/sharko/client.go uses syscall.Stat_t per the V124-2.5 defensive
+    # HOME resolver, which is Unix-only).
     goos:
       - linux
       - darwin
-      - windows
     goarch:
       - amd64
       - arm64
@@ -18,9 +20,6 @@ builds:
 archives:
   - format: tar.gz
     name_template: "sharko_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    format_overrides:
-      - goos: windows
-        format: zip
 
 checksum:
   name_template: 'checksums.txt'
