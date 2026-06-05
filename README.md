@@ -18,7 +18,7 @@
 
 ---
 
-> **v2.0.0 — first production release.** Sharko v2.0.0 is the first production release. Earlier `v1.x` tags were pre-release development builds. From v2.0.0 onward, breaking changes only land in MAJOR version bumps per the [API stability contract](docs/site/developer-guide/api-stability.md).
+> **v2.0.0 — production release.** Sharko follows [semantic versioning](https://semver.org/) and an [API stability contract](docs/site/developer-guide/api-stability.md): breaking changes only land in MAJOR version bumps.
 
 Sharko is a server that runs in your Kubernetes cluster, next to ArgoCD, and manages the lifecycle of addons across your fleet. Install it with a single Helm command, and a guided wizard walks you through connecting your Git repo, ArgoCD instance, and optional secrets provider — no config files, no env vars to set by hand.
 
