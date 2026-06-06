@@ -70,8 +70,8 @@ WARN_MARK="${YELLOW}[WARN]${RESET}"
 FAIL_MARK="${RED}[FAIL]${RESET}"
 
 # ---- log helpers ----
-log_ok()   { printf '%s %s\n' "$OK_MARK"   "$*"; }
-log_info() { printf '%s %s\n' "$INFO_MARK" "$*"; }
+log_ok()   { printf '%s %s\n' "$OK_MARK"   "$*" >&2; }
+log_info() { printf '%s %s\n' "$INFO_MARK" "$*" >&2; }
 log_warn() { printf '%s %s\n' "$WARN_MARK" "$*" >&2; }
 log_fail() { printf '%s %s\n' "$FAIL_MARK" "$*" >&2; }
 
@@ -339,7 +339,8 @@ preflight() {
             # Count currently running kind clusters (incl. the target if up).
             local running_clusters=0
             if command -v kind >/dev/null 2>&1; then
-                running_clusters=$(kind get clusters 2>/dev/null | grep -cv '^$' || echo 0)
+                running_clusters=$(kind get clusters 2>/dev/null | grep -cv '^$')
+                [ -n "$running_clusters" ] || running_clusters=0
             fi
             # Each kind control-plane node roughly needs 2 GB headroom; plus
             # 2 GB baseline for Docker itself + system overhead. Heuristic.
@@ -634,12 +635,29 @@ EOF
     log_ok "image loaded into kind"
 
     # 5. helm install
+    #
+    # clusterRegSource.{type,argocdNamespace}=argocd set SHARKO_CLUSTER_REG_TYPE
+    # + SHARKO_CLUSTER_REG_ARGOCD_NAMESPACE (charts/sharko/templates/deployment.yaml:88-91).
+    # These are a PRECONDITION for the cluster Secret reconciler that turns a
+    # registered cluster into a reachable ArgoCD cluster Secret — but they are
+    # NOT sufficient on their own. The reconciler in cmd/sharko/serve.go:754 is
+    # gated on `credProvider != nil`, and credProvider is resolved from the
+    # SAVED ArgoCD connection (or in-cluster auto-default once a connection
+    # exists), NOT from these helm flags. So a fresh `ready` env still needs the
+    # maintainer to save the ArgoCD connection in the Sharko wizard before the
+    # reconciler comes up. (And kubeconfig-pasted creds don't live in any
+    # backend, so even a running reconciler can't build their Secret — that's
+    # the load-bearing product fix in Story 8.2.) Setting the flags here keeps
+    # the dev env honest and ready for that wiring; the `ready` Next steps note
+    # spells out the wizard requirement.
     log_info "helm install sharko in namespace '${SHARKO_NAMESPACE}'"
     if ! helm install sharko "${REPO_ROOT}/charts/sharko/" \
          --namespace "${SHARKO_NAMESPACE}" --create-namespace \
          --set image.repository=sharko \
          --set image.tag="${IMAGE_TAG}" \
-         --set image.pullPolicy=Never >/tmp/sharko-dev-helm.log 2>&1; then
+         --set image.pullPolicy=Never \
+         --set clusterRegSource.type=argocd \
+         --set clusterRegSource.argocdNamespace=argocd >/tmp/sharko-dev-helm.log 2>&1; then
         log_fail "helm install failed (last 20 lines):"
         tail -20 /tmp/sharko-dev-helm.log >&2
         return 1
@@ -2156,6 +2174,19 @@ EOF
     printf '%s\n' "$VT"
     printf '%s  Port-forwards: %sBOTH running (sharko %s, argocd %s)%s\n' \
         "$VT" "$GREEN" "$SHARKO_LOCAL_PORT" "$ARGOCD_LOCAL_PORT" "$RESET"
+    printf '%s\n' "$VT"
+    printf '%s%s%s\n' "$MID_L" "$rule" "$MID_R"
+    printf '%s  %sNext steps%s\n' "$VT" "$BOLD" "$RESET"
+    printf '%s    1. Open Sharko:   %shttp://localhost:%s%s  (admin / password above)\n' \
+        "$VT" "$BOLD" "$SHARKO_LOCAL_PORT" "$RESET"
+    printf '%s    2. Add a cluster for Sharko to manage:\n' "$VT"
+    printf '%s         %s./scripts/sharko-dev.sh kind-target create 1%s\n' \
+        "$VT" "$BOLD" "$RESET"
+    printf '%s    3. Register it in the UI:\n' "$VT"
+    printf '%s         Clusters -> Register -> Generic K8s (kubeconfig),\n' "$VT"
+    printf '%s         then paste the kubeconfig file the command above prints.\n' "$VT"
+    printf '%s         (The cluster Secret reconciler only activates after you\n' "$VT"
+    printf '%s          save the ArgoCD connection in the Sharko wizard.)\n' "$VT"
     printf '%s\n' "$VT"
     printf '%s%s%s\n' "$MID_L" "$rule" "$MID_R"
     printf '%s  Eval-via-pipe to export into your shell:\n' "$VT"
