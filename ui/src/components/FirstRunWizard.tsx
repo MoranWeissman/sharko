@@ -19,11 +19,12 @@ import {
 import {
   api,
   initRepo,
+  getInitStatus,
   getOperation,
   operationHeartbeat,
   isUnauthorizedError,
 } from '@/services/api'
-import type { OperationStep } from '@/services/api'
+import type { OperationStep, InitStatus } from '@/services/api'
 import { useConnections } from '@/hooks/useConnections'
 
 /* ------------------------------------------------------------------ */
@@ -120,8 +121,10 @@ function StepWelcome({ onNext }: { onNext: () => void }) {
           Welcome to Sharko!
         </h2>
         <p className="text-[#2a5a7a] dark:text-gray-400 max-w-md">
-          Sharko manages your Kubernetes addons through ArgoCD and Git. Let's
-          connect your Git repository and ArgoCD instance to get started.
+          Sharko stores your addon setup as files in a Git repo — the same way
+          ArgoCD works. You can use a brand-new empty repo (Sharko fills it in
+          for you) or one you've already set up with Sharko. Next, you'll
+          connect that repo and your ArgoCD instance.
         </p>
       </div>
       <button
@@ -173,7 +176,9 @@ function StepGit({
         </h3>
       </div>
       <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
-        Connect Sharko to your Git repository where addon configuration will be stored.
+        This is a dedicated config repo for Sharko — not your application's
+        code. A brand-new empty repo works great; Sharko sets up the folders
+        and files for you in the next step.
       </p>
 
       <div className="space-y-4">
@@ -206,7 +211,7 @@ function StepGit({
           <p className="mt-1 text-[10px] text-[#3a6a8a]">
             {hasSavedToken
               ? 'Submitting blank keeps your saved credential. Enter a new value to replace it.'
-              : 'Needs read/write access to the repository.'}
+              : 'Needs read and write access so Sharko can open pull requests.'}
           </p>
         </div>
       </div>
@@ -501,6 +506,38 @@ function StepInit({ onDone, resumed, onBack }: { onDone: () => void; resumed?: b
   // flow.
   const [sessionExpired, setSessionExpired] = useState(false)
 
+  // Repo-state probe (V2-cleanup-9). On mount we ask the backend whether the
+  // repo is empty / already initialized / partial so Step 4 can render honest,
+  // probe-backed copy instead of the old hardcoded "appears to be empty". On a
+  // network/probe failure we fall back to the Initialize offer ('empty') so a
+  // flaky probe never blocks the user.
+  const [repoState, setRepoState] = useState<
+    'loading' | 'empty' | 'initialized' | 'partial'
+  >('loading')
+  const [probeDetail, setProbeDetail] = useState<string>('')
+  const [probeFailed, setProbeFailed] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    setRepoState('loading')
+    setProbeFailed(false)
+    getInitStatus()
+      .then((res: InitStatus) => {
+        if (cancelled) return
+        setRepoState(res.state)
+        setProbeDetail(res.detail || '')
+      })
+      .catch(() => {
+        if (cancelled) return
+        // Graceful fallback — never block the user on a probe failure.
+        setRepoState('empty')
+        setProbeFailed(true)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   const handleInit = async (autoMerge: boolean) => {
     setState('running')
     setError(null)
@@ -590,17 +627,72 @@ function StepInit({ onDone, resumed, onBack }: { onDone: () => void; resumed?: b
         </h3>
       </div>
 
-      <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 dark:bg-gray-800">
-        <p className="text-sm text-[#0a2a4a] dark:text-gray-200 font-medium mb-1">
-          Your repository appears to be empty.
-        </p>
-        <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
-          Sharko can initialize it with the standard template — creating the folder
-          structure, ApplicationSet, and a PR for your review.
-        </p>
-      </div>
+      {/* Probe in flight — don't show the Initialize offer or a misleading
+          "empty" claim until we know the real repo state. */}
+      {repoState === 'loading' && (
+        <div className="flex items-center gap-2 text-sm text-[#2a5a7a] dark:text-gray-400">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Checking repository…
+        </div>
+      )}
 
-      {state === 'idle' && (
+      {/* Already set up — no clobber offer. The repo is initialized and the
+          ArgoCD bootstrap is healthy, so the only action is to leave. */}
+      {repoState === 'initialized' && state === 'idle' && (
+        <div className="space-y-3">
+          <div className="rounded-xl ring-2 ring-green-300 bg-green-50 p-5 dark:bg-green-900/20">
+            <p className="flex items-center gap-2 text-sm font-medium text-green-800 dark:text-green-300">
+              <CheckCircle className="h-4 w-4 shrink-0" />
+              This repository is already set up for Sharko.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onDone}
+            className="inline-flex items-center gap-2 rounded-full bg-teal-600 px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-400"
+          >
+            Go to Dashboard
+            <ArrowRight className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
+      {/* Partial state — repo files exist but the ArgoCD bootstrap is missing
+          or unhealthy. Surface the backend detail and keep the Initialize
+          buttons so the user can repair (init is idempotent). */}
+      {repoState === 'partial' && state === 'idle' && (
+        <div className="rounded-xl ring-2 ring-amber-300 bg-amber-50 p-5 dark:bg-amber-900/20">
+          <p className="text-sm font-medium text-amber-800 dark:text-amber-300 mb-1">
+            This repo has Sharko files but the ArgoCD bootstrap is missing or
+            unhealthy
+            {probeDetail ? `: ${probeDetail}` : '.'}
+          </p>
+          <p className="text-sm text-amber-700 dark:text-amber-400">
+            Re-run initialize to repair it — Sharko opens a PR for your review.
+          </p>
+        </div>
+      )}
+
+      {/* Empty repo — the honest, probe-backed Initialize offer. Also the
+          graceful-fallback surface when the probe itself failed. */}
+      {repoState === 'empty' && state === 'idle' && (
+        <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 dark:bg-gray-800">
+          <p className="text-sm text-[#0a2a4a] dark:text-gray-200 font-medium mb-1">
+            This repository is empty — Sharko will set up the GitOps structure
+            and open a PR for your review.
+          </p>
+          {probeFailed && (
+            <p className="mt-1 text-xs text-[#3a6a8a] dark:text-gray-400">
+              (Couldn't confirm the repository state — you can still initialize
+              safely; Sharko skips files that already exist.)
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Initialize buttons — shown for empty (set up) and partial (repair).
+          Hidden for initialized (nothing to do) and while loading. */}
+      {(repoState === 'empty' || repoState === 'partial') && state === 'idle' && (
         <div className="flex flex-col gap-3 sm:flex-row">
           <button
             type="button"

@@ -171,24 +171,28 @@ func (s *Server) runInitOperation(
 	// that would re-introduce a different false-success bug if the user
 	// manually deleted the ArgoCD app and the wizard reported "all good"
 	// while their cluster has nothing running.
-	if _, checkErr := gp.GetFileContent(ctx, orchestrator.BootstrapRootAppPath, gitopsCfg.BaseBranch); checkErr == nil {
-		argoStatus, argoDetail := ProbeBootstrapApp(ctx, ac)
-		if argoStatus == "healthy" {
-			// Advance every step as already-completed so the wizard's
-			// step-list UI shows a clean checkmarked sequence. We know the
-			// step count from the Create() call above (6 steps); the
-			// helper paginates by reading session state so it stays in
-			// sync if the step list ever changes.
-			markAllStepsAlreadyInitialized(s.opsStore, sessionID)
-			s.opsStore.Complete(sessionID,
-				"repo already initialized — ArgoCD bootstrap detected and healthy")
-			return
-		}
+	//
+	// The classify-by-state decision is shared with the read-only
+	// GET /api/v1/init/status probe via probeRepoState, so the two paths
+	// can never disagree about what "already initialized" means.
+	switch state, detail := probeRepoState(ctx, gp, ac, gitopsCfg.BaseBranch); state {
+	case RepoStateInitialized:
+		// Advance every step as already-completed so the wizard's
+		// step-list UI shows a clean checkmarked sequence. We know the
+		// step count from the Create() call above (6 steps); the
+		// helper paginates by reading session state so it stays in
+		// sync if the step list ever changes.
+		markAllStepsAlreadyInitialized(s.opsStore, sessionID)
+		s.opsStore.Complete(sessionID,
+			"repo already initialized — ArgoCD bootstrap detected and healthy")
+		return
+	case RepoStatePartial:
 		s.opsStore.Fail(sessionID,
 			fmt.Sprintf("repo initialized but ArgoCD bootstrap is missing or unhealthy: %s",
-				argoDetail))
+				detail))
 		return
 	}
+	// RepoStateEmpty falls through to the normal bootstrap flow below.
 
 	// Step 1: Creating bootstrap files
 	files, filesErr := orch.CollectBootstrapFiles(ctx)

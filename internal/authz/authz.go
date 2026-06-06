@@ -112,6 +112,12 @@ var ActionRequirements = map[string]Role{
 	"audit.stream":            RoleViewer,
 	"metrics.read":            RoleViewer,
 	"addon-secret.list":       RoleViewer,
+
+	// Read-only first-run repo-state probe (GET /api/v1/init/status). The
+	// matching write action "init" is Operator+; the probe is read-only so
+	// any authenticated viewer (and the unauthenticated first-run flow)
+	// can check repo state before the wizard offers to initialize.
+	"init.status": RoleViewer,
 }
 
 // Require checks whether the request has a role sufficient for the given action.

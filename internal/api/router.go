@@ -599,6 +599,9 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 
 	// Init (orchestrator-backed)
 	mux.HandleFunc("POST /api/v1/init", srv.handleInit)
+	// Read-only repo-state probe consumed by the first-run wizard's Step 4
+	// before it offers to initialize — empty / initialized / partial.
+	mux.HandleFunc("GET /api/v1/init/status", srv.handleInitStatus)
 
 	// Operations (async operation tracking)
 	mux.HandleFunc("GET /api/v1/operations/{id}", srv.handleGetOperation)

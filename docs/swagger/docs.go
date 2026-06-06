@@ -4950,6 +4950,45 @@ const docTemplate = `{
                 }
             }
         },
+        "/init/status": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Read-only probe used by the first-run wizard before it offers to initialize the repo. Returns \"empty\" when the bootstrap root-app YAML is not present on the base branch, \"initialized\" when it is present and the ArgoCD bootstrap application is Synced + Healthy, and \"partial\" when the file is present but the ArgoCD bootstrap is missing or unhealthy (detail carries the ArgoCD diagnostic). Performs no writes and creates no operation session. Requires an active Git connection.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "init"
+                ],
+                "summary": "Probe GitOps repo initialization state",
+                "responses": {
+                    "200": {
+                        "description": "Repo state probe result",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.InitStatusResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "No active Git/ArgoCD connection",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/notifications": {
             "get": {
                 "security": [
@@ -7959,6 +7998,17 @@ const docTemplate = `{
                 },
                 "status": {
                     "description": "\"pass\", \"fail\", \"skipped\"",
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.InitStatusResponse": {
+            "type": "object",
+            "properties": {
+                "detail": {
+                    "type": "string"
+                },
+                "state": {
                     "type": "string"
                 }
             }

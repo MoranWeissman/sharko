@@ -76,6 +76,10 @@ vi.mock('@/services/api', () => {
       testArgocdConnection: vi.fn().mockResolvedValue({ ok: true }),
       saveConnection: vi.fn().mockResolvedValue({ ok: true }),
     },
+    // V2-cleanup-9: Step 4 probes repo state on mount. Default to "empty" so
+    // existing resume-mode / init tests still see the Initialize offer; the
+    // dedicated state tests below override per-test.
+    getInitStatus: vi.fn().mockResolvedValue({ state: 'empty', detail: '' }),
     initRepo: vi.fn().mockResolvedValue({ operation_id: 'op-1' }),
     getOperation: vi.fn().mockResolvedValue({
       id: 'op-1',
@@ -230,8 +234,14 @@ describe('FirstRunWizard step 4 — sync-failure surfacing (V124-14 / BUG-032)',
     try {
       renderWizard(4)
 
+      // V2-cleanup-9: Step 4 probes repo state on mount; the Initialize offer
+      // renders only after that probe (mocked "empty") resolves. Flush it.
+      await act(async () => {
+        await Promise.resolve()
+      })
+
       // Click "Initialize & Auto-merge" to kick off init.
-      const initBtn = screen.getByRole('button', { name: /Initialize.*Auto-merge/i })
+      const initBtn = await screen.findByRole('button', { name: /Initialize.*Auto-merge/i })
       fireEvent.click(initBtn)
 
       // Let the initRepo promise resolve (microtasks).
@@ -299,7 +309,13 @@ describe('FirstRunWizard step 4 — 401 during polling (V124-15 / BUG-033)', () 
     try {
       renderWizard(4)
 
-      const initBtn = screen.getByRole('button', {
+      // V2-cleanup-9: flush the on-mount repo-state probe so the Initialize
+      // offer renders.
+      await act(async () => {
+        await Promise.resolve()
+      })
+
+      const initBtn = await screen.findByRole('button', {
         name: /Initialize.*Auto-merge/i,
       })
       fireEvent.click(initBtn)
@@ -571,12 +587,18 @@ describe('FirstRunWizard — V124-17 wizard polish (BUG-039 / 040 / 042)', () =>
     try {
       renderWizard(4)
 
+      // V2-cleanup-9: flush the on-mount repo-state probe so the Initialize
+      // offer renders.
+      await act(async () => {
+        await Promise.resolve()
+      })
+
       // Idle state — Back IS present (V124-16 behaviour, baseline).
       expect(screen.getByRole('button', { name: /^Back$/ })).toBeInTheDocument()
 
       // Click Initialize — wizard transitions to 'running'.
       fireEvent.click(
-        screen.getByRole('button', { name: /Initialize.*Auto-merge/i }),
+        await screen.findByRole('button', { name: /Initialize.*Auto-merge/i }),
       )
 
       // Resolve the initRepo promise so setOperationId fires and the
@@ -936,5 +958,140 @@ describe('FirstRunWizard — V124-19 use_saved test-credential contract (BUG-044
     // testStatus on every change → Next disables until they re-test.
     fireEvent.change(tokenInput, { target: { value: 'ghp_partial' } })
     expect(screen.getByRole('button', { name: /Next/i })).toBeDisabled()
+  })
+})
+
+// V2-cleanup-9.2 — repo-clarity copy on Steps 1-2.
+//
+// The maintainer reviewed first-run as a newcomer and couldn't tell which repo
+// to connect, whether it needed to exist first, or why write access was asked
+// for. These assert the locked copy answers all three up front.
+describe('FirstRunWizard — repo-clarity copy (V2-cleanup-9.2)', () => {
+  it('Step 1 explains the GitOps config repo and that an empty repo is fine', () => {
+    renderWizard()
+    expect(
+      screen.getByText(
+        /Sharko stores your addon setup as files in a Git repo/i,
+      ),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/use a brand-new empty repo \(Sharko fills it in for you\)/i),
+    ).toBeInTheDocument()
+  })
+
+  it('Step 2 says this is a dedicated config repo and the token needs write to open PRs', async () => {
+    renderWizard()
+    // Walk from Welcome to the Git step.
+    fireEvent.click(screen.getByRole('button', { name: /Get Started/i }))
+
+    expect(
+      await screen.findByText(
+        /This is a dedicated config repo for Sharko — not your application's code/i,
+      ),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        /Needs read and write access so Sharko can open pull requests\./i,
+      ),
+    ).toBeInTheDocument()
+  })
+})
+
+// V2-cleanup-9.2 — Step 4 renders by the probed repo state.
+//
+// Before this, StepInit hardcoded "Your repository appears to be empty",
+// alarming users who pointed the wizard at a populated Sharko repo. Step 4 now
+// probes GET /api/v1/init/status on mount and renders empty / initialized /
+// partial / loading / fallback accordingly.
+describe('FirstRunWizard — Step 4 conditional render by repo state (V2-cleanup-9.2)', () => {
+  const getInitStatusMock = () =>
+    apiModule.getInitStatus as ReturnType<typeof vi.fn>
+
+  afterEach(() => {
+    // Restore the default "empty" probe so it never leaks into other tests.
+    getInitStatusMock().mockResolvedValue({ state: 'empty', detail: '' })
+  })
+
+  it('empty → shows the honest Initialize offer (probe-backed, not "appears to be")', async () => {
+    getInitStatusMock().mockResolvedValueOnce({ state: 'empty', detail: '' })
+    renderWizard(4)
+
+    expect(
+      await screen.findByText(
+        /This repository is empty — Sharko will set up the GitOps structure and open a PR for your review\./i,
+      ),
+    ).toBeInTheDocument()
+    // The Initialize buttons are present for an empty repo.
+    expect(
+      screen.getByRole('button', { name: /Initialize.*Auto-merge/i }),
+    ).toBeInTheDocument()
+    // The old hardcoded alarming copy is gone.
+    expect(
+      screen.queryByText(/Your repository appears to be empty/i),
+    ).not.toBeInTheDocument()
+  })
+
+  it('initialized → shows a success panel + Go to Dashboard, no Initialize buttons', async () => {
+    getInitStatusMock().mockResolvedValueOnce({ state: 'initialized', detail: '' })
+    renderWizard(4)
+
+    expect(
+      await screen.findByText(/This repository is already set up for Sharko\./i),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /Go to Dashboard/i }),
+    ).toBeInTheDocument()
+    // No clobber offer when the repo is already initialized.
+    expect(
+      screen.queryByRole('button', { name: /Initialize.*Auto-merge/i }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('partial → shows the ArgoCD detail and keeps the Initialize/repair buttons', async () => {
+    getInitStatusMock().mockResolvedValueOnce({
+      state: 'partial',
+      detail: 'argocd app "cluster-addons-bootstrap" sync=OutOfSync health=Degraded',
+    })
+    renderWizard(4)
+
+    expect(
+      await screen.findByText(
+        /This repo has Sharko files but the ArgoCD bootstrap is missing or unhealthy/i,
+      ),
+    ).toBeInTheDocument()
+    // The backend detail is surfaced verbatim.
+    expect(
+      screen.getByText(/sync=OutOfSync health=Degraded/i),
+    ).toBeInTheDocument()
+    // Repair path stays available.
+    expect(
+      screen.getByRole('button', { name: /Initialize.*Auto-merge/i }),
+    ).toBeInTheDocument()
+  })
+
+  it('loading → shows a "Checking repository…" spinner before the probe resolves', async () => {
+    // Never-resolving probe so the loading state stays on screen.
+    getInitStatusMock().mockReturnValueOnce(new Promise(() => {}))
+    renderWizard(4)
+
+    expect(screen.getByText(/Checking repository…/i)).toBeInTheDocument()
+    // No Initialize offer while the probe is in flight.
+    expect(
+      screen.queryByRole('button', { name: /Initialize.*Auto-merge/i }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('probe failure → falls back to the Initialize offer (never blocks the user)', async () => {
+    getInitStatusMock().mockRejectedValueOnce(new Error('network down'))
+    renderWizard(4)
+
+    // Fallback shows the empty-state Initialize offer …
+    expect(
+      await screen.findByRole('button', { name: /Initialize.*Auto-merge/i }),
+    ).toBeInTheDocument()
+    // … plus a subtle note that the state couldn't be confirmed.
+    expect(
+      screen.getByText(/Couldn't confirm the repository state/i),
+    ).toBeInTheDocument()
   })
 })
