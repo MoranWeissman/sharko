@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/MoranWeissman/sharko/internal/argosecrets"
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
 // argoManagerAdapter bridges argosecrets.Manager to orchestrator.ArgoSecretManager.
@@ -31,4 +32,21 @@ func (a *argoManagerAdapter) GetManagedByLabel(ctx context.Context, name string)
 // Unadopt delegates to the real Manager.
 func (a *argoManagerAdapter) Unadopt(ctx context.Context, name string) error {
 	return a.mgr.Unadopt(ctx, name)
+}
+
+// Ensure converts the orchestrator-local spec to argosecrets.ClusterSecretSpec
+// and delegates to the real Manager. Labels and config JSON are built inside
+// Manager.Ensure (via buildLabels / buildSecretConfig), so the write is
+// byte-identical to anything the reconciler would emit for the same spec.
+func (a *argoManagerAdapter) Ensure(ctx context.Context, spec orchestrator.ArgoSecretSpec) (bool, error) {
+	return a.mgr.Ensure(ctx, argosecrets.ClusterSecretSpec{
+		Name:        spec.Name,
+		Server:      spec.Server,
+		Region:      spec.Region,
+		RoleARN:     spec.RoleARN,
+		CAData:      spec.CAData,
+		Token:       spec.Token,
+		Labels:      spec.Labels,
+		Annotations: spec.Annotations,
+	})
 }

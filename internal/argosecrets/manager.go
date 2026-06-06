@@ -46,6 +46,14 @@ type ClusterSecretSpec struct {
 	// RoleARN is the IAM role ARN passed to argocd-k8s-auth via --role-arn.
 	// When empty the --role-arn flag is omitted from execProviderConfig.args.
 	RoleARN string
+	// Token is a static bearer token for direct cluster authentication.
+	// When non-empty, the secret config is written in ArgoCD's bearerToken
+	// shape ({"bearerToken": ..., "tlsClientConfig": {...}}) instead of the
+	// execProviderConfig (argocd-k8s-auth) shape. This is the path used by
+	// kubeconfig-registered clusters, whose pasted credentials carry a
+	// bearer token that ArgoCDProvider.GetCredentials reads back directly.
+	// When empty, the execProviderConfig (EKS / IAM) shape is used.
+	Token string
 	// CAData is the base64-encoded PEM CA certificate for TLS verification of the cluster API server.
 	// When non-empty it is written into tlsClientConfig.caData so ArgoCD can verify the server cert.
 	// When empty, ArgoCD falls back to system trust roots.
@@ -76,6 +84,17 @@ func NewManager(client kubernetes.Interface, namespace string) *Manager {
 type execProviderConfig struct {
 	ExecProviderConfig execProvider `json:"execProviderConfig"`
 	TLSClientConfig    tlsConfig    `json:"tlsClientConfig"`
+}
+
+// bearerTokenConfig is the JSON structure written into secret
+// stringData.config for clusters that authenticate with a static bearer
+// token (the kubeconfig registration path). It matches the shape ArgoCD
+// itself writes for bearer-token clusters and the shape
+// providers.ArgoCDProvider.GetCredentials reads back via
+// buildBearerTokenKubeconfig.
+type bearerTokenConfig struct {
+	BearerToken     string    `json:"bearerToken"`
+	TLSClientConfig tlsConfig `json:"tlsClientConfig"`
 }
 
 type execProvider struct {
@@ -111,11 +130,37 @@ func BuildClusterSecretLabels(spec ClusterSecretSpec) map[string]string {
 	return buildLabels(spec)
 }
 
-// buildSecretConfig constructs the ArgoCD execProviderConfig JSON string.
+// buildSecretConfig constructs the ArgoCD cluster Secret data["config"] JSON.
+//
+// When spec.Token is non-empty the bearerToken shape is emitted (the
+// kubeconfig registration path): a static token plus a tlsClientConfig that
+// carries the CA bundle (or insecure:true when no CA is present). This is the
+// shape providers.ArgoCDProvider.GetCredentials can read back directly, which
+// is what makes a kubeconfig-registered cluster reachable.
+//
+// Otherwise the execProviderConfig (argocd-k8s-auth / EKS) shape is emitted.
 // The --role-arn arg is only included when spec.RoleARN is non-empty.
 // No env vars are set: argocd-k8s-auth inherits the environment from ArgoCD and
 // ArgoCD v2.14 cannot unmarshal the env field in execProviderConfig.
 func buildSecretConfig(spec ClusterSecretSpec) (string, error) {
+	if spec.Token != "" {
+		cfg := bearerTokenConfig{
+			BearerToken: spec.Token,
+			TLSClientConfig: tlsConfig{
+				// No CA bundle → fall back to skipping TLS verification, the
+				// same choice ArgoCDProvider.buildBearerTokenKubeconfig makes
+				// when caData is absent.
+				Insecure: spec.CAData == "",
+				CAData:   spec.CAData,
+			},
+		}
+		b, err := json.MarshalIndent(cfg, "", "  ")
+		if err != nil {
+			return "", fmt.Errorf("marshalling bearerTokenConfig: %w", err)
+		}
+		return string(b), nil
+	}
+
 	args := []string{"aws", "--cluster-name", spec.Name}
 	if spec.RoleARN != "" {
 		args = append(args, "--role-arn", spec.RoleARN)

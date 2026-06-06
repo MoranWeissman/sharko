@@ -83,6 +83,99 @@ func TestRegisterCluster_Kubeconfig_HappyPath_NoCredProvider(t *testing.T) {
 	}
 }
 
+// TestRegisterCluster_Kubeconfig_WritesArgoSecret is the V2-cleanup-8.2
+// regression test. When Sharko runs in-cluster (an argo secret manager is
+// wired) and a kubeconfig is pasted, RegisterCluster must write the ArgoCD
+// cluster Secret directly from the parsed bearer-token credentials. Without
+// this the reconciler — which reads from a secrets backend the kubeconfig
+// creds never reach — could never create the Secret, leaving the cluster
+// permanently Unreachable.
+func TestRegisterCluster_Kubeconfig_WritesArgoSecret(t *testing.T) {
+	argocd := newMockArgocd()
+	git := newMockGitProvider()
+	asm := newMockArgoSecretManager()
+
+	// nil credProvider: the in-cluster manager must be wired independently of
+	// any secrets backend (mirrors the production ungate in serve.go).
+	orch := New(nil, nil, argocd, git, defaultGitOps(), defaultPaths(), nil)
+	orch.SetArgoSecretManager(asm, "")
+
+	result, err := orch.RegisterCluster(context.Background(), RegisterClusterRequest{
+		Name:       "kind-sharko",
+		Provider:   "kubeconfig",
+		Kubeconfig: v125TestBearerKubeconfig,
+		Addons:     map[string]bool{"monitoring": true},
+	})
+	if err != nil {
+		t.Fatalf("expected success, got error: %v", err)
+	}
+	if result.Status != "success" {
+		t.Errorf("expected status=success, got %q", result.Status)
+	}
+
+	if len(asm.ensured) != 1 {
+		t.Fatalf("expected exactly 1 Ensure call, got %d", len(asm.ensured))
+	}
+	spec := asm.ensured[0]
+	if spec.Name != "kind-sharko" {
+		t.Errorf("Ensure spec.Name = %q, want kind-sharko (must match the lookup key GetCredentials uses)", spec.Name)
+	}
+	if spec.Server != "https://127.0.0.1:60123" {
+		t.Errorf("Ensure spec.Server = %q, want the kubeconfig server", spec.Server)
+	}
+	if spec.Token != "ya29.example-bearer-token" {
+		t.Errorf("Ensure spec.Token = %q, want the kubeconfig bearer token", spec.Token)
+	}
+	// CAData must be base64 — the kubeconfig's certificate-authority-data was
+	// already base64, decoded by clientcmd into raw bytes, then re-encoded here.
+	if spec.CAData == "" {
+		t.Error("Ensure spec.CAData is empty; expected the base64-encoded CA bundle")
+	}
+	if spec.Labels["monitoring"] != "true" {
+		t.Errorf("Ensure spec.Labels[monitoring] = %q, want true (\"true\"/\"false\" form matching the reconciler)", spec.Labels["monitoring"])
+	}
+
+	// The write_argocd_secret step is the marker that the direct write ran.
+	foundStep := false
+	for _, step := range result.CompletedSteps {
+		if step == "write_argocd_secret" {
+			foundStep = true
+			break
+		}
+	}
+	if !foundStep {
+		t.Errorf("expected write_argocd_secret step; got %v", result.CompletedSteps)
+	}
+}
+
+// TestRegisterCluster_Kubeconfig_NoManager_NoWrite verifies graceful fallback:
+// when no manager is wired (out-of-cluster), RegisterCluster does not attempt
+// a direct write and still succeeds.
+func TestRegisterCluster_Kubeconfig_NoManager_NoWrite(t *testing.T) {
+	argocd := newMockArgocd()
+	git := newMockGitProvider()
+	orch := New(nil, nil, argocd, git, defaultGitOps(), defaultPaths(), nil)
+	// No SetArgoSecretManager — manager stays nil.
+
+	result, err := orch.RegisterCluster(context.Background(), RegisterClusterRequest{
+		Name:       "kind-sharko",
+		Provider:   "kubeconfig",
+		Kubeconfig: v125TestBearerKubeconfig,
+		Addons:     map[string]bool{"monitoring": true},
+	})
+	if err != nil {
+		t.Fatalf("expected success with nil manager, got error: %v", err)
+	}
+	if result.Status != "success" {
+		t.Errorf("expected status=success, got %q", result.Status)
+	}
+	for _, step := range result.CompletedSteps {
+		if step == "write_argocd_secret" {
+			t.Errorf("write_argocd_secret must not appear when no manager is wired; got %v", result.CompletedSteps)
+		}
+	}
+}
+
 func TestRegisterCluster_Kubeconfig_RejectsCertBased(t *testing.T) {
 	argocd := newMockArgocd()
 	git := newMockGitProvider()

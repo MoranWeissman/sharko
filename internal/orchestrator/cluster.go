@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"path"
@@ -215,10 +216,51 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		return result, nil
 	}
 
-	// We no longer write anything in the argocd namespace before the
-	// managed-clusters.yaml PR is merged; the reconciler picks the new
-	// cluster up via either the post-merge trigger or the periodic 30s
-	// safety-net tick.
+	// For the EKS / backend path we write nothing in the argocd namespace
+	// before the managed-clusters.yaml PR merges; the reconciler picks the
+	// new cluster up via either the post-merge trigger or the periodic
+	// safety-net tick, reading credentials from the secrets backend.
+	//
+	// The kubeconfig path is different: the pasted bearer-token credentials
+	// never reach any secrets backend, so the reconciler can NEVER create the
+	// ArgoCD cluster Secret for them — leaving the cluster permanently
+	// Unreachable (V2-cleanup-8.2). We therefore write the Secret directly
+	// here, right after Stage-1 verification, from the parsed credentials.
+	// The write uses the same Manager the reconciler uses (same labels + the
+	// bearerToken config shape), so a later reconcile tick adopts rather than
+	// fights it, and the managed-by=sharko label lets the reconciler's orphan
+	// sweep reclaim it should the registration PR never merge. The write is
+	// best-effort: a failure is logged and recorded but does not abort
+	// registration (the Git source of truth and reconciler can still
+	// converge). When no manager is wired (out-of-cluster), this is skipped.
+	if req.Provider == "kubeconfig" && o.argoSecretManager != nil && creds.Token != "" {
+		// Addon labels in the "true"/"false" form the reconciler emits
+		// (reconciler passes cluster.Labels parsed from managed-clusters.yaml,
+		// which uses "true"/"false"), so the direct-write is byte-identical.
+		secretLabels := make(map[string]string, len(req.Addons))
+		for addon, enabled := range req.Addons {
+			if enabled {
+				secretLabels[addon] = "true"
+			} else {
+				secretLabels[addon] = "false"
+			}
+		}
+		_, ensureErr := o.argoSecretManager.Ensure(ctx, ArgoSecretSpec{
+			Name:   req.Name,
+			Server: creds.Server,
+			CAData: base64.StdEncoding.EncodeToString(creds.CAData),
+			Token:  creds.Token,
+			Labels: secretLabels,
+		})
+		if ensureErr != nil {
+			log.Error("RegisterCluster: direct ArgoCD cluster Secret write failed (continuing — Git + reconciler can still converge)",
+				"cluster", req.Name, "error", ensureErr)
+		} else {
+			steps = append(steps, "write_argocd_secret")
+			log.Info("ArgoCD cluster Secret written directly from kubeconfig credentials",
+				"cluster", req.Name, "server", creds.Server)
+		}
+	}
 
 	// Step 4: Create addon secrets on remote cluster (if configured).
 	// Uses partial-success semantics: individual failures are tracked but don't stop the flow.
