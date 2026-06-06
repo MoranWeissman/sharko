@@ -157,8 +157,8 @@ confidence: `grep -nE '\*\*GAP — P[01]\*\*' failure-mode-index.md`.
 | Cluster-discover (`POST /clusters/discover`) returns partial list — some EKS clusters in account but not surfaced | P2 | **GAP — P2** | Per-region IAM gap; operator may not have intended all regions. Document the diagnostic check. |
 | Dashboard "fleet status" surfaces ArgoCD-unreachable flag (handler returns 200 with `argocd_reachable: false` instead of 5xx) | P2 | [`budget-burn-runbook.md#sharkodashboardreadfastburn`](budget-burn-runbook.md#sharkodashboardreadfastburn) | V2-3.4 documents the graceful-degradation pattern; the P2 case is when degradation persists too long to be transient. |
 | Catalog source slow but functional — fetches taking >5s but succeeding | P2 | **GAP — P2** | Tracks as a sizing issue, not a bug. Surface via metric, not page. |
-| Validate-config CLI returns failure on a YAML file (`sharko validate-config docs/site/configuration/`) | P2 | [`yaml-schema-migration.md`](yaml-schema-migration.md) | Existing migration runbook covers the schema; the P2 case is "operator edited YAML and broke it" — fix is "obey the schema." |
-| `validate` legacy CLI returns failure (pre-envelope validator) | P2 | [`yaml-schema-migration.md`](yaml-schema-migration.md) | Legacy command slated for V126 removal; document that operators should migrate to `validate-config`. |
+| Validate-config CLI returns failure on a YAML file (`sharko validate-config docs/site/configuration/`) | P2 | **GAP — P2** | Operator-correctable: edit the YAML so it matches the embedded JSON Schema (`apiVersion: sharko.io/v1` envelope). |
+| `validate` legacy CLI returns failure (pre-envelope validator) | P2 | **GAP — P2** | Legacy command slated for removal; document that operators should migrate to `validate-config`. |
 | 404 on unmounted API route — wrong path or version | P2 | **GAP — P2** | Operator-correctable. Fix is "read the API reference." |
 | Token revocation succeeded but token still works for one request (race) | P2 | **GAP — P2** | Token cache TTL = 60s by default; window is narrow. Document for security-conscious operators. |
 | Connection test (`/connections/{id}/test`) returns success but actual cluster operation fails later | P2 | **GAP — P2** | Connection test is a smoke probe, not a guarantee. Document the test's actual scope. |
@@ -215,11 +215,10 @@ header, Symptoms before Diagnosis, Mitigation as numbered list with
 4 steps, Root-cause patterns with 3 named causes, Prevention with
 3 measures, Related runbooks, Escalation, compliance checklist). The
 intro explicitly justifies under-floor length per the style guide's
-brevity carve-out ("entire mitigation is wait for v2 or verify
-manually outside Sharko"). Cross-linked to
+brevity carve-out. Cross-linked to
 `argocd-exec-plugin-auth-unsupported.md`,
-`cluster-connectivity-model.md`, `eks-token-generation-failed.md`,
-and `migration-v1-to-v2.md`. Page line count grew from 41 to ~340.
+`cluster-connectivity-model.md`, and
+`eks-token-generation-failed.md`. Page line count grew from 41 to ~340.
 
 Drift findings (resolved):
 
@@ -492,21 +491,6 @@ Drift findings (resolved by redirector):
   runbook file under `operator/`, then keep `troubleshooting.md` as a
   thin redirector page that links to the split-out runbooks. This is
   the highest-effort PR 3 page; budget accordingly.
-
-### `yaml-schema-migration.md`
-
-- **Length:** 312 lines (in range).
-- **Section order:** Reference-first (what changed / why / writer
-  / reader / validator surface), then operator action. PR 3 should
-  add a leading symptom section ("If `sharko validate-config`
-  fails, jump to <section>") so operators in the middle of a
-  failure don't have to scroll past the reference content.
-- **Missing required:** `Severity` (would be P1), `Mitigation`
-  (currently the "What you should do" section — rename), `Prevention`
-  (acceptable text: "Use `sharko validate-config` in CI; pre-commit
-  hook locally"), `Related runbooks`, verified header.
-- **Tone:** Clean, operator-voice. Intro lead-in ("You don't have to
-  do anything") is well-calibrated to pager-context.
 
 ---
 

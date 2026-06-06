@@ -1,10 +1,10 @@
 # Catalog Scan Runbook
 
-> **Verified:** Not verified end-to-end since authoring (V123-3.5, 2026-04-25); review pending. The runbook describes a daily, stateless GitHub Actions workflow whose source-of-truth is `.github/workflows/catalog-scan.yml` + `scripts/catalog-scan.mjs` — those have not changed materially since v1.23. A re-walk against a real bot-opened PR is recommended before V2.0.0 ships.
+> **Verified:** Not verified end-to-end since authoring (V123-3.5, 2026-04-25); review pending. The runbook describes a daily, stateless GitHub Actions workflow whose source-of-truth is `.github/workflows/catalog-scan.yml` + `scripts/catalog-scan.mjs` — those have not changed materially since they were authored. A re-walk against a real bot-opened PR is recommended.
 
 Operational guide for reviewers of `catalog-scan` bot PRs.
 
-The bot was introduced in **v1.23** (Epic V123-3). It opens one **draft PR per scan day** with proposed catalog additions and updates derived from upstream sources. Reviewers triage these PRs — the bot **never** auto-merges.
+The bot (codenamed V123-3 internally) opens one **draft PR per scan day** with proposed catalog additions and updates derived from upstream sources. Reviewers triage these PRs — the bot **never** auto-merges.
 
 ---
 
@@ -17,7 +17,7 @@ The bot was introduced in **v1.23** (Epic V123-3). It opens one **draft PR per s
 3. A diff against the existing catalog produces a **changeset** (`adds[]` + `updates[]`).
 4. If the changeset is non-empty, `scripts/catalog-scan/pr-open.mjs` pre-computes review signals (Scorecard, license allow-list, chart resolvability) and opens a single draft PR with labels `catalog-scan` + `needs-review`.
 
-Design context: see [v1.23 catalog extensibility design doc §7.3](https://github.com/MoranWeissman/sharko/blob/main/docs/design/2026-04-20-v1.23-catalog-extensibility.md) — draft-to-main + label gating + NEVER auto-merge per NFR-V123-7.
+Design context: see [catalog extensibility design doc §7.3](https://github.com/MoranWeissman/sharko/blob/main/docs/design/2026-04-20-v1.23-catalog-extensibility.md) — draft-to-main + label gating + NEVER auto-merge per NFR-V123-7.
 
 **Guarantees:**
 
@@ -32,7 +32,7 @@ Design context: see [v1.23 catalog extensibility design doc §7.3](https://githu
 
 ## Sources scanned
 
-Two production plugins ship with v1.23. Both can produce zero proposals on a given run; that's normal (see [Known limitations](#known-limitations)).
+Two production plugins ship today. Both can produce zero proposals on a given run; that's normal (see [Known limitations](#known-limitations)).
 
 | Plugin | Upstream source | Notes |
 |---|---|---|

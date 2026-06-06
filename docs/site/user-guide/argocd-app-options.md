@@ -1,6 +1,6 @@
 # Editing ArgoCD Application Options
 
-Starting in **v1.20.1**, the Addon Detail page has a dedicated **ArgoCD App Options** tab for editing the ArgoCD Application options that control HOW an addon is deployed (not what's inside its `values.yaml`).
+The Addon Detail page has a dedicated **ArgoCD App Options** tab for editing the ArgoCD Application options that control HOW an addon is deployed (not what's inside its `values.yaml`).
 
 ## What's in ArgoCD App Options vs. Values
 
@@ -52,4 +52,4 @@ A few addon fields aren't editable from the ArgoCD App Options tab yet — they 
 - **Dependencies (`dependsOn`)** — not yet surfaced in the UI. Edit the catalog file directly via the repo.
 - **Namespace** — set at addon-add time.
 
-If you need to change one of the read-only fields, edit `addons-catalog.yaml` in GitHub or your Git client. These are on the v1.21+ roadmap.
+If you need to change one of the read-only fields, edit `addons-catalog.yaml` in GitHub or your Git client. Surfacing these in the UI is on the roadmap.

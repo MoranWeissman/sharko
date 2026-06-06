@@ -27,8 +27,8 @@ Show the CLI version and the server version.
 
 ```bash
 sharko version
-# CLI: v1.0.0
-# Server: v1.0.0
+# CLI: v2.0.1
+# Server: v2.0.1
 ```
 
 ---

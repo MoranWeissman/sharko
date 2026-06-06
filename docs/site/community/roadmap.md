@@ -34,10 +34,7 @@ release notes describe reality.
 
 ## What shipped in v2.0.0
 
-v2.0.0 is Sharko's first production release. The v1.x line was the
-development cycle (see
-[`migration-v1-to-v2.md`](../operator/migration-v1-to-v2.md) for the
-"there is no migration; reinstall fresh" framing). The v2.0.0
+v2.0.0 is Sharko's first production release. The v2.0.0
 production-launch epic focused on **measurable production-readiness**
 rather than new user features. Capabilities landed:
 
@@ -75,13 +72,10 @@ rather than new user features. Capabilities landed:
   → See [`failure-mode-index.md`](../operator/failure-mode-index.md)
   and the [runbook style
   guide](../developer-guide/runbook-style-guide.md).
-- **First production release notes + v1.x → v2.0.0 migration
-  reference.** v2.0.0 is the first production line — there is nothing
-  to downgrade to, and no production compat shims to retire. The
-  migration reference documents the "reinstall fresh" path because
-  state lives in your git repo, not in Sharko.
-  → See [`release-notes.md`](../release-notes.md) and
-  [`migration-v1-to-v2.md`](../operator/migration-v1-to-v2.md).
+- **First production release notes.** v2.0.0 is the first production
+  line — there is nothing to downgrade to, and no production compat
+  shims to retire.
+  → See [`release-notes.md`](../release-notes.md).
 - **CNCF foundation docs + GitHub config.** `MAINTAINERS`,
   `GOVERNANCE`, `CODE_OF_CONDUCT` (Contributor Covenant 2.1),
   `CONTRIBUTING`, `SECURITY`, and `ADOPTERS` at the repo root; DCO

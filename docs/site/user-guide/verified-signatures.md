@@ -32,7 +32,7 @@ Unverified entries — it surfaces the trust state and lets you decide.
 
 Verified entries give you a **supply-chain provenance** signal: you can
 trace the catalog entry back to a specific signing identity (for example,
-"this entry was signed by the Sharko release workflow on tag `v1.23.0`"
+"this entry was signed by the Sharko release workflow on tag `v2.0.0`"
 or "this entry was signed by my org's internal release workflow").
 
 An **Unverified** entry isn't necessarily compromised. It just means
@@ -69,8 +69,7 @@ The Verified state surfaces in three places:
 ## What to do if you see Unverified on an *embedded* addon
 
 Embedded addons are the ones that ship with Sharko itself (the curated
-catalog). From `v1.23` onwards, every embedded entry is signed by the
-Sharko release workflow.
+catalog). Every embedded entry is signed by the Sharko release workflow.
 
 If an embedded entry shows as Unverified on a fresh install, the most
 likely cause is that your operator has set a custom trust policy that

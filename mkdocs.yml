@@ -60,8 +60,6 @@ nav:
   - Operator Manual:
     - Installation: operator/installation.md
     - Configuration: operator/configuration.md
-    - 'Reference — YAML Schema Migration': operator/yaml-schema-migration.md
-    - 'Reference — Migrating from v1.x to v2.0.0': operator/migration-v1-to-v2.md
     - 'Reference — Cluster Reconciler (architecture + embedded troubleshooting)': operator/cluster-reconciler.md
     - 'Reference — AI Configuration': operator/ai-config.md
     - 'Reference — Security': operator/security.md
@@ -124,6 +122,7 @@ nav:
     - Repository Structure: architecture/repo-structure.md
   - Developer Guide:
     - Overview: developer-guide.md
+    - 'Architecture & Design History': developer-guide/design-history.md
     - API Stability Contract: developer-guide/api-stability.md
     - Catalog Scan Runbook: developer-guide/catalog-scan-runbook.md
     - Catalog Sources Smoke Runbook: developer-guide/catalog-sources-smoke.md
