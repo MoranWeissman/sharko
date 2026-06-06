@@ -13,21 +13,23 @@ import (
 
 // ---------- mock ArgoSecretManager ----------
 //
-// V125-1-8.3 retirement: the previous mock implemented Ensure(ctx, spec)
-// to track pre-merge cluster-Secret creation calls. That interface
-// method (and the mock method) were removed because the V125-1-8
-// reconciler now owns Secret lifecycle — orchestrator code no longer
-// dispatches Ensure. The remaining methods (SetAnnotation, GetAnnotation,
-// GetManagedByLabel, Unadopt) cover the adopt/unadopt metadata paths
-// that remain orchestrator responsibilities.
+// Ensure was reintroduced for V2-cleanup-8.2: the kubeconfig registration
+// path writes the ArgoCD cluster Secret directly (the reconciler can't —
+// kubeconfig creds never reach the secrets backend it reads from). The mock
+// captures the spec it is called with so the regression test can assert the
+// Server / Token / CAData / Labels passed to the manager. SetAnnotation,
+// GetAnnotation, GetManagedByLabel and Unadopt cover the adopt/unadopt
+// metadata paths that remain orchestrator responsibilities.
 
 type mockArgoSecretManager struct {
 	annotations    map[string]map[string]string // cluster -> key -> value
 	managedByLabel map[string]string            // cluster -> label value
 	unadopted      []string
+	ensured        []ArgoSecretSpec // specs captured by Ensure, in call order
 	annotationErr  error
 	labelErr       error
 	unadoptErr     error
+	ensureErr      error
 }
 
 func newMockArgoSecretManager() *mockArgoSecretManager {
@@ -71,6 +73,14 @@ func (m *mockArgoSecretManager) Unadopt(_ context.Context, name string) error {
 	}
 	m.unadopted = append(m.unadopted, name)
 	return nil
+}
+
+func (m *mockArgoSecretManager) Ensure(_ context.Context, spec ArgoSecretSpec) (bool, error) {
+	if m.ensureErr != nil {
+		return false, m.ensureErr
+	}
+	m.ensured = append(m.ensured, spec)
+	return true, nil
 }
 
 // ---------- adopt tests ----------

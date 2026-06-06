@@ -80,6 +80,133 @@ func TestEnsure_CreatePath(t *testing.T) {
 	}
 }
 
+// TestEnsure_BearerTokenPath is the V2-cleanup-8.2 regression test.
+//
+// Kubeconfig-registered clusters carry a static bearer token. The Secret
+// written for them MUST use ArgoCD's bearerToken config shape
+// ({"bearerToken": ..., "tlsClientConfig": {...}}) — that is the only shape
+// providers.ArgoCDProvider.GetCredentials can read back, and the only way the
+// cluster becomes Reachable. Before this fix the only Secret writer was the
+// reconciler, which always emitted the execProviderConfig (EKS) shape that
+// GetCredentials rejects — so a kubeconfig cluster stayed Unreachable forever.
+//
+// The struct used here mirrors providers.argoCDClusterConfig field-for-field
+// (it is unexported, so it cannot be imported) — if GetCredentials's parser
+// changes, this assertion still pins the wire contract Ensure must satisfy.
+func TestEnsure_BearerTokenPath(t *testing.T) {
+	// Mirror of the config shape providers.ArgoCDProvider.GetCredentials parses.
+	type tlsClientConfig struct {
+		Insecure bool   `json:"insecure"`
+		CAData   string `json:"caData"`
+	}
+	type argoConfig struct {
+		BearerToken        string           `json:"bearerToken"`
+		ExecProviderConfig *json.RawMessage `json:"execProviderConfig"`
+		TLSClientConfig    tlsClientConfig  `json:"tlsClientConfig"`
+	}
+
+	client := fake.NewSimpleClientset()
+	mgr := NewManager(client, testNamespace)
+
+	spec := ClusterSecretSpec{
+		Name:   "kind-sharko",
+		Server: "https://127.0.0.1:60123",
+		Token:  "ya29.example-bearer-token",
+		// base64("fake-ca-bytes")
+		CAData: "ZmFrZS1jYS1ieXRlcw==",
+		Labels: map[string]string{"monitoring": "true"},
+	}
+
+	changed, err := mgr.Ensure(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Ensure() returned error: %v", err)
+	}
+	if !changed {
+		t.Error("Ensure() reported no change on create")
+	}
+
+	secret, err := client.CoreV1().Secrets(testNamespace).Get(context.Background(), spec.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("secret not found after Ensure(): %v", err)
+	}
+
+	// Name / server fields must match what findClusterSecret looks up by
+	// (data["name"]) and what GetCredentials reads as the server URL.
+	if secret.StringData["name"] != spec.Name {
+		t.Errorf("stringData.name = %q, want %q", secret.StringData["name"], spec.Name)
+	}
+	if secret.StringData["server"] != spec.Server {
+		t.Errorf("stringData.server = %q, want %q", secret.StringData["server"], spec.Server)
+	}
+
+	// Labels: addon label + system labels, exactly what the reconciler emits.
+	if secret.Labels[LabelSecretType] != "cluster" {
+		t.Errorf("label %q = %q, want cluster", LabelSecretType, secret.Labels[LabelSecretType])
+	}
+	if secret.Labels[LabelManagedBy] != ManagedByValue {
+		t.Errorf("label %q = %q, want %q", LabelManagedBy, secret.Labels[LabelManagedBy], ManagedByValue)
+	}
+	if secret.Labels["monitoring"] != "true" {
+		t.Errorf("addon label monitoring = %q, want true", secret.Labels["monitoring"])
+	}
+
+	// The crux: config must be the bearerToken shape, NOT execProviderConfig,
+	// so GetCredentials accepts it.
+	var cfg argoConfig
+	if err := json.Unmarshal([]byte(secret.StringData["config"]), &cfg); err != nil {
+		t.Fatalf("config JSON did not parse as bearerToken shape: %v\nconfig=%s", err, secret.StringData["config"])
+	}
+	if cfg.BearerToken != spec.Token {
+		t.Errorf("config.bearerToken = %q, want %q", cfg.BearerToken, spec.Token)
+	}
+	if cfg.ExecProviderConfig != nil {
+		t.Errorf("config must NOT contain execProviderConfig for a token cluster; got %s", string(*cfg.ExecProviderConfig))
+	}
+	if cfg.TLSClientConfig.CAData != spec.CAData {
+		t.Errorf("config.tlsClientConfig.caData = %q, want %q", cfg.TLSClientConfig.CAData, spec.CAData)
+	}
+	if cfg.TLSClientConfig.Insecure {
+		t.Error("config.tlsClientConfig.insecure = true, want false when CAData is present")
+	}
+}
+
+// TestEnsure_BearerTokenPath_InsecureNoCA verifies the no-CA fallback emits
+// insecure:true, matching ArgoCDProvider.buildBearerTokenKubeconfig.
+func TestEnsure_BearerTokenPath_InsecureNoCA(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	mgr := NewManager(client, testNamespace)
+
+	spec := ClusterSecretSpec{
+		Name:   "no-ca-cluster",
+		Server: "https://10.0.0.1:6443",
+		Token:  "tok",
+		// CAData intentionally empty.
+	}
+	if _, err := mgr.Ensure(context.Background(), spec); err != nil {
+		t.Fatalf("Ensure() returned error: %v", err)
+	}
+	secret, err := client.CoreV1().Secrets(testNamespace).Get(context.Background(), spec.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("secret not found: %v", err)
+	}
+	var cfg struct {
+		BearerToken     string `json:"bearerToken"`
+		TLSClientConfig struct {
+			Insecure bool   `json:"insecure"`
+			CAData   string `json:"caData"`
+		} `json:"tlsClientConfig"`
+	}
+	if err := json.Unmarshal([]byte(secret.StringData["config"]), &cfg); err != nil {
+		t.Fatalf("config parse: %v", err)
+	}
+	if !cfg.TLSClientConfig.Insecure {
+		t.Error("expected insecure:true when no CAData")
+	}
+	if cfg.TLSClientConfig.CAData != "" {
+		t.Errorf("expected empty caData, got %q", cfg.TLSClientConfig.CAData)
+	}
+}
+
 // TestEnsure_UpdatePath verifies that Ensure updates a secret when labels differ.
 func TestEnsure_UpdatePath(t *testing.T) {
 	// Pre-populate with a secret that has stale labels.

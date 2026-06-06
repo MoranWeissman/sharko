@@ -906,20 +906,23 @@ export function ClusterDetail() {
                   </div>
                 )}
                 {nodeInfo && nodeInfo.total > 0 && (
-                  <div className={`flex items-center gap-2 rounded-lg border px-4 py-3 shadow-sm ${
+                  <div
+                    title="Nodes of the cluster Sharko runs in — not this target cluster."
+                    className={`flex items-center gap-2 rounded-lg border px-4 py-3 shadow-sm ${
                     nodeInfo.not_ready > 0
                       ? 'border-red-200 bg-red-50 dark:border-red-700 dark:bg-red-900/20'
                       : 'border-green-200 bg-green-50 dark:border-green-700 dark:bg-green-900/20'
                   }`}>
                     <Cpu className={`h-4 w-4 ${nodeInfo.not_ready > 0 ? 'text-red-500' : 'text-green-500'}`} />
                     <div>
-                      <p className="text-xs text-[#2a5a7a] dark:text-gray-400">Nodes Ready</p>
+                      <p className="text-xs text-[#2a5a7a] dark:text-gray-400">Host Cluster Nodes</p>
                       <p className={`text-sm font-semibold ${nodeInfo.not_ready > 0 ? 'text-red-700 dark:text-red-400' : 'text-green-700 dark:text-green-400'}`}>
                         {nodeInfo.ready} / {nodeInfo.total}
                         {nodeInfo.not_ready > 0 && (
                           <span className="ml-1.5 text-xs font-normal">({nodeInfo.not_ready} not ready)</span>
                         )}
                       </p>
+                      <p className="text-[10px] text-[#2a5a7a]/70 dark:text-gray-500">Sharko's own cluster, not this target</p>
                     </div>
                   </div>
                 )}

@@ -34,6 +34,7 @@ vi.mock('react-router-dom', async () => {
 const mockGetClusterComparison = vi.fn();
 const mockTestClusterConnection = vi.fn();
 const mockFetchTrackedPRs = vi.fn();
+const mockGetNodeInfo = vi.fn();
 vi.mock('@/services/api', async () => {
   // V125-1-10.5: keep `isTestClusterUnavailable` real so the view's
   // discriminator stays in sync with the API contract; only stub the
@@ -44,7 +45,7 @@ vi.mock('@/services/api', async () => {
     api: {
       getClusterComparison: (...args: unknown[]) => mockGetClusterComparison(...args),
       getConnections: vi.fn().mockResolvedValue({ connections: [], active_connection: '' }),
-      getNodeInfo: vi.fn().mockResolvedValue(null),
+      getNodeInfo: (...args: unknown[]) => mockGetNodeInfo(...args),
       enableAddonOnCluster: vi.fn().mockResolvedValue({}),
       getAddonCatalog: vi.fn().mockResolvedValue({ addons: [] }),
     },
@@ -154,6 +155,35 @@ describe('ClusterDetail', () => {
     // BUG-042: default to "no pending PRs" so existing assertions don't
     // accidentally find a badge. Per-test overrides drive the badge cases.
     mockFetchTrackedPRs.mockResolvedValue({ prs: [] });
+    // Default to "no node info" so the host-node card is hidden in the
+    // baseline; the V2-cleanup-8.3 test below overrides this.
+    mockGetNodeInfo.mockResolvedValue(null);
+  });
+
+  // V2-cleanup-8.3: the node-count card always reflects the Sharko HOST
+  // cluster's nodes (the API only lists in-cluster nodes), yet it renders on
+  // every target's detail page. The old "Nodes Ready" label made a green host
+  // count look like the target's health, contradicting an Unreachable target.
+  // The card is now labelled "Host Cluster Nodes" with clarifying subtext.
+  describe('V2-cleanup-8.3: host-node card labelling', () => {
+    it('labels the node card "Host Cluster Nodes" (not "Nodes Ready") with clarifying subtext', async () => {
+      mockGetNodeInfo.mockResolvedValue({ ready: 1, total: 1, not_ready: 0 });
+      renderView();
+
+      await waitFor(() => {
+        expect(screen.getByText('prod-eu')).toBeInTheDocument();
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText('Host Cluster Nodes')).toBeInTheDocument();
+      });
+      // The misleading old label must be gone.
+      expect(screen.queryByText('Nodes Ready')).not.toBeInTheDocument();
+      // Clarifying subtext distinguishes host from target.
+      expect(screen.getByText(/Sharko's own cluster, not this target/i)).toBeInTheDocument();
+      // The count itself still renders.
+      expect(screen.getByText('1 / 1')).toBeInTheDocument();
+    });
   });
 
   it('renders loading state initially', () => {

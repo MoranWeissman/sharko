@@ -41,17 +41,28 @@ type ArgoSecretManager interface {
 	GetAnnotation(ctx context.Context, name, key string) (string, error)
 	GetManagedByLabel(ctx context.Context, name string) (string, error)
 	Unadopt(ctx context.Context, name string) error
+	// Ensure creates or updates the ArgoCD cluster Secret for spec. Used by
+	// the kubeconfig registration path to write the Secret directly from the
+	// pasted credentials (V2-cleanup-8.2) — those credentials never reach the
+	// secrets backend the reconciler reads from, so the reconciler can never
+	// create the Secret for them. Returns (changed, error).
+	Ensure(ctx context.Context, spec ArgoSecretSpec) (bool, error)
 }
 
 // ArgoSecretSpec mirrors argosecrets.ClusterSecretSpec but is defined locally
-// to keep the orchestrator free from argosecrets imports. Kept as a value
-// type so api/argo_adapter.go can hold its package-local shape; no
-// orchestrator code reads it after the pre-merge Ensure call was removed.
+// to keep the orchestrator free from argosecrets imports. The api-layer
+// adapter (api/argo_adapter.go) converts it to argosecrets.ClusterSecretSpec.
 type ArgoSecretSpec struct {
-	Name        string
-	Server      string
-	Region      string
-	RoleARN     string
+	Name    string
+	Server  string
+	Region  string
+	RoleARN string
+	// CAData is the base64-encoded PEM CA bundle (same encoding the
+	// reconciler uses). Written into tlsClientConfig.caData.
+	CAData string
+	// Token is a static bearer token. When set, the Secret is written in
+	// ArgoCD's bearerToken shape (the kubeconfig registration path).
+	Token       string
 	Labels      map[string]string
 	Annotations map[string]string
 }
