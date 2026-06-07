@@ -18,6 +18,24 @@ import (
 // and provider while errors.Is still works.
 var ErrFileNotFound = errors.New("file not found")
 
+// ErrPullRequestNotFound is the canonical sentinel returned by GitProvider
+// implementations from GetPullRequestStatus when the pull request no longer
+// exists on the provider — e.g. the PR was deleted, or the repository was
+// recreated and the old PR number is gone. It maps to a definitive HTTP 404
+// ONLY. Transient/auth/server errors (network failures, 401, 403, 429, 5xx)
+// MUST stay generic errors so callers keep retrying rather than discarding a
+// PR that is still live but momentarily unreachable.
+//
+// Callers (e.g. the PR tracker) MUST detect this condition via
+// errors.Is(err, gitprovider.ErrPullRequestNotFound) rather than
+// substring-matching the message — substring matching on "404"/"not found"
+// silently masks legitimate auth/perm errors.
+//
+// Implementations may wrap the sentinel with additional context using
+// fmt.Errorf("...: %w", gitprovider.ErrPullRequestNotFound) so logs retain
+// the PR number while errors.Is still works.
+var ErrPullRequestNotFound = errors.New("pull request not found")
+
 // PullRequest represents a pull request from any Git provider.
 type PullRequest struct {
 	ID           int

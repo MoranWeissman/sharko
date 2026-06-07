@@ -392,6 +392,99 @@ func TestCreateBranch_OtherErrors_Propagate(t *testing.T) {
 	}
 }
 
+// TestGetPullRequestStatus_NotFound_404 — V2-cleanup-18. A 404 from the PR
+// Get endpoint (PR deleted, or repo recreated) must return an error that
+// errors.Is-matches gitprovider.ErrPullRequestNotFound so the PR tracker can
+// drop the stale entry instead of keeping it as a phantom forever.
+func TestGetPullRequestStatus_NotFound_404(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /repos/test-owner/test-repo/pulls/8", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(github.ErrorResponse{
+			Response: &http.Response{StatusCode: http.StatusNotFound},
+			Message:  "Not Found",
+		})
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	provider := newTestGitHubProvider(t, server)
+	_, err := provider.GetPullRequestStatus(context.Background(), 8)
+	if err == nil {
+		t.Fatal("expected error for 404, got nil")
+	}
+	if !errors.Is(err, ErrPullRequestNotFound) {
+		t.Errorf("expected errors.Is(err, ErrPullRequestNotFound), got: %v", err)
+	}
+}
+
+// TestGetPullRequestStatus_TransientError_NotSentinel — V2-cleanup-18. Only a
+// definitive 404 maps to the sentinel. A 500 (or any other non-2xx) must NOT
+// match ErrPullRequestNotFound so the tracker keeps retrying rather than
+// dropping a PR that is still live but momentarily unreachable.
+func TestGetPullRequestStatus_TransientError_NotSentinel(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		msg    string
+	}{
+		{"unauthorized_401", http.StatusUnauthorized, "Bad credentials"},
+		{"forbidden_403", http.StatusForbidden, "Resource not accessible"},
+		{"rate_limited_429", http.StatusTooManyRequests, "API rate limit exceeded"},
+		{"server_error_500", http.StatusInternalServerError, "Server error"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			mux.HandleFunc("GET /repos/test-owner/test-repo/pulls/9", func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+				_ = json.NewEncoder(w).Encode(github.ErrorResponse{
+					Response: &http.Response{StatusCode: tc.status},
+					Message:  tc.msg,
+				})
+			})
+
+			server := httptest.NewServer(mux)
+			defer server.Close()
+
+			provider := newTestGitHubProvider(t, server)
+			_, err := provider.GetPullRequestStatus(context.Background(), 9)
+			if err == nil {
+				t.Fatalf("%s: expected error, got nil", tc.name)
+			}
+			if errors.Is(err, ErrPullRequestNotFound) {
+				t.Errorf("%s: error must NOT match ErrPullRequestNotFound (it is transient), got: %v", tc.name, err)
+			}
+		})
+	}
+}
+
+// TestGetPullRequestStatus_Merged — V2-cleanup-18 regression guard: a 200 with
+// merged=true still resolves to "merged" (no behaviour change on the happy path).
+func TestGetPullRequestStatus_Merged(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /repos/test-owner/test-repo/pulls/42", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(github.PullRequest{
+			Number: github.Ptr(42),
+			State:  github.Ptr("closed"),
+			Merged: github.Ptr(true),
+		})
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	provider := newTestGitHubProvider(t, server)
+	status, err := provider.GetPullRequestStatus(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("GetPullRequestStatus: %v", err)
+	}
+	if status != "merged" {
+		t.Errorf("expected status merged, got %q", status)
+	}
+}
+
 // TestIsEmptyRepo — unit test the detector directly so future callers can
 // rely on its semantics without re-deriving them.
 func TestIsEmptyRepo(t *testing.T) {
