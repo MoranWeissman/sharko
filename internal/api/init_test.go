@@ -93,6 +93,14 @@ func (f *initFakeGit) DeleteBranch(_ context.Context, _ string) error { return n
 type initFakeArgocd struct {
 	app    *models.ArgocdApplication // returned from GetApplication when getErr is nil
 	getErr error
+	// listApps / listErr drive ListApplications, which ProbeBootstrapApp now
+	// uses (V2-cleanup-11.2). When listApps is nil and listErr is nil, the
+	// fixture synthesizes the list from app (so existing healthy/forbidden
+	// fixtures keep working): a non-nil app → one-element list; a nil app with
+	// a permission-denied getErr → that same error on LIST; a nil app with no
+	// getErr → empty list (the "absent" case).
+	listApps []models.ArgocdApplication
+	listErr  error
 }
 
 func (a *initFakeArgocd) ListClusters(_ context.Context) ([]models.ArgocdCluster, error) {
@@ -113,6 +121,29 @@ func (a *initFakeArgocd) CreateApplication(_ context.Context, _ []byte) error {
 func (a *initFakeArgocd) AddRepository(_ context.Context, _, _, _ string) error { return nil }
 func (a *initFakeArgocd) GetApplication(_ context.Context, _ string) (*models.ArgocdApplication, error) {
 	return a.app, a.getErr
+}
+
+// ListApplications backs the V2-cleanup-11.2 LIST-and-filter probe. Explicit
+// listApps/listErr win; otherwise the result is synthesized from the existing
+// app/getErr fields so pre-11.2 fixtures (healthy / forbidden / no-app) keep
+// classifying the same way under the new probe.
+func (a *initFakeArgocd) ListApplications(_ context.Context) ([]models.ArgocdApplication, error) {
+	if a.listErr != nil {
+		return nil, a.listErr
+	}
+	if a.listApps != nil {
+		return a.listApps, nil
+	}
+	if a.getErr != nil {
+		// A forbidden/permission fixture (getErr wraps ErrPermissionDenied)
+		// should also make the LIST fail with that error.
+		return nil, a.getErr
+	}
+	if a.app != nil {
+		return []models.ArgocdApplication{*a.app}, nil
+	}
+	// Nil app, no error → the app simply does not exist yet (absent case).
+	return nil, nil
 }
 
 // ---------------------------------------------------------------------------

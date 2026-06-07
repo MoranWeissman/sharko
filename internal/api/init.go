@@ -414,53 +414,82 @@ func (s *Server) pollPRMerge(ctx context.Context, sessionID string, gp gitprovid
 	}
 }
 
+// Bootstrap-app probe statuses returned by ProbeBootstrapApp. These are the
+// intermediate classifications probeRepoState maps onto the wire RepoState*
+// values the wizard consumes.
+const (
+	// bootstrapHealthy — the app is present, Sync=Synced, Health=Healthy.
+	bootstrapHealthy = "healthy"
+	// bootstrapUnhealthy — the app is present but not Synced+Healthy.
+	bootstrapUnhealthy = "unhealthy"
+	// bootstrapAbsent — the app is genuinely not created on this ArgoCD yet
+	// (LIST succeeded, the app is not in the results). NOT a permission
+	// problem and NOT an unhealthy app — the repo has bootstrap files but
+	// ArgoCD has not been pointed at them yet, so the right move is to offer
+	// init/repair, never an RBAC message (V2-cleanup-11.2).
+	bootstrapAbsent = "absent"
+	// bootstrapForbidden — ArgoCD rejected the LIST itself with a 403; the
+	// token genuinely lacks permission to read applications (V2-cleanup-10).
+	bootstrapForbidden = "forbidden"
+)
+
 // ProbeBootstrapApp checks whether the canonical ArgoCD root application
 // (orchestrator.BootstrapRootAppName) exists and is Synced + Healthy.
 //
-// Returns ("healthy", "") when the app is present, Sync=Synced, and
-// Health=Healthy.
+// It LISTs applications and filters by name rather than GET-by-name. ArgoCD
+// answers a GET on a non-existent application with HTTP 403 (not 404) for
+// apiKey tokens — even a full-admin grant 403s on GET-of-a-missing-app while
+// LIST returns 200 + empty. GET-by-name therefore could not distinguish "app
+// absent" from "token forbidden", which made init abort with a bogus RBAC
+// message whenever a populated repo was pointed at a fresh ArgoCD
+// (V2-cleanup-11.2). LIST-and-filter removes that ambiguity:
 //
-// Returns ("forbidden", <detail>) when ArgoCD rejects the read with a 403
-// (the token lacks RBAC permission). This is reported distinctly — and NOT as
-// "missing or unhealthy" — because a 403 means the bootstrap app may well be
-// fine; the problem is the token's permissions (V2-cleanup-10).
+//   - LIST ok, app present, Synced+Healthy        → ("healthy",   "")
+//   - LIST ok, app present, not Synced+Healthy     → ("unhealthy", <detail>)
+//   - LIST ok, app absent (not in results)         → ("absent",    <detail>)
+//   - LIST itself 403 (ErrPermissionDenied)        → ("forbidden", <permMsg>)
+//   - LIST fails for any other reason              → ("unhealthy", <detail>)
 //
-// Returns ("unhealthy", <detail>) otherwise — including when the app is
-// genuinely missing (GetApplication returns a non-permission error), the sync
-// status is anything other than "Synced", or the health status is anything
-// other than "Healthy".
-//
-// Used to disambiguate "repo file exists" between idempotent-success
-// and partial-state on first-run init retry. Exported so the
-// /repo/status handler can reuse the same probe semantics — the wizard
-// gate reads `bootstrap_synced` from /repo/status to auto-open the
-// wizard when the bootstrap is missing/degraded. (Both "forbidden" and
-// "unhealthy" are non-healthy, so that gate keeps treating them as
-// not-synced.)
+// Used to disambiguate "repo file exists" between idempotent-success and
+// partial-state on first-run init retry. Exported so the /repo/status handler
+// can reuse the same probe semantics — the wizard gate reads `bootstrap_synced`
+// from /repo/status to auto-open the wizard when the bootstrap is
+// absent/degraded. ("forbidden", "unhealthy", and "absent" are all
+// non-healthy, so that gate keeps treating them as not-synced.)
 func ProbeBootstrapApp(ctx context.Context, ac orchestrator.ArgocdClient) (status, detail string) {
 	if ac == nil {
-		return "unhealthy", "no ArgoCD client configured"
+		return bootstrapUnhealthy, "no ArgoCD client configured"
 	}
-	app, err := ac.GetApplication(ctx, orchestrator.BootstrapRootAppName)
+	apps, err := ac.ListApplications(ctx)
 	if err != nil {
-		// A 403 is an RBAC problem with the token, not a missing/broken app —
-		// surface it distinctly so the user fixes their ArgoCD permissions
-		// instead of chasing a phantom bootstrap failure.
+		// A 403 on the LIST is a genuine RBAC problem with the token — surface
+		// it distinctly so the user fixes their ArgoCD permissions instead of
+		// chasing a phantom bootstrap failure (V2-cleanup-10).
 		if errors.Is(err, argocd.ErrPermissionDenied) {
-			return "forbidden", permissionDeniedDetail
+			return bootstrapForbidden, permissionDeniedDetail
 		}
-		return "unhealthy", fmt.Sprintf("argocd app %q not found: %v",
-			orchestrator.BootstrapRootAppName, err)
+		return bootstrapUnhealthy, fmt.Sprintf("listing argocd applications failed: %v", err)
 	}
-	if app == nil {
-		return "unhealthy", fmt.Sprintf("argocd app %q not found",
+
+	var found *models.ArgocdApplication
+	for i := range apps {
+		if apps[i].Name == orchestrator.BootstrapRootAppName {
+			found = &apps[i]
+			break
+		}
+	}
+	if found == nil {
+		// LIST succeeded but the bootstrap app is not there — it simply has
+		// not been created on this cluster yet. Offer init/repair; do NOT
+		// report an RBAC or unhealthy condition.
+		return bootstrapAbsent, fmt.Sprintf("argocd app %q is not created on this cluster yet",
 			orchestrator.BootstrapRootAppName)
 	}
-	if app.SyncStatus != "Synced" || app.HealthStatus != "Healthy" {
-		return "unhealthy", fmt.Sprintf("argocd app %q sync=%s health=%s",
-			orchestrator.BootstrapRootAppName, app.SyncStatus, app.HealthStatus)
+	if found.SyncStatus != "Synced" || found.HealthStatus != "Healthy" {
+		return bootstrapUnhealthy, fmt.Sprintf("argocd app %q sync=%s health=%s",
+			orchestrator.BootstrapRootAppName, found.SyncStatus, found.HealthStatus)
 	}
-	return "healthy", ""
+	return bootstrapHealthy, ""
 }
 
 // markAllStepsAlreadyInitialized walks the session's steps and marks each as

@@ -56,10 +56,16 @@ type InitStatusResponse struct {
 // The probe path is orchestrator.BootstrapRootAppPath — the same constant
 // CollectBootstrapFiles emits to and isPRMerged keys off of.
 //
-//	file missing                               -> ("empty",       "")
-//	file present + ProbeBootstrapApp "healthy"  -> ("initialized", "")
-//	file present + ArgoCD 403 / permission-denied -> ("forbidden", <detail>)
-//	file present + ArgoCD missing/unhealthy     -> ("partial",     <detail>)
+//	file missing                                  -> ("empty",       "")
+//	file present + ProbeBootstrapApp "healthy"     -> ("initialized", "")
+//	file present + LIST 403 / permission-denied    -> ("forbidden",   <detail>)
+//	file present + app absent (LIST ok, not found) -> ("partial",     <detail>)
+//	file present + app present but unhealthy        -> ("partial",     <detail>)
+//
+// Note (V2-cleanup-11.2): the "app absent" case maps to "partial", NOT
+// "forbidden". A populated repo pointed at a fresh ArgoCD (the bootstrap app
+// not created yet) is a repair/init situation, not an RBAC problem. Only a
+// genuine 403 on the LIST maps to "forbidden".
 func probeRepoState(
 	ctx context.Context,
 	gp gitprovider.GitProvider,
@@ -71,14 +77,17 @@ func probeRepoState(
 	}
 	status, argoDetail := ProbeBootstrapApp(ctx, ac)
 	switch status {
-	case "healthy":
+	case bootstrapHealthy:
 		return RepoStateInitialized, ""
-	case "forbidden":
-		// A 403 is an RBAC problem with the token, not a broken bootstrap —
-		// surface it distinctly so neither the POST /init partial path nor the
-		// GET /init/status probe mislabels it as "missing or unhealthy".
+	case bootstrapForbidden:
+		// A 403 on the LIST is a genuine RBAC problem with the token, not a
+		// broken bootstrap — surface it distinctly so neither the POST /init
+		// partial path nor the GET /init/status probe mislabels it.
 		return RepoStateForbidden, argoDetail
 	default:
+		// "absent" and "unhealthy" both mean: the repo has bootstrap files but
+		// ArgoCD is not (yet) running a healthy bootstrap. The wizard offers
+		// init/repair. Never an RBAC message here (V2-cleanup-11.2).
 		return RepoStatePartial, argoDetail
 	}
 }

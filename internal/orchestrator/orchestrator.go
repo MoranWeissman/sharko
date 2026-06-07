@@ -22,6 +22,12 @@ type ArgocdClient interface {
 	CreateApplication(ctx context.Context, appJSON []byte) error
 	AddRepository(ctx context.Context, repoURL, username, password string) error
 	GetApplication(ctx context.Context, name string) (*models.ArgocdApplication, error)
+	// ListApplications returns all applications visible to the token. Used by
+	// the bootstrap-app probe (V2-cleanup-11.2): ArgoCD answers GET on a
+	// non-existent app with 403 (not 404) for apiKey tokens, so the probe
+	// LISTs and filters by name instead of GET-by-name — a missing app is then
+	// an empty filter result (offer init), not a phantom permission error.
+	ListApplications(ctx context.Context) ([]models.ArgocdApplication, error)
 }
 
 // ArgoSecretManager is the interface the orchestrator uses for ArgoCD
