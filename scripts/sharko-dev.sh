@@ -1697,50 +1697,61 @@ EOF
         patched=1
     fi
 
-    # ---- 3. Service-account RBAC (only on --service-account) ----
-    # Goal: ensure "g, sharko, role:admin" is in argocd-rbac-cm policy.csv.
+    # ---- 3. Account RBAC grant (always — for whichever account we mint a token for) ----
+    # Goal: ensure "g, ${target_account}, role:admin" is in argocd-rbac-cm policy.csv.
+    #
+    # Why this is needed even for the built-in 'admin' account (V2-cleanup-10):
+    # ArgoCD's admin superuser bypass applies ONLY to the password *session*
+    # (token sub "admin"). An apiKey token minted for admin has sub
+    # "admin:apiKey" and is NOT covered by that bypass — it is subject to
+    # argocd-rbac-cm just like any other account. With an empty policy.csv the
+    # admin apiKey token gets HTTP 403 on every application read, so Sharko's
+    # bootstrap-app probe fails on a fresh 'ready'. Granting the account
+    # role:admin here (a group binding, NOT policy.default) gives the apiKey
+    # token the access it needs without making anonymous/other users admin.
+    # rbac-cm hot-reloads, so no argocd-server restart is required; this runs
+    # before the token is generated (step 7) so the grant is in place first.
+    #
     # Idempotency caveat: kubectl patch --type merge REPLACES the whole
     # policy.csv string. We avoid that by reading current value, appending
     # only if our line is not already present, then writing the merged
     # value back.
-    if [ "$service_account" = "1" ]; then
-        local current_policy
-        current_policy=$(kubectl get configmap argocd-rbac-cm -n argocd \
-            -o jsonpath='{.data.policy\.csv}' 2>/dev/null || true)
+    local current_policy
+    current_policy=$(kubectl get configmap argocd-rbac-cm -n argocd \
+        -o jsonpath='{.data.policy\.csv}' 2>/dev/null || true)
 
-        local sharko_rule="g, sharko, role:admin"
-        if printf '%s' "$current_policy" | grep -qxF "$sharko_rule"; then
-            [ "$mode" = "default" ] && log_info "argocd-rbac-cm already grants sharko role:admin"
+    local account_rule="g, ${target_account}, role:admin"
+    if printf '%s' "$current_policy" | grep -qxF "$account_rule"; then
+        [ "$mode" = "default" ] && log_info "argocd-rbac-cm already grants ${target_account} role:admin"
+    else
+        local new_policy
+        if [ -z "$current_policy" ]; then
+            new_policy="$account_rule"
         else
-            local new_policy
-            if [ -z "$current_policy" ]; then
-                new_policy="$sharko_rule"
-            else
-                # Preserve trailing newline behavior — append our line.
-                new_policy="${current_policy}
-${sharko_rule}"
-                [ "$mode" = "default" ] && log_warn "argocd-rbac-cm policy.csv had pre-existing rules — appending sharko role:admin (verify with: kubectl get configmap argocd-rbac-cm -n argocd -o jsonpath='{.data.policy\\.csv}')"
-            fi
+            # Preserve trailing newline behavior — append our line.
+            new_policy="${current_policy}
+${account_rule}"
+            [ "$mode" = "default" ] && log_warn "argocd-rbac-cm policy.csv had pre-existing rules — appending ${target_account} role:admin (verify with: kubectl get configmap argocd-rbac-cm -n argocd -o jsonpath='{.data.policy\\.csv}')"
+        fi
 
-            # Use kubectl patch via stdin to avoid embedding newlines in a
-            # one-liner shell-quoted JSON string. python3 (already a preflight
-            # tool) renders the JSON safely.
-            local patch_json
-            patch_json=$(NEW_POLICY="$new_policy" python3 -c '
+        # Use kubectl patch via stdin to avoid embedding newlines in a
+        # one-liner shell-quoted JSON string. python3 (already a preflight
+        # tool) renders the JSON safely.
+        local patch_json
+        patch_json=$(NEW_POLICY="$new_policy" python3 -c '
 import json, os
 print(json.dumps({"data": {"policy.csv": os.environ["NEW_POLICY"]}}))
 ' 2>/dev/null)
-            if [ -z "$patch_json" ]; then
-                log_fail "failed to render argocd-rbac-cm patch JSON"
-                return 1
-            fi
-            if ! printf '%s' "$patch_json" | kubectl patch configmap argocd-rbac-cm \
-                 -n argocd --type merge --patch-file=/dev/stdin >/dev/null 2>&1; then
-                log_fail "kubectl patch configmap argocd-rbac-cm failed"
-                return 1
-            fi
-            [ "$mode" = "default" ] && log_ok "patched argocd-rbac-cm to grant sharko role:admin"
+        if [ -z "$patch_json" ]; then
+            log_fail "failed to render argocd-rbac-cm patch JSON"
+            return 1
         fi
+        if ! printf '%s' "$patch_json" | kubectl patch configmap argocd-rbac-cm \
+             -n argocd --type merge --patch-file=/dev/stdin >/dev/null 2>&1; then
+            log_fail "kubectl patch configmap argocd-rbac-cm failed"
+            return 1
+        fi
+        [ "$mode" = "default" ] && log_ok "patched argocd-rbac-cm to grant ${target_account} role:admin"
     fi
 
     # ---- 4. Restart argocd-server (only if we patched argocd-cm) ----

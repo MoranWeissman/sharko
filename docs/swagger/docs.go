@@ -4957,7 +4957,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Read-only probe used by the first-run wizard before it offers to initialize the repo. Returns \"empty\" when the bootstrap root-app YAML is not present on the base branch, \"initialized\" when it is present and the ArgoCD bootstrap application is Synced + Healthy, and \"partial\" when the file is present but the ArgoCD bootstrap is missing or unhealthy (detail carries the ArgoCD diagnostic). Performs no writes and creates no operation session. Requires an active Git connection.",
+                "description": "Read-only probe used by the first-run wizard before it offers to initialize the repo. Returns \"empty\" when the bootstrap root-app YAML is not present on the base branch, \"initialized\" when it is present and the ArgoCD bootstrap application is Synced + Healthy, \"forbidden\" when the file is present but ArgoCD rejected the read with a 403 because the token lacks RBAC permission (detail carries an actionable permission message), and \"partial\" when the file is present but the ArgoCD bootstrap is missing or unhealthy (detail carries the ArgoCD diagnostic). Performs no writes and creates no operation session. Requires an active Git connection.",
                 "produces": [
                     "application/json"
                 ],

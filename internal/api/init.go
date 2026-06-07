@@ -3,12 +3,14 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
 	"net/http"
 	"time"
 
+	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
@@ -16,6 +18,11 @@ import (
 	"github.com/MoranWeissman/sharko/internal/operations"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
+
+// permissionDeniedDetail is the actionable message surfaced when ArgoCD answers
+// the bootstrap-app probe with a 403. Phrased so a user with a scoped token
+// understands the cause is RBAC on their token — NOT a broken bootstrap app.
+const permissionDeniedDetail = "ArgoCD rejected Sharko's token (permission denied) — the token needs permission to read applications. Check your ArgoCD RBAC: the account needs role:admin (or at least applications:get)."
 
 // handleInit godoc
 //
@@ -185,6 +192,12 @@ func (s *Server) runInitOperation(
 		markAllStepsAlreadyInitialized(s.opsStore, sessionID)
 		s.opsStore.Complete(sessionID,
 			"repo already initialized — ArgoCD bootstrap detected and healthy")
+		return
+	case RepoStateForbidden:
+		// A 403 from ArgoCD is an RBAC problem with the token, not a broken
+		// bootstrap — report the actionable permission message verbatim
+		// instead of mislabeling it as "missing or unhealthy" (V2-cleanup-10).
+		s.opsStore.Fail(sessionID, detail)
 		return
 	case RepoStatePartial:
 		s.opsStore.Fail(sessionID,
@@ -405,22 +418,37 @@ func (s *Server) pollPRMerge(ctx context.Context, sessionID string, gp gitprovid
 // (orchestrator.BootstrapRootAppName) exists and is Synced + Healthy.
 //
 // Returns ("healthy", "") when the app is present, Sync=Synced, and
-// Health=Healthy. Returns ("unhealthy", <detail>) otherwise — including
-// when the app is missing (GetApplication returns an error), the sync
-// status is anything other than "Synced", or the health status is
-// anything other than "Healthy".
+// Health=Healthy.
+//
+// Returns ("forbidden", <detail>) when ArgoCD rejects the read with a 403
+// (the token lacks RBAC permission). This is reported distinctly — and NOT as
+// "missing or unhealthy" — because a 403 means the bootstrap app may well be
+// fine; the problem is the token's permissions (V2-cleanup-10).
+//
+// Returns ("unhealthy", <detail>) otherwise — including when the app is
+// genuinely missing (GetApplication returns a non-permission error), the sync
+// status is anything other than "Synced", or the health status is anything
+// other than "Healthy".
 //
 // Used to disambiguate "repo file exists" between idempotent-success
 // and partial-state on first-run init retry. Exported so the
 // /repo/status handler can reuse the same probe semantics — the wizard
 // gate reads `bootstrap_synced` from /repo/status to auto-open the
-// wizard when the bootstrap is missing/degraded.
+// wizard when the bootstrap is missing/degraded. (Both "forbidden" and
+// "unhealthy" are non-healthy, so that gate keeps treating them as
+// not-synced.)
 func ProbeBootstrapApp(ctx context.Context, ac orchestrator.ArgocdClient) (status, detail string) {
 	if ac == nil {
 		return "unhealthy", "no ArgoCD client configured"
 	}
 	app, err := ac.GetApplication(ctx, orchestrator.BootstrapRootAppName)
 	if err != nil {
+		// A 403 is an RBAC problem with the token, not a missing/broken app —
+		// surface it distinctly so the user fixes their ArgoCD permissions
+		// instead of chasing a phantom bootstrap failure.
+		if errors.Is(err, argocd.ErrPermissionDenied) {
+			return "forbidden", permissionDeniedDetail
+		}
 		return "unhealthy", fmt.Sprintf("argocd app %q not found: %v",
 			orchestrator.BootstrapRootAppName, err)
 	}
