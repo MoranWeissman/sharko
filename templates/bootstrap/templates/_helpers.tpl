@@ -42,9 +42,9 @@ Deduplication (e.g. multiple istio addons → single istio-system) is handled in
 Usage: {{ include "addon.namespacesCSV" $ }}
 */}}
 {{- define "addon.namespacesCSV" -}}
-{{- range $a := $.Values.applicationsets -}}
-  {{- $ns := ($a.namespace | default $a.appName) -}}
-  {{`{{- if eq (index .metadata.labels "`}}{{ $a.appName }}{{`") "enabled" }},`}}{{ $ns }}{{`{{- end }}`}}
+{{- range $a := ($.Values.spec | default dict).applicationsets -}}
+  {{- $ns := ($a.namespace | default $a.name) -}}
+  {{`{{- if eq (index .metadata.labels "`}}{{ $a.name }}{{`") "enabled" }},`}}{{ $ns }}{{`{{- end }}`}}
 {{- end -}}
 {{- end -}}
 

@@ -1,13 +1,13 @@
 # ----------------------------------------------------------------------------------------------------
 # Sharko Generic Addon ApplicationSet Template
 #
-# - Catalog-driven: all per-addon behavior is configured via catalog fields in Values.applicationsets
+# - Catalog-driven: all per-addon behavior is configured via catalog fields in Values.spec.applicationsets
 # - No addon-specific logic: no if-name blocks, no hardcoded sync waves, no addon helpers
 # - Safety features are always on: cluster secret-type filter, finalizers, RBAC, schema tolerances
 # - Additional sources, sync options, ignoreDifferences, extraHelmValues: fully conditional
 # ----------------------------------------------------------------------------------------------------
 
-{{- range $index, $appset := .Values.applicationsets }}
+{{- range $index, $appset := (.Values.spec | default dict).applicationsets }}
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
@@ -29,7 +29,7 @@ spec:
   - '*'
 {{- end }}
 
-{{- range $index, $appset := .Values.applicationsets }}
+{{- range $index, $appset := (.Values.spec | default dict).applicationsets }}
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet

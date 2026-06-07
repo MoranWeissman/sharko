@@ -14,6 +14,64 @@ the PR. Append new releases at the TOP of the v2.x stream so the most
 recent release is the first thing readers see.
 -->
 
+## v2.0.3 — Bootstrap addon-deployment fix
+
+**Status:** in development
+
+v2.0.3 is a patch release that fixes a high-severity bug in the bootstrap
+Helm chart: it read the addon catalog at the wrong path, so the chart
+generated no ArgoCD ApplicationSets and **no addon ever deployed to any
+cluster**. No breaking changes.
+
+### Breaking changes
+
+No breaking changes — v2.0.3 is a patch release.
+
+### Bug fixes
+
+- **Bootstrap chart now actually deploys addons.** The chart that turns the
+  addon catalog into ArgoCD ApplicationSets read the addon list from the
+  top level (`.Values.applicationsets`), but Sharko writes the catalog under
+  the `sharko.io/v1` envelope, so the list lives at
+  `.Values.spec.applicationsets`. The mismatch meant the chart rendered zero
+  AppProjects and zero ApplicationSets regardless of catalog contents — every
+  addon showed "not deployed." The template (and the namespace helper, which
+  additionally referenced a non-existent `appName` field instead of `name`)
+  now read the catalog at the correct enveloped path. A new render regression
+  test renders the bootstrap chart against an enveloped catalog and fails if
+  it produces no ApplicationSet, and CI's Helm job now renders the bootstrap
+  chart on every PR so this can never silently regress.
+  (V2-cleanup-17)
+
+### Upgrading — existing repos need a manual one-time fix
+
+The fix above is in Sharko's source templates, so **newly initialized**
+repos get the corrected chart automatically. But repos that were already
+initialized by an earlier Sharko version still carry the old, broken
+bootstrap chart committed in Git — upgrading Sharko does **not** rewrite
+those files. Until you apply the fix below, addons in those repos will keep
+showing "not deployed."
+
+Sharko has no "re-bootstrap" or "update the bootstrap chart" command today:
+`sharko init` refuses to run on an already-initialized repo, and no
+reconciler owns the bootstrap chart files. So apply this 2-line correction
+by hand in your config repo (the one Sharko commits to), then commit it:
+
+1. In `bootstrap/templates/addons-appset.yaml`, change both
+   `.Values.applicationsets` references to `.Values.spec.applicationsets`.
+2. In `bootstrap/templates/_helpers.tpl`, change `$.Values.applicationsets`
+   to `$.Values.spec.applicationsets` (and, if your copy of the
+   `addon.namespacesCSV` helper references `$a.appName`, change it to
+   `$a.name`).
+
+Once committed and synced, ArgoCD will generate the missing ApplicationSets
+and your enabled addons will deploy.
+
+> **Backlog:** an automated "refresh the bootstrap chart in an existing
+> repo" flow (e.g. a `sharko init --update` / re-bootstrap path, or a
+> reconciler that owns the bootstrap chart) is tracked as a follow-up so
+> future template fixes reach existing repos without manual edits.
+
 ## v2.0.2 — First-run smoke-test fixes
 
 **Status:** released 2026-06-07

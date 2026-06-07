@@ -1,0 +1,12 @@
+# Regression fixture for V2-cleanup-17 — an ENVELOPED managed-clusters file.
+# The cluster list lives under spec.clusters (sharko.io/v1 envelope).
+apiVersion: sharko.io/v1
+kind: ManagedClusters
+metadata:
+  name: managed-clusters
+spec:
+  clusters:
+    - name: cluster-test-3
+      region: eu-central-1
+      labels:
+        velero: enabled
