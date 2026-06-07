@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"path"
 	"strings"
@@ -515,11 +516,21 @@ func (a *AzureDevOpsProvider) MergePullRequest(ctx context.Context, prNumber int
 }
 
 // GetPullRequestStatus returns the status of a pull request: "open", "merged", or "closed".
+//
+// A definitive HTTP 404 means the pull request no longer exists (it was
+// deleted, or the repository was recreated). In that case the error is wrapped
+// with gitprovider.ErrPullRequestNotFound so callers can use errors.Is to
+// distinguish a gone PR from a transient/auth failure. Only a 404 maps to the
+// sentinel — every other non-2xx (401, 403, 429, 5xx) stays generic so the
+// caller keeps retrying.
 func (a *AzureDevOpsProvider) GetPullRequestStatus(ctx context.Context, prNumber int) (string, error) {
 	prURL := fmt.Sprintf("%s/pullrequests/%d?api-version=7.1", a.baseURL, prNumber)
 	resp, body, err := a.doGet(prURL)
 	if err != nil {
 		return "", fmt.Errorf("get pull request #%d: %w", prNumber, err)
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return "", fmt.Errorf("get pull request #%d: %w", prNumber, ErrPullRequestNotFound)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("get pull request #%d failed (status %d): %s", prNumber, resp.StatusCode, string(body))

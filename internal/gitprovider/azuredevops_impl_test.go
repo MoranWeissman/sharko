@@ -3,6 +3,7 @@ package gitprovider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -370,5 +371,86 @@ func TestAzure_CreatePullRequest_Success(t *testing.T) {
 	}
 	if pr.TargetBranch != "main" {
 		t.Errorf("expected target branch 'main', got %q", pr.TargetBranch)
+	}
+}
+
+// TestAzure_GetPullRequestStatus_NotFound_404 — V2-cleanup-18. A 404 from the
+// pull-request endpoint (PR deleted, or repo recreated) must return an error
+// that errors.Is-matches gitprovider.ErrPullRequestNotFound so the PR tracker
+// can drop the stale entry.
+func TestAzure_GetPullRequestStatus_NotFound_404(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /pullrequests/8", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"message":"TF401174: The requested pull request was not found."}`))
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	provider := newTestAzureProvider(t, server)
+	_, err := provider.GetPullRequestStatus(context.Background(), 8)
+	if err == nil {
+		t.Fatal("expected error for 404, got nil")
+	}
+	if !errors.Is(err, ErrPullRequestNotFound) {
+		t.Errorf("expected errors.Is(err, ErrPullRequestNotFound), got: %v", err)
+	}
+}
+
+// TestAzure_GetPullRequestStatus_TransientError_NotSentinel — V2-cleanup-18.
+// Only a definitive 404 maps to the sentinel. Any other non-2xx (401/403/5xx)
+// must NOT match ErrPullRequestNotFound so the tracker keeps retrying.
+func TestAzure_GetPullRequestStatus_TransientError_NotSentinel(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+	}{
+		{"unauthorized_401", http.StatusUnauthorized},
+		{"forbidden_403", http.StatusForbidden},
+		{"server_error_500", http.StatusInternalServerError},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			mux.HandleFunc("GET /pullrequests/9", func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+				w.Write([]byte(`{"message":"error"}`))
+			})
+
+			server := httptest.NewServer(mux)
+			defer server.Close()
+
+			provider := newTestAzureProvider(t, server)
+			_, err := provider.GetPullRequestStatus(context.Background(), 9)
+			if err == nil {
+				t.Fatalf("%s: expected error, got nil", tc.name)
+			}
+			if errors.Is(err, ErrPullRequestNotFound) {
+				t.Errorf("%s: error must NOT match ErrPullRequestNotFound (transient), got: %v", tc.name, err)
+			}
+		})
+	}
+}
+
+// TestAzure_GetPullRequestStatus_Completed — V2-cleanup-18 regression guard: a
+// 200 with status "completed" still resolves to "merged" (happy path unchanged).
+func TestAzure_GetPullRequestStatus_Completed(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /pullrequests/42", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"completed"}`))
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	provider := newTestAzureProvider(t, server)
+	status, err := provider.GetPullRequestStatus(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("GetPullRequestStatus: %v", err)
+	}
+	if status != "merged" {
+		t.Errorf("expected status merged, got %q", status)
 	}
 }

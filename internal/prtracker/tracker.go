@@ -7,6 +7,7 @@ package prtracker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/cmstore"
+	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/logging"
 )
 
@@ -254,6 +256,28 @@ func (t *Tracker) PollOnce(ctx context.Context) {
 	for id, pr := range prs {
 		status, err := gp.GetPullRequestStatus(ctx, pr.PRID)
 		if err != nil {
+			// A definitive not-found (HTTP 404) means the PR no longer
+			// exists on the provider — it was deleted, or the repo was
+			// recreated. Drop the stale entry so it self-heals instead of
+			// lingering as a phantom "open" PR forever. Every other error
+			// (auth, rate-limit, 5xx, network) is treated as transient: keep
+			// the entry and retry on the next poll.
+			if errors.Is(err, gitprovider.ErrPullRequestNotFound) {
+				log.Info("[prtracker] PR no longer exists on provider — dropping stale entry",
+					"pr_id", pr.PRID, "cluster", pr.Cluster, "operation", pr.Operation)
+				t.auditFn(audit.Entry{
+					Level:     "warn",
+					Event:     "pr_gone",
+					User:      pr.User,
+					Action:    pr.Operation,
+					Resource:  fmt.Sprintf("pr:%d cluster:%s", pr.PRID, pr.Cluster),
+					Source:    "prtracker",
+					Result:    "warn",
+					RequestID: logging.RequestID(ctx),
+				})
+				toRemove = append(toRemove, id)
+				continue
+			}
 			log.Warn("[prtracker] failed to poll PR", "pr_id", pr.PRID, "error", err)
 			continue
 		}
@@ -335,6 +359,44 @@ func (t *Tracker) PollSinglePR(ctx context.Context, prID int) (*PRInfo, error) {
 
 	status, err := gp.GetPullRequestStatus(ctx, prID)
 	if err != nil {
+		// Definitive not-found (HTTP 404): the PR is gone from the provider
+		// (deleted, or repo recreated). Drop the stale entry and audit it,
+		// mirroring how merged/closed entries are removed below. Every other
+		// error stays transient — surface it so the caller retries later.
+		if errors.Is(err, gitprovider.ErrPullRequestNotFound) {
+			var gonePR *PRInfo
+			rmErr := t.cmStore.ReadModifyWrite(ctx, func(data map[string]interface{}) error {
+				prs := t.extractPRs(data)
+				key := strconv.Itoa(prID)
+				pr, ok := prs[key]
+				if !ok {
+					return nil
+				}
+				gonePR = &pr
+				delete(prs, key)
+				return t.encodePRs(data, prs)
+			})
+			if rmErr != nil {
+				return nil, rmErr
+			}
+			if gonePR != nil {
+				log.Info("[prtracker] PR no longer exists on provider — dropping stale entry",
+					"pr_id", prID, "cluster", gonePR.Cluster, "operation", gonePR.Operation)
+				t.auditFn(audit.Entry{
+					Level:     "warn",
+					Event:     "pr_gone",
+					User:      gonePR.User,
+					Action:    gonePR.Operation,
+					Resource:  fmt.Sprintf("pr:%d cluster:%s", prID, gonePR.Cluster),
+					Source:    "prtracker",
+					Result:    "warn",
+					RequestID: logging.RequestID(ctx),
+				})
+			}
+			// The PR is gone; it is no longer tracked. Return no PR and no
+			// error — this is a clean, expected terminal state, not a failure.
+			return nil, nil
+		}
 		return nil, fmt.Errorf("poll PR #%d: %w", prID, err)
 	}
 

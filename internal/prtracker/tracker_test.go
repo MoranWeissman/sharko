@@ -2,22 +2,31 @@ package prtracker
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/cmstore"
+	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
 // mockGitProvider implements GitProvider for testing.
 type mockGitProvider struct {
 	statuses        map[int]string
+	statusErrs      map[int]error // per-PR error returned by GetPullRequestStatus
 	deletedBranches []string
 	deleteBranchErr error
 }
 
 func (m *mockGitProvider) GetPullRequestStatus(_ context.Context, prNumber int) (string, error) {
+	if m.statusErrs != nil {
+		if err, ok := m.statusErrs[prNumber]; ok {
+			return "", err
+		}
+	}
 	s, ok := m.statuses[prNumber]
 	if !ok {
 		return "open", nil
@@ -470,4 +479,170 @@ var errBranchGone = stringErr("branch already deleted")
 type stringErr string
 
 func (e stringErr) Error() string { return string(e) }
+
+// TestPollOnce_GonePR_Dropped — V2-cleanup-18. When the provider reports the
+// PR no longer exists (HTTP 404 → gitprovider.ErrPullRequestNotFound), the
+// tracker must drop the stale entry (self-heal a phantom "open" PR left over
+// from a deleted PR / recreated repo) and emit a pr_gone audit event.
+func TestPollOnce_GonePR_Dropped(t *testing.T) {
+	gp := &mockGitProvider{
+		statusErrs: map[int]error{
+			8: fmt.Errorf("get pull request #8: %w", gitprovider.ErrPullRequestNotFound),
+		},
+	}
+	tracker, events := newTestTracker(gp)
+	ctx := context.Background()
+
+	if err := tracker.TrackPR(ctx, PRInfo{
+		PRID:       8,
+		PRBranch:   "sharko/addon-cert-manager",
+		Cluster:    "prod",
+		Operation:  "addon-add",
+		User:       "admin",
+		LastStatus: "open",
+	}); err != nil {
+		t.Fatalf("TrackPR: %v", err)
+	}
+
+	tracker.PollOnce(ctx)
+
+	// The phantom entry must be gone from ConfigMap state.
+	prs, _ := tracker.ListPRs(ctx, "", "", "", "")
+	if len(prs) != 0 {
+		t.Errorf("expected 0 tracked PRs after gone-PR drop, got %d", len(prs))
+	}
+
+	// A pr_gone audit event must have been emitted.
+	if len(*events) != 1 {
+		t.Fatalf("expected 1 audit event, got %d", len(*events))
+	}
+	if (*events)[0].Event != "pr_gone" {
+		t.Errorf("expected event pr_gone, got %s", (*events)[0].Event)
+	}
+	if (*events)[0].Result != "warn" {
+		t.Errorf("expected result warn, got %s", (*events)[0].Result)
+	}
+}
+
+// TestPollOnce_TransientError_Kept — V2-cleanup-18. A transient/generic error
+// (network, 401, 403, 429, 5xx — anything that is NOT
+// gitprovider.ErrPullRequestNotFound) must NOT drop the PR. The entry is kept
+// so the next poll retries it. No audit event is emitted.
+func TestPollOnce_TransientError_Kept(t *testing.T) {
+	gp := &mockGitProvider{
+		statusErrs: map[int]error{
+			9: errors.New("get pull request #9: 503 service unavailable"),
+		},
+	}
+	tracker, events := newTestTracker(gp)
+	ctx := context.Background()
+
+	if err := tracker.TrackPR(ctx, PRInfo{
+		PRID:       9,
+		PRBranch:   "sharko/register-prod",
+		Cluster:    "prod",
+		Operation:  "register",
+		User:       "admin",
+		LastStatus: "open",
+	}); err != nil {
+		t.Fatalf("TrackPR: %v", err)
+	}
+
+	tracker.PollOnce(ctx)
+
+	// The PR must still be tracked (will retry next poll).
+	prs, _ := tracker.ListPRs(ctx, "", "", "", "")
+	if len(prs) != 1 {
+		t.Errorf("expected 1 tracked PR kept on transient error, got %d", len(prs))
+	}
+
+	// No audit event on a transient failure.
+	if len(*events) != 0 {
+		t.Errorf("expected 0 audit events on transient error, got %d", len(*events))
+	}
+}
+
+// TestPollSinglePR_Gone_Dropped — V2-cleanup-18. PollSinglePR must apply the
+// same gone-PR handling: drop the entry, emit pr_gone, and return (nil, nil)
+// because the PR being gone is an expected terminal state, not a failure.
+func TestPollSinglePR_Gone_Dropped(t *testing.T) {
+	gp := &mockGitProvider{
+		statusErrs: map[int]error{
+			8: fmt.Errorf("get pull request #8: %w", gitprovider.ErrPullRequestNotFound),
+		},
+	}
+	tracker, events := newTestTracker(gp)
+	ctx := context.Background()
+
+	if err := tracker.TrackPR(ctx, PRInfo{
+		PRID:       8,
+		Cluster:    "prod",
+		Operation:  "addon-add",
+		User:       "admin",
+		LastStatus: "open",
+	}); err != nil {
+		t.Fatalf("TrackPR: %v", err)
+	}
+
+	pr, err := tracker.PollSinglePR(ctx, 8)
+	if err != nil {
+		t.Fatalf("PollSinglePR returned error for gone PR, want nil: %v", err)
+	}
+	if pr != nil {
+		t.Errorf("expected nil PRInfo for gone PR, got %+v", pr)
+	}
+
+	// Entry dropped from state.
+	prs, _ := tracker.ListPRs(ctx, "", "", "", "")
+	if len(prs) != 0 {
+		t.Errorf("expected 0 tracked PRs after gone-PR drop, got %d", len(prs))
+	}
+
+	// pr_gone audit emitted.
+	if len(*events) != 1 {
+		t.Fatalf("expected 1 audit event, got %d", len(*events))
+	}
+	if (*events)[0].Event != "pr_gone" {
+		t.Errorf("expected event pr_gone, got %s", (*events)[0].Event)
+	}
+}
+
+// TestPollSinglePR_TransientError_Kept — V2-cleanup-18. A transient/generic
+// error from PollSinglePR must surface as an error (so the caller knows the
+// poll failed) and must NOT drop the tracked PR.
+func TestPollSinglePR_TransientError_Kept(t *testing.T) {
+	gp := &mockGitProvider{
+		statusErrs: map[int]error{
+			9: errors.New("get pull request #9: 500 internal server error"),
+		},
+	}
+	tracker, events := newTestTracker(gp)
+	ctx := context.Background()
+
+	if err := tracker.TrackPR(ctx, PRInfo{
+		PRID:       9,
+		Cluster:    "prod",
+		Operation:  "register",
+		User:       "admin",
+		LastStatus: "open",
+	}); err != nil {
+		t.Fatalf("TrackPR: %v", err)
+	}
+
+	_, err := tracker.PollSinglePR(ctx, 9)
+	if err == nil {
+		t.Fatal("expected error on transient failure, got nil")
+	}
+
+	// PR must still be tracked.
+	prs, _ := tracker.ListPRs(ctx, "", "", "", "")
+	if len(prs) != 1 {
+		t.Errorf("expected 1 tracked PR kept on transient error, got %d", len(prs))
+	}
+
+	// No audit event on a transient failure.
+	if len(*events) != 0 {
+		t.Errorf("expected 0 audit events on transient error, got %d", len(*events))
+	}
+}
 

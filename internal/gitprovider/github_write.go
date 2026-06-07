@@ -328,9 +328,20 @@ func (g *GitHubProvider) MergePullRequest(ctx context.Context, prNumber int) err
 }
 
 // GetPullRequestStatus returns the status of a pull request: "open", "merged", or "closed".
+//
+// When GitHub returns HTTP 404 the pull request no longer exists (it was
+// deleted, or the repository was recreated and the old PR number is gone). In
+// that case the error is wrapped with gitprovider.ErrPullRequestNotFound so
+// callers can use errors.Is to distinguish a definitively-gone PR from a
+// transient/auth failure. Only a 404 maps to the sentinel — every other error
+// (401, 403, 429, 5xx, network) stays generic so the caller keeps retrying.
 func (g *GitHubProvider) GetPullRequestStatus(ctx context.Context, prNumber int) (string, error) {
 	pr, _, err := g.client.PullRequests.Get(ctx, g.owner, g.repo, prNumber)
 	if err != nil {
+		var ghErr *github.ErrorResponse
+		if errors.As(err, &ghErr) && ghErr.Response != nil && ghErr.Response.StatusCode == http.StatusNotFound {
+			return "", fmt.Errorf("get pull request #%d: %w", prNumber, ErrPullRequestNotFound)
+		}
 		return "", fmt.Errorf("get pull request #%d: %w", prNumber, err)
 	}
 	if pr.GetMerged() {
