@@ -117,6 +117,21 @@ func (m *mockArgocd) GetApplication(_ context.Context, name string) (*models.Arg
 	return nil, fmt.Errorf("application %q not found", name)
 }
 
+func (m *mockArgocd) ListApplications(_ context.Context) ([]models.ArgocdApplication, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.getAppErr != nil {
+		return nil, m.getAppErr
+	}
+	apps := make([]models.ArgocdApplication, 0, len(m.applications))
+	for _, app := range m.applications {
+		if app != nil {
+			apps = append(apps, *app)
+		}
+	}
+	return apps, nil
+}
+
 // ---------- mock credentials provider ----------
 
 type mockCredProvider struct {

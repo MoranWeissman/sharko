@@ -245,12 +245,25 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 				secretLabels[addon] = "false"
 			}
 		}
+		// Stamp the registration-pending marker so the cluster reconciler's
+		// orphan sweep does NOT delete this Secret before the registration PR
+		// (which adds the cluster to managed-clusters.yaml) merges. Until that
+		// PR merges the cluster is "in-argocd ∖ in-git" and would otherwise be
+		// reaped ~200ms later (V2-cleanup-11.1). The value is an RFC3339
+		// timestamp; the sweep computes grace-window expiry from it (restart-
+		// safe), and the reconciler strips the annotation once the cluster
+		// becomes managed. The annotation key + grace window are defined once
+		// in internal/models so this writer and the sweep can never disagree.
+		pendingAnnotations := map[string]string{
+			models.AnnotationRegistrationPending: models.RegistrationPendingTimestamp(time.Now()),
+		}
 		_, ensureErr := o.argoSecretManager.Ensure(ctx, ArgoSecretSpec{
-			Name:   req.Name,
-			Server: creds.Server,
-			CAData: base64.StdEncoding.EncodeToString(creds.CAData),
-			Token:  creds.Token,
-			Labels: secretLabels,
+			Name:        req.Name,
+			Server:      creds.Server,
+			CAData:      base64.StdEncoding.EncodeToString(creds.CAData),
+			Token:       creds.Token,
+			Labels:      secretLabels,
+			Annotations: pendingAnnotations,
 		})
 		if ensureErr != nil {
 			log.Error("RegisterCluster: direct ArgoCD cluster Secret write failed (continuing — Git + reconciler can still converge)",

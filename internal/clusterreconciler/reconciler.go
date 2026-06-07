@@ -184,6 +184,13 @@ type Reconciler struct {
 	// Per-instance (rather than a package-level var) so parallel tests do
 	// not race on a shared seam.
 	pollFn func(context.Context)
+
+	// nowFn is the per-instance clock seam used when evaluating the
+	// registration-pending grace window (V2-cleanup-11.1). Production
+	// initializes it to time.Now in New(); tests override it to drive a
+	// within-window / expired Secret deterministically. Per-instance (not a
+	// package-level var) so parallel tests do not race on a shared seam.
+	nowFn func() time.Time
 }
 
 // New constructs a Reconciler with the given dependencies. It does NOT start
@@ -219,6 +226,7 @@ func New(deps Deps) *Reconciler {
 		branch:              branch,
 		triggerCh:           make(chan struct{}, 1),
 		stopCh:              make(chan struct{}),
+		nowFn:               time.Now,
 	}
 	r.pollFn = r.pollOnce
 	return r
@@ -292,6 +300,8 @@ type reconcileStats struct {
 	Created          int
 	Deleted          int
 	SkippedUnlabeled int // existing same-name unlabeled Secret — Adopt territory
+	SkippedPending   int // orphan candidate skipped — registration-pending within grace (V2-cleanup-11.1)
+	ClearedPending   int // pending annotation stripped — cluster became managed (V2-cleanup-11.1)
 	Errors           int
 }
 
@@ -453,11 +463,39 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 			toCreate = append(toCreate, entry)
 		}
 	}
+
+	now := r.now()
 	toDelete := make([]string, 0)
 	for name := range existing {
-		if _, present := desired[name]; !present {
-			toDelete = append(toDelete, name)
+		if _, present := desired[name]; present {
+			continue // in both sets — handled by the clear-pending pass below.
 		}
+		// in-argocd ∖ in-git → orphan candidate. BUT: a Secret that was
+		// direct-written during registration Stage 1 carries the
+		// registration-pending annotation and is NOT yet in git because its
+		// registration PR has not merged. Skip it while the grace window is
+		// open so the orphan sweep does not race the PR merge
+		// (V2-cleanup-11.1). Once the window expires (PR never merged) it
+		// falls through and is reaped — no permanent leak.
+		secret := existing[name]
+		pending, malformed := models.IsRegistrationPending(annotationsOf(secret), now)
+		if malformed {
+			logging.LoggerFromContext(ctx).Warn(
+				"[clusterreconciler] registration-pending annotation is unparseable — treating Secret as a normal orphan candidate",
+				"cluster", name, "namespace", r.namespace,
+				"annotation", models.AnnotationRegistrationPending,
+				"value", annotationsOf(secret)[models.AnnotationRegistrationPending],
+			)
+		}
+		if pending {
+			stats.SkippedPending++
+			logging.LoggerFromContext(ctx).Info(
+				"[clusterreconciler] skipping orphan delete — Secret is registration-pending within grace window",
+				"cluster", name, "namespace", r.namespace,
+			)
+			continue
+		}
+		toDelete = append(toDelete, name)
 	}
 
 	// Create missing Secrets (in-git ∖ in-argocd).
@@ -471,6 +509,90 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 		secret := existing[name]
 		r.deleteOne(ctx, name, secret, stats)
 	}
+
+	// Convert pending → managed: any Secret that is now in BOTH git and
+	// argocd AND still carries the registration-pending annotation has had
+	// its registration PR merged — strip the annotation so it becomes a
+	// normal managed Secret (and is no longer immune to a future orphan
+	// sweep). Idempotent: Secrets without the annotation are untouched.
+	for name := range desired {
+		secret, present := existing[name]
+		if !present {
+			continue // will be created above; nothing to clear.
+		}
+		if _, has := annotationsOf(secret)[models.AnnotationRegistrationPending]; has {
+			r.clearRegistrationPending(ctx, name, secret, stats)
+		}
+	}
+}
+
+// now returns the current time via the per-instance clock seam. Defaulted to
+// time.Now in New(); overridable in tests for deterministic grace-window
+// evaluation.
+func (r *Reconciler) now() time.Time {
+	if r.nowFn == nil {
+		return time.Now()
+	}
+	return r.nowFn()
+}
+
+// annotationsOf is a nil-safe accessor for a Secret's annotations.
+func annotationsOf(secret *corev1.Secret) map[string]string {
+	if secret == nil {
+		return nil
+	}
+	return secret.Annotations
+}
+
+// clearRegistrationPending removes the registration-pending annotation from a
+// now-managed cluster Secret. Best-effort + isolated: a failure is logged +
+// audited but does not abort the tick. Re-applies the ownership label
+// defensively (the annotation strip must never drop the managed-by label).
+func (r *Reconciler) clearRegistrationPending(ctx context.Context, name string, cached *corev1.Secret, stats *reconcileStats) {
+	log := logging.LoggerFromContext(ctx)
+	updated := cached.DeepCopy()
+	delete(updated.Annotations, models.AnnotationRegistrationPending)
+	// Strip the K8s-managed Data/StringData mismatch concern: we only mutate
+	// metadata here, so keep Data as-is (DeepCopy preserved it).
+	ApplyManagedBySharkoLabel(updated)
+	if _, err := r.deps.ArgoClient.CoreV1().Secrets(r.namespace).Update(ctx, updated, metav1.UpdateOptions{}); err != nil {
+		if apierrors.IsNotFound(err) {
+			log.Info("[clusterreconciler] registration-pending Secret already gone before annotation clear — nothing to do",
+				"cluster", name, "namespace", r.namespace,
+			)
+			return
+		}
+		stats.Errors++
+		log.Error("[clusterreconciler] clearing registration-pending annotation failed — continuing",
+			"cluster", name, "namespace", r.namespace, "error", err,
+		)
+		r.audit(audit.Entry{
+			Level:     "error",
+			Event:     "cluster_secret_clear_pending",
+			User:      "sharko",
+			Action:    "clear_registration_pending",
+			Resource:  fmt.Sprintf("cluster:%s", name),
+			Source:    "reconciler",
+			Result:    "failure",
+			Error:     err.Error(),
+			RequestID: logging.RequestID(ctx),
+		})
+		return
+	}
+	stats.ClearedPending++
+	log.Info("[clusterreconciler] registration-pending annotation cleared — cluster is now managed",
+		"cluster", name, "namespace", r.namespace,
+	)
+	r.audit(audit.Entry{
+		Level:     "info",
+		Event:     "cluster_secret_clear_pending",
+		User:      "sharko",
+		Action:    "clear_registration_pending",
+		Resource:  fmt.Sprintf("cluster:%s", name),
+		Source:    "reconciler",
+		Result:    "success",
+		RequestID: logging.RequestID(ctx),
+	})
 }
 
 // listManagedSecrets fetches all sharko-labeled cluster Secrets from the
@@ -720,8 +842,8 @@ func (r *Reconciler) emitSummaryAudit(ctx context.Context, stats reconcileStats)
 		Event:  "cluster_secret_reconcile_tick",
 		User:   "sharko",
 		Action: "reconcile",
-		Resource: fmt.Sprintf("created:%d deleted:%d skipped_unlabeled:%d errors:%d",
-			stats.Created, stats.Deleted, stats.SkippedUnlabeled, stats.Errors),
+		Resource: fmt.Sprintf("created:%d deleted:%d skipped_unlabeled:%d skipped_pending:%d cleared_pending:%d errors:%d",
+			stats.Created, stats.Deleted, stats.SkippedUnlabeled, stats.SkippedPending, stats.ClearedPending, stats.Errors),
 		Source:    "reconciler",
 		Result:    result,
 		RequestID: logging.RequestID(ctx),

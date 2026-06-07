@@ -255,3 +255,92 @@ func TestProbeBootstrapApp_Degraded(t *testing.T) {
 		t.Errorf("degraded app must NOT use the permission message, got %q", detail)
 	}
 }
+
+// --- V2-cleanup-11.2 — LIST-and-filter probe ---------------------------------
+//
+// The probe now LISTs applications and filters by name instead of GET-by-name,
+// because ArgoCD answers GET-on-missing-app with 403 (not 404) for apiKey
+// tokens. The critical new case is "app absent on a fresh ArgoCD with a
+// populated repo": LIST returns 200 + empty, and that must classify as
+// "absent" (offer init), NOT "forbidden" (the V2-cleanup-10.2 regression).
+
+// listApps present + healthy → "healthy".
+func TestProbeBootstrapApp_ListPresentHealthy(t *testing.T) {
+	ac := &initFakeArgocd{listApps: []models.ArgocdApplication{
+		{Name: orchestrator.BootstrapRootAppName, SyncStatus: "Synced", HealthStatus: "Healthy"},
+	}}
+	status, detail := ProbeBootstrapApp(context.Background(), ac)
+	if status != "healthy" {
+		t.Errorf("expected status=healthy, got %q (detail %q)", status, detail)
+	}
+}
+
+// listApps present but degraded → "unhealthy".
+func TestProbeBootstrapApp_ListPresentDegraded(t *testing.T) {
+	ac := &initFakeArgocd{listApps: []models.ArgocdApplication{
+		{Name: orchestrator.BootstrapRootAppName, SyncStatus: "OutOfSync", HealthStatus: "Degraded"},
+	}}
+	status, detail := ProbeBootstrapApp(context.Background(), ac)
+	if status != "unhealthy" {
+		t.Errorf("expected status=unhealthy, got %q", status)
+	}
+	if detail == permissionDeniedDetail {
+		t.Errorf("degraded app must NOT use the permission message, got %q", detail)
+	}
+}
+
+// LIST succeeds with an empty result (other apps but not the bootstrap one) →
+// "absent", NOT "forbidden", NOT "unhealthy". This is the bug the story fixes.
+func TestProbeBootstrapApp_ListAbsent_NotForbidden(t *testing.T) {
+	ac := &initFakeArgocd{listApps: []models.ArgocdApplication{
+		{Name: "some-other-app", SyncStatus: "Synced", HealthStatus: "Healthy"},
+	}}
+	status, detail := ProbeBootstrapApp(context.Background(), ac)
+	if status != "absent" {
+		t.Errorf("expected status=absent for a missing bootstrap app, got %q", status)
+	}
+	if detail == permissionDeniedDetail {
+		t.Errorf("absent app must NOT use the permission-denied message, got %q", detail)
+	}
+	if detail == "" {
+		t.Error("expected a non-empty detail explaining the app is not created yet")
+	}
+}
+
+// LIST itself 403s → "forbidden" + permission message (genuine RBAC problem).
+func TestProbeBootstrapApp_ListForbidden(t *testing.T) {
+	ac := &initFakeArgocd{listErr: fmt.Errorf("listing applications: %w", argocd.ErrPermissionDenied)}
+	status, detail := ProbeBootstrapApp(context.Background(), ac)
+	if status != "forbidden" {
+		t.Errorf("expected status=forbidden on a LIST 403, got %q", status)
+	}
+	if detail != permissionDeniedDetail {
+		t.Errorf("expected permission-denied detail, got %q", detail)
+	}
+}
+
+// Through probeRepoState: file present + app absent (LIST ok, empty) must map
+// to RepoStatePartial — the wizard offers init/repair, NOT an RBAC message.
+func TestProbeRepoState_AbsentApp_MapsToPartial_NotForbidden(t *testing.T) {
+	ac := &initFakeArgocd{listApps: []models.ArgocdApplication{}} // LIST ok, empty
+	state, detail := probeRepoState(context.Background(), initializedRepoGit(), ac, "main")
+	if state != RepoStatePartial {
+		t.Fatalf("absent bootstrap app must map to partial, got %q", state)
+	}
+	if state == RepoStateForbidden || detail == permissionDeniedDetail {
+		t.Fatalf("absent app must NOT be classified as forbidden/permission-denied; state=%q detail=%q", state, detail)
+	}
+}
+
+// Through probeRepoState: a genuine LIST 403 still maps to RepoStateForbidden
+// with the permission message preserved.
+func TestProbeRepoState_ListForbidden_MapsToForbidden(t *testing.T) {
+	ac := &initFakeArgocd{listErr: fmt.Errorf("listing applications: %w", argocd.ErrPermissionDenied)}
+	state, detail := probeRepoState(context.Background(), initializedRepoGit(), ac, "main")
+	if state != RepoStateForbidden {
+		t.Fatalf("a genuine LIST 403 must map to forbidden, got %q", state)
+	}
+	if detail != permissionDeniedDetail {
+		t.Fatalf("expected the permission-denied message preserved, got %q", detail)
+	}
+}
