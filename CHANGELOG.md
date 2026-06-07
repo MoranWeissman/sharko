@@ -5,10 +5,94 @@ All notable changes to Sharko are documented in this file.
 The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-> **Pre-release notice.** All `v1.x` tags are pre-release builds intended for
-> evaluation, testing, and early adoption feedback. The first production-ready
-> release will be **`v2.0.0`**, which has not shipped yet. Expect breaking
-> changes between minor versions until GA. Pin to a specific patch tag.
+> **Production status.** Sharko reached production GA with **`v2.0.0`**
+> (2026-06-03), its first production release. All `v1.x` tags were
+> pre-release builds for evaluation and early-adopter feedback. From v2.0.0
+> onward the project follows semantic versioning under an
+> [API stability contract](docs/site/release-notes.md) — see the v2.0.0
+> release notes for the per-endpoint stability tiers and deprecation policy.
+
+## [v2.0.2] - 2026-06-07
+
+> First-run smoke-test fixes — the V2-cleanup line (V2-cleanup-7..14).
+> Closes the gaps found while running Sharko end-to-end on a fresh cluster.
+> No breaking changes. Full PR-by-PR detail:
+> [release notes](docs/site/release-notes.md).
+
+### Fixed
+
+- Kubeconfig-based cluster registration now works end-to-end, so operators
+  can register a cluster from a kubeconfig without manual ArgoCD Secret
+  surgery (#391, #394, #395).
+- Cluster removal honors the auto-merge setting instead of leaving the
+  removal PR open (#396).
+- The setup wizard probes the repository state before it starts, so it no
+  longer assumes an empty or already-initialized repo (#392).
+- `scripts/sharko-dev.sh` reliability fixes for the maintainer dev loop
+  (#390).
+
+### Changed
+
+- The marketplace add-addon flow now matches the first-run init flow:
+  auto-merge, change preview, progress display, a clickable pull-request
+  link, and navigation back to the addon (#397).
+- The dev-environment ArgoCD RBAC notes are clearer about what access the
+  dev setup grants (#393).
+
+### Added
+
+- Design-history docs capturing the decisions behind the current setup
+  flow (#388).
+
+## [v2.0.1] - 2026-06-04
+
+> Release-pipeline fix only. No change to the Sharko binary or its
+> behavior. See the
+> [v2.0.1 release notes](docs/site/release-notes.md#v201--release-pipeline-fix).
+
+### Fixed
+
+- Dropped Windows from the GoReleaser config so releases build cleanly on
+  the Linux runners; Linux and macOS artifacts are unaffected (#387).
+
+## [v2.0.0] - 2026-06-03
+
+> Sharko's first production release. No breaking changes — there is no prior
+> production line to break. The summary below is theme-level; for the full
+> PR-by-PR detail see the
+> [v2.0.0 release notes](docs/site/release-notes.md#v200--production-launch).
+
+### Added
+
+- Performance baselines and SLO targets per critical path (cluster
+  registration, addon cycle, catalog scan, dashboard reads), with a
+  comparator that gates every PR against the committed baselines (V2-1).
+- 100% structured logging on `log/slog` with correlation IDs threaded
+  across the stack and a handler that redacts tokens, kubeconfigs, and
+  secret bodies before they reach any log sink (V2-2).
+- Prometheus telemetry for the SLO surfaces, a Helm-shipped PrometheusRule
+  with multi-window burn-rate alerts, and an operator runbook for every
+  alert (V2-3).
+- Operator runbooks covering the inventoried failure modes (Symptoms →
+  Diagnosis → Mitigation → Root cause → Prevention) (V2-4).
+- CNCF foundation files (MAINTAINERS, GOVERNANCE, CODE_OF_CONDUCT,
+  CONTRIBUTING, SECURITY, ADOPTERS), DCO sign-off enforcement, issue
+  templates, and GitHub Discussions (V2-6).
+- A public roadmap and an API stability contract that tiers every endpoint
+  (stable / beta / alpha) with a documented deprecation policy (V2-6.3).
+
+### Security
+
+- v2.0.0 threat model (STRIDE per trust boundary) plus a third-party
+  security-review-prep bundle and a formalized disclosure SLO (V2-6.5).
+- The bootstrap admin password is no longer written to the structured logs;
+  it is shown on stdout at first start and remains retrievable from the
+  `sharko-initial-admin-secret` Kubernetes Secret (#382).
+
+## [v1.25.0-pre.0] - 2026-05-22
+
+> The final pre-release before GA, cut just ahead of the v2.0.0 production
+> launch.
 
 ## [v1.24.0-pre.0] - 2026-05-10
 
@@ -378,6 +462,11 @@ and is on `main`. Highlights:
   detected`.
 - `feat(security): audit-log secret-leak blocks for grep-ability`.
 
+[v2.0.2]: https://github.com/MoranWeissman/sharko/releases/tag/v2.0.2
+[v2.0.1]: https://github.com/MoranWeissman/sharko/releases/tag/v2.0.1
+[v2.0.0]: https://github.com/MoranWeissman/sharko/releases/tag/v2.0.0
+[v1.25.0-pre.0]: https://github.com/MoranWeissman/sharko/releases/tag/v1.25.0-pre.0
+[v1.24.0-pre.0]: https://github.com/MoranWeissman/sharko/releases/tag/v1.24.0-pre.0
 [v1.23.0-pre.0]: https://github.com/MoranWeissman/sharko/releases/tag/v1.23.0-pre.0
 [v1.22.0]: https://github.com/MoranWeissman/sharko/commits/main
 [v1.21.7]: https://github.com/MoranWeissman/sharko/releases/tag/v1.21.7
