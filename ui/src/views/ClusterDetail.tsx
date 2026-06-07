@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, useContext } from 'react';
 import { Link, useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -49,6 +49,7 @@ import { ErrorState } from '@/components/ErrorState';
 import { EmptyState } from '@/components/EmptyState';
 import { YamlViewer } from '@/components/YamlViewer';
 import { RoleGuard } from '@/components/RoleGuard';
+import { AuthContext } from '@/hooks/useAuth';
 import { ConfirmationModal } from '@/components/ConfirmationModal';
 import { DetailNavPanel } from '@/components/DetailNavPanel';
 import { DiagnoseModal } from '@/components/DiagnoseModal';
@@ -245,10 +246,18 @@ export function ClusterDetail() {
   const [gitRepoBase, setGitRepoBase] = useState<string>('');
   const [gitDefaultBranch, setGitDefaultBranch] = useState<string>('main');
 
+  // Auth context for role-based auto-merge gating (admin-only, mirrors the
+  // register/adopt dialogs).
+  const authCtx = useContext(AuthContext);
+  const isAutoMergeDisabled = authCtx?.role === 'operator' || authCtx?.role === 'viewer';
+
   // Remove cluster
   const [removeModalOpen, setRemoveModalOpen] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [removeError, setRemoveError] = useState<string | null>(null);
+  // Auto-merge choice for the removal PR. Defaults to false (open a PR for
+  // review) so removal mirrors the init/register wizard's explicit opt-in.
+  const [removeAutoMerge, setRemoveAutoMerge] = useState(false);
 
   // Test connection
   const [testResult, setTestResult] = useState<
@@ -397,13 +406,36 @@ export function ClusterDetail() {
     setRemoving(true);
     setRemoveError(null);
     try {
-      await deregisterCluster(name);
-      navigate('/clusters');
+      // Forward the auto-merge choice. RemoveClusterResult carries git/PR
+      // info so we can tell the user whether the cluster is gone (PR merged)
+      // or a PR was opened for review (still listed until that PR merges).
+      const result = await deregisterCluster(name, removeAutoMerge);
+      const git = result?.git;
+      const merged = git?.merged ?? false;
+      const prUrl = git?.pr_url || git?.pull_request_url;
+      const prId = git?.pr_id;
+      if (merged) {
+        showToast(`Cluster "${name}" removed.`, 'success');
+        navigate('/clusters');
+        return;
+      }
+      // Manual path: PR opened, cluster stays listed until it merges. Close
+      // the dialog and surface the PR so it doesn't look like nothing happened.
+      setRemoveModalOpen(false);
+      setRemoving(false);
+      showToast(
+        prId
+          ? `Removal PR #${prId} opened for review${prUrl ? ` — ${prUrl}` : ''}. The cluster stays listed until it merges.`
+          : `Removal PR opened for review. The cluster stays listed until it merges.`,
+        'success',
+      );
+      // Refresh so any pending-PR indicator picks up the new open PR.
+      void fetchData(true);
     } catch (e: unknown) {
       setRemoveError(e instanceof Error ? e.message : 'Failed to remove cluster');
       setRemoving(false);
     }
-  }, [name, navigate]);
+  }, [name, navigate, removeAutoMerge, fetchData]);
 
   const hasToggleChanges = useMemo(() => {
     return Object.keys(addonToggles).some((k) => addonToggles[k] !== originalToggles[k]);
@@ -852,6 +884,27 @@ export function ClusterDetail() {
         confirmText="Remove"
         destructive
         loading={removing}
+        extraContent={
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="remove-auto-merge"
+              checked={removeAutoMerge}
+              disabled={isAutoMergeDisabled}
+              onChange={(e) => setRemoveAutoMerge(e.target.checked)}
+              className="rounded border-[#5a9dd0] dark:border-gray-600 disabled:opacity-50"
+            />
+            <label
+              htmlFor="remove-auto-merge"
+              className={`text-sm font-medium ${isAutoMergeDisabled ? 'text-[#5a8aaa] dark:text-gray-500' : 'text-[#0a3a5a] dark:text-gray-300'}`}
+            >
+              Merge PR automatically
+            </label>
+            {isAutoMergeDisabled && (
+              <span className="text-xs text-[#5a8aaa] dark:text-gray-500">(admin only)</span>
+            )}
+          </div>
+        }
       />
       <DiagnoseModal
         clusterName={name ?? ''}

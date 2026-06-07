@@ -127,10 +127,11 @@ func (o *Orchestrator) DisableAddon(ctx context.Context, req DisableAddonRequest
 
 	// Step 3: Create PR with combined changes.
 	gitResult, gitErr := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("disable addon %s on cluster %s", req.Addon, req.Cluster), PRMetadata{
-		OperationCode: "addon-disable",
-		Addon:         req.Addon,
-		Cluster:       req.Cluster,
-		Title:         fmt.Sprintf("Disable %s on cluster %s", req.Addon, req.Cluster),
+		OperationCode:     "addon-disable",
+		Addon:             req.Addon,
+		Cluster:           req.Cluster,
+		Title:             fmt.Sprintf("Disable %s on cluster %s", req.Addon, req.Cluster),
+		AutoMergeOverride: req.AutoMerge, // per-request override; nil = connection default
 	})
 	if gitErr != nil {
 		if gitResult != nil {

@@ -113,9 +113,10 @@ func (o *Orchestrator) RemoveCluster(ctx context.Context, req RemoveClusterReque
 	// Only create a PR if there are changes to commit.
 	if len(files) > 0 || len(deletePaths) > 0 {
 		gitResult, gitErr := o.commitChangesWithMeta(ctx, files, deletePaths, fmt.Sprintf("remove cluster %s", req.Name), PRMetadata{
-			OperationCode: "remove-cluster",
-			Cluster:       req.Name,
-			Title:         fmt.Sprintf("Remove cluster %s", req.Name),
+			OperationCode:     "remove-cluster",
+			Cluster:           req.Name,
+			Title:             fmt.Sprintf("Remove cluster %s", req.Name),
+			AutoMergeOverride: req.AutoMerge, // per-request override; nil = connection default
 		})
 		if gitErr != nil {
 			if gitResult != nil {
