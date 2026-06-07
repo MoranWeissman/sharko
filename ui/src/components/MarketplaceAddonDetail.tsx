@@ -1,14 +1,12 @@
-import { forwardRef, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { forwardRef, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
-  AlertCircle,
   ArrowLeft,
   CheckCircle2,
   Eye,
   ExternalLink,
   FileText,
   Github,
-  GitPullRequest,
   Info,
   Loader2,
   Package,
@@ -28,7 +26,6 @@ import type {
   CatalogVersionsResponse,
   DryRunResult,
 } from '@/services/models'
-import { AuthContext } from '@/hooks/useAuth'
 import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
 import { ScorecardBadge } from '@/components/ScorecardBadge'
@@ -38,6 +35,15 @@ import { AttributionNudge } from '@/components/AttributionNudge'
 import { MarkdownRenderer } from '@/components/MarkdownRenderer'
 import { VersionPicker } from '@/components/VersionPicker'
 import { showToast } from '@/components/ToastNotification'
+import {
+  AutoMergeToggle,
+  DryRunPreview,
+  SubmitErrorBanner,
+  SubmitPhaseBanner,
+  SubmitResultBanner,
+  useAutoMergeGate,
+  type SubmitPhase,
+} from '@/components/AddAddonFlow'
 
 /**
  * In-page Marketplace detail view. Embedded form (NOT a modal) — clicking
@@ -126,12 +132,10 @@ export function MarketplaceAddonDetail({
 
   // ─── Auto-merge toggle (admin-gated, mirrors the register/init dialogs) ───
   const navigate = useNavigate()
-  const authCtx = useContext(AuthContext)
-  // Same gate the register/init/remove dialogs use: only admins may flip
-  // auto-merge; operators/viewers always open a PR for review.
-  const isAutoMergeDisabled =
-    authCtx?.role === 'operator' || authCtx?.role === 'viewer'
   const [autoMerge, setAutoMerge] = useState(false)
+  // Shared admin-gate (AddAddonFlow): only admins may flip auto-merge;
+  // operators/viewers always open a PR for review.
+  const { isAutoMergeDisabled, autoMergeValue } = useAutoMergeGate(autoMerge)
 
   // ─── Preview (dry-run) state ─────────────────────────────────────────────
   // Calling addAddon with dry_run:true returns the files it WOULD write with
@@ -145,9 +149,7 @@ export function MarketplaceAddonDetail({
   // the individual git steps from a single synchronous POST, so we surface a
   // coarse phase: "submitting" while the request is in flight, then the
   // terminal merged/opened state from the result.
-  const [submitPhase, setSubmitPhase] = useState<
-    'idle' | 'submitting' | 'merged' | 'opened'
-  >('idle')
+  const [submitPhase, setSubmitPhase] = useState<SubmitPhase>('idle')
 
   // Configured catalog sources. Curated detail view uses this to render the
   // "Source" section + SourceBadge tooltip (last_fetched/status).
@@ -456,8 +458,6 @@ export function MarketplaceAddonDetail({
     submitResult === null
 
   const prURL = submitResult?.pr_url || submitResult?.result?.pr_url
-  const prID = submitResult?.pr_id ?? submitResult?.result?.pr_id
-  const merged = submitResult?.merged ?? submitResult?.result?.merged ?? false
 
   // Shared request payload for both the preview and the real submit so the
   // dry-run previews exactly what the real call will write.
@@ -477,7 +477,7 @@ export function MarketplaceAddonDetail({
       // nil-equivalent fallback: admins send their choice; non-admins always
       // open a PR (the toggle is disabled for them). Sending false here keeps
       // the manual-review default for operators/viewers.
-      auto_merge: isAutoMergeDisabled ? false : autoMerge,
+      auto_merge: autoMergeValue,
       dry_run: dryRun,
     }
   }
@@ -807,123 +807,27 @@ export function MarketplaceAddonDetail({
               />
             </Field>
 
-            {/* Auto-merge toggle — same admin-gated pattern as the
-              * register/init dialogs. When checked (admins only), the
-              * catalog PR auto-merges as soon as required checks pass;
-              * otherwise it's left open for human review. */}
+            {/* Auto-merge toggle — shared admin-gated control (AddAddonFlow),
+              * identical to the register/init dialogs and the catalog
+              * "Register addon" dialog. */}
             {!submitResult && (
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="mp-add-auto-merge"
-                  checked={!isAutoMergeDisabled && autoMerge}
-                  disabled={isAutoMergeDisabled}
-                  onChange={(e) => setAutoMerge(e.target.checked)}
-                  title={
-                    isAutoMergeDisabled
-                      ? 'Admin-only. When checked, the catalog PR auto-merges as soon as required checks pass; otherwise the PR is left open for human review.'
-                      : 'When checked, the catalog PR auto-merges as soon as required checks pass. Uncheck to leave the PR open for review before the addon is added.'
-                  }
-                  className="rounded border-[#5a9dd0] disabled:opacity-50 dark:border-gray-600"
-                />
-                <label
-                  htmlFor="mp-add-auto-merge"
-                  title={
-                    isAutoMergeDisabled
-                      ? 'Admin-only. When checked, the catalog PR auto-merges as soon as required checks pass; otherwise the PR is left open for human review.'
-                      : 'When checked, the catalog PR auto-merges as soon as required checks pass. Uncheck to leave the PR open for review before the addon is added.'
-                  }
-                  className={`text-sm font-medium ${isAutoMergeDisabled ? 'text-[#5a8aaa] dark:text-gray-500' : 'text-[#0a3a5a] dark:text-gray-300'}`}
-                >
-                  Merge PR automatically
-                </label>
-                {isAutoMergeDisabled && (
-                  <span className="text-xs text-[#5a8aaa] dark:text-gray-500">
-                    (admin only)
-                  </span>
-                )}
-              </div>
+              <AutoMergeToggle
+                id="mp-add-auto-merge"
+                checked={!isAutoMergeDisabled && autoMerge}
+                disabled={isAutoMergeDisabled}
+                onChange={setAutoMerge}
+              />
             )}
 
-            {/* Dry-run preview panel. Reuses the same DryRunResult shape the
-              * register flow renders (files_to_write + create/update markers).
-              * Every array read is null-safe via `?? []`. */}
+            {/* Dry-run preview panel (shared AddAddonFlow render). Shows the
+              * files the real submit would write — no PR, no commit. */}
             {dryRunResult && !submitResult && (
-              <div className="rounded-md bg-[#e8f4ff] p-3 ring-2 ring-[#6aade0] dark:bg-gray-900 dark:ring-gray-700">
-                <h4 className="mb-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-200">
-                  Preview
-                </h4>
-                <div className="space-y-2 text-xs text-[#2a5a7a] dark:text-gray-400">
-                  <div>
-                    <span className="font-medium text-[#0a3a5a] dark:text-gray-300">
-                      PR Title:
-                    </span>{' '}
-                    {dryRunResult.pr_title}
-                  </div>
-                  {(dryRunResult.files_to_write ?? dryRunResult.files ?? [])
-                    .length > 0 && (
-                    <div>
-                      <span className="font-medium text-[#0a3a5a] dark:text-gray-300">
-                        Files:
-                      </span>
-                      <ul className="mt-1 space-y-0.5 font-mono">
-                        {(
-                          dryRunResult.files_to_write ??
-                          dryRunResult.files ??
-                          []
-                        ).map((f) => (
-                          <li key={f.path}>
-                            <span
-                              className={
-                                f.action === 'create'
-                                  ? 'text-green-600 dark:text-green-400'
-                                  : 'text-amber-600 dark:text-amber-400'
-                              }
-                            >
-                              {f.action === 'create' ? '+' : '~'}
-                            </span>{' '}
-                            {f.path}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                </div>
-              </div>
+              <DryRunPreview result={dryRunResult} />
             )}
 
-            {/* Git progress — coarse phase indicator shown while the submit
-              * request is in flight and on its terminal result. Mirrors the
-              * register flow's branch → commit → PR → merge progress in
-              * spirit (a single synchronous POST can't stream the steps). */}
-            {submitPhase !== 'idle' && (
-              <div
-                role="status"
-                className="flex items-center gap-2 rounded-md border border-[#c0ddf0] bg-[#f0f7ff] p-3 text-sm text-[#0a3a5a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
-              >
-                {submitPhase === 'submitting' ? (
-                  <>
-                    <Loader2
-                      className="h-4 w-4 animate-spin text-teal-600 dark:text-teal-400"
-                      aria-hidden="true"
-                    />
-                    <span>Creating branch, committing, opening PR…</span>
-                  </>
-                ) : (
-                  <>
-                    <CheckCircle2
-                      className="h-4 w-4 text-green-600 dark:text-green-400"
-                      aria-hidden="true"
-                    />
-                    <span>
-                      {submitPhase === 'merged'
-                        ? 'PR merged — addon added to your catalog'
-                        : 'PR opened — merge it to apply'}
-                    </span>
-                  </>
-                )}
-              </div>
-            )}
+            {/* Git progress — coarse branch → commit → PR → merge phase
+              * (shared AddAddonFlow render). */}
+            <SubmitPhaseBanner phase={submitPhase} />
 
             {(inCatalog || duplicateInfo) && !submitResult && (
               <div
@@ -958,39 +862,11 @@ export function MarketplaceAddonDetail({
               hasPersonalToken !== false && <AttributionNudge inline />}
 
             {submitResult && prURL && (
-              <div
-                role="status"
-                className="flex items-start gap-2 rounded-md border border-green-300 bg-green-50 p-3 text-sm text-green-900 dark:border-green-700 dark:bg-green-950/40 dark:text-green-200"
-              >
-                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-                <div className="flex-1">
-                  <p className="font-medium">
-                    {merged
-                      ? 'PR merged — addon added to your catalog'
-                      : 'PR opened — your addon is on its way'}
-                  </p>
-                  <a
-                    href={prURL}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="mt-1 inline-flex items-center gap-1 text-xs font-medium underline hover:no-underline"
-                  >
-                    <GitPullRequest className="h-3 w-3" aria-hidden="true" />
-                    {prID ? `View PR #${prID} on GitHub` : 'View PR on GitHub'}
-                    <ExternalLink className="h-3 w-3" aria-hidden="true" />
-                  </a>
-                </div>
-              </div>
+              <SubmitResultBanner result={submitResult} />
             )}
 
             {submitError && !submitResult && (
-              <div
-                role="alert"
-                className="flex items-start gap-2 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-900 dark:border-red-700 dark:bg-red-950/40 dark:text-red-200"
-              >
-                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-                <p>{submitError}</p>
-              </div>
+              <SubmitErrorBanner message={submitError} />
             )}
 
             <div className="mt-1 flex flex-wrap items-center justify-end gap-2">

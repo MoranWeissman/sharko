@@ -11,6 +11,8 @@ import {
   XCircle,
   AlertTriangle,
   ExternalLink,
+  Eye,
+  GitPullRequest,
   LayoutGrid,
   LayoutList,
   Plus,
@@ -20,13 +22,14 @@ import {
   Boxes,
   Store,
 } from 'lucide-react'
-import { api, addAddon } from '@/services/api'
+import { api, addAddon, type AddAddonResponse } from '@/services/api'
 import type {
   AddonCatalogItem,
   AddonCatalogResponse,
   CatalogRepoChartsResponse,
   CatalogValidateResponse,
   CatalogVersionsResponse,
+  DryRunResult,
 } from '@/services/models'
 import { StatCard } from '@/components/StatCard'
 import { StatusBadge } from '@/components/StatusBadge'
@@ -35,6 +38,14 @@ import { ErrorState } from '@/components/ErrorState'
 import { RoleGuard } from '@/components/RoleGuard'
 import { MarketplaceTab } from '@/components/MarketplaceTab'
 import { VersionPicker } from '@/components/VersionPicker'
+import {
+  AutoMergeToggle,
+  DryRunPreview,
+  SubmitPhaseBanner,
+  SubmitResultBanner,
+  useAutoMergeGate,
+  type SubmitPhase,
+} from '@/components/AddAddonFlow'
 import {
   Dialog,
   DialogContent,
@@ -493,6 +504,7 @@ export function AddonCatalog() {
   // effect so they don't crash and the URL stays canonical.
   // Marketplace is opt-in via ?tab=marketplace or the tab control.
   const [searchParams, setSearchParams] = useSearchParams()
+  const navigate = useNavigate()
   const initialTab: AddonsView =
     searchParams.get('tab') === 'marketplace' ? 'marketplace' : 'catalog'
   const [tab, setTab] = useState<AddonsView>(initialTab)
@@ -542,6 +554,21 @@ export function AddonCatalog() {
   })
   const [addAddonSubmitting, setAddAddonSubmitting] = useState(false)
   const [addAddonError, setAddAddonError] = useState<string | null>(null)
+
+  // V2-cleanup-15 — parity with the Marketplace add-addon flow (#397). The
+  // catalog "Register addon" dialog now offers the same admin-gated
+  // auto-merge toggle, a dry-run preview, branch→commit→PR→merge progress, a
+  // clickable PR link, and an HONEST merged-vs-open outcome (an open PR is
+  // never shown as already-cataloged). All inner surfaces come from the
+  // shared AddAddonFlow component so the two add paths can't drift again.
+  const [addAddonAutoMerge, setAddAddonAutoMerge] = useState(false)
+  const { isAutoMergeDisabled, autoMergeValue } =
+    useAutoMergeGate(addAddonAutoMerge)
+  const [addAddonDryRun, setAddAddonDryRun] = useState<DryRunResult | null>(null)
+  const [addAddonPreviewing, setAddAddonPreviewing] = useState(false)
+  const [addAddonPhase, setAddAddonPhase] = useState<SubmitPhase>('idle')
+  const [addAddonResult, setAddAddonResult] =
+    useState<AddAddonResponse | null>(null)
 
   // Repo URL validation lifecycle. Debounced auto-fire on blur or after
   // 500ms of typing pause. We only set validRepo=true after a successful
@@ -606,6 +633,11 @@ export function AddonCatalog() {
     setChartVersionsLoading(false)
     setChartVersionsError(null)
     setChartShowPrereleases(false)
+    setAddAddonAutoMerge(false)
+    setAddAddonDryRun(null)
+    setAddAddonPreviewing(false)
+    setAddAddonPhase('idle')
+    setAddAddonResult(null)
   }, [])
 
   const openAddAddon = useCallback(() => {
@@ -725,39 +757,119 @@ export function AddonCatalog() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [addAddonOpen, addonForm.chart, addonForm.repo_url, repoValidState])
 
+  // Shared request payload for both the preview and the real submit so the
+  // dry-run previews exactly what the real call will write. `source: manual`
+  // marks this as the legacy direct "Register addon" path (not Marketplace).
+  const buildAddRequest = useCallback(
+    (dryRun: boolean) => ({
+      name: addonForm.name.trim(),
+      chart: addonForm.chart.trim(),
+      repo_url: addonForm.repo_url.trim(),
+      version: addonForm.version.trim(),
+      namespace: addonForm.namespace.trim() || undefined,
+      // sync_wave intentionally omitted — operators set it on the addon's
+      // ArgoCD App Options tab after creation.
+      source: 'manual' as const,
+      // nil-equivalent fallback: admins send their choice; non-admins always
+      // open a PR for review (the toggle is disabled for them).
+      auto_merge: autoMergeValue,
+      dry_run: dryRun,
+    }),
+    [addonForm, autoMergeValue],
+  )
+
+  const addAddonFormValid =
+    !!addonForm.name.trim() &&
+    !!addonForm.chart.trim() &&
+    !!addonForm.repo_url.trim() &&
+    !!addonForm.version.trim() &&
+    repoValidState === 'valid'
+
+  // Editing any form field invalidates a stale dry-run preview so the operator
+  // never confirms against an out-of-date file list.
+  useEffect(() => {
+    setAddAddonDryRun(null)
+  }, [
+    addonForm.name,
+    addonForm.chart,
+    addonForm.repo_url,
+    addonForm.version,
+    addonForm.namespace,
+    addAddonAutoMerge,
+  ])
+
+  // Preview step: dry-run the add and render the files it would write. No PR,
+  // no commit. Re-runnable — the operator can tweak the form and preview again.
+  const handlePreviewAddon = useCallback(async () => {
+    if (!addAddonFormValid) return
+    setAddAddonPreviewing(true)
+    setAddAddonError(null)
+    setAddAddonDryRun(null)
+    try {
+      const res = await addAddon(buildAddRequest(true))
+      if (res.dry_run) setAddAddonDryRun(res.dry_run)
+    } catch (e: unknown) {
+      setAddAddonError(e instanceof Error ? e.message : 'Failed to preview')
+    } finally {
+      setAddAddonPreviewing(false)
+    }
+  }, [addAddonFormValid, buildAddRequest])
+
   const handleAddAddon = useCallback(async () => {
-    if (
-      !addonForm.name.trim() ||
-      !addonForm.chart.trim() ||
-      !addonForm.repo_url.trim() ||
-      !addonForm.version.trim()
-    ) return
+    if (!addAddonFormValid) return
     setAddAddonSubmitting(true)
+    setAddAddonPhase('submitting')
     setAddAddonError(null)
     try {
-      const result = await addAddon({
-        name: addonForm.name.trim(),
-        chart: addonForm.chart.trim(),
-        repo_url: addonForm.repo_url.trim(),
-        version: addonForm.version.trim(),
-        namespace: addonForm.namespace.trim() || undefined,
-        // sync_wave intentionally omitted — operators set it on the
-        // addon's ArgoCD App Options tab after creation.
-      })
-      const prUrl = result?.pr_url || result?.pull_request_url
+      const result = await addAddon(buildAddRequest(false))
+      setAddAddonResult(result)
       const addonName = addonForm.name.trim()
-      // Auto-close modal and show toast instead
-      setAddAddonOpen(false)
-      setToast({ message: `Addon \`${addonName}\` registered. PR opened.`, prUrl: prUrl || undefined })
-      // Auto-dismiss toast after 6 seconds
-      setTimeout(() => setToast(null), 6000)
-      void fetchCatalog()
+      const prUrl = result.pr_url || result.result?.pr_url || result.pull_request_url
+      const prId = result.pr_id ?? result.result?.pr_id
+      const wasMerged = result.merged ?? result.result?.merged ?? false
+      const label = prId ? `PR #${prId}` : 'PR'
+
+      // Branch STRICTLY on `merged` so an open PR is never presented as
+      // already-cataloged ("not really in git" was the v2.0.2 smoke-test bug):
+      //   - merged === true  → the addon really landed → refresh the catalog
+      //     and confirm "added to your catalog".
+      //   - merged === false → a PR is awaiting review → DO NOT refresh the
+      //     catalog (it isn't in git yet). Keep the dialog open showing the
+      //     honest "PR open — merge to apply" banner with the clickable PR.
+      if (wasMerged) {
+        setAddAddonPhase('merged')
+        setAddAddonOpen(false)
+        resetAddonFormState()
+        setToast({
+          message: `\`${addonName}\` added to your catalog.`,
+          prUrl: prUrl || undefined,
+        })
+        setTimeout(() => setToast(null), 6000)
+        void fetchCatalog()
+      } else {
+        setAddAddonPhase('opened')
+        // Leave the dialog open so the SubmitResultBanner shows the clickable
+        // PR. The catalog is NOT refreshed — the addon isn't in git until the
+        // PR merges. A toast also points at the pending-PR dashboard.
+        setToast({
+          message: `${label} opened — merge it to apply. Track it on the Dashboard.`,
+          prUrl: prUrl || undefined,
+        })
+        setTimeout(() => setToast(null), 8000)
+      }
     } catch (e: unknown) {
+      setAddAddonPhase('idle')
       setAddAddonError(e instanceof Error ? e.message : 'Failed to add addon')
     } finally {
       setAddAddonSubmitting(false)
     }
-  }, [addonForm, fetchCatalog])
+  }, [
+    addAddonFormValid,
+    buildAddRequest,
+    addonForm,
+    fetchCatalog,
+    resetAddonFormState,
+  ])
 
   // Reset page on filter/search/sort/pageSize change
   useEffect(() => {
@@ -1168,38 +1280,108 @@ export function AddonCatalog() {
               addon&rsquo;s <strong>ArgoCD App Options</strong> tab.
             </div>
 
+            {/* Auto-merge toggle — shared admin-gated control (AddAddonFlow),
+                identical to the Marketplace add-addon flow and the
+                register/init dialogs. Sends auto_merge on the addAddon call. */}
+            {!addAddonResult && (
+              <AutoMergeToggle
+                id="add-addon-auto-merge"
+                checked={!isAutoMergeDisabled && addAddonAutoMerge}
+                disabled={isAutoMergeDisabled}
+                onChange={setAddAddonAutoMerge}
+              />
+            )}
+
+            {/* Dry-run preview (shared AddAddonFlow render) — the files the
+                real submit would write, no PR, no commit. */}
+            {addAddonDryRun && !addAddonResult && (
+              <DryRunPreview result={addAddonDryRun} />
+            )}
+
+            {/* Git progress — coarse branch → commit → PR → merge phase. */}
+            <SubmitPhaseBanner phase={addAddonPhase} />
+
+            {/* Terminal success — clickable PR link; branches on merged so an
+                open PR is shown as "merge it to apply", never as cataloged. */}
+            {addAddonResult && (
+              <SubmitResultBanner result={addAddonResult} />
+            )}
+
             {addAddonError && (
               <p className="text-sm text-red-600 dark:text-red-400">{addAddonError}</p>
             )}
           </div>
           <DialogFooter>
-            <button
-              type="button"
-              onClick={() => {
-                setAddAddonOpen(false)
-                resetAddonFormState()
-              }}
-              disabled={addAddonSubmitting}
-              className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={handleAddAddon}
-              disabled={
-                !addonForm.name.trim() ||
-                !addonForm.chart.trim() ||
-                !addonForm.repo_url.trim() ||
-                !addonForm.version.trim() ||
-                repoValidState !== 'valid' ||
-                addAddonSubmitting
-              }
-              className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
-            >
-              {addAddonSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
-              Register Addon
-            </button>
+            {addAddonResult ? (
+              // Terminal state. The PR opened for review (merged results close
+              // the dialog and refresh the catalog instead). Offer a jump to
+              // the pending-PR dashboard plus a Close button.
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddAddonOpen(false)
+                    resetAddonFormState()
+                  }}
+                  className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                >
+                  Close
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddAddonOpen(false)
+                    resetAddonFormState()
+                    navigate('/dashboard?prs_state=pending')
+                  }}
+                  className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-600"
+                >
+                  <GitPullRequest className="h-4 w-4" />
+                  View pending PRs
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddAddonOpen(false)
+                    resetAddonFormState()
+                  }}
+                  disabled={addAddonSubmitting || addAddonPreviewing}
+                  className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handlePreviewAddon}
+                  disabled={
+                    !addAddonFormValid ||
+                    addAddonPreviewing ||
+                    addAddonSubmitting
+                  }
+                  title="Preview: show the PR title and the files that would be committed — without opening a PR."
+                  className="inline-flex items-center gap-2 rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                >
+                  {addAddonPreviewing ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Eye className="h-4 w-4" />
+                  )}
+                  Preview
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAddAddon}
+                  disabled={!addAddonFormValid || addAddonSubmitting}
+                  className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
+                >
+                  {addAddonSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
+                  Register Addon
+                </button>
+              </>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

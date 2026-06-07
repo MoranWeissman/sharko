@@ -1833,12 +1833,25 @@ export function AddonDetail() {
                 total={addon.enabled_clusters}
               />
 
-              {/* Pending Upgrade Banner */}
+              {/* Pending change banner. The PR may be an upgrade OR an
+                  "Add addon" PR (the catalog/marketplace add flow). Keying the
+                  copy off the PR kind avoids mislabelling an Add PR as an
+                  "Upgrade" (V2-cleanup-15.2). */}
               {addonPRs.length > 0 && addonPRs.map((pr) => {
                 const isOpen = pr.last_status === 'open'
                 const isMerged = pr.last_status === 'merged'
                 if (!isOpen && !isMerged) return null
                 const targetVersion = pr.pr_title.match(/to\s+([\d.v][^\s]*)/i)?.[1] ?? null
+                // Derive the PR kind from its title. Add-addon PRs read
+                // "... add addon <name>"; upgrades read "... upgrade ... to X".
+                const isAddPR = /add addon/i.test(pr.pr_title)
+                const headline = isAddPR
+                  ? isOpen
+                    ? 'Add addon — PR open'
+                    : 'Addon added'
+                  : isOpen
+                    ? 'Upgrade in progress'
+                    : 'Upgrade merged'
                 return (
                   <div
                     key={pr.pr_id}
@@ -1851,8 +1864,8 @@ export function AddonDetail() {
                     <ArrowUpCircle className={`mt-0.5 h-4 w-4 shrink-0 ${isOpen ? 'text-amber-500' : 'text-green-500'}`} />
                     <div className="flex-1 min-w-0">
                       <p className={`text-sm font-semibold ${isOpen ? 'text-amber-800 dark:text-amber-300' : 'text-green-800 dark:text-green-300'}`}>
-                        {isOpen ? 'Upgrade in progress' : 'Upgrade merged'}
-                        {addon && targetVersion && (
+                        {headline}
+                        {!isAddPR && addon && targetVersion && (
                           <span className="ml-2 font-normal">
                             {addon.version} &rarr; {targetVersion}
                           </span>
