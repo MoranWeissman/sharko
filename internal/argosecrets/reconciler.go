@@ -53,17 +53,17 @@ type ReconcileStats struct {
 
 // Reconciler syncs ArgoCD cluster secrets with managed-clusters.yaml.
 type Reconciler struct {
-	manager              *Manager
-	credProvider         ClusterCredentialsProvider
-	gitReader            func() GitReader // lazy — resolved from active connection
-	parser               *config.Parser
-	baseBranch           string
-	defaultRoleARN       string // connection-level default from providers.AddonSecretProviderConfig.RoleARN
-	managedClustersPath  string // path to managed-clusters.yaml in the Git repo
-	interval             time.Duration
-	triggerCh            chan struct{}
-	stopCh               chan struct{}
-	stopOnce             sync.Once
+	manager             *Manager
+	credProvider        ClusterCredentialsProvider
+	gitReader           func() GitReader // lazy — resolved from active connection
+	parser              *config.Parser
+	baseBranch          string
+	defaultRoleARN      string // connection-level default from providers.AddonSecretProviderConfig.RoleARN
+	managedClustersPath string // path to managed-clusters.yaml in the Git repo
+	interval            time.Duration
+	triggerCh           chan struct{}
+	stopCh              chan struct{}
+	stopOnce            sync.Once
 
 	// Optional audit callback — set via SetAuditFunc.
 	// Protected by mu.
@@ -349,8 +349,15 @@ func (r *Reconciler) reconcileCluster(ctx context.Context, cluster models.Cluste
 		Server:  creds.Server,
 		Region:  cluster.Region,
 		RoleARN: r.defaultRoleARN,
-		CAData:  base64.StdEncoding.EncodeToString(creds.CAData),
-		Labels:  cluster.Labels,
+		// Carry the bearer token through so buildSecretConfig emits the
+		// bearerToken shape for kubeconfig-registered clusters. Without this
+		// the spec would fall into the execProviderConfig (argocd-k8s-auth)
+		// branch and clobber the good bearer-token Secret written at
+		// registration. EKS/IAM clusters return Token=="" and still take the
+		// exec branch (RoleARN/Region preserved).
+		Token:  creds.Token,
+		CAData: base64.StdEncoding.EncodeToString(creds.CAData),
+		Labels: cluster.Labels,
 	}
 
 	// 4. Call Manager.Ensure() — returns whether it changed anything.

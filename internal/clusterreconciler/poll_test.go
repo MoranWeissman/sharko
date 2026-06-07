@@ -2,6 +2,7 @@ package clusterreconciler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -89,9 +90,9 @@ func (v *fakeVault) GetCredentials(name string) (*providers.Kubeconfig, error) {
 	}
 	return nil, fmt.Errorf("fakeVault: no credentials for %q", name)
 }
-func (v *fakeVault) ListClusters() ([]providers.ClusterInfo, error)  { return nil, nil }
-func (v *fakeVault) SearchSecrets(_ string) ([]string, error)        { return nil, nil }
-func (v *fakeVault) HealthCheck(_ context.Context) error             { return nil }
+func (v *fakeVault) ListClusters() ([]providers.ClusterInfo, error) { return nil, nil }
+func (v *fakeVault) SearchSecrets(_ string) ([]string, error)       { return nil, nil }
+func (v *fakeVault) HealthCheck(_ context.Context) error            { return nil }
 
 // auditCollector accumulates audit.Entry emissions for assertion.
 // Safe for concurrent use: pollOnce is synchronous in tests but the
@@ -578,6 +579,150 @@ spec:
 	entries := audits.Snapshot()
 	if !hasEvent(entries, "cluster_secret_reconcile", "failure") {
 		t.Fatalf("expected cluster_secret_reconcile failure audit on invalid YAML; got %v", entries)
+	}
+}
+
+// clusterSecretShape unmarshals a created cluster Secret's config JSON enough
+// to distinguish the bearerToken shape from the execProviderConfig (EKS) shape.
+type clusterSecretShape struct {
+	BearerToken        string           `json:"bearerToken"`
+	ExecProviderConfig *json.RawMessage `json:"execProviderConfig"`
+}
+
+// readClusterSecretConfig fetches the named cluster Secret from the argocd
+// namespace and parses its config JSON. buildClusterSecret writes config via
+// StringData (the fake clientset keeps it there on Create), so read StringData
+// first and fall back to Data.
+func readClusterSecretConfig(t *testing.T, client *fake.Clientset, name string) clusterSecretShape {
+	t.Helper()
+	secret, err := client.CoreV1().Secrets(DefaultArgoCDNamespace).Get(context.Background(), name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("getting secret %q: %v", name, err)
+	}
+	raw := secret.StringData["config"]
+	if raw == "" {
+		raw = string(secret.Data["config"])
+	}
+	if raw == "" {
+		t.Fatalf("secret %q has empty config", name)
+	}
+	var cfg clusterSecretShape
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		t.Fatalf("parsing config for secret %q: %v\nconfig=%s", name, err, raw)
+	}
+	return cfg
+}
+
+// Test V2-cleanup-12 #1 — a kubeconfig cluster whose vault credentials carry a
+// bearer token must produce a Secret in the bearerToken shape, NOT the
+// execProviderConfig (argocd-k8s-auth) shape ArgoCD v1.x rejects. This is the
+// core regression guard: before the fix the reconciler dropped creds.Token, so
+// buildSecretConfig fell into the AWS exec branch and clobbered the good secret.
+func TestPollOnce_KubeconfigClusterKeepsBearerShape(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	body := envelopedManagedClusters("kube-cluster")
+	vault := &fakeVault{
+		creds: map[string]*providers.Kubeconfig{
+			"kube-cluster": {
+				Server: "https://kube-cluster.example.com",
+				CAData: []byte("fake-ca-bytes"),
+				Token:  "static-bearer-token-xyz",
+			},
+		},
+	}
+	k8sClient := fake.NewSimpleClientset()
+	audits := &auditCollector{}
+
+	r := newReconcilerForTest(t, nil, k8sClient, vault, audits, body)
+	r.pollOnce(ctx)
+
+	cfg := readClusterSecretConfig(t, k8sClient, "kube-cluster")
+	if cfg.BearerToken != "static-bearer-token-xyz" {
+		t.Fatalf("config.bearerToken = %q, want the vault token (the V2-cleanup-12 fix)", cfg.BearerToken)
+	}
+	if cfg.ExecProviderConfig != nil {
+		t.Fatalf("kubeconfig cluster must NOT get execProviderConfig; got %s", string(*cfg.ExecProviderConfig))
+	}
+}
+
+// Test V2-cleanup-12 #2 — a genuine EKS/IAM cluster whose credentials have NO
+// token must still produce the execProviderConfig shape (AWS path unchanged).
+// RoleARN flows through DefaultRoleARN and Region from the cluster entry.
+func TestPollOnce_EKSClusterKeepsExecShape(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	body := envelopedManagedClusters("eks-cluster")
+	vault := &fakeVault{
+		creds: map[string]*providers.Kubeconfig{
+			"eks-cluster": {
+				Server: "https://eks-cluster.example.com",
+				CAData: []byte("fake-ca-bytes"),
+				// No Token — pure IAM cluster.
+			},
+		},
+	}
+	k8sClient := fake.NewSimpleClientset()
+	audits := &auditCollector{}
+
+	r := New(Deps{
+		GitProvider: func() gitprovider.GitProvider {
+			return &fakeGit{files: map[string][]byte{DefaultManagedClustersPath: body}}
+		},
+		ArgoClient:     k8sClient,
+		Vault:          vault,
+		AuditFn:        audits.Add,
+		DefaultRoleARN: "arn:aws:iam::123456789012:role/EKSReadRole",
+	})
+	r.pollOnce(ctx)
+
+	cfg := readClusterSecretConfig(t, k8sClient, "eks-cluster")
+	if cfg.BearerToken != "" {
+		t.Fatalf("EKS cluster must NOT get a bearerToken; got %q", cfg.BearerToken)
+	}
+	if cfg.ExecProviderConfig == nil {
+		t.Fatal("EKS cluster (empty Token) must keep the execProviderConfig shape")
+	}
+}
+
+// Test V2-cleanup-12 #3 — round-trip idempotency: a kubeconfig cluster written
+// as bearerToken, reconciled again (vault still returns the token), must stay
+// bearerToken across ticks. Guards against a writer fight that flips the shape.
+func TestPollOnce_BearerRoundTripDoesNotFlip(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	body := envelopedManagedClusters("kube-cluster")
+	vault := &fakeVault{
+		creds: map[string]*providers.Kubeconfig{
+			"kube-cluster": {
+				Server: "https://kube-cluster.example.com",
+				CAData: []byte("fake-ca-bytes"),
+				Token:  "static-bearer-token-xyz",
+			},
+		},
+	}
+	k8sClient := fake.NewSimpleClientset()
+	audits := &auditCollector{}
+
+	r := newReconcilerForTest(t, nil, k8sClient, vault, audits, body)
+
+	r.pollOnce(ctx)
+	first := readClusterSecretConfig(t, k8sClient, "kube-cluster")
+	if first.BearerToken == "" || first.ExecProviderConfig != nil {
+		t.Fatalf("first tick should be bearerToken shape; bearer=%q exec=%v", first.BearerToken, first.ExecProviderConfig)
+	}
+
+	// Second tick — identical desired state; the secret must remain bearer.
+	r.pollOnce(ctx)
+	second := readClusterSecretConfig(t, k8sClient, "kube-cluster")
+	if second.BearerToken != "static-bearer-token-xyz" {
+		t.Fatalf("second tick bearerToken = %q, want unchanged token", second.BearerToken)
+	}
+	if second.ExecProviderConfig != nil {
+		t.Fatalf("second tick must NOT flip to execProviderConfig; got %s", string(*second.ExecProviderConfig))
 	}
 }
 
