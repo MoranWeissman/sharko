@@ -1,9 +1,10 @@
-import { forwardRef, useEffect, useMemo, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { forwardRef, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import {
   AlertCircle,
   ArrowLeft,
   CheckCircle2,
+  Eye,
   ExternalLink,
   FileText,
   Github,
@@ -25,7 +26,9 @@ import type {
   CatalogReadmeResponse,
   CatalogSourceRecord,
   CatalogVersionsResponse,
+  DryRunResult,
 } from '@/services/models'
+import { AuthContext } from '@/hooks/useAuth'
 import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
 import { ScorecardBadge } from '@/components/ScorecardBadge'
@@ -120,6 +123,31 @@ export function MarketplaceAddonDetail({
   const [duplicateInfo, setDuplicateInfo] = useState<DuplicateInfo | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [submitResult, setSubmitResult] = useState<AddAddonResponse | null>(null)
+
+  // ─── Auto-merge toggle (admin-gated, mirrors the register/init dialogs) ───
+  const navigate = useNavigate()
+  const authCtx = useContext(AuthContext)
+  // Same gate the register/init/remove dialogs use: only admins may flip
+  // auto-merge; operators/viewers always open a PR for review.
+  const isAutoMergeDisabled =
+    authCtx?.role === 'operator' || authCtx?.role === 'viewer'
+  const [autoMerge, setAutoMerge] = useState(false)
+
+  // ─── Preview (dry-run) state ─────────────────────────────────────────────
+  // Calling addAddon with dry_run:true returns the files it WOULD write with
+  // no PR/commit. We render the same DryRunResult shape the register flow
+  // uses so the operator sees the change before committing.
+  const [dryRunResult, setDryRunResult] = useState<DryRunResult | null>(null)
+  const [previewing, setPreviewing] = useState(false)
+
+  // ─── Submit progress (branch → commit → PR → merge) ──────────────────────
+  // Mirrors the register flow's step indicator in spirit. We can't observe
+  // the individual git steps from a single synchronous POST, so we surface a
+  // coarse phase: "submitting" while the request is in flight, then the
+  // terminal merged/opened state from the result.
+  const [submitPhase, setSubmitPhase] = useState<
+    'idle' | 'submitting' | 'merged' | 'opened'
+  >('idle')
 
   // Configured catalog sources. Curated detail view uses this to render the
   // "Source" section + SourceBadge tooltip (last_fetched/status).
@@ -431,37 +459,92 @@ export function MarketplaceAddonDetail({
   const prID = submitResult?.pr_id ?? submitResult?.result?.pr_id
   const merged = submitResult?.merged ?? submitResult?.result?.merged ?? false
 
+  // Shared request payload for both the preview and the real submit so the
+  // dry-run previews exactly what the real call will write.
+  const buildAddRequest = (dryRun: boolean) => {
+    if (!entry) return null
+    return {
+      name: trimmedName,
+      chart: entry.chart,
+      repo_url: entry.repo,
+      version: version.trim(),
+      namespace: namespace.trim(),
+      // No sync_wave field — operators set it on the addon page after
+      // creation.
+      source: (source === 'curated' ? 'marketplace' : 'artifacthub') as
+        | 'marketplace'
+        | 'artifacthub',
+      // nil-equivalent fallback: admins send their choice; non-admins always
+      // open a PR (the toggle is disabled for them). Sending false here keeps
+      // the manual-review default for operators/viewers.
+      auto_merge: isAutoMergeDisabled ? false : autoMerge,
+      dry_run: dryRun,
+    }
+  }
+
+  // Preview step: dry-run the add and render the files it would write. No PR,
+  // no commit. Re-runnable — the operator can tweak the form and preview again.
+  const handlePreview = async () => {
+    const req = buildAddRequest(true)
+    if (!req || !formValid) return
+    setPreviewing(true)
+    setSubmitError(null)
+    setDuplicateInfo(null)
+    setDryRunResult(null)
+    try {
+      const res = await addAddon(req)
+      if (res.dry_run) {
+        setDryRunResult(res.dry_run)
+      }
+    } catch (e) {
+      if (isAddonAlreadyExistsError(e)) {
+        setDuplicateInfo({ addon: e.addon, existingUrl: e.existingUrl })
+      } else {
+        const msg = e instanceof Error ? e.message : 'Failed to preview'
+        setSubmitError(msg)
+        showToast(`Failed to preview — ${msg}`, 'info')
+      }
+    } finally {
+      setPreviewing(false)
+    }
+  }
+
   const handleSubmit = async () => {
-    if (!formValid || !entry) return
+    const req = buildAddRequest(false)
+    if (!req || !formValid || !entry) return
     setSubmitting(true)
+    setSubmitPhase('submitting')
     setSubmitError(null)
     setDuplicateInfo(null)
     try {
-      const res = await addAddon({
-        name: trimmedName,
-        chart: entry.chart,
-        repo_url: entry.repo,
-        version: version.trim(),
-        namespace: namespace.trim(),
-        // No sync_wave field — operators set it on the addon page after
-        // creation.
-        source: source === 'curated' ? 'marketplace' : 'artifacthub',
-      })
+      const res = await addAddon(req)
       setSubmitResult(res)
-      const label = prID || res.pr_id || res.result?.pr_id
-        ? `PR #${res.pr_id ?? res.result?.pr_id}`
-        : 'PR'
+      const resPrID = res.pr_id ?? res.result?.pr_id
+      const label = resPrID ? `PR #${resPrID}` : 'PR'
       const wasMerged = res.merged ?? res.result?.merged ?? false
       const url = res.pr_url || res.result?.pr_url
-      if (url) {
-        showToast(
-          wasMerged ? `${label} merged →` : `${label} opened →`,
-          'success',
-        )
+
+      // Post-submit navigation branches on whether the PR merged:
+      //   - merged  → the addon is really in the catalog → go to its page.
+      //   - opened  → a PR is awaiting review → go to the Dashboard's pending
+      //     PR panel (deep-linked via ?prs_state=pending) so the operator can
+      //     watch / merge it.
+      if (wasMerged) {
+        setSubmitPhase('merged')
+        showToast(`${entry.name} added to your catalog`, 'success')
+        navigate(`/addons/${encodeURIComponent(entry.name)}`)
+      } else if (url) {
+        setSubmitPhase('opened')
+        showToast(`${label} opened — merge to apply`, 'success')
+        navigate('/dashboard?prs_state=pending')
       } else {
-        showToast(`${entry.name} added`, 'success')
+        // Defensive: no merge flag and no PR URL. Stay on the page and tell
+        // the truth rather than navigating somewhere misleading.
+        setSubmitPhase('opened')
+        showToast(`${entry.name} submitted — check the open PR list`, 'info')
       }
     } catch (e) {
+      setSubmitPhase('idle')
       if (isAddonAlreadyExistsError(e)) {
         setDuplicateInfo({ addon: e.addon, existingUrl: e.existingUrl })
       } else {
@@ -724,6 +807,124 @@ export function MarketplaceAddonDetail({
               />
             </Field>
 
+            {/* Auto-merge toggle — same admin-gated pattern as the
+              * register/init dialogs. When checked (admins only), the
+              * catalog PR auto-merges as soon as required checks pass;
+              * otherwise it's left open for human review. */}
+            {!submitResult && (
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="mp-add-auto-merge"
+                  checked={!isAutoMergeDisabled && autoMerge}
+                  disabled={isAutoMergeDisabled}
+                  onChange={(e) => setAutoMerge(e.target.checked)}
+                  title={
+                    isAutoMergeDisabled
+                      ? 'Admin-only. When checked, the catalog PR auto-merges as soon as required checks pass; otherwise the PR is left open for human review.'
+                      : 'When checked, the catalog PR auto-merges as soon as required checks pass. Uncheck to leave the PR open for review before the addon is added.'
+                  }
+                  className="rounded border-[#5a9dd0] disabled:opacity-50 dark:border-gray-600"
+                />
+                <label
+                  htmlFor="mp-add-auto-merge"
+                  title={
+                    isAutoMergeDisabled
+                      ? 'Admin-only. When checked, the catalog PR auto-merges as soon as required checks pass; otherwise the PR is left open for human review.'
+                      : 'When checked, the catalog PR auto-merges as soon as required checks pass. Uncheck to leave the PR open for review before the addon is added.'
+                  }
+                  className={`text-sm font-medium ${isAutoMergeDisabled ? 'text-[#5a8aaa] dark:text-gray-500' : 'text-[#0a3a5a] dark:text-gray-300'}`}
+                >
+                  Merge PR automatically
+                </label>
+                {isAutoMergeDisabled && (
+                  <span className="text-xs text-[#5a8aaa] dark:text-gray-500">
+                    (admin only)
+                  </span>
+                )}
+              </div>
+            )}
+
+            {/* Dry-run preview panel. Reuses the same DryRunResult shape the
+              * register flow renders (files_to_write + create/update markers).
+              * Every array read is null-safe via `?? []`. */}
+            {dryRunResult && !submitResult && (
+              <div className="rounded-md bg-[#e8f4ff] p-3 ring-2 ring-[#6aade0] dark:bg-gray-900 dark:ring-gray-700">
+                <h4 className="mb-2 text-sm font-semibold text-[#0a2a4a] dark:text-gray-200">
+                  Preview
+                </h4>
+                <div className="space-y-2 text-xs text-[#2a5a7a] dark:text-gray-400">
+                  <div>
+                    <span className="font-medium text-[#0a3a5a] dark:text-gray-300">
+                      PR Title:
+                    </span>{' '}
+                    {dryRunResult.pr_title}
+                  </div>
+                  {(dryRunResult.files_to_write ?? dryRunResult.files ?? [])
+                    .length > 0 && (
+                    <div>
+                      <span className="font-medium text-[#0a3a5a] dark:text-gray-300">
+                        Files:
+                      </span>
+                      <ul className="mt-1 space-y-0.5 font-mono">
+                        {(
+                          dryRunResult.files_to_write ??
+                          dryRunResult.files ??
+                          []
+                        ).map((f) => (
+                          <li key={f.path}>
+                            <span
+                              className={
+                                f.action === 'create'
+                                  ? 'text-green-600 dark:text-green-400'
+                                  : 'text-amber-600 dark:text-amber-400'
+                              }
+                            >
+                              {f.action === 'create' ? '+' : '~'}
+                            </span>{' '}
+                            {f.path}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Git progress — coarse phase indicator shown while the submit
+              * request is in flight and on its terminal result. Mirrors the
+              * register flow's branch → commit → PR → merge progress in
+              * spirit (a single synchronous POST can't stream the steps). */}
+            {submitPhase !== 'idle' && (
+              <div
+                role="status"
+                className="flex items-center gap-2 rounded-md border border-[#c0ddf0] bg-[#f0f7ff] p-3 text-sm text-[#0a3a5a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
+              >
+                {submitPhase === 'submitting' ? (
+                  <>
+                    <Loader2
+                      className="h-4 w-4 animate-spin text-teal-600 dark:text-teal-400"
+                      aria-hidden="true"
+                    />
+                    <span>Creating branch, committing, opening PR…</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2
+                      className="h-4 w-4 text-green-600 dark:text-green-400"
+                      aria-hidden="true"
+                    />
+                    <span>
+                      {submitPhase === 'merged'
+                        ? 'PR merged — addon added to your catalog'
+                        : 'PR opened — merge it to apply'}
+                    </span>
+                  </>
+                )}
+              </div>
+            )}
+
             {(inCatalog || duplicateInfo) && !submitResult && (
               <div
                 role="alert"
@@ -800,6 +1001,22 @@ export function MarketplaceAddonDetail({
               >
                 {submitResult ? 'Back to Marketplace' : 'Cancel'}
               </button>
+              {!submitResult && (
+                <button
+                  type="button"
+                  onClick={handlePreview}
+                  disabled={!formValid || previewing}
+                  title="Preview: show the PR title and the files that would be committed — without opening a PR."
+                  className="inline-flex items-center gap-2 rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#6aade0] disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                >
+                  {previewing ? (
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Eye className="h-4 w-4" aria-hidden="true" />
+                  )}
+                  Preview
+                </button>
+              )}
               {!submitResult && (
                 <button
                   type="button"

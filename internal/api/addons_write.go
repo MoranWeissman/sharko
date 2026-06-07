@@ -80,7 +80,13 @@ func (s *Server) handleAddAddon(w http.ResponseWriter, r *http.Request) {
 	// with a per-cluster template. On any fetch failure we silently fall
 	// back to the minimal stub — the user can Refresh from upstream
 	// later. This keeps Add Addon non-blocking on flaky registries.
-	if req.RepoURL != "" && req.Chart != "" && req.Version != "" {
+	//
+	// Skip on dry-run: the preview returns only file paths + create/update
+	// actions, not file content, so the upstream fetch (and the AI annotate
+	// pass below) can't change what the preview shows. Skipping them keeps
+	// the preview fast and avoids burning registry/LLM quota on a request
+	// that writes nothing.
+	if !req.DryRun && req.RepoURL != "" && req.Chart != "" && req.Version != "" {
 		if upstream, ferr := helm.NewFetcher().FetchValues(ctx, req.RepoURL, req.Chart, req.Version); ferr == nil {
 			req.UpstreamValues = []byte(upstream)
 		} else {
@@ -101,7 +107,7 @@ func (s *Server) handleAddAddon(w http.ResponseWriter, r *http.Request) {
 	// and never fails the addon-add. The only error we surface to the
 	// caller is the SecretLeakError (rendered as a banner, not a toast).
 	var secretBlock *orchestrator.SecretLeakError
-	if len(req.UpstreamValues) > 0 && !req.AIOptOut && s.aiClient != nil && s.aiClient.AnnotateOnSeedEnabled() {
+	if !req.DryRun && len(req.UpstreamValues) > 0 && !req.AIOptOut && s.aiClient != nil && s.aiClient.AnnotateOnSeedEnabled() {
 		annRes, annErr := orchestrator.AnnotateValues(ctx, req.UpstreamValues, req.Chart, req.Version, s.aiClient)
 		if annErr != nil {
 			// Only one error class is non-fatal-yet-surfaced: secret leak.
@@ -153,6 +159,15 @@ func (s *Server) handleAddAddon(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	// Dry-run: return the preview (file set + actions) without side effects.
+	// No PR was created and no catalog change was committed, so we return 200
+	// and skip the `addon_added` audit event — mirrors register-cluster's
+	// dry-run handling.
+	if req.DryRun {
+		writeJSON(w, http.StatusOK, result)
 		return
 	}
 

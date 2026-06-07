@@ -15,6 +15,7 @@ import type {
   DashboardStats,
   DiagnosticReport,
   DiscoverClustersResponse,
+  DryRunResult,
   ObservabilityOverviewResponse,
   PullRequestsResponse,
   RegisterClusterResult,
@@ -392,6 +393,10 @@ export interface AddAddonResponse {
     branch?: string
     merged?: boolean
   }
+  // Preview returned when the request set dry_run=true. No PR was created and
+  // no catalog change was committed. Mirrors the register-cluster dry-run
+  // shape so the Marketplace preview reuses the same DryRunResult render.
+  dry_run?: DryRunResult
 }
 
 /**
@@ -429,6 +434,18 @@ export async function addAddon(data: {
    *   "manual"      — legacy direct "Add Addon" form
    */
   source?: 'marketplace' | 'artifacthub' | 'paste_url' | 'manual'
+  /**
+   * Per-request auto-merge decision. Omit (undefined) to fall back to the
+   * connection-level default; true/false overrides it for this PR only.
+   * Routed to AddAddonRequest.AutoMerge on the server.
+   */
+  auto_merge?: boolean
+  /**
+   * When true the server returns a DryRunResult preview (files it would
+   * write, no PR, no commit) on AddAddonResponse.dry_run. Used by the
+   * Marketplace preview step before the real submit.
+   */
+  dry_run?: boolean
 }): Promise<AddAddonResponse> {
   // Use raw fetch so we can detect the structured 409 body returned when
   // the addon already exists. postJSON throws a plain Error with just
