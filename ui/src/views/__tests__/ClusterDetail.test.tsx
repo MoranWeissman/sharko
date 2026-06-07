@@ -35,6 +35,18 @@ const mockGetClusterComparison = vi.fn();
 const mockTestClusterConnection = vi.fn();
 const mockFetchTrackedPRs = vi.fn();
 const mockGetNodeInfo = vi.fn();
+const mockDeregisterCluster = vi.fn();
+
+// V2-cleanup-13: capture toast calls so the removal-feedback assertions can
+// distinguish "cluster removed" (auto-merged) from "removal PR opened".
+const mockShowToast = vi.fn();
+vi.mock('@/components/ToastNotification', async () => {
+  const actual = await vi.importActual<typeof import('@/components/ToastNotification')>(
+    '@/components/ToastNotification',
+  );
+  return { ...actual, showToast: (...args: unknown[]) => mockShowToast(...args) };
+});
+
 vi.mock('@/services/api', async () => {
   // V125-1-10.5: keep `isTestClusterUnavailable` real so the view's
   // discriminator stays in sync with the API contract; only stub the
@@ -50,7 +62,7 @@ vi.mock('@/services/api', async () => {
       getAddonCatalog: vi.fn().mockResolvedValue({ addons: [] }),
     },
     testClusterConnection: (...args: unknown[]) => mockTestClusterConnection(...args),
-    deregisterCluster: vi.fn().mockResolvedValue({}),
+    deregisterCluster: (...args: unknown[]) => mockDeregisterCluster(...args),
     updateClusterAddons: vi.fn().mockResolvedValue({}),
     updateClusterSettings: vi.fn().mockResolvedValue({}),
     // BUG-042: ClusterDetail now fetches /api/v1/prs?status=open&cluster=<name>
@@ -158,6 +170,8 @@ describe('ClusterDetail', () => {
     // Default to "no node info" so the host-node card is hidden in the
     // baseline; the V2-cleanup-8.3 test below overrides this.
     mockGetNodeInfo.mockResolvedValue(null);
+    // V2-cleanup-13: default removal returns an opened-but-not-merged PR.
+    mockDeregisterCluster.mockResolvedValue({});
   });
 
   // V2-cleanup-8.3: the node-count card always reflects the Sharko HOST
@@ -734,6 +748,70 @@ describe('ClusterDetail', () => {
         expect(screen.getByText(/Connected.*v1\.29\.3/)).toBeInTheDocument();
       });
       expect(screen.queryByTestId('test-unavailable-banner')).not.toBeInTheDocument();
+    });
+  });
+
+  // V2-cleanup-13: cluster removal now offers the same auto-merge vs
+  // manual-PR choice as init/register, and the success feedback tells the
+  // user whether the cluster was removed (PR merged) or a PR was opened for
+  // review (cluster stays listed until it merges).
+  describe('V2-cleanup-13: removal auto-merge choice + feedback', () => {
+    async function openRemoveModal() {
+      renderView();
+      await waitFor(() => {
+        expect(screen.getByText('prod-eu')).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByRole('button', { name: /Remove Cluster/i }));
+      // The confirmation dialog and its auto-merge toggle should appear.
+      await waitFor(() => {
+        expect(screen.getByText(/Remove cluster "prod-eu"\?/i)).toBeInTheDocument();
+      });
+    }
+
+    it('renders the "Merge PR automatically" toggle in the remove dialog', async () => {
+      await openRemoveModal();
+      expect(screen.getByLabelText(/Merge PR automatically/i)).toBeInTheDocument();
+    });
+
+    it('auto-merge ON: sends auto_merge=true, toasts "removed", navigates away', async () => {
+      mockDeregisterCluster.mockResolvedValue({ git: { merged: true, pr_id: 7 } });
+      await openRemoveModal();
+
+      fireEvent.click(screen.getByLabelText(/Merge PR automatically/i));
+      fireEvent.click(screen.getByRole('button', { name: /^Remove$/i }));
+
+      await waitFor(() => {
+        expect(mockDeregisterCluster).toHaveBeenCalledWith('prod-eu', true);
+      });
+      await waitFor(() => {
+        expect(mockShowToast).toHaveBeenCalledWith(
+          expect.stringMatching(/removed/i),
+          'success',
+        );
+      });
+      expect(mockNavigate).toHaveBeenCalledWith('/clusters');
+    });
+
+    it('auto-merge OFF: sends auto_merge=false, toasts "PR opened", stays on page', async () => {
+      mockDeregisterCluster.mockResolvedValue({
+        git: { merged: false, pr_id: 12, pr_url: 'https://github.com/example/repo/pull/12' },
+      });
+      await openRemoveModal();
+
+      // Leave the toggle unchecked (default false), confirm removal.
+      fireEvent.click(screen.getByRole('button', { name: /^Remove$/i }));
+
+      await waitFor(() => {
+        expect(mockDeregisterCluster).toHaveBeenCalledWith('prod-eu', false);
+      });
+      await waitFor(() => {
+        expect(mockShowToast).toHaveBeenCalledWith(
+          expect.stringMatching(/PR #12 opened for review/i),
+          'success',
+        );
+      });
+      // Manual path must NOT navigate away — the cluster is still listed.
+      expect(mockNavigate).not.toHaveBeenCalledWith('/clusters');
     });
   });
 });

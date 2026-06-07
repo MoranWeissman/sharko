@@ -7571,6 +7571,10 @@ const docTemplate = `{
                 "addon": {
                     "type": "string"
                 },
+                "auto_merge": {
+                    "description": "AutoMerge overrides the connection-level PRAutoMerge default for the\ndisable PR only. nil = fall back to the connection default. Mirrors the\nfield on init/register/UpdateClusterAddons so disable behaves identically.",
+                    "type": "boolean"
+                },
                 "cleanup": {
                     "description": "\"all\" (default), \"labels\", \"none\"",
                     "type": "string"
@@ -7798,6 +7802,10 @@ const docTemplate = `{
         "github_com_MoranWeissman_sharko_internal_orchestrator.RemoveClusterRequest": {
             "type": "object",
             "properties": {
+                "auto_merge": {
+                    "description": "AutoMerge overrides the connection-level PRAutoMerge default for the\nremoval PR only. nil = fall back to the connection default. Mirrors the\nfield on init/register/UpdateClusterAddons so removal behaves identically.",
+                    "type": "boolean"
+                },
                 "cleanup": {
                     "description": "\"all\" (default), \"git\", \"none\"",
                     "type": "string"

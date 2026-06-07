@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import type { ReactNode } from 'react'
 import { Loader2 } from 'lucide-react'
 import {
   Dialog,
@@ -19,6 +20,9 @@ interface ConfirmationModalProps {
   typeToConfirm?: string
   destructive?: boolean
   loading?: boolean
+  // Optional extra content rendered between the description and the footer —
+  // e.g. an auto-merge / manual-PR choice for PR-producing operations.
+  extraContent?: ReactNode
 }
 
 export function ConfirmationModal({
@@ -31,6 +35,7 @@ export function ConfirmationModal({
   typeToConfirm,
   destructive = false,
   loading = false,
+  extraContent,
 }: ConfirmationModalProps) {
   const [typed, setTyped] = useState('')
 
@@ -70,6 +75,8 @@ export function ConfirmationModal({
             />
           </div>
         )}
+
+        {extraContent && <div className="mt-2">{extraContent}</div>}
 
         <DialogFooter className="mt-2">
           <button

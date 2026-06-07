@@ -242,6 +242,10 @@ type RemoveClusterRequest struct {
 	Cleanup string `json:"cleanup"` // "all" (default), "git", "none"
 	DryRun  bool   `json:"dry_run,omitempty"`
 	Yes     bool   `json:"yes"` // confirmation required
+	// AutoMerge overrides the connection-level PRAutoMerge default for the
+	// removal PR only. nil = fall back to the connection default. Mirrors the
+	// field on init/register/UpdateClusterAddons so removal behaves identically.
+	AutoMerge *bool `json:"auto_merge,omitempty"`
 }
 
 // RemoveClusterResult is the output of a cluster removal operation.
@@ -264,6 +268,10 @@ type DisableAddonRequest struct {
 	Cleanup string `json:"cleanup"` // "all" (default), "labels", "none"
 	DryRun  bool   `json:"dry_run,omitempty"`
 	Yes     bool   `json:"yes"` // confirmation required
+	// AutoMerge overrides the connection-level PRAutoMerge default for the
+	// disable PR only. nil = fall back to the connection default. Mirrors the
+	// field on init/register/UpdateClusterAddons so disable behaves identically.
+	AutoMerge *bool `json:"auto_merge,omitempty"`
 }
 
 // DisableAddonResult is the output of an addon disable operation.

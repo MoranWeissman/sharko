@@ -647,6 +647,12 @@ definitions:
     properties:
       addon:
         type: string
+      auto_merge:
+        description: |-
+          AutoMerge overrides the connection-level PRAutoMerge default for the
+          disable PR only. nil = fall back to the connection default. Mirrors the
+          field on init/register/UpdateClusterAddons so disable behaves identically.
+        type: boolean
       cleanup:
         description: '"all" (default), "labels", "none"'
         type: string
@@ -807,6 +813,12 @@ definitions:
     type: object
   github_com_MoranWeissman_sharko_internal_orchestrator.RemoveClusterRequest:
     properties:
+      auto_merge:
+        description: |-
+          AutoMerge overrides the connection-level PRAutoMerge default for the
+          removal PR only. nil = fall back to the connection default. Mirrors the
+          field on init/register/UpdateClusterAddons so removal behaves identically.
+        type: boolean
       cleanup:
         description: '"all" (default), "git", "none"'
         type: string

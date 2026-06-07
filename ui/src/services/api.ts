@@ -304,11 +304,17 @@ export function createAuditStream(): EventSource {
 // confirmation-required operations with HTTP 400 "confirmation required:
 // set yes: true in request body" when the body doesn't include
 // `{"yes": true}`. Include the confirmation flag in the DELETE body.
-export async function deregisterCluster(name: string) {
+export async function deregisterCluster(name: string, autoMerge?: boolean) {
+  // auto_merge mirrors init/register: when set it overrides the connection's
+  // PRAutoMerge default for this removal PR only; when omitted the backend
+  // falls back to the connection default. Omitting the key (rather than
+  // sending null) keeps the wire shape identical to the legacy call.
+  const body: { yes: boolean; auto_merge?: boolean } = { yes: true }
+  if (autoMerge !== undefined) body.auto_merge = autoMerge
   const res = await fetch(`${BASE_URL}/clusters/${encodeURIComponent(name)}`, {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify({ yes: true }),
+    body: JSON.stringify(body),
   })
   if (res.status === 401) {
     sessionStorage.removeItem(TOKEN_KEY)
