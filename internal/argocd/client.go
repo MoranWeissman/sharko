@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -17,6 +18,15 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
+
+// ErrPermissionDenied is the sentinel returned (wrapped) when ArgoCD answers an
+// API call with HTTP 403. Callers can detect it with errors.Is to distinguish a
+// genuine "the token lacks RBAC permission" condition from other failures (a
+// missing application, an unhealthy app, a network error). This matters because
+// an admin apiKey token (sub "admin:apiKey") is subject to argocd-rbac-cm and
+// gets a 403 — not ArgoCD's password-session superuser bypass — so a 403 should
+// be surfaced as an RBAC problem, not mislabeled as a broken bootstrap.
+var ErrPermissionDenied = errors.New("ArgoCD access denied — the token does not have permission for this operation")
 
 // Client is a REST API client for ArgoCD.
 type Client struct {
@@ -413,7 +423,10 @@ func (c *Client) doGet(ctx context.Context, path string) ([]byte, error) {
 		case 401:
 			return nil, fmt.Errorf("invalid ArgoCD token — check that the token is correct and not expired")
 		case 403:
-			return nil, fmt.Errorf("ArgoCD access denied — the token does not have permission for this operation")
+			// Wrap the sentinel so callers (e.g. the bootstrap-app probe) can
+			// detect permission-denied with errors.Is and surface an
+			// RBAC-focused message instead of "bootstrap missing or unhealthy".
+			return nil, fmt.Errorf("%w", ErrPermissionDenied)
 		case 404:
 			return nil, fmt.Errorf("ArgoCD endpoint not found (%s) — check the server URL", path)
 		default:

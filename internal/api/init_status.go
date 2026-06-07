@@ -25,6 +25,13 @@ const (
 	// bootstrap application is missing or unhealthy. The wizard surfaces
 	// the detail string and offers a repair (re-run Initialize).
 	RepoStatePartial = "partial"
+	// RepoStateForbidden — the bootstrap file is present but ArgoCD rejected
+	// the application read with a 403 (the token lacks RBAC permission). The
+	// repo and bootstrap may be fine; the problem is the token's permissions.
+	// Reported distinctly from "partial" so the user fixes ArgoCD RBAC rather
+	// than chasing a phantom bootstrap failure (V2-cleanup-10). Detail carries
+	// the actionable permission-denied message.
+	RepoStateForbidden = "forbidden"
 )
 
 // InitStatusResponse is the body returned by GET /api/v1/init/status.
@@ -51,6 +58,7 @@ type InitStatusResponse struct {
 //
 //	file missing                               -> ("empty",       "")
 //	file present + ProbeBootstrapApp "healthy"  -> ("initialized", "")
+//	file present + ArgoCD 403 / permission-denied -> ("forbidden", <detail>)
 //	file present + ArgoCD missing/unhealthy     -> ("partial",     <detail>)
 func probeRepoState(
 	ctx context.Context,
@@ -62,16 +70,23 @@ func probeRepoState(
 		return RepoStateEmpty, ""
 	}
 	status, argoDetail := ProbeBootstrapApp(ctx, ac)
-	if status == "healthy" {
+	switch status {
+	case "healthy":
 		return RepoStateInitialized, ""
+	case "forbidden":
+		// A 403 is an RBAC problem with the token, not a broken bootstrap —
+		// surface it distinctly so neither the POST /init partial path nor the
+		// GET /init/status probe mislabels it as "missing or unhealthy".
+		return RepoStateForbidden, argoDetail
+	default:
+		return RepoStatePartial, argoDetail
 	}
-	return RepoStatePartial, argoDetail
 }
 
 // handleInitStatus godoc
 //
 // @Summary Probe GitOps repo initialization state
-// @Description Read-only probe used by the first-run wizard before it offers to initialize the repo. Returns "empty" when the bootstrap root-app YAML is not present on the base branch, "initialized" when it is present and the ArgoCD bootstrap application is Synced + Healthy, and "partial" when the file is present but the ArgoCD bootstrap is missing or unhealthy (detail carries the ArgoCD diagnostic). Performs no writes and creates no operation session. Requires an active Git connection.
+// @Description Read-only probe used by the first-run wizard before it offers to initialize the repo. Returns "empty" when the bootstrap root-app YAML is not present on the base branch, "initialized" when it is present and the ArgoCD bootstrap application is Synced + Healthy, "forbidden" when the file is present but ArgoCD rejected the read with a 403 because the token lacks RBAC permission (detail carries an actionable permission message), and "partial" when the file is present but the ArgoCD bootstrap is missing or unhealthy (detail carries the ArgoCD diagnostic). Performs no writes and creates no operation session. Requires an active Git connection.
 // @Tags init
 // @Produce json
 // @Security BearerAuth

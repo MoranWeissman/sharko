@@ -17,13 +17,26 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/MoranWeissman/sharko/internal/argocd"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
+
+// forbiddenBootstrapArgocd returns an ArgoCD fake whose GetApplication fails
+// with a 403/permission-denied error — wrapping argocd.ErrPermissionDenied the
+// same way the real client does (GetApplication wraps doGet, doGet wraps the
+// sentinel). This drives the V2-cleanup-10 "forbidden" classification.
+func forbiddenBootstrapArgocd() *initFakeArgocd {
+	return &initFakeArgocd{
+		getErr: fmt.Errorf("getting application %q: %w",
+			orchestrator.BootstrapRootAppName, argocd.ErrPermissionDenied),
+	}
+}
 
 // initStatusBody runs GET /api/v1/init/status against a server wired with the
 // given git provider override + (optional) ArgoCD override, asserts 200, and
@@ -126,6 +139,20 @@ func TestHandleInitStatus_Partial_AppDegraded(t *testing.T) {
 	}
 }
 
+// V2-cleanup-10: a 403 from ArgoCD (token lacks RBAC) must classify as
+// "forbidden" with an actionable permission message — NOT "partial"
+// (missing/unhealthy), which would send the user chasing a phantom broken
+// bootstrap instead of fixing their token's permissions.
+func TestHandleInitStatus_Forbidden(t *testing.T) {
+	body := initStatusBody(t, initializedRepoGit(), forbiddenBootstrapArgocd())
+	if body.State != RepoStateForbidden {
+		t.Errorf("expected state=%q, got %q", RepoStateForbidden, body.State)
+	}
+	if body.Detail != permissionDeniedDetail {
+		t.Errorf("expected permission-denied detail, got %q", body.Detail)
+	}
+}
+
 // No active Git connection — no override installed and the test config has no
 // connection — must surface a clear error (502) the wizard can fall back on,
 // not a panic or a misleading "empty".
@@ -169,5 +196,62 @@ func TestProbeRepoState_Partial(t *testing.T) {
 	}
 	if detail == "" {
 		t.Error("expected non-empty detail for partial state")
+	}
+}
+
+// V2-cleanup-10: a permission-denied error classifies as "forbidden" with the
+// actionable message — distinct from "partial".
+func TestProbeRepoState_Forbidden(t *testing.T) {
+	state, detail := probeRepoState(context.Background(), initializedRepoGit(), forbiddenBootstrapArgocd(), "main")
+	if state != RepoStateForbidden {
+		t.Errorf("expected state=forbidden, got %q", state)
+	}
+	if detail != permissionDeniedDetail {
+		t.Errorf("expected permission-denied detail, got %q", detail)
+	}
+}
+
+// --- ProbeBootstrapApp — error-classification unit tests --------------------
+
+// A 403/permission-denied underlying error → "forbidden" + permission message.
+func TestProbeBootstrapApp_Forbidden(t *testing.T) {
+	status, detail := ProbeBootstrapApp(context.Background(), forbiddenBootstrapArgocd())
+	if status != "forbidden" {
+		t.Errorf("expected status=forbidden, got %q", status)
+	}
+	if detail != permissionDeniedDetail {
+		t.Errorf("expected permission-denied detail, got %q", detail)
+	}
+}
+
+// A genuine not-found error → "unhealthy" + the bootstrap-missing message,
+// NOT the permission message. Proves the special-casing is conservative.
+func TestProbeBootstrapApp_NotFound(t *testing.T) {
+	ac := &initFakeArgocd{getErr: errors.New("application not found")}
+	status, detail := ProbeBootstrapApp(context.Background(), ac)
+	if status != "unhealthy" {
+		t.Errorf("expected status=unhealthy, got %q", status)
+	}
+	if detail == permissionDeniedDetail {
+		t.Errorf("not-found must NOT use the permission message, got %q", detail)
+	}
+	if detail == "" {
+		t.Error("expected non-empty detail for missing app")
+	}
+}
+
+// An unhealthy/degraded app → "unhealthy", never the permission message.
+func TestProbeBootstrapApp_Degraded(t *testing.T) {
+	ac := &initFakeArgocd{app: &models.ArgocdApplication{
+		Name:         orchestrator.BootstrapRootAppName,
+		SyncStatus:   "OutOfSync",
+		HealthStatus: "Degraded",
+	}}
+	status, detail := ProbeBootstrapApp(context.Background(), ac)
+	if status != "unhealthy" {
+		t.Errorf("expected status=unhealthy, got %q", status)
+	}
+	if detail == permissionDeniedDetail {
+		t.Errorf("degraded app must NOT use the permission message, got %q", detail)
 	}
 }
