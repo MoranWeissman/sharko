@@ -704,8 +704,15 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 		Server:  creds.Server,
 		Region:  entry.Region,
 		RoleARN: r.deps.DefaultRoleARN,
-		CAData:  base64.StdEncoding.EncodeToString(creds.CAData),
-		Labels:  clusterLabels,
+		// Carry the bearer token through so buildSecretConfig emits the
+		// bearerToken shape for kubeconfig-registered clusters. Without this
+		// the spec would fall into the execProviderConfig (argocd-k8s-auth)
+		// branch and clobber the good bearer-token Secret written at
+		// registration. EKS/IAM clusters return Token=="" and still take the
+		// exec branch (RoleARN/Region preserved).
+		Token:  creds.Token,
+		CAData: base64.StdEncoding.EncodeToString(creds.CAData),
+		Labels: clusterLabels,
 	}
 
 	secret, buildErr := buildClusterSecret(spec, r.namespace)

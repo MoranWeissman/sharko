@@ -2,6 +2,7 @@ package argosecrets
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"testing"
@@ -518,6 +519,168 @@ clusters:
 	_, err := client.CoreV1().Secrets(testNamespace).Get(context.Background(), "prod-cluster", metav1.GetOptions{})
 	if err != nil {
 		t.Errorf("secret prod-cluster not found: %v", err)
+	}
+}
+
+// secretConfigShape unmarshals an ArgoCD cluster secret's config JSON enough
+// to tell the bearerToken shape from the execProviderConfig (EKS) shape.
+type secretConfigShape struct {
+	BearerToken        string           `json:"bearerToken"`
+	ExecProviderConfig *json.RawMessage `json:"execProviderConfig"`
+}
+
+// readSecretConfig fetches the named cluster secret and parses its config JSON.
+// The fake clientset keeps Create payloads in StringData (it does not move
+// StringData → Data), so we read StringData first and fall back to Data.
+func readSecretConfig(t *testing.T, client *fake.Clientset, name string) secretConfigShape {
+	t.Helper()
+	secret, err := client.CoreV1().Secrets(testNamespace).Get(context.Background(), name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("getting secret %q: %v", name, err)
+	}
+	raw := secret.StringData["config"]
+	if raw == "" {
+		raw = string(secret.Data["config"])
+	}
+	if raw == "" {
+		t.Fatalf("secret %q has empty config", name)
+	}
+	var cfg secretConfigShape
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		t.Fatalf("parsing config for secret %q: %v\nconfig=%s", name, err, raw)
+	}
+	return cfg
+}
+
+// TestReconcileOnce_KubeconfigClusterKeepsBearerShape is the V2-cleanup-12
+// regression guard for the argosecrets reconciler: when the provider returns
+// credentials carrying a bearer token (a kubeconfig-registered cluster), the
+// reconciled secret MUST be the bearerToken shape — never the execProviderConfig
+// (argocd-k8s-auth) shape that ArgoCD v1.x rejects.
+func TestReconcileOnce_KubeconfigClusterKeepsBearerShape(t *testing.T) {
+	const yaml = `
+clusters:
+  - name: kube-cluster
+    region: us-east-1
+    labels: {}
+`
+	reader := &mockGitReader{
+		files: map[string][]byte{clusterAddonsPath: []byte(yaml)},
+	}
+	creds := &mockCredProvider{
+		creds: map[string]*providers.Kubeconfig{
+			"kube-cluster": {
+				Server: "https://api.kube-cluster.example.com",
+				CAData: []byte("ca-bundle-bytes"),
+				Token:  "static-bearer-token-abc123",
+			},
+		},
+	}
+
+	rec, _, client := newTestReconciler(func() GitReader { return reader }, creds)
+	rec.ReconcileOnce(context.Background())
+
+	cfg := readSecretConfig(t, client, "kube-cluster")
+	if cfg.BearerToken != "static-bearer-token-abc123" {
+		t.Errorf("config.bearerToken = %q, want the provider token", cfg.BearerToken)
+	}
+	if cfg.ExecProviderConfig != nil {
+		t.Errorf("kubeconfig cluster must NOT get execProviderConfig; got %s", string(*cfg.ExecProviderConfig))
+	}
+}
+
+// TestReconcileOnce_EKSClusterKeepsExecShape verifies the AWS/IAM path is
+// unchanged: when the provider returns credentials WITHOUT a token (a genuine
+// EKS/IAM cluster), the reconciled secret stays the execProviderConfig shape so
+// argocd-k8s-auth still generates the STS token.
+func TestReconcileOnce_EKSClusterKeepsExecShape(t *testing.T) {
+	const yaml = `
+clusters:
+  - name: eks-cluster
+    region: eu-west-1
+    labels: {}
+`
+	reader := &mockGitReader{
+		files: map[string][]byte{clusterAddonsPath: []byte(yaml)},
+	}
+	creds := &mockCredProvider{
+		creds: map[string]*providers.Kubeconfig{
+			"eks-cluster": {
+				Server: "https://api.eks-cluster.example.com",
+				CAData: []byte("ca-bundle-bytes"),
+				// No Token — pure IAM cluster.
+			},
+		},
+	}
+
+	client := fake.NewClientset()
+	mgr := NewManager(client, testNamespace)
+	parser := config.NewParser()
+	const roleARN = "arn:aws:iam::123456789012:role/EKSReadRole"
+	rec := NewReconciler(mgr, creds, func() GitReader { return reader }, parser, "main", roleARN, clusterAddonsPath, 0)
+
+	rec.ReconcileOnce(context.Background())
+
+	cfg := readSecretConfig(t, client, "eks-cluster")
+	if cfg.BearerToken != "" {
+		t.Errorf("EKS cluster must NOT get a bearerToken; got %q", cfg.BearerToken)
+	}
+	if cfg.ExecProviderConfig == nil {
+		t.Error("EKS cluster (empty Token) must keep the execProviderConfig shape")
+	}
+}
+
+// TestReconcileOnce_BearerRoundTripIdempotent verifies the shape does not flip
+// across reconciles. A kubeconfig cluster written as bearerToken, then read
+// back (provider still returns the token) and reconciled again, must stay
+// bearerToken — the round-trip the V2-cleanup-12 fix protects.
+func TestReconcileOnce_BearerRoundTripIdempotent(t *testing.T) {
+	const yamlA = `
+clusters:
+  - name: kube-cluster
+    region: us-east-1
+    labels:
+      addon-foo: "true"
+`
+	// Same cluster, different label value → different content hash so the
+	// second ReconcileOnce does not short-circuit at the hash check.
+	const yamlB = `
+clusters:
+  - name: kube-cluster
+    region: us-east-1
+    labels:
+      addon-foo: "false"
+`
+	reader := &mockGitReader{
+		files: map[string][]byte{clusterAddonsPath: []byte(yamlA)},
+	}
+	creds := &mockCredProvider{
+		creds: map[string]*providers.Kubeconfig{
+			"kube-cluster": {
+				Server: "https://api.kube-cluster.example.com",
+				CAData: []byte("ca-bundle-bytes"),
+				Token:  "static-bearer-token-abc123",
+			},
+		},
+	}
+
+	rec, _, client := newTestReconciler(func() GitReader { return reader }, creds)
+
+	rec.ReconcileOnce(context.Background())
+	first := readSecretConfig(t, client, "kube-cluster")
+	if first.BearerToken == "" || first.ExecProviderConfig != nil {
+		t.Fatalf("first pass should be bearerToken shape; bearer=%q exec=%v", first.BearerToken, first.ExecProviderConfig)
+	}
+
+	// Second pass with changed content — must still be bearerToken, not flipped.
+	reader.setFile(clusterAddonsPath, []byte(yamlB))
+	rec.ReconcileOnce(context.Background())
+	second := readSecretConfig(t, client, "kube-cluster")
+	if second.BearerToken != "static-bearer-token-abc123" {
+		t.Errorf("second pass bearerToken = %q, want unchanged token", second.BearerToken)
+	}
+	if second.ExecProviderConfig != nil {
+		t.Errorf("second pass must NOT flip to execProviderConfig; got %s", string(*second.ExecProviderConfig))
 	}
 }
 
