@@ -14,6 +14,63 @@ the PR. Append new releases at the TOP of the v2.x stream so the most
 recent release is the first thing readers see.
 -->
 
+## v2.0.2 — First-run smoke-test fixes
+
+**Status:** released 2026-06-07
+
+v2.0.2 is a patch release that closes the issues the maintainer found
+during hands-on first-run testing of v2.0.1 — kubeconfig cluster
+registration, cluster removal, the marketplace add-addon flow, the setup
+wizard, and dev tooling. No breaking changes.
+
+### Breaking changes
+
+No breaking changes — v2.0.2 is a patch release.
+
+### What's new
+
+- **Setup wizard now probes the Git repo state before offering to
+  initialize it** — Step 4 carries honest wording so operators aren't told
+  an already-initialized repo is empty.
+  (V2-cleanup-9: PR [#392](https://github.com/MoranWeissman/sharko/pull/392))
+- **Marketplace "Add addon to catalog" flow reaches parity with the init
+  flow** — an auto-merge/manual toggle that actually takes effect, a dry-run
+  preview of the catalog files that will be written, step-by-step Git
+  progress, a clickable pull-request link, and post-submit navigation (to
+  the new addon if it auto-merged, or to the pending-PR list if manual).
+  (V2-cleanup-14: PR [#397](https://github.com/MoranWeissman/sharko/pull/397))
+- **Curated design-history docs page added; remaining v1.x user-facing
+  cruft removed** from the docs.
+  (V2-cleanup-7: PR [#388](https://github.com/MoranWeissman/sharko/pull/388))
+
+### Bug fixes
+
+- **Kubeconfig cluster registration now works end-to-end.** Three fixes
+  combine: registration writes the ArgoCD cluster Secret directly
+  ([#391](https://github.com/MoranWeissman/sharko/pull/391)); that Secret is
+  protected from the orphan-sweep reconciler during the registration
+  window, and the bootstrap probe lists ArgoCD apps instead of fetching one
+  by name ([#394](https://github.com/MoranWeissman/sharko/pull/394)); and the
+  reconcilers preserve the bearer token so a kubeconfig cluster's Secret
+  keeps its correct shape instead of being rebuilt into a broken AWS
+  exec-plugin form ([#395](https://github.com/MoranWeissman/sharko/pull/395)).
+  (V2-cleanup-8.2/8.3, 11, 12)
+- **Cluster removal now honors the auto-merge choice**, like the init and
+  register flows — previously the removal pull request was silently left
+  open even when auto-merge was selected.
+  (V2-cleanup-13: PR [#396](https://github.com/MoranWeissman/sharko/pull/396))
+- **Clearer ArgoCD permission handling in the dev environment** — the dev
+  install grants the admin apiKey RBAC, and Sharko gives a clearer message
+  when ArgoCD denies its token.
+  (V2-cleanup-10: PR [#393](https://github.com/MoranWeissman/sharko/pull/393))
+
+### Maintainer tooling
+
+- **`scripts/sharko-dev.sh` reliability fixes** — corrected preflight
+  arithmetic, logging routed to stderr, a next-steps footer, and the
+  reconciler enabled in the dev install.
+  (V2-cleanup-8.1: PR [#390](https://github.com/MoranWeissman/sharko/pull/390))
+
 ## v2.0.1 — Release pipeline fix
 
 **Status:** released 2026-06-04
