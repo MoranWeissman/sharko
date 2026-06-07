@@ -11,6 +11,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -236,6 +237,17 @@ func collectYAMLFiles(dir string) ([]string, error) {
 // changed YAML in a PR, and most YAML in this repo (workflows, Helm
 // templates, kustomize, kind configs, etc.) is not Sharko-managed.
 // Treating "not Sharko-owned" as "fail" would block every PR.
+//
+// Go/Helm template files are also skipped, not failed. Helm chart
+// templates (e.g. templates/bootstrap/templates/*.yaml) contain raw
+// {{ ... }} Go-template directives and are intentionally NOT valid YAML
+// until Helm renders them — yet the CI hook still walks them as changed
+// .yaml files. A genuine Sharko-enveloped config is concrete YAML and
+// never contains raw {{ }} delimiters, so when the envelope detector
+// hits a YAML parse error on a body that contains both "{{" and "}}",
+// we treat it as a template and skip rather than fail. Bodies that fail
+// to parse with NO templating are still failed loudly (genuinely broken
+// YAML).
 func validateSingleFile(v *sharkoschema.Validator, path string) fileVerdict {
 	body, err := os.ReadFile(path)
 	if err != nil {
@@ -244,12 +256,18 @@ func validateSingleFile(v *sharkoschema.Validator, path string) fileVerdict {
 
 	enveloped, err := sharkoschema.IsEnveloped(body)
 	if err != nil {
-		// Malformed YAML at the envelope-detection step. We could
-		// argue this is a "skip" (the file isn't even valid YAML so
-		// can't be a Sharko envelope), but the operator's intent in
-		// running validate-config is "tell me if my file is OK", and a
-		// file that doesn't parse as YAML is clearly not OK. Fail
-		// loudly with the parser error.
+		// Go/Helm template files contain raw {{ ... }} directives and
+		// are intentionally not valid YAML until rendered. They are not
+		// Sharko configs, so skip them rather than failing the PR.
+		if looksLikeGoTemplate(body) {
+			return fileVerdict{path: path, kind: "skip", reason: "Helm/Go template, not a Sharko config"}
+		}
+		// Malformed YAML at the envelope-detection step (with no
+		// templating). We could argue this is a "skip" (the file isn't
+		// even valid YAML so can't be a Sharko envelope), but the
+		// operator's intent in running validate-config is "tell me if my
+		// file is OK", and a file that doesn't parse as YAML is clearly
+		// not OK. Fail loudly with the parser error.
 		return fileVerdict{
 			path:    path,
 			kind:    "fail",
@@ -270,6 +288,12 @@ func validateSingleFile(v *sharkoschema.Validator, path string) fileVerdict {
 		Kind string `yaml:"kind"`
 	}
 	if err := yaml.Unmarshal(body, &header); err != nil {
+		// Normally unreachable for a template (IsEnveloped above would
+		// have already failed and we'd have skipped it). Guard anyway so
+		// the two parse-error sites behave identically.
+		if looksLikeGoTemplate(body) {
+			return fileVerdict{path: path, kind: "skip", reason: "Helm/Go template, not a Sharko config"}
+		}
 		return fileVerdict{path: path, kind: "fail", reason: "YAML parse error", details: []string{err.Error()}}
 	}
 
@@ -295,6 +319,19 @@ func validateSingleFile(v *sharkoschema.Validator, path string) fileVerdict {
 		}
 	}
 	return fileVerdict{path: path, kind: "pass"}
+}
+
+// looksLikeGoTemplate reports whether body appears to be a Go/Helm
+// template rather than a concrete YAML document. Helm chart templates
+// embed raw {{ ... }} action delimiters, which make the file invalid
+// YAML until Helm renders it. A genuine Sharko-enveloped config is
+// concrete, rendered YAML and never contains raw {{ }} delimiters, so
+// the presence of BOTH "{{" and "}}" is a robust, cheap signal that the
+// file is a template the operator did not intend validate-config to
+// parse. We require both delimiters (rather than either) to avoid
+// misclassifying a stray "{{" inside a comment or string.
+func looksLikeGoTemplate(body []byte) bool {
+	return bytes.Contains(body, []byte("{{")) && bytes.Contains(body, []byte("}}"))
 }
 
 // schemaURLForKind maps a Sharko envelope kind to its canonical public
