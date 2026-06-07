@@ -111,10 +111,38 @@ func (o *Orchestrator) AddAddon(ctx context.Context, req AddAddonRequest) (*GitR
 		}
 	}
 
+	// Dry-run exit point: return a preview of the exact file set the real
+	// write below would commit, with ZERO side effects (no branch, no commit,
+	// no PR). The `files` map computed above is the single source of truth —
+	// the preview iterates it so the dry-run set is guaranteed identical to
+	// what the non-dry-run path writes. Mirrors register-cluster's dry-run
+	// shape so the Marketplace UI reuses the same FilePreview render.
+	if req.DryRun {
+		filePreviews := make([]FilePreview, 0, len(files))
+		// Catalog file first for a stable, readable preview order; the
+		// remaining files (global values, when present) follow.
+		filePreviews = append(filePreviews, FilePreview{Path: catalogPath, Action: o.fileAction(ctx, catalogPath)})
+		for p := range files {
+			if p == catalogPath {
+				continue
+			}
+			filePreviews = append(filePreviews, FilePreview{Path: p, Action: o.fileAction(ctx, p)})
+		}
+		return &GitResult{
+			DryRun: &DryRunResult{
+				EffectiveAddons: []string{req.Name},
+				FilesToWrite:    filePreviews,
+				PRTitle:         fmt.Sprintf("%s add addon %s", o.gitops.CommitPrefix, req.Name),
+				SecretsToCreate: []string{},
+			},
+		}, nil
+	}
+
 	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("add addon %s", req.Name), PRMetadata{
-		OperationCode: "addon-add",
-		Addon:         req.Name,
-		Title:         fmt.Sprintf("Add addon %s", req.Name),
+		OperationCode:     "addon-add",
+		Addon:             req.Name,
+		Title:             fmt.Sprintf("Add addon %s", req.Name),
+		AutoMergeOverride: req.AutoMerge,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("committing addon %q to Git: %w", req.Name, err)

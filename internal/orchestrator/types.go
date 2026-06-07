@@ -128,6 +128,14 @@ type GitResult struct {
 	Merged     bool   `json:"merged"`
 	CommitSHA  string `json:"commit_sha,omitempty"`
 	ValuesFile string `json:"values_file,omitempty"`
+
+	// DryRun holds the preview result when the caller requested dry_run=true.
+	// When set, NO git side effects occurred (no branch, no commit, no PR) —
+	// the other GitResult fields are empty. omitempty keeps the non-dry-run
+	// response shape byte-identical to before this field existed. Mirrors the
+	// DryRun field on RegisterClusterResult so the UI reuses the same preview
+	// render for both flows.
+	DryRun *DryRunResult `json:"dry_run,omitempty"`
 }
 
 // AddAddonRequest is the input for adding an addon to the catalog.
@@ -144,6 +152,21 @@ type AddAddonRequest struct {
 	IgnoreDifferences []map[string]interface{} `json:"ignore_differences,omitempty"`
 	ExtraHelmValues   map[string]string        `json:"extra_helm_values,omitempty"`
 	DependsOn         []string                 `json:"depends_on,omitempty"`
+
+	// AutoMerge is the per-request auto-merge decision. nil means "fall back
+	// to the connection-level PRAutoMerge default"; a non-nil value overrides
+	// the default for this operation only. Routed to PRMetadata.AutoMergeOverride
+	// and resolved via resolveAutoMerge — never mutate o.gitops.PRAutoMerge.
+	// Mirrors the field on init/register/remove/disable so add-to-catalog
+	// behaves identically.
+	AutoMerge *bool `json:"auto_merge,omitempty"`
+
+	// DryRun, when true, makes AddAddon compute and return the files it WOULD
+	// write (as a DryRunResult on the returned GitResult) with NO side effects
+	// — no branch, no commit, no PR. Mirrors register-cluster's dry-run so the
+	// Marketplace UI can preview the change before committing.
+	DryRun bool `json:"dry_run,omitempty"`
+
 	// Source identifies the originating UI flow for audit/observability.
 	// Optional. Examples: "marketplace" (curated catalog Configure modal),
 	// "manual" (raw Add Addon form), "" (caller didn't say — handler treats

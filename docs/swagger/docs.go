@@ -7395,6 +7395,10 @@ const docTemplate = `{
                         "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.AddonSource"
                     }
                 },
+                "auto_merge": {
+                    "description": "AutoMerge is the per-request auto-merge decision. nil means \"fall back\nto the connection-level PRAutoMerge default\"; a non-nil value overrides\nthe default for this operation only. Routed to PRMetadata.AutoMergeOverride\nand resolved via resolveAutoMerge — never mutate o.gitops.PRAutoMerge.\nMirrors the field on init/register/remove/disable so add-to-catalog\nbehaves identically.",
+                    "type": "boolean"
+                },
                 "chart": {
                     "type": "string"
                 },
@@ -7403,6 +7407,10 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                },
+                "dry_run": {
+                    "description": "DryRun, when true, makes AddAddon compute and return the files it WOULD\nwrite (as a DryRunResult on the returned GitResult) with NO side effects\n— no branch, no commit, no PR. Mirrors register-cluster's dry-run so the\nMarketplace UI can preview the change before committing.",
+                    "type": "boolean"
                 },
                 "extra_helm_values": {
                     "type": "object",
@@ -7733,6 +7741,14 @@ const docTemplate = `{
                 },
                 "commit_sha": {
                     "type": "string"
+                },
+                "dry_run": {
+                    "description": "DryRun holds the preview result when the caller requested dry_run=true.\nWhen set, NO git side effects occurred (no branch, no commit, no PR) —\nthe other GitResult fields are empty. omitempty keeps the non-dry-run\nresponse shape byte-identical to before this field existed. Mirrors the\nDryRun field on RegisterClusterResult so the UI reuses the same preview\nrender for both flows.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.DryRunResult"
+                        }
+                    ]
                 },
                 "merged": {
                     "type": "boolean"

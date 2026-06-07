@@ -526,12 +526,28 @@ definitions:
         items:
           $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.AddonSource'
         type: array
+      auto_merge:
+        description: |-
+          AutoMerge is the per-request auto-merge decision. nil means "fall back
+          to the connection-level PRAutoMerge default"; a non-nil value overrides
+          the default for this operation only. Routed to PRMetadata.AutoMergeOverride
+          and resolved via resolveAutoMerge — never mutate o.gitops.PRAutoMerge.
+          Mirrors the field on init/register/remove/disable so add-to-catalog
+          behaves identically.
+        type: boolean
       chart:
         type: string
       depends_on:
         items:
           type: string
         type: array
+      dry_run:
+        description: |-
+          DryRun, when true, makes AddAddon compute and return the files it WOULD
+          write (as a DryRunResult on the returned GitResult) with NO side effects
+          — no branch, no commit, no PR. Mirrors register-cluster's dry-run so the
+          Marketplace UI can preview the change before committing.
+        type: boolean
       extra_helm_values:
         additionalProperties:
           type: string
@@ -759,6 +775,16 @@ definitions:
         type: string
       commit_sha:
         type: string
+      dry_run:
+        allOf:
+        - $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.DryRunResult'
+        description: |-
+          DryRun holds the preview result when the caller requested dry_run=true.
+          When set, NO git side effects occurred (no branch, no commit, no PR) —
+          the other GitResult fields are empty. omitempty keeps the non-dry-run
+          response shape byte-identical to before this field existed. Mirrors the
+          DryRun field on RegisterClusterResult so the UI reuses the same preview
+          render for both flows.
       merged:
         type: boolean
       pr_id:
