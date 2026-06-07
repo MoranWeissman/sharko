@@ -1,7 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { AddonCatalog } from '@/views/AddonCatalog'
+import { AuthProvider } from '@/hooks/useAuth'
+import { addAddon } from '@/services/api'
+
+const mockNavigate = vi.fn()
+vi.mock('react-router-dom', async () => {
+  const actual = await vi.importActual('react-router-dom')
+  return { ...actual, useNavigate: () => mockNavigate }
+})
 
 // Catalog fixture covers all 4 V126-3.1 (DESIGN-02) tile-badge states:
 //
@@ -10,7 +18,24 @@ import { AddonCatalog } from '@/views/AddonCatalog'
 // - addon-target-only → N=0, M=4 → "Not deployed yet"
 // - addon-nowhere     → N=0, M=0 → "Not deployed anywhere"
 vi.mock('@/services/api', () => ({
+  // V2-cleanup-15 — the catalog "Register addon" dialog now sends auto_merge,
+  // supports a dry-run preview, and branches on merged. addAddon is mocked
+  // per-test; the repo/chart validation endpoints return happy-path shapes so
+  // the form reaches a submittable state.
+  addAddon: vi.fn(),
+  isAddonAlreadyExistsError: () => false,
   api: {
+    listRepoCharts: vi.fn().mockResolvedValue({
+      valid: true,
+      charts: ['my-chart'],
+    }),
+    validateCatalogChart: vi.fn().mockResolvedValue({
+      valid: true,
+      repo: 'https://helm.example.com',
+      versions: [{ version: '1.2.3' }],
+      latest_stable: '1.2.3',
+      cached_at: new Date().toISOString(),
+    }),
     getAddonCatalog: vi.fn().mockResolvedValue({
       addons: [
         {
@@ -278,5 +303,175 @@ describe('AddonCatalog — Catalog tab rename (V126-3.1)', () => {
     // normalised — not respected).
     const catalogTab = await screen.findByRole('tab', { name: /catalog/i })
     expect(catalogTab).toHaveAttribute('aria-selected', 'true')
+  })
+})
+
+/**
+ * V2-cleanup-15.1 — the catalog "Register addon" dialog reaches parity with
+ * the Marketplace add-addon flow (#397):
+ *   - an admin-gated auto-merge toggle whose value is sent on addAddon
+ *   - a dry-run Preview step that renders DryRunResult.files_to_write
+ *   - an HONEST merged-vs-open outcome: a merged PR refreshes the catalog;
+ *     an open PR does NOT (the addon isn't in git yet) and surfaces the
+ *     clickable PR via pr_url instead.
+ */
+describe('AddonCatalog — add-addon parity flow (V2-cleanup-15.1)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    sessionStorage.clear()
+    sessionStorage.setItem('sharko-auth-token', 'test-token')
+    sessionStorage.setItem('sharko-auth-user', 'tester')
+    sessionStorage.setItem('sharko-auth-role', 'admin')
+  })
+
+  async function renderAndOpenDialog() {
+    render(
+      <MemoryRouter initialEntries={['/addons']}>
+        <AuthProvider>
+          <AddonCatalog />
+        </AuthProvider>
+      </MemoryRouter>,
+    )
+    // Wait for the catalog to finish loading, then open the dialog.
+    const addBtn = await screen.findByRole('button', { name: /add addon/i })
+    fireEvent.click(addBtn)
+    return await screen.findByRole('dialog')
+  }
+
+  // Fill the form so it reaches a submittable state: name, repo URL (which
+  // fires the debounced validation → marks repo valid + offers charts), chart,
+  // and version (auto-selected from latest_stable once chart validates).
+  async function fillSubmittableForm(dialog: HTMLElement) {
+    const byId = (id: string) =>
+      dialog.querySelector(`#${id}`) as HTMLInputElement
+    fireEvent.change(byId('add-addon-name'), {
+      target: { value: 'my-addon' },
+    })
+    fireEvent.change(byId('add-addon-repo'), {
+      target: { value: 'https://helm.example.com' },
+    })
+    // Repo validation is debounced; wait for the chart input to enable.
+    const chartInput = byId('add-addon-chart')
+    await waitFor(() => expect(chartInput).toBeEnabled())
+    fireEvent.change(chartInput, { target: { value: 'my-chart' } })
+    // Version auto-selects latest_stable (1.2.3) once the chart validates.
+    await waitFor(() =>
+      expect(
+        within(dialog).getByRole('button', { name: /register addon/i }),
+      ).toBeEnabled(),
+    )
+  }
+
+  it('renders the admin-gated auto-merge toggle and sends auto_merge on submit', async () => {
+    vi.mocked(addAddon).mockResolvedValue({
+      pr_id: 7,
+      pr_url: 'https://gh/pr/7',
+      merged: false,
+    })
+    const dialog = await renderAndOpenDialog()
+    await fillSubmittableForm(dialog)
+
+    const toggle = within(dialog).getByLabelText(
+      /merge pr automatically/i,
+    ) as HTMLInputElement
+    expect(toggle).toBeInTheDocument()
+    expect(toggle).not.toBeDisabled() // admin
+    fireEvent.click(toggle)
+    expect(toggle.checked).toBe(true)
+
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: /register addon/i }),
+    )
+
+    await waitFor(() => expect(addAddon).toHaveBeenCalled())
+    const arg = vi.mocked(addAddon).mock.calls[0][0]
+    expect(arg.auto_merge).toBe(true)
+    expect(arg.dry_run).toBe(false)
+  })
+
+  it('previews the files that would be written (dry-run) without opening a PR', async () => {
+    vi.mocked(addAddon).mockResolvedValue({
+      dry_run: {
+        pr_title: 'sharko: add addon my-addon',
+        files_to_write: [
+          { path: 'configuration/addons-catalog.yaml', action: 'update' },
+          { path: 'configuration/addons-global-values/my-addon.yaml', action: 'create' },
+        ],
+      },
+    })
+    const dialog = await renderAndOpenDialog()
+    await fillSubmittableForm(dialog)
+
+    fireEvent.click(within(dialog).getByRole('button', { name: /preview/i }))
+
+    await waitFor(() =>
+      expect(
+        within(dialog).getByText(
+          'configuration/addons-global-values/my-addon.yaml',
+        ),
+      ).toBeInTheDocument(),
+    )
+    expect(
+      within(dialog).getByText('configuration/addons-catalog.yaml'),
+    ).toBeInTheDocument()
+    // The preview call set dry_run:true and did NOT open a PR.
+    expect(vi.mocked(addAddon).mock.calls[0][0].dry_run).toBe(true)
+  })
+
+  it('merged===true refreshes the catalog and confirms it was added', async () => {
+    const { api } = await import('@/services/api')
+    vi.mocked(addAddon).mockResolvedValue({
+      pr_id: 8,
+      pr_url: 'https://gh/pr/8',
+      merged: true,
+    })
+    const dialog = await renderAndOpenDialog()
+    await fillSubmittableForm(dialog)
+
+    const catalogCallsBefore = vi.mocked(api.getAddonCatalog).mock.calls.length
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: /register addon/i }),
+    )
+
+    // Merged → catalog refetched + "added to your catalog" toast.
+    await waitFor(() =>
+      expect(vi.mocked(api.getAddonCatalog).mock.calls.length).toBeGreaterThan(
+        catalogCallsBefore,
+      ),
+    )
+    expect(
+      await screen.findByText(/added to your catalog/i),
+    ).toBeInTheDocument()
+  })
+
+  it('merged===false does NOT refresh the catalog and shows the clickable PR', async () => {
+    const { api } = await import('@/services/api')
+    vi.mocked(addAddon).mockResolvedValue({
+      pr_id: 9,
+      pr_url: 'https://gh/pr/9',
+      merged: false,
+    })
+    const dialog = await renderAndOpenDialog()
+    await fillSubmittableForm(dialog)
+
+    const catalogCallsBefore = vi.mocked(api.getAddonCatalog).mock.calls.length
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: /register addon/i }),
+    )
+
+    // Open PR → success banner with a clickable PR link to pr_url.
+    const prLink = await within(dialog).findByRole('link', {
+      name: /view pr #9 on github/i,
+    })
+    expect(prLink).toHaveAttribute('href', 'https://gh/pr/9')
+    // The honest "merge it to apply" copy — NOT presented as cataloged.
+    // (Shown by both the phase banner and the result banner.)
+    expect(
+      within(dialog).getAllByText(/merge it to apply/i).length,
+    ).toBeGreaterThan(0)
+    // The catalog was NOT refetched while the PR is still open.
+    expect(vi.mocked(api.getAddonCatalog).mock.calls.length).toBe(
+      catalogCallsBefore,
+    )
   })
 })

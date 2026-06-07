@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { AddonDetail } from '@/views/AddonDetail'
+import { getAddonPRs } from '@/services/api'
 
 vi.mock('@/services/api', () => ({
   getAddonPRs: vi.fn().mockResolvedValue({ prs: [] }),
@@ -182,5 +183,73 @@ describe('AddonDetail', () => {
     expect(
       screen.getByText('6 of 8 applications are healthy (75%)'),
     ).toBeInTheDocument()
+  })
+})
+
+// V2-cleanup-15.2 — the pending-PR banner must label the PR by its KIND.
+// An "Add addon" PR was previously mislabelled "Upgrade in progress" because
+// the banner copy was hard-coded to the upgrade wording. These tests drive
+// the banner with each PR kind and assert the headline.
+describe('AddonDetail — pending-PR banner copy (V2-cleanup-15.2)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('labels an open "Add addon" PR as "Add addon — PR open" (not an Upgrade)', async () => {
+    vi.mocked(getAddonPRs).mockResolvedValue({
+      prs: [
+        {
+          pr_id: 42,
+          pr_url: 'https://gh/pr/42',
+          pr_title: 'sharko: add addon ingress-nginx',
+          last_status: 'open',
+        },
+      ],
+    } as never)
+    renderDetail()
+
+    await waitFor(() => {
+      expect(screen.getByText('Add addon — PR open')).toBeInTheDocument()
+    })
+    // The old mislabel must be gone for an Add PR.
+    expect(screen.queryByText('Upgrade in progress')).not.toBeInTheDocument()
+  })
+
+  it('labels a merged "Add addon" PR as "Addon added"', async () => {
+    vi.mocked(getAddonPRs).mockResolvedValue({
+      prs: [
+        {
+          pr_id: 43,
+          pr_url: 'https://gh/pr/43',
+          pr_title: 'sharko: add addon ingress-nginx',
+          last_status: 'merged',
+        },
+      ],
+    } as never)
+    renderDetail()
+
+    await waitFor(() => {
+      expect(screen.getByText('Addon added')).toBeInTheDocument()
+    })
+    expect(screen.queryByText('Upgrade merged')).not.toBeInTheDocument()
+  })
+
+  it('still labels an upgrade PR as "Upgrade in progress"', async () => {
+    vi.mocked(getAddonPRs).mockResolvedValue({
+      prs: [
+        {
+          pr_id: 44,
+          pr_url: 'https://gh/pr/44',
+          pr_title: 'sharko: upgrade ingress-nginx to 4.9.0',
+          last_status: 'open',
+        },
+      ],
+    } as never)
+    renderDetail()
+
+    await waitFor(() => {
+      expect(screen.getByText('Upgrade in progress')).toBeInTheDocument()
+    })
+    expect(screen.queryByText('Add addon — PR open')).not.toBeInTheDocument()
   })
 })
