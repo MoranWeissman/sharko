@@ -547,6 +547,34 @@ export async function initRepo(data?: { bootstrap_argocd?: boolean; auto_merge?:
 }
 
 /**
+ * Repo-state probe returned by GET /api/v1/init/status.
+ *
+ *   - "empty"        — the GitOps repo has not been initialized yet.
+ *   - "initialized"  — repo is set up AND the ArgoCD bootstrap is healthy.
+ *   - "partial"      — repo files exist but the ArgoCD bootstrap is missing
+ *                      or unhealthy; `detail` carries the ArgoCD diagnostic.
+ */
+export interface InitStatus {
+  state: 'empty' | 'initialized' | 'partial'
+  detail: string
+}
+
+/**
+ * Read-only probe used by the first-run wizard's Step 4 before it offers to
+ * initialize the repo. Unlike most helpers here it does NOT auto-reload on
+ * 401 — the wizard owns that flow — and on any failure the caller falls back
+ * to the Initialize offer so the user is never blocked.
+ */
+export async function getInitStatus(): Promise<InitStatus> {
+  const res = await fetch(`${BASE_URL}/init/status`, { headers: authHeaders() })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error(err.error || res.statusText)
+  }
+  return res.json()
+}
+
+/**
  * Typed error thrown by `getOperation` so the wizard can distinguish a 401
  * (session expired — fatal, stop polling) from transient network errors
  * (swallow + retry).

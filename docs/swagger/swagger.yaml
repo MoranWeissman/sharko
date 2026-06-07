@@ -951,6 +951,13 @@ definitions:
         description: '"pass", "fail", "skipped"'
         type: string
     type: object
+  internal_api.InitStatusResponse:
+    properties:
+      detail:
+        type: string
+      state:
+        type: string
+    type: object
   internal_api.MergedPRItem:
     properties:
       addon:
@@ -5036,6 +5043,37 @@ paths:
       security:
       - BearerAuth: []
       summary: Initialize addons repository
+      tags:
+      - init
+  /init/status:
+    get:
+      description: Read-only probe used by the first-run wizard before it offers to
+        initialize the repo. Returns "empty" when the bootstrap root-app YAML is not
+        present on the base branch, "initialized" when it is present and the ArgoCD
+        bootstrap application is Synced + Healthy, and "partial" when the file is
+        present but the ArgoCD bootstrap is missing or unhealthy (detail carries the
+        ArgoCD diagnostic). Performs no writes and creates no operation session. Requires
+        an active Git connection.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Repo state probe result
+          schema:
+            $ref: '#/definitions/internal_api.InitStatusResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: No active Git/ArgoCD connection
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Probe GitOps repo initialization state
       tags:
       - init
   /notifications:
