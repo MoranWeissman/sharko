@@ -1,0 +1,19 @@
+# Regression fixture for V2-cleanup-17 — an ENVELOPED catalog (sharko.io/v1).
+# The addon list lives under spec.applicationsets, exactly as Sharko writes it.
+# The bug fixed in V2-cleanup-17 was the bootstrap template reading the addon
+# list from the TOP level (.Values.applicationsets) instead of from
+# .Values.spec.applicationsets — which rendered ZERO ApplicationSets, so no
+# addon ever deployed. This fixture has one addon (velero); the render test
+# asserts the chart emits a velero AppProject AND a velero ApplicationSet.
+apiVersion: sharko.io/v1
+kind: AddonCatalog
+metadata:
+  name: addon-catalog
+spec:
+  applicationsets:
+    - name: velero
+      repoURL: https://vmware-tanzu.github.io/helm-charts
+      chart: velero
+      version: "7.2.1"
+      namespace: velero
+      syncWave: 0

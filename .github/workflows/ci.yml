@@ -246,6 +246,25 @@ jobs:
           helm lint charts/sharko/
           helm template sharko charts/sharko/ --values charts/sharko/values.yaml > /dev/null
 
+      - name: Bootstrap chart render regression (V2-cleanup-17)
+        # The bootstrap chart turns the addon catalog into ArgoCD ApplicationSets.
+        # Sharko writes the catalog under the sharko.io/v1 envelope, so the addon
+        # list lives at .Values.spec.applicationsets. A path bug (reading the
+        # top-level .Values.applicationsets) rendered ZERO ApplicationSets, so no
+        # addon ever deployed. Render the bootstrap chart against an enveloped
+        # fixture and fail if it does not emit an addon ApplicationSet/AppProject.
+        run: |
+          helm lint templates/bootstrap/
+          RENDERED=$(helm template testbootstrap templates/bootstrap/ \
+            --values tests/bootstraprender/testdata/bootstrap-config.yaml \
+            --values tests/bootstraprender/testdata/addons-catalog.yaml \
+            --values tests/bootstraprender/testdata/managed-clusters.yaml)
+          echo "$RENDERED" | grep -q "kind: ApplicationSet" \
+            || { echo "::error::bootstrap chart rendered NO ApplicationSet from an enveloped catalog — addons would not deploy (V2-cleanup-17 regression)"; exit 1; }
+          echo "$RENDERED" | grep -q "kind: AppProject" \
+            || { echo "::error::bootstrap chart rendered NO AppProject from an enveloped catalog (V2-cleanup-17 regression)"; exit 1; }
+          echo "bootstrap chart render guard passed: ApplicationSet + AppProject present"
+
   security-scan:
     name: Security Scan
     runs-on: ubuntu-latest

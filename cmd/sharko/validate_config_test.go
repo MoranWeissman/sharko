@@ -79,6 +79,34 @@ spec:
       image: busybox
 `
 
+// helmTemplateYAML is a snippet from a real ApplicationSet Helm chart
+// template (the kind that lives at templates/bootstrap/templates/). It
+// contains raw {{ ... }} Go-template directives and is intentionally NOT
+// valid YAML until Helm renders it. The CLI must skip it (not fail it):
+// editing any Helm template must never turn the config-validation job
+// red. This is the regression fixture for the V2-cleanup-17 follow-up.
+const helmTemplateYAML = `apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: addons
+spec:
+  generators:
+    - matrix:
+        generators:
+{{- range $i, $a := .Values.spec.applicationsets }}
+          - list:
+              elements:
+                - name: {{ $a.name }}
+                  chart: {{ $a.chart | quote }}
+{{- end }}
+`
+
+// malformedNoTemplateYAML is genuinely broken YAML with NO templating —
+// an unclosed flow sequence. This must still FAIL (the safety behavior
+// is preserved: a real broken Sharko config is not silently skipped).
+const malformedNoTemplateYAML = `foo: [unclosed
+`
+
 // writeTempFile creates a temp file with the given content + suffix
 // (so the .yaml extension is real and the directory walker picks it
 // up). Returns the absolute path. t.TempDir is auto-cleaned on test
@@ -161,6 +189,65 @@ func TestValidateConfig_NonShakroYAML_Skip_Exit0(t *testing.T) {
 	}
 	if !strings.Contains(out, "not a Sharko-enveloped file") {
 		t.Errorf("expected skip reason 'not a Sharko-enveloped file' in output, got:\n%s", out)
+	}
+}
+
+// TestValidateConfig_HelmTemplate_Skip_Exit0 — a Helm/Go template file
+// (contains raw {{ ... }} directives, not valid YAML) must be SKIPPED,
+// not failed. This is the V2-cleanup-17 follow-up regression: the CI
+// hook walks every changed .yaml in a PR, including Helm chart
+// templates, and editing a template must never turn the config job red.
+func TestValidateConfig_HelmTemplate_Skip_Exit0(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := writeTempFile(t, dir, "addons-appset.yaml", helmTemplateYAML)
+
+	var buf bytes.Buffer
+	err := runValidateConfig(&buf, path, false)
+	if err != nil {
+		t.Fatalf("runValidateConfig: unexpected error for Helm template: %v\noutput: %s", err, buf.String())
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "skip: "+path) {
+		t.Errorf("expected skip line for Helm template %q, got:\n%s", path, out)
+	}
+	if !strings.Contains(out, "Helm/Go template, not a Sharko config") {
+		t.Errorf("expected Helm/Go template skip reason in output, got:\n%s", out)
+	}
+	if strings.Contains(out, "YAML parse error") {
+		t.Errorf("Helm template should NOT produce a YAML parse error, got:\n%s", out)
+	}
+}
+
+// TestValidateConfig_MalformedNoTemplate_Fail_Exit1 — genuinely broken
+// YAML with NO templating must still FAIL. The template-skip guard must
+// not swallow real parse errors in non-template files; that safety
+// behavior is what keeps a truly broken Sharko config from sliding
+// through as a silent skip.
+func TestValidateConfig_MalformedNoTemplate_Fail_Exit1(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := writeTempFile(t, dir, "broken.yaml", malformedNoTemplateYAML)
+
+	var buf bytes.Buffer
+	err := runValidateConfig(&buf, path, false)
+	if !errors.Is(err, errValidationFailed) {
+		t.Fatalf("expected errValidationFailed for malformed non-template YAML, got %v\noutput: %s", err, buf.String())
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "✘ "+path+":") {
+		t.Errorf("expected ✘ failure header for %q, got:\n%s", path, out)
+	}
+	if !strings.Contains(out, "YAML parse error") {
+		t.Errorf("expected 'YAML parse error' reason for malformed YAML, got:\n%s", out)
+	}
+	if strings.Contains(out, "Helm/Go template") {
+		t.Errorf("non-template malformed YAML must not be skipped as a template, got:\n%s", out)
+	}
+	if !strings.Contains(out, "1 file(s) failed validation") {
+		t.Errorf("expected failure summary footer, got:\n%s", out)
 	}
 }
 
