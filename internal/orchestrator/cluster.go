@@ -37,10 +37,10 @@ var validClusterName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]*$`)
 // owned model:
 //
 //  1. Validate input
-//  1b. Merge default addons
+//     1b. Merge default addons
 //  2. Check for duplicate cluster in ArgoCD (adopt if exists; never duplicate-register)
 //  3. Fetch credentials from provider (kubeconfig or AWS-SM/EKS path)
-//  3a. Verify connectivity via Stage 1 (UX win — fail fast on bad creds)
+//     3a. Verify connectivity via Stage 1 (UX win — fail fast on bad creds)
 //  4. Create addon secrets on remote cluster (if configured)
 //  5. Generate values file + commit via PR (create + auto-merge if configured)
 //  6. Trigger the reconciler so the ArgoCD cluster Secret is created/updated
@@ -234,16 +234,16 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	// registration (the Git source of truth and reconciler can still
 	// converge). When no manager is wired (out-of-cluster), this is skipped.
 	if req.Provider == "kubeconfig" && o.argoSecretManager != nil && creds.Token != "" {
-		// Addon labels in the "true"/"false" form the reconciler emits
-		// (reconciler passes cluster.Labels parsed from managed-clusters.yaml,
-		// which uses "true"/"false"), so the direct-write is byte-identical.
+		// Addon labels in the canonical "enabled"/"disabled" vocabulary —
+		// the SAME value the reconciler writes when it later reconciles this
+		// cluster from managed-clusters.yaml (which we also write in this
+		// vocabulary below), so the direct-write is byte-identical and a
+		// later reconcile tick adopts rather than fights it. This is the
+		// value the ArgoCD ApplicationSet selector + GetEnabledAddons require
+		// for the addon to actually deploy (V2-cleanup-20).
 		secretLabels := make(map[string]string, len(req.Addons))
 		for addon, enabled := range req.Addons {
-			if enabled {
-				secretLabels[addon] = "true"
-			} else {
-				secretLabels[addon] = "false"
-			}
+			secretLabels[addon] = models.AddonLabelValue(enabled)
 		}
 		// Stamp the registration-pending marker so the cluster reconciler's
 		// orphan sweep does NOT delete this Secret before the registration PR
@@ -345,14 +345,13 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		clusterAddonsData = []byte("clusters:\n")
 	}
 
-	// Build labels in "true"/"false" format to match cluster-addons.yaml convention.
+	// Build labels in the canonical "enabled"/"disabled" vocabulary. This is
+	// the value the live ArgoCD ApplicationSet selector + GetEnabledAddons
+	// require; the legacy "true"/"false" form read as NOT-enabled downstream
+	// and the addon never deployed (V2-cleanup-20).
 	clusterLabels := make(map[string]string, len(req.Addons))
 	for addon, enabled := range req.Addons {
-		if enabled {
-			clusterLabels[addon] = "true"
-		} else {
-			clusterLabels[addon] = "false"
-		}
+		clusterLabels[addon] = models.AddonLabelValue(enabled)
 	}
 
 	// AddClusterEntry is itself idempotent — if the cluster already exists, it returns
@@ -466,12 +465,12 @@ func (o *Orchestrator) DeregisterCluster(ctx context.Context, name string, serve
 
 	// Step 1: Disable all addon labels on the ArgoCD cluster so ApplicationSet
 	// stops managing addons (prunes the generated Applications).
-	// We set all known addon labels to "disabled" rather than removing them,
+	// We set all known addon labels to disabled rather than removing them,
 	// because UpdateClusterLabels merges — an empty map would be a no-op.
 	disableLabels := make(map[string]string)
 	if o.secretDefs != nil {
 		for addonName := range o.secretDefs {
-			disableLabels[addonName] = "disabled"
+			disableLabels[addonName] = models.LabelDisabled
 		}
 	}
 	// Also read the cluster's current labels from ArgoCD to catch addons not in secretDefs.
@@ -482,7 +481,7 @@ func (o *Orchestrator) DeregisterCluster(ctx context.Context, name string, serve
 				// Any label that looks like an addon (not a system label) gets disabled.
 				for k := range c.Labels {
 					if k != "name" && k != "server" && k != "env" && k != "region" {
-						disableLabels[k] = "disabled"
+						disableLabels[k] = models.LabelDisabled
 					}
 				}
 				break
@@ -645,11 +644,7 @@ func (o *Orchestrator) UpdateClusterAddons(ctx context.Context, name string, ser
 	// Step 5: Update ArgoCD cluster labels (LAST — secrets and values file exist by now).
 	labels := make(map[string]string)
 	for addon, enabled := range addons {
-		if enabled {
-			labels[addon] = "enabled"
-		} else {
-			labels[addon] = "disabled"
-		}
+		labels[addon] = models.AddonLabelValue(enabled)
 	}
 
 	if err := o.argocd.UpdateClusterLabels(ctx, serverURL, labels); err != nil {

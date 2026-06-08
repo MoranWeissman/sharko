@@ -131,8 +131,8 @@ func TestRegisterCluster_Kubeconfig_WritesArgoSecret(t *testing.T) {
 	if spec.CAData == "" {
 		t.Error("Ensure spec.CAData is empty; expected the base64-encoded CA bundle")
 	}
-	if spec.Labels["monitoring"] != "true" {
-		t.Errorf("Ensure spec.Labels[monitoring] = %q, want true (\"true\"/\"false\" form matching the reconciler)", spec.Labels["monitoring"])
+	if spec.Labels["monitoring"] != "enabled" {
+		t.Errorf("Ensure spec.Labels[monitoring] = %q, want \"enabled\" (canonical addon vocabulary the ArgoCD selector + GetEnabledAddons require — V2-cleanup-20)", spec.Labels["monitoring"])
 	}
 
 	// The write_argocd_secret step is the marker that the direct write ran.

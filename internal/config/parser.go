@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/schema"
@@ -343,10 +342,13 @@ func (p *Parser) GetEnabledAddons(cluster models.Cluster, catalog []models.Addon
 			continue
 		}
 
-		// Only include addons where the label value is "enabled".
-		// The ArgoCD cluster generator only listens to key: enabled;
-		// disabled, commented out, or missing labels are all equivalent.
-		if !strings.EqualFold(labelValue, "enabled") {
+		// Only include addons whose label value means "on" (the canonical
+		// "enabled"). The ArgoCD cluster generator only listens to
+		// key: enabled; disabled, commented out, or missing labels are all
+		// equivalent. models.AddonLabelEnabled is the single source of truth
+		// for this predicate so the parser, the chart selector, and the
+		// register/enable writers can never drift apart.
+		if !models.AddonLabelEnabled(labelValue) {
 			continue
 		}
 

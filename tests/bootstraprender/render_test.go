@@ -88,3 +88,51 @@ func TestBootstrapChartRendersAddonFromEnvelopedCatalog(t *testing.T) {
 			"--- rendered output ---\n%s", len(veleroNames), rendered)
 	}
 }
+
+// TestBootstrapAppSetSelectorRequiresEnabledLabel pins the deploy-correctness
+// contract for V2-cleanup-20: the ApplicationSet cluster selector matches ONLY
+// the canonical "<addon>: enabled" label. This is the downstream half of the
+// fix — register/enable now write "enabled" (not the legacy "true") precisely
+// because this selector reads only "enabled". If a future template change ever
+// loosened or mistyped the selector value, the register-side fix would silently
+// stop driving deployment; this test fails first.
+func TestBootstrapAppSetSelectorRequiresEnabledLabel(t *testing.T) {
+	helmBin, err := exec.LookPath("helm")
+	if err != nil {
+		t.Skip("helm not installed; skipping bootstrap render test (CI helm-validate job is the hard guard)")
+	}
+
+	root := repoRoot(t)
+	chartDir := filepath.Join(root, "templates", "bootstrap")
+	dataDir := filepath.Join(root, "tests", "bootstraprender", "testdata")
+
+	cmd := exec.Command(helmBin, "template", "testbootstrap", chartDir,
+		"--values", filepath.Join(dataDir, "bootstrap-config.yaml"),
+		"--values", filepath.Join(dataDir, "addons-catalog.yaml"),
+		"--values", filepath.Join(dataDir, "managed-clusters.yaml"),
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("helm template failed: %v\n%s", err, out)
+	}
+	rendered := string(out)
+
+	// The velero ApplicationSet's cluster generator must select on
+	// "velero: enabled" — the exact value the canonical AddonLabelValue(true)
+	// emits and the reconciler propagates to the ArgoCD cluster Secret. A
+	// cluster registered with velero on (label "velero: enabled") therefore
+	// matches and the velero Application is generated for it.
+	selectorRe := regexp.MustCompile(`(?m)^\s+velero:\s+enabled\s*$`)
+	if !selectorRe.MatchString(rendered) {
+		t.Errorf("ApplicationSet selector does not require \"velero: enabled\" — the canonical "+
+			"label register/enable now write would not match, so velero would never deploy.\n"+
+			"--- rendered output ---\n%s", rendered)
+	}
+
+	// Defensive: the legacy boolean vocabulary must NOT appear as a selector
+	// value (it would silently re-introduce the V2-cleanup-20 mismatch).
+	if regexp.MustCompile(`(?m)^\s+velero:\s+"?true"?\s*$`).MatchString(rendered) {
+		t.Errorf("ApplicationSet selector uses legacy \"velero: true\" — the deploy-correctness "+
+			"contract requires \"enabled\".\n--- rendered output ---\n%s", rendered)
+	}
+}

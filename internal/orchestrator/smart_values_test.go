@@ -16,10 +16,10 @@ import (
 // pattern.
 func TestClassifyClusterSpecificFields_PositiveAndNegative(t *testing.T) {
 	cases := []struct {
-		name        string
-		yaml        string
-		mustHit     []string // paths required to be classified cluster-specific
-		mustNotHit  []string // paths that must NOT be classified cluster-specific
+		name       string
+		yaml       string
+		mustHit    []string // paths required to be classified cluster-specific
+		mustNotHit []string // paths that must NOT be classified cluster-specific
 	}{
 		{
 			name: "ingress host + replicaCount + resources",
@@ -49,7 +49,7 @@ storageClass: gp3
 nodeSelector:
   kubernetes.io/os: linux
 `,
-			mustHit: []string{"tls.enabled", "persistence.size", "storageClass", "nodeSelector"},
+			mustHit:    []string{"tls.enabled", "persistence.size", "storageClass", "nodeSelector"},
 			mustNotHit: []string{},
 		},
 		{
@@ -247,7 +247,7 @@ func TestWriteAndParseSmartValuesHeader_Roundtrip(t *testing.T) {
 			name: "ai annotated, no opt-out",
 			h: SmartValuesHeader{
 				Chart: "cert-manager", Version: "v1.14.4",
-				RepoURL: "https://charts.jetstack.io",
+				RepoURL:     "https://charts.jetstack.io",
 				AIAnnotated: true, Now: now,
 			},
 		},
@@ -255,7 +255,7 @@ func TestWriteAndParseSmartValuesHeader_Roundtrip(t *testing.T) {
 			name: "ai disabled with per-addon opt-out",
 			h: SmartValuesHeader{
 				Chart: "external-secrets", Version: "v0.10.0",
-				RepoURL: "https://charts.external-secrets.io",
+				RepoURL:     "https://charts.external-secrets.io",
 				AIAnnotated: false, AIOptOut: true, Now: now,
 			},
 		},
@@ -374,7 +374,10 @@ func TestExtractClusterTemplateLeaves_LegacyFileNoMarker(t *testing.T) {
 }
 
 // TestInjectTemplateLeaves_FreshStanza creates a brand-new addon stanza
-// with the seeded fields. Other top-level keys are preserved.
+// recording only `enabled: true` as live YAML. Other top-level keys are
+// preserved. The override hints are emitted as a trailing COMMENT block, so
+// the file `helm template`s cleanly — there must be NO live
+// "<set per cluster>" value anywhere (V2-cleanup-19).
 func TestInjectTemplateLeaves_FreshStanza(t *testing.T) {
 	cluster := []byte(`clusterGlobalValues:
   region: us-east-1
@@ -391,18 +394,39 @@ external-secrets:
 		"external-secrets:",    // preserved
 		"cert-manager:",        // added
 		"enabled: true",        // EnableAddon added enabled flag
-		"ingress:",
-		"host: <set per cluster>",
-		"replicaCount: <set per cluster>",
+		// override hints appear, but COMMENTED:
+		"# --- per-cluster overrides for cert-manager ---",
+		`#   "ingress.host": <set per cluster>`,
+		"#   replicaCount: <set per cluster>",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("expected %q in injected output:\n%s", want, body)
 		}
 	}
+	// The placeholder must NEVER appear as a LIVE value — only inside the
+	// trailing comment block. Assert no uncommented "<set per cluster>" line.
+	assertNoLivePlaceholder(t, body)
+}
+
+// assertNoLivePlaceholder fails if any non-comment line carries the
+// "<set per cluster>" placeholder as a live YAML value. Comment lines
+// (leading '#', ignoring indentation) are allowed to mention it.
+func assertNoLivePlaceholder(t *testing.T, body string) {
+	t.Helper()
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if strings.Contains(line, "<set per cluster>") {
+			t.Errorf("found LIVE \"<set per cluster>\" placeholder (must be commented only) on line: %q\nfull body:\n%s", line, body)
+		}
+	}
 }
 
 // TestInjectTemplateLeaves_ExistingValuesPreserved — a leaf that already
-// has a user value must not be overwritten by the placeholder.
+// has a user value must not be overwritten, and no live placeholder is
+// written for the missing leaves (they go into the comment hint block).
 func TestInjectTemplateLeaves_ExistingValuesPreserved(t *testing.T) {
 	cluster := []byte(`cert-manager:
   enabled: true
@@ -417,9 +441,11 @@ func TestInjectTemplateLeaves_ExistingValuesPreserved(t *testing.T) {
 	if !strings.Contains(body, "host: my-real-host") {
 		t.Errorf("user-authored host was clobbered, got:\n%s", body)
 	}
-	if !strings.Contains(body, "replicaCount: <set per cluster>") {
-		t.Errorf("expected new replicaCount leaf to be added, got:\n%s", body)
+	// The new leaves are offered as commented hints, never live placeholders.
+	if !strings.Contains(body, "#   replicaCount: <set per cluster>") {
+		t.Errorf("expected commented replicaCount hint, got:\n%s", body)
 	}
+	assertNoLivePlaceholder(t, body)
 }
 
 // TestHasAddonStanzaUserFields covers the three cases the seeder uses to

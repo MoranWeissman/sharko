@@ -113,16 +113,37 @@ func (o *Orchestrator) DisableAddon(ctx context.Context, req DisableAddonRequest
 	files[valuesPath] = updatedValues
 	steps = append(steps, "update_values_file")
 
-	// Step 2: Update managed-clusters.yaml — set addon label to "disabled".
-	if cleanup != "none" && clusterAddonsData != nil {
+	// Step 2: Update managed-clusters.yaml — set addon label to the canonical
+	// "disabled" value. When cleanup=="none" the caller has explicitly asked
+	// to leave the label untouched (values-file-only disable), so a missing
+	// label write is expected and fine. But when a label change WAS requested
+	// (cleanup all/labels) and it fails, we must not swallow it into a
+	// success-with-only-values response — fail honestly before opening the PR
+	// so the two files never disagree (V2-cleanup-20, decision #3).
+	if cleanup != "none" {
+		if clusterAddonsData == nil {
+			log.Error("managed-clusters.yaml unavailable — cannot set addon label; aborting before PR",
+				"cluster", req.Cluster, "addon", req.Addon)
+			result.Status = "failed"
+			result.CompletedSteps = steps
+			result.FailedStep = "update_addon_label"
+			result.Error = "managed-clusters.yaml not found"
+			result.Message = fmt.Sprintf("Cluster %s is not registered in managed-clusters.yaml, so the addon label cannot be updated. Retry with cleanup=none to update only the values file, or register the cluster first.", req.Cluster)
+			return result, nil
+		}
 		updatedClusterAddons, labelErr := gitops.DisableAddonLabel(clusterAddonsData, req.Cluster, req.Addon)
 		if labelErr != nil {
-			log.Warn("failed to disable addon label in managed-clusters.yaml",
+			log.Error("failed to disable addon label in managed-clusters.yaml — aborting before PR (no half-write)",
 				"cluster", req.Cluster, "addon", req.Addon, "error", labelErr)
-		} else {
-			files[clusterAddonsPath] = updatedClusterAddons
-			steps = append(steps, "update_addon_label")
+			result.Status = "failed"
+			result.CompletedSteps = steps
+			result.FailedStep = "update_addon_label"
+			result.Error = labelErr.Error()
+			result.Message = fmt.Sprintf("Could not clear the addon label for %s on cluster %s; no change was committed. Retry with cleanup=none to update only the values file, or make sure the cluster is in managed-clusters.yaml.", req.Addon, req.Cluster)
+			return result, nil
 		}
+		files[clusterAddonsPath] = updatedClusterAddons
+		steps = append(steps, "update_addon_label")
 	}
 
 	// Step 3: Create PR with combined changes.
@@ -263,16 +284,39 @@ func (o *Orchestrator) EnableAddon(ctx context.Context, req EnableAddonRequest) 
 	files[valuesPath] = updatedValues
 	steps = append(steps, "update_values_file")
 
-	// Step 2: Update managed-clusters.yaml — set addon label to "enabled".
+	// Step 2: Update managed-clusters.yaml — set addon label to the canonical
+	// "enabled" value. The label is the deploy driver (the ArgoCD
+	// ApplicationSet selector keys off it), so a failed label write must NOT
+	// be swallowed into a success-with-only-values response — the two files
+	// would disagree and the addon would never deploy. Fail honestly instead
+	// (V2-cleanup-20, decision #3). We bail BEFORE opening the PR so we never
+	// commit a half-written change.
 	if clusterAddonsData != nil {
 		updatedClusterAddons, labelErr := gitops.EnableAddonLabel(clusterAddonsData, req.Cluster, req.Addon)
 		if labelErr != nil {
-			log.Warn("failed to enable addon label in managed-clusters.yaml",
+			log.Error("failed to enable addon label in managed-clusters.yaml — aborting before PR (no half-write)",
 				"cluster", req.Cluster, "addon", req.Addon, "error", labelErr)
-		} else {
-			files[clusterAddonsPath] = updatedClusterAddons
-			steps = append(steps, "update_addon_label")
+			result.Status = "failed"
+			result.CompletedSteps = steps
+			result.FailedStep = "update_addon_label"
+			result.Error = labelErr.Error()
+			result.Message = fmt.Sprintf("Could not set the addon label for %s on cluster %s; no change was committed. Make sure the cluster is registered in managed-clusters.yaml, then retry.", req.Addon, req.Cluster)
+			return result, nil
 		}
+		files[clusterAddonsPath] = updatedClusterAddons
+		steps = append(steps, "update_addon_label")
+	} else {
+		// No managed-clusters.yaml means the cluster isn't registered yet, so
+		// there is no label to drive deployment. Refuse rather than open a
+		// values-only PR that silently does nothing.
+		log.Error("managed-clusters.yaml unavailable — cannot set addon label; aborting before PR",
+			"cluster", req.Cluster, "addon", req.Addon)
+		result.Status = "failed"
+		result.CompletedSteps = steps
+		result.FailedStep = "update_addon_label"
+		result.Error = "managed-clusters.yaml not found"
+		result.Message = fmt.Sprintf("Cluster %s is not registered in managed-clusters.yaml, so the addon label that drives deployment cannot be set. Register the cluster first, then retry.", req.Cluster)
+		return result, nil
 	}
 
 	// Step 3: Create PR with combined changes.
