@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
+	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/catalog"
 )
 
@@ -41,6 +42,14 @@ type catalogReprobeResponse struct {
 // @Failure 401 {object} map[string]interface{} "Unauthenticated"
 // @Router /catalog/reprobe [post]
 func (s *Server) handleReprobeArtifactHub(w http.ResponseWriter, r *http.Request) {
+	// This endpoint refreshes the catalog data-source (ArtifactHub) connectivity
+	// and purges its caches — the same "refresh the catalog source" intent the
+	// admin-only catalog.sources.refresh action guards, matching this handler's
+	// documented "admin-only" tier.
+	if !authz.RequireWithResponse(w, r, "catalog.sources.refresh") {
+		return
+	}
+
 	// Reset backoff so the probe is allowed to run.
 	ahBackoff.Success()
 
