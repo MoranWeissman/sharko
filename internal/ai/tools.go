@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/MoranWeissman/sharko/internal/argocd"
+	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/helm"
@@ -312,9 +313,18 @@ func GetToolDefinitions(writeEnabled bool) []ToolDefinition {
 }
 
 // ExecuteTool runs a tool and returns the result as a string.
-func (e *ToolExecutor) ExecuteTool(ctx context.Context, name string, args json.RawMessage) (string, error) {
+func (e *ToolExecutor) ExecuteTool(ctx context.Context, name string, args json.RawMessage, callerRole authz.Role) (string, error) {
 	var params map[string]string
 	json.Unmarshal(args, &params) //nolint:errcheck // best-effort parse
+
+	// Gate write tools on the caller's role. A write tool invoked on behalf of
+	// a user who lacks permission is refused with the SAME authz decision the
+	// equivalent direct REST endpoint uses. Read tools are never gated.
+	if err := authorizeWriteTool(callerRole, name); err != nil {
+		// Return the refusal as the tool result (not a hard error) so the LLM
+		// relays it to the user instead of the chat turn failing outright.
+		return err.Error(), nil
+	}
 
 	switch name {
 	case "list_clusters":

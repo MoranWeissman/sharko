@@ -7,8 +7,46 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/gitops"
 )
+
+// writeToolActions maps each AI write tool to the authz action whose role
+// requirement it must satisfy. The action is the SAME one the equivalent
+// direct REST endpoint enforces, so a tool invoked on behalf of a user who
+// lacks permission is refused with the identical authz decision:
+//
+//   - enable_addon         → "addon.enable"   (handleEnableAddon)
+//   - disable_addon        → "addon.disable"  (handleDisableAddon)
+//   - update_addon_version → "addon.update-catalog" (handleUpgradeAddon catalog write)
+//   - sync_argocd_app      → "reconciler.trigger"   (operator-level deploy action)
+//   - refresh_argocd_app   → "reconciler.trigger"   (operator-level deploy action)
+//
+// A tool name absent from this map is treated as read-only and is never gated.
+var writeToolActions = map[string]string{
+	"enable_addon":         "addon.enable",
+	"disable_addon":        "addon.disable",
+	"update_addon_version": "addon.update-catalog",
+	"sync_argocd_app":      "reconciler.trigger",
+	"refresh_argocd_app":   "reconciler.trigger",
+}
+
+// authorizeWriteTool returns nil if callerRole may invoke the named tool.
+// For read tools (not in writeToolActions) it always returns nil. For write
+// tools it returns a non-nil refusal error when the caller's role is below the
+// required level — mirroring the 403 the equivalent REST endpoint would return.
+func authorizeWriteTool(callerRole authz.Role, toolName string) error {
+	action, isWrite := writeToolActions[toolName]
+	if !isWrite {
+		return nil
+	}
+	if authz.RoleAllows(callerRole, action) {
+		return nil
+	}
+	required := authz.ActionRequirements[action]
+	return fmt.Errorf("permission denied: %q requires role %q, you have %q",
+		toolName, required, callerRole)
+}
 
 var branchNameRe = regexp.MustCompile(`[^a-zA-Z0-9-]`)
 

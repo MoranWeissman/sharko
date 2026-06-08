@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
+	"github.com/MoranWeissman/sharko/internal/authz"
 )
 
 // handleGetOperation godoc
@@ -41,6 +42,12 @@ func (s *Server) handleGetOperation(w http.ResponseWriter, r *http.Request) {
 // @Failure 404 {object} map[string]interface{} "Operation not found"
 // @Router /operations/{id}/heartbeat [post]
 func (s *Server) handleOperationHeartbeat(w http.ResponseWriter, r *http.Request) {
+	// Async operations are created only by the operator-level init flow
+	// (opsStore.Create("init", ...)). Gate heartbeat with the same "init"
+	// action so a viewer cannot keep an operator's operation alive.
+	if !authz.RequireWithResponse(w, r, "init") {
+		return
+	}
 	id := r.PathValue("id")
 	if !s.opsStore.Heartbeat(id) {
 		writeError(w, http.StatusNotFound, "operation not found")
@@ -61,6 +68,12 @@ func (s *Server) handleOperationHeartbeat(w http.ResponseWriter, r *http.Request
 // @Failure 404 {object} map[string]interface{} "Operation not found"
 // @Router /operations/{id}/cancel [post]
 func (s *Server) handleCancelOperation(w http.ResponseWriter, r *http.Request) {
+	// Async operations are created only by the operator-level init flow
+	// (opsStore.Create("init", ...)). Gate cancel with the same "init" action
+	// so a viewer cannot cancel an operator's operation.
+	if !authz.RequireWithResponse(w, r, "init") {
+		return
+	}
 	id := r.PathValue("id")
 	if !s.opsStore.Cancel(id) {
 		writeError(w, http.StatusNotFound, "operation not found")

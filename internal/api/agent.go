@@ -10,7 +10,27 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/ai"
 	"github.com/MoranWeissman/sharko/internal/audit"
+	"github.com/MoranWeissman/sharko/internal/authz"
 )
+
+// callerRole derives the effective authorization role for the request from the
+// X-Sharko-Role header the auth middleware sets after authenticating. It
+// mirrors authz.Require's "auth not configured" behavior: when there are no
+// auth headers at all (no users configured), the caller is treated as admin so
+// the agent's write tools behave exactly like the direct REST endpoints, which
+// also allow through in that mode. An authenticated request with no role header
+// is treated as the minimum (viewer).
+func callerRole(r *http.Request) authz.Role {
+	roleStr := r.Header.Get("X-Sharko-Role")
+	if roleStr == "" {
+		if r.Header.Get("X-Sharko-User") == "" {
+			// Auth not configured — same allow-through stance as authz.Require.
+			return authz.RoleAdmin
+		}
+		roleStr = "viewer"
+	}
+	return authz.RoleFromString(roleStr)
+}
 
 // agentSession wraps an agent with creation time for cleanup.
 type agentSession struct {
@@ -102,7 +122,7 @@ func (s *Server) handleAgentChat(w http.ResponseWriter, r *http.Request) {
 	}
 	agentMu.Unlock()
 
-	response, err := sess.agent.Chat(r.Context(), message)
+	response, err := sess.agent.Chat(r.Context(), message, callerRole(r))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

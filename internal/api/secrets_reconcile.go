@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
+	"github.com/MoranWeissman/sharko/internal/authz"
 )
 
 // handleTriggerReconcile godoc
@@ -19,6 +20,9 @@ import (
 // @Failure 503 {object} map[string]string "Secrets reconciler not configured"
 // @Router /secrets/reconcile [post]
 func (s *Server) handleTriggerReconcile(w http.ResponseWriter, r *http.Request) {
+	if !authz.RequireWithResponse(w, r, "reconciler.trigger") {
+		return
+	}
 	if s.secretReconciler == nil {
 		writeError(w, http.StatusServiceUnavailable, "secrets reconciler not configured")
 		return

@@ -120,6 +120,20 @@ var ActionRequirements = map[string]Role{
 	"init.status": RoleViewer,
 }
 
+// RoleAllows reports whether the given role is sufficient for the action.
+// This is the underlying role check used by both the HTTP request path
+// (Require / RequireWithResponse) and non-HTTP callers such as the AI agent's
+// write-tool gate, which must enforce the SAME decision as the equivalent
+// REST endpoint. Actions not in the requirements table are admin-only
+// (fail-closed), matching Require's behavior.
+func RoleAllows(role Role, action string) bool {
+	required, ok := ActionRequirements[action]
+	if !ok {
+		required = RoleAdmin // fail-closed
+	}
+	return role.AtLeast(required)
+}
+
 // Require checks whether the request has a role sufficient for the given action.
 // It returns true if allowed, false if denied.
 func Require(r *http.Request, action string) bool {
@@ -134,11 +148,7 @@ func Require(r *http.Request, action string) bool {
 	}
 
 	userRole := RoleFromString(roleStr)
-	required, ok := ActionRequirements[action]
-	if !ok {
-		required = RoleAdmin // fail-closed
-	}
-	return userRole.AtLeast(required)
+	return RoleAllows(userRole, action)
 }
 
 // RequireWithResponse checks authorization and writes a 403 JSON error if denied.

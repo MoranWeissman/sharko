@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MoranWeissman/sharko/internal/authz"
 	"github.com/MoranWeissman/sharko/internal/logging"
 )
 
@@ -235,7 +236,13 @@ func (a *Agent) initContext() {
 
 // Chat sends a user message and returns the assistant's response.
 // It handles tool calling loops internally (max 5 iterations).
-func (a *Agent) Chat(ctx context.Context, userMessage string) (string, error) {
+//
+// callerRole is the authorization role of the user driving the chat. It gates
+// the agent's WRITE tools: a write tool requested by the LLM on behalf of a
+// user whose role is below the required level is refused with the SAME authz
+// decision the equivalent direct REST endpoint uses. Read-only tools are never
+// gated, so chat itself stays open to any authenticated user.
+func (a *Agent) Chat(ctx context.Context, userMessage string, callerRole authz.Role) (string, error) {
 	log := logging.LoggerFromContext(ctx)
 	if !a.client.IsEnabled() {
 		return "", fmt.Errorf("AI not configured")
@@ -270,7 +277,7 @@ func (a *Agent) Chat(ctx context.Context, userMessage string) (string, error) {
 
 		for _, tc := range resp.ToolCalls {
 			log.Info("agent tool call", "tool", tc.Function.Name)
-			result, err := a.executor.ExecuteTool(ctx, tc.Function.Name, tc.Function.Arguments)
+			result, err := a.executor.ExecuteTool(ctx, tc.Function.Name, tc.Function.Arguments, callerRole)
 			if err != nil {
 				result = fmt.Sprintf("Error executing %s: %v", tc.Function.Name, err)
 			}
