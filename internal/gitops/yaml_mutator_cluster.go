@@ -41,14 +41,14 @@ import (
 
 // ClusterEntryInput holds the fields for a new managed-clusters.yaml
 // entry. Region and SecretPath are optional (zero value means not set).
-// Labels should use "true"/"false" format to match managed-clusters.yaml
-// convention — the orchestrator builds this map in that shape and the
-// the schema validates either-or-empty.
+// Labels use the canonical "enabled"/"disabled" addon vocabulary
+// (models.LabelEnabled / models.LabelDisabled) — the orchestrator builds
+// this map via models.AddonLabelValue. The schema accepts any label shape.
 type ClusterEntryInput struct {
 	Name       string
 	Region     string            // optional
 	SecretPath string            // optional
-	Labels     map[string]string // addon labels, e.g. {"cert-manager": "true"}
+	Labels     map[string]string // addon labels, e.g. {"cert-manager": "enabled"}
 }
 
 // AddClusterEntry adds a new cluster to the managed-clusters.yaml spec.
@@ -114,17 +114,18 @@ func RemoveClusterEntry(data []byte, name string) ([]byte, error) {
 	return models.SaveManagedClusters(spec)
 }
 
-// EnableAddonLabel sets addonName=enabled in the labels block of the
-// given cluster. The label-value format matches the legacy contract
-// ("enabled" / "disabled" — see internal/orchestrator/addon_ops.go).
+// EnableAddonLabel sets addonName to the canonical "enabled" value
+// (models.LabelEnabled) in the labels block of the given cluster. This is
+// the value the live ArgoCD ApplicationSet selector + GetEnabledAddons
+// require for the addon to deploy.
 func EnableAddonLabel(data []byte, clusterName, addonName string) ([]byte, error) {
-	return setClusterAddonLabel(data, clusterName, addonName, "enabled")
+	return setClusterAddonLabel(data, clusterName, addonName, models.LabelEnabled)
 }
 
-// DisableAddonLabel sets addonName=disabled in the labels block of the
-// given cluster.
+// DisableAddonLabel sets addonName to the canonical "disabled" value
+// (models.LabelDisabled) in the labels block of the given cluster.
 func DisableAddonLabel(data []byte, clusterName, addonName string) ([]byte, error) {
-	return setClusterAddonLabel(data, clusterName, addonName, "disabled")
+	return setClusterAddonLabel(data, clusterName, addonName, models.LabelDisabled)
 }
 
 // setClusterAddonLabel is the shared implementation behind Enable / Disable.

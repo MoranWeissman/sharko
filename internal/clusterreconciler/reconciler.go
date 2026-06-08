@@ -699,6 +699,18 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 	// to what argosecrets.Manager.Ensure writes — ArgoCD's auth code
 	// path is unchanged regardless of which writer mutated the Secret.
 	clusterLabels := normalizeLabels(entry.Labels)
+	// Self-heal legacy addon labels: clusters registered before V2-cleanup-20
+	// carry "true"/"false" addon labels in managed-clusters.yaml, which the
+	// ArgoCD ApplicationSet selector reads as NOT-enabled — so their addons
+	// never deploy. Upgrade those values to the canonical "enabled"/"disabled"
+	// on this write so an already-registered cluster converges with no manual
+	// re-register. Values that are already canonical (or non-addon labels) are
+	// left untouched. (V2-cleanup-20, decision #4.)
+	for k, v := range clusterLabels {
+		if normalized, changed := models.NormalizeAddonLabelValue(v); changed {
+			clusterLabels[k] = normalized
+		}
+	}
 	spec := argosecrets.ClusterSecretSpec{
 		Name:    entry.Name,
 		Server:  creds.Server,

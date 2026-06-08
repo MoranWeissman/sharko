@@ -160,21 +160,30 @@ func ExtractClusterTemplateLeaves(globalYAML []byte, addonName string) []string 
 	return out
 }
 
-// injectTemplateLeaves takes the cluster YAML and adds the addon's
-// stanza fields. It:
-//   1. Parses the cluster YAML into a generic map.
-//   2. Ensures `<addonName>:` exists; if it doesn't, creates it with
-//      `enabled: true` (the EnableAddon path called us, so the addon
-//      is necessarily being enabled).
-//   3. For every leaf in templateLeaves, inserts a placeholder under
-//      the addon stanza at the correct nested path. Existing keys are
-//      not overwritten.
-//   4. Re-serializes the map back to YAML.
+// injectTemplateLeaves takes the cluster YAML and records that the addon
+// is enabled, then appends the addon's overridable fields as a trailing
+// COMMENT block (NOT live values). It:
+//  1. Parses the cluster YAML into a generic map.
+//  2. Ensures `<addonName>:` exists; if it doesn't, creates it with
+//     `enabled: true` (the EnableAddon path called us, so the addon
+//     is necessarily being enabled). NO placeholder leaves are written
+//     as live values.
+//  3. Re-serializes the map back to YAML.
+//  4. Appends a commented "here's what you can override" hint block
+//     mirroring the global-values writer (perClusterTemplate), so the
+//     file `helm template`s cleanly — a field the chart expects to be a
+//     number/object never arrives as the literal text "<set per cluster>".
 //
-// Yes, this loses comments from the regenerated body. That's acceptable
-// for the cluster overrides file because generateClusterValues already
-// emits a fixed, comment-light layout — we are not preserving user-
-// authored comments here.
+// Why comments instead of live placeholders: the bootstrap appset feeds the
+// addon stanza to Helm verbatim (`{{ $addonKey | toYaml }}`). A live
+// `"<set per cluster>"` string under a key the chart expects to be typed
+// breaks the render or deploys garbage (V2-cleanup-19). The user fills in
+// real values by uncommenting the hint lines and editing them.
+//
+// Yes, this loses comments from the regenerated body above the addon
+// stanza. That's acceptable for the cluster overrides file because
+// generateClusterValues already emits a fixed, comment-light layout — we
+// are not preserving user-authored comments here.
 func injectTemplateLeaves(clusterYAML []byte, addonName string, leaves []string) ([]byte, error) {
 	root := map[string]interface{}{}
 	if len(clusterYAML) > 0 {
@@ -193,44 +202,47 @@ func injectTemplateLeaves(clusterYAML []byte, addonName string, leaves []string)
 	if _, ok := section["enabled"]; !ok {
 		section["enabled"] = true
 	}
-
-	for _, leaf := range leaves {
-		setNestedDefault(section, leaf, "<set per cluster>")
-	}
 	root[addonName] = section
 
 	out, err := yaml.Marshal(root)
 	if err != nil {
 		return nil, fmt.Errorf("serializing cluster YAML: %w", err)
 	}
+
+	// Append the override hints as a trailing COMMENT block. These are
+	// hints only — never live YAML — so the file renders cleanly. Mirrors
+	// the global-values writer's perClusterTemplate block.
+	hint := renderClusterOverrideHints(addonName, leaves)
+	if hint != "" {
+		if len(out) > 0 && out[len(out)-1] != '\n' {
+			out = append(out, '\n')
+		}
+		out = append(out, '\n')
+		out = append(out, []byte(hint)...)
+	}
 	return out, nil
 }
 
-// setNestedDefault sets `path` (dotted) to `value` inside `m`, walking or
-// creating intermediate map[string]interface{} levels. If the leaf
-// already exists, it is left alone (we never overwrite user-authored
-// values). The function tolerates intermediate keys that are not maps
-// (in that case it bails — the user has hand-written something at that
-// path and we respect it).
-func setNestedDefault(m map[string]interface{}, dottedPath string, value interface{}) {
-	parts := strings.Split(dottedPath, ".")
-	cur := m
-	for i, p := range parts {
-		if i == len(parts)-1 {
-			if _, ok := cur[p]; !ok {
-				cur[p] = value
-			}
-			return
-		}
-		next, ok := cur[p].(map[string]interface{})
-		if !ok {
-			if _, exists := cur[p]; exists {
-				// Non-map at intermediate path — bail.
-				return
-			}
-			next = map[string]interface{}{}
-			cur[p] = next
-		}
-		cur = next
+// renderClusterOverrideHints renders the addon's overridable leaf paths as a
+// commented YAML block the user can uncomment and fill in. Returns "" when
+// there are no leaves. Mirrors perClusterTemplate (smart_values.go) so the
+// hint style is identical to what the global-values file already emits.
+func renderClusterOverrideHints(addonName string, leaves []string) string {
+	if len(leaves) == 0 {
+		return ""
 	}
+	var b strings.Builder
+	b.WriteString("# --- per-cluster overrides for ")
+	b.WriteString(addonName)
+	b.WriteString(" ---\n")
+	b.WriteString("# Uncomment and set real values for any field this cluster needs to override.\n")
+	b.WriteString("# ")
+	b.WriteString(addonName)
+	b.WriteString(":\n")
+	for _, leaf := range leaves {
+		b.WriteString("#   ")
+		b.WriteString(renderTemplateLine(leaf))
+		b.WriteString("\n")
+	}
+	return b.String()
 }

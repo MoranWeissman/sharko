@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"path"
 
-	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/gitops"
+	"github.com/MoranWeissman/sharko/internal/logging"
+	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/verify"
 )
 
@@ -181,11 +182,7 @@ func (o *Orchestrator) adoptSingleCluster(ctx context.Context, name, serverURL s
 
 	clusterLabels := make(map[string]string, len(addons))
 	for addon, enabled := range addons {
-		if enabled {
-			clusterLabels[addon] = "true"
-		} else {
-			clusterLabels[addon] = "false"
-		}
+		clusterLabels[addon] = models.AddonLabelValue(enabled)
 	}
 
 	updatedClusterAddons, addEntryErr := gitops.AddClusterEntry(clusterAddonsData, gitops.ClusterEntryInput{
