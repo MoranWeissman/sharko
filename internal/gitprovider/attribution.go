@@ -13,13 +13,27 @@ import (
 	"strings"
 )
 
+// DefaultAuthorName and DefaultAuthorEmail are the legacy "Sharko Bot"
+// identity used for the commit author whenever an attribution carries no
+// explicit author override. This is the single source of truth for the bot
+// identity: both commitAuthorFor (which sets the Git commit author) and the
+// Signed-off-by sign-off logic read these constants, so the commit author
+// email and the DCO sign-off email can never drift apart. A DCO check
+// requires the author's email to be matched exactly by a Signed-off-by line,
+// so they MUST stay identical.
+const (
+	DefaultAuthorName  = "Sharko Bot"
+	DefaultAuthorEmail = "sharko-bot@users.noreply.github.com"
+)
+
 // CommitAttribution describes how a Git commit should be authored and
 // trailed. It is attached to a request context with WithAttribution and
 // read by provider implementations when constructing commit objects.
 //
 // All fields are optional. When CommitAttribution is absent or empty the
-// providers fall back to the legacy "Sharko Bot" identity with no trailer
-// (existing behavior).
+// providers fall back to the legacy "Sharko Bot" identity. Every generated
+// commit message carries a Signed-off-by trailer for the effective author
+// (DCO compliance); a co-author, when present, is signed off too.
 type CommitAttribution struct {
 	// AuthorName / AuthorEmail set the Git commit author. Leave both empty
 	// to keep the legacy "Sharko Bot <sharko-bot@users.noreply.github.com>"
@@ -45,6 +59,18 @@ func (a CommitAttribution) HasAuthor() bool {
 	return a.AuthorName != "" && a.AuthorEmail != ""
 }
 
+// EffectiveAuthor returns the (name, email) that will be used as the Git
+// commit author: the override author when HasAuthor() is true, otherwise the
+// default "Sharko Bot" identity. This is the identity the Signed-off-by
+// trailer signs off, and it matches what commitAuthorFor sets as the commit
+// author — keeping the DCO sign-off email aligned with the author email.
+func (a CommitAttribution) EffectiveAuthor() (name, email string) {
+	if a.HasAuthor() {
+		return a.AuthorName, a.AuthorEmail
+	}
+	return DefaultAuthorName, DefaultAuthorEmail
+}
+
 // HasCoAuthor reports whether a Co-authored-by trailer should be added.
 // Suppressed when the co-author equals the author (already-attributed).
 func (a CommitAttribution) HasCoAuthor() bool {
@@ -67,17 +93,68 @@ func (a CommitAttribution) CoAuthorTrailer() string {
 	return "Co-authored-by: " + a.CoAuthorName + " <" + a.CoAuthorEmail + ">"
 }
 
-// ApplyToMessage returns the commit message with the Co-authored-by trailer
-// appended (separated by a blank line per Git convention). When no co-author
-// applies, the message is returned unchanged.
+// ApplyToMessage returns the commit message with a well-formed trailer block
+// appended (body, one blank line, then trailer lines), per the Git trailer
+// convention. The trailer block contains, in order:
+//
+//	Co-authored-by: <co-author>   (only when a co-author applies)
+//	Signed-off-by:  <effective author>  (always — DCO compliance)
+//	Signed-off-by:  <co-author>   (when a co-author applies and differs from author)
+//
+// The effective-author sign-off email matches the commit author the provider
+// sets (see commitAuthorFor / EffectiveAuthor), so DCO-enforced repos accept
+// the commit. The call is idempotent: a trailer line already present in msg is
+// not duplicated, so applying ApplyToMessage twice yields the same result.
 func (a CommitAttribution) ApplyToMessage(msg string) string {
-	trailer := a.CoAuthorTrailer()
-	if trailer == "" {
+	// Build the ordered list of desired trailer lines.
+	var trailers []string
+	if t := a.CoAuthorTrailer(); t != "" {
+		trailers = append(trailers, t)
+	}
+
+	authorName, authorEmail := a.EffectiveAuthor()
+	trailers = append(trailers, signoffTrailer(authorName, authorEmail))
+
+	if a.HasCoAuthor() {
+		// The co-author needs its own sign-off for DCO too — unless it is the
+		// same identity as the effective author (case-insensitive on email).
+		if !strings.EqualFold(a.CoAuthorEmail, authorEmail) {
+			trailers = append(trailers, signoffTrailer(a.CoAuthorName, a.CoAuthorEmail))
+		}
+	}
+
+	// Drop any trailer already present in the message (idempotency guard).
+	var toAppend []string
+	for _, t := range trailers {
+		if !containsTrailerLine(msg, t) {
+			toAppend = append(toAppend, t)
+		}
+	}
+	if len(toAppend) == 0 {
 		return msg
 	}
+
 	msg = strings.TrimRight(msg, "\n")
-	// Collapse any existing trailing blank lines to a single blank separator.
-	return msg + "\n\n" + trailer + "\n"
+	// Collapse any existing trailing blank lines to a single blank separator,
+	// then emit the new trailer lines.
+	return msg + "\n\n" + strings.Join(toAppend, "\n") + "\n"
+}
+
+// signoffTrailer returns a canonical DCO `Signed-off-by:` trailer line.
+func signoffTrailer(name, email string) string {
+	return "Signed-off-by: " + name + " <" + email + ">"
+}
+
+// containsTrailerLine reports whether msg already contains the given trailer
+// line as a standalone line (start-of-line, exact text). This keeps the
+// idempotency guard from matching a substring buried inside the body.
+func containsTrailerLine(msg, line string) bool {
+	for _, l := range strings.Split(msg, "\n") {
+		if strings.TrimRight(l, "\r") == line {
+			return true
+		}
+	}
+	return false
 }
 
 type ctxKey struct{}
