@@ -204,16 +204,24 @@ func (g *GitHubProvider) ListPullRequests(ctx context.Context, state string) ([]
 // When the attribution carries explicit author identity (Tier 2 + per-user PAT)
 // that identity is used; otherwise we fall back to the legacy "Sharko Bot"
 // author so the commit metadata is stable for downstream consumers.
+//
+// It reads the effective author through CommitAttribution.EffectiveAuthor so
+// the commit author email is the exact same value the Signed-off-by trailer
+// signs off (see attribution.go) — a DCO check matches the author email
+// against the sign-off line, so the two must never drift.
+//
+// Note: the GitHub write paths set this same value as both Author and
+// Committer (see github_write.go), so a single effective-author sign-off
+// satisfies DCO for author and committer alike.
+// TODO(V2-cleanup-16 follow-up): committer-vs-author sign-off under Tier 2 PAT
+// — if a future change ever makes the committer differ from the author (e.g.
+// a per-user PAT where GitHub stamps the token owner as committer), the
+// committer would also need its own Signed-off-by line.
 func commitAuthorFor(attr CommitAttribution) *github.CommitAuthor {
-	if attr.HasAuthor() {
-		return &github.CommitAuthor{
-			Name:  github.Ptr(attr.AuthorName),
-			Email: github.Ptr(attr.AuthorEmail),
-		}
-	}
+	name, email := attr.EffectiveAuthor()
 	return &github.CommitAuthor{
-		Name:  github.Ptr("Sharko Bot"),
-		Email: github.Ptr("sharko-bot@users.noreply.github.com"),
+		Name:  github.Ptr(name),
+		Email: github.Ptr(email),
 	}
 }
 
