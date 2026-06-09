@@ -75,6 +75,25 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		}
 	}
 
+	// Step 1c: Referential integrity (V2-cleanup-22, Part 2 / decision #3).
+	// Every addon named in req.Addons becomes a cluster label downstream; a
+	// label for an addon that has no catalog ApplicationSet entry produces
+	// config ArgoCD can never render. Validate the WHOLE request up-front and
+	// reject it listing every bad name, before any credentials fetch, secret
+	// write, or PR. We skip the catalog read entirely when no addons were
+	// requested (nothing to check) so a bare registration does not depend on
+	// the catalog being readable. A genuine catalog read failure surfaces
+	// (→ 502); an absent addon returns *AddonNotInCatalogError (→ 4xx).
+	if len(req.Addons) > 0 {
+		addonNames := make([]string, 0, len(req.Addons))
+		for name := range req.Addons {
+			addonNames = append(addonNames, name)
+		}
+		if _, err := o.requireAddonsInCatalog(ctx, addonNames); err != nil {
+			return nil, err
+		}
+	}
+
 	// Step 2: Check whether the cluster already exists in ArgoCD.
 	// If it does, we adopt it (skip ArgoCD registration) instead of returning an error.
 	clusters, err := o.argocd.ListClusters(ctx)

@@ -149,6 +149,13 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := orch.RegisterCluster(ctx, req)
 	if err != nil {
+		// Referential-integrity rejection (V2-cleanup-22): one or more
+		// requested addons are not in the catalog. Caller error → 422 with
+		// the orchestrator's message listing the bad name(s).
+		if orchestrator.IsAddonNotInCatalog(err) {
+			writeError(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}

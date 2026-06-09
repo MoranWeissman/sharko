@@ -24,22 +24,73 @@ const ManagedClustersSchemaHeader = "# yaml-language-server: $schema=https://sha
 //     credentials provider (e.g. Vault path, AWS Secrets Manager path). When
 //     empty, the credentials provider derives a default path from Name.
 //   - Region: optional cloud region label, surfaced in the UI / observability.
-//   - Labels: optional addon-enablement map. Modelled as interface{} to
-//     match the legacy parser's tolerance: the on-disk shape is either a
-//     map (`labels: { cert-manager: enabled }`) or the empty-list sentinel
-//     `labels: []` that older hand-authored files used to mean "no
-//     labels". Downstream code reads this via config.parseLabels which
-//     normalises both shapes into a map[string]string.
+//   - Labels: optional addon-enablement map. Modelled as map[string]string
+//     because that is the shape EVERY Sharko producer emits (the gitops
+//     cluster mutators build a map[string]string of addon→"enabled"/
+//     "disabled"; the bootstrap template documents `<addon-name>: enabled`).
+//     V2-cleanup-22 (Part 3 / decision #5) tightened this from interface{}
+//     to map[string]string so the GENERATED JSON Schema (see cmd/schema-gen)
+//     requires `labels` to be an object with string values and rejects the
+//     scalar footgun (`labels: "oops"` previously passed the `"labels": true`
+//     schema and silently yielded zero addons via config.parseLabels).
+//     The legacy `labels: []` empty-array sentinel that older HAND-AUTHORED
+//     bare-YAML files used is still tolerated on the legacy bare read path
+//     (config.clusterEntry keeps interface{} + config.parseLabels handles
+//     the array form) — that path skips schema validation by design. Only
+//     the enveloped read/write path, where no producer ever emitted the
+//     array form, is now constrained.
 //
 // The yaml tags mirror the existing config.clusterEntry shape exactly so
 // that bytes parsed via the legacy bare-YAML path and bytes parsed via the
 // new envelope path produce semantically-equivalent specs (see the
 // TestRoundTrip_* tests in cluster_test.go).
 type ManagedClusterEntry struct {
-	Name       string      `json:"name" yaml:"name"`
-	SecretPath string      `json:"secretPath,omitempty" yaml:"secretPath,omitempty"`
-	Region     string      `json:"region,omitempty" yaml:"region,omitempty"`
-	Labels     interface{} `json:"labels,omitempty" yaml:"labels,omitempty"`
+	Name       string        `json:"name" yaml:"name"`
+	SecretPath string        `json:"secretPath,omitempty" yaml:"secretPath,omitempty"`
+	Region     string        `json:"region,omitempty" yaml:"region,omitempty"`
+	Labels     ClusterLabels `json:"labels,omitempty" yaml:"labels,omitempty"`
+}
+
+// ClusterLabels is the addon-enablement map on a managed-cluster entry. Its
+// underlying type is map[string]string, which drives the GENERATED JSON
+// Schema (cmd/schema-gen reflects it to `{type: object,
+// additionalProperties: {type: string}}` — V2-cleanup-22 Part 3, the object
+// minimum that closes the scalar footgun).
+//
+// The custom UnmarshalYAML preserves READ tolerance for older hand-authored
+// bare-YAML files: yaml.v3 alone would reject the legacy `labels: []`
+// empty-array sentinel ("cannot unmarshal !!seq into map[string]string"),
+// silently breaking pre-envelope user repos. We treat an empty sequence and
+// an explicit null as "no labels" (empty map), exactly as config.parseLabels
+// always has. A scalar (`labels: oops`) is still a parse error — that is the
+// footgun we are closing — and on the enveloped path the schema validator
+// also rejects it before the reader is reached.
+type ClusterLabels map[string]string
+
+// UnmarshalYAML implements yaml.Unmarshaler with legacy tolerance. See the
+// ClusterLabels doc for the back-compat rationale.
+func (l *ClusterLabels) UnmarshalYAML(value *yaml.Node) error {
+	switch {
+	case value == nil, value.Tag == "!!null":
+		*l = ClusterLabels{}
+		return nil
+	case value.Kind == yaml.SequenceNode:
+		// Legacy `labels: []` empty-array sentinel → no labels. A
+		// non-empty sequence is nonsensical for a label map; reject it so
+		// genuinely malformed input still surfaces.
+		if len(value.Content) != 0 {
+			return fmt.Errorf("labels must be a mapping of string→string, got a non-empty sequence")
+		}
+		*l = ClusterLabels{}
+		return nil
+	default:
+		var m map[string]string
+		if err := value.Decode(&m); err != nil {
+			return fmt.Errorf("labels must be a mapping of string→string: %w", err)
+		}
+		*l = m
+		return nil
+	}
 }
 
 // ManagedClustersSpec is the spec block of a managed-clusters.yaml envelope.
@@ -184,6 +235,29 @@ func SaveManagedClusters(spec ManagedClustersSpec) ([]byte, error) {
 		return nil, fmt.Errorf("marshalling managed-clusters envelope: %w", err)
 	}
 
+	// Validate-before-commit safety net (V2-cleanup-22, Part 1 / decisions
+	// #1+#2). SaveManagedClusters is the single choke point every
+	// managed-clusters writer funnels through (the gitops cluster mutators
+	// in internal/gitops/yaml_mutator_cluster.go all end in this call), so
+	// validating here means a new caller cannot bypass the gate. We run the
+	// SAME embedded validator the readers use against the marshalled bytes
+	// BEFORE any commit/PR happens — a failure means a Sharko bug or a
+	// genuinely bad in-memory spec, not legitimate user data, so we FAIL the
+	// operation and emit nothing. By construction Sharko-generated content
+	// passes; this only fires on a regression. If DefaultValidator itself
+	// fails to compile (a build-time bug, never runtime data) we do not block
+	// the write — the build-time invariant (TestNewValidator) is the real
+	// gate, same stance the reader paths take.
+	if validator, vErr := schema.DefaultValidator(); vErr == nil && validator != nil {
+		if err := validator.Validate(schema.KindManagedClusters, body); err != nil {
+			var vf *schema.ValidationFailure
+			if errors.As(err, &vf) {
+				schema.LogValidationFailure("managed-clusters.yaml (write)", vf)
+			}
+			return nil, fmt.Errorf("validating managed-clusters before write: %w", err)
+		}
+	}
+
 	// Prepend the schema header as line 1. We do this here (rather than
 	// asking yaml.v3 to emit a head comment on the root node) because
 	// yaml.v3's HeadComment on a generic Envelope[T] would attach to the
@@ -211,11 +285,11 @@ type Cluster struct {
 
 // ClusterHealthStats holds aggregated health statistics for the clusters overview.
 type ClusterHealthStats struct {
-	TotalInGit         int `json:"total_in_git"`
-	Connected          int `json:"connected"`
-	Failed             int `json:"failed"`
-	MissingFromArgoCD  int `json:"missing_from_argocd"`
-	NotInGit           int `json:"not_in_git"`
+	TotalInGit        int `json:"total_in_git"`
+	Connected         int `json:"connected"`
+	Failed            int `json:"failed"`
+	MissingFromArgoCD int `json:"missing_from_argocd"`
+	NotInGit          int `json:"not_in_git"`
 }
 
 // PendingRegistration represents a cluster registration PR that has been
@@ -299,7 +373,7 @@ type ClusterAddonInfo struct {
 
 // ClusterDetailResponse is the API response for a single cluster's details.
 type ClusterDetailResponse struct {
-	Cluster Cluster          `json:"cluster"`
+	Cluster Cluster            `json:"cluster"`
 	Addons  []ClusterAddonInfo `json:"addons"`
 }
 
@@ -350,21 +424,21 @@ type ClusterComparisonResponse struct {
 	GitDisabledAddons int `json:"git_disabled_addons"`
 
 	// ArgoCD summary
-	ArgocdTotalApplications      int `json:"argocd_total_applications"`
-	ArgocdHealthyApplications    int `json:"argocd_healthy_applications"`
-	ArgocdSyncedApplications     int `json:"argocd_synced_applications"`
-	ArgocdDegradedApplications   int `json:"argocd_degraded_applications"`
-	ArgocdOutOfSyncApplications  int `json:"argocd_out_of_sync_applications"`
+	ArgocdTotalApplications     int `json:"argocd_total_applications"`
+	ArgocdHealthyApplications   int `json:"argocd_healthy_applications"`
+	ArgocdSyncedApplications    int `json:"argocd_synced_applications"`
+	ArgocdDegradedApplications  int `json:"argocd_degraded_applications"`
+	ArgocdOutOfSyncApplications int `json:"argocd_out_of_sync_applications"`
 
 	// Per-addon comparison
 	AddonComparisons []AddonComparisonStatus `json:"addon_comparisons"`
 
 	// Overall totals
-	TotalHealthy            int `json:"total_healthy"`
-	TotalWithIssues         int `json:"total_with_issues"`
-	TotalMissingInArgocd    int `json:"total_missing_in_argocd"`
-	TotalUntrackedInArgocd  int `json:"total_untracked_in_argocd"`
-	TotalDisabledInGit      int `json:"total_disabled_in_git"`
+	TotalHealthy           int `json:"total_healthy"`
+	TotalWithIssues        int `json:"total_with_issues"`
+	TotalMissingInArgocd   int `json:"total_missing_in_argocd"`
+	TotalUntrackedInArgocd int `json:"total_untracked_in_argocd"`
+	TotalDisabledInGit     int `json:"total_disabled_in_git"`
 
 	ClusterConnectionState  string `json:"cluster_connection_state,omitempty"`
 	ArgocdConnectionStatus  string `json:"argocd_connection_status,omitempty"`  // e.g. "Successful", "Failed"

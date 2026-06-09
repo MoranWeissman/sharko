@@ -897,6 +897,15 @@ func normalizeLabels(raw interface{}) map[string]string {
 		return map[string]string{}
 	}
 	switch v := raw.(type) {
+	case models.ClusterLabels:
+		// V2-cleanup-22: ManagedClusterEntry.Labels is now the named
+		// models.ClusterLabels (underlying map[string]string); a type switch
+		// does not match it against the unnamed map case.
+		out := make(map[string]string, len(v))
+		for k, val := range v {
+			out[k] = val
+		}
+		return out
 	case map[string]string:
 		out := make(map[string]string, len(v))
 		for k, val := range v {

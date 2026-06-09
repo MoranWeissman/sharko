@@ -294,6 +294,28 @@ func MarshalAddonCatalog(metadataName string, entries []models.AddonCatalogEntry
 		return nil, fmt.Errorf("marshalling addon-catalog envelope: %w", err)
 	}
 
+	// Validate-before-commit safety net (V2-cleanup-22, Part 1 / decisions
+	// #1+#2). MarshalAddonCatalog is the single choke point every
+	// addon-catalog writer funnels through (the gitops catalog mutators in
+	// internal/gitops/yaml_mutator_catalog.go all end in this call), so
+	// validating here means a new caller cannot bypass the gate. We run the
+	// SAME embedded validator the readers use against the marshalled bytes
+	// BEFORE any commit/PR happens — a failure means a Sharko bug or a
+	// genuinely bad in-memory entry set, not legitimate user data, so we
+	// FAIL the operation and emit nothing. By construction Sharko-generated
+	// content passes; this only fires on a regression. If DefaultValidator
+	// itself fails to compile (a build-time bug, never runtime data) we do
+	// not block the write — same stance the reader paths take.
+	if validator, vErr := schema.DefaultValidator(); vErr == nil && validator != nil {
+		if err := validator.Validate(schema.KindAddonCatalog, body); err != nil {
+			var vf *schema.ValidationFailure
+			if errors.As(err, &vf) {
+				schema.LogValidationFailure("addons-catalog.yaml (write)", vf)
+			}
+			return nil, fmt.Errorf("validating addons-catalog before write: %w", err)
+		}
+	}
+
 	var buf bytes.Buffer
 	buf.WriteString(AddonCatalogSchemaHeader)
 	buf.WriteByte('\n')
