@@ -34,7 +34,7 @@ func TestUpgradeAddonGlobal(t *testing.T) {
 
 	orch := New(nil, defaultCreds(), argocd, git, autoMergeGitOps(), defaultPaths(), nil)
 
-	result, err := orch.UpgradeAddonGlobal(context.Background(), "cert-manager", "1.15.0")
+	result, err := orch.UpgradeAddonGlobal(context.Background(), "cert-manager", "1.15.0", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestUpgradeAddonGlobal_AddonNotFound(t *testing.T) {
 
 	orch := New(nil, defaultCreds(), argocd, git, autoMergeGitOps(), defaultPaths(), nil)
 
-	_, err := orch.UpgradeAddonGlobal(context.Background(), "nonexistent", "1.0.0")
+	_, err := orch.UpgradeAddonGlobal(context.Background(), "nonexistent", "1.0.0", nil)
 	if err == nil {
 		t.Fatal("expected error for nonexistent addon")
 	}
@@ -88,7 +88,7 @@ func TestUpgradeAddonCluster(t *testing.T) {
 
 	orch := New(nil, defaultCreds(), argocd, git, autoMergeGitOps(), defaultPaths(), nil)
 
-	result, err := orch.UpgradeAddonCluster(context.Background(), "cert-manager", "prod-eu", "1.15.0")
+	result, err := orch.UpgradeAddonCluster(context.Background(), "cert-manager", "prod-eu", "1.15.0", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestUpgradeAddonCluster_NewVersionField(t *testing.T) {
 
 	orch := New(nil, defaultCreds(), argocd, git, autoMergeGitOps(), defaultPaths(), nil)
 
-	result, err := orch.UpgradeAddonCluster(context.Background(), "cert-manager", "prod-eu", "1.15.0")
+	result, err := orch.UpgradeAddonCluster(context.Background(), "cert-manager", "prod-eu", "1.15.0", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestUpgradeAddons_Batch(t *testing.T) {
 		"metrics-server": "0.7.1",
 	}
 
-	result, err := orch.UpgradeAddons(context.Background(), upgrades)
+	result, err := orch.UpgradeAddons(context.Background(), upgrades, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

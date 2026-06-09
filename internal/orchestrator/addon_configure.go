@@ -83,11 +83,8 @@ func (o *Orchestrator) ConfigureAddon(ctx context.Context, req ConfigureAddonReq
 		}
 
 		files := map[string][]byte{catalogPath: updatedData}
-		return o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("configure addon %s", req.Name), PRMetadata{
-			OperationCode: "addon-configure",
-			Addon:         req.Name,
-			Title:         fmt.Sprintf("Configure addon %s", req.Name),
-		})
+		return o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("configure addon %s", req.Name),
+			o.prMeta(req.AutoMerge, "addon-configure", fmt.Sprintf("Configure addon %s", req.Name), "", req.Name))
 	}
 
 	// Simple fields only — delegate to the gitops envelope-aware mutator.
@@ -115,11 +112,8 @@ func (o *Orchestrator) ConfigureAddon(ctx context.Context, req ConfigureAddonReq
 		catalogPath: updatedData,
 	}
 
-	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("configure addon %s", req.Name), PRMetadata{
-		OperationCode: "addon-configure",
-		Addon:         req.Name,
-		Title:         fmt.Sprintf("Configure addon %s", req.Name),
-	})
+	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("configure addon %s", req.Name),
+		o.prMeta(req.AutoMerge, "addon-configure", fmt.Sprintf("Configure addon %s", req.Name), "", req.Name))
 	if err != nil {
 		return nil, fmt.Errorf("committing addon %q configuration: %w", req.Name, err)
 	}

@@ -18,7 +18,6 @@ import (
 	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/metrics"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
-	"github.com/MoranWeissman/sharko/internal/prtracker"
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
 )
 
@@ -357,7 +356,19 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	orch := orchestrator.New(&s.gitMu, s.credProvider, ac, git, s.gitopsCfg, s.repoPaths, nil)
+	s.attachPRTracker(orch)
+	orch.SetSecretManagement(s.addonSecretDefs, s.secretFetcher, remoteclient.NewClientFromKubeconfig)
+
 	// Handle secret_path update (metadata-only change via managed-clusters.yaml).
+	//
+	// V2-cleanup-23: this used to hand-roll branch+commit+PR+track+auto-merge
+	// +branch-cleanup inline, which is exactly the kind of out-of-funnel
+	// re-implementation that drifts from the shared auto-merge behavior. It
+	// now routes through orch.CommitFilesAsPRWithMeta → commitChangesWithMeta
+	// (the funnel), so the per-request override, connection default, PR
+	// tracking, and post-merge branch cleanup all come from the one shared
+	// code path via the prMeta builder.
 	if req.SecretPath != nil {
 		managedPath := s.repoPaths.ManagedClusters
 		if managedPath == "" {
@@ -374,79 +385,31 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 			return
 		}
 
-		s.gitMu.Lock()
-		branchName := fmt.Sprintf("%supdate-secret-path-%s", s.gitopsCfg.BranchPrefix, name)
-		if err := git.CreateBranch(ctx, branchName, s.gitopsCfg.BaseBranch); err != nil {
-			s.gitMu.Unlock()
-			writeError(w, http.StatusBadGateway, "creating branch: "+err.Error())
-			return
+		user := r.Header.Get("X-Sharko-User")
+		if user == "" {
+			user = "system"
 		}
-		commitMsg := fmt.Sprintf("%s update secret_path for cluster %s", s.gitopsCfg.CommitPrefix, name)
-		if err := git.CreateOrUpdateFile(ctx, managedPath, updated, branchName, commitMsg); err != nil {
-			s.gitMu.Unlock()
-			writeError(w, http.StatusBadGateway, "committing secret_path update: "+err.Error())
-			return
-		}
-		pr, prErr := git.CreatePullRequest(ctx,
-			fmt.Sprintf("Update secret_path for cluster %s", name),
-			fmt.Sprintf("Sets secret_path to %q for cluster %s", *req.SecretPath, name),
-			branchName, s.gitopsCfg.BaseBranch,
-		)
-		s.gitMu.Unlock()
+		files := map[string][]byte{managedPath: updated}
+		gitResult, prErr := orch.CommitFilesAsPRWithMeta(ctx, files,
+			fmt.Sprintf("update secret_path for cluster %s", name),
+			orchestrator.PRMetadata{
+				OperationCode:     "update-cluster",
+				Cluster:           name,
+				Title:             fmt.Sprintf("Update secret_path for cluster %s", name),
+				User:              user,
+				Source:            "api",
+				AutoMergeOverride: req.AutoMerge,
+			})
 		if prErr != nil {
 			writeError(w, http.StatusBadGateway, "creating PR: "+prErr.Error())
 			return
 		}
 
-		// secret_path update bypasses orchestrator.commitChanges
-		// (metadata-only), so the dashboard PR-tracker write is
-		// performed inline. Skipped silently when no tracker is wired.
-		if s.prTracker != nil && pr != nil {
-			user := r.Header.Get("X-Sharko-User")
-			if user == "" {
-				user = "system"
-			}
-			_ = s.prTracker.TrackPR(ctx, prtracker.PRInfo{
-				PRID:       pr.ID,
-				PRUrl:      pr.URL,
-				PRBranch:   branchName,
-				PRTitle:    fmt.Sprintf("Update secret_path for cluster %s", name),
-				PRBase:     s.gitopsCfg.BaseBranch,
-				Cluster:    name,
-				Operation:  "update-cluster",
-				User:       user,
-				Source:     "api",
-				CreatedAt:  time.Now(),
-				LastStatus: "open",
-			})
-		}
-
-		// Auto-merge if configured. The per-request override wins over
-		// the connection-level default. Clean up the source branch
-		// after a successful merge — best-effort, never fail the
-		// operation on DeleteBranch error.
-		if pr != nil {
-			autoMerge := req.AutoMerge
-			if autoMerge == nil {
-				v := s.gitopsCfg.PRAutoMerge
-				autoMerge = &v
-			}
-			if *autoMerge {
-				if mergeErr := git.MergePullRequest(ctx, pr.ID); mergeErr == nil {
-					if delErr := git.DeleteBranch(ctx, branchName); delErr != nil {
-						slog.Warn("failed to delete branch after secret_path merge",
-							"request_id", logging.RequestID(ctx),
-							"branch", branchName, "error", delErr)
-					}
-				}
-			}
-		}
-
 		// If no addons to update, return early with the secret_path result.
 		if len(req.Addons) == 0 {
 			prURL := ""
-			if pr != nil {
-				prURL = pr.URL
+			if gitResult != nil {
+				prURL = gitResult.PRUrl
 			}
 			writeJSON(w, http.StatusOK, map[string]interface{}{
 				"status":  "success",
@@ -456,10 +419,6 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
-
-	orch := orchestrator.New(&s.gitMu, s.credProvider, ac, git, s.gitopsCfg, s.repoPaths, nil)
-	s.attachPRTracker(orch)
-	orch.SetSecretManagement(s.addonSecretDefs, s.secretFetcher, remoteclient.NewClientFromKubeconfig)
 	// Region is empty — PATCH only updates addon labels, not cluster metadata.
 	// Region is set during RegisterCluster and not exposed via the update API.
 	// Pass per-request auto_merge override (nil = fall back to

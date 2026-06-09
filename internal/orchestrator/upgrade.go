@@ -11,7 +11,7 @@ import (
 
 // UpgradeAddonGlobal changes the version in the addons-catalog.yaml.
 // Affects every cluster using the global version.
-func (o *Orchestrator) UpgradeAddonGlobal(ctx context.Context, addonName, newVersion string) (*GitResult, error) {
+func (o *Orchestrator) UpgradeAddonGlobal(ctx context.Context, addonName, newVersion string, autoMerge *bool) (*GitResult, error) {
 	if addonName == "" {
 		return nil, fmt.Errorf("addon name is required")
 	}
@@ -34,11 +34,8 @@ func (o *Orchestrator) UpgradeAddonGlobal(ctx context.Context, addonName, newVer
 		catalogPath: updated,
 	}
 
-	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("upgrade addon %s to %s", addonName, newVersion), PRMetadata{
-		OperationCode: "addon-upgrade",
-		Addon:         addonName,
-		Title:         fmt.Sprintf("Upgrade %s to %s", addonName, newVersion),
-	})
+	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("upgrade addon %s to %s", addonName, newVersion),
+		o.prMeta(autoMerge, "addon-upgrade", fmt.Sprintf("Upgrade %s to %s", addonName, newVersion), "", addonName))
 	if err != nil {
 		return nil, fmt.Errorf("committing upgrade of addon %q to %s: %w", addonName, newVersion, err)
 	}
@@ -48,7 +45,7 @@ func (o *Orchestrator) UpgradeAddonGlobal(ctx context.Context, addonName, newVer
 
 // UpgradeAddonCluster changes the version in a specific cluster's values file.
 // Only affects that cluster (per-cluster override).
-func (o *Orchestrator) UpgradeAddonCluster(ctx context.Context, addonName, clusterName, newVersion string) (*GitResult, error) {
+func (o *Orchestrator) UpgradeAddonCluster(ctx context.Context, addonName, clusterName, newVersion string, autoMerge *bool) (*GitResult, error) {
 	if addonName == "" {
 		return nil, fmt.Errorf("addon name is required")
 	}
@@ -71,12 +68,8 @@ func (o *Orchestrator) UpgradeAddonCluster(ctx context.Context, addonName, clust
 		valuesPath: []byte(updated),
 	}
 
-	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("upgrade addon %s to %s on cluster %s", addonName, newVersion, clusterName), PRMetadata{
-		OperationCode: "addon-upgrade",
-		Addon:         addonName,
-		Cluster:       clusterName,
-		Title:         fmt.Sprintf("Upgrade %s to %s on cluster %s", addonName, newVersion, clusterName),
-	})
+	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("upgrade addon %s to %s on cluster %s", addonName, newVersion, clusterName),
+		o.prMeta(autoMerge, "addon-upgrade", fmt.Sprintf("Upgrade %s to %s on cluster %s", addonName, newVersion, clusterName), clusterName, addonName))
 	if err != nil {
 		return nil, fmt.Errorf("committing upgrade of addon %q to %s on cluster %q: %w", addonName, newVersion, clusterName, err)
 	}
@@ -85,7 +78,7 @@ func (o *Orchestrator) UpgradeAddonCluster(ctx context.Context, addonName, clust
 }
 
 // UpgradeAddons upgrades multiple addons in one PR (global catalog changes).
-func (o *Orchestrator) UpgradeAddons(ctx context.Context, upgrades map[string]string) (*GitResult, error) {
+func (o *Orchestrator) UpgradeAddons(ctx context.Context, upgrades map[string]string, autoMerge *bool) (*GitResult, error) {
 	if len(upgrades) == 0 {
 		return nil, fmt.Errorf("at least one addon upgrade is required")
 	}
@@ -113,10 +106,8 @@ func (o *Orchestrator) UpgradeAddons(ctx context.Context, upgrades map[string]st
 		catalogPath: content,
 	}
 
-	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("upgrade addons: %s", strings.Join(names, ", ")), PRMetadata{
-		OperationCode: "addon-upgrade",
-		Title:         fmt.Sprintf("Batch upgrade addons: %s", strings.Join(names, ", ")),
-	})
+	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("upgrade addons: %s", strings.Join(names, ", ")),
+		o.prMeta(autoMerge, "addon-upgrade", fmt.Sprintf("Batch upgrade addons: %s", strings.Join(names, ", ")), "", ""))
 	if err != nil {
 		return nil, fmt.Errorf("committing batch addon upgrade: %w", err)
 	}

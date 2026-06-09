@@ -7540,6 +7540,10 @@ const docTemplate = `{
                         "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_models.AddonSource"
                     }
                 },
+                "auto_merge": {
+                    "description": "AutoMerge overrides the connection-level PRAutoMerge default for the\nconfigure PR only. nil = fall back to the connection default. Routed to\nPRMetadata.AutoMergeOverride via the prMeta builder and resolved by\nresolveAutoMerge — never mutate o.gitops.PRAutoMerge.",
+                    "type": "boolean"
+                },
                 "extra_helm_values": {
                     "type": "object",
                     "additionalProperties": {
@@ -7672,6 +7676,10 @@ const docTemplate = `{
             "properties": {
                 "addon": {
                     "type": "string"
+                },
+                "auto_merge": {
+                    "description": "AutoMerge overrides the connection-level PRAutoMerge default for the\nenable PR only. nil = fall back to the connection default. Mirrors the\nfield on DisableAddonRequest so enable/disable behave identically.\nRouted to PRMetadata.AutoMergeOverride via the prMeta builder.",
+                    "type": "boolean"
                 },
                 "cluster": {
                     "type": "string"
@@ -7892,6 +7900,10 @@ const docTemplate = `{
         "github_com_MoranWeissman_sharko_internal_orchestrator.UnadoptClusterRequest": {
             "type": "object",
             "properties": {
+                "auto_merge": {
+                    "description": "AutoMerge overrides the connection-level PRAutoMerge default for the\nunadopt PR only. nil = fall back to the connection default. Routed to\nPRMetadata.AutoMergeOverride via the prMeta builder and resolved by\nresolveAutoMerge — never mutate o.gitops.PRAutoMerge.",
+                    "type": "boolean"
+                },
                 "dry_run": {
                     "type": "boolean"
                 },
@@ -8774,6 +8786,10 @@ const docTemplate = `{
         "internal_api.setAddonValuesRequest": {
             "type": "object",
             "properties": {
+                "auto_merge": {
+                    "description": "AutoMerge overrides the connection-level PRAutoMerge default for this\nvalues-edit PR only. nil = fall back to the connection default.",
+                    "type": "boolean"
+                },
                 "refresh_from_upstream": {
                     "description": "RefreshFromUpstream, when true, regenerates the global values file\nfrom the chart's upstream values.yaml at the catalog-pinned version.\nThe audit event for this path is ` + "`" + `values_refreshed_from_upstream` + "`" + `\n(overriding the default ` + "`" + `values_set` + "`" + `) so audit consumers can\ndistinguish manual edits from upstream refreshes.",
                     "type": "boolean"
@@ -8787,6 +8803,10 @@ const docTemplate = `{
         "internal_api.setClusterAddonValuesRequest": {
             "type": "object",
             "properties": {
+                "auto_merge": {
+                    "description": "AutoMerge overrides the connection-level PRAutoMerge default for this\nvalues-edit PR only. nil = fall back to the connection default.",
+                    "type": "boolean"
+                },
                 "values": {
                     "type": "string"
                 }

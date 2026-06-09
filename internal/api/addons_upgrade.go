@@ -41,8 +41,9 @@ func (s *Server) handleUpgradeAddon(w http.ResponseWriter, r *http.Request) {
 
 	// Decode + validate body BEFORE upstream call.
 	var req struct {
-		Version string `json:"version"`
-		Cluster string `json:"cluster"`
+		Version   string `json:"version"`
+		Cluster   string `json:"cluster"`
+		AutoMerge *bool  `json:"auto_merge,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
@@ -71,9 +72,9 @@ func (s *Server) handleUpgradeAddon(w http.ResponseWriter, r *http.Request) {
 
 	var result *orchestrator.GitResult
 	if req.Cluster != "" {
-		result, err = orch.UpgradeAddonCluster(r.Context(), addonName, req.Cluster, req.Version)
+		result, err = orch.UpgradeAddonCluster(r.Context(), addonName, req.Cluster, req.Version, req.AutoMerge)
 	} else {
-		result, err = orch.UpgradeAddonGlobal(r.Context(), addonName, req.Version)
+		result, err = orch.UpgradeAddonGlobal(r.Context(), addonName, req.Version, req.AutoMerge)
 	}
 
 	if err != nil {
@@ -116,7 +117,8 @@ func (s *Server) handleUpgradeAddonsBatch(w http.ResponseWriter, r *http.Request
 
 	// Decode + validate body BEFORE upstream call.
 	var req struct {
-		Upgrades map[string]string `json:"upgrades"`
+		Upgrades  map[string]string `json:"upgrades"`
+		AutoMerge *bool             `json:"auto_merge,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
@@ -143,7 +145,7 @@ func (s *Server) handleUpgradeAddonsBatch(w http.ResponseWriter, r *http.Request
 	s.attachPRTracker(orch)
 	orch.SetSecretManagement(s.addonSecretDefs, s.secretFetcher, remoteclient.NewClientFromKubeconfig)
 
-	result, err := orch.UpgradeAddons(r.Context(), req.Upgrades)
+	result, err := orch.UpgradeAddons(r.Context(), req.Upgrades, req.AutoMerge)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return

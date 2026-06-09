@@ -64,10 +64,8 @@ func (o *Orchestrator) InitRepo(ctx context.Context, req InitRepoRequest) (*Init
 	}
 
 	// Step 3 — Commit all files via PR (using commitChanges with shared mutex).
-	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, "initialize repository", PRMetadata{
-		OperationCode: "init-repo",
-		Title:         "Initialize repository",
-	})
+	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, "initialize repository",
+		o.prMeta(req.AutoMerge, "init-repo", "Initialize repository", "", ""))
 	if err != nil {
 		return nil, fmt.Errorf("committing init files: %w", err)
 	}

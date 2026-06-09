@@ -143,7 +143,7 @@ func TestSetClusterAddonValues_NotInCatalog_Rejected(t *testing.T) {
 
 	orch := New(nil, nil, argocd, git, autoMergeGitOps(), defaultPaths(), nil)
 
-	_, err := orch.SetClusterAddonValues(context.Background(), "prod-eu", "ghost", "replicaCount: 2\n")
+	_, err := orch.SetClusterAddonValues(context.Background(), "prod-eu", "ghost", "replicaCount: 2\n", nil)
 	if err == nil {
 		t.Fatal("expected rejection setting values for an addon not in the catalog, got nil")
 	}
@@ -169,7 +169,7 @@ func TestSetClusterAddonValues_RemoveAllowedForNonCatalogAddon(t *testing.T) {
 
 	orch := New(nil, nil, argocd, git, autoMergeGitOps(), defaultPaths(), nil)
 
-	_, err := orch.SetClusterAddonValues(context.Background(), "prod-eu", "ghost", "")
+	_, err := orch.SetClusterAddonValues(context.Background(), "prod-eu", "ghost", "", nil)
 	if err != nil {
 		t.Fatalf("removing overrides for a non-catalog addon should be allowed (cleanup): %v", err)
 	}
@@ -213,7 +213,7 @@ func TestGuardrails_FullFlow_Regression(t *testing.T) {
 	}
 
 	// 3) Edit per-cluster values for the real addon.
-	if _, err := orch.SetClusterAddonValues(context.Background(), "prod-eu", "cert-manager", "replicaCount: 2\n"); err != nil {
+	if _, err := orch.SetClusterAddonValues(context.Background(), "prod-eu", "cert-manager", "replicaCount: 2\n", nil); err != nil {
 		t.Fatalf("values edit failed: %v", err)
 	}
 

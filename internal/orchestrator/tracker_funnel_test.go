@@ -126,7 +126,7 @@ func TestUpgradeAddonGlobal_TracksWithAddonUpgradeOp(t *testing.T) {
 	orch := New(nil, nil, argocd, git, defaultGitOps(), defaultPaths(), nil)
 	orch.SetPRTracker(tracker)
 
-	if _, err := orch.UpgradeAddonGlobal(context.Background(), "metrics-server", "3.12.1"); err != nil {
+	if _, err := orch.UpgradeAddonGlobal(context.Background(), "metrics-server", "3.12.1", nil); err != nil {
 		t.Fatalf("UpgradeAddonGlobal: %v", err)
 	}
 

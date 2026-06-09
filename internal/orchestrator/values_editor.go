@@ -27,8 +27,8 @@ import (
 //
 // The path written is `<paths.GlobalValues>/<addonName>.yaml`. The
 // content is validated as parseable YAML before any Git activity happens.
-func (o *Orchestrator) SetGlobalAddonValues(ctx context.Context, addonName, valuesYAML string) (*GitResult, error) {
-	return o.SetGlobalAddonValuesWithOp(ctx, addonName, valuesYAML, "values-edit", "")
+func (o *Orchestrator) SetGlobalAddonValues(ctx context.Context, addonName, valuesYAML string, autoMerge *bool) (*GitResult, error) {
+	return o.SetGlobalAddonValuesWithOp(ctx, addonName, valuesYAML, "values-edit", "", autoMerge)
 }
 
 // SetGlobalAddonValuesWithOp is the tracking-aware variant of
@@ -39,7 +39,7 @@ func (o *Orchestrator) SetGlobalAddonValues(ctx context.Context, addonName, valu
 //
 // titleOverride lets callers provide a more specific PR title than the
 // default "Update global values for X" — empty string keeps the default.
-func (o *Orchestrator) SetGlobalAddonValuesWithOp(ctx context.Context, addonName, valuesYAML, opCode, titleOverride string) (*GitResult, error) {
+func (o *Orchestrator) SetGlobalAddonValuesWithOp(ctx context.Context, addonName, valuesYAML, opCode, titleOverride string, autoMerge *bool) (*GitResult, error) {
 	if addonName == "" {
 		return nil, fmt.Errorf("addon name is required")
 	}
@@ -60,11 +60,8 @@ func (o *Orchestrator) SetGlobalAddonValuesWithOp(ctx context.Context, addonName
 	if title == "" {
 		title = fmt.Sprintf("Update global values for %s", addonName)
 	}
-	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, op, PRMetadata{
-		OperationCode: opCode,
-		Addon:         addonName,
-		Title:         title,
-	})
+	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, op,
+		o.prMeta(autoMerge, opCode, title, "", addonName))
 	if err != nil {
 		return nil, fmt.Errorf("committing values for addon %q: %w", addonName, err)
 	}
@@ -81,7 +78,7 @@ func (o *Orchestrator) SetGlobalAddonValuesWithOp(ctx context.Context, addonName
 // not the whole file. Pass an empty string to remove the addon's overrides
 // (the addon section is deleted from the file). The result of the merge is
 // validated before write.
-func (o *Orchestrator) SetClusterAddonValues(ctx context.Context, clusterName, addonName, overridesYAML string) (*GitResult, error) {
+func (o *Orchestrator) SetClusterAddonValues(ctx context.Context, clusterName, addonName, overridesYAML string, autoMerge *bool) (*GitResult, error) {
 	if clusterName == "" {
 		return nil, fmt.Errorf("cluster name is required")
 	}
@@ -123,12 +120,8 @@ func (o *Orchestrator) SetClusterAddonValues(ctx context.Context, clusterName, a
 	files := map[string][]byte{filePath: merged}
 	op := fmt.Sprintf("update %s overrides on cluster %s", addonName, clusterName)
 
-	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, op, PRMetadata{
-		OperationCode: "values-edit",
-		Addon:         addonName,
-		Cluster:       clusterName,
-		Title:         fmt.Sprintf("Update %s overrides on cluster %s", addonName, clusterName),
-	})
+	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, op,
+		o.prMeta(autoMerge, "values-edit", fmt.Sprintf("Update %s overrides on cluster %s", addonName, clusterName), clusterName, addonName))
 	if err != nil {
 		return nil, fmt.Errorf("committing cluster overrides: %w", err)
 	}

@@ -213,6 +213,11 @@ type ConfigureAddonRequest struct {
 	AdditionalSources []models.AddonSource     `json:"additional_sources,omitempty"`
 	IgnoreDifferences []map[string]interface{} `json:"ignore_differences,omitempty"`
 	ExtraHelmValues   map[string]string        `json:"extra_helm_values,omitempty"`
+	// AutoMerge overrides the connection-level PRAutoMerge default for the
+	// configure PR only. nil = fall back to the connection default. Routed to
+	// PRMetadata.AutoMergeOverride via the prMeta builder and resolved by
+	// resolveAutoMerge — never mutate o.gitops.PRAutoMerge.
+	AutoMerge *bool `json:"auto_merge,omitempty"`
 }
 
 // AdoptClustersRequest is the input for adopting existing ArgoCD clusters.
@@ -247,6 +252,11 @@ type AdoptClustersResult struct {
 type UnadoptClusterRequest struct {
 	Yes    bool `json:"yes"`
 	DryRun bool `json:"dry_run,omitempty"`
+	// AutoMerge overrides the connection-level PRAutoMerge default for the
+	// unadopt PR only. nil = fall back to the connection default. Routed to
+	// PRMetadata.AutoMergeOverride via the prMeta builder and resolved by
+	// resolveAutoMerge — never mutate o.gitops.PRAutoMerge.
+	AutoMerge *bool `json:"auto_merge,omitempty"`
 }
 
 // UnadoptClusterResult is the output of an un-adopt operation.
@@ -317,6 +327,11 @@ type EnableAddonRequest struct {
 	Addon   string `json:"addon"`
 	DryRun  bool   `json:"dry_run,omitempty"`
 	Yes     bool   `json:"yes"` // confirmation required
+	// AutoMerge overrides the connection-level PRAutoMerge default for the
+	// enable PR only. nil = fall back to the connection default. Mirrors the
+	// field on DisableAddonRequest so enable/disable behave identically.
+	// Routed to PRMetadata.AutoMergeOverride via the prMeta builder.
+	AutoMerge *bool `json:"auto_merge,omitempty"`
 }
 
 // EnableAddonResult is the output of an addon enable operation.

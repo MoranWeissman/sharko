@@ -637,6 +637,13 @@ definitions:
         items:
           $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_models.AddonSource'
         type: array
+      auto_merge:
+        description: |-
+          AutoMerge overrides the connection-level PRAutoMerge default for the
+          configure PR only. nil = fall back to the connection default. Routed to
+          PRMetadata.AutoMergeOverride via the prMeta builder and resolved by
+          resolveAutoMerge — never mutate o.gitops.PRAutoMerge.
+        type: boolean
       extra_helm_values:
         additionalProperties:
           type: string
@@ -729,6 +736,13 @@ definitions:
     properties:
       addon:
         type: string
+      auto_merge:
+        description: |-
+          AutoMerge overrides the connection-level PRAutoMerge default for the
+          enable PR only. nil = fall back to the connection default. Mirrors the
+          field on DisableAddonRequest so enable/disable behave identically.
+          Routed to PRMetadata.AutoMergeOverride via the prMeta builder.
+        type: boolean
       cluster:
         type: string
       dry_run:
@@ -894,6 +908,13 @@ definitions:
     type: object
   github_com_MoranWeissman_sharko_internal_orchestrator.UnadoptClusterRequest:
     properties:
+      auto_merge:
+        description: |-
+          AutoMerge overrides the connection-level PRAutoMerge default for the
+          unadopt PR only. nil = fall back to the connection default. Routed to
+          PRMetadata.AutoMergeOverride via the prMeta builder and resolved by
+          resolveAutoMerge — never mutate o.gitops.PRAutoMerge.
+        type: boolean
       dry_run:
         type: boolean
       "yes":
@@ -1549,6 +1570,11 @@ definitions:
     type: object
   internal_api.setAddonValuesRequest:
     properties:
+      auto_merge:
+        description: |-
+          AutoMerge overrides the connection-level PRAutoMerge default for this
+          values-edit PR only. nil = fall back to the connection default.
+        type: boolean
       refresh_from_upstream:
         description: |-
           RefreshFromUpstream, when true, regenerates the global values file
@@ -1566,6 +1592,11 @@ definitions:
     type: object
   internal_api.setClusterAddonValuesRequest:
     properties:
+      auto_merge:
+        description: |-
+          AutoMerge overrides the connection-level PRAutoMerge default for this
+          values-edit PR only. nil = fall back to the connection default.
+        type: boolean
       values:
         type: string
     type: object
