@@ -684,6 +684,126 @@ clusters:
 	}
 }
 
+// --- Story 28.1: argosecrets orphan sweep — adopted secrets are delete-proof ---
+
+// TestReconcileOnce_AdoptedOrphan_NeverDeleted verifies that an orphan secret
+// with the adopted annotation is NEVER deleted across multiple reconcile cycles
+// (Story 28.1 — argosecrets sweep).
+func TestReconcileOnce_AdoptedOrphan_NeverDeleted(t *testing.T) {
+	// Pre-create an adopted orphan: managed-by label (so List returns it)
+	// AND the adopted annotation.
+	adoptedOrphan := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "adopted-orphan",
+			Namespace: testNamespace,
+			Labels: map[string]string{
+				LabelSecretType: "cluster",
+				LabelManagedBy:  ManagedByValue,
+			},
+			Annotations: map[string]string{
+				AnnotationAdopted: "true",
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+	}
+
+	client := fake.NewClientset(adoptedOrphan)
+	mgr := NewManager(client, testNamespace)
+	parser := config.NewParser()
+
+	// YAML does NOT list "adopted-orphan" — so it becomes an orphan candidate.
+	reader := &mockGitReader{
+		files: map[string][]byte{
+			clusterAddonsPath: []byte(twoClusterYAML),
+		},
+	}
+	creds := &mockCredProvider{
+		creds: map[string]*providers.Kubeconfig{
+			"cluster-1": kubeconfig("https://api.cluster-1.example.com"),
+			"cluster-2": kubeconfig("https://api.cluster-2.example.com"),
+		},
+	}
+
+	rec := NewReconciler(mgr, creds, func() GitReader { return reader }, parser, "main", "", clusterAddonsPath, 0)
+
+	// Cycle 1: adopted orphan detected but must NOT be deferred into previousOrphans for deletion.
+	rec.ReconcileOnce(context.Background())
+
+	_, err := client.CoreV1().Secrets(testNamespace).Get(context.Background(), "adopted-orphan", metav1.GetOptions{})
+	if err != nil {
+		t.Errorf("cycle 1: adopted-orphan must still exist (skip, not defer): %v", err)
+	}
+	if rec.GetStats().Deleted != 0 {
+		t.Errorf("cycle 1: stats.Deleted = %d, want 0 (adopted secret must not be deleted)", rec.GetStats().Deleted)
+	}
+
+	// Cycle 2: change content so the hash check does not short-circuit; adopted orphan must still survive.
+	reader.setFile(clusterAddonsPath, []byte(twoClusterYAMLAlt))
+	rec.ReconcileOnce(context.Background())
+
+	_, err = client.CoreV1().Secrets(testNamespace).Get(context.Background(), "adopted-orphan", metav1.GetOptions{})
+	if err != nil {
+		t.Errorf("cycle 2: adopted-orphan must still exist (delete-proof): %v", err)
+	}
+	if rec.GetStats().Deleted != 0 {
+		t.Errorf("cycle 2: stats.Deleted = %d, want 0 (adopted secret must not be deleted)", rec.GetStats().Deleted)
+	}
+}
+
+// TestReconcileOnce_NonAdoptedOrphan_DeletedAfterTwoCycles verifies that the
+// two-cycle deferral behavior is unchanged for non-adopted orphans (regression).
+func TestReconcileOnce_NonAdoptedOrphan_DeletedAfterTwoCycles(t *testing.T) {
+	// Same as TestReconcileOnce_OrphanCleanup — no adopted annotation.
+	orphan := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "plain-orphan",
+			Namespace: testNamespace,
+			Labels: map[string]string{
+				LabelSecretType: "cluster",
+				LabelManagedBy:  ManagedByValue,
+			},
+			// No AnnotationAdopted.
+		},
+		Type: corev1.SecretTypeOpaque,
+	}
+
+	client := fake.NewClientset(orphan)
+	mgr := NewManager(client, testNamespace)
+	parser := config.NewParser()
+
+	reader := &mockGitReader{
+		files: map[string][]byte{
+			clusterAddonsPath: []byte(twoClusterYAML),
+		},
+	}
+	creds := &mockCredProvider{
+		creds: map[string]*providers.Kubeconfig{
+			"cluster-1": kubeconfig("https://api.cluster-1.example.com"),
+			"cluster-2": kubeconfig("https://api.cluster-2.example.com"),
+		},
+	}
+
+	rec := NewReconciler(mgr, creds, func() GitReader { return reader }, parser, "main", "", clusterAddonsPath, 0)
+
+	// Cycle 1: orphan deferred.
+	rec.ReconcileOnce(context.Background())
+	_, err := client.CoreV1().Secrets(testNamespace).Get(context.Background(), "plain-orphan", metav1.GetOptions{})
+	if err != nil {
+		t.Errorf("cycle 1: plain-orphan should still exist (deferred): %v", err)
+	}
+
+	// Cycle 2: orphan must be deleted.
+	reader.setFile(clusterAddonsPath, []byte(twoClusterYAMLAlt))
+	rec.ReconcileOnce(context.Background())
+	_, err = client.CoreV1().Secrets(testNamespace).Get(context.Background(), "plain-orphan", metav1.GetOptions{})
+	if err == nil {
+		t.Error("cycle 2: plain-orphan should have been deleted, but still exists")
+	}
+	if rec.GetStats().Deleted != 1 {
+		t.Errorf("cycle 2: stats.Deleted = %d, want 1", rec.GetStats().Deleted)
+	}
+}
+
 // --------------------------------------------------------------------------
 // trackingCredProvider — records which name was passed to GetCredentials.
 // --------------------------------------------------------------------------

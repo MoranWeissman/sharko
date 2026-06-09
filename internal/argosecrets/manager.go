@@ -3,6 +3,17 @@
 // argocd.argoproj.io/secret-type: cluster. This package creates and updates
 // those secrets so that ArgoCD's ApplicationSet cluster generator can discover
 // Sharko-managed clusters without storing static credentials.
+//
+// Ownership split (V2-cleanup-28):
+//
+//   - Sharko-CREATED secrets (managed-by label, NO adopted annotation):
+//     fully managed — Ensure rewrites connection data on drift; orphan sweeps
+//     delete them when they leave managed-clusters.yaml.
+//
+//   - Sharko-ADOPTED secrets (managed-by label + adopted annotation):
+//     labels managed only — Ensure merges desired labels but never touches
+//     Data/StringData; orphan sweeps skip them; removal requires an explicit
+//     Unadopt call.
 package argosecrets
 
 import (
@@ -290,25 +301,76 @@ func (m *Manager) Ensure(ctx context.Context, spec ClusterSecretSpec) (bool, err
 	// Secret exists — check whether we manage it or need to adopt it.
 	if existing.Labels[LabelManagedBy] != ManagedByValue {
 		// Adoption path: secret exists but was not created by Sharko.
-		// Explicitly adopt it by applying the managed-by label, desired labels, and credentials.
-		// Always write — do not compare hashes. Adoption is itself a meaningful state change.
+		// Apply the managed-by label, merge desired labels (foreign labels kept),
+		// stamp the adopted annotation, and preserve the existing Data/StringData
+		// so we do not wipe connection config we do not model.
+		// Always write — adoption is itself a meaningful state change.
 		adopted := existing.DeepCopy()
-		adopted.Labels = desiredLabels
+		// Merge desired labels into existing labels; desired labels win on conflict,
+		// but existing foreign labels not in the desired set are kept (guest semantics).
+		if adopted.Labels == nil {
+			adopted.Labels = make(map[string]string, len(desiredLabels))
+		}
+		for k, v := range desiredLabels {
+			adopted.Labels[k] = v
+		}
+		// Always stamp the adopted annotation so the orphan sweeps recognise the
+		// secret as adopted even before the orchestrator's SetAnnotation call
+		// completes (closes the reconciler-fires-first race window).
+		if adopted.Annotations == nil {
+			adopted.Annotations = make(map[string]string)
+		}
+		adopted.Annotations[AnnotationAdopted] = "true"
 		if spec.Annotations != nil {
 			adopted.Annotations = mergeAnnotations(adopted.Annotations, spec.Annotations)
 		}
-		adopted.Data = nil
-		adopted.StringData = desiredStringData
+		// IMPORTANT: do NOT touch adopted.Data or adopted.StringData — the existing
+		// connection config (TLS extras, shard, namespaces, exec details) must be
+		// preserved verbatim. K8s Update replaces the whole object; we mutate only
+		// labels and annotations on the DeepCopy.
 		if _, adoptErr := m.client.CoreV1().Secrets(m.namespace).Update(ctx, adopted, metav1.UpdateOptions{}); adoptErr != nil {
 			return false, fmt.Errorf("adopting secret %q in namespace %q: %w", spec.Name, m.namespace, adoptErr)
 		}
-		slog.Info("[argosecrets] cluster secret adopted",
+		slog.Info("[argosecrets] cluster secret adopted — labels merged, connection data preserved",
 			"cluster", spec.Name, "namespace", m.namespace,
 		)
 		return true, nil
 	}
 
-	// Secret is already managed by Sharko — compare hashes to decide whether an update is needed.
+	// Secret is managed by Sharko. Branch on whether it is adopted.
+	isAdopted := existing.Annotations[AnnotationAdopted] == "true"
+
+	if isAdopted {
+		// Adopted secret — converge LABELS only. Never touch Data/StringData.
+		// "Labels match" means all desired labels are present in the current
+		// labels with the correct values. Foreign labels (not in desired) are
+		// always kept, so they do not trigger a write.
+		if desiredLabelsSubset(existing.Labels, desiredLabels) {
+			slog.Debug("[argosecrets] adopted cluster secret labels up-to-date, skipping",
+				"cluster", spec.Name, "namespace", m.namespace,
+			)
+			return false, nil
+		}
+		updated := existing.DeepCopy()
+		// Merge: desired wins on conflict, existing foreign keys kept.
+		for k, v := range desiredLabels {
+			updated.Labels[k] = v
+		}
+		if spec.Annotations != nil {
+			updated.Annotations = mergeAnnotations(updated.Annotations, spec.Annotations)
+		}
+		// Do NOT touch updated.Data or updated.StringData.
+		if _, updateErr := m.client.CoreV1().Secrets(m.namespace).Update(ctx, updated, metav1.UpdateOptions{}); updateErr != nil {
+			return false, fmt.Errorf("updating labels on adopted secret %q in namespace %q: %w", spec.Name, m.namespace, updateErr)
+		}
+		slog.Info("[argosecrets] adopted cluster secret labels converged — connection data untouched",
+			"cluster", spec.Name, "namespace", m.namespace,
+		)
+		return true, nil
+	}
+
+	// Sharko-created secret (managed-by label present, NO adopted annotation):
+	// compare hashes to decide whether a full update is needed.
 	existingHash := hashSecretState(existing.Labels, existing.Data)
 	if existingHash == desiredHash {
 		slog.Debug("[argosecrets] cluster secret up-to-date, skipping",
@@ -332,6 +394,18 @@ func (m *Manager) Ensure(ctx context.Context, spec ClusterSecretSpec) (bool, err
 		"cluster", spec.Name, "namespace", m.namespace,
 	)
 	return true, nil
+}
+
+// desiredLabelsSubset reports whether all key-value pairs in desired are
+// present in current. Foreign keys in current (not in desired) are ignored —
+// they are kept by the merge semantics of the adopted path.
+func desiredLabelsSubset(current, desired map[string]string) bool {
+	for k, want := range desired {
+		if current[k] != want {
+			return false
+		}
+	}
+	return true
 }
 
 // mergeAnnotations merges new annotations into existing, overwriting on conflict.
@@ -361,6 +435,20 @@ func (m *Manager) List(ctx context.Context) ([]string, error) {
 		names[i] = s.Name
 	}
 	return names, nil
+}
+
+// ListSecrets returns the full corev1.Secret objects for all ArgoCD cluster
+// secrets managed by Sharko. Use this instead of List when callers need to
+// inspect annotations (e.g. the orphan sweep that must skip adopted secrets).
+// Same label selector as List.
+func (m *Manager) ListSecrets(ctx context.Context) ([]corev1.Secret, error) {
+	list, err := m.client.CoreV1().Secrets(m.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: LabelManagedBy + "=" + ManagedByValue + "," + LabelSecretType + "=cluster",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing managed secrets in namespace %q: %w", m.namespace, err)
+	}
+	return list.Items, nil
 }
 
 // Delete removes the named ArgoCD cluster secret, but only if it is managed by Sharko.

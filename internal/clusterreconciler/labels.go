@@ -28,6 +28,16 @@ const (
 	// Presence of LabelManagedBy = LabelValueSharko is the canonical "owned by
 	// Sharko" signal; downstream stories key delete / adopt decisions off it.
 	LabelValueSharko = "sharko"
+
+	// annotationAdopted is the annotation key that marks a cluster Secret as
+	// adopted (brought under Sharko management from a pre-existing ArgoCD
+	// secret) rather than registered from scratch by Sharko.
+	//
+	// Canonical definition: internal/argosecrets.AnnotationAdopted
+	// ("sharko.sharko.io/adopted"). Duplicated here to avoid a circular import
+	// between clusterreconciler and argosecrets — both packages must stay
+	// independent. Value MUST stay byte-identical to the argosecrets const.
+	annotationAdopted = "sharko.sharko.io/adopted"
 )
 
 // IsManagedBySharko reports whether secret carries the Sharko ownership label

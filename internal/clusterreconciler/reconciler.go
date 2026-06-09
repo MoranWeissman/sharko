@@ -17,6 +17,21 @@
 //  4. Per-cluster + per-secret error isolation: a vault failure on one
 //     cluster does NOT block reconciliation of the others.
 //
+// Coexistence with the legacy argosecrets.Reconciler (V2-cleanup-28):
+//
+// In a standard in-cluster install BOTH this reconciler AND the legacy
+// argosecrets.Reconciler run concurrently (see cmd/sharko/serve.go for the
+// wiring). After V2-cleanup-28 their adoption-safety semantics are aligned:
+//
+//   - Orphan sweeps in both reconcilers skip secrets that carry the
+//     sharko.sharko.io/adopted annotation — those secrets are owned by the
+//     Adopt flow and can only be removed via an explicit Unadopt call.
+//   - internal/argosecrets.Manager.Ensure preserves the connection Data of
+//     adopted secrets and only converges their labels.
+//
+// Single-writer consolidation (retiring the legacy argosecrets reconciler)
+// is a tracked follow-up item.
+//
 // See:
 //   - docs/design/2026-05-11-cluster-secret-reconciler-and-gitops-stance.md
 //     §7 (Option E), §8 (pattern), §9 (two-direction policy), §10 (REST
@@ -301,6 +316,7 @@ type reconcileStats struct {
 	Deleted          int
 	SkippedUnlabeled int // existing same-name unlabeled Secret — Adopt territory
 	SkippedPending   int // orphan candidate skipped — registration-pending within grace (V2-cleanup-11.1)
+	SkippedAdopted   int // orphan candidate skipped — adopted annotation present (V2-cleanup-28)
 	ClearedPending   int // pending annotation stripped — cluster became managed (V2-cleanup-11.1)
 	Errors           int
 }
@@ -470,14 +486,40 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 		if _, present := desired[name]; present {
 			continue // in both sets — handled by the clear-pending pass below.
 		}
-		// in-argocd ∖ in-git → orphan candidate. BUT: a Secret that was
-		// direct-written during registration Stage 1 carries the
-		// registration-pending annotation and is NOT yet in git because its
-		// registration PR has not merged. Skip it while the grace window is
-		// open so the orphan sweep does not race the PR merge
+		// in-argocd ∖ in-git → orphan candidate.
+
+		secret := existing[name]
+
+		// V2-cleanup-28: adopted secrets are delete-proof from the automatic
+		// sweep. They can only be removed via an explicit Unadopt call.
+		// The full corev1.Secret is already cached in existing[name] — no
+		// extra Get required.
+		if annotationsOf(secret)[annotationAdopted] == "true" {
+			stats.SkippedAdopted++
+			logging.LoggerFromContext(ctx).Warn(
+				"[clusterreconciler] skipping orphan delete — Secret has adopted annotation; remove via Unadopt",
+				"cluster", name, "namespace", r.namespace,
+			)
+			r.audit(audit.Entry{
+				Level:     "warn",
+				Event:     "cluster_secret_skip_adopted",
+				User:      "sharko",
+				Action:    "skip",
+				Resource:  fmt.Sprintf("cluster:%s", name),
+				Source:    "reconciler",
+				Result:    "partial",
+				Detail:    "adopted secret not in git — left in place; remove via Unadopt",
+				RequestID: logging.RequestID(ctx),
+			})
+			continue
+		}
+
+		// BUT: a Secret that was direct-written during registration Stage 1
+		// carries the registration-pending annotation and is NOT yet in git
+		// because its registration PR has not merged. Skip it while the grace
+		// window is open so the orphan sweep does not race the PR merge
 		// (V2-cleanup-11.1). Once the window expires (PR never merged) it
 		// falls through and is reaped — no permanent leak.
-		secret := existing[name]
 		pending, malformed := models.IsRegistrationPending(annotationsOf(secret), now)
 		if malformed {
 			logging.LoggerFromContext(ctx).Warn(
@@ -861,8 +903,8 @@ func (r *Reconciler) emitSummaryAudit(ctx context.Context, stats reconcileStats)
 		Event:  "cluster_secret_reconcile_tick",
 		User:   "sharko",
 		Action: "reconcile",
-		Resource: fmt.Sprintf("created:%d deleted:%d skipped_unlabeled:%d skipped_pending:%d cleared_pending:%d errors:%d",
-			stats.Created, stats.Deleted, stats.SkippedUnlabeled, stats.SkippedPending, stats.ClearedPending, stats.Errors),
+		Resource: fmt.Sprintf("created:%d deleted:%d skipped_unlabeled:%d skipped_pending:%d skipped_adopted:%d cleared_pending:%d errors:%d",
+			stats.Created, stats.Deleted, stats.SkippedUnlabeled, stats.SkippedPending, stats.SkippedAdopted, stats.ClearedPending, stats.Errors),
 		Source:    "reconciler",
 		Result:    result,
 		RequestID: logging.RequestID(ctx),

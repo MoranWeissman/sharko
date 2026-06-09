@@ -726,6 +726,108 @@ func TestPollOnce_BearerRoundTripDoesNotFlip(t *testing.T) {
 	}
 }
 
+// --- Story 28.1: clusterreconciler orphan sweep — adopted secrets are delete-proof ---
+
+// TestPollOnce_AdoptedOrphan_NeverDeleted verifies that a sharko-labeled Secret
+// with the adopted annotation is NOT deleted by the orphan sweep even when it is
+// absent from managed-clusters.yaml (Story 28.1 — clusterreconciler sweep).
+func TestPollOnce_AdoptedOrphan_NeverDeleted(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	// Secret is sharko-labeled (so listManagedSecrets returns it) AND adopted.
+	adoptedSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "adopted-cluster",
+			Namespace: DefaultArgoCDNamespace,
+			Labels: map[string]string{
+				LabelManagedBy:                   LabelValueSharko,
+				"argocd.argoproj.io/secret-type": "cluster",
+			},
+			Annotations: map[string]string{
+				annotationAdopted: "true",
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			"server": []byte("https://adopted-cluster.example.com"),
+			"config": []byte(`{"bearerToken":"foreign-tok"}`),
+		},
+	}
+
+	// Git says zero clusters — adopted-cluster is an orphan candidate.
+	body := envelopedManagedClusters()
+	k8sClient := fake.NewSimpleClientset(adoptedSecret)
+	audits := &auditCollector{}
+
+	r := newReconcilerForTest(t, nil, k8sClient, &fakeVault{}, audits, body)
+	r.pollOnce(ctx)
+
+	// Adopted secret must survive the orphan sweep.
+	got, err := k8sClient.CoreV1().Secrets(DefaultArgoCDNamespace).Get(ctx, "adopted-cluster", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("adopted-cluster must still exist after orphan sweep: %v", err)
+	}
+	// Data must be untouched.
+	if string(got.Data["config"]) != `{"bearerToken":"foreign-tok"}` {
+		t.Errorf("adopted-cluster Data was mutated: config=%q", string(got.Data["config"]))
+	}
+	// Adopted annotation must still be present.
+	if got.Annotations[annotationAdopted] != "true" {
+		t.Errorf("adopted annotation missing after sweep; annotations=%v", got.Annotations)
+	}
+
+	// Audit must surface the skip.
+	entries := audits.Snapshot()
+	if !hasEventForResource(entries, "cluster_secret_skip_adopted", "cluster:adopted-cluster") {
+		t.Fatalf("expected cluster_secret_skip_adopted audit for adopted-cluster; got %v", entries)
+	}
+	// No delete action should have been issued.
+	for _, a := range k8sClient.Actions() {
+		if a.GetVerb() == "delete" {
+			t.Errorf("unexpected delete action on adopted secret: %s", actionTarget(a))
+		}
+	}
+}
+
+// TestPollOnce_NonAdoptedOrphan_Deleted verifies that a non-adopted orphan
+// IS deleted (regression: registration-pending and adopted checks must not
+// block regular orphan cleanup — Story 28.1).
+func TestPollOnce_NonAdoptedOrphan_Deleted(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	// A sharko-labeled secret that is not in git and has no adopted annotation.
+	plainOrphan := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "plain-orphan",
+			Namespace: DefaultArgoCDNamespace,
+			Labels: map[string]string{
+				LabelManagedBy:                   LabelValueSharko,
+				"argocd.argoproj.io/secret-type": "cluster",
+			},
+			// No annotations.
+		},
+		Type: corev1.SecretTypeOpaque,
+	}
+
+	body := envelopedManagedClusters() // zero clusters
+	k8sClient := fake.NewSimpleClientset(plainOrphan)
+	audits := &auditCollector{}
+
+	r := newReconcilerForTest(t, nil, k8sClient, &fakeVault{}, audits, body)
+	r.pollOnce(ctx)
+
+	_, err := k8sClient.CoreV1().Secrets(DefaultArgoCDNamespace).Get(ctx, "plain-orphan", metav1.GetOptions{})
+	if err == nil {
+		t.Fatal("plain-orphan should have been deleted, but still exists")
+	}
+	entries := audits.Snapshot()
+	if !hasEventForResource(entries, "cluster_secret_delete", "cluster:plain-orphan") {
+		t.Fatalf("expected cluster_secret_delete audit for plain-orphan; got %v", entries)
+	}
+}
+
 // actionTarget extracts a human-readable target name from a fake-client
 // Action for test error messages. Different verbs expose the target
 // differently in k8stesting's API; the safe fallback is the verb's GVR

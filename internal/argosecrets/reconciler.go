@@ -209,11 +209,21 @@ func (r *Reconciler) ReconcileOnce(ctx context.Context) {
 	}
 
 	// 5. Pre-fetch the set of already-managed secrets ONCE (Fix 2: avoid N+1 List() calls).
-	existingManaged, listErr := r.manager.List(ctx)
-	existingSet := make(map[string]bool, len(existingManaged))
+	// Use ListSecrets (returns full objects) so the orphan sweep can inspect
+	// annotations without an extra Get per secret (Story 28.1).
+	existingSecrets, listErr := r.manager.ListSecrets(ctx)
+	existingManaged := make([]string, 0, len(existingSecrets))
+	existingSet := make(map[string]bool, len(existingSecrets))
+	// adoptedSecrets maps cluster name → true for O(1) lookup in the orphan loop.
+	adoptedSecrets := make(map[string]bool, len(existingSecrets))
 	if listErr == nil {
-		for _, n := range existingManaged {
-			existingSet[n] = true
+		for i := range existingSecrets {
+			s := &existingSecrets[i]
+			existingManaged = append(existingManaged, s.Name)
+			existingSet[s.Name] = true
+			if s.Annotations[AnnotationAdopted] == "true" {
+				adoptedSecrets[s.Name] = true
+			}
 		}
 	}
 
@@ -263,6 +273,21 @@ func (r *Reconciler) ReconcileOnce(ctx context.Context) {
 		r.mu.RUnlock()
 
 		for name := range currentOrphans {
+			// Adopted secrets are delete-proof from the automatic sweep.
+			// They can only be removed via an explicit Unadopt call (Story 28.1).
+			if adoptedSecrets[name] {
+				log.Warn("[argosecrets] orphan secret has adopted annotation — skipping auto-delete; remove via Unadopt",
+					"cluster", name,
+				)
+				r.mu.RLock()
+				auditFnNow := r.auditFn
+				r.mu.RUnlock()
+				if auditFnNow != nil {
+					auditFnNow(0, 0, 0) // signal that a reconcile ran but the adopted skip is notable
+				}
+				stats.Skipped++
+				continue
+			}
 			if prevOrphans[name] {
 				// Orphaned on two consecutive cycles — safe to delete.
 				if delErr := r.manager.Delete(ctx, name); delErr != nil {
