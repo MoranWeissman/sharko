@@ -211,6 +211,19 @@ func (o *Orchestrator) EnableAddon(ctx context.Context, req EnableAddonRequest) 
 		return nil, fmt.Errorf("addon name is required")
 	}
 
+	// Referential integrity (V2-cleanup-22, Part 2 / decision #3): the addon
+	// must exist in the catalog before we label a cluster for it. Labeling a
+	// cluster for an addon that has no ApplicationSet entry produces config
+	// ArgoCD can never render. We also reuse the parsed catalog below for
+	// value generation, and — critically — we no longer swallow a catalog
+	// READ failure (the old `catalog, _ = parseAddonsCatalog(...)` hid a
+	// broken catalog). A genuine read failure surfaces; an absent addon
+	// returns *AddonNotInCatalogError → 4xx at the API edge.
+	catalog, catalogErr := o.requireAddonsInCatalog(ctx, []string{req.Addon})
+	if catalogErr != nil {
+		return nil, catalogErr
+	}
+
 	result := &EnableAddonResult{
 		Cluster: req.Cluster,
 		Addon:   req.Addon,
@@ -264,12 +277,8 @@ func (o *Orchestrator) EnableAddon(ctx context.Context, req EnableAddonRequest) 
 	// Parse existing values and set the target addon to true.
 	addons := o.extractAddonsFromValuesForEnable(existingValues, req.Addon)
 
-	var catalog []models.AddonCatalogEntry
-	catalogData, catalogErr := o.git.GetFileContent(ctx, "configuration/addons-catalog.yaml", o.gitops.BaseBranch)
-	if catalogErr == nil && catalogData != nil {
-		catalog, _ = parseAddonsCatalog(catalogData)
-	}
-
+	// catalog was loaded by the referential-integrity check above (no second
+	// read, no swallowed error) and feeds the values generator.
 	updatedValues := generateClusterValues(req.Cluster, "", addons, catalog)
 
 	// Seed the per-cluster stanza for this addon from the template block

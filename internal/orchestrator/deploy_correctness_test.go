@@ -92,6 +92,11 @@ func TestRegisterCluster_AddonLabelIsEnabled_RecognizedDownstream(t *testing.T) 
 func normaliseLabelsForTest(raw interface{}) map[string]string {
 	out := map[string]string{}
 	switch v := raw.(type) {
+	case models.ClusterLabels:
+		// V2-cleanup-22: ManagedClusterEntry.Labels is now ClusterLabels.
+		for k, val := range v {
+			out[k] = val
+		}
 	case map[string]string:
 		for k, val := range v {
 			out[k] = val

@@ -299,6 +299,12 @@ func (s *Server) handleSetClusterAddonValues(w http.ResponseWriter, r *http.Requ
 	s.attachPRTracker(orch)
 	result, err := orch.SetClusterAddonValues(ctx, cluster, addonName, req.Values)
 	if err != nil {
+		// Referential-integrity rejection (V2-cleanup-22): the addon is not
+		// in the catalog. Caller error → 422 with the actionable message.
+		if orchestrator.IsAddonNotInCatalog(err) {
+			writeError(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}

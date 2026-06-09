@@ -40,7 +40,12 @@
               "region": {
                 "type": "string"
               },
-              "labels": true
+              "labels": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              }
             },
             "additionalProperties": false,
             "type": "object",

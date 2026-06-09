@@ -89,6 +89,19 @@ func (o *Orchestrator) SetClusterAddonValues(ctx context.Context, clusterName, a
 		return nil, fmt.Errorf("addon name is required")
 	}
 
+	// Referential integrity (V2-cleanup-22, Part 2 / decision #3): writing
+	// per-cluster values for an addon that is not in the catalog produces
+	// orphan config. We only enforce membership when SETTING values; an
+	// empty overridesYAML means "remove this addon's overrides", which must
+	// stay allowed as cleanup even after the addon left the catalog. A
+	// genuine catalog read failure surfaces (→ 502); an absent addon returns
+	// *AddonNotInCatalogError (→ 4xx).
+	if strings.TrimSpace(overridesYAML) != "" {
+		if _, err := o.requireAddonsInCatalog(ctx, []string{addonName}); err != nil {
+			return nil, err
+		}
+	}
+
 	dir := strings.TrimSuffix(o.paths.ClusterValues, "/")
 	if dir == "" {
 		dir = "configuration/addons-clusters-values"

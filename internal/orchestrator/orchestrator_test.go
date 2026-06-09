@@ -178,10 +178,50 @@ type mockGitProvider struct {
 }
 
 func newMockGitProvider() *mockGitProvider {
-	return &mockGitProvider{
+	m := &mockGitProvider{
 		files: make(map[string][]byte),
 	}
+	// V2-cleanup-22 (Part 2): RegisterCluster / EnableAddon / SetClusterAddonValues
+	// now reject an addon that is not in the catalog. Seed a default catalog
+	// containing every addon name the register/enable tests reference so the
+	// happy-path flows still pass. Tests that exercise the rejection path, or
+	// that need a specific catalog, overwrite git.files[catalogPath] directly.
+	m.files["configuration/addons-catalog.yaml"] = []byte(defaultTestCatalogYAML)
+	return m
 }
+
+// defaultTestCatalogYAML is the seed catalog covering the addons used across
+// the orchestrator register/enable test suite (V2-cleanup-22).
+const defaultTestCatalogYAML = `applicationsets:
+  - name: cert-manager
+    chart: cert-manager
+    repoURL: https://charts.jetstack.io
+    version: 1.0.0
+  - name: metrics-server
+    chart: metrics-server
+    repoURL: https://example.com
+    version: 1.0.0
+  - name: datadog
+    chart: datadog
+    repoURL: https://example.com
+    version: 1.0.0
+  - name: keda
+    chart: keda
+    repoURL: https://example.com
+    version: 1.0.0
+  - name: logging
+    chart: logging
+    repoURL: https://example.com
+    version: 1.0.0
+  - name: monitoring
+    chart: kube-prometheus-stack
+    repoURL: https://example.com
+    version: 1.0.0
+  - name: secrets-store
+    chart: secrets-store
+    repoURL: https://example.com
+    version: 1.0.0
+`
 
 func (m *mockGitProvider) GetFileContent(_ context.Context, path, _ string) ([]byte, error) {
 	m.mu.Lock()

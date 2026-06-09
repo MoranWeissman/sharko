@@ -107,6 +107,13 @@ func (s *Server) handleEnableAddon(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, orchErr.Error())
 			return
 		}
+		// Referential-integrity rejection (V2-cleanup-22): the addon is not
+		// in the catalog. This is a caller error, not an upstream failure —
+		// map it to 422 with the orchestrator's actionable message.
+		if orchestrator.IsAddonNotInCatalog(orchErr) {
+			writeError(w, http.StatusUnprocessableEntity, orchErr.Error())
+			return
+		}
 		writeError(w, http.StatusBadGateway, orchErr.Error())
 		return
 	}
