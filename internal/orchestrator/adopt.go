@@ -89,8 +89,8 @@ func (o *Orchestrator) AdoptClusters(ctx context.Context, req AdoptClustersReque
 				cr.Verification = &verifyResult
 				if !verifyResult.Success {
 					cr.Status = "failed"
-					cr.Error = fmt.Sprintf("connectivity verification failed: [%s] %s",
-						verifyResult.ErrorCode, verifyResult.ErrorMessage)
+					cr.Error = fmt.Sprintf("connectivity verification failed: %s",
+						verify.FriendlyMessage(verifyResult))
 					result.Results = append(result.Results, cr)
 					continue
 				}
