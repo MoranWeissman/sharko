@@ -45,12 +45,44 @@ func (o *Orchestrator) detectConflicts(ctx context.Context, files map[string][]b
 	}
 }
 
+// prMeta is the single anti-drift constructor for PRMetadata. It REQUIRES
+// the auto-merge choice as its first parameter so a new PR-opening call
+// site physically cannot forget to thread it — the historical drift that
+// produced "sometimes auto-merged, sometimes not" (V2-cleanup-23). Pass
+// nil for autoMerge to mean "fall back to the connection default"; pass a
+// non-nil *bool to honor an explicit per-request choice.
+//
+// opCode and title are always set; cluster and addon are passed as ""
+// when the operation has no associated cluster/addon. User and Source are
+// intentionally NOT parameters — they are derived/defaulted inside
+// commitChangesWithMeta ("system"/"api") and no current call site sets
+// them, so keeping them out of the signature keeps every call site a
+// readable one-liner.
+//
+// EVERY PRMetadata value in this package is built here. Constructing a
+// bare PRMetadata{} literal at a new call site is the exact mistake this
+// constructor exists to prevent — route through prMeta instead.
+func (o *Orchestrator) prMeta(autoMerge *bool, opCode, title, cluster, addon string) PRMetadata {
+	return PRMetadata{
+		OperationCode:     opCode,
+		Cluster:           cluster,
+		Addon:             addon,
+		Title:             title,
+		AutoMergeOverride: autoMerge,
+	}
+}
+
 // commitChanges creates a PR for the given file changes WITHOUT tracking it
 // in the prtracker. Use commitChangesWithMeta when the call site has the
 // canonical operation code, cluster, and addon (the default). Kept as a
 // thin wrapper for paths that genuinely cannot supply metadata.
+//
+// The empty operation code means the PR is not tracked; the nil auto-merge
+// choice means it follows the connection default. Both are deliberate for
+// this metadata-less escape hatch — every metadata-bearing path uses
+// prMeta + commitChangesWithMeta instead.
 func (o *Orchestrator) commitChanges(ctx context.Context, files map[string][]byte, deletePaths []string, operation string) (*GitResult, error) {
-	return o.commitChangesWithMeta(ctx, files, deletePaths, operation, PRMetadata{})
+	return o.commitChangesWithMeta(ctx, files, deletePaths, operation, o.prMeta(nil, "", "", "", ""))
 }
 
 // commitChangesWithMeta creates a PR for the given file changes and (when

@@ -101,11 +101,8 @@ func (o *Orchestrator) UnadoptCluster(ctx context.Context, name string, req Unad
 
 	deletePaths = append(deletePaths, valuesPath)
 
-	gitResult, gitErr := o.commitChangesWithMeta(ctx, files, deletePaths, fmt.Sprintf("unadopt cluster %s", name), PRMetadata{
-		OperationCode: "unadopt-cluster",
-		Cluster:       name,
-		Title:         fmt.Sprintf("Unadopt cluster %s", name),
-	})
+	gitResult, gitErr := o.commitChangesWithMeta(ctx, files, deletePaths, fmt.Sprintf("unadopt cluster %s", name),
+		o.prMeta(req.AutoMerge, "unadopt-cluster", fmt.Sprintf("Unadopt cluster %s", name), name, ""))
 	if gitErr != nil {
 		if gitResult != nil {
 			result.Status = "partial"

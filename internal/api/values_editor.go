@@ -62,6 +62,10 @@ type setAddonValuesRequest struct {
 	// (overriding the default `values_set`) so audit consumers can
 	// distinguish manual edits from upstream refreshes.
 	RefreshFromUpstream bool `json:"refresh_from_upstream,omitempty"`
+
+	// AutoMerge overrides the connection-level PRAutoMerge default for this
+	// values-edit PR only. nil = fall back to the connection default.
+	AutoMerge *bool `json:"auto_merge,omitempty"`
 }
 
 // setClusterAddonValuesRequest is the body of
@@ -70,6 +74,10 @@ type setAddonValuesRequest struct {
 // whole file). Pass an empty string to remove the addon's overrides.
 type setClusterAddonValuesRequest struct {
 	Values string `json:"values"`
+
+	// AutoMerge overrides the connection-level PRAutoMerge default for this
+	// values-edit PR only. nil = fall back to the connection default.
+	AutoMerge *bool `json:"auto_merge,omitempty"`
 }
 
 // handleSetAddonValues godoc
@@ -224,7 +232,7 @@ func (s *Server) handleSetAddonValues(w http.ResponseWriter, r *http.Request) {
 	// Route through the WithOp variant so the dashboard PR panel filter
 	// chip reflects the requested operation (manual edit vs. upstream
 	// refresh) rather than the generic values-edit default.
-	result, err := orch.SetGlobalAddonValuesWithOp(ctx, name, yamlPayload, prOperation, prTitle)
+	result, err := orch.SetGlobalAddonValuesWithOp(ctx, name, yamlPayload, prOperation, prTitle, req.AutoMerge)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
@@ -297,7 +305,7 @@ func (s *Server) handleSetClusterAddonValues(w http.ResponseWriter, r *http.Requ
 
 	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
 	s.attachPRTracker(orch)
-	result, err := orch.SetClusterAddonValues(ctx, cluster, addonName, req.Values)
+	result, err := orch.SetClusterAddonValues(ctx, cluster, addonName, req.Values, req.AutoMerge)
 	if err != nil {
 		// Referential-integrity rejection (V2-cleanup-22): the addon is not
 		// in the catalog. Caller error → 422 with the actionable message.

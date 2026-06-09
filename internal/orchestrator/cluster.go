@@ -396,12 +396,8 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		files[clusterAddonsPath] = updatedClusterAddons
 	}
 
-	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("register cluster %s", req.Name), PRMetadata{
-		OperationCode:     "register-cluster",
-		Cluster:           req.Name,
-		Title:             fmt.Sprintf("Register cluster %s", req.Name),
-		AutoMergeOverride: req.AutoMerge, // per-request override
-	})
+	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("register cluster %s", req.Name),
+		o.prMeta(req.AutoMerge, "register-cluster", fmt.Sprintf("Register cluster %s", req.Name), req.Name, ""))
 	if err != nil {
 		if gitResult != nil {
 			// PR created but merge failed — partial success with PR info.
@@ -535,11 +531,8 @@ func (o *Orchestrator) DeregisterCluster(ctx context.Context, name string, serve
 
 	// Step 5: Delete values file from Git.
 	valuesPath := path.Join(o.paths.ClusterValues, name+".yaml")
-	gitResult, err := o.commitChangesWithMeta(ctx, nil, []string{valuesPath}, fmt.Sprintf("deregister cluster %s", name), PRMetadata{
-		OperationCode: "remove-cluster",
-		Cluster:       name,
-		Title:         fmt.Sprintf("Deregister cluster %s", name),
-	})
+	gitResult, err := o.commitChangesWithMeta(ctx, nil, []string{valuesPath}, fmt.Sprintf("deregister cluster %s", name),
+		o.prMeta(nil, "remove-cluster", fmt.Sprintf("Deregister cluster %s", name), name, ""))
 	if err != nil {
 		if gitResult != nil {
 			// PR created but merge failed — partial success with PR info.
@@ -632,12 +625,8 @@ func (o *Orchestrator) UpdateClusterAddons(ctx context.Context, name string, ser
 		valuesPath: valuesContent,
 	}
 
-	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("update addons for cluster %s", name), PRMetadata{
-		OperationCode:     "update-cluster",
-		Cluster:           name,
-		Title:             fmt.Sprintf("Update addons for cluster %s", name),
-		AutoMergeOverride: autoMergeOverride, // per-request override
-	})
+	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("update addons for cluster %s", name),
+		o.prMeta(autoMergeOverride, "update-cluster", fmt.Sprintf("Update addons for cluster %s", name), name, ""))
 	if err != nil {
 		if gitResult != nil {
 			// PR created but merge failed — partial success with PR info.

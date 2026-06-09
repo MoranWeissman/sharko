@@ -300,9 +300,22 @@ func (s *Server) handleRemoveAddon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Optional per-request auto-merge override. The DELETE body is
+	// optional — when absent or unparseable, autoMerge stays nil and the
+	// removal PR follows the connection-level default.
+	var autoMerge *bool
+	if r.Body != nil && r.ContentLength > 0 {
+		var body struct {
+			AutoMerge *bool `json:"auto_merge,omitempty"`
+		}
+		if decErr := json.NewDecoder(r.Body).Decode(&body); decErr == nil {
+			autoMerge = body.AutoMerge
+		}
+	}
+
 	orch := orchestrator.New(&s.gitMu, nil, ac, git, s.gitopsCfg, s.repoPaths, nil)
 	s.attachPRTracker(orch)
-	result, err := orch.RemoveAddon(ctx, name)
+	result, err := orch.RemoveAddon(ctx, name, autoMerge)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return

@@ -839,7 +839,7 @@ func TestRemoveAddon(t *testing.T) {
 
 	orch := New(nil, defaultCreds(), newMockArgocd(), git, defaultGitOps(), defaultPaths(), nil)
 
-	result, err := orch.RemoveAddon(context.Background(), "prometheus")
+	result, err := orch.RemoveAddon(context.Background(), "prometheus", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -204,12 +204,8 @@ func (o *Orchestrator) adoptSingleCluster(ctx context.Context, name, serverURL s
 	// mutating o.gitops.PRAutoMerge (which would race against concurrent
 	// ops on the shared connection-level config). nil here means "fall
 	// back to the connection default".
-	gitResult, gitErr := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("adopt cluster %s", name), PRMetadata{
-		OperationCode:     "adopt-cluster",
-		Cluster:           name,
-		Title:             fmt.Sprintf("Adopt cluster %s", name),
-		AutoMergeOverride: autoMergeOverride,
-	})
+	gitResult, gitErr := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("adopt cluster %s", name),
+		o.prMeta(autoMergeOverride, "adopt-cluster", fmt.Sprintf("Adopt cluster %s", name), name, ""))
 
 	if gitErr != nil {
 		if gitResult != nil {
