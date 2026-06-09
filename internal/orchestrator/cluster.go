@@ -164,8 +164,8 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 			result.Cluster.ServerVersion = verifyResult.ServerVersion
 		}
 		if !verifyResult.Success {
-			return nil, fmt.Errorf("cluster %q connectivity verification failed: [%s] %s",
-				req.Name, verifyResult.ErrorCode, verifyResult.ErrorMessage)
+			return nil, fmt.Errorf("cluster %q connectivity verification failed: %s",
+				req.Name, verify.FriendlyMessage(verifyResult))
 		}
 		steps = append(steps, "verify_stage1")
 		log.Info("Stage 1 verification passed", "cluster", req.Name, "version", verifyResult.ServerVersion)
