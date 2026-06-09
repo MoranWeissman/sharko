@@ -1,14 +1,13 @@
 import { useContext } from 'react'
-import {
-  AlertCircle,
-  CheckCircle2,
-  ExternalLink,
-  GitPullRequest,
-  Loader2,
-} from 'lucide-react'
+import { AlertCircle } from 'lucide-react'
 import type { DryRunResult } from '@/services/models'
 import type { AddAddonResponse } from '@/services/api'
 import { AuthContext } from '@/hooks/useAuth'
+import {
+  PRProgressBanner,
+  PRResultBanner,
+  type PRPhase,
+} from '@/components/PRFeedback'
 
 /**
  * AddAddonFlow — shared, presentational building blocks for the
@@ -28,6 +27,13 @@ import { AuthContext } from '@/hooks/useAuth'
  *   - <SubmitPhaseBanner> — coarse branch→commit→PR→merge progress
  *   - <SubmitResultBanner> — terminal success block with a clickable PR link
  *
+ * The two PR-feedback banners (SubmitPhaseBanner + SubmitResultBanner) are now
+ * thin add-addon-specific wrappers around the flow-agnostic PRProgressBanner /
+ * PRResultBanner in PRFeedback.tsx (promoted in V2-cleanup-24). Behavior and
+ * copy for the two add-addon callers are unchanged — the wrappers exist so the
+ * Marketplace + Catalog screens keep their exact imports while every OTHER
+ * write flow shares the same components.
+ *
  * Backend contract (unchanged, from #397): addAddon accepts auto_merge +
  * dry_run; the response carries dry_run (DryRunResult), pr_url/pr_id, and
  * merged. SubmitResultBanner branches strictly on `merged` so an open PR is
@@ -35,7 +41,7 @@ import { AuthContext } from '@/hooks/useAuth'
  */
 
 /** The coarse submit phase shared by both add-addon callers. */
-export type SubmitPhase = 'idle' | 'submitting' | 'merged' | 'opened'
+export type SubmitPhase = PRPhase
 
 /**
  * useAutoMergeGate — the single source of truth for the admin-gated
@@ -172,34 +178,12 @@ export interface SubmitPhaseBannerProps {
  * spinner while submitting and the merged/opened outcome afterwards.
  */
 export function SubmitPhaseBanner({ phase }: SubmitPhaseBannerProps) {
-  if (phase === 'idle') return null
   return (
-    <div
-      role="status"
-      className="flex items-center gap-2 rounded-md border border-[#c0ddf0] bg-[#f0f7ff] p-3 text-sm text-[#0a3a5a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
-    >
-      {phase === 'submitting' ? (
-        <>
-          <Loader2
-            className="h-4 w-4 animate-spin text-teal-600 dark:text-teal-400"
-            aria-hidden="true"
-          />
-          <span>Creating branch, committing, opening PR…</span>
-        </>
-      ) : (
-        <>
-          <CheckCircle2
-            className="h-4 w-4 text-green-600 dark:text-green-400"
-            aria-hidden="true"
-          />
-          <span>
-            {phase === 'merged'
-              ? 'PR merged — addon added to your catalog'
-              : 'PR opened — merge it to apply'}
-          </span>
-        </>
-      )}
-    </div>
+    <PRProgressBanner
+      phase={phase}
+      mergedMessage="PR merged — addon added to your catalog"
+      openedMessage="PR opened — merge it to apply"
+    />
   )
 }
 
@@ -215,34 +199,12 @@ export interface SubmitResultBannerProps {
  * link — the caller surfaces a defensive fallback in that case.
  */
 export function SubmitResultBanner({ result }: SubmitResultBannerProps) {
-  const prURL = result.pr_url || result.result?.pr_url
-  const prID = result.pr_id ?? result.result?.pr_id
-  const merged = result.merged ?? result.result?.merged ?? false
-  if (!prURL) return null
   return (
-    <div
-      role="status"
-      className="flex items-start gap-2 rounded-md border border-green-300 bg-green-50 p-3 text-sm text-green-900 dark:border-green-700 dark:bg-green-950/40 dark:text-green-200"
-    >
-      <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-      <div className="flex-1">
-        <p className="font-medium">
-          {merged
-            ? 'PR merged — addon added to your catalog'
-            : 'PR opened — merge it to apply'}
-        </p>
-        <a
-          href={prURL}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="mt-1 inline-flex items-center gap-1 text-xs font-medium underline hover:no-underline"
-        >
-          <GitPullRequest className="h-3 w-3" aria-hidden="true" />
-          {prID ? `View PR #${prID} on GitHub` : 'View PR on GitHub'}
-          <ExternalLink className="h-3 w-3" aria-hidden="true" />
-        </a>
-      </div>
-    </div>
+    <PRResultBanner
+      result={result}
+      mergedMessage="PR merged — addon added to your catalog"
+      openMessage="PR opened — merge it to apply"
+    />
   )
 }
 

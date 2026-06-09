@@ -24,7 +24,8 @@ import {
   RefreshCw,
   Trash2,
 } from 'lucide-react';
-import { api, registerCluster, discoverEKSClusters, testClusterConnection, unadoptCluster, deleteOrphanCluster, isTestClusterUnavailable } from '@/services/api';
+import { api, registerCluster, discoverEKSClusters, testClusterConnection, unadoptCluster, deleteOrphanCluster, isTestClusterUnavailable, type PRWriteResult } from '@/services/api';
+import { PRResultBanner, extractPR } from '@/components/PRFeedback';
 import type { TestClusterUnavailable } from '@/services/api';
 import type {
   Cluster,
@@ -148,7 +149,9 @@ export function ClustersOverview() {
   // Un-adopt state
   const [unadoptTarget, setUnadoptTarget] = useState<string | null>(null);
   const [unadoptLoading, setUnadoptLoading] = useState(false);
-  const [unadoptResult, setUnadoptResult] = useState<{ success?: string; error?: string } | null>(null);
+  // Un-adopt result: a PR-bearing result (clickable PRResultBanner), a plain
+  // success message (no PR), or an error (V2-cleanup-24).
+  const [unadoptResult, setUnadoptResult] = useState<{ pr?: PRWriteResult; success?: string; error?: string } | null>(null);
 
   // ArgoCD unreachable detection
   const [argoCDUnreachable, setArgoCDUnreachable] = useState(false);
@@ -603,7 +606,8 @@ export function ClustersOverview() {
     setUnadoptResult(null);
     try {
       const result = await unadoptCluster(unadoptTarget);
-      setUnadoptResult({ success: result.pr_url || 'Cluster un-adopted successfully.' });
+      const { prUrl } = extractPR(result);
+      setUnadoptResult(prUrl ? { pr: result } : { success: 'Cluster un-adopted successfully.' });
       setUnadoptTarget(null);
       void fetchData();
     } catch (err) {
@@ -2074,21 +2078,33 @@ export function ClustersOverview() {
         loading={orphanDeleteLoading}
       />
 
-      {/* Un-adopt result banner */}
-      {unadoptResult && (
+      {/* Un-adopt result banner. Defect 2.2/2.4: when a PR is opened we render
+          the shared PRResultBanner with a clickable "View PR #N" link and a
+          merged-vs-open outcome instead of pasting the raw URL. */}
+      {unadoptResult?.pr && (
+        <div className="relative">
+          <PRResultBanner
+            result={unadoptResult.pr}
+            mergedMessage="PR merged — cluster un-adopted"
+            openMessage="PR opened — cluster is un-adopted once it merges"
+          />
+          <button
+            type="button"
+            onClick={() => setUnadoptResult(null)}
+            className="absolute right-2 top-2 rounded p-0.5 hover:bg-green-100 dark:hover:bg-green-800"
+            aria-label="Dismiss"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+      {unadoptResult && !unadoptResult.pr && (
         <div className={`flex items-center justify-between rounded-md px-4 py-2 text-sm ${
           unadoptResult.error
             ? 'border border-red-300 bg-red-50 text-red-800 dark:border-red-700 dark:bg-red-900/30 dark:text-red-300'
             : 'border border-green-300 bg-green-50 text-green-800 dark:border-green-700 dark:bg-green-900/30 dark:text-green-300'
         }`}>
-          <span>
-            {unadoptResult.error
-              ? unadoptResult.error
-              : unadoptResult.success?.startsWith('http')
-                ? <>Cluster un-adopted. PR: <a href={unadoptResult.success} target="_blank" rel="noopener noreferrer" className="underline font-medium">{unadoptResult.success}</a></>
-                : unadoptResult.success
-            }
-          </span>
+          <span>{unadoptResult.error ? unadoptResult.error : unadoptResult.success}</span>
           <button
             type="button"
             onClick={() => setUnadoptResult(null)}

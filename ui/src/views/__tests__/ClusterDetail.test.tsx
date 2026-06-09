@@ -805,9 +805,12 @@ describe('ClusterDetail', () => {
         expect(mockDeregisterCluster).toHaveBeenCalledWith('prod-eu', false);
       });
       await waitFor(() => {
+        // V2-cleanup-24: the PR id/url is now passed as a clickable link
+        // object on the toast instead of being baked into the message string.
         expect(mockShowToast).toHaveBeenCalledWith(
-          expect.stringMatching(/PR #12 opened for review/i),
+          expect.stringMatching(/PR opened for review/i),
           'success',
+          { url: 'https://github.com/example/repo/pull/12', id: 12 },
         );
       });
       // Manual path must NOT navigate away — the cluster is still listed.

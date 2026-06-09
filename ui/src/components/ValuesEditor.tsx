@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import { AttributionNudge } from '@/components/AttributionNudge'
 import { showToast } from '@/components/ToastNotification'
+import { PRResultBanner } from '@/components/PRFeedback'
 import type { PreviewMergeResponse, ValuesEditResult } from '@/services/models'
 
 /**
@@ -212,12 +213,12 @@ export function ValuesEditor({
         // Auto-merge may already have fired server-side; don't claim
         // "opened for review" when the PR is already merged. Otherwise
         // stay neutral — the maintainer may have GitHub auto-merge on.
-        const label = prID ? `PR #${prID}` : 'PR'
-        if (merged) {
-          showToast(`${label} merged →`, 'success')
-        } else {
-          showToast(`${label} opened →`, 'success')
-        }
+        // Defect 2.2: attach a clickable PR link to the toast.
+        showToast(
+          merged ? 'Values saved — PR merged' : 'Values saved — PR opened for review',
+          'success',
+          { url: prURL, id: prID },
+        )
       } else {
         showToast('Values saved', 'success')
       }
@@ -253,8 +254,13 @@ export function ValuesEditor({
       const prID = res.pr_id ?? res.result?.pr_id
       const merged = res.merged ?? res.result?.merged ?? false
       if (prURL) {
-        const label = prID ? `PR #${prID}` : 'PR'
-        showToast(merged ? `${label} merged →` : `${label} opened →`, 'success')
+        showToast(
+          merged
+            ? 'Upstream values applied — PR merged'
+            : 'Upstream values applied — PR opened for review',
+          'success',
+          { url: prURL, id: prID },
+        )
       } else {
         showToast('Upstream values applied', 'success')
       }
@@ -545,25 +551,15 @@ export function ValuesEditor({
 
       {/* PR banner — neutral language; auto-merge may have already fired so
           we don't claim "opened for review". "merged" is shown when the
-          response confirms it; otherwise just "opened". */}
+          response confirms it; otherwise just "opened". Shared PRResultBanner
+          renders the clickable "View PR #N" link (V2-cleanup-24). */}
       {responsePR && (
-        <div className="mt-4 flex items-start gap-2 rounded-md border border-green-300 bg-green-50 p-3 text-sm text-green-900 dark:border-green-700 dark:bg-green-950/40 dark:text-green-200">
-          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
-          <div className="flex-1">
-            <p className="font-medium">
-              {(lastResult?.merged ?? lastResult?.result?.merged) ? 'PR merged' : 'PR opened'}
-            </p>
-            <a
-              href={responsePR}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-1 inline-flex items-center gap-1 text-xs font-medium underline hover:no-underline"
-            >
-              <GitPullRequest className="h-3 w-3" />
-              {responsePR}
-              <ExternalLink className="h-3 w-3" />
-            </a>
-          </div>
+        <div className="mt-4">
+          <PRResultBanner
+            result={lastResult}
+            mergedMessage="PR merged — values applied"
+            openMessage="PR opened — values apply once it merges"
+          />
         </div>
       )}
 

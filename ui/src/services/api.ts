@@ -30,6 +30,50 @@ import type {
 const BASE_URL = '/api/v1'
 const TOKEN_KEY = 'sharko-auth-token'
 
+/**
+ * PRWriteResult — the PR fields every write endpoint returns when it opens
+ * (or auto-merges) a pull request. Some handlers wrap the orchestrator result
+ * under `result` when an attribution warning fired, and a few still emit the
+ * legacy `pull_request_url` alias. Typing the write calls with this (instead
+ * of `Promise<any>`) means a missing pr_url/pr_id/merged surfaces at compile
+ * time and the UI can branch on `merged` consistently (V2-cleanup-24).
+ */
+export interface PRWriteResult {
+  pr_url?: string
+  pr_id?: number
+  branch?: string
+  merged?: boolean
+  /** Legacy alias for pr_url emitted by older handlers. */
+  pull_request_url?: string
+  status?: string
+  message?: string
+  attribution_warning?: 'no_per_user_pat'
+  result?: {
+    pr_url?: string
+    pr_id?: number
+    branch?: string
+    merged?: boolean
+  }
+}
+
+/**
+ * RemoveClusterResult — deregisterCluster wraps its PR fields under `git`
+ * (RemoveClusterResult on the backend), so the UI can tell "cluster gone"
+ * (PR merged) apart from "PR opened for review" (cluster stays listed).
+ */
+export interface RemoveClusterResult {
+  status?: string
+  git?: PRWriteResult
+}
+
+/**
+ * DeployAddonResult — toggling/deploying an addon on a cluster returns PR
+ * fields either under `git` or at the top level depending on the path.
+ */
+export interface DeployAddonResult extends PRWriteResult {
+  git?: PRWriteResult
+}
+
 function authHeaders(): Record<string, string> {
   const token = sessionStorage.getItem(TOKEN_KEY)
   return token ? { Authorization: `Bearer ${token}` } : {}
@@ -305,7 +349,7 @@ export function createAuditStream(): EventSource {
 // confirmation-required operations with HTTP 400 "confirmation required:
 // set yes: true in request body" when the body doesn't include
 // `{"yes": true}`. Include the confirmation flag in the DELETE body.
-export async function deregisterCluster(name: string, autoMerge?: boolean) {
+export async function deregisterCluster(name: string, autoMerge?: boolean): Promise<RemoveClusterResult> {
   // auto_merge mirrors init/register: when set it overrides the connection's
   // PRAutoMerge default for this removal PR only; when omitted the backend
   // falls back to the connection default. Omitting the key (rather than
@@ -326,7 +370,7 @@ export async function deregisterCluster(name: string, autoMerge?: boolean) {
     const err = await res.json().catch(() => ({ error: res.statusText }))
     throw new Error(err.error || res.statusText)
   }
-  return res.json()
+  return res.json() as Promise<RemoveClusterResult>
 }
 
 export async function adoptClusters(data: { clusters: string[]; auto_merge?: boolean; dry_run?: boolean }) {
@@ -340,8 +384,8 @@ export async function adoptClusters(data: { clusters: string[]; auto_merge?: boo
 
 // The unadopt handler is `POST /clusters/{name}/unadopt` and requires
 // `yes: true` in the body.
-export async function unadoptCluster(name: string) {
-  return postJSON<{ status: string; pr_url?: string }>(
+export async function unadoptCluster(name: string): Promise<PRWriteResult> {
+  return postJSON<PRWriteResult>(
     `/clusters/${encodeURIComponent(name)}/unadopt`,
     { yes: true },
   )
@@ -369,12 +413,12 @@ export async function deleteOrphanCluster(name: string): Promise<void> {
   // 204 No Content — nothing to parse.
 }
 
-export async function updateClusterAddons(name: string, addons: Record<string, boolean>) {
-  return patchJSON<any>(`/clusters/${encodeURIComponent(name)}`, { addons })
+export async function updateClusterAddons(name: string, addons: Record<string, boolean>): Promise<DeployAddonResult> {
+  return patchJSON<DeployAddonResult>(`/clusters/${encodeURIComponent(name)}`, { addons })
 }
 
-export async function updateClusterSettings(name: string, settings: { secret_path?: string }) {
-  return patchJSON<any>(`/clusters/${encodeURIComponent(name)}`, settings)
+export async function updateClusterSettings(name: string, settings: { secret_path?: string }): Promise<PRWriteResult> {
+  return patchJSON<PRWriteResult>(`/clusters/${encodeURIComponent(name)}`, settings)
 }
 
 export interface AddAddonResponse {
@@ -481,12 +525,12 @@ export async function addAddon(data: {
   return (await res.json()) as AddAddonResponse
 }
 
-export async function removeAddon(name: string) {
-  return deleteJSON<any>(`/addons/${encodeURIComponent(name)}?confirm=true`)
+export async function removeAddon(name: string): Promise<PRWriteResult> {
+  return deleteJSON<PRWriteResult>(`/addons/${encodeURIComponent(name)}?confirm=true`)
 }
 
-export async function upgradeAddon(name: string, data: { version: string; cluster?: string }) {
-  return postJSON<any>(`/addons/${encodeURIComponent(name)}/upgrade`, data)
+export async function upgradeAddon(name: string, data: { version: string; cluster?: string }): Promise<PRWriteResult> {
+  return postJSON<PRWriteResult>(`/addons/${encodeURIComponent(name)}/upgrade`, data)
 }
 
 export async function configureAddon(
@@ -503,14 +547,7 @@ export async function configureAddon(
 ) {
   // The backend handler is registered at PATCH /api/v1/addons/{name}
   // (see internal/api/router.go).
-  return patchJSON<{
-    status?: string
-    pr_url?: string
-    pr_id?: number
-    pull_request_url?: string
-    attribution_warning?: 'no_per_user_pat'
-    result?: { pr_url?: string; pr_id?: number }
-  }>(
+  return patchJSON<PRWriteResult>(
     `/addons/${encodeURIComponent(name)}`,
     { name, ...config },
   )
@@ -988,8 +1025,8 @@ export const api = {
   getRepoStatus: () => fetchJSON<{ initialized: boolean; bootstrap_synced: boolean; reason?: string }>('/repo/status'),
 
   // Cluster addons
-  enableAddonOnCluster: (clusterName: string, addonName: string) =>
-    postJSON<any>(`/clusters/${encodeURIComponent(clusterName)}/addons/${encodeURIComponent(addonName)}`, { yes: true }),
+  enableAddonOnCluster: (clusterName: string, addonName: string): Promise<DeployAddonResult> =>
+    postJSON<DeployAddonResult>(`/clusters/${encodeURIComponent(clusterName)}/addons/${encodeURIComponent(addonName)}`, { yes: true }),
 
   // Notifications
   getNotifications: () => fetchJSON<{
