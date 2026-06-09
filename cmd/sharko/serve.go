@@ -620,6 +620,14 @@ var serveCmd = &cobra.Command{
 		//   - The *reconciler* (argosecrets.NewReconciler) reads credentials from
 		//     credProvider (a secrets backend) on a timer. It stays gated on
 		//     credProvider != nil because without a backend it has nothing to read.
+		//
+		// Dual-writer coexistence (V2-cleanup-28): in a standard in-cluster install
+		// BOTH this (legacy) reconciler AND the clusterreconciler below run
+		// concurrently. After V2-cleanup-28 their adoption-safety semantics are
+		// aligned — orphan sweeps in both reconcilers skip secrets that carry the
+		// sharko.sharko.io/adopted annotation, and Manager.Ensure preserves the
+		// connection Data of adopted secrets. Single-writer consolidation is a
+		// tracked follow-up.
 		if inClusterCfg, inClusterErr := rest.InClusterConfig(); inClusterErr != nil {
 			slog.Warn("not running in-cluster, skipping argocd cluster-secret manager and reconciler", "error", inClusterErr)
 		} else if k8sClient, k8sErr := kubernetes.NewForConfig(inClusterCfg); k8sErr != nil {
@@ -766,6 +774,13 @@ var serveCmd = &cobra.Command{
 			// vault credential resolution at create time. When any
 			// precondition is missing we log + skip — the legacy
 			// argosecrets reconciler still runs above and covers the gap.
+			//
+			// Dual-writer coexistence (V2-cleanup-28): when all preconditions
+			// are met BOTH this reconciler AND the legacy argosecrets.Reconciler
+			// above run concurrently in the same process. After V2-cleanup-28
+			// their adoption-safety semantics are aligned — adopted-exempt orphan
+			// sweeps, no foreign-data rewrite. Single-writer consolidation
+			// (retiring the legacy reconciler) is a tracked follow-up.
 			var clusterRecon *clusterreconciler.Reconciler
 			if prCMStore != nil && inClusterK8sClient != nil && credProvider != nil {
 				clusterReconNamespace := getEnvDefault("SHARKO_ARGOCD_NAMESPACE", "argocd")

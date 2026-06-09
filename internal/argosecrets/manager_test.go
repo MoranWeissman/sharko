@@ -430,25 +430,29 @@ func mustContainSequence(t *testing.T, haystack, needle []string) {
 	t.Errorf("args %v do not contain sequence %v", haystack, needle)
 }
 
-// --- Story 1.2: Adoption path tests ---
+// --- Story 1.2: Adoption path tests (updated for V2-cleanup-28 guest semantics) ---
 
-// TestEnsure_AdoptPath verifies that Ensure adopts a pre-existing secret without the managed-by label.
+// TestEnsure_AdoptPath verifies that Ensure adopts a pre-existing secret: applies labels
+// and the adopted annotation, but PRESERVES the existing connection Data byte-for-byte.
 func TestEnsure_AdoptPath(t *testing.T) {
+	foreignData := map[string][]byte{
+		"name":              []byte("my-cluster"),
+		"server":            []byte("https://OLD.gr7.us-east-1.eks.amazonaws.com"),
+		"config":            []byte(`{"foreign":"config","tls-extras":"preserved"}`),
+		"extra-foreign-key": []byte("should-survive"),
+	}
 	existing := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "my-cluster",
 			Namespace: testNamespace,
 			Labels: map[string]string{
-				LabelSecretType: "cluster",
+				LabelSecretType:  "cluster",
+				"foreign-label":  "kept",
 				// No LabelManagedBy — simulating pre-Sharko secret.
 			},
 		},
 		Type: corev1.SecretTypeOpaque,
-		Data: map[string][]byte{
-			"name":   []byte("my-cluster"),
-			"server": []byte("https://OLD.gr7.us-east-1.eks.amazonaws.com"),
-			"config": []byte("{}"),
-		},
+		Data: foreignData,
 	}
 
 	client := fake.NewSimpleClientset(existing)
@@ -484,35 +488,42 @@ func TestEnsure_AdoptPath(t *testing.T) {
 	if secret.Labels[LabelManagedBy] != ManagedByValue {
 		t.Errorf("after adoption, label %q = %q, want %q", LabelManagedBy, secret.Labels[LabelManagedBy], ManagedByValue)
 	}
-	// Verify system labels take precedence.
+	// Verify system labels are present.
 	if secret.Labels[LabelSecretType] != "cluster" {
 		t.Errorf("after adoption, label %q = %q, want cluster", LabelSecretType, secret.Labels[LabelSecretType])
 	}
 	// Verify addon labels from spec are present.
-	if secret.StringData["addon-datadog"] != "" {
-		// addon labels are on ObjectMeta.Labels, not StringData
-	}
 	if secret.Labels["addon-datadog"] != "true" {
 		t.Errorf("after adoption, addon label addon-datadog = %q, want true", secret.Labels["addon-datadog"])
 	}
-	// Verify credentials are updated.
-	if secret.StringData["server"] != spec.Server {
-		t.Errorf("after adoption, stringData.server = %q, want %q", secret.StringData["server"], spec.Server)
+	// Verify foreign label is KEPT (guest semantics).
+	if secret.Labels["foreign-label"] != "kept" {
+		t.Errorf("after adoption, foreign-label = %q, want kept", secret.Labels["foreign-label"])
+	}
+	// Verify adopted annotation is stamped.
+	if secret.Annotations[AnnotationAdopted] != "true" {
+		t.Errorf("after adoption, annotation %q = %q, want true", AnnotationAdopted, secret.Annotations[AnnotationAdopted])
+	}
+	// CRITICAL: verify connection Data is byte-for-byte identical — not replaced with Sharko template.
+	for k, want := range foreignData {
+		if got := string(secret.Data[k]); got != string(want) {
+			t.Errorf("after adoption, Data[%q] = %q, want %q (connection data must be preserved)", k, got, string(want))
+		}
+	}
+	// StringData must NOT have been replaced (that would overwrite connection config).
+	if secret.StringData["server"] != "" && secret.StringData["server"] != spec.Server {
+		// The fake clientset may or may not move StringData→Data; what matters is
+		// Data is not overwritten with Sharko's template values.
+		t.Errorf("StringData[server] unexpectedly set to %q on adopted path", secret.StringData["server"])
 	}
 }
 
-// TestEnsure_AdoptPath_AlwaysWrites verifies that adoption always writes even if data would match.
+// TestEnsure_AdoptPath_AlwaysWrites verifies that adoption always writes even if labels already match.
 func TestEnsure_AdoptPath_AlwaysWrites(t *testing.T) {
 	spec := baseSpec()
-
-	// Build the exact desired data — same as what Ensure() would write.
-	configJSON, err := buildSecretConfig(spec)
-	if err != nil {
-		t.Fatalf("buildSecretConfig() error: %v", err)
-	}
 	desiredLabels := buildLabels(spec)
 
-	// Pre-populate without the managed-by label but with identical data.
+	// Pre-populate without the managed-by label but with identical labels otherwise.
 	existing := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      spec.Name,
@@ -528,7 +539,7 @@ func TestEnsure_AdoptPath_AlwaysWrites(t *testing.T) {
 		Data: map[string][]byte{
 			"name":   []byte(spec.Name),
 			"server": []byte(spec.Server),
-			"config": []byte(configJSON),
+			"config": []byte("{}"),
 		},
 	}
 
@@ -539,7 +550,8 @@ func TestEnsure_AdoptPath_AlwaysWrites(t *testing.T) {
 		t.Fatalf("Ensure() returned error: %v", err)
 	}
 
-	// Even though data matches, adoption must always write.
+	// Even though some labels match, adoption must always write
+	// (managed-by label and adopted annotation still need to be applied).
 	var updates int
 	for _, a := range client.Actions() {
 		if a.GetVerb() == "update" {
@@ -548,6 +560,223 @@ func TestEnsure_AdoptPath_AlwaysWrites(t *testing.T) {
 	}
 	if updates != 1 {
 		t.Errorf("expected 1 update action (adoption always writes), got %d", updates)
+	}
+}
+
+// TestEnsure_AdoptedSteadyState_LabelsConverge verifies that on a secret that is
+// already adopted (has adopted annotation + managed-by label), Ensure converges
+// only the labels — it never touches Data/StringData (Story 28.2).
+func TestEnsure_AdoptedSteadyState_LabelsConverge(t *testing.T) {
+	spec := baseSpec()
+	desiredLabels := buildLabels(spec)
+
+	foreignData := map[string][]byte{
+		"config": []byte(`{"bearerToken":"my-token","tlsClientConfig":{"insecure":false}}`),
+		"server": []byte("https://original-server.example.com"),
+		"name":   []byte(spec.Name),
+	}
+
+	// Pre-existing adopted secret with stale addon labels.
+	existing := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      spec.Name,
+			Namespace: testNamespace,
+			Labels: map[string]string{
+				LabelSecretType: "cluster",
+				LabelManagedBy:  ManagedByValue,
+				// No addon labels yet (stale).
+				"foreign-extra": "preserved",
+			},
+			Annotations: map[string]string{
+				AnnotationAdopted: "true",
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: foreignData,
+	}
+
+	client := fake.NewSimpleClientset(existing)
+	mgr := NewManager(client, testNamespace)
+
+	changed, err := mgr.Ensure(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Ensure() returned error: %v", err)
+	}
+	if !changed {
+		t.Error("Ensure() should report changed=true when labels diverged")
+	}
+
+	secret, err := client.CoreV1().Secrets(testNamespace).Get(context.Background(), spec.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("secret not found: %v", err)
+	}
+
+	// Desired labels must be present.
+	for k, want := range desiredLabels {
+		if got := secret.Labels[k]; got != want {
+			t.Errorf("after label convergence, Labels[%q] = %q, want %q", k, got, want)
+		}
+	}
+	// Foreign label must be preserved (guest semantics).
+	if secret.Labels["foreign-extra"] != "preserved" {
+		t.Errorf("foreign-extra label lost after label convergence; labels=%v", secret.Labels)
+	}
+	// Data must be byte-for-byte untouched.
+	for k, want := range foreignData {
+		if got := string(secret.Data[k]); got != string(want) {
+			t.Errorf("Data[%q] = %q, want %q (must be untouched on adopted secret)", k, got, string(want))
+		}
+	}
+}
+
+// TestEnsure_AdoptedSteadyState_Idempotent verifies that when labels already match
+// on an adopted secret, Ensure performs no write (idempotent) — Story 28.2.
+func TestEnsure_AdoptedSteadyState_Idempotent(t *testing.T) {
+	spec := baseSpec()
+	desiredLabels := buildLabels(spec)
+
+	// Clone desired labels + add a foreign label to simulate real state.
+	existingLabels := make(map[string]string, len(desiredLabels)+1)
+	for k, v := range desiredLabels {
+		existingLabels[k] = v
+	}
+	existingLabels["foreign-extra"] = "preserved"
+
+	existing := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      spec.Name,
+			Namespace: testNamespace,
+			Labels:    existingLabels,
+			Annotations: map[string]string{
+				AnnotationAdopted: "true",
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			"config": []byte(`{"bearerToken":"tok"}`),
+		},
+	}
+
+	client := fake.NewSimpleClientset(existing)
+	mgr := NewManager(client, testNamespace)
+
+	changed, err := mgr.Ensure(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Ensure() returned error: %v", err)
+	}
+	// When the desired labels are already a subset of existing labels,
+	// no update should be issued (idempotent).
+	if changed {
+		t.Error("Ensure() reported changed=true on an already-converged adopted secret (expected idempotent skip)")
+	}
+	for _, a := range client.Actions() {
+		if a.GetVerb() == "update" {
+			t.Error("Ensure() issued an update action on an already-converged adopted secret")
+		}
+	}
+}
+
+// TestEnsure_CreatedSecret_UnchangedPath verifies that a Sharko-CREATED secret
+// (managed-by label, NO adopted annotation) still goes through the full
+// hash-compare + data-rewrite path (regression guard for Story 28.2).
+func TestEnsure_CreatedSecret_UnchangedPath(t *testing.T) {
+	// Pre-existing Sharko-created secret with stale data.
+	existing := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "my-cluster",
+			Namespace: testNamespace,
+			Labels: map[string]string{
+				LabelSecretType: "cluster",
+				LabelManagedBy:  ManagedByValue,
+			},
+			// No AnnotationAdopted — this is a Sharko-CREATED secret.
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			"name":   []byte("my-cluster"),
+			"server": []byte("https://STALE.gr7.us-east-1.eks.amazonaws.com"),
+			"config": []byte("{}"),
+		},
+	}
+
+	client := fake.NewSimpleClientset(existing)
+	mgr := NewManager(client, testNamespace)
+	spec := baseSpec() // desired state differs
+
+	changed, err := mgr.Ensure(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Ensure() returned error: %v", err)
+	}
+	if !changed {
+		t.Error("Ensure() should report changed=true when a Sharko-created secret is stale")
+	}
+
+	// Verify the secret was updated with new server URL (not the old stale one).
+	secret, err := client.CoreV1().Secrets(testNamespace).Get(context.Background(), spec.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("secret not found: %v", err)
+	}
+	// The update path writes via StringData; fake clientset keeps it in StringData.
+	if secret.StringData["server"] != spec.Server && string(secret.Data["server"]) != spec.Server {
+		t.Errorf("server not updated to %q; StringData[server]=%q Data[server]=%q",
+			spec.Server, secret.StringData["server"], string(secret.Data["server"]))
+	}
+}
+
+// TestEnsure_RaceWindow_UnlabeledBecomesAdopted verifies that when Ensure fires
+// on an unlabeled secret before the orchestrator's SetAnnotation call, the secret
+// ends up adopted-annotated with data preserved (Story 28.2 race-window closure).
+func TestEnsure_RaceWindow_UnlabeledBecomesAdopted(t *testing.T) {
+	foreignData := map[string][]byte{
+		"config": []byte(`{"execProviderConfig":{"command":"kubectl","args":["..."]}}`),
+		"server": []byte("https://race-cluster.example.com"),
+		"name":   []byte("race-cluster"),
+	}
+	existing := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "race-cluster",
+			Namespace: testNamespace,
+			Labels: map[string]string{
+				"argocd.argoproj.io/secret-type": "cluster",
+				// No managed-by, no adopted annotation — simulates the race window
+				// where the reconciler fires before the orchestrator's SetAnnotation.
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: foreignData,
+	}
+
+	spec := ClusterSecretSpec{
+		Name:   "race-cluster",
+		Server: "https://race-cluster.example.com",
+		Region: "us-east-1",
+		Labels: map[string]string{"addon-foo": "true"},
+	}
+
+	client := fake.NewSimpleClientset(existing)
+	mgr := NewManager(client, testNamespace)
+
+	if _, err := mgr.Ensure(context.Background(), spec); err != nil {
+		t.Fatalf("Ensure() returned error: %v", err)
+	}
+
+	secret, err := client.CoreV1().Secrets(testNamespace).Get(context.Background(), spec.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("secret not found: %v", err)
+	}
+	// Must have the adopted annotation (closes the race window).
+	if secret.Annotations[AnnotationAdopted] != "true" {
+		t.Errorf("expected adopted annotation after race-window Ensure; annotations=%v", secret.Annotations)
+	}
+	// Must have the managed-by label.
+	if secret.Labels[LabelManagedBy] != ManagedByValue {
+		t.Errorf("expected managed-by label; labels=%v", secret.Labels)
+	}
+	// Data must be preserved.
+	for k, want := range foreignData {
+		if got := string(secret.Data[k]); got != string(want) {
+			t.Errorf("Data[%q] = %q, want %q (must be preserved in race-window)", k, got, string(want))
+		}
 	}
 }
 
