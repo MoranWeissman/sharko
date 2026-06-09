@@ -28,7 +28,8 @@ import {
   Shield,
   Star,
 } from 'lucide-react'
-import { api, removeAddon, upgradeAddon, configureAddon, getAddonPRs } from '@/services/api'
+import { api, removeAddon, upgradeAddon, configureAddon, getAddonPRs, type PRWriteResult } from '@/services/api'
+import { PRResultBanner, PRLink, extractPR } from '@/components/PRFeedback'
 import type { AddonCatalogItem, CatalogEntry, CatalogSourceRecord, ConnectionsListResponse, UpgradeCheckResponse, UpgradeRecommendations, RecommendationCard, ValueDiffEntry, ConflictCheckEntry, TrackedPR, AddonValuesSchemaResponse, MeResponse } from '@/services/models'
 import { ValuesEditor } from '@/components/ValuesEditor'
 import { RecentPRsPanel } from '@/components/RecentPRsPanel'
@@ -413,7 +414,7 @@ function InlineUpgradeResults({
   analyzeError: string | null
   onRetry: () => void
   onClose: () => void
-  onUpgrade: (version: string) => Promise<{ pr_url?: string; pull_request_url?: string }>
+  onUpgrade: (version: string) => Promise<PRWriteResult>
   onUpgradeComplete?: () => void
 }) {
   const [activeTab, setActiveTab] = useState<InlineChangeTab>('added')
@@ -423,7 +424,7 @@ function InlineUpgradeResults({
   // Inline upgrade state for this analysis
   const [upgradeConfirming, setUpgradeConfirming] = useState(false)
   const [upgradeSubmitting, setUpgradeSubmitting] = useState(false)
-  const [upgradePrUrl, setUpgradePrUrl] = useState<string | null>(null)
+  const [upgradeResult, setUpgradeResult] = useState<PRWriteResult | null>(null)
   const [upgradeError, setUpgradeError] = useState<string | null>(null)
   const [upgradeDone, setUpgradeDone] = useState(false)
   // Downgrade modal state
@@ -436,8 +437,7 @@ function InlineUpgradeResults({
     setUpgradeError(null)
     try {
       const res = await onUpgrade(targetVersion)
-      const prUrl = res?.pr_url || res?.pull_request_url || null
-      setUpgradePrUrl(prUrl)
+      setUpgradeResult(res)
       setUpgradeDone(true)
       setUpgradeConfirming(false)
       // Auto-refresh the addon data after 2 seconds so the version shows as updated
@@ -813,48 +813,23 @@ function InlineUpgradeResults({
           </div>
         </div>
       )}
-      {upgradeDone && (() => {
-        // Extract PR number from URL (e.g. https://github.com/org/repo/pull/42 → 42)
-        const prNum = upgradePrUrl ? upgradePrUrl.match(/\/pull\/(\d+)/)?.[1] : null
-        return (
-          <div className="mt-4 border-t border-[#c0ddf0] pt-4 dark:border-gray-700">
-            <div className="rounded-lg ring-2 ring-green-300 bg-green-50 p-4 dark:ring-green-700 dark:bg-green-950/30">
-              <div className="space-y-1.5">
-                {/* Step 1 done */}
-                <div className="flex items-center gap-2">
-                  <CheckCircle className="h-4 w-4 text-green-500" />
-                  <span className="text-sm text-green-700 dark:text-green-400">
-                    {prNum ? `PR #${prNum} created.` : 'Pull request created.'}
-                    {upgradePrUrl && (
-                      <>
-                        {' '}
-                        <a
-                          href={upgradePrUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-0.5 font-medium text-teal-600 hover:underline dark:text-teal-400"
-                        >
-                          View PR <ExternalLink className="h-3 w-3" />
-                        </a>
-                      </>
-                    )}
-                  </span>
-                </div>
-                {/* Step 2: waiting for merge */}
-                <div className="flex items-center gap-2">
-                  <CheckCircle className="h-4 w-4 text-green-500" />
-                  <span className="text-sm text-green-700 dark:text-green-400">Upgrade initiated!</span>
-                </div>
-              </div>
-              <div className="mt-2 flex items-start gap-1.5">
-                <p className="text-xs text-green-600 dark:text-green-500">
-                  The addon will update once the PR merges and ArgoCD syncs. Track merge status in the Pending Upgrades panel above.
-                </p>
-              </div>
-            </div>
-          </div>
-        )
-      })()}
+      {upgradeDone && (
+        <div className="mt-4 border-t border-[#c0ddf0] pt-4 dark:border-gray-700">
+          {/* Defect 2.3: branch on the response `merged` flag (and use pr_id)
+              instead of always saying "wait for merge". When auto-merge fired
+              the upgrade is already applied; only an open PR needs merging. */}
+          <PRResultBanner
+            result={upgradeResult}
+            mergedMessage={`PR merged — ${addonName} upgraded to ${targetVersion}`}
+            openMessage={`PR opened — ${addonName} upgrades to ${targetVersion} once it merges`}
+            hint={
+              (upgradeResult?.merged ?? upgradeResult?.result?.merged)
+                ? 'ArgoCD will sync the new version shortly.'
+                : 'The addon updates once the PR merges and ArgoCD syncs. Track merge status in the Pending Upgrades panel above.'
+            }
+          />
+        </div>
+      )}
       {upgradeError && (
         <div className="mt-4 border-t border-[#c0ddf0] pt-4 dark:border-gray-700">
           <p className="text-sm text-red-600 dark:text-red-400">{upgradeError}</p>
@@ -929,10 +904,10 @@ function PerClusterUpgradeRow({
   deployedVersion: string
   catalogVersion: string
   isDrifted: boolean
-  onUpgrade: (cluster: string) => Promise<{ pr_url?: string; pull_request_url?: string }>
+  onUpgrade: (cluster: string) => Promise<PRWriteResult>
 }) {
   const [state, setState] = useState<'idle' | 'confirm' | 'loading' | 'done'>('idle')
-  const [prUrl, setPrUrl] = useState<string | null>(null)
+  const [upgradeResult, setUpgradeResult] = useState<PRWriteResult | null>(null)
   const [upgradeError, setUpgradeError] = useState<string | null>(null)
   const [downgradeModalOpen, setDowngradeModalOpen] = useState(false)
 
@@ -943,14 +918,16 @@ function PerClusterUpgradeRow({
     setUpgradeError(null)
     try {
       const result = await onUpgrade(clusterName)
-      const url = result?.pr_url || result?.pull_request_url || null
-      setPrUrl(url)
+      setUpgradeResult(result)
       setState('done')
     } catch (err) {
       setUpgradeError(err instanceof Error ? err.message : 'Upgrade failed')
       setState('idle')
     }
   }
+
+  const { prUrl: clusterPrUrl, prId: clusterPrId, merged: clusterMerged } =
+    extractPR(upgradeResult)
 
   return (
     <div className="rounded-lg bg-[#e0f0ff] px-4 py-2.5">
@@ -987,17 +964,15 @@ function PerClusterUpgradeRow({
           state === 'done' ? (
             <div className="flex items-center gap-1.5 text-xs text-green-600 dark:text-green-400">
               <CheckCircle className="h-3.5 w-3.5" />
-              {isDowngradingCluster ? 'Downgrade' : 'Upgrade'} initiated
-              {prUrl && (
-                <a
-                  href={prUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="ml-1 inline-flex items-center gap-1 text-teal-600 hover:underline dark:text-teal-400"
-                >
-                  <ExternalLink className="h-3 w-3" />
-                  PR
-                </a>
+              {clusterMerged
+                ? `${isDowngradingCluster ? 'Downgrade' : 'Upgrade'} applied`
+                : `${isDowngradingCluster ? 'Downgrade' : 'Upgrade'} initiated`}
+              {clusterPrUrl && (
+                <PRLink
+                  url={clusterPrUrl}
+                  id={clusterPrId}
+                  className="ml-1 text-teal-600 dark:text-teal-400"
+                />
               )}
             </div>
           ) : state === 'loading' ? (
@@ -1154,6 +1129,11 @@ export function AddonDetail() {
   const [removeModalOpen, setRemoveModalOpen] = useState(false)
   const [removing, setRemoving] = useState(false)
   const [removeError, setRemoveError] = useState<string | null>(null)
+  // The removal PR result. Removing an addon opens a PR (or auto-merges it);
+  // we surface that PR instead of navigating away and throwing the response
+  // out (V2-cleanup-24, defect 2.1). Only when the PR is already merged do we
+  // navigate, because the addon really is gone.
+  const [removeResult, setRemoveResult] = useState<PRWriteResult | null>(null)
 
   // Advanced config editing
   const [isEditingConfig, setIsEditingConfig] = useState(false)
@@ -1165,7 +1145,11 @@ export function AddonDetail() {
   const [editAdditionalSourcesYaml, setEditAdditionalSourcesYaml] = useState<string>('')
   const [configSaving, setConfigSaving] = useState(false)
   const [configError, setConfigError] = useState<string | null>(null)
-  const [configSuccess, setConfigSuccess] = useState<string | null>(null)
+  // Defect 2.2: configure used to stuff the PR URL into a plain string; now we
+  // keep the full result and render a clickable PRResultBanner. `configSaved`
+  // covers the no-PR success case (nothing changed / direct apply).
+  const [configResult, setConfigResult] = useState<PRWriteResult | null>(null)
+  const [configSaved, setConfigSaved] = useState(false)
 
   // Inline upgrade analysis
   const [inlineAnalysisVersion, setInlineAnalysisVersion] = useState<string | null>(null)
@@ -1301,9 +1285,20 @@ export function AddonDetail() {
     if (!name) return
     setRemoving(true)
     setRemoveError(null)
+    setRemoveResult(null)
     try {
-      await removeAddon(name)
-      navigate('/addons')
+      const result = await removeAddon(name)
+      const { merged } = extractPR(result)
+      setRemoveModalOpen(false)
+      setRemoving(false)
+      if (merged) {
+        // PR already merged — the addon is gone, leave the page.
+        navigate('/addons')
+        return
+      }
+      // PR opened for review — DON'T navigate away (defect 2.1: that threw the
+      // PR result out). Show the PR so the user can track/merge it.
+      setRemoveResult(result)
     } catch (e: unknown) {
       setRemoveError(e instanceof Error ? e.message : 'Failed to remove addon')
       setRemoving(false)
@@ -1338,21 +1333,24 @@ export function AddonDetail() {
         : '',
     )
     setConfigError(null)
-    setConfigSuccess(null)
+    setConfigResult(null)
+    setConfigSaved(false)
     setIsEditingConfig(true)
   }, [addon])
 
   const handleCancelEditConfig = useCallback(() => {
     setIsEditingConfig(false)
     setConfigError(null)
-    setConfigSuccess(null)
+    setConfigResult(null)
+    setConfigSaved(false)
   }, [])
 
   const handleSaveConfig = useCallback(async () => {
     if (!name || !addon) return
     setConfigSaving(true)
     setConfigError(null)
-    setConfigSuccess(null)
+    setConfigResult(null)
+    setConfigSaved(false)
     try {
       const syncOptions = editSyncOptionsText
         .split(',')
@@ -1402,8 +1400,12 @@ export function AddonDetail() {
       }
 
       const result = await configureAddon(name, payload)
-      const prUrl = result?.pr_url || result?.pull_request_url
-      setConfigSuccess(prUrl ? `Configuration updated. PR: ${prUrl}` : 'Configuration updated successfully.')
+      const { prUrl } = extractPR(result)
+      if (prUrl) {
+        setConfigResult(result)
+      } else {
+        setConfigSaved(true)
+      }
       setIsEditingConfig(false)
       // Refresh addon data
       api.getAddonDetail(name).then((res) => setAddon(res.addon)).catch(() => {})
@@ -1674,6 +1676,16 @@ export function AddonDetail() {
       />
       {removeError && (
         <p className="text-sm text-red-600 dark:text-red-400">{removeError}</p>
+      )}
+      {removeResult && (
+        <div className="mb-2">
+          <PRResultBanner
+            result={removeResult}
+            mergedMessage={`PR merged — ${name} removed from the catalog`}
+            openMessage={`PR opened — ${name} will be removed once it merges`}
+            hint="The addon stays in the catalog until the PR merges. Track it in the Recent changes panel."
+          />
+        </div>
       )}
 
       <div className="flex gap-6">
@@ -2250,8 +2262,13 @@ export function AddonDetail() {
                     try {
                       const res = await api.unwrapGlobalValues(addon.addon_name)
                       if (res.pr_url || res.pr_id) {
-                        const label = res.pr_id ? `PR #${res.pr_id}` : 'PR'
-                        showToast(res.merged ? `${label} merged →` : `${label} opened →`, 'success')
+                        showToast(
+                          res.merged
+                            ? 'Values file migrated — PR merged'
+                            : 'Values file migration — PR opened for review',
+                          'success',
+                          res.pr_url ? { url: res.pr_url, id: res.pr_id } : undefined,
+                        )
                       } else if (res.message) {
                         showToast(res.message, 'info')
                       }
@@ -2291,8 +2308,13 @@ export function AddonDetail() {
                           try {
                             const res = await api.annotateAddonValues(addon.addon_name)
                             if (res.pr_url || res.pr_id) {
-                              const label = res.pr_id ? `PR #${res.pr_id}` : 'PR'
-                              showToast(res.merged ? `${label} merged →` : `${label} opened →`, 'success')
+                              showToast(
+                                res.merged
+                                  ? 'AI annotate done — PR merged'
+                                  : 'AI annotate done — PR opened for review',
+                                'success',
+                                res.pr_url ? { url: res.pr_url, id: res.pr_id } : undefined,
+                              )
                             } else if (res.ai_skip_reason) {
                               showToast(`AI annotate skipped: ${res.ai_skip_reason}`, 'info')
                             } else {
@@ -2368,10 +2390,21 @@ export function AddonDetail() {
                   </div>
                 )}
 
-                {/* Success / error banners */}
-                {configSuccess && (
+                {/* Success / error banners. Defect 2.2: the PR is now a real
+                    clickable link via PRResultBanner instead of dead "PR: <url>"
+                    text. */}
+                {configResult && (
+                  <div className="mb-4">
+                    <PRResultBanner
+                      result={configResult}
+                      mergedMessage="PR merged — ArgoCD options updated"
+                      openMessage="PR opened — ArgoCD options update once it merges"
+                    />
+                  </div>
+                )}
+                {configSaved && (
                   <div className="mb-4 rounded-lg bg-green-50 px-4 py-3 text-sm text-green-700 ring-1 ring-green-200 dark:bg-green-900/20 dark:text-green-400">
-                    {configSuccess}
+                    Configuration updated successfully.
                   </div>
                 )}
                 {configError && (

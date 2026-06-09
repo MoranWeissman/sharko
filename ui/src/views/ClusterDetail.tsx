@@ -39,7 +39,8 @@ import {
 } from '@/components/ui/dialog';
 import type { AddonCatalogItem } from '@/services/models';
 import { api, deregisterCluster, updateClusterAddons, updateClusterSettings, testClusterConnection, isTestClusterUnavailable, fetchTrackedPRs } from '@/services/api';
-import type { TestClusterUnavailable } from '@/services/api';
+import type { TestClusterUnavailable, PRWriteResult } from '@/services/api';
+import { PRResultBanner, PRLink, extractPR } from '@/components/PRFeedback';
 import type { ClusterComparisonResponse, AddonComparisonStatus, ConfigDiffResponse, SyncActivityEntry, VerifyStep } from '@/services/models';
 import { StatCard } from '@/components/StatCard';
 import { StatusBadge } from '@/components/StatusBadge';
@@ -272,14 +273,19 @@ export function ClusterDetail() {
   const [editingSecretPath, setEditingSecretPath] = useState(false);
   const [secretPathValue, setSecretPathValue] = useState('');
   const [secretPathSaving, setSecretPathSaving] = useState(false);
-  const [secretPathResult, setSecretPathResult] = useState<string | null>(null);
+  // Defect 2.2: secret-path save now keeps the PR result so we can render a
+  // clickable PR link (PRResultBanner) instead of dumping the raw URL as text.
+  // `message` carries the non-PR / error fallback.
+  const [secretPathResult, setSecretPathResult] = useState<{ pr?: PRWriteResult; message?: string } | null>(null);
 
   // Addon toggles
   const [addonToggles, setAddonToggles] = useState<Record<string, boolean>>({});
   const [originalToggles, setOriginalToggles] = useState<Record<string, boolean>>({});
   const [applyingToggles, setApplyingToggles] = useState(false);
   const [toggleError, setToggleError] = useState<string | null>(null);
-  const [toggleResult, setToggleResult] = useState<string | null>(null);
+  // Defect 2.2: apply-toggles keeps the PR result so the success line is a
+  // clickable PR link (PRResultBanner) instead of "Changes applied. PR: <url>".
+  const [toggleResult, setToggleResult] = useState<{ pr?: PRWriteResult; message?: string } | null>(null);
 
   // Deploy Addon dialog
   const [deployDialogOpen, setDeployDialogOpen] = useState(false);
@@ -424,10 +430,9 @@ export function ClusterDetail() {
       setRemoveModalOpen(false);
       setRemoving(false);
       showToast(
-        prId
-          ? `Removal PR #${prId} opened for review${prUrl ? ` — ${prUrl}` : ''}. The cluster stays listed until it merges.`
-          : `Removal PR opened for review. The cluster stays listed until it merges.`,
+        'Removal PR opened for review. The cluster stays listed until it merges.',
         'success',
+        prUrl ? { url: prUrl, id: prId } : undefined,
       );
       // Refresh so any pending-PR indicator picks up the new open PR.
       void fetchData(true);
@@ -448,8 +453,8 @@ export function ClusterDetail() {
     setToggleResult(null);
     try {
       const result = await updateClusterAddons(name, addonToggles);
-      const prUrl = result?.pr_url || result?.pull_request_url;
-      setToggleResult(prUrl ? `Changes applied. PR: ${prUrl}` : 'Changes applied successfully.');
+      const { prUrl } = extractPR(result);
+      setToggleResult(prUrl ? { pr: result } : { message: 'Changes applied successfully.' });
       setOriginalToggles({ ...addonToggles });
     } catch (e: unknown) {
       setToggleError(e instanceof Error ? e.message : 'Failed to apply changes');
@@ -1009,10 +1014,15 @@ export function ClusterDetail() {
                             setSecretPathResult(null);
                             try {
                               const result = await updateClusterSettings(name, { secret_path: secretPathValue });
-                              setSecretPathResult(result?.pr_url || result?.message || 'Secret path updated');
+                              const { prUrl } = extractPR(result);
+                              setSecretPathResult(
+                                prUrl
+                                  ? { pr: result }
+                                  : { message: result?.message || 'Secret path updated' },
+                              );
                               setEditingSecretPath(false);
                             } catch (e: unknown) {
-                              setSecretPathResult(e instanceof Error ? e.message : 'Failed to update');
+                              setSecretPathResult({ message: e instanceof Error ? e.message : 'Failed to update' });
                             } finally {
                               setSecretPathSaving(false);
                             }
@@ -1050,8 +1060,17 @@ export function ClusterDetail() {
                         </RoleGuard>
                       </div>
                     )}
-                    {secretPathResult && (
-                      <p className="mt-0.5 text-xs text-teal-600 dark:text-teal-400">{secretPathResult}</p>
+                    {secretPathResult?.pr && (
+                      <div className="mt-1">
+                        <PRResultBanner
+                          result={secretPathResult.pr}
+                          mergedMessage="PR merged — secret path updated"
+                          openMessage="PR opened — secret path updates once it merges"
+                        />
+                      </div>
+                    )}
+                    {secretPathResult?.message && (
+                      <p className="mt-0.5 text-xs text-teal-600 dark:text-teal-400">{secretPathResult.message}</p>
                     )}
                   </div>
                 </div>
@@ -1275,15 +1294,11 @@ export function ClusterDetail() {
                             <p className="font-medium">Addon deploy request submitted.</p>
                           )}
                           {deployResult.prUrl && (
-                            <a
-                              href={deployResult.prUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="mt-1 inline-flex items-center gap-1 text-xs underline"
-                            >
-                              <ExternalLink className="h-3 w-3" />
-                              View Pull Request
-                            </a>
+                            <PRLink
+                              url={deployResult.prUrl}
+                              id={deployResult.prId}
+                              className="mt-1"
+                            />
                           )}
                         </div>
                       )}
@@ -1380,7 +1395,18 @@ export function ClusterDetail() {
                     </div>
                   )}
                   {toggleError && <p className="mt-2 text-sm text-red-600 dark:text-red-400">{toggleError}</p>}
-                  {toggleResult && <p className="mt-2 text-sm text-green-600 dark:text-green-400">{toggleResult}</p>}
+                  {toggleResult?.pr && (
+                    <div className="mt-2">
+                      <PRResultBanner
+                        result={toggleResult.pr}
+                        mergedMessage="PR merged — addon changes applied"
+                        openMessage="PR opened — addon changes apply once it merges"
+                      />
+                    </div>
+                  )}
+                  {toggleResult?.message && (
+                    <p className="mt-2 text-sm text-green-600 dark:text-green-400">{toggleResult.message}</p>
+                  )}
                 </div>
               </RoleGuard>
 
