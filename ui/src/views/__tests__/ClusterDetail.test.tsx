@@ -817,4 +817,78 @@ describe('ClusterDetail', () => {
       expect(mockNavigate).not.toHaveBeenCalledWith('/clusters');
     });
   });
+
+  // V2-cleanup-30: sharko_system row rendering
+  describe('V2-cleanup-30: sharko_system comparison row', () => {
+    const responseWithCheckApp = {
+      ...comparisonResponse,
+      addon_comparisons: [
+        ...comparisonResponse.addon_comparisons,
+        {
+          addon_name: 'connectivity-check-prod-eu',
+          argocd_deployed: true,
+          argocd_application_name: 'connectivity-check-prod-eu',
+          argocd_sync_status: 'OutOfSync',
+          argocd_health_status: 'Missing',
+          argocd_namespace: 'argocd',
+          status: 'sharko_system',
+          issues: [],
+        },
+      ],
+      total_untracked_in_argocd: 0, // NOT counted in untracked
+    };
+
+    beforeEach(() => {
+      mockGetClusterComparison.mockResolvedValue(responseWithCheckApp);
+    });
+
+    it('renders the row with "Sharko system" badge instead of "Unmanaged"', async () => {
+      renderView('addons');
+
+      await waitFor(() => {
+        expect(screen.getByText('prod-eu')).toBeInTheDocument();
+      });
+
+      // The badge says "Sharko system", not "Unmanaged"
+      expect(screen.getByText('Sharko system')).toBeInTheDocument();
+      expect(screen.queryByText('Unmanaged')).not.toBeInTheDocument();
+    });
+
+    it('renders the display name "Connectivity check" (not the raw app name)', async () => {
+      renderView('addons');
+
+      await waitFor(() => {
+        expect(screen.getByText('prod-eu')).toBeInTheDocument();
+      });
+
+      expect(screen.getByText('Connectivity check')).toBeInTheDocument();
+      // Raw app name should NOT appear as link text
+      expect(screen.queryByText('Connectivity-check-prod-eu')).not.toBeInTheDocument();
+    });
+
+    it('renders the descriptive system explanation in the issues cell', async () => {
+      renderView('addons');
+
+      await waitFor(() => {
+        expect(screen.getByText('prod-eu')).toBeInTheDocument();
+      });
+
+      expect(screen.getByText(/tiny test app Sharko deploys through ArgoCD/)).toBeInTheDocument();
+      // Must NOT show the untracked "not configured in Git" issue text
+      expect(
+        screen.queryByText(/Application exists in ArgoCD but not configured in Git/),
+      ).not.toBeInTheDocument();
+    });
+
+    it('does NOT count the check app in total_untracked_in_argocd stat card', async () => {
+      renderView('addons');
+
+      await waitFor(() => {
+        expect(screen.getByText('prod-eu')).toBeInTheDocument();
+      });
+
+      // total_untracked_in_argocd is 0 → "Unmanaged" stat card must be hidden
+      expect(screen.queryByText('Unmanaged')).not.toBeInTheDocument();
+    });
+  });
 });

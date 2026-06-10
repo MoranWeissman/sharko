@@ -289,10 +289,12 @@ type Cluster struct {
 	// connectivity_status values:
 	//   "verified_argocd" — ArgoCD ConnectionStatus == "Successful"
 	//   "verified_check"  — connectivity-check Application is Synced+Healthy
-	//   "check_failed"    — check Application is degraded/sync-error
+	//   "check_pending"   — check Application exists but not yet Synced+Healthy (deploying)
+	//   "check_failed"    — check Application has honest failure signals (Degraded,
+	//                       OperationPhase Failed/Error, or Error-type conditions)
 	//   ""               — nothing known (ArgoCD "Unknown" stands untouched)
 	ConnectivityStatus string `json:"connectivity_status,omitempty"`
-	ConnectivityDetail string `json:"connectivity_detail,omitempty"` // reason when check_failed
+	ConnectivityDetail string `json:"connectivity_detail,omitempty"` // detail for check_pending or check_failed
 
 	// Sharko observability fields (V2-cleanup-27 folded into V2-cleanup-29).
 	// Populated when obsStore is available; absent otherwise (omitempty).

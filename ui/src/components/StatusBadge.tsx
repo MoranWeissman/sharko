@@ -101,6 +101,9 @@ function getStatusColor(status: string): { dot: string; bg: string; text: string
   if (['untracked_in_argocd', 'not_in_git'].includes(s)) {
     return { dot: 'bg-purple-500', bg: 'bg-purple-50 dark:bg-purple-900/30', text: 'text-purple-700 dark:text-purple-400' };
   }
+  if (s === 'sharko_system') {
+    return { dot: 'bg-[#6aade0]', bg: 'bg-[#d6eeff] dark:bg-blue-900/30', text: 'text-[#1a4a6a] dark:text-blue-300' };
+  }
 
   return { dot: 'bg-[#3a6a8a]', bg: 'bg-[#d6eeff] dark:bg-gray-700', text: 'text-[#1a4a6a] dark:text-gray-300' };
 }
@@ -109,6 +112,7 @@ const statusDisplayNames: Record<string, string> = {
   disabled_in_git: 'Not Enabled',
   missing_in_argocd: 'Not Deployed',
   untracked_in_argocd: 'Unmanaged',
+  sharko_system: 'Sharko system',
   unknown_state: 'Unknown',
   unknown_health: 'Unknown',
 };

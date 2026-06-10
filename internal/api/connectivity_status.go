@@ -1,33 +1,54 @@
 package api
 
 import (
+	"strings"
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/observations"
 )
 
+// checkPendingEscalation is the age after which a still-pending check app is
+// escalated to check_failed. Without an ArgoCD webhook a new app can take ~3
+// minutes to sync; 10 minutes is a clear signal something is wrong.
+const checkPendingEscalation = 10 * time.Minute
+
 // connectivityVerdict is the result of the priority connectivity computation
 // for one cluster.
 type connectivityVerdict struct {
-	// Status values: "verified_argocd" | "verified_check" | "check_failed" | ""
+	// Status values: "verified_argocd" | "verified_check" | "check_pending" | "check_failed" | ""
 	Status string
-	// Detail is populated only when Status == "check_failed".
+	// Detail is populated when Status is "check_pending" or "check_failed".
 	Detail string
 }
 
-// computeConnectivityVerdict applies the four-priority logic described in
-// V2-cleanup-29:
-//
-//  1. ArgoCD ConnectionStatus == "Successful" → "verified_argocd"
-//  2. Connectivity-check Application Synced+Healthy  → "verified_check"
-//  3. Connectivity-check Application degraded/error  → "check_failed" + detail
-//  4. Otherwise                                       → "" (ArgoCD "Unknown" stands)
+// computeConnectivityVerdict applies the priority logic for connectivity.
+// It is a thin wrapper around computeConnectivityVerdictAt using time.Now().
 //
 // apps is the pre-fetched ArgoCD application list for the cluster (the same
 // slice the handler already holds — no extra API call). The check Application
 // is identified by name "connectivity-check-<clusterName>".
 func computeConnectivityVerdict(clusterName, connectionStatus string, apps []models.ArgocdApplication) connectivityVerdict {
+	return computeConnectivityVerdictAt(clusterName, connectionStatus, apps, time.Now())
+}
+
+// computeConnectivityVerdictAt is the testable inner implementation; callers
+// inject "now" to control time.
+//
+// Priority order:
+//  1. ArgoCD ConnectionStatus == "Successful" → "verified_argocd"
+//  2. Connectivity-check Application Synced+Healthy → "verified_check"
+//  3. Connectivity-check Application has honest failure signals → "check_failed"
+//  4. Connectivity-check Application exists but not yet healthy → "check_pending"
+//     (escalated to "check_failed" when age > checkPendingEscalation)
+//  5. No check app → "" (ArgoCD "Unknown" stands)
+//
+// Honest failure signals (Priority 3):
+//   - HealthStatus == "Degraded"
+//   - OperationPhase in {"Failed", "Error"} (ArgoCD client literal values)
+//   - Any Condition whose Type contains "Error" (SyncError, ComparisonError,
+//     InvalidSpecError, etc.) — plain warnings are NOT failures.
+func computeConnectivityVerdictAt(clusterName, connectionStatus string, apps []models.ArgocdApplication, now time.Time) connectivityVerdict {
 	// Priority 1: ArgoCD itself says the connection is fine.
 	if connectionStatus == "Successful" {
 		return connectivityVerdict{Status: "verified_argocd"}
@@ -53,17 +74,52 @@ func computeConnectivityVerdict(clusterName, connectionStatus string, apps []mod
 		return connectivityVerdict{Status: "verified_check"}
 	}
 
-	// Priority 3: check app is in a bad state → surface the reason.
-	isDegraded := checkApp.HealthStatus == "Degraded" || checkApp.HealthStatus == "Missing"
-	isSyncError := checkApp.SyncStatus == "OutOfSync" || checkApp.SyncStatus == "Unknown"
-	hasConditions := len(checkApp.Conditions) > 0
-	if isDegraded || isSyncError || hasConditions {
-		detail := buildCheckFailDetail(checkApp)
-		return connectivityVerdict{Status: "check_failed", Detail: detail}
+	// Priority 3: honest failure signals.
+	if isHonestFailure(checkApp) {
+		return connectivityVerdict{Status: "check_failed", Detail: buildCheckFailDetail(checkApp)}
 	}
 
-	// Not yet Synced+Healthy but not obviously failed (e.g. Progressing) → empty.
-	return connectivityVerdict{}
+	// Priority 4: check app exists but is not yet healthy → pending.
+	// Escalate to failed if the app has been around longer than the threshold.
+	if checkApp.CreatedAt != "" {
+		created, err := time.Parse(time.RFC3339, checkApp.CreatedAt)
+		if err == nil && now.Sub(created) > checkPendingEscalation {
+			return connectivityVerdict{
+				Status: "check_failed",
+				Detail: "connectivity check has not completed after 10 minutes — inspect the connectivity-check application in ArgoCD",
+			}
+		}
+	}
+
+	return connectivityVerdict{
+		Status: "check_pending",
+		Detail: "connectivity check is deploying — usually under a minute; without an ArgoCD webhook it can take ~3 minutes",
+	}
+}
+
+// isHonestFailure returns true only on genuine failure signals from ArgoCD,
+// not transient "app just created" states like OutOfSync or Missing health.
+func isHonestFailure(app *models.ArgocdApplication) bool {
+	// Degraded health is a concrete failure.
+	if app.HealthStatus == "Degraded" {
+		return true
+	}
+	// OperationPhase "Failed" or "Error" means ArgoCD tried and failed.
+	// These are the literal phase strings the ArgoCD client maps from
+	// operationState.phase in the API response.
+	if app.OperationPhase == "Failed" || app.OperationPhase == "Error" {
+		return true
+	}
+	// Conditions whose Type contains "Error" are real errors
+	// (SyncError, ComparisonError, InvalidSpecError, etc.).
+	// Conditions whose Type does NOT contain "Error" (e.g. SharedResourceWarning)
+	// are mere warnings and do NOT constitute failure.
+	for _, c := range app.Conditions {
+		if strings.Contains(c.Type, "Error") {
+			return true
+		}
+	}
+	return false
 }
 
 // buildCheckFailDetail assembles a short human-readable reason from the
@@ -73,9 +129,9 @@ func buildCheckFailDetail(app *models.ArgocdApplication) string {
 	if app.OperationMessage != "" {
 		return app.OperationMessage
 	}
-	// Fall back to first condition message.
+	// Fall back to first error condition message.
 	for _, c := range app.Conditions {
-		if c.Message != "" {
+		if strings.Contains(c.Type, "Error") && c.Message != "" {
 			return c.Message
 		}
 	}
