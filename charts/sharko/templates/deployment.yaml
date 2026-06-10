@@ -126,6 +126,10 @@ spec:
             - name: APP_ENVIRONMENTS
               value: {{ .Values.config.environments | quote }}
             {{- end }}
+            {{- if and .Values.connectivityCheck (not .Values.connectivityCheck.enabled) }}
+            - name: SHARKO_CONNECTIVITY_CHECK
+              value: "false"
+            {{- end }}
             {{- if .Values.gitops.actions.enabled }}
             - name: GITOPS_ACTIONS_ENABLED
               value: "true"

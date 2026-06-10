@@ -688,6 +688,13 @@ var serveCmd = &cobra.Command{
 					repoPaths.ManagedClusters,
 					argoDur,
 				)
+				// Wire the connectivity-check feature toggle. On by default;
+				// disabled only when SHARKO_CONNECTIVITY_CHECK is explicitly
+				// "false" or "0".
+				if connectivityCheckDisabled(getEnvDefault("SHARKO_CONNECTIVITY_CHECK", "true")) {
+					argoReconciler.SetConnectivityCheck(false)
+					slog.Info("connectivity check feature disabled via SHARKO_CONNECTIVITY_CHECK")
+				}
 
 				auditLog := srv.AuditLog()
 				argoReconciler.SetAuditFunc(func(created, updated, deleted int) {
@@ -805,14 +812,15 @@ var serveCmd = &cobra.Command{
 						}
 						return gp
 					},
-					ArgoClient:          inClusterK8sClient,
-					Vault:               credProvider,
-					AuditFn:             auditLog.Add,
-					TickInterval:        clusterreconciler.DefaultTickInterval,
-					ManagedClustersPath: repoPaths.ManagedClusters,
-					Namespace:           clusterReconNamespace,
-					Branch:              clusterReconBranch,
-					DefaultRoleARN:      clusterReconRoleARN,
+					ArgoClient:               inClusterK8sClient,
+					Vault:                    credProvider,
+					AuditFn:                  auditLog.Add,
+					TickInterval:             clusterreconciler.DefaultTickInterval,
+					ManagedClustersPath:      repoPaths.ManagedClusters,
+					Namespace:                clusterReconNamespace,
+					Branch:                   clusterReconBranch,
+					DefaultRoleARN:           clusterReconRoleARN,
+					DisableConnectivityCheck: connectivityCheckDisabled(getEnvDefault("SHARKO_CONNECTIVITY_CHECK", "true")),
 				})
 				// Wire the trigger onto the Server BEFORE Start() so the
 				// first request to the per-request orchestrator helper
@@ -934,6 +942,15 @@ func getEnvDefault(key, defaultVal string) string {
 		return v
 	}
 	return defaultVal
+}
+
+// connectivityCheckDisabled returns true when the caller should DISABLE the
+// connectivity-check feature. The feature is on by default; the operator
+// opts out by setting SHARKO_CONNECTIVITY_CHECK=false or
+// SHARKO_CONNECTIVITY_CHECK=0. Any other value (including the default "true"
+// and empty string) leaves the feature on.
+func connectivityCheckDisabled(val string) bool {
+	return strings.EqualFold(val, "false") || val == "0"
 }
 
 // getConnectionGitOps returns the GitOpsSettings from the active connection, or nil if not set.

@@ -1033,5 +1033,138 @@ func TestDelete_VerifiesLabel(t *testing.T) {
 	}
 }
 
+// --- Story 29.2: Adopted-gate tests — connectivity-check label must never appear on adopted secrets ---
+
+// TestEnsure_AdoptPath_ConnectivityCheckLabelExcluded verifies that even when the
+// caller passes connectivity-check: enabled in the spec's desired labels (the race
+// window where the reconciler computes the label before it knows about adoption),
+// the takeover write strips it — adopted clusters are guests in a shared ArgoCD hub
+// and must never receive the check ApplicationSet.
+func TestEnsure_AdoptPath_ConnectivityCheckLabelExcluded(t *testing.T) {
+	const checkLabel = "sharko.io/connectivity-check"
+
+	foreignData := map[string][]byte{
+		"config": []byte(`{"bearerToken":"tok","tlsClientConfig":{"insecure":false}}`),
+		"server": []byte("https://adopted-cluster.example.com"),
+		"name":   []byte("adopted-cluster"),
+	}
+	existing := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "adopted-cluster",
+			Namespace: testNamespace,
+			Labels: map[string]string{
+				LabelSecretType: "cluster",
+				// No managed-by — triggers the takeover adoption path.
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: foreignData,
+	}
+
+	// Spec deliberately includes the check label (simulating what the reconciler
+	// computes for a zero-addon cluster before it is aware of adoption).
+	spec := ClusterSecretSpec{
+		Name:   "adopted-cluster",
+		Server: "https://adopted-cluster.example.com",
+		Labels: map[string]string{
+			checkLabel: "enabled",
+		},
+	}
+
+	client := fake.NewSimpleClientset(existing)
+	mgr := NewManager(client, testNamespace)
+
+	if _, err := mgr.Ensure(context.Background(), spec); err != nil {
+		t.Fatalf("Ensure() returned error: %v", err)
+	}
+
+	secret, err := client.CoreV1().Secrets(testNamespace).Get(context.Background(), spec.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("secret not found after adoption: %v", err)
+	}
+	// The connectivity-check label MUST NOT appear on the adopted secret.
+	if v, ok := secret.Labels[checkLabel]; ok {
+		t.Errorf("adopted cluster secret must not carry %q; got value=%q", checkLabel, v)
+	}
+	// The adoption annotation must still be present.
+	if secret.Annotations[AnnotationAdopted] != "true" {
+		t.Errorf("expected adopted annotation; annotations=%v", secret.Annotations)
+	}
+	// Data must be untouched.
+	for k, want := range foreignData {
+		if got := string(secret.Data[k]); got != string(want) {
+			t.Errorf("Data[%q] = %q, want %q (connection data must be preserved)", k, got, string(want))
+		}
+	}
+}
+
+// TestEnsure_AdoptedSteadyState_ConnectivityCheckLabelStripped verifies that when
+// the reconciler later re-converges an already-adopted secret and includes the
+// connectivity-check label in desired labels, the adopted steady-state path strips
+// it before writing — the gate must hold on every reconcile, not just at adoption
+// time.
+func TestEnsure_AdoptedSteadyState_ConnectivityCheckLabelStripped(t *testing.T) {
+	const checkLabel = "sharko.io/connectivity-check"
+
+	foreignData := map[string][]byte{
+		"config": []byte(`{"bearerToken":"tok","tlsClientConfig":{"insecure":false}}`),
+		"server": []byte("https://adopted2.example.com"),
+		"name":   []byte("adopted2"),
+	}
+	// Already-adopted secret (managed-by + adopted annotation).
+	existing := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "adopted2",
+			Namespace: testNamespace,
+			Labels: map[string]string{
+				LabelSecretType: "cluster",
+				LabelManagedBy:  ManagedByValue,
+				// No addon labels — stale, triggers a label-convergence write.
+			},
+			Annotations: map[string]string{
+				AnnotationAdopted: "true",
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: foreignData,
+	}
+
+	// Spec includes the check label (computed by reconciler for a zero-addon cluster).
+	spec := ClusterSecretSpec{
+		Name:   "adopted2",
+		Server: "https://adopted2.example.com",
+		Labels: map[string]string{
+			"addon-foo":  "enabled",
+			checkLabel: "enabled",
+		},
+	}
+
+	client := fake.NewSimpleClientset(existing)
+	mgr := NewManager(client, testNamespace)
+
+	if _, err := mgr.Ensure(context.Background(), spec); err != nil {
+		t.Fatalf("Ensure() returned error: %v", err)
+	}
+
+	secret, err := client.CoreV1().Secrets(testNamespace).Get(context.Background(), spec.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("secret not found after steady-state convergence: %v", err)
+	}
+	// The connectivity-check label MUST NOT appear, even though it was in the desired labels.
+	if v, ok := secret.Labels[checkLabel]; ok {
+		t.Errorf("adopted cluster steady-state must not carry %q; got value=%q", checkLabel, v)
+	}
+	// The addon label from the spec must be present.
+	if secret.Labels["addon-foo"] != "enabled" {
+		t.Errorf("addon label addon-foo = %q, want enabled", secret.Labels["addon-foo"])
+	}
+	// Data must be untouched.
+	for k, want := range foreignData {
+		if got := string(secret.Data[k]); got != string(want) {
+			t.Errorf("Data[%q] = %q, want %q (connection data must be untouched)", k, got, string(want))
+		}
+	}
+}
+
 // Ensure k8stesting is imported (used indirectly via fake client assertions above).
 var _ k8stesting.Action // compile-time import check

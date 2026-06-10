@@ -29,6 +29,8 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+
+	"github.com/MoranWeissman/sharko/internal/models"
 )
 
 const (
@@ -314,6 +316,12 @@ func (m *Manager) Ensure(ctx context.Context, spec ClusterSecretSpec) (bool, err
 		for k, v := range desiredLabels {
 			adopted.Labels[k] = v
 		}
+		// Adopted gate (V2-cleanup-29): adopted clusters are guests in a shared
+		// hub-and-spoke ArgoCD; NEVER stamp the connectivity-check label on them,
+		// not even for one tick. Strip it here — the takeover write is the ONLY
+		// reliable place the existing secret and its AnnotationAdopted are both
+		// in hand simultaneously, so this is the canonical adopted gate.
+		delete(adopted.Labels, models.LabelConnectivityCheck)
 		// Always stamp the adopted annotation so the orphan sweeps recognise the
 		// secret as adopted even before the orchestrator's SetAnnotation call
 		// completes (closes the reconciler-fires-first race window).
@@ -345,7 +353,18 @@ func (m *Manager) Ensure(ctx context.Context, spec ClusterSecretSpec) (bool, err
 		// "Labels match" means all desired labels are present in the current
 		// labels with the correct values. Foreign labels (not in desired) are
 		// always kept, so they do not trigger a write.
-		if desiredLabelsSubset(existing.Labels, desiredLabels) {
+		//
+		// Adopted gate (V2-cleanup-29): strip the connectivity-check label from
+		// the desired set before comparing and merging. Adopted clusters are guests;
+		// the check label must never appear on them, even when the caller's spec
+		// inadvertently included it (e.g. both reconcilers running concurrently).
+		adoptedDesired := make(map[string]string, len(desiredLabels))
+		for k, v := range desiredLabels {
+			adoptedDesired[k] = v
+		}
+		delete(adoptedDesired, models.LabelConnectivityCheck)
+
+		if desiredLabelsSubset(existing.Labels, adoptedDesired) {
 			slog.Debug("[argosecrets] adopted cluster secret labels up-to-date, skipping",
 				"cluster", spec.Name, "namespace", m.namespace,
 			)
@@ -353,9 +372,11 @@ func (m *Manager) Ensure(ctx context.Context, spec ClusterSecretSpec) (bool, err
 		}
 		updated := existing.DeepCopy()
 		// Merge: desired wins on conflict, existing foreign keys kept.
-		for k, v := range desiredLabels {
+		// Remove the check label if it somehow ended up on the secret.
+		for k, v := range adoptedDesired {
 			updated.Labels[k] = v
 		}
+		delete(updated.Labels, models.LabelConnectivityCheck)
 		if spec.Annotations != nil {
 			updated.Annotations = mergeAnnotations(updated.Annotations, spec.Annotations)
 		}

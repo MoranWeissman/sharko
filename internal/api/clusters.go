@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/observations"
 )
 
 // handleListClusters handles GET /api/v1/clusters
@@ -101,6 +102,30 @@ func (s *Server) handleListClusters(w http.ResponseWriter, r *http.Request) {
 			filtered = append(filtered, c)
 		}
 		resp.Clusters = filtered
+	}
+
+	// Enrich clusters with connectivity status + Sharko obs fields.
+	// Fetch the full application list once (no N+1 per cluster).
+	// Best-effort: connectivity fields simply stay absent on failure.
+	allApps, appsErr := ac.ListApplications(r.Context())
+	if appsErr != nil {
+		allApps = nil // degrade gracefully
+	}
+
+	// Resolve obs map once for the whole list (nil obsStore → empty map).
+	var obsMap map[string]*observations.Observation
+	if s.obsStore != nil {
+		obsMap, _ = s.obsStore.ListObservations(r.Context())
+	}
+
+	for i := range resp.Clusters {
+		c := &resp.Clusters[i]
+		verdict := computeConnectivityVerdict(c.Name, c.ConnectionStatus, allApps)
+		c.ConnectivityStatus = verdict.Status
+		c.ConnectivityDetail = verdict.Detail
+		if obsMap != nil {
+			applyObsFields(c, obsMap[c.Name])
+		}
 	}
 
 	qp := parseQueryParams(r)
@@ -213,6 +238,24 @@ func (s *Server) handleGetCluster(w http.ResponseWriter, r *http.Request) {
 	if resp == nil {
 		writeError(w, http.StatusNotFound, "cluster not found")
 		return
+	}
+
+	// Enrich the single cluster with connectivity status + Sharko obs fields.
+	// Re-use the per-cluster app list that GetClusterDetail already fetched
+	// internally; fetch it again here to avoid threading it through the service
+	// return value (the service layer is deliberately obs-free).
+	// Best-effort: fields stay absent on failure.
+	detailApps, detailAppsErr := ac.ListApplications(r.Context())
+	if detailAppsErr == nil {
+		verdict := computeConnectivityVerdict(resp.Cluster.Name, resp.Cluster.ConnectionStatus, detailApps)
+		resp.Cluster.ConnectivityStatus = verdict.Status
+		resp.Cluster.ConnectivityDetail = verdict.Detail
+	}
+	if s.obsStore != nil {
+		obsMap, _ := s.obsStore.ListObservations(r.Context())
+		if obsMap != nil {
+			applyObsFields(&resp.Cluster, obsMap[name])
+		}
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -329,6 +372,24 @@ func (s *Server) handleGetClusterComparison(w http.ResponseWriter, r *http.Reque
 	if resp == nil {
 		writeError(w, http.StatusNotFound, "cluster not found")
 		return
+	}
+
+	// Enrich the cluster with connectivity status + Sharko obs fields.
+	// GetClusterComparison already called ListApplications internally to
+	// build the comparison; we call it again here rather than thread the
+	// result through the service layer to avoid coupling service ↔ obs.
+	// Best-effort: fields stay absent on failure.
+	compApps, compAppsErr := ac.ListApplications(r.Context())
+	if compAppsErr == nil {
+		verdict := computeConnectivityVerdict(resp.Cluster.Name, resp.Cluster.ConnectionStatus, compApps)
+		resp.Cluster.ConnectivityStatus = verdict.Status
+		resp.Cluster.ConnectivityDetail = verdict.Detail
+	}
+	if s.obsStore != nil {
+		obsMap, _ := s.obsStore.ListObservations(r.Context())
+		if obsMap != nil {
+			applyObsFields(&resp.Cluster, obsMap[name])
+		}
 	}
 
 	writeJSON(w, http.StatusOK, resp)

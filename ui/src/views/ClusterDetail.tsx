@@ -44,6 +44,7 @@ import { PRResultBanner, PRLink, extractPR } from '@/components/PRFeedback';
 import type { ClusterComparisonResponse, AddonComparisonStatus, ConfigDiffResponse, SyncActivityEntry, VerifyStep } from '@/services/models';
 import { StatCard } from '@/components/StatCard';
 import { StatusBadge } from '@/components/StatusBadge';
+import { ConnectivityBadge } from '@/components/ConnectivityBadge';
 import { ClusterTypeBadge } from '@/components/ClusterTypeBadge';
 import { LoadingState } from '@/components/LoadingState';
 import { ErrorState } from '@/components/ErrorState';
@@ -988,7 +989,17 @@ export function ClusterDetail() {
                   <Server className="h-4 w-4 text-teal-500" />
                   <div>
                     <p className="text-xs text-[#2a5a7a] dark:text-gray-400">Connection</p>
-                    <StatusBadge status={computedStatus} size="sm" />
+                    <div className="flex flex-col gap-1">
+                      <StatusBadge status={computedStatus} size="sm" />
+                      <ConnectivityBadge
+                        connectivityStatus={data.cluster.connectivity_status}
+                        connectivityDetail={data.cluster.connectivity_detail}
+                        sharkoStatus={data.cluster.sharko_status}
+                        lastTestAt={data.cluster.last_test_at}
+                        testFailing={data.cluster.test_failing}
+                        testErrorCode={data.cluster.test_error_code}
+                      />
+                    </div>
                   </div>
                 </div>
                 {/* Secret Path */}
