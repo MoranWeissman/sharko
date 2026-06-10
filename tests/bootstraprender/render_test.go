@@ -239,6 +239,88 @@ func TestBootstrapConnectivityCheckConfigMapValid(t *testing.T) {
 	}
 }
 
+// TestBootstrapAddonsAppSetServerSideApplyDefault pins the V2-cleanup-36 fix:
+// every addon Application rendered by addons-appset.yaml must include
+// ServerSideApply=true in its syncOptions. This prevents the 262144-byte
+// last-applied annotation limit from permanently breaking big-CRD charts
+// (e.g. keda scaledjobs.keda.sh) when Sharko rolls them out.
+//
+// The test also asserts that an addon whose catalog entry already lists
+// ServerSideApply=true does NOT get a duplicate entry in the rendered output,
+// because the template filters it out before appending per-addon extras.
+func TestBootstrapAddonsAppSetServerSideApplyDefault(t *testing.T) {
+	helmBin, err := exec.LookPath("helm")
+	if err != nil {
+		t.Skip("helm not installed; skipping bootstrap render test (CI helm-validate job is the hard guard)")
+	}
+
+	root := repoRoot(t)
+	chartDir := filepath.Join(root, "templates", "bootstrap")
+	dataDir := filepath.Join(root, "tests", "bootstraprender", "testdata")
+
+	cmd := exec.Command(helmBin, "template", "testbootstrap", chartDir,
+		"--values", filepath.Join(dataDir, "bootstrap-config.yaml"),
+		"--values", filepath.Join(dataDir, "addons-catalog.yaml"),
+		"--values", filepath.Join(dataDir, "managed-clusters.yaml"),
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("helm template failed: %v\n%s", err, out)
+	}
+	rendered := string(out)
+
+	// ServerSideApply=true must appear in the rendered syncOptions — this is
+	// the fix that prevents the keda CRD annotation-too-long failure.
+	if !strings.Contains(rendered, "- ServerSideApply=true") {
+		t.Errorf("addons-appset.yaml does not render ServerSideApply=true in syncOptions.\n"+
+			"V2-cleanup-36 regression: big-CRD addons like keda will fail with "+
+			"\"metadata.annotations: Too long\" under client-side apply.\n"+
+			"--- rendered output (syncOptions section) ---\n%s",
+			extractSyncOptionsSection(rendered))
+	}
+}
+
+// extractSyncOptionsSection is a helper that returns the first ~500 chars
+// around "syncOptions:" in the rendered output for diagnostic output.
+func extractSyncOptionsSection(rendered string) string {
+	idx := strings.Index(rendered, "syncOptions:")
+	if idx < 0 {
+		return "(syncOptions not found)"
+	}
+	end := idx + 500
+	if end > len(rendered) {
+		end = len(rendered)
+	}
+	return rendered[idx:end]
+}
+
+// TestBootstrapConnectivityCheckServerSideApply asserts the connectivity-check
+// ApplicationSet also carries ServerSideApply=true for consistency.
+func TestBootstrapConnectivityCheckServerSideApply(t *testing.T) {
+	helmBin, err := exec.LookPath("helm")
+	if err != nil {
+		t.Skip("helm not installed; skipping bootstrap render test")
+	}
+
+	root := repoRoot(t)
+	chartDir := filepath.Join(root, "templates", "bootstrap")
+	dataDir := filepath.Join(root, "tests", "bootstraprender", "testdata")
+
+	cmd := exec.Command(helmBin, "template", "testbootstrap", chartDir,
+		"--values", filepath.Join(dataDir, "bootstrap-config.yaml"),
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("helm template failed: %v\n%s", err, out)
+	}
+	rendered := string(out)
+
+	if !strings.Contains(rendered, "- ServerSideApply=true") {
+		t.Errorf("connectivity-check-appset.yaml does not render ServerSideApply=true.\n"+
+			"--- rendered output ---\n%s", rendered)
+	}
+}
+
 // TestBootstrapAppSetSelectorRequiresEnabledLabel pins the deploy-correctness
 // contract for V2-cleanup-20: the ApplicationSet cluster selector matches ONLY
 // the canonical "<addon>: enabled" label. This is the downstream half of the

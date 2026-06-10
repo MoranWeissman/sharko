@@ -102,6 +102,9 @@ export interface AddonComparisonStatus {
   argocd_health_status?: string
   argocd_deployed_version?: string
   argocd_namespace?: string
+  argocd_operation_state?: string
+  /** First line of operationState.message when the operation is failing (capped at 300 chars). */
+  argocd_operation_message?: string
   status?: string
   issues: string[]
 }

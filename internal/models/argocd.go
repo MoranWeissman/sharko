@@ -30,10 +30,16 @@ type ArgocdApplication struct {
 	SourceHelmParameters []HelmParameter   `json:"source_helm_parameters,omitempty"`
 	HealthLastTransition string            `json:"health_last_transition,omitempty"`
 	ReconciledAt         string            `json:"reconciled_at,omitempty"`
-	OperationPhase       string            `json:"operation_phase,omitempty"`
-	OperationStartedAt   string            `json:"operation_started_at,omitempty"`
-	OperationFinishedAt  string            `json:"operation_finished_at,omitempty"`
-	OperationMessage     string            `json:"operation_message,omitempty"`
+	OperationPhase          string            `json:"operation_phase,omitempty"`
+	OperationStartedAt      string            `json:"operation_started_at,omitempty"`
+	OperationFinishedAt     string            `json:"operation_finished_at,omitempty"`
+	OperationMessage        string            `json:"operation_message,omitempty"`
+	// HasSyncFailedResource is true when operationState.syncResult.resources[]
+	// contains at least one entry with status "SyncFailed". Combined with
+	// phase=Running and a "completed unsuccessfully" message, this identifies
+	// an ArgoCD application that is permanently failing to sync even though
+	// ArgoCD continues retrying (the keda CRD-too-long scenario).
+	HasSyncFailedResource bool `json:"has_sync_failed_resource,omitempty"`
 	History              []AppHistoryEntry `json:"history,omitempty"`
 	Resources            []AppResource     `json:"resources,omitempty"`
 	Conditions           []AppCondition    `json:"conditions,omitempty"`

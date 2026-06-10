@@ -191,15 +191,14 @@ func (s *AddonService) GetCatalog(ctx context.Context, gp gitprovider.GitProvide
 					dep.DeployedVersion = app.SourceTargetRevision
 					dep.ApplicationName = app.Name
 
-					switch app.HealthStatus {
-					case "Healthy":
-						dep.Status = "healthy"
+					dep.Status, _ = classifyAddonApp(app)
+					switch dep.Status {
+					case "healthy":
 						healthyCount++
-					case "Degraded":
-						dep.Status = "degraded"
+					case "sync_failing", "unhealthy":
+						// sync_failing counts as degraded for the tile counters so the
+						// catalog health bar and unhealthy chip reflect the real situation.
 						degradedCount++
-					default:
-						dep.Status = "unknown"
 					}
 					if app.SyncStatus == "Synced" && app.HealthStatus == "Healthy" {
 						deployedCount++

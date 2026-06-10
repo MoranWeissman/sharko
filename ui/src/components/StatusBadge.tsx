@@ -86,10 +86,10 @@ function getStatusColor(status: string): { dot: string; bg: string; text: string
   if (['healthy', 'synced', 'completed'].includes(s)) {
     return { dot: 'bg-green-500', bg: 'bg-green-50 dark:bg-green-900/30', text: 'text-green-700 dark:text-green-400' };
   }
-  if (['degraded', 'unhealthy', 'failed', 'error'].includes(s)) {
+  if (['degraded', 'unhealthy', 'failed', 'error', 'sync_failing'].includes(s)) {
     return { dot: 'bg-red-500', bg: 'bg-red-50 dark:bg-red-900/30', text: 'text-red-700 dark:text-red-400' };
   }
-  if (['running', 'progressing', 'outofsync'].includes(s)) {
+  if (['running', 'progressing', 'outofsync', 'deploying'].includes(s)) {
     return { dot: 'bg-blue-500', bg: 'bg-blue-50 dark:bg-blue-900/30', text: 'text-blue-700 dark:text-blue-400' };
   }
   if (['waiting', 'gated', 'paused', 'warning', 'missing', 'missing_in_argocd'].includes(s)) {
@@ -115,6 +115,8 @@ const statusDisplayNames: Record<string, string> = {
   sharko_system: 'Sharko system',
   unknown_state: 'Unknown',
   unknown_health: 'Unknown',
+  sync_failing: 'Sync failing',
+  deploying: 'Deploying',
 };
 
 export function statusDisplayName(status: string): string {
