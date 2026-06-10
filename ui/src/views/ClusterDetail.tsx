@@ -28,6 +28,8 @@ import {
   KeyRound,
   Plus,
   RefreshCw,
+  X,
+  ShieldCheck,
 } from 'lucide-react';
 import {
   Dialog,
@@ -41,6 +43,7 @@ import type { AddonCatalogItem } from '@/services/models';
 import { api, deregisterCluster, updateClusterAddons, updateClusterSettings, testClusterConnection, isTestClusterUnavailable, fetchTrackedPRs } from '@/services/api';
 import type { TestClusterUnavailable, PRWriteResult } from '@/services/api';
 import { PRResultBanner, PRLink, extractPR } from '@/components/PRFeedback';
+import { EnableAddonPicker } from '@/components/EnableAddonPicker';
 import type { ClusterComparisonResponse, AddonComparisonStatus, ConfigDiffResponse, SyncActivityEntry, VerifyStep } from '@/services/models';
 import { StatCard } from '@/components/StatCard';
 import { StatusBadge } from '@/components/StatusBadge';
@@ -287,6 +290,9 @@ export function ClusterDetail() {
   // Defect 2.2: apply-toggles keeps the PR result so the success line is a
   // clickable PR link (PRResultBanner) instead of "Changes applied. PR: <url>".
   const [toggleResult, setToggleResult] = useState<{ pr?: PRWriteResult; message?: string } | null>(null);
+
+  // Enable-addon picker (Manage Addons card)
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   // Deploy Addon dialog
   const [deployDialogOpen, setDeployDialogOpen] = useState(false);
@@ -1349,76 +1355,223 @@ export function ClusterDetail() {
                 </DialogContent>
               </Dialog>
 
-              {/* Admin: Addon Enable/Disable Toggles */}
+              {/* Admin: Manage Addons — enabled list + searchable enable picker */}
               <RoleGuard adminOnly>
-                <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800">
-                  <h3 className="mb-3 text-base font-semibold text-[#0a2a4a] dark:text-gray-100">Manage Addons</h3>
-                  {Object.keys(addonToggles).length === 0 ? (
-                    <p className="text-sm text-[#3a6a8a] dark:text-gray-500">No addons in catalog.</p>
-                  ) : (
-                    <div className="grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-3 lg:grid-cols-4">
-                      {Object.keys(addonToggles).sort().map((addonName) => (
-                        <label key={addonName} className="flex cursor-pointer items-center gap-2 text-sm">
-                          <div
-                            role="switch"
-                            aria-checked={addonToggles[addonName]}
-                            onClick={() =>
-                              setAddonToggles((prev) => ({ ...prev, [addonName]: !prev[addonName] }))
-                            }
-                            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none ${
-                              addonToggles[addonName]
-                                ? 'bg-teal-600'
-                                : 'bg-[#c0ddf0] dark:bg-gray-600'
-                            }`}
+                {(() => {
+                  const allCatalogNames = Object.keys(addonToggles).sort();
+                  const noCatalog = allCatalogNames.length === 0;
+
+                  // Which addons are currently desired-true (original + staged enables)?
+                  // Excludes addons staged for removal (still in list, but they retain
+                  // their row with a pending-removal mark).
+                  const enabledRows = allCatalogNames.filter((n) => addonToggles[n]);
+                  const removedRows = allCatalogNames.filter(
+                    (n) => originalToggles[n] && !addonToggles[n],
+                  );
+                  // Rows to show: currently enabled OR staged for removal.
+                  const visibleRows = Array.from(
+                    new Set([...enabledRows, ...removedRows]),
+                  ).sort();
+
+                  // The picker must not show addons that are already enabled
+                  // (including staged-enable that haven't been applied yet).
+                  const pickerEnabledNames = new Set(enabledRows);
+
+                  // Connectivity-check system row visibility.
+                  // Values: 'verified_check' | 'check_pending' | 'check_failed'
+                  const connStatus = data?.cluster?.connectivity_status ?? '';
+                  const showCheckRow =
+                    connStatus === 'verified_check' ||
+                    connStatus === 'check_pending' ||
+                    connStatus === 'check_failed';
+
+                  return (
+                    <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800">
+                      {/* Card header */}
+                      <div className="mb-3 flex items-center justify-between gap-2">
+                        <h3 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
+                          Manage Addons
+                        </h3>
+                        {!noCatalog && (
+                          <button
+                            type="button"
+                            data-testid="manage-addons-enable-btn"
+                            onClick={() => setPickerOpen(true)}
+                            className="inline-flex items-center gap-1.5 rounded-md bg-teal-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-600"
                           >
-                            <span
-                              className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-[#f0f7ff] shadow-lg transition-transform ${
-                                addonToggles[addonName] ? 'translate-x-4' : 'translate-x-0'
-                              }`}
-                            />
-                          </div>
-                          <span className={`capitalize ${addonToggles[addonName] !== originalToggles[addonName] ? 'font-semibold text-teal-600 dark:text-teal-400' : 'text-[#0a3a5a] dark:text-gray-300'}`}>
-                            {addonName}
-                          </span>
-                        </label>
-                      ))}
-                    </div>
-                  )}
-                  {hasToggleChanges && (
-                    <div className="mt-4 flex items-center gap-3">
-                      <button
-                        type="button"
-                        onClick={handleApplyToggles}
-                        disabled={applyingToggles}
-                        className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
-                      >
-                        {applyingToggles && <Loader2 className="h-4 w-4 animate-spin" />}
-                        Apply Changes
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => { setAddonToggles({ ...originalToggles }); setToggleError(null); setToggleResult(null); }}
-                        disabled={applyingToggles}
-                        className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
-                      >
-                        Discard
-                      </button>
-                    </div>
-                  )}
-                  {toggleError && <p className="mt-2 text-sm text-red-600 dark:text-red-400">{toggleError}</p>}
-                  {toggleResult?.pr && (
-                    <div className="mt-2">
-                      <PRResultBanner
-                        result={toggleResult.pr}
-                        mergedMessage="PR merged — addon changes applied"
-                        openMessage="PR opened — addon changes apply once it merges"
+                            <Plus className="h-3.5 w-3.5" />
+                            Enable addon
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Empty catalog */}
+                      {noCatalog && (
+                        <p className="text-sm text-[#3a6a8a] dark:text-gray-500">
+                          No addons in catalog.
+                        </p>
+                      )}
+
+                      {/* Row list */}
+                      {!noCatalog && (
+                        <div className="space-y-1">
+                          {/* Connectivity-check system row */}
+                          {showCheckRow && (
+                            <div
+                              data-testid="connectivity-check-row"
+                              className="flex items-start gap-3 rounded-md bg-[#e8f4ff] px-3 py-2.5 opacity-80 dark:bg-gray-700/60"
+                            >
+                              <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[#5a8aaa] dark:text-gray-400" />
+                              <div className="min-w-0 flex-1">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="text-sm font-medium text-[#3a6a8a] dark:text-gray-300">
+                                    Connectivity check
+                                  </span>
+                                  <span className="rounded-full bg-[#c0ddf0] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#2a5a7a] dark:bg-gray-600 dark:text-gray-300">
+                                    Sharko system — automatic
+                                  </span>
+                                </div>
+                                <p className="mt-0.5 text-xs text-[#5a8aaa] dark:text-gray-400">
+                                  A tiny test app Sharko deploys through ArgoCD to prove this cluster can receive deployments. It removes itself when the first addon is enabled.
+                                </p>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Enabled / pending addon rows */}
+                          {visibleRows.length === 0 ? (
+                            <div className="py-2">
+                              <p className="text-sm text-[#3a6a8a] dark:text-gray-400">
+                                No addons enabled on this cluster yet.
+                              </p>
+                            </div>
+                          ) : (
+                            visibleRows.map((addonName) => {
+                              const isPendingEnable =
+                                !originalToggles[addonName] && addonToggles[addonName];
+                              const isPendingRemove =
+                                originalToggles[addonName] && !addonToggles[addonName];
+
+                              return (
+                                <div
+                                  key={addonName}
+                                  data-testid={`manage-addon-row-${addonName}`}
+                                  className={`flex items-center justify-between gap-3 rounded-md px-3 py-2 ${
+                                    isPendingEnable
+                                      ? 'bg-teal-50 ring-1 ring-teal-300 dark:bg-teal-900/20 dark:ring-teal-700'
+                                      : isPendingRemove
+                                      ? 'bg-[#e8f4ff] opacity-60 ring-1 ring-[#6aade0] dark:bg-gray-700/40'
+                                      : 'bg-[#e8f4ff] dark:bg-gray-700/40'
+                                  }`}
+                                >
+                                  <div className="flex min-w-0 flex-1 items-center gap-2">
+                                    <span
+                                      className={`truncate text-sm font-medium capitalize ${
+                                        isPendingRemove
+                                          ? 'line-through text-[#5a8aaa] dark:text-gray-500'
+                                          : 'text-[#0a2a4a] dark:text-gray-200'
+                                      }`}
+                                    >
+                                      {addonName}
+                                    </span>
+                                    {(isPendingEnable || isPendingRemove) && (
+                                      <span className="shrink-0 rounded-full bg-teal-600 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white dark:bg-teal-700">
+                                        {isPendingEnable ? 'pending' : 'removing'}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {/* Remove button — not available when already pending-remove */}
+                                  {!isPendingRemove && (
+                                    <button
+                                      type="button"
+                                      data-testid={`manage-addon-remove-${addonName}`}
+                                      aria-label={`Remove ${addonName}`}
+                                      onClick={() =>
+                                        setAddonToggles((prev) => ({ ...prev, [addonName]: false }))
+                                      }
+                                      className="shrink-0 rounded p-0.5 text-[#5a8aaa] hover:bg-[#c0ddf0] hover:text-[#0a2a4a] dark:hover:bg-gray-600 dark:hover:text-gray-200"
+                                    >
+                                      <X className="h-4 w-4" />
+                                    </button>
+                                  )}
+                                  {/* Undo-remove button when pending-remove */}
+                                  {isPendingRemove && (
+                                    <button
+                                      type="button"
+                                      data-testid={`manage-addon-undo-${addonName}`}
+                                      aria-label={`Undo remove ${addonName}`}
+                                      onClick={() =>
+                                        setAddonToggles((prev) => ({ ...prev, [addonName]: true }))
+                                      }
+                                      className="shrink-0 rounded p-0.5 text-teal-600 hover:bg-teal-100 dark:hover:bg-teal-900/30"
+                                    >
+                                      Undo
+                                    </button>
+                                  )}
+                                </div>
+                              );
+                            })
+                          )}
+                        </div>
+                      )}
+
+                      {/* Apply / Discard footer */}
+                      {hasToggleChanges && (
+                        <div className="mt-4 flex items-center gap-3">
+                          <button
+                            type="button"
+                            onClick={handleApplyToggles}
+                            disabled={applyingToggles}
+                            className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
+                          >
+                            {applyingToggles && <Loader2 className="h-4 w-4 animate-spin" />}
+                            Apply Changes
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAddonToggles({ ...originalToggles });
+                              setToggleError(null);
+                              setToggleResult(null);
+                            }}
+                            disabled={applyingToggles}
+                            className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-4 py-2 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                          >
+                            Discard
+                          </button>
+                        </div>
+                      )}
+                      {toggleError && (
+                        <p className="mt-2 text-sm text-red-600 dark:text-red-400">{toggleError}</p>
+                      )}
+                      {toggleResult?.pr && (
+                        <div className="mt-2">
+                          <PRResultBanner
+                            result={toggleResult.pr}
+                            mergedMessage="PR merged — addon changes applied"
+                            openMessage="PR opened — addon changes apply once it merges"
+                          />
+                        </div>
+                      )}
+                      {toggleResult?.message && (
+                        <p className="mt-2 text-sm text-green-600 dark:text-green-400">
+                          {toggleResult.message}
+                        </p>
+                      )}
+
+                      {/* Enable-addon picker dialog */}
+                      <EnableAddonPicker
+                        open={pickerOpen}
+                        allAddonNames={allCatalogNames}
+                        enabledNames={pickerEnabledNames}
+                        onEnable={(addonName) =>
+                          setAddonToggles((prev) => ({ ...prev, [addonName]: true }))
+                        }
+                        onClose={() => setPickerOpen(false)}
                       />
                     </div>
-                  )}
-                  {toggleResult?.message && (
-                    <p className="mt-2 text-sm text-green-600 dark:text-green-400">{toggleResult.message}</p>
-                  )}
-                </div>
+                  );
+                })()}
               </RoleGuard>
 
               {/* Status filter cards — hide zero-count categories */}
