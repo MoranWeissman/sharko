@@ -36,6 +36,7 @@ const mockTestClusterConnection = vi.fn();
 const mockFetchTrackedPRs = vi.fn();
 const mockGetNodeInfo = vi.fn();
 const mockDeregisterCluster = vi.fn();
+const mockUpdateClusterAddons = vi.fn();
 
 // V2-cleanup-13: capture toast calls so the removal-feedback assertions can
 // distinguish "cluster removed" (auto-merged) from "removal PR opened".
@@ -63,7 +64,7 @@ vi.mock('@/services/api', async () => {
     },
     testClusterConnection: (...args: unknown[]) => mockTestClusterConnection(...args),
     deregisterCluster: (...args: unknown[]) => mockDeregisterCluster(...args),
-    updateClusterAddons: vi.fn().mockResolvedValue({}),
+    updateClusterAddons: (...args: unknown[]) => mockUpdateClusterAddons(...args),
     updateClusterSettings: vi.fn().mockResolvedValue({}),
     // BUG-042: ClusterDetail now fetches /api/v1/prs?status=open&cluster=<name>
     // alongside the cluster comparison to overlay pending-PR badges on
@@ -172,6 +173,8 @@ describe('ClusterDetail', () => {
     mockGetNodeInfo.mockResolvedValue(null);
     // V2-cleanup-13: default removal returns an opened-but-not-merged PR.
     mockDeregisterCluster.mockResolvedValue({});
+    // V2-cleanup-31: default apply-addons returns an empty result (no PR).
+    mockUpdateClusterAddons.mockResolvedValue({});
   });
 
   // V2-cleanup-8.3: the node-count card always reflects the Sharko HOST
@@ -889,6 +892,383 @@ describe('ClusterDetail', () => {
 
       // total_untracked_in_argocd is 0 → "Unmanaged" stat card must be hidden
       expect(screen.queryByText('Unmanaged')).not.toBeInTheDocument();
+    });
+  });
+
+  // V2-cleanup-31: Manage Addons rework — enabled-only list, searchable picker,
+  // pending-changes model, connectivity-check system row.
+  describe('V2-cleanup-31: Manage Addons rework', () => {
+    // Base comparison data: ingress-nginx + cert-manager enabled; prometheus disabled.
+    // addonToggles is initialised from addon_comparisons git_enabled values.
+    const baseResponse = {
+      ...comparisonResponse,
+      addon_comparisons: [
+        {
+          addon_name: 'cert-manager',
+          git_configured: true,
+          git_version: '1.12.0',
+          git_enabled: true,
+          has_version_override: false,
+          argocd_deployed: true,
+          status: 'healthy',
+          issues: [],
+        },
+        {
+          addon_name: 'ingress-nginx',
+          git_configured: true,
+          git_version: '4.7.0',
+          git_enabled: true,
+          has_version_override: false,
+          argocd_deployed: true,
+          status: 'healthy',
+          issues: [],
+        },
+        {
+          addon_name: 'prometheus',
+          git_configured: true,
+          git_version: '2.45.0',
+          git_enabled: false,
+          has_version_override: false,
+          argocd_deployed: false,
+          status: 'disabled_in_git',
+          issues: [],
+        },
+      ],
+    };
+
+    beforeEach(() => {
+      mockGetClusterComparison.mockResolvedValue(baseResponse);
+    });
+
+    // --- 1. Enabled-only rows ---
+
+    it('renders rows only for enabled addons; disabled addons are not shown', async () => {
+      renderView('addons');
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+
+      // cert-manager and ingress-nginx are enabled → rows present
+      expect(screen.getByTestId('manage-addon-row-cert-manager')).toBeInTheDocument();
+      expect(screen.getByTestId('manage-addon-row-ingress-nginx')).toBeInTheDocument();
+
+      // prometheus is disabled in git → no row in the Manage Addons card
+      expect(screen.queryByTestId('manage-addon-row-prometheus')).not.toBeInTheDocument();
+    });
+
+    it('shows a "No addons enabled" message when no addons are enabled', async () => {
+      mockGetClusterComparison.mockResolvedValueOnce({
+        ...baseResponse,
+        addon_comparisons: [
+          {
+            addon_name: 'prometheus',
+            git_configured: true,
+            git_version: '2.45.0',
+            git_enabled: false,
+            has_version_override: false,
+            argocd_deployed: false,
+            status: 'disabled_in_git',
+            issues: [],
+          },
+        ],
+      });
+      renderView('addons');
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+      expect(
+        screen.getByText(/no addons enabled on this cluster yet/i),
+      ).toBeInTheDocument();
+    });
+
+    it('shows "No addons in catalog." when the catalog (addonToggles) is empty', async () => {
+      mockGetClusterComparison.mockResolvedValueOnce({
+        ...baseResponse,
+        addon_comparisons: [],
+      });
+      renderView('addons');
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+      expect(screen.getByText('No addons in catalog.')).toBeInTheDocument();
+    });
+
+    // --- 2. Enable-addon picker ---
+
+    it('opens the picker when "+ Enable addon" is clicked', async () => {
+      renderView('addons');
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+
+      fireEvent.click(screen.getByTestId('manage-addons-enable-btn'));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('addon-picker-search')).toBeInTheDocument();
+      });
+
+      // prometheus is not enabled → it must appear in the picker
+      expect(screen.getByTestId('addon-picker-item-prometheus')).toBeInTheDocument();
+      // cert-manager + ingress-nginx are already enabled → NOT in picker
+      expect(screen.queryByTestId('addon-picker-item-cert-manager')).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId('addon-picker-item-ingress-nginx'),
+      ).not.toBeInTheDocument();
+    });
+
+    it('picker: typing filters by name', async () => {
+      renderView('addons');
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+      fireEvent.click(screen.getByTestId('manage-addons-enable-btn'));
+      await waitFor(() =>
+        expect(screen.getByTestId('addon-picker-search')).toBeInTheDocument(),
+      );
+
+      fireEvent.change(screen.getByTestId('addon-picker-search'), {
+        target: { value: 'prOM' },
+      });
+      expect(screen.getByTestId('addon-picker-item-prometheus')).toBeInTheDocument();
+    });
+
+    it('picker: clicking an addon stages it as pending-enable and removes it from the picker list', async () => {
+      renderView('addons');
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+      fireEvent.click(screen.getByTestId('manage-addons-enable-btn'));
+      await waitFor(() =>
+        expect(screen.getByTestId('addon-picker-item-prometheus')).toBeInTheDocument(),
+      );
+
+      // Click prometheus in the picker
+      fireEvent.click(screen.getByTestId('addon-picker-item-prometheus'));
+
+      // prometheus is now staged → it must no longer appear as a picker item
+      expect(
+        screen.queryByTestId('addon-picker-item-prometheus'),
+      ).not.toBeInTheDocument();
+
+      // Close picker
+      fireEvent.click(screen.getByTestId('addon-picker-done'));
+
+      // The staged row must appear with a "pending" chip
+      await waitFor(() => {
+        expect(screen.getByTestId('manage-addon-row-prometheus')).toBeInTheDocument();
+      });
+      expect(screen.getByTestId('manage-addon-row-prometheus')).toHaveTextContent(
+        /pending/i,
+      );
+    });
+
+    // --- 3. Staged removal ---
+
+    it('clicking X marks a row as pending-removal with a strikethrough + "removing" chip', async () => {
+      renderView('addons');
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+
+      fireEvent.click(screen.getByTestId('manage-addon-remove-cert-manager'));
+
+      // Row still present but marked for removal
+      expect(screen.getByTestId('manage-addon-row-cert-manager')).toBeInTheDocument();
+      expect(screen.getByTestId('manage-addon-row-cert-manager')).toHaveTextContent(
+        /removing/i,
+      );
+      // Apply Changes button appears
+      expect(screen.getByRole('button', { name: /apply changes/i })).toBeInTheDocument();
+    });
+
+    // --- 4. Payload identity ---
+
+    it('Apply Changes calls updateClusterAddons with the full boolean catalog map', async () => {
+      renderView('addons');
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+
+      // Stage cert-manager for removal
+      fireEvent.click(screen.getByTestId('manage-addon-remove-cert-manager'));
+
+      // Apply
+      fireEvent.click(screen.getByRole('button', { name: /apply changes/i }));
+
+      await waitFor(() => {
+        expect(mockUpdateClusterAddons).toHaveBeenCalledOnce();
+      });
+
+      // Full catalog map: cert-manager → false, ingress-nginx → true, prometheus → false
+      expect(mockUpdateClusterAddons).toHaveBeenCalledWith('prod-eu', {
+        'cert-manager': false,
+        'ingress-nginx': true,
+        prometheus: false,
+      });
+    });
+
+    it('Apply Changes after staging a new enable emits true for the staged addon', async () => {
+      renderView('addons');
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+
+      // Stage prometheus for enable via the picker
+      fireEvent.click(screen.getByTestId('manage-addons-enable-btn'));
+      await waitFor(() =>
+        expect(screen.getByTestId('addon-picker-item-prometheus')).toBeInTheDocument(),
+      );
+      fireEvent.click(screen.getByTestId('addon-picker-item-prometheus'));
+      fireEvent.click(screen.getByTestId('addon-picker-done'));
+
+      // Apply
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /apply changes/i })).toBeInTheDocument(),
+      );
+      fireEvent.click(screen.getByRole('button', { name: /apply changes/i }));
+
+      await waitFor(() => {
+        expect(mockUpdateClusterAddons).toHaveBeenCalledOnce();
+      });
+
+      expect(mockUpdateClusterAddons).toHaveBeenCalledWith('prod-eu', {
+        'cert-manager': true,
+        'ingress-nginx': true,
+        prometheus: true,
+      });
+    });
+
+    // --- 5. Discard resets state ---
+
+    it('Discard resets staged changes back to the original state', async () => {
+      renderView('addons');
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+
+      // Stage cert-manager for removal
+      fireEvent.click(screen.getByTestId('manage-addon-remove-cert-manager'));
+      expect(screen.getByTestId('manage-addon-row-cert-manager')).toHaveTextContent(
+        /removing/i,
+      );
+
+      // Discard
+      fireEvent.click(screen.getByRole('button', { name: /discard/i }));
+
+      // Row is back to normal (no "removing" chip)
+      expect(screen.getByTestId('manage-addon-row-cert-manager')).not.toHaveTextContent(
+        /removing/i,
+      );
+      // Apply Changes button gone
+      expect(
+        screen.queryByRole('button', { name: /apply changes/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    // --- 6. Connectivity-check system row ---
+
+    it.each([
+      ['verified_check'],
+      ['check_pending'],
+      ['check_failed'],
+    ] as const)(
+      'renders the connectivity-check row for connectivity_status=%s',
+      async (connStatus) => {
+        mockGetClusterComparison.mockResolvedValueOnce({
+          ...baseResponse,
+          cluster: { ...baseResponse.cluster, connectivity_status: connStatus },
+        });
+        renderView('addons');
+        await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+        expect(screen.getByTestId('connectivity-check-row')).toBeInTheDocument();
+        expect(screen.getByText('Connectivity check')).toBeInTheDocument();
+        expect(screen.getByText(/Sharko system — automatic/i)).toBeInTheDocument();
+        expect(
+          screen.getByText(/tiny test app Sharko deploys through ArgoCD/i),
+        ).toBeInTheDocument();
+      },
+    );
+
+    it.each([
+      ['verified_argocd'],
+      [''],
+      [undefined],
+    ] as const)(
+      'does NOT render the connectivity-check row for connectivity_status=%s',
+      async (connStatus) => {
+        mockGetClusterComparison.mockResolvedValueOnce({
+          ...baseResponse,
+          cluster: { ...baseResponse.cluster, connectivity_status: connStatus },
+        });
+        renderView('addons');
+        await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+        expect(screen.queryByTestId('connectivity-check-row')).not.toBeInTheDocument();
+      },
+    );
+
+    it('connectivity-check row has no remove/toggle affordance', async () => {
+      mockGetClusterComparison.mockResolvedValueOnce({
+        ...baseResponse,
+        cluster: { ...baseResponse.cluster, connectivity_status: 'verified_check' },
+      });
+      renderView('addons');
+      await waitFor(() => expect(screen.getByTestId('connectivity-check-row')).toBeInTheDocument());
+
+      const row = screen.getByTestId('connectivity-check-row');
+      // No button inside the row (no X/remove)
+      expect(row.querySelectorAll('button')).toHaveLength(0);
+    });
+
+    it('connectivity-check row is excluded from enabled-count in the card (not counted)', async () => {
+      // The card doesn't display an explicit count today, but the check row
+      // must not inject a manage-addon-row-* entry into the enabled list.
+      mockGetClusterComparison.mockResolvedValueOnce({
+        ...baseResponse,
+        cluster: { ...baseResponse.cluster, connectivity_status: 'check_pending' },
+      });
+      renderView('addons');
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+
+      // Connectivity check has its own testid, not a manage-addon-row-*
+      expect(
+        screen.queryByTestId('manage-addon-row-connectivity-check'),
+      ).not.toBeInTheDocument();
+    });
+
+    it('connectivity-check row does not appear in the enable picker', async () => {
+      mockGetClusterComparison.mockResolvedValueOnce({
+        ...baseResponse,
+        cluster: { ...baseResponse.cluster, connectivity_status: 'check_pending' },
+      });
+      renderView('addons');
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+
+      fireEvent.click(screen.getByTestId('manage-addons-enable-btn'));
+      await waitFor(() =>
+        expect(screen.getByTestId('addon-picker-search')).toBeInTheDocument(),
+      );
+
+      // The picker dialog lists catalog addons from addonToggles only —
+      // "Connectivity check" must not appear as a picker item.
+      expect(
+        screen.queryByTestId('addon-picker-item-connectivity-check'),
+      ).not.toBeInTheDocument();
+      // The picker list itself must contain no connectivity-check item.
+      const pickerList = screen.getByTestId('addon-picker-list');
+      expect(pickerList).not.toHaveTextContent('Connectivity check');
+    });
+
+    // --- 7. RoleGuard behavior unchanged ---
+
+    it('Manage Addons card is hidden for non-admin users', async () => {
+      const viewerAuth = {
+        token: 'viewer-token',
+        username: 'viewer',
+        role: 'viewer',
+        login: vi.fn(),
+        logout: vi.fn(),
+        isAuthenticated: true,
+        isAdmin: false,
+        loading: false,
+        error: null,
+      };
+      const { MemoryRouter, Route, Routes } = await import('react-router-dom');
+      const { ClusterDetail } = await import('@/views/ClusterDetail');
+      const { AuthContext } = await import('@/hooks/useAuth');
+      const { render: r, screen: s, waitFor: w } = await import('@testing-library/react');
+
+      r(
+        <AuthContext.Provider value={viewerAuth}>
+          <MemoryRouter initialEntries={['/clusters/prod-eu?section=addons']}>
+            <Routes>
+              <Route path="/clusters/:name" element={<ClusterDetail />} />
+            </Routes>
+          </MemoryRouter>
+        </AuthContext.Provider>,
+      );
+
+      await w(() => expect(s.getByText('prod-eu')).toBeInTheDocument());
+      expect(s.queryByText('Manage Addons')).not.toBeInTheDocument();
     });
   });
 });
