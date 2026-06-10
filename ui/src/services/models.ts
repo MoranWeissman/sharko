@@ -15,8 +15,8 @@ export interface Cluster {
   connection_status?: string
   managed?: boolean
   adopted?: boolean
-  // Connectivity check fields (V2-cleanup-29)
-  // connectivity_status values: 'verified_argocd' | 'verified_check' | 'check_failed' | ''
+  // Connectivity check fields (V2-cleanup-29/30)
+  // connectivity_status values: 'verified_argocd' | 'verified_check' | 'check_pending' | 'check_failed' | ''
   connectivity_status?: string
   connectivity_detail?: string
   // Sharko observability fields (V2-cleanup-27 folded in)

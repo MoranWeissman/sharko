@@ -335,14 +335,35 @@ func (s *ClusterService) GetClusterComparison(ctx context.Context, clusterName s
 		comparisons = append(comparisons, comp)
 	}
 
-	// Find untracked ArgoCD apps (not in Git), excluding infrastructure apps
+	// Find untracked ArgoCD apps (not in Git), excluding infrastructure apps.
+	// The connectivity-check app is a special case: it IS GitOps-managed (its
+	// ApplicationSet lives in the repo) but it is not a catalog addon. Surface
+	// it with status "sharko_system" so operators understand what it is.
 	totalUntracked := 0
+	connectivityCheckAppName := "connectivity-check-" + clusterName
 	for appName, app := range argocdAppMap {
 		if trackedArgocdApps[appName] {
 			continue
 		}
 		// Skip known infrastructure apps that aren't addons
 		if isInfrastructureApp(appName) {
+			continue
+		}
+		// Sharko's own connectivity-check app: visible but distinct.
+		if appName == connectivityCheckAppName {
+			comparisons = append(comparisons, models.AddonComparisonStatus{
+				AddonName:               appName,
+				ArgocdDeployed:          true,
+				ArgocdApplicationName:   app.Name,
+				ArgocdSyncStatus:        app.SyncStatus,
+				ArgocdHealthStatus:      app.HealthStatus,
+				ArgocdDeployedVersion:   app.SourceTargetRevision,
+				ArgocdNamespace:         app.DestinationNamespace,
+				ArgocdSourceRepoURL:     app.SourceRepoURL,
+				ArgocdDestinationServer: app.DestinationServer,
+				Status:                  "sharko_system",
+				Issues:                  []string{},
+			})
 			continue
 		}
 		totalUntracked++

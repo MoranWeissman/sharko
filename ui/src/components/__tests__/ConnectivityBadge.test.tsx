@@ -27,6 +27,39 @@ describe('ConnectivityBadge', () => {
     expect(badge?.className).toContain('green');
   });
 
+  // --- check_pending (new state: blue informational badge) ---
+
+  it('check_pending: shows blue "Connectivity check running…" badge', () => {
+    render(<ConnectivityBadge connectivityStatus="check_pending" />);
+    expect(screen.getByText(/Connectivity check running/)).toBeInTheDocument();
+    const badge = screen.getByText(/Connectivity check running/).closest('span');
+    // Blue-tinted palette uses the project's custom blue tokens, not Tailwind's blue-*
+    // Verify it is NOT amber or red (not a failure state).
+    expect(badge?.className).not.toContain('amber');
+    expect(badge?.className).not.toContain('red');
+  });
+
+  it('check_pending: carries connectivityDetail as data-detail attribute', () => {
+    render(
+      <ConnectivityBadge
+        connectivityStatus="check_pending"
+        connectivityDetail="connectivity check is deploying — usually under a minute"
+      />,
+    );
+    const trigger = screen.getByText(/Connectivity check running/).closest('span');
+    expect(trigger?.getAttribute('data-detail')).toBe(
+      'connectivity check is deploying — usually under a minute',
+    );
+  });
+
+  it('check_pending: renders without detail (no data-detail attribute)', () => {
+    render(<ConnectivityBadge connectivityStatus="check_pending" />);
+    const trigger = screen.getByText(/Connectivity check running/).closest('span');
+    expect(trigger?.getAttribute('data-detail')).toBeNull();
+  });
+
+  // --- check_failed ---
+
   it('check_failed: shows amber "Connectivity check failed" badge', () => {
     render(<ConnectivityBadge connectivityStatus="check_failed" />);
     expect(screen.getByText(/Connectivity check failed/)).toBeInTheDocument();
@@ -44,6 +77,8 @@ describe('ConnectivityBadge', () => {
     const trigger = screen.getByText(/Connectivity check failed/).closest('span');
     expect(trigger?.getAttribute('data-detail')).toBe('namespace not found');
   });
+
+  // --- secondary line ---
 
   it('sharko status: shows secondary line when sharkoStatus present', () => {
     render(
@@ -78,6 +113,19 @@ describe('ConnectivityBadge', () => {
       />,
     );
     expect(screen.getByText(/Connectivity verified/)).toBeInTheDocument();
+    expect(screen.getByText(/Sharko can reach it/)).toBeInTheDocument();
+  });
+
+  it('check_pending with secondary line: renders both', () => {
+    render(
+      <ConnectivityBadge
+        connectivityStatus="check_pending"
+        connectivityDetail="connectivity check is deploying"
+        sharkoStatus="Connected"
+        lastTestAt={new Date(Date.now() - 60000).toISOString()}
+      />,
+    );
+    expect(screen.getByText(/Connectivity check running/)).toBeInTheDocument();
     expect(screen.getByText(/Sharko can reach it/)).toBeInTheDocument();
   });
 });

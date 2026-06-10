@@ -1596,13 +1596,17 @@ function ComparisonRow({ addon, isExpanded, onToggleExpand, argocdBaseURL, highl
       </td>
       <td className="px-4 py-3 font-medium text-[#0a2a4a] dark:text-gray-100">
         <div className="flex flex-wrap items-center gap-2">
-          <Link
-            to={`/addons/${encodeURIComponent(addon.addon_name)}`}
-            className="hover:text-teal-600 hover:underline dark:hover:text-teal-400"
-            title={`Open ${addon.addon_name} details`}
-          >
-            {capitalizeAddonName(addon.addon_name)}
-          </Link>
+          {addon.status === 'sharko_system' ? (
+            <span className="text-[#0a2a4a] dark:text-gray-100">Connectivity check</span>
+          ) : (
+            <Link
+              to={`/addons/${encodeURIComponent(addon.addon_name)}`}
+              className="hover:text-teal-600 hover:underline dark:hover:text-teal-400"
+              title={`Open ${addon.addon_name} details`}
+            >
+              {capitalizeAddonName(addon.addon_name)}
+            </Link>
+          )}
           {addon.argocd_application_name && argocdBaseURL && (
             <a
               href={`${argocdBaseURL}/applications/${addon.argocd_application_name}`}
@@ -1655,7 +1659,12 @@ function ComparisonRow({ addon, isExpanded, onToggleExpand, argocdBaseURL, highl
         {addon.argocd_namespace ?? '--'}
       </td>
       <td className="px-4 py-3">
-        {allIssues.length > 0 ? (
+        {addon.status === 'sharko_system' ? (
+          <span className="text-xs text-[#3a6a8a] dark:text-gray-400">
+            A tiny test app Sharko deploys through ArgoCD to prove this cluster can receive
+            deployments. It removes itself when the first addon is enabled.
+          </span>
+        ) : allIssues.length > 0 ? (
           <div>
             <ul className="space-y-0.5 text-xs text-[#1a4a6a] dark:text-gray-400">
               {displayedIssues.map((issue, i) => (

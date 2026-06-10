@@ -1,4 +1,4 @@
-import { CheckCircle2, XCircle } from 'lucide-react';
+import { CheckCircle2, Clock, XCircle } from 'lucide-react';
 import {
   Tooltip,
   TooltipContent,
@@ -7,7 +7,7 @@ import {
 } from '@/components/ui/tooltip';
 
 interface ConnectivityBadgeProps {
-  /** 'verified_argocd' | 'verified_check' | 'check_failed' | '' | undefined */
+  /** 'verified_argocd' | 'verified_check' | 'check_pending' | 'check_failed' | '' | undefined */
   connectivityStatus?: string;
   /** Reason string when connectivityStatus === 'check_failed' */
   connectivityDetail?: string;
@@ -43,8 +43,9 @@ function relativeTime(isoString: string): string {
  *
  * Priority:
  *  1. 'verified_argocd' or 'verified_check' → green "Connectivity verified ✓"
- *  2. 'check_failed' → red/amber "Connectivity check failed" + detail
- *  3. Nothing (empty/absent) → render nothing (ArgoCD status rendering stays as-is)
+ *  2. 'check_pending' → blue "Connectivity check running…" + detail
+ *  3. 'check_failed' → amber "Connectivity check failed" + detail
+ *  4. Nothing (empty/absent) → render nothing (ArgoCD status rendering stays as-is)
  *
  * Secondary: when sharkoStatus is present, show a line about Sharko's reach test.
  */
@@ -88,6 +89,30 @@ function renderPrimary(status?: string, detail?: string) {
           </TooltipTrigger>
           <TooltipContent>
             <p className="max-w-xs text-xs">{tooltipText}</p>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    );
+  }
+
+  if (status === 'check_pending') {
+    const tooltipContent = detail
+      ? detail
+      : 'Connectivity check is deploying — usually under a minute; without an ArgoCD webhook it can take ~3 minutes';
+    return (
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span
+              className="inline-flex items-center gap-1.5 rounded-full bg-[#d6eeff] px-2 py-0.5 text-xs font-medium text-[#1a4a6a] dark:bg-blue-900/30 dark:text-blue-300 cursor-help"
+              data-detail={detail || undefined}
+            >
+              <Clock className="h-3 w-3" />
+              Connectivity check running…
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p className="max-w-xs text-xs">{tooltipContent}</p>
           </TooltipContent>
         </Tooltip>
       </TooltipProvider>
