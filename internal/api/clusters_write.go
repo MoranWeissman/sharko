@@ -312,6 +312,7 @@ func (s *Server) handleDeregisterCluster(w http.ResponseWriter, r *http.Request)
 // @Failure 400 {object} map[string]interface{} "Bad request"
 // @Failure 401 {object} map[string]interface{} "Unauthorized"
 // @Failure 404 {object} map[string]interface{} "Cluster not found"
+// @Failure 422 {object} map[string]interface{} "Addon not in catalog"
 // @Failure 502 {object} map[string]interface{} "Gateway error"
 // @Router /clusters/{name} [patch]
 // handleUpdateClusterAddons handles PATCH /api/v1/clusters/{name} — update addon labels.
@@ -426,6 +427,10 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 	// commitChangesWithMeta via PRMetadata.AutoMergeOverride.
 	result, err := orch.UpdateClusterAddons(ctx, name, serverURL, "", req.Addons, req.AutoMerge)
 	if err != nil {
+		if orchestrator.IsAddonNotInCatalog(err) {
+			writeError(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}

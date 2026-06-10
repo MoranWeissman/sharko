@@ -3819,6 +3819,11 @@ paths:
           schema:
             additionalProperties: true
             type: object
+        "422":
+          description: Addon not in catalog
+          schema:
+            additionalProperties: true
+            type: object
         "502":
           description: Gateway error
           schema:
