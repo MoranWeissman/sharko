@@ -3494,6 +3494,82 @@ const docTemplate = `{
                 }
             }
         },
+        "/clusters/{name}/addons/{addon}/restart-sync": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Terminates any in-flight ArgoCD sync operation for the addon on the given cluster\nand immediately re-triggers a sync. Use this to recover from a stale or permanently-\nfailing operation without having to open the ArgoCD UI.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "clusters"
+                ],
+                "summary": "Restart addon sync on cluster",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Cluster name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Addon name",
+                        "name": "addon",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Sync restarted",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.RestartSyncResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Application not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "502": {
+                        "description": "ArgoCD gateway error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
         "/clusters/{name}/comparison": {
             "get": {
                 "security": [
@@ -8177,6 +8253,19 @@ const docTemplate = `{
                 },
                 "reason": {
                     "type": "string"
+                }
+            }
+        },
+        "internal_api.RestartSyncResult": {
+            "type": "object",
+            "properties": {
+                "synced": {
+                    "description": "always true on success",
+                    "type": "boolean"
+                },
+                "terminated": {
+                    "description": "true when a prior operation was terminated",
+                    "type": "boolean"
                 }
             }
         },

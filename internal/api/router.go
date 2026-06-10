@@ -592,6 +592,7 @@ func NewRouter(srv *Server, staticFS fs.FS) http.Handler {
 	mux.HandleFunc("POST /api/v1/clusters/{name}/unadopt", srv.handleUnadoptCluster)
 	mux.HandleFunc("POST /api/v1/clusters/{name}/addons/{addon}", srv.handleEnableAddon)
 	mux.HandleFunc("DELETE /api/v1/clusters/{name}/addons/{addon}", srv.handleDisableAddon)
+	mux.HandleFunc("POST /api/v1/clusters/{name}/addons/{addon}/restart-sync", srv.handleRestartAddonSync)
 	// Orphan-cluster Secret cleanup. Refuses to delete a cluster that's
 	// actually managed (in git) or pending (open register PR) — see
 	// clusters_orphan_delete.go for the safety gates.

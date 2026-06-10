@@ -14,6 +14,19 @@ import (
 	"github.com/MoranWeissman/sharko/internal/models"
 )
 
+// TerminateOperation cancels the in-flight sync operation for the named ArgoCD
+// application. It is a no-op when no operation is active (ArgoCD returns 200
+// with no body in that case). Use this before re-syncing an application that is
+// permanently failing due to a stale operation snapshot.
+func (c *Client) TerminateOperation(ctx context.Context, appName string) error {
+	path := "/api/v1/applications/" + url.PathEscape(appName) + "/operation"
+	_, err := c.doDelete(ctx, path)
+	if err != nil {
+		return fmt.Errorf("terminating operation for %q: %w", appName, err)
+	}
+	return nil
+}
+
 // SyncApplication triggers a sync operation on the named ArgoCD application.
 func (c *Client) SyncApplication(ctx context.Context, appName string) error {
 	path := "/api/v1/applications/" + appName + "/sync"

@@ -28,6 +28,7 @@ import {
   KeyRound,
   Plus,
   RefreshCw,
+  RotateCcw,
   X,
   ShieldCheck,
 } from 'lucide-react';
@@ -1674,6 +1675,7 @@ export function ClusterDetail() {
                       <ComparisonRow
                         key={addon.addon_name}
                         addon={addon}
+                        clusterName={name ?? ''}
                         isExpanded={expandedRows.has(addon.addon_name)}
                         onToggleExpand={() => toggleExpanded(addon.addon_name)}
                         argocdBaseURL={argocdBaseURL}
@@ -1763,6 +1765,7 @@ export function ClusterDetail() {
 
 interface ComparisonRowProps {
   addon: AddonComparisonStatus;
+  clusterName: string;
   isExpanded: boolean;
   onToggleExpand: () => void;
   argocdBaseURL: string;
@@ -1773,10 +1776,23 @@ interface ComparisonRowProps {
   pendingPRs?: TrackedPR[];
 }
 
-function ComparisonRow({ addon, isExpanded, onToggleExpand, argocdBaseURL, highlighted, pendingPRs = [] }: ComparisonRowProps) {
+function ComparisonRow({ addon, clusterName, isExpanded, onToggleExpand, argocdBaseURL, highlighted, pendingPRs = [] }: ComparisonRowProps) {
+  const [restartLoading, setRestartLoading] = useState(false);
   const allIssues = addon.issues;
   const isTruncated = shouldTruncateIssues(allIssues);
   const displayedIssues = isExpanded ? allIssues : allIssues.slice(0, 2);
+
+  const handleRestartSync = async () => {
+    setRestartLoading(true);
+    try {
+      await api.restartAddonSync(clusterName, addon.addon_name);
+      showToast(`Sync restarted for ${addon.addon_name} on ${clusterName}.`, 'success');
+    } catch (err) {
+      showToast(`Failed to restart sync: ${err instanceof Error ? err.message : String(err)}`, 'error');
+    } finally {
+      setRestartLoading(false);
+    }
+  };
   const rowRef = useRef<HTMLTableRowElement>(null);
 
   // Deep-link effect: when highlighted flips true, scroll into view and
@@ -1908,6 +1924,22 @@ function ComparisonRow({ addon, isExpanded, onToggleExpand, argocdBaseURL, highl
                   </>
                 )}
               </button>
+            )}
+            {addon.status === 'sync_failing' && (
+              <RoleGuard roles={['admin', 'operator']}>
+                <button
+                  type="button"
+                  data-testid="restart-sync-btn"
+                  onClick={(e) => { e.stopPropagation(); void handleRestartSync(); }}
+                  disabled={restartLoading}
+                  className="mt-2 inline-flex items-center gap-1 rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-2 py-0.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+                >
+                  {restartLoading
+                    ? <Loader2 className="h-3 w-3 animate-spin" />
+                    : <RotateCcw className="h-3 w-3" />}
+                  Restart sync
+                </button>
+              </RoleGuard>
             )}
           </div>
         ) : hasProblems ? (

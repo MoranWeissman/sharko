@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { X, CheckCircle2 } from 'lucide-react'
+import { X, CheckCircle2, AlertCircle } from 'lucide-react'
 import { PRLink } from '@/components/PRFeedback'
 
 /**
@@ -15,13 +15,13 @@ export interface ToastPRLink {
 interface Toast {
   id: number
   message: string
-  type: 'success' | 'info'
+  type: 'success' | 'info' | 'error'
   pr?: ToastPRLink
 }
 
 let toastId = 0
 let addToastFn:
-  | ((message: string, type?: 'success' | 'info', pr?: ToastPRLink) => void)
+  | ((message: string, type?: 'success' | 'info' | 'error', pr?: ToastPRLink) => void)
   | null = null
 
 /**
@@ -32,7 +32,7 @@ let addToastFn:
  */
 export function showToast(
   message: string,
-  type: 'success' | 'info' = 'success',
+  type: 'success' | 'info' | 'error' = 'success',
   pr?: ToastPRLink,
 ) {
   addToastFn?.(message, type, pr)
@@ -42,7 +42,7 @@ export function ToastContainer() {
   const [toasts, setToasts] = useState<Toast[]>([])
 
   const addToast = useCallback(
-    (message: string, type: 'success' | 'info' = 'success', pr?: ToastPRLink) => {
+    (message: string, type: 'success' | 'info' | 'error' = 'success', pr?: ToastPRLink) => {
       const id = ++toastId
       setToasts(prev => [...prev, { id, message, type, pr }])
       setTimeout(() => {
@@ -71,9 +71,13 @@ export function ToastContainer() {
           className="flex items-start gap-3 rounded-lg bg-[#f0f7ff] px-4 py-3 shadow-lg ring-2 ring-[#6aade0] dark:bg-gray-800 dark:ring-gray-700 animate-in slide-in-from-right"
           style={{ minWidth: 280, maxWidth: 420 }}
         >
-          <CheckCircle2 className={`mt-0.5 h-4 w-4 shrink-0 ${
-            toast.type === 'success' ? 'text-green-500' : 'text-teal-500'
-          }`} />
+          {toast.type === 'error' ? (
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
+          ) : (
+            <CheckCircle2 className={`mt-0.5 h-4 w-4 shrink-0 ${
+              toast.type === 'success' ? 'text-green-500' : 'text-teal-500'
+            }`} />
+          )}
           <div className="flex-1">
             <p className="text-sm text-[#0a2a4a] dark:text-gray-100">{toast.message}</p>
             {toast.pr && (

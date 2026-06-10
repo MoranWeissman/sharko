@@ -1098,6 +1098,15 @@ definitions:
       reason:
         type: string
     type: object
+  internal_api.RestartSyncResult:
+    properties:
+      synced:
+        description: always true on success
+        type: boolean
+      terminated:
+        description: true when a prior operation was terminated
+        type: boolean
+    type: object
   internal_api.aiAnnotateBlockedResponse:
     properties:
       code:
@@ -3955,6 +3964,60 @@ paths:
       security:
       - BearerAuth: []
       summary: Enable addon on cluster
+      tags:
+      - clusters
+  /clusters/{name}/addons/{addon}/restart-sync:
+    post:
+      description: |-
+        Terminates any in-flight ArgoCD sync operation for the addon on the given cluster
+        and immediately re-triggers a sync. Use this to recover from a stale or permanently-
+        failing operation without having to open the ArgoCD UI.
+      parameters:
+      - description: Cluster name
+        in: path
+        name: name
+        required: true
+        type: string
+      - description: Addon name
+        in: path
+        name: addon
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Sync restarted
+          schema:
+            $ref: '#/definitions/internal_api.RestartSyncResult'
+        "400":
+          description: Bad request
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Application not found
+          schema:
+            additionalProperties: true
+            type: object
+        "502":
+          description: ArgoCD gateway error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Restart addon sync on cluster
       tags:
       - clusters
   /clusters/{name}/comparison:
