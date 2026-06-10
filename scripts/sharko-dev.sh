@@ -2308,7 +2308,7 @@ EOF
 # =====================================================================
 # Subcommand: do_kind_target (V125-3.12)
 # Spin up N kind clusters as Sharko-managed-cluster targets, generate a
-# serviceaccount + 24h bearer token + Docker-network-internal kubeconfig
+# serviceaccount + non-expiring SA token secret + Docker-network-internal kubeconfig
 # per cluster, and write each kubeconfig to ./.local/kubeconfigs/ (gitignored)
 # ready to paste into the wizard's V125-1.1 kubeconfig form.
 #
@@ -2330,7 +2330,7 @@ sharko-dev.sh kind-target — manage kind clusters as Sharko-managed targets (V1
 
 Wraps the multi-step flow for creating kind clusters that Sharko can
 register as managed targets via V125-1.1's kubeconfig path. Each target
-gets a serviceaccount, ClusterRoleBinding, 24h bearer token, and a
+gets a serviceaccount, ClusterRoleBinding, a non-expiring token secret, and a
 kubeconfig file with the Docker-network-internal API server URL so the
 in-cluster sharko + argocd controllers can reach the target's API server
 over the kind Docker bridge.
@@ -2349,8 +2349,13 @@ Files:
   ./.local/kubeconfigs/<name>.kubeconfig.yaml   (mode 0600, gitignored)
 
 Notes:
-  Token TTL is 24h. Re-run 'kind-target create' to refresh tokens
-  without recreating clusters (idempotent — existing clusters are reused).
+  The token does not expire — safe for throwaway LOCAL DEV kind clusters
+  (do NOT use this pattern for real clusters). Re-run 'kind-target create'
+  only when you need fresh kubeconfig files (e.g. Docker reassigned
+  container IPs) or to upgrade targets created before this change (their
+  old 24h tokens may have expired; the SA + binding already exist, the
+  new secret mechanism takes over in place). Idempotent — existing
+  clusters are reused.
   Requires the main 'sharko-e2e' kind cluster to exist first (run 'up')
   so the shared 'kind' Docker network is present.
 EOF
@@ -2502,11 +2507,42 @@ _kind_target_create() {
             return 1
         fi
 
-        # ---- 5. Generate 24h bearer token ----
-        local token
-        token=$(kubectl --context "$ctx" -n default create token sharko-target-sa --duration=24h 2>/dev/null || true)
+        # ---- 5. Ensure non-expiring SA token secret + extract token ----
+        # Uses the legacy kubernetes.io/service-account-token Secret type, which
+        # the token controller populates with a JWT that has no exp claim — the
+        # token stays valid as long as the Secret and SA exist. This is still
+        # fully supported in all current Kubernetes when created explicitly.
+        # Appropriate for throwaway LOCAL DEV kind clusters only.
+        if ! kubectl --context "$ctx" -n default apply -f - >/dev/null <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sharko-target-sa-token
+  namespace: default
+  annotations:
+    kubernetes.io/service-account.name: sharko-target-sa
+type: kubernetes.io/service-account-token
+EOF
+        then
+            log_fail "failed to apply SA token secret on ${name}"
+            return 1
+        fi
+        # Wait for the token controller to populate data.token (up to ~15s).
+        local token=""
+        local _attempts=0
+        while [ "$_attempts" -lt 15 ]; do
+            local raw
+            raw=$(kubectl --context "$ctx" -n default get secret sharko-target-sa-token \
+                -o jsonpath='{.data.token}' 2>/dev/null || true)
+            if [ -n "$raw" ]; then
+                token=$(printf '%s' "$raw" | base64 -d)
+                break
+            fi
+            _attempts=$((_attempts + 1))
+            sleep 1
+        done
         if [ -z "$token" ]; then
-            log_fail "failed to generate bearer token for ${name}"
+            log_fail "SA token secret on ${name} was never populated by the token controller — re-run 'kind-target create' to retry"
             return 1
         fi
 
@@ -2573,8 +2609,10 @@ EOF
     echo "Open the wizard → Register Cluster → Provider: Generic K8s (kubeconfig)"
     echo "Paste the contents of any of the files above into the kubeconfig textarea."
     echo
-    echo "Token TTL: 24h. Re-run \`kind-target create\` to refresh tokens without"
-    echo "recreating clusters."
+    echo "Tokens do not expire (non-expiring SA secret — LOCAL DEV only, not for real clusters)."
+    echo "Re-run \`kind-target create\` only when Docker reassigns container IPs or to upgrade"
+    echo "targets created before this change (old 24h tokens may have expired; the new secret"
+    echo "mechanism takes over in place without recreating clusters)."
     return 0
 }
 
@@ -2622,7 +2660,7 @@ _kind_target_list() {
         if [ -f "$kc" ]; then
             printf '  %-20s %s\n' "$c" "./.local/kubeconfigs/${c}.kubeconfig.yaml"
         else
-            printf '  %-20s %s\n' "$c" "(no kubeconfig file — token may have expired; run 'kind-target create' to regenerate)"
+            printf '  %-20s %s\n' "$c" "(no kubeconfig file — run 'kind-target create' to generate)"
         fi
     done
     return 0
