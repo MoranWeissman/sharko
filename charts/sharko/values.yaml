@@ -154,6 +154,21 @@ connectivityCheck:
   enabled: true
 
 # ---------------------------------------------------------------------------
+# Auto-Remediation (V2-cleanup-37)
+# ---------------------------------------------------------------------------
+# When enabled, Sharko automatically terminates stale ArgoCD sync operations
+# that it caused (by merging a configuration PR) and re-triggers a fresh sync.
+# The remediator fires only when ALL of the following hold:
+#   - The ArgoCD application has an in-flight operation that is failing
+#     (phase Failed/Error, or Running with a SyncFailed resource).
+#   - The operation started BEFORE the configuration-change PR merged.
+#   - A per-app cooldown of 5 minutes has elapsed since the last auto-action.
+#   - The application name matches Sharko's naming convention (addon-cluster).
+# Set to false to disable (maps to SHARKO_AUTO_REMEDIATE=false).
+autoRemediate:
+  enabled: true
+
+# ---------------------------------------------------------------------------
 # GitOps Actions (v2 — PR creation from UI/AI)
 # ---------------------------------------------------------------------------
 gitops:

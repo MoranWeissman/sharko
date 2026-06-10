@@ -1028,6 +1028,11 @@ export const api = {
   enableAddonOnCluster: (clusterName: string, addonName: string): Promise<DeployAddonResult> =>
     postJSON<DeployAddonResult>(`/clusters/${encodeURIComponent(clusterName)}/addons/${encodeURIComponent(addonName)}`, { yes: true }),
 
+  restartAddonSync: (clusterName: string, addonName: string): Promise<{ terminated: boolean; synced: boolean }> =>
+    postJSON<{ terminated: boolean; synced: boolean }>(
+      `/clusters/${encodeURIComponent(clusterName)}/addons/${encodeURIComponent(addonName)}/restart-sync`,
+    ),
+
   // Notifications
   getNotifications: () => fetchJSON<{
     notifications: { id: string; type: string; title: string; description: string; timestamp: string; read: boolean }[]

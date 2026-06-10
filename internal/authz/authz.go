@@ -69,6 +69,7 @@ var ActionRequirements = map[string]Role{
 	// Operator+ actions
 	"addon.enable":                  RoleOperator,
 	"addon.disable":                 RoleOperator,
+	"addon.restart-sync":            RoleOperator,
 	"cluster.register":              RoleOperator,
 	"cluster.adopt":                 RoleOperator,
 	"cluster.update-addons":         RoleOperator,

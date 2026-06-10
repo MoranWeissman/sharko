@@ -8,6 +8,46 @@ import (
 	"testing"
 )
 
+func TestTerminateOperation_Success(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			t.Errorf("expected DELETE, got %s", r.Method)
+		}
+		if r.URL.Path != "/api/v1/applications/my-app/operation" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer test-token" {
+			t.Errorf("missing or wrong Authorization header")
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer ts.Close()
+
+	c := NewClient(ts.URL, "test-token", false)
+	err := c.TerminateOperation(context.Background(), "my-app")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+}
+
+func TestTerminateOperation_Non200ReturnsError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"message":"permission denied"}`))
+	}))
+	defer ts.Close()
+
+	c := NewClient(ts.URL, "test-token", false)
+	err := c.TerminateOperation(context.Background(), "my-app")
+	if err == nil {
+		t.Fatal("expected error for non-200 response")
+	}
+	if !strings.Contains(err.Error(), "403") {
+		t.Errorf("expected error to contain '403', got: %v", err)
+	}
+}
+
 func TestSyncApplication_Success(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

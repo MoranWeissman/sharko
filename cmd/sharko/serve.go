@@ -34,6 +34,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/platform"
 	"github.com/MoranWeissman/sharko/internal/providers"
 	"github.com/MoranWeissman/sharko/internal/prtracker"
+	"github.com/MoranWeissman/sharko/internal/remediation"
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
 	"github.com/MoranWeissman/sharko/internal/secrets"
 	"github.com/MoranWeissman/sharko/internal/service"
@@ -869,16 +870,37 @@ var serveCmd = &cobra.Command{
 				//     lock-free Trigger() means it is safe to call even
 				//     when no reconciler is wired (the buffered-1 channel
 				//     drops the redundant nudge).
-				if srv.ArgoSecretReconciler() != nil || clusterRecon != nil {
-					prTracker.SetOnMergeFn(func(pr prtracker.PRInfo) {
-						if r := srv.ArgoSecretReconciler(); r != nil {
-							r.Trigger()
-						}
-						if clusterRecon != nil {
-							clusterRecon.Trigger()
-						}
+				//   - remediator.OnMerge(): auto-terminates stale failing
+				//     ArgoCD sync ops caused by the merged change.
+
+				// Build the auto-remediator. It only acts when an active
+				// ArgoCD connection exists at merge time (lazy lookup via
+				// connSvc so the wiring works even when ArgoCD is configured
+				// after startup).
+				var remediator *remediation.Remediator
+				if remediation.IsAutoRemediateEnabled(getEnvDefault("SHARKO_AUTO_REMEDIATE", "true")) {
+					remediator = remediation.New(remediation.Deps{
+						ArgoClient: &remediation.LazyArgoClient{ConnSvc: connSvc},
+						AuditFn: func(e audit.Entry) {
+							auditLog.Add(e)
+						},
 					})
+					slog.Info("auto-remediation enabled (SHARKO_AUTO_REMEDIATE)")
+				} else {
+					slog.Info("auto-remediation disabled via SHARKO_AUTO_REMEDIATE")
 				}
+
+				prTracker.SetOnMergeFn(func(pr prtracker.PRInfo) {
+					if r := srv.ArgoSecretReconciler(); r != nil {
+						r.Trigger()
+					}
+					if clusterRecon != nil {
+						clusterRecon.Trigger()
+					}
+					if remediator != nil {
+						go remediator.OnMerge(pr)
+					}
+				})
 
 				srv.SetPRTracker(prTracker)
 				prTracker.ReconcileOnStartup(context.Background())

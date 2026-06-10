@@ -130,6 +130,10 @@ spec:
             - name: SHARKO_CONNECTIVITY_CHECK
               value: "false"
             {{- end }}
+            {{- if and .Values.autoRemediate (not .Values.autoRemediate.enabled) }}
+            - name: SHARKO_AUTO_REMEDIATE
+              value: "false"
+            {{- end }}
             {{- if .Values.gitops.actions.enabled }}
             - name: GITOPS_ACTIONS_ENABLED
               value: "true"

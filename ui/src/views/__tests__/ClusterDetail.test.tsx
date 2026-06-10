@@ -38,6 +38,7 @@ const mockGetNodeInfo = vi.fn();
 const mockDeregisterCluster = vi.fn();
 const mockUpdateClusterAddons = vi.fn();
 const mockGetAddonCatalog = vi.fn();
+const mockRestartAddonSync = vi.fn();
 
 // V2-cleanup-13: capture toast calls so the removal-feedback assertions can
 // distinguish "cluster removed" (auto-merged) from "removal PR opened".
@@ -62,6 +63,7 @@ vi.mock('@/services/api', async () => {
       getNodeInfo: (...args: unknown[]) => mockGetNodeInfo(...args),
       enableAddonOnCluster: vi.fn().mockResolvedValue({}),
       getAddonCatalog: (...args: unknown[]) => mockGetAddonCatalog(...args),
+      restartAddonSync: (...args: unknown[]) => mockRestartAddonSync(...args),
     },
     testClusterConnection: (...args: unknown[]) => mockTestClusterConnection(...args),
     deregisterCluster: (...args: unknown[]) => mockDeregisterCluster(...args),
@@ -1454,6 +1456,111 @@ describe('ClusterDetail', () => {
       // Junk must still not appear.
       expect('some-manual-app' in payload).toBe(false);
       expect('connectivity-check-cluster-1' in payload).toBe(false);
+    });
+  });
+
+  /**
+   * V2-cleanup-37: "Restart sync" button.
+   *
+   * The button must appear ONLY on rows with status=sync_failing and must
+   * call api.restartAddonSync when clicked.
+   */
+  describe('V2-cleanup-37: Restart sync button', () => {
+    const syncFailingResponse = {
+      ...comparisonResponse,
+      addon_comparisons: [
+        {
+          addon_name: 'keda',
+          git_configured: true,
+          git_version: '2.13.0',
+          git_enabled: true,
+          has_version_override: false,
+          argocd_deployed: true,
+          argocd_health_status: 'Healthy',
+          status: 'sync_failing',
+          issues: ['one or more synchronization tasks completed unsuccessfully, reason: CRD too long'],
+        },
+        {
+          addon_name: 'cert-manager',
+          git_configured: true,
+          git_version: '1.12.0',
+          git_enabled: true,
+          has_version_override: false,
+          argocd_deployed: true,
+          argocd_health_status: 'Healthy',
+          status: 'healthy',
+          issues: [],
+        },
+      ],
+      total_healthy: 1,
+      total_with_issues: 1,
+      total_missing_in_argocd: 0,
+    };
+
+    it('renders Restart sync button only on sync_failing rows', async () => {
+      mockGetClusterComparison.mockResolvedValue(syncFailingResponse);
+      mockRestartAddonSync.mockResolvedValue({ terminated: true, synced: true });
+
+      renderView('addons');
+      await screen.findByText('prod-eu', {}, { timeout: 5000 });
+
+      // Exactly one "Restart sync" button — only for keda.
+      const buttons = screen.getAllByTestId('restart-sync-btn');
+      expect(buttons).toHaveLength(1);
+
+      // cert-manager (healthy) should NOT have the button.
+      expect(screen.queryAllByTestId('restart-sync-btn')).toHaveLength(1);
+    });
+
+    it('calls api.restartAddonSync when Restart sync is clicked', async () => {
+      mockGetClusterComparison.mockResolvedValue(syncFailingResponse);
+      mockRestartAddonSync.mockResolvedValue({ terminated: true, synced: true });
+
+      renderView('addons');
+      await screen.findByText('prod-eu', {}, { timeout: 5000 });
+
+      const btn = screen.getByTestId('restart-sync-btn');
+      fireEvent.click(btn);
+
+      await waitFor(() => {
+        expect(mockRestartAddonSync).toHaveBeenCalledWith('prod-eu', 'keda');
+      });
+    });
+
+    it('shows success toast after successful restart', async () => {
+      mockGetClusterComparison.mockResolvedValue(syncFailingResponse);
+      mockRestartAddonSync.mockResolvedValue({ terminated: true, synced: true });
+
+      renderView('addons');
+      await screen.findByText('prod-eu', {}, { timeout: 5000 });
+
+      const btn = screen.getByTestId('restart-sync-btn');
+      fireEvent.click(btn);
+
+      await waitFor(() => {
+        expect(mockShowToast).toHaveBeenCalledWith(
+          expect.stringContaining('Sync restarted'),
+          'success',
+        );
+      });
+    });
+
+    it('shows error toast when restart fails', async () => {
+      mockGetClusterComparison.mockResolvedValue(syncFailingResponse);
+      mockRestartAddonSync.mockRejectedValue(new Error('ArgoCD unavailable'));
+
+      renderView('addons');
+      await screen.findByText('prod-eu', {}, { timeout: 5000 });
+
+      const btn = screen.getByTestId('restart-sync-btn');
+      fireEvent.click(btn);
+
+      await waitFor(() => {
+        expect(mockShowToast).toHaveBeenCalledWith(
+          expect.stringContaining('Failed to restart sync'),
+          'error',
+        );
+      });
     });
   });
 

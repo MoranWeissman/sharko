@@ -41,8 +41,9 @@ var mutatingPatternTier = map[string]audit.Tier{
 	"POST /api/v1/clusters/{name}/test":              audit.Tier1,
 	"POST /api/v1/clusters/{name}/diagnose":          audit.Tier1,
 	"POST /api/v1/clusters/{name}/unadopt":           audit.Tier1,
-	"POST /api/v1/clusters/{name}/addons/{addon}":    audit.Tier1,
-	"DELETE /api/v1/clusters/{name}/addons/{addon}":  audit.Tier1,
+	"POST /api/v1/clusters/{name}/addons/{addon}":                   audit.Tier1,
+	"DELETE /api/v1/clusters/{name}/addons/{addon}":                 audit.Tier1,
+	"POST /api/v1/clusters/{name}/addons/{addon}/restart-sync":      audit.Tier1,
 	"POST /api/v1/clusters/{name}/secrets/refresh":   audit.Tier1,
 
 	// Init — Tier 1.
