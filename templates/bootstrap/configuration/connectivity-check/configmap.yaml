@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sharko-connectivity-check
+  namespace: sharko-system
+  labels:
+    app.kubernetes.io/managed-by: sharko
+data:
+  purpose: "Deployed by Sharko through ArgoCD to verify this cluster can receive deployments. Removed automatically when the first addon is enabled."

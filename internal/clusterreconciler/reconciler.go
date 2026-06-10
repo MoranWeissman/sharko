@@ -174,6 +174,13 @@ type Deps struct {
 	// the Secret payload shape matches across both writers during the
 	// transition window).
 	DefaultRoleARN string
+
+	// DisableConnectivityCheck opts out of the connectivity-check label
+	// (sharko.io/connectivity-check: enabled) that Sharko applies to
+	// newly-created cluster Secrets for zero-addon clusters. When false
+	// (the zero value, i.e. the default), the feature is ON. Set to true
+	// to disable (wired from SHARKO_CONNECTIVITY_CHECK=false/0 in serve.go).
+	DisableConnectivityCheck bool
 }
 
 // Reconciler is a background reconciler that converges ArgoCD cluster Secret
@@ -753,6 +760,11 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 			clusterLabels[k] = normalized
 		}
 	}
+	// Apply the connectivity-check label (V2-cleanup-29). The label is DERIVED
+	// here — never stored in managed-clusters.yaml — so no schema regen needed.
+	// DisableConnectivityCheck is the zero-value-safe inverted sentinel: false
+	// (zero value = default) means "feature on"; true means "feature off".
+	models.ApplyConnectivityCheckLabel(clusterLabels, !r.deps.DisableConnectivityCheck)
 	spec := argosecrets.ClusterSecretSpec{
 		Name:    entry.Name,
 		Server:  creds.Server,

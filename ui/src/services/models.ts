@@ -15,6 +15,15 @@ export interface Cluster {
   connection_status?: string
   managed?: boolean
   adopted?: boolean
+  // Connectivity check fields (V2-cleanup-29)
+  // connectivity_status values: 'verified_argocd' | 'verified_check' | 'check_failed' | ''
+  connectivity_status?: string
+  connectivity_detail?: string
+  // Sharko observability fields (V2-cleanup-27 folded in)
+  sharko_status?: string
+  last_test_at?: string   // RFC3339
+  test_failing?: boolean
+  test_error_code?: string
 }
 
 export interface ClusterHealthStats {

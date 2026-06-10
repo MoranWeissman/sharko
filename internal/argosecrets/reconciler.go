@@ -65,6 +65,12 @@ type Reconciler struct {
 	stopCh              chan struct{}
 	stopOnce            sync.Once
 
+	// connectivityCheckEnabled controls whether the connectivity-check label
+	// (sharko.io/connectivity-check: enabled) is applied to newly-written
+	// cluster Secrets for zero-addon clusters. Default true.
+	// Protected by mu.
+	connectivityCheckEnabled bool
+
 	// Optional audit callback — set via SetAuditFunc.
 	// Protected by mu.
 	auditFn AuditFunc
@@ -93,6 +99,10 @@ type Reconciler struct {
 // file (e.g. "configuration/managed-clusters.yaml"). An empty string defaults
 // to "configuration/managed-clusters.yaml".
 // interval <= 0 defaults to 3 minutes.
+// connectivityCheckEnabled controls whether the connectivity-check label
+// (sharko.io/connectivity-check: enabled) is applied to new cluster Secrets
+// for zero-addon clusters. Defaults to true when not explicitly set — use
+// SetConnectivityCheck(false) after construction to disable.
 func NewReconciler(
 	manager *Manager,
 	credProvider ClusterCredentialsProvider,
@@ -110,18 +120,28 @@ func NewReconciler(
 		managedClustersPath = "configuration/managed-clusters.yaml"
 	}
 	return &Reconciler{
-		manager:             manager,
-		credProvider:        credProvider,
-		gitReader:           gitReaderFn,
-		parser:              parser,
-		baseBranch:          baseBranch,
-		defaultRoleARN:      defaultRoleARN,
-		managedClustersPath: managedClustersPath,
-		interval:            interval,
-		triggerCh:           make(chan struct{}, 1),
-		stopCh:              make(chan struct{}),
-		previousOrphans:     make(map[string]bool),
+		manager:                  manager,
+		credProvider:             credProvider,
+		gitReader:                gitReaderFn,
+		parser:                   parser,
+		baseBranch:               baseBranch,
+		defaultRoleARN:           defaultRoleARN,
+		managedClustersPath:      managedClustersPath,
+		interval:                 interval,
+		triggerCh:                make(chan struct{}, 1),
+		stopCh:                   make(chan struct{}),
+		previousOrphans:          make(map[string]bool),
+		connectivityCheckEnabled: true, // on by default; disabled via SetConnectivityCheck
 	}
+}
+
+// SetConnectivityCheck enables or disables the connectivity-check label for
+// this reconciler instance. Thread-safe. Call before Start() for the typical
+// case; safe to call after Start() but the next tick picks up the new value.
+func (r *Reconciler) SetConnectivityCheck(enabled bool) {
+	r.mu.Lock()
+	r.connectivityCheckEnabled = enabled
+	r.mu.Unlock()
 }
 
 // Start launches the background reconcile loop. Runs one reconcile immediately,
@@ -369,6 +389,18 @@ func (r *Reconciler) reconcileCluster(ctx context.Context, cluster models.Cluste
 	}
 
 	// 3. Build ClusterSecretSpec.
+	// Derive the connectivity-check label before building the spec so it is
+	// included in the payload sent to Manager.Ensure. The feature flag is read
+	// under the lock to be consistent with SetConnectivityCheck calls.
+	clusterLabels := make(map[string]string, len(cluster.Labels))
+	for k, v := range cluster.Labels {
+		clusterLabels[k] = v
+	}
+	r.mu.RLock()
+	checkEnabled := r.connectivityCheckEnabled
+	r.mu.RUnlock()
+	models.ApplyConnectivityCheckLabel(clusterLabels, checkEnabled)
+
 	spec := ClusterSecretSpec{
 		Name:    cluster.Name,
 		Server:  creds.Server,
@@ -382,7 +414,7 @@ func (r *Reconciler) reconcileCluster(ctx context.Context, cluster models.Cluste
 		// exec branch (RoleARN/Region preserved).
 		Token:  creds.Token,
 		CAData: base64.StdEncoding.EncodeToString(creds.CAData),
-		Labels: cluster.Labels,
+		Labels: clusterLabels,
 	}
 
 	// 4. Call Manager.Ensure() — returns whether it changed anything.

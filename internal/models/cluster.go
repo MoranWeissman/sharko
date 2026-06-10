@@ -281,6 +281,25 @@ type Cluster struct {
 	ServerVersion    string            `json:"server_version,omitempty"`
 	ConnectionStatus string            `json:"connection_status,omitempty"`
 	Managed          bool              `json:"managed"` // true if in cluster-addons.yaml
+
+	// Connectivity check fields (V2-cleanup-29). Flat primitives only —
+	// computed at the API layer from ArgoCD application state. The models
+	// package must not import internal/observations (no import cycle).
+	//
+	// connectivity_status values:
+	//   "verified_argocd" — ArgoCD ConnectionStatus == "Successful"
+	//   "verified_check"  — connectivity-check Application is Synced+Healthy
+	//   "check_failed"    — check Application is degraded/sync-error
+	//   ""               — nothing known (ArgoCD "Unknown" stands untouched)
+	ConnectivityStatus string `json:"connectivity_status,omitempty"`
+	ConnectivityDetail string `json:"connectivity_detail,omitempty"` // reason when check_failed
+
+	// Sharko observability fields (V2-cleanup-27 folded into V2-cleanup-29).
+	// Populated when obsStore is available; absent otherwise (omitempty).
+	SharkoStatus  string `json:"sharko_status,omitempty"`
+	LastTestAt    string `json:"last_test_at,omitempty"` // RFC3339
+	TestFailing   bool   `json:"test_failing,omitempty"`
+	TestErrorCode string `json:"test_error_code,omitempty"`
 }
 
 // ClusterHealthStats holds aggregated health statistics for the clusters overview.

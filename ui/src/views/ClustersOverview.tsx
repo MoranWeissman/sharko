@@ -43,6 +43,7 @@ import type {
 import { AuthContext } from '@/hooks/useAuth';
 import { StatCard } from '@/components/StatCard';
 import { ConnectionStatus } from '@/components/ConnectionStatus';
+import { ConnectivityBadge } from '@/components/ConnectivityBadge';
 import { LoadingState } from '@/components/LoadingState';
 import { ErrorState } from '@/components/ErrorState';
 import { RoleGuard } from '@/components/RoleGuard';
@@ -1697,10 +1698,20 @@ export function ClustersOverview() {
                         </span>
                       </td>
                       <td className="px-6 py-3">
-                        {isClusterStatus(cluster.connection_status ?? 'unknown')
-                          ? <StatusBadge status={cluster.connection_status ?? 'unknown'} />
-                          : <ConnectionStatus status={cluster.connection_status ?? 'unknown'} />
-                        }
+                        <div className="flex flex-col gap-1">
+                          {isClusterStatus(cluster.connection_status ?? 'unknown')
+                            ? <StatusBadge status={cluster.connection_status ?? 'unknown'} />
+                            : <ConnectionStatus status={cluster.connection_status ?? 'unknown'} />
+                          }
+                          <ConnectivityBadge
+                            connectivityStatus={cluster.connectivity_status}
+                            connectivityDetail={cluster.connectivity_detail}
+                            sharkoStatus={cluster.sharko_status}
+                            lastTestAt={cluster.last_test_at}
+                            testFailing={cluster.test_failing}
+                            testErrorCode={cluster.test_error_code}
+                          />
+                        </div>
                       </td>
                       <td className="px-6 py-3 font-mono text-xs text-[#2a5a7a] dark:text-gray-400">
                         {cluster.server_version ?? '--'}
@@ -1808,11 +1819,19 @@ export function ClustersOverview() {
                       {renderTestResult(cluster.name, testResult, { showSuggestions: true })}
                     </div>
                   )}
-                  <div className="mb-2">
+                  <div className="mb-2 flex flex-col gap-1">
                     {isClusterStatus(cluster.connection_status ?? 'unknown')
                       ? <StatusBadge status={cluster.connection_status ?? 'unknown'} />
                       : <ConnectionStatus status={cluster.connection_status ?? 'unknown'} />
                     }
+                    <ConnectivityBadge
+                      connectivityStatus={cluster.connectivity_status}
+                      connectivityDetail={cluster.connectivity_detail}
+                      sharkoStatus={cluster.sharko_status}
+                      lastTestAt={cluster.last_test_at}
+                      testFailing={cluster.test_failing}
+                      testErrorCode={cluster.test_error_code}
+                    />
                   </div>
                   <p className="mb-2 font-mono text-xs text-[#2a5a7a] dark:text-gray-400">
                     {cluster.server_version ? `v${cluster.server_version}` : '--'}

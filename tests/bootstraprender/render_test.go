@@ -21,12 +21,15 @@
 package bootstraprender
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // repoRoot resolves the repository root from this test file's location so the
@@ -86,6 +89,153 @@ func TestBootstrapChartRendersAddonFromEnvelopedCatalog(t *testing.T) {
 	if len(veleroNames) < 2 {
 		t.Errorf("expected at least 2 resources named 'velero' (AppProject + ApplicationSet), found %d.\n"+
 			"--- rendered output ---\n%s", len(veleroNames), rendered)
+	}
+}
+
+// TestBootstrapConnectivityCheckAlwaysRendered asserts that the bootstrap chart
+// always emits the connectivity-check AppProject and ApplicationSet — even when
+// the addon catalog is EMPTY (zero applicationsets). This is the never-empty-
+// bootstrap guard: with an empty catalog addons-appset.yaml renders nothing, and
+// ArgoCD's "auto-sync will wipe out all resources" guard fires. The check appset
+// having no {{ if }} gate means the bootstrap Application always has at least one
+// resource and the wipe-out guard never fires.
+func TestBootstrapConnectivityCheckAlwaysRendered(t *testing.T) {
+	helmBin, err := exec.LookPath("helm")
+	if err != nil {
+		t.Skip("helm not installed; skipping bootstrap render test (CI helm-validate job is the hard guard)")
+	}
+
+	root := repoRoot(t)
+	chartDir := filepath.Join(root, "templates", "bootstrap")
+	dataDir := filepath.Join(root, "tests", "bootstraprender", "testdata")
+
+	// Render with only bootstrap-config (no catalog → empty applicationsets list).
+	cmd := exec.Command(helmBin, "template", "testbootstrap", chartDir,
+		"--values", filepath.Join(dataDir, "bootstrap-config.yaml"),
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("helm template failed with empty catalog: %v\n%s", err, out)
+	}
+	rendered := string(out)
+
+	// The connectivity-check AppProject and ApplicationSet must always be present.
+	if !strings.Contains(rendered, "name: connectivity-check") {
+		t.Errorf("bootstrap chart with empty catalog is missing connectivity-check resources.\n"+
+			"The connectivity-check AppProject/ApplicationSet must be unconditionally rendered "+
+			"so the bootstrap Application never renders zero resources.\n"+
+			"--- rendered output ---\n%s", rendered)
+	}
+
+	// The ApplicationSet must be present (not just the AppProject).
+	if !strings.Contains(rendered, "kind: ApplicationSet") {
+		t.Errorf("bootstrap chart with empty catalog is missing kind: ApplicationSet.\n"+
+			"--- rendered output ---\n%s", rendered)
+	}
+}
+
+// TestBootstrapConnectivityCheckSelector asserts the ApplicationSet generator
+// carries exactly the two required matchLabels so only cluster Secrets that
+// Sharko has explicitly marked for connectivity checking are selected.
+func TestBootstrapConnectivityCheckSelector(t *testing.T) {
+	helmBin, err := exec.LookPath("helm")
+	if err != nil {
+		t.Skip("helm not installed; skipping bootstrap render test (CI helm-validate job is the hard guard)")
+	}
+
+	root := repoRoot(t)
+	chartDir := filepath.Join(root, "templates", "bootstrap")
+	dataDir := filepath.Join(root, "tests", "bootstraprender", "testdata")
+
+	cmd := exec.Command(helmBin, "template", "testbootstrap", chartDir,
+		"--values", filepath.Join(dataDir, "bootstrap-config.yaml"),
+		"--values", filepath.Join(dataDir, "addons-catalog.yaml"),
+		"--values", filepath.Join(dataDir, "managed-clusters.yaml"),
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("helm template failed: %v\n%s", err, out)
+	}
+	rendered := string(out)
+
+	// Both matchLabels must be present in the connectivity-check ApplicationSet.
+	if !regexp.MustCompile(`(?m)^\s+argocd\.argoproj\.io/secret-type:\s+cluster\s*$`).MatchString(rendered) {
+		t.Errorf("connectivity-check ApplicationSet is missing required matchLabel argocd.argoproj.io/secret-type: cluster\n"+
+			"--- rendered output ---\n%s", rendered)
+	}
+	if !regexp.MustCompile(`(?m)^\s+sharko\.io/connectivity-check:\s+enabled\s*$`).MatchString(rendered) {
+		t.Errorf("connectivity-check ApplicationSet is missing required matchLabel sharko.io/connectivity-check: enabled\n"+
+			"--- rendered output ---\n%s", rendered)
+	}
+}
+
+// TestBootstrapConnectivityCheckSourcePath asserts the ApplicationSet template's
+// source path is exactly "configuration/connectivity-check" — the directory where
+// Sharko's init seeds the check ConfigMap manifest.
+func TestBootstrapConnectivityCheckSourcePath(t *testing.T) {
+	helmBin, err := exec.LookPath("helm")
+	if err != nil {
+		t.Skip("helm not installed; skipping bootstrap render test (CI helm-validate job is the hard guard)")
+	}
+
+	root := repoRoot(t)
+	chartDir := filepath.Join(root, "templates", "bootstrap")
+	dataDir := filepath.Join(root, "tests", "bootstraprender", "testdata")
+
+	cmd := exec.Command(helmBin, "template", "testbootstrap", chartDir,
+		"--values", filepath.Join(dataDir, "bootstrap-config.yaml"),
+		"--values", filepath.Join(dataDir, "addons-catalog.yaml"),
+		"--values", filepath.Join(dataDir, "managed-clusters.yaml"),
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("helm template failed: %v\n%s", err, out)
+	}
+	rendered := string(out)
+
+	if !strings.Contains(rendered, "path: configuration/connectivity-check") {
+		t.Errorf("connectivity-check ApplicationSet source path is not 'configuration/connectivity-check'.\n"+
+			"The ApplicationSet template must point to exactly this directory so Sharko's "+
+			"init-seeded ConfigMap manifest is deployed.\n"+
+			"--- rendered output ---\n%s", rendered)
+	}
+}
+
+// TestBootstrapConnectivityCheckConfigMapValid asserts that the ConfigMap manifest
+// seeded under configuration/connectivity-check/configmap.yaml is valid YAML and
+// contains the expected resource fields.
+func TestBootstrapConnectivityCheckConfigMapValid(t *testing.T) {
+	root := repoRoot(t)
+	cmPath := filepath.Join(root, "templates", "bootstrap", "configuration", "connectivity-check", "configmap.yaml")
+
+	data, err := os.ReadFile(cmPath)
+	if err != nil {
+		t.Fatalf("failed to read configmap.yaml: %v", err)
+	}
+
+	// Must be parseable YAML.
+	var doc map[string]interface{}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("configmap.yaml is not valid YAML: %v", err)
+	}
+
+	// Must declare the expected kind and name.
+	if doc["kind"] != "ConfigMap" {
+		t.Errorf("expected kind: ConfigMap, got %v", doc["kind"])
+	}
+	metadata, _ := doc["metadata"].(map[string]interface{})
+	if metadata == nil {
+		t.Fatal("configmap.yaml is missing metadata block")
+	}
+	if metadata["name"] != "sharko-connectivity-check" {
+		t.Errorf("expected name: sharko-connectivity-check, got %v", metadata["name"])
+	}
+	// Must carry the managed-by label.
+	labels, _ := metadata["labels"].(map[string]interface{})
+	if labels == nil {
+		t.Error("configmap.yaml metadata is missing labels block")
+	} else if labels["app.kubernetes.io/managed-by"] != "sharko" {
+		t.Errorf("expected app.kubernetes.io/managed-by: sharko, got %v", labels["app.kubernetes.io/managed-by"])
 	}
 }
 
