@@ -32,7 +32,7 @@ import { ScorecardBadge } from '@/components/ScorecardBadge'
 import { SourceBadge } from '@/components/SourceBadge'
 import { VerifiedBadge } from '@/components/VerifiedBadge'
 import { AttributionNudge } from '@/components/AttributionNudge'
-import { MarkdownRenderer } from '@/components/MarkdownRenderer'
+import { RichMarkdown } from '@/components/RichMarkdown'
 import { VersionPicker } from '@/components/VersionPicker'
 import { showToast } from '@/components/ToastNotification'
 import {
@@ -58,8 +58,12 @@ import {
  *      the addon page after creation). Collapses to a friendly link when
  *      the addon is already in the catalog so we don't tempt the user to
  *      open a no-op PR.
- *   4. README — Markdown rendered via MarkdownRenderer (XSS-safe). Loading
- *      skeleton while fetching; empty state when no README.
+ *   4. README — Rendered via RichMarkdown (react-markdown + rehype-raw +
+ *      rehype-sanitize with a tightened GitHub schema). Third-party README
+ *      content from ArtifactHub and upstream projects is treated as hostile:
+ *      script/iframe/on-handlers/javascript:/data: vectors are stripped; only safe
+ *      http/https content attributes survive. Loading skeleton while fetching;
+ *      empty state when no README.
  *   5. Metadata footer — chart, repo URL, docs URL, source URL, maintainers.
  *
  * Data fetching:
@@ -1016,7 +1020,7 @@ export function MarketplaceAddonDetail({
               </div>
             ) : readmeResp && readmeResp.readme.trim().length > 0 ? (
               <div className="prose prose-sm max-w-none dark:prose-invert">
-                <MarkdownRenderer content={readmeResp.readme} />
+                <RichMarkdown content={readmeResp.readme} />
               </div>
             ) : (
               <p className="py-2 text-sm italic text-[#3a6a8a] dark:text-gray-500">
@@ -1032,7 +1036,7 @@ export function MarketplaceAddonDetail({
             </div>
           ) : projectReadme?.available ? (
             <div className="prose prose-sm max-w-none dark:prose-invert">
-              <MarkdownRenderer content={projectReadme.readme} />
+              <RichMarkdown content={projectReadme.readme} />
             </div>
           ) : (
             <p className="py-2 text-sm italic text-[#3a6a8a] dark:text-gray-500">
