@@ -575,6 +575,22 @@ func (o *Orchestrator) UpdateClusterAddons(ctx context.Context, name string, ser
 		Cluster: ClusterResult{Name: name, Server: serverURL, Addons: addons},
 	}
 
+	// Referential-integrity guard (V2-cleanup-32): every addon name in the
+	// request must exist in the catalog before any write is attempted. An
+	// unknown name means the label would point at a non-existent
+	// ApplicationSet entry and leave the gitops repo in an inconsistent
+	// state. We reuse the same helper (and the same *AddonNotInCatalogError
+	// → 422) as EnableAddon / RegisterCluster / SetClusterAddonValues.
+	if len(addons) > 0 {
+		names := make([]string, 0, len(addons))
+		for a := range addons {
+			names = append(names, a)
+		}
+		if _, err := o.requireAddonsInCatalog(ctx, names); err != nil {
+			return nil, err
+		}
+	}
+
 	// Step 1: Fetch credentials if provider is configured (needed for secret operations).
 	var rawKubeconfig []byte
 	if o.credProvider != nil {

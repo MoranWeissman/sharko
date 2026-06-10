@@ -223,3 +223,110 @@ func TestGuardrails_FullFlow_Regression(t *testing.T) {
 		t.Errorf("expected canonical 'cert-manager: enabled' label after full flow, got:\n%s", mc)
 	}
 }
+
+// ── V2-cleanup-32: UpdateClusterAddons referential-integrity guard ────────────
+
+// TestUpdateClusterAddons_UnknownAddon_Rejected ensures that a PATCH request
+// containing an addon name absent from the catalog is rejected before any Git
+// write or ArgoCD label update occurs.
+func TestUpdateClusterAddons_UnknownAddon_Rejected(t *testing.T) {
+	argocd := newMockArgocd()
+	git := newMockGitProvider()
+	// Catalog has cert-manager only; we try to update with "ghost".
+	git.files["configuration/addons-catalog.yaml"] = catalogOnlyYAML("cert-manager")
+	git.files["configuration/managed-clusters.yaml"] = []byte("clusters:\n  - name: prod-eu\n    labels: {}\n")
+	git.files["configuration/addons-clusters-values/prod-eu.yaml"] = []byte("clusterGlobalValues:\n")
+
+	orch := New(nil, nil, argocd, git, autoMergeGitOps(), defaultPaths(), nil)
+
+	_, err := orch.UpdateClusterAddons(context.Background(), "prod-eu", "https://k8s.example.com:6443", "", map[string]bool{
+		"ghost": true,
+	}, nil)
+	if err == nil {
+		t.Fatal("expected rejection when addon is not in catalog, got nil")
+	}
+	if !IsAddonNotInCatalog(err) {
+		t.Fatalf("expected *AddonNotInCatalogError, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "ghost") {
+		t.Errorf("error should name the bad addon, got: %v", err)
+	}
+	// No PR should have been opened and no label should have been updated.
+	if len(git.prs) != 0 {
+		t.Errorf("expected no PR on referential-integrity rejection, got %d", len(git.prs))
+	}
+	if len(argocd.updatedLabels) != 0 {
+		t.Errorf("expected no ArgoCD label update on rejection, got %d entries", len(argocd.updatedLabels))
+	}
+}
+
+// TestUpdateClusterAddons_MixedAddonNames_Rejected: one valid + one unknown
+// name → the whole request is rejected (all-or-nothing).
+func TestUpdateClusterAddons_MixedAddonNames_Rejected(t *testing.T) {
+	argocd := newMockArgocd()
+	git := newMockGitProvider()
+	git.files["configuration/addons-catalog.yaml"] = catalogOnlyYAML("cert-manager", "metrics-server")
+
+	orch := New(nil, nil, argocd, git, autoMergeGitOps(), defaultPaths(), nil)
+
+	_, err := orch.UpdateClusterAddons(context.Background(), "prod-eu", "https://k8s.example.com:6443", "", map[string]bool{
+		"cert-manager": true,
+		"ghost":        false,
+	}, nil)
+	if err == nil {
+		t.Fatal("expected rejection, got nil")
+	}
+	if !IsAddonNotInCatalog(err) {
+		t.Fatalf("expected *AddonNotInCatalogError, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "ghost") {
+		t.Errorf("error should name the bad addon, got: %v", err)
+	}
+	if len(git.prs) != 0 {
+		t.Errorf("expected no PR on rejection, got %d", len(git.prs))
+	}
+}
+
+// TestUpdateClusterAddons_ValidCatalogAddons_Succeeds: a request containing
+// only catalog-registered addons passes the guard and completes normally.
+func TestUpdateClusterAddons_ValidCatalogAddons_Succeeds(t *testing.T) {
+	argocd := newMockArgocd()
+	git := newMockGitProvider()
+	git.files["configuration/addons-catalog.yaml"] = catalogOnlyYAML("cert-manager", "metrics-server")
+	git.files["configuration/managed-clusters.yaml"] = []byte("clusters:\n  - name: prod-eu\n    labels: {}\n")
+	git.files["configuration/addons-clusters-values/prod-eu.yaml"] = []byte("clusterGlobalValues:\n")
+
+	orch := New(nil, nil, argocd, git, autoMergeGitOps(), defaultPaths(), nil)
+
+	result, err := orch.UpdateClusterAddons(context.Background(), "prod-eu", "https://k8s.example.com:6443", "", map[string]bool{
+		"cert-manager":   true,
+		"metrics-server": false,
+	}, nil)
+	if err != nil {
+		t.Fatalf("expected success for valid catalog addons, got: %v", err)
+	}
+	if result.Status != "success" {
+		t.Errorf("expected status 'success', got %q (%s)", result.Status, result.Error)
+	}
+}
+
+// TestUpdateClusterAddons_EmptyMap_SkipsGuard: an empty addons map bypasses the
+// catalog check (nothing to validate) and completes normally.
+func TestUpdateClusterAddons_EmptyMap_SkipsGuard(t *testing.T) {
+	argocd := newMockArgocd()
+	git := newMockGitProvider()
+	// No catalog at all — but empty addons map should still succeed.
+	delete(git.files, "configuration/addons-catalog.yaml")
+	git.files["configuration/managed-clusters.yaml"] = []byte("clusters:\n  - name: prod-eu\n    labels: {}\n")
+	git.files["configuration/addons-clusters-values/prod-eu.yaml"] = []byte("clusterGlobalValues:\n")
+
+	orch := New(nil, nil, argocd, git, autoMergeGitOps(), defaultPaths(), nil)
+
+	result, err := orch.UpdateClusterAddons(context.Background(), "prod-eu", "https://k8s.example.com:6443", "", map[string]bool{}, nil)
+	if err != nil {
+		t.Fatalf("empty addons map should skip the catalog guard: %v", err)
+	}
+	if result.Status != "success" {
+		t.Errorf("expected status 'success', got %q", result.Status)
+	}
+}

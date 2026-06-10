@@ -37,6 +37,7 @@ const mockFetchTrackedPRs = vi.fn();
 const mockGetNodeInfo = vi.fn();
 const mockDeregisterCluster = vi.fn();
 const mockUpdateClusterAddons = vi.fn();
+const mockGetAddonCatalog = vi.fn();
 
 // V2-cleanup-13: capture toast calls so the removal-feedback assertions can
 // distinguish "cluster removed" (auto-merged) from "removal PR opened".
@@ -60,7 +61,7 @@ vi.mock('@/services/api', async () => {
       getConnections: vi.fn().mockResolvedValue({ connections: [], active_connection: '' }),
       getNodeInfo: (...args: unknown[]) => mockGetNodeInfo(...args),
       enableAddonOnCluster: vi.fn().mockResolvedValue({}),
-      getAddonCatalog: vi.fn().mockResolvedValue({ addons: [] }),
+      getAddonCatalog: (...args: unknown[]) => mockGetAddonCatalog(...args),
     },
     testClusterConnection: (...args: unknown[]) => mockTestClusterConnection(...args),
     deregisterCluster: (...args: unknown[]) => mockDeregisterCluster(...args),
@@ -175,6 +176,10 @@ describe('ClusterDetail', () => {
     mockDeregisterCluster.mockResolvedValue({});
     // V2-cleanup-31: default apply-addons returns an empty result (no PR).
     mockUpdateClusterAddons.mockResolvedValue({});
+    // V2-cleanup-32: default catalog returns empty (most tests don't exercise
+    // the picker's catalog fetch; per-test overrides in the 32 suite set up
+    // real catalog data).
+    mockGetAddonCatalog.mockResolvedValue({ addons: [] });
   });
 
   // V2-cleanup-8.3: the node-count card always reflects the Sharko HOST
@@ -1069,7 +1074,13 @@ describe('ClusterDetail', () => {
 
     // --- 4. Payload identity ---
 
-    it('Apply Changes calls updateClusterAddons with the full boolean catalog map', async () => {
+    // V2-cleanup-32: the payload sent to updateClusterAddons must include ONLY
+    // keys that were enabled OR are being changed. Disabled-in-git catalog
+    // addons that the operator never touched (prometheus here) must NOT be
+    // included — sending them as `false` would add spurious labels to
+    // managed-clusters.yaml. The backend guard independently rejects unknown
+    // names (422), but the FE must never send junk in the first place.
+    it('Apply Changes sends only enabled/changing keys — never disabled-untouched keys', async () => {
       renderView('addons');
       await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
 
@@ -1083,11 +1094,12 @@ describe('ClusterDetail', () => {
         expect(mockUpdateClusterAddons).toHaveBeenCalledOnce();
       });
 
-      // Full catalog map: cert-manager → false, ingress-nginx → true, prometheus → false
+      // cert-manager: was enabled → include as false (being removed)
+      // ingress-nginx: currently enabled → include as true
+      // prometheus: disabled in git and never staged → must NOT be in payload
       expect(mockUpdateClusterAddons).toHaveBeenCalledWith('prod-eu', {
         'cert-manager': false,
         'ingress-nginx': true,
-        prometheus: false,
       });
     });
 
@@ -1269,6 +1281,179 @@ describe('ClusterDetail', () => {
 
       await w(() => expect(s.getByText('prod-eu')).toBeInTheDocument());
       expect(s.queryByText('Manage Addons')).not.toBeInTheDocument();
+    });
+  });
+
+  // V2-cleanup-32: enable-addon picker must source the real catalog; junk rows
+  // (untracked_in_argocd, sharko_system) from the comparison response must
+  // never appear in the toggle map, picker list, enable counts, or PATCH payload.
+  describe('V2-cleanup-32: picker sources catalog; junk rows excluded', () => {
+    // Comparison response that mirrors a real cluster: two enabled catalog
+    // addons, one disabled catalog addon, one untracked ArgoCD app (third-
+    // party), and Sharko's connectivity-check system app.
+    const responseWithJunk = {
+      ...comparisonResponse,
+      addon_comparisons: [
+        {
+          addon_name: 'cert-manager',
+          git_configured: true,
+          git_version: '1.12.0',
+          git_enabled: true,
+          has_version_override: false,
+          argocd_deployed: true,
+          status: 'healthy',
+          issues: [],
+        },
+        {
+          addon_name: 'ingress-nginx',
+          git_configured: true,
+          git_version: '4.7.0',
+          git_enabled: true,
+          has_version_override: false,
+          argocd_deployed: true,
+          status: 'healthy',
+          issues: [],
+        },
+        {
+          addon_name: 'prometheus',
+          git_configured: true,
+          git_version: '2.45.0',
+          git_enabled: false,
+          has_version_override: false,
+          argocd_deployed: false,
+          status: 'disabled_in_git',
+          issues: [],
+        },
+        // Untracked ArgoCD app — NOT in catalog, must never enter toggle map.
+        {
+          addon_name: 'some-manual-app',
+          git_configured: false,
+          git_enabled: false,
+          has_version_override: false,
+          argocd_deployed: true,
+          status: 'untracked_in_argocd',
+          issues: [],
+        },
+        // Sharko system row (connectivity check) — must never enter toggle map.
+        {
+          addon_name: 'connectivity-check-cluster-1',
+          git_configured: false,
+          git_enabled: false,
+          has_version_override: false,
+          argocd_deployed: true,
+          status: 'sharko_system',
+          issues: [],
+        },
+      ],
+    };
+
+    beforeEach(() => {
+      mockGetClusterComparison.mockResolvedValue(responseWithJunk);
+      // Picker catalog: cert-manager + ingress-nginx + prometheus (three real addons).
+      // velero is in the catalog but absent from comparisons — it's the
+      // "never-enabled catalog addon" case.
+      mockGetAddonCatalog.mockResolvedValue({
+        addons: [
+          { addon_name: 'cert-manager', chart: 'cert-manager', repo_url: 'https://charts.jetstack.io', version: '1.12.0', total_clusters: 1, enabled_clusters: 1, healthy_applications: 1, degraded_applications: 0, missing_applications: 0, applications: [] },
+          { addon_name: 'ingress-nginx', chart: 'ingress-nginx', repo_url: 'https://example.com', version: '4.7.0', total_clusters: 1, enabled_clusters: 1, healthy_applications: 1, degraded_applications: 0, missing_applications: 0, applications: [] },
+          { addon_name: 'prometheus', chart: 'kube-prometheus-stack', repo_url: 'https://example.com', version: '2.45.0', total_clusters: 1, enabled_clusters: 0, healthy_applications: 0, degraded_applications: 0, missing_applications: 0, applications: [] },
+          { addon_name: 'velero', chart: 'velero', repo_url: 'https://example.com', version: '5.0.0', total_clusters: 0, enabled_clusters: 0, healthy_applications: 0, degraded_applications: 0, missing_applications: 0, applications: [] },
+        ],
+        total_addons: 4,
+        total_clusters: 1,
+        addons_only_in_git: 0,
+      });
+    });
+
+    it('junk rows (untracked/sharko_system) never appear as manage-addon rows', async () => {
+      renderView('addons');
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+
+      // Only catalog rows appear as manage-addon-row-* entries.
+      expect(screen.getByTestId('manage-addon-row-cert-manager')).toBeInTheDocument();
+      expect(screen.getByTestId('manage-addon-row-ingress-nginx')).toBeInTheDocument();
+      // Junk must not appear as a managed row.
+      expect(screen.queryByTestId('manage-addon-row-some-manual-app')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('manage-addon-row-connectivity-check-cluster-1')).not.toBeInTheDocument();
+    });
+
+    it('junk rows never appear in the enable picker — not as items, not via search', async () => {
+      renderView('addons');
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+
+      fireEvent.click(screen.getByTestId('manage-addons-enable-btn'));
+      await waitFor(() =>
+        expect(screen.getByTestId('addon-picker-search')).toBeInTheDocument(),
+      );
+
+      // Junk names must not appear in the picker at all.
+      expect(screen.queryByTestId('addon-picker-item-some-manual-app')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('addon-picker-item-connectivity-check-cluster-1')).not.toBeInTheDocument();
+    });
+
+    it('catalog addon absent from comparisons (velero) appears in the picker after catalog fetch', async () => {
+      renderView('addons');
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+
+      fireEvent.click(screen.getByTestId('manage-addons-enable-btn'));
+      await waitFor(() =>
+        expect(screen.getByTestId('addon-picker-search')).toBeInTheDocument(),
+      );
+
+      // velero is in the catalog but has no comparison row → it must appear
+      // in the picker as available to enable.
+      expect(screen.getByTestId('addon-picker-item-velero')).toBeInTheDocument();
+    });
+
+    it('Apply payload never includes junk names, only catalog enabled/staged keys', async () => {
+      renderView('addons');
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+
+      // Stage cert-manager for removal (it's enabled in the fixture).
+      fireEvent.click(screen.getByTestId('manage-addon-remove-cert-manager'));
+
+      fireEvent.click(screen.getByRole('button', { name: /apply changes/i }));
+      await waitFor(() => {
+        expect(mockUpdateClusterAddons).toHaveBeenCalledOnce();
+      });
+
+      const [, payload] = mockUpdateClusterAddons.mock.calls[0] as [string, Record<string, boolean>];
+      // cert-manager: was enabled → include as false
+      expect(payload['cert-manager']).toBe(false);
+      // ingress-nginx: currently enabled → include as true
+      expect(payload['ingress-nginx']).toBe(true);
+      // Junk names must NEVER appear in the payload.
+      expect('some-manual-app' in payload).toBe(false);
+      expect('connectivity-check-cluster-1' in payload).toBe(false);
+      // prometheus: disabled in git and not staged → must NOT be in payload
+      expect('prometheus' in payload).toBe(false);
+    });
+
+    it('staging a catalog addon from the picker adds it to the payload as true', async () => {
+      renderView('addons');
+      await waitFor(() => expect(screen.getByText('prod-eu')).toBeInTheDocument());
+
+      fireEvent.click(screen.getByTestId('manage-addons-enable-btn'));
+      await waitFor(() =>
+        expect(screen.getByTestId('addon-picker-item-velero')).toBeInTheDocument(),
+      );
+      fireEvent.click(screen.getByTestId('addon-picker-item-velero'));
+      fireEvent.click(screen.getByTestId('addon-picker-done'));
+
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /apply changes/i })).toBeInTheDocument(),
+      );
+      fireEvent.click(screen.getByRole('button', { name: /apply changes/i }));
+      await waitFor(() => {
+        expect(mockUpdateClusterAddons).toHaveBeenCalledOnce();
+      });
+
+      const [, payload] = mockUpdateClusterAddons.mock.calls[0] as [string, Record<string, boolean>];
+      // velero: newly staged → true
+      expect(payload['velero']).toBe(true);
+      // Junk must still not appear.
+      expect('some-manual-app' in payload).toBe(false);
+      expect('connectivity-check-cluster-1' in payload).toBe(false);
     });
   });
 });

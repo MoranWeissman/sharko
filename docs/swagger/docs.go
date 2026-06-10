@@ -3305,6 +3305,13 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     },
+                    "422": {
+                        "description": "Addon not in catalog",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
                     "502": {
                         "description": "Gateway error",
                         "schema": {

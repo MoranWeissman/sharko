@@ -293,6 +293,10 @@ export function ClusterDetail() {
 
   // Enable-addon picker (Manage Addons card)
   const [pickerOpen, setPickerOpen] = useState(false);
+  // Catalog names fetched lazily when the picker opens.
+  const [pickerCatalogNames, setPickerCatalogNames] = useState<string[]>([]);
+  const [pickerCatalogLoading, setPickerCatalogLoading] = useState(false);
+  const [pickerCatalogError, setPickerCatalogError] = useState<string | null>(null);
 
   // Deploy Addon dialog
   const [deployDialogOpen, setDeployDialogOpen] = useState(false);
@@ -365,9 +369,16 @@ export function ClusterDetail() {
       } else {
         setPendingPRsByAddon({});
       }
-      // Initialize addon toggles from cluster data
+      // Initialize addon toggles from cluster data. Only include rows that are
+      // genuine catalog addons (git_configured === true). Rows with status
+      // 'untracked_in_argocd' or 'sharko_system' are NOT catalog addons and
+      // must never enter the toggle map — if they did, they'd appear in the
+      // picker and could be sent to the PATCH endpoint as labels, producing
+      // an inconsistent gitops state (V2-cleanup-32 fix).
       const toggleMap: Record<string, boolean> = {};
-      result.addon_comparisons.forEach((a: { addon_name: string; git_enabled: boolean }) => {
+      result.addon_comparisons.forEach((a: { addon_name: string; git_enabled: boolean; git_configured: boolean; status?: string }) => {
+        if (!a.git_configured) return;
+        if (a.status === 'untracked_in_argocd' || a.status === 'sharko_system') return;
         toggleMap[a.addon_name] = a.git_enabled;
       });
       setAddonToggles(toggleMap);
@@ -459,7 +470,21 @@ export function ClusterDetail() {
     setToggleError(null);
     setToggleResult(null);
     try {
-      const result = await updateClusterAddons(name, addonToggles);
+      // Send only keys that are currently enabled OR being staged for a change
+      // (enabled→disabled or never-enabled→enabled). Do NOT send keys for addons
+      // that are disabled-in-git with no pending change — those are catalog addons
+      // the operator never touched on this cluster. Sending them as `false` would
+      // add spurious labels to managed-clusters.yaml (V2-cleanup-32 fix).
+      const payload: Record<string, boolean> = {};
+      for (const [k, v] of Object.entries(addonToggles)) {
+        const wasEnabled = originalToggles[k] === true;
+        const isEnabled = v === true;
+        // Include if currently enabled, was enabled (being removed), or is newly staged
+        if (wasEnabled || isEnabled) {
+          payload[k] = v;
+        }
+      }
+      const result = await updateClusterAddons(name, payload);
       const { prUrl } = extractPR(result);
       setToggleResult(prUrl ? { pr: result } : { message: 'Changes applied successfully.' });
       setOriginalToggles({ ...addonToggles });
@@ -468,7 +493,7 @@ export function ClusterDetail() {
     } finally {
       setApplyingToggles(false);
     }
-  }, [name, addonToggles]);
+  }, [name, addonToggles, originalToggles]);
 
   const handleTestConnection = useCallback(async () => {
     if (!name) return;
@@ -489,6 +514,26 @@ export function ClusterDetail() {
       setTestResult({ reachable: false, error: err instanceof Error ? err.message : 'Failed' });
     }
   }, [name, fetchData]);
+
+  // Open the enable-addon picker and lazily fetch the real catalog so the
+  // picker offers every catalog addon, not just the ones already in
+  // addonToggles. Reuses api.getAddonCatalog() — the same call AddonCatalog
+  // view uses (no new endpoint). Available = catalog names minus currently
+  // enabled+staged, which the picker computes from pickerEnabledNames.
+  const handleOpenPicker = useCallback(async () => {
+    setPickerOpen(true);
+    setPickerCatalogError(null);
+    if (pickerCatalogNames.length > 0) return; // already fetched
+    setPickerCatalogLoading(true);
+    try {
+      const catalog = await api.getAddonCatalog();
+      setPickerCatalogNames(catalog.addons.map((a) => a.addon_name));
+    } catch (e: unknown) {
+      setPickerCatalogError(e instanceof Error ? e.message : 'Failed to load catalog');
+    } finally {
+      setPickerCatalogLoading(false);
+    }
+  }, [pickerCatalogNames]);
 
   const handleOpenDeployDialog = useCallback(async () => {
     setDeployDialogOpen(true);
@@ -1358,8 +1403,14 @@ export function ClusterDetail() {
               {/* Admin: Manage Addons — enabled list + searchable enable picker */}
               <RoleGuard adminOnly>
                 {(() => {
+                  // Visible-row source: only catalog rows (git_configured=true) — junk
+                  // (untracked/sharko_system) was filtered out at toggle-map seeding time.
                   const allCatalogNames = Object.keys(addonToggles).sort();
-                  const noCatalog = allCatalogNames.length === 0;
+                  // noCatalog: true when addonToggles has no entries AND no catalog was
+                  // fetched for the picker yet. After the picker fetch we have
+                  // pickerCatalogNames, which is the authoritative source for what's
+                  // available to enable. If even that is empty, there's nothing in the catalog.
+                  const noCatalog = allCatalogNames.length === 0 && pickerCatalogNames.length === 0;
 
                   // Which addons are currently desired-true (original + staged enables)?
                   // Excludes addons staged for removal (still in list, but they retain
@@ -1373,9 +1424,13 @@ export function ClusterDetail() {
                     new Set([...enabledRows, ...removedRows]),
                   ).sort();
 
-                  // The picker must not show addons that are already enabled
-                  // (including staged-enable that haven't been applied yet).
-                  const pickerEnabledNames = new Set(enabledRows);
+                  // The picker must not show addons that are already enabled OR
+                  // staged for enable (i.e. addonToggles[n] === true).
+                  const pickerEnabledNames = new Set(
+                    Object.entries(addonToggles)
+                      .filter(([, v]) => v)
+                      .map(([k]) => k),
+                  );
 
                   // Connectivity-check system row visibility.
                   // Values: 'verified_check' | 'check_pending' | 'check_failed'
@@ -1396,7 +1451,7 @@ export function ClusterDetail() {
                           <button
                             type="button"
                             data-testid="manage-addons-enable-btn"
-                            onClick={() => setPickerOpen(true)}
+                            onClick={() => { void handleOpenPicker(); }}
                             className="inline-flex items-center gap-1.5 rounded-md bg-teal-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-600"
                           >
                             <Plus className="h-3.5 w-3.5" />
@@ -1562,12 +1617,19 @@ export function ClusterDetail() {
                       {/* Enable-addon picker dialog */}
                       <EnableAddonPicker
                         open={pickerOpen}
-                        allAddonNames={allCatalogNames}
+                        allAddonNames={pickerCatalogNames.length > 0 ? pickerCatalogNames : allCatalogNames}
                         enabledNames={pickerEnabledNames}
+                        loading={pickerCatalogLoading}
+                        error={pickerCatalogError}
                         onEnable={(addonName) =>
                           setAddonToggles((prev) => ({ ...prev, [addonName]: true }))
                         }
                         onClose={() => setPickerOpen(false)}
+                        onRetry={() => {
+                          setPickerCatalogError(null);
+                          setPickerCatalogNames([]);
+                          void handleOpenPicker();
+                        }}
                       />
                     </div>
                   );

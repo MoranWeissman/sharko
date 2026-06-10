@@ -2,7 +2,8 @@
  * EnableAddonPicker — unit tests.
  *
  * Covers: open/close, filtering, staging (onEnable callback),
- * empty-catalog and empty-search states.
+ * empty-catalog and empty-search states, loading + error states
+ * added in V2-cleanup-32.
  */
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
@@ -14,16 +15,22 @@ function renderPicker({
   open = true,
   allAddonNames = ALL_ADDONS,
   enabledNames = new Set<string>(),
+  loading = false,
+  error = null as string | null,
   onEnable = vi.fn(),
   onClose = vi.fn(),
+  onRetry = undefined as (() => void) | undefined,
 } = {}) {
   return render(
     <EnableAddonPicker
       open={open}
       allAddonNames={allAddonNames}
       enabledNames={enabledNames}
+      loading={loading}
+      error={error}
       onEnable={onEnable}
       onClose={onClose}
+      onRetry={onRetry}
     />,
   );
 }
@@ -87,5 +94,29 @@ describe('EnableAddonPicker', () => {
     expect(
       screen.getByText(/all catalog addons are already enabled/i),
     ).toBeInTheDocument();
+  });
+
+  // V2-cleanup-32: loading and error states.
+
+  it('shows a loading spinner and hides the search field when loading=true', () => {
+    renderPicker({ loading: true });
+    expect(screen.queryByTestId('addon-picker-search')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('addon-picker-list')).not.toBeInTheDocument();
+    expect(screen.getByText(/loading catalog/i)).toBeInTheDocument();
+  });
+
+  it('shows an error message and Retry button when error is set', () => {
+    const onRetry = vi.fn();
+    renderPicker({ error: 'Network error', onRetry });
+    expect(screen.queryByTestId('addon-picker-search')).not.toBeInTheDocument();
+    expect(screen.getByText('Network error')).toBeInTheDocument();
+    const retryBtn = screen.getByTestId('addon-picker-retry');
+    fireEvent.click(retryBtn);
+    expect(onRetry).toHaveBeenCalledOnce();
+  });
+
+  it('does not show a Retry button when onRetry is not provided', () => {
+    renderPicker({ error: 'Network error' });
+    expect(screen.queryByTestId('addon-picker-retry')).not.toBeInTheDocument();
   });
 });
