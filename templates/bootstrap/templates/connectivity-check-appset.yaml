@@ -97,3 +97,5 @@ spec:
           selfHeal: true
         syncOptions:
         - CreateNamespace=true
+        # ServerSideApply avoids the 262144-byte annotation limit for large CRDs.
+        - ServerSideApply=true

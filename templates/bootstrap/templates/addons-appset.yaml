@@ -140,9 +140,16 @@ spec:
           selfHeal: {{ if eq (toString $appset.selfHeal) "false" }}false{{ else }}true{{ end }}
         syncOptions:
         - CreateNamespace=true
+        # ServerSideApply avoids the 262144-byte last-applied annotation limit
+        # that causes client-side apply to permanently fail for large CRDs
+        # (e.g. keda scaledjobs.keda.sh). ArgoCD tolerates a duplicate entry
+        # if an addon's catalog syncOptions also specifies ServerSideApply=true.
+        - ServerSideApply=true
         {{- if $appset.syncOptions }}
         {{- range $appset.syncOptions }}
+        {{- if ne . "ServerSideApply=true" }}
         - {{ . }}
+        {{- end }}
         {{- end }}
         {{- end }}
       {{- if $appset.ignoreDifferences }}

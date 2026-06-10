@@ -321,7 +321,12 @@ func (s *ClusterService) GetClusterComparison(ctx context.Context, clusterName s
 			comp.ArgocdDestinationServer = app.DestinationServer
 			comp.ArgocdOperationState = app.OperationState
 
-			comp.Status = classifyHealth(app.HealthStatus, app.SyncStatus)
+			var issueMsg string
+			comp.Status, issueMsg = classifyAddonApp(app)
+			if issueMsg != "" {
+				comp.ArgocdOperationMessage = issueMsg
+				comp.Issues = append(comp.Issues, issueMsg)
+			}
 			if comp.Status == "healthy" {
 				totalHealthy++
 			} else {
@@ -605,6 +610,60 @@ func (s *ClusterService) GetClusterAddonValues(ctx context.Context, clusterName,
 	}
 
 	return resp, nil
+}
+
+// classifyAddonApp derives the addon comparison status string and an optional
+// issue message from a live ArgoCD application. Priority order:
+//
+//  1. sync_failing — op phase Failed|Error, OR phase Running AND
+//     (any SyncFailed task OR message contains "completed unsuccessfully").
+//     The truncated operationState.message is returned as the issue.
+//  2. deploying — op phase Running OR health Progressing (no error signal).
+//  3. Existing health-based mapping (healthy / unhealthy / unknown_health /
+//     unknown_state).
+//
+// The function is the single source of truth for both the cluster comparison
+// endpoint and the addon catalog endpoint so they stay in sync.
+func classifyAddonApp(app models.ArgocdApplication) (status, issueMessage string) {
+	phase := app.OperationPhase
+	health := app.HealthStatus
+	opMsg := app.OperationMessage
+
+	// 1. Detect a permanently-failing operation.
+	opFailed := phase == "Failed" || phase == "Error"
+	opRunningWithFailure := phase == "Running" &&
+		(app.HasSyncFailedResource || strings.Contains(opMsg, "completed unsuccessfully"))
+	if opFailed || opRunningWithFailure {
+		issue := trimOperationMessage(opMsg)
+		return "sync_failing", issue
+	}
+
+	// 2. Active rollout — no error signal yet.
+	if phase == "Running" || health == "Progressing" {
+		return "deploying", ""
+	}
+
+	// 3. Existing health mapping.
+	return classifyHealth(health, ""), ""
+}
+
+// trimOperationMessage truncates an ArgoCD operation message to its first line,
+// capped at 300 characters. This prevents multi-KB error blobs from bloating
+// the issues[] array in API responses.
+func trimOperationMessage(msg string) string {
+	if msg == "" {
+		return ""
+	}
+	// First line only.
+	if idx := strings.Index(msg, "\n"); idx >= 0 {
+		msg = msg[:idx]
+	}
+	// Cap at 300 chars.
+	const maxLen = 300
+	if len(msg) > maxLen {
+		msg = msg[:maxLen]
+	}
+	return strings.TrimSpace(msg)
 }
 
 func classifyHealth(healthStatus, _ string) string {

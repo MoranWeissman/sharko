@@ -646,7 +646,9 @@ export function ClusterDetail() {
         case 'healthy':
           return addon.status === 'healthy';
         case 'with_issues':
-          return ['progressing', 'unknown_health', 'unhealthy', 'unknown_state'].includes(
+          // sync_failing is a real issue — show it in the with_issues filter.
+          // deploying is informational (active rollout with no error) — not an issue.
+          return ['progressing', 'unknown_health', 'unhealthy', 'unknown_state', 'sync_failing'].includes(
             addon.status ?? '',
           );
         case 'missing_in_argocd':
@@ -1793,7 +1795,8 @@ function ComparisonRow({ addon, isExpanded, onToggleExpand, argocdBaseURL, highl
     || addon.argocd_health_status === 'Degraded'
     || addon.status === 'with_issues'
     || addon.status === 'unknown_health'
-    || addon.status === 'unknown_state';
+    || addon.status === 'unknown_state'
+    || addon.status === 'sync_failing';
 
   return (
     <tr

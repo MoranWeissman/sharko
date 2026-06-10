@@ -524,6 +524,14 @@ type argocdApplicationItem struct {
 			StartedAt  string `json:"startedAt"`
 			FinishedAt string `json:"finishedAt"`
 			Message    string `json:"message"`
+			SyncResult *struct {
+				Resources []struct {
+					Kind    string `json:"kind"`
+					Name    string `json:"name"`
+					Status  string `json:"status"`
+					Message string `json:"message"`
+				} `json:"resources"`
+			} `json:"syncResult"`
 		} `json:"operationState"`
 		History []struct {
 			ID              int    `json:"id"`
@@ -605,6 +613,15 @@ func (a argocdApplicationItem) toModel() models.ArgocdApplication {
 		app.OperationStartedAt = a.Status.OperationState.StartedAt
 		app.OperationFinishedAt = a.Status.OperationState.FinishedAt
 		app.OperationMessage = a.Status.OperationState.Message
+		// Check for per-resource sync failures in the operation result.
+		if sr := a.Status.OperationState.SyncResult; sr != nil {
+			for _, res := range sr.Resources {
+				if res.Status == "SyncFailed" {
+					app.HasSyncFailedResource = true
+					break
+				}
+			}
+		}
 	}
 
 	if a.Spec.Source.Helm != nil {

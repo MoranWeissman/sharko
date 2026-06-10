@@ -115,4 +115,36 @@ describe('StatusBadge', () => {
     expect(svg).toBeTruthy();
     expect(screen.getByText('Connected')).toBeInTheDocument();
   });
+
+  // --- V2-cleanup-36: new addon states ---
+
+  it('renders "sync_failing" with red styling', () => {
+    const { container } = render(<StatusBadge status="sync_failing" />);
+    const badge = container.firstChild as HTMLElement;
+    expect(badge.className).toContain('bg-red-50');
+    expect(badge.className).toContain('text-red-700');
+    const dot = badge.querySelector('span span') as HTMLElement;
+    expect(dot.className).toContain('bg-red-500');
+  });
+
+  it('renders "sync_failing" display name as "Sync failing"', () => {
+    expect(statusDisplayName('sync_failing')).toBe('Sync failing');
+    render(<StatusBadge status="sync_failing" />);
+    expect(screen.getByText('Sync failing')).toBeInTheDocument();
+  });
+
+  it('renders "deploying" with blue styling', () => {
+    const { container } = render(<StatusBadge status="deploying" />);
+    const badge = container.firstChild as HTMLElement;
+    expect(badge.className).toContain('bg-blue-50');
+    expect(badge.className).toContain('text-blue-700');
+    const dot = badge.querySelector('span span') as HTMLElement;
+    expect(dot.className).toContain('bg-blue-500');
+  });
+
+  it('renders "deploying" display name as "Deploying"', () => {
+    expect(statusDisplayName('deploying')).toBe('Deploying');
+    render(<StatusBadge status="deploying" />);
+    expect(screen.getByText('Deploying')).toBeInTheDocument();
+  });
 });

@@ -183,12 +183,24 @@ function DeploymentBadge({ addon }: { addon: AddonCatalogItem }) {
   const deployed = addon.deployed_cluster_count ?? 0
   const target = addon.total_target_cluster_count ?? 0
 
-  let label: string
-  let tone: 'amber' | 'blue' | 'green'
+  // Check for applications in a failing sync state — surfaces before the
+  // running-count logic so operators see a warning before the count story.
+  const hasSyncFailing = addon.applications.some((a) => a.enabled && a.status === 'sync_failing')
+  const hasDeploying = addon.applications.some((a) => a.enabled && a.status === 'deploying')
 
-  if (target === 0) {
+  let label: string
+  let tone: 'amber' | 'blue' | 'green' | 'red'
+
+  if (hasSyncFailing) {
+    label = 'Sync failing'
+    tone = 'red'
+  } else if (target === 0) {
     label = 'Not deployed anywhere'
     tone = 'amber'
+  } else if (deployed === 0 && hasDeploying) {
+    // Active first rollout — no completed deploys yet but something is Deploying.
+    label = 'Deploying…'
+    tone = 'blue'
   } else if (deployed === 0) {
     label = 'Not deployed yet'
     tone = 'amber'
@@ -210,6 +222,8 @@ function DeploymentBadge({ addon }: { addon: AddonCatalogItem }) {
       'bg-[#d0e8f8] text-[#0a3a5a] ring-[#6aade0] dark:bg-blue-900/30 dark:text-blue-300 dark:ring-blue-700',
     green:
       'bg-green-50 text-green-700 ring-green-200 dark:bg-green-900/30 dark:text-green-400 dark:ring-green-700',
+    red:
+      'bg-red-50 text-red-700 ring-red-200 dark:bg-red-900/30 dark:text-red-400 dark:ring-red-700',
   }
 
   return (

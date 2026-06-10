@@ -266,6 +266,136 @@ describe('AddonCatalog — DeploymentBadge (V126-3.1)', () => {
 })
 
 /**
+ * V2-cleanup-36: DeploymentBadge new states — sync_failing (red) and
+ * deploying (blue). These states are checked first in the priority chain
+ * so they surface before the running-count logic.
+ */
+describe('AddonCatalog — DeploymentBadge V2-cleanup-36 states', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('renders "Sync failing" badge (red) when any enabled application has status sync_failing', async () => {
+    const { api } = await import('@/services/api')
+    vi.mocked(api.getAddonCatalog).mockResolvedValueOnce({
+      addons: [
+        {
+          addon_name: 'keda',
+          chart: 'keda',
+          repo_url: 'https://kedacore.github.io/charts',
+          namespace: 'keda',
+          version: '2.13.0',
+          total_clusters: 1,
+          enabled_clusters: 1,
+          healthy_applications: 0,
+          degraded_applications: 1,
+          missing_applications: 0,
+          // keda incident: Running + SyncFailed → sync_failing
+          deployed_cluster_count: 0,
+          total_target_cluster_count: 1,
+          applications: [
+            {
+              cluster_name: 'prod',
+              enabled: true,
+              configured_version: '2.13.0',
+              status: 'sync_failing',
+            },
+          ],
+        },
+      ],
+      total_addons: 1,
+      total_clusters: 1,
+      addons_only_in_git: 0,
+    })
+
+    renderCatalog()
+    await waitFor(() =>
+      expect(screen.getAllByTestId('addon-deployment-badge').length).toBeGreaterThan(0),
+    )
+    expect(screen.getByText('Sync failing')).toBeInTheDocument()
+  })
+
+  it('renders "Deploying…" badge (blue) when deployed=0, target>0, and any enabled app is deploying', async () => {
+    const { api } = await import('@/services/api')
+    vi.mocked(api.getAddonCatalog).mockResolvedValueOnce({
+      addons: [
+        {
+          addon_name: 'velero',
+          chart: 'velero',
+          repo_url: 'https://vmware-tanzu.github.io/helm-charts',
+          namespace: 'velero',
+          version: '5.1.0',
+          total_clusters: 1,
+          enabled_clusters: 1,
+          healthy_applications: 0,
+          degraded_applications: 0,
+          missing_applications: 0,
+          // Active first rollout — op Running, no failures yet
+          deployed_cluster_count: 0,
+          total_target_cluster_count: 1,
+          applications: [
+            {
+              cluster_name: 'dev',
+              enabled: true,
+              configured_version: '5.1.0',
+              status: 'deploying',
+            },
+          ],
+        },
+      ],
+      total_addons: 1,
+      total_clusters: 1,
+      addons_only_in_git: 0,
+    })
+
+    renderCatalog()
+    await waitFor(() =>
+      expect(screen.getAllByTestId('addon-deployment-badge').length).toBeGreaterThan(0),
+    )
+    expect(screen.getByText('Deploying…')).toBeInTheDocument()
+  })
+
+  it('sync_failing takes priority over the running-count logic', async () => {
+    // N=1 (one cluster is healthy) but another has sync_failing —
+    // badge should show "Sync failing", not "Running on 1/2 clusters".
+    const { api } = await import('@/services/api')
+    vi.mocked(api.getAddonCatalog).mockResolvedValueOnce({
+      addons: [
+        {
+          addon_name: 'mixed-addon',
+          chart: 'mixed',
+          repo_url: 'https://example.com',
+          namespace: 'mixed',
+          version: '1.0.0',
+          total_clusters: 2,
+          enabled_clusters: 2,
+          healthy_applications: 1,
+          degraded_applications: 1,
+          missing_applications: 0,
+          deployed_cluster_count: 1,
+          total_target_cluster_count: 2,
+          applications: [
+            { cluster_name: 'prod', enabled: true, configured_version: '1.0.0', status: 'healthy' },
+            { cluster_name: 'staging', enabled: true, configured_version: '1.0.0', status: 'sync_failing' },
+          ],
+        },
+      ],
+      total_addons: 1,
+      total_clusters: 2,
+      addons_only_in_git: 0,
+    })
+
+    renderCatalog()
+    await waitFor(() =>
+      expect(screen.getAllByTestId('addon-deployment-badge').length).toBeGreaterThan(0),
+    )
+    // sync_failing wins over "Running on 1/2 clusters"
+    expect(screen.getByText('Sync failing')).toBeInTheDocument()
+    expect(screen.queryByText(/Running on/)).not.toBeInTheDocument()
+  })
+})
+
+/**
  * V126-3.1 (DESIGN-02): the historical tab value `'installed'` was renamed
  * to `'catalog'`. This regression test asserts:
  *
