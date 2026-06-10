@@ -9,13 +9,12 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/gitops"
 	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/providers"
 	"github.com/MoranWeissman/sharko/internal/verify"
-
-	"gopkg.in/yaml.v3"
 )
 
 // supportedProviders enumerates the cluster-provider values RegisterCluster
@@ -710,17 +709,11 @@ func (o *Orchestrator) RefreshClusterCredentials(_ context.Context, name string,
 	return nil
 }
 
-// addonsCatalogFile mirrors the YAML structure of addons-catalog.yaml.
-// Duplicated here to avoid an import cycle with the config package.
-type addonsCatalogFile struct {
-	ApplicationSets []models.AddonCatalogEntry `yaml:"applicationsets"`
-}
-
-// parseAddonsCatalog unmarshals raw addons-catalog.yaml bytes into a slice of catalog entries.
+// parseAddonsCatalog delegates to the canonical config.Parser so that both
+// the enveloped shape (apiVersion: sharko.io/v1 / kind: AddonCatalog) and the
+// legacy bare applicationsets: top-level shape parse identically everywhere.
+// The orchestrator already imports internal/config (addon.go, addon_configure.go)
+// so there is no import cycle — the previous duplicate was based on a false assumption.
 func parseAddonsCatalog(data []byte) ([]models.AddonCatalogEntry, error) {
-	var file addonsCatalogFile
-	if err := yaml.Unmarshal(data, &file); err != nil {
-		return nil, fmt.Errorf("parsing addons-catalog.yaml: %w", err)
-	}
-	return file.ApplicationSets, nil
+	return config.NewParser().ParseAddonsCatalog(data)
 }
