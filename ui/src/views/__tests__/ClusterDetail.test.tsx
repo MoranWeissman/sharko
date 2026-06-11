@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ClusterDetail } from '@/views/ClusterDetail';
 import { AuthContext } from '@/hooks/useAuth';
@@ -1628,5 +1628,204 @@ describe('ClusterDetail', () => {
       expect(screen.getByText('Keda')).toBeInTheDocument();
       expect(screen.getByText('Velero')).toBeInTheDocument();
     });
+  });
+
+  /**
+   * V2-cleanup-38.2: full operation message in expanded row.
+   *
+   * Collapsed row shows the short issues[] text. Expanded row shows the full
+   * argocd_operation_message in a scrollable monospace block.
+   */
+  describe('V2-cleanup-38.2: full sync-error text in expanded row', () => {
+    const shortIssue = 'one or more synchronization tasks completed unsuccessfully';
+    const fullMessage =
+      'one or more synchronization tasks completed unsuccessfully, reason: ' +
+      'failed to create typed patch object (keda/keda-admission-webhooks; apps/v1, Kind=Deployment): ' +
+      '.spec.template.spec.containers[name="keda-admission-webhooks"].resources.metricServer: ' +
+      'field not declared in schema,failed to create typed patch object ' +
+      '(keda/keda-operator; apps/v1, Kind=Deployment): ' +
+      '.spec.template.spec.containers[name="keda-operator"].resources.metricServer: ' +
+      'field not declared in schema';
+
+    const responseWithFullMsg = {
+      ...comparisonResponse,
+      addon_comparisons: [
+        {
+          addon_name: 'keda',
+          git_configured: true,
+          git_version: '2.13.0',
+          git_enabled: true,
+          has_version_override: false,
+          argocd_deployed: true,
+          argocd_health_status: 'Healthy',
+          argocd_sync_status: 'OutOfSync',
+          argocd_operation_state: 'Running',
+          // Full message in argocd_operation_message; short version in issues[].
+          argocd_operation_message: fullMessage,
+          status: 'sync_failing',
+          issues: [shortIssue],
+        },
+      ],
+      total_healthy: 0,
+      total_with_issues: 1,
+      total_missing_in_argocd: 0,
+    };
+
+    it('collapsed row: full-message block is NOT visible', async () => {
+      mockGetClusterComparison.mockResolvedValue(responseWithFullMsg);
+      renderView('addons');
+      await screen.findByText('prod-eu', {}, { timeout: 5000 });
+
+      // The short issue text appears in the list.
+      expect(screen.getByText(shortIssue)).toBeInTheDocument();
+
+      // The full-message block must not be visible in collapsed state.
+      expect(screen.queryByTestId('full-operation-message')).not.toBeInTheDocument();
+    });
+
+    it('expanded row: full-message block is visible with complete text', async () => {
+      mockGetClusterComparison.mockResolvedValue(responseWithFullMsg);
+      renderView('addons');
+      await screen.findByText('prod-eu', {}, { timeout: 5000 });
+
+      // Expand the row by clicking "Show more".
+      const showMoreBtn = screen.getByText('Show more');
+      fireEvent.click(showMoreBtn);
+
+      // The full-message block should now be visible.
+      const block = await screen.findByTestId('full-operation-message');
+      expect(block).toBeInTheDocument();
+      // It must contain the tail of the error that was previously cut off.
+      expect(block.textContent).toContain('field not declared in schema');
+    });
+  });
+
+  /**
+   * V2-cleanup-38.4: adaptive polling and refetch after restart-sync.
+   */
+  describe('V2-cleanup-38.4: restart-sync triggers immediate refetch', () => {
+    it('calls getClusterComparison again after a successful restart-sync', async () => {
+      const syncFailingResponse = {
+        ...comparisonResponse,
+        addon_comparisons: [
+          {
+            addon_name: 'keda',
+            git_configured: true,
+            git_version: '2.13.0',
+            git_enabled: true,
+            has_version_override: false,
+            argocd_deployed: true,
+            argocd_health_status: 'Healthy',
+            status: 'sync_failing',
+            issues: ['sync operation failed'],
+          },
+        ],
+        total_healthy: 0,
+        total_with_issues: 1,
+        total_missing_in_argocd: 0,
+      };
+
+      mockGetClusterComparison.mockResolvedValue(syncFailingResponse);
+      mockRestartAddonSync.mockResolvedValue({ terminated: true, synced: true });
+      renderView('addons');
+      await screen.findByText('prod-eu', {}, { timeout: 5000 });
+
+      const initialCallCount = mockGetClusterComparison.mock.calls.length;
+
+      // Click restart-sync.
+      const btn = screen.getByTestId('restart-sync-btn');
+      fireEvent.click(btn);
+
+      // Wait for the success toast, which fires after the API call resolves.
+      await waitFor(() => {
+        expect(mockShowToast).toHaveBeenCalledWith(
+          expect.stringContaining('Sync restarted'),
+          'success',
+        );
+      });
+
+      // An extra getClusterComparison call must have fired (the immediate refetch).
+      await waitFor(() => {
+        expect(mockGetClusterComparison.mock.calls.length).toBeGreaterThan(initialCallCount);
+      });
+    });
+  });
+
+  /**
+   * V2-cleanup-38.4: timer tests for adaptive polling interval.
+   * Uses vi.useFakeTimers to control time precisely.
+   */
+  describe('V2-cleanup-38.4: adaptive polling interval', () => {
+    it('uses 10s interval when a deploying addon is present', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        const deployingResponse = {
+          ...comparisonResponse,
+          addon_comparisons: [
+            {
+              addon_name: 'keda',
+              git_configured: true,
+              git_version: '2.13.0',
+              git_enabled: true,
+              has_version_override: false,
+              argocd_deployed: true,
+              status: 'deploying',
+              issues: [],
+            },
+          ],
+        };
+        mockGetClusterComparison.mockResolvedValue(deployingResponse);
+
+        renderView('addons');
+
+        // Let the initial fetch + state settle.
+        await act(async () => {
+          await Promise.resolve();
+        });
+        const afterInit = mockGetClusterComparison.mock.calls.length;
+
+        // Advance 10s — should trigger one more poll (active interval = 10s).
+        await act(async () => {
+          vi.advanceTimersByTime(10_000);
+          await Promise.resolve();
+        });
+
+        expect(mockGetClusterComparison.mock.calls.length).toBeGreaterThan(afterInit);
+      } finally {
+        vi.useRealTimers();
+      }
+    }, 15_000);
+
+    it('uses 30s interval when no active addons are present', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        // All addons healthy — no deploying or sync_failing.
+        mockGetClusterComparison.mockResolvedValue(comparisonResponse);
+
+        renderView('addons');
+
+        // Let the initial fetch settle.
+        await act(async () => {
+          await Promise.resolve();
+        });
+        const afterInit = mockGetClusterComparison.mock.calls.length;
+
+        // Advance only 10s — must NOT trigger a poll (30s interval).
+        await act(async () => {
+          vi.advanceTimersByTime(10_000);
+          await Promise.resolve();
+        });
+        expect(mockGetClusterComparison.mock.calls.length).toBe(afterInit);
+
+        // Advance another 20s (total = 30s) — now should trigger.
+        await act(async () => {
+          vi.advanceTimersByTime(20_000);
+          await Promise.resolve();
+        });
+        expect(mockGetClusterComparison.mock.calls.length).toBeGreaterThan(afterInit);
+      } finally {
+        vi.useRealTimers();
+      }
+    }, 15_000);
   });
 });

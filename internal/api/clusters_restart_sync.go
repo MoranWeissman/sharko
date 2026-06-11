@@ -3,9 +3,11 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/authz"
+	"log/slog"
 )
 
 // RestartSyncResult is the response body for a successful restart-sync call.
@@ -74,13 +76,34 @@ func (s *Server) handleRestartAddonSync(w http.ResponseWriter, r *http.Request) 
 
 	result := RestartSyncResult{}
 
-	// Terminate any in-flight operation.
-	if app.OperationPhase != "" {
+	// Terminate only when an operation is actively in flight.
+	// ArgoCD retains the last operationState (phase Failed/Succeeded/Error) after
+	// an operation finishes; attempting to terminate a finished op returns a 400
+	// "No operation is in progress" error and blocks the subsequent sync.
+	// Use OperationFinishedAt (populated by #418) when available; fall back to
+	// phase-only check (Running or Terminating = still active).
+	opInFlight := false
+	if app.OperationFinishedAt != "" {
+		opInFlight = false // finishedAt set → op is done, nothing to terminate
+	} else if app.OperationPhase == "Running" || app.OperationPhase == "Terminating" {
+		opInFlight = true
+	}
+
+	if opInFlight {
 		if err := ac.TerminateOperation(r.Context(), appName); err != nil {
-			writeError(w, http.StatusBadGateway, "failed to terminate operation: "+err.Error())
-			return
+			// Benign race: ArgoCD reports "No operation is in progress" (400).
+			// The op finished between our GetApplication call and the DELETE.
+			// Treat as harmless — continue to sync.
+			if isBenignTerminateError(err) {
+				slog.Warn("restart-sync: terminate returned benign 'no operation' error; continuing to sync",
+					"app", appName, "error", err)
+			} else {
+				writeError(w, http.StatusBadGateway, "failed to terminate operation: "+err.Error())
+				return
+			}
+		} else {
+			result.Terminated = true
 		}
-		result.Terminated = true
 	}
 
 	// Re-trigger sync.
@@ -91,4 +114,18 @@ func (s *Server) handleRestartAddonSync(w http.ResponseWriter, r *http.Request) 
 	result.Synced = true
 
 	writeJSON(w, http.StatusOK, result)
+}
+
+// isBenignTerminateError returns true when an TerminateOperation error
+// indicates that no operation was in progress — i.e. the operation already
+// finished between our GetApplication check and the terminate call. These
+// race-window errors are safe to ignore; the subsequent sync call should
+// proceed normally.
+func isBenignTerminateError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "no operation is in progress") ||
+		(strings.Contains(msg, "unexpected status 400") && strings.Contains(msg, "no operation"))
 }

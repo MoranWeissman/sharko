@@ -27,15 +27,31 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/models"
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/prtracker"
 	"github.com/MoranWeissman/sharko/internal/service"
 )
+
+// isBenignTerminateError returns true when a TerminateOperation error
+// indicates no operation was in progress (benign race window).
+func isBenignTerminateError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "no operation is in progress") ||
+		(strings.Contains(msg, "unexpected status 400") && strings.Contains(msg, "no operation"))
+}
 
 // ArgoClient is the subset of the ArgoCD client the remediator needs.
 type ArgoClient interface {
 	ListApplications(ctx context.Context) ([]models.ArgocdApplication, error)
 	TerminateOperation(ctx context.Context, appName string) error
 	SyncApplication(ctx context.Context, appName string) error
+	// RefreshApplication triggers ArgoCD to re-fetch the application state from
+	// Git. Called after a Sharko PR merges so ArgoCD picks up the new config
+	// without waiting for its next poll cycle (~3 min in most environments).
+	RefreshApplication(ctx context.Context, appName string, hard bool) (*models.ArgocdApplication, error)
 }
 
 // Deps holds the external dependencies for the Remediator.
@@ -146,18 +162,25 @@ func (r *Remediator) act(ctx context.Context, app models.ArgocdApplication, pr p
 		"operation_phase", app.OperationPhase, "started_at", app.OperationStartedAt)
 
 	if err := r.deps.ArgoClient.TerminateOperation(ctx, app.Name); err != nil {
-		slog.Error("remediation: terminate operation failed", "app", app.Name, "error", err)
-		r.deps.AuditFn(audit.Entry{
-			Level:    "error",
-			Event:    "argocd_auto_remediation_failed",
-			Action:   "terminate_operation",
-			Resource: "app:" + app.Name,
-			Source:   "remediation",
-			Result:   "failure",
-			Error:    err.Error(),
-			Detail:   fmt.Sprintf("failed to terminate stale sync for %s after PR #%d merged", app.Name, pr.PRID),
-		})
-		return
+		if isBenignTerminateError(err) {
+			// Race window: the operation finished between isFailingAndStale and now.
+			// Log a warning and proceed to re-sync — the op is already done.
+			slog.Warn("remediation: terminate returned benign 'no operation' error; proceeding to sync",
+				"app", app.Name, "error", err)
+		} else {
+			slog.Error("remediation: terminate operation failed", "app", app.Name, "error", err)
+			r.deps.AuditFn(audit.Entry{
+				Level:    "error",
+				Event:    "argocd_auto_remediation_failed",
+				Action:   "terminate_operation",
+				Resource: "app:" + app.Name,
+				Source:   "remediation",
+				Result:   "failure",
+				Error:    err.Error(),
+				Detail:   fmt.Sprintf("failed to terminate stale sync for %s after PR #%d merged", app.Name, pr.PRID),
+			})
+			return
+		}
 	}
 
 	if err := r.deps.ArgoClient.SyncApplication(ctx, app.Name); err != nil {
@@ -220,6 +243,63 @@ func (l *LazyArgoClient) SyncApplication(ctx context.Context, appName string) er
 	return c.SyncApplication(ctx, appName)
 }
 
+func (l *LazyArgoClient) RefreshApplication(ctx context.Context, appName string, hard bool) (*models.ArgocdApplication, error) {
+	c, err := l.ConnSvc.GetActiveArgocdClient()
+	if err != nil {
+		return nil, fmt.Errorf("no active ArgoCD connection: %w", err)
+	}
+	return c.RefreshApplication(ctx, appName, hard)
+}
+
+// OnMergeRefresh triggers an ArgoCD refresh for the bootstrap application and,
+// when PRInfo carries an addon+cluster, for the affected addon application too.
+// This eliminates the ~3-minute git-poll delay after a Sharko PR merges.
+//
+// Refresh failures are non-fatal (slog.Warn only) — they are a best-effort
+// optimisation, not a correctness requirement. No kill-switch; refresh is
+// cheap and merge-driven.
+func (r *Remediator) OnMergeRefresh(ctx context.Context, pr prtracker.PRInfo) {
+	// Always refresh the bootstrap application.
+	bootstrapAppName := orchestrator.BootstrapRootAppName
+	if _, err := r.deps.ArgoClient.RefreshApplication(ctx, bootstrapAppName, false); err != nil {
+		slog.Warn("remediation: failed to refresh bootstrap app after PR merge",
+			"app", bootstrapAppName, "pr_id", pr.PRID, "error", err)
+	} else {
+		slog.Info("remediation: refreshed ArgoCD after PR merge",
+			"app", bootstrapAppName, "pr_id", pr.PRID)
+		r.deps.AuditFn(audit.Entry{
+			Level:    "info",
+			Event:    "argocd_refreshed_after_merge",
+			Action:   "refresh_application",
+			Resource: "app:" + bootstrapAppName,
+			Source:   "remediation",
+			Result:   "success",
+			Detail:   fmt.Sprintf("refreshed ArgoCD after PR #%d merged", pr.PRID),
+		})
+	}
+
+	// When the PR targets a specific addon+cluster, also refresh that app.
+	if pr.Addon != "" && pr.Cluster != "" {
+		addonAppName := pr.Addon + "-" + pr.Cluster
+		if _, err := r.deps.ArgoClient.RefreshApplication(ctx, addonAppName, false); err != nil {
+			slog.Warn("remediation: failed to refresh addon app after PR merge",
+				"app", addonAppName, "pr_id", pr.PRID, "error", err)
+		} else {
+			slog.Info("remediation: refreshed ArgoCD after PR merge",
+				"app", addonAppName, "pr_id", pr.PRID)
+			r.deps.AuditFn(audit.Entry{
+				Level:    "info",
+				Event:    "argocd_refreshed_after_merge",
+				Action:   "refresh_application",
+				Resource: "app:" + addonAppName,
+				Source:   "remediation",
+				Result:   "success",
+				Detail:   fmt.Sprintf("refreshed ArgoCD after PR #%d merged", pr.PRID),
+			})
+		}
+	}
+}
+
 // IsAutoRemediateEnabled reports whether auto-remediation is on.
 // Exported so serve.go can call it with the env value.
 // "false" / "0" (case-insensitive) turns it off; anything else (including
@@ -259,13 +339,25 @@ func (r *Remediator) isSharkogenerated(name string) bool {
 }
 
 // isFailingAndStale returns true when the application has a failing operation
-// that started before mergeTime. It reuses the same detection logic as the
-// #418 classifyAddonApp in internal/service (phase Failed|Error, or Running
-// with HasSyncFailedResource or "completed unsuccessfully" in the message).
+// that started before mergeTime AND is still in flight (not yet finished).
+// It reuses the same detection logic as the #418 classifyAddonApp in
+// internal/service (phase Failed|Error, or Running with HasSyncFailedResource
+// or "completed unsuccessfully" in the message).
+//
+// A finished operation (OperationFinishedAt set) is NEVER terminated even if
+// its terminal phase is Failed/Error — it is already done and terminating it
+// would return a benign 400 from ArgoCD. The correct action for a finished
+// failing op is to re-sync directly, which the caller handles when this
+// function returns false.
 func (r *Remediator) isFailingAndStale(app models.ArgocdApplication, mergeTime time.Time) bool {
 	phase := app.OperationPhase
 	if phase == "" {
 		return false // no operation in flight
+	}
+
+	// A finished operation must not be terminated.
+	if app.OperationFinishedAt != "" {
+		return false
 	}
 
 	opMsg := app.OperationMessage
