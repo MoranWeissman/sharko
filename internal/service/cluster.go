@@ -324,8 +324,12 @@ func (s *ClusterService) GetClusterComparison(ctx context.Context, clusterName s
 			var issueMsg string
 			comp.Status, issueMsg = classifyAddonApp(app)
 			if issueMsg != "" {
-				comp.ArgocdOperationMessage = issueMsg
+				// issues[] keeps the short first-line version so badges stay compact.
 				comp.Issues = append(comp.Issues, issueMsg)
+				// ArgocdOperationMessage ships the full text (capped at 4000 chars)
+				// so the UI's expanded row can render the complete error without
+				// truncation. The field was previously set to the trimmed issueMsg.
+				comp.ArgocdOperationMessage = fullOperationMessage(app.OperationMessage)
 			}
 			if comp.Status == "healthy" {
 				totalHealthy++
@@ -617,7 +621,8 @@ func (s *ClusterService) GetClusterAddonValues(ctx context.Context, clusterName,
 //
 //  1. sync_failing — op phase Failed|Error, OR phase Running AND
 //     (any SyncFailed task OR message contains "completed unsuccessfully").
-//     The truncated operationState.message is returned as the issue.
+//     The short (first-line, 300-char) message is returned as the issue;
+//     use fullOperationMessage for the full text.
 //  2. deploying — op phase Running OR health Progressing (no error signal).
 //  3. Existing health-based mapping (healthy / unhealthy / unknown_health /
 //     unknown_state).
@@ -645,6 +650,22 @@ func classifyAddonApp(app models.ArgocdApplication) (status, issueMessage string
 
 	// 3. Existing health mapping.
 	return classifyHealth(health, ""), ""
+}
+
+// fullOperationMessage returns the full operation message capped at 4000
+// characters. Unlike trimOperationMessage it preserves newlines and the
+// full text so the UI can render the complete error in the expanded row.
+// The 4000-char cap prevents accidental multi-MB blobs from reaching the
+// API response (ArgoCD messages rarely exceed a few KB).
+func fullOperationMessage(msg string) string {
+	if msg == "" {
+		return ""
+	}
+	const maxLen = 4000
+	if len(msg) > maxLen {
+		msg = msg[:maxLen]
+	}
+	return msg
 }
 
 // trimOperationMessage truncates an ArgoCD operation message to its first line,

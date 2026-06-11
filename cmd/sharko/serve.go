@@ -899,6 +899,9 @@ var serveCmd = &cobra.Command{
 					}
 					if remediator != nil {
 						go remediator.OnMerge(pr)
+						// Refresh ArgoCD immediately after the merge so it picks up
+						// the new config without waiting for its git-poll cycle.
+						go remediator.OnMergeRefresh(context.Background(), pr)
 					}
 				})
 

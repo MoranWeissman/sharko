@@ -233,3 +233,108 @@ func min(a, b int) int {
 	}
 	return b
 }
+
+// TestFullOperationMessage_V2cleanup38 verifies that fullOperationMessage
+// preserves newlines + full text and only caps at 4000 chars.
+func TestFullOperationMessage_V2cleanup38(t *testing.T) {
+	// The live keda error — multi-line, > 300 chars but < 4000.
+	// trimOperationMessage would cut this at the first comma (first newline) + 300
+	// chars, but fullOperationMessage must keep ALL of it.
+	liveKedaErr := "one or more synchronization tasks completed unsuccessfully, reason: " +
+		"failed to create typed patch object (keda/keda-admission-webhooks; apps/v1, Kind=Deployment): " +
+		".spec.template.spec.containers[name=\"keda-admission-webhooks\"].resources.metricServer: " +
+		"field not declared in schema,failed to create typed patch object " +
+		"(keda/keda-operator; apps/v1, Kind=Deployment): " +
+		".spec.template.spec.containers[name=\"keda-operator\"].resources.metricServer: " +
+		"field not declared in schema"
+
+	cases := []struct {
+		name    string
+		in      string
+		wantLen int    // 0 = check exact equality
+		wantContains string
+	}{
+		{
+			name:         "empty",
+			in:           "",
+			wantLen:      0,
+			wantContains: "",
+		},
+		{
+			name:         "live_keda_error_preserved_fully",
+			in:           liveKedaErr,
+			wantContains: "field not declared in schema",
+		},
+		{
+			name:    "multiline_preserved",
+			in:      "line one\nline two\nline three",
+			wantContains: "line two", // newlines kept
+		},
+		{
+			name:    "over_4000_chars_capped",
+			in:      strings.Repeat("x", 5000),
+			wantLen: 4000,
+		},
+		{
+			name:    "exactly_4000_stays",
+			in:      strings.Repeat("y", 4000),
+			wantLen: 4000,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := fullOperationMessage(tc.in)
+			if tc.wantLen > 0 && len(got) != tc.wantLen {
+				t.Errorf("fullOperationMessage len = %d, want %d", len(got), tc.wantLen)
+			}
+			if tc.wantContains != "" && !strings.Contains(got, tc.wantContains) {
+				t.Errorf("fullOperationMessage = %q, want to contain %q", got[:min(len(got), 100)], tc.wantContains)
+			}
+		})
+	}
+}
+
+// TestClassifyAddonApp_V2cleanup38_FullVsShort verifies that classifyAddonApp
+// returns only the SHORT first-line message (issues[]) while the call site
+// separately fetches the full message for argocd_operation_message.
+// This test pins the contract: issues carries short text.
+func TestClassifyAddonApp_V2cleanup38_FullVsShort(t *testing.T) {
+	// Live keda error with multi-line / comma-separated content past 300 chars.
+	longMsg := "one or more synchronization tasks completed unsuccessfully, reason: " +
+		"failed to create typed patch object (keda/keda-admission-webhooks; apps/v1, Kind=Deployment): " +
+		".spec.template.spec.containers[name=\"keda-admission-webhooks\"].resources.metricServer: " +
+		"field not declared in schema,failed to create typed patch object " +
+		"(keda/keda-operator; apps/v1, Kind=Deployment): " +
+		strings.Repeat("additional error detail ", 15)
+
+	app := models.ArgocdApplication{
+		SyncStatus:       "OutOfSync",
+		HealthStatus:     "Healthy",
+		OperationPhase:   "Failed",
+		OperationMessage: longMsg,
+	}
+
+	status, issueMsg := classifyAddonApp(app)
+	if status != "sync_failing" {
+		t.Fatalf("expected sync_failing, got %q", status)
+	}
+
+	// issueMsg must be the SHORT first-line version (≤300 chars, single line).
+	if len(issueMsg) > 300 {
+		t.Errorf("issueMsg len %d exceeds 300 char cap", len(issueMsg))
+	}
+	if strings.Contains(issueMsg, "\n") {
+		t.Errorf("issueMsg must not contain newlines")
+	}
+
+	// fullOperationMessage must return the whole thing.
+	full := fullOperationMessage(longMsg)
+	if !strings.HasPrefix(full, issueMsg[:min(len(issueMsg), 50)]) {
+		// issueMsg should be the first chunk of the full message.
+		t.Errorf("full message prefix mismatch: full=%q, issue=%q", full[:min(len(full), 80)], issueMsg[:min(len(issueMsg), 80)])
+	}
+	if len(full) <= len(issueMsg) && len(longMsg) > 300 {
+		t.Errorf("expected full (%d) to be longer than issue (%d) for long message", len(full), len(issueMsg))
+	}
+}

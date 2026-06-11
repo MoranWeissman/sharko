@@ -12,16 +12,19 @@ import (
 	"github.com/MoranWeissman/sharko/internal/prtracker"
 )
 
-// fakeArgo records calls to TerminateOperation and SyncApplication.
+// fakeArgo records calls to TerminateOperation, SyncApplication, and RefreshApplication.
 type fakeArgo struct {
 	mu         sync.Mutex
 	apps       []models.ArgocdApplication
 	terminated []string
 	synced     []string
+	refreshed  []string
 	// errTerminate forces TerminateOperation to return an error.
 	errTerminate error
 	// errSync forces SyncApplication to return an error.
 	errSync error
+	// errRefresh forces RefreshApplication to return an error.
+	errRefresh error
 }
 
 func (f *fakeArgo) ListApplications(_ context.Context) ([]models.ArgocdApplication, error) {
@@ -46,6 +49,16 @@ func (f *fakeArgo) SyncApplication(_ context.Context, appName string) error {
 	f.synced = append(f.synced, appName)
 	f.mu.Unlock()
 	return nil
+}
+
+func (f *fakeArgo) RefreshApplication(_ context.Context, appName string, _ bool) (*models.ArgocdApplication, error) {
+	if f.errRefresh != nil {
+		return nil, f.errRefresh
+	}
+	f.mu.Lock()
+	f.refreshed = append(f.refreshed, appName)
+	f.mu.Unlock()
+	return nil, nil
 }
 
 // liveKedaApp is the fixture that mirrors the real keda incident shape.
@@ -386,4 +399,134 @@ func TestIsFailingAndStale(t *testing.T) {
 // Ensure the package compiles when SHARKO_AUTO_REMEDIATE is referenced.
 func TestIsAutoRemediateEnabled_Compiled(_ *testing.T) {
 	_ = isAutoRemediateEnabled(fmt.Sprintf("%v", true))
+}
+
+// TestRemediation_V2cleanup38_FinishedOp — finished ops (OperationFinishedAt set)
+// must NOT trigger terminate even when the phase is Failed.
+func TestRemediation_V2cleanup38_FinishedOp(t *testing.T) {
+	mergeBase := time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC)
+	startedAt := mergeBase.Add(-10 * time.Minute)
+	finishedAt := mergeBase.Add(-5 * time.Minute) // finished before merge
+
+	// A "Failed" op that finished — isFailingAndStale must return false.
+	app := models.ArgocdApplication{
+		Name:                "keda-moran-test",
+		SyncStatus:          "OutOfSync",
+		HealthStatus:        "Degraded",
+		OperationPhase:      "Failed",
+		OperationMessage:    "sync operation failed",
+		OperationStartedAt:  startedAt.UTC().Format(time.RFC3339),
+		OperationFinishedAt: finishedAt.UTC().Format(time.RFC3339),
+	}
+	rem := &Remediator{}
+	if rem.isFailingAndStale(app, mergeBase) {
+		t.Error("isFailingAndStale: finished op (finishedAt set) must return false, got true")
+	}
+}
+
+// TestRemediation_V2cleanup38_BenignTerminate — terminate returns benign 400
+// → warning logged, SyncApplication still called.
+func TestRemediation_V2cleanup38_BenignTerminate(t *testing.T) {
+	mergeBase := time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC)
+	app := liveKedaApp(mergeBase)
+
+	fa := &fakeArgo{
+		apps:         []models.ArgocdApplication{app},
+		errTerminate: fmt.Errorf("terminating operation for \"keda-moran-test\": unexpected status 400 from DELETE /api/v1/applications/keda-moran-test/operation: {\"error\":\"Unable to terminate operation. No operation is in progress\"}"),
+	}
+	rem, ac := makeRemediator(fa, func() time.Time { return mergeBase })
+	pr := makePR("keda", "moran-test", 42)
+	pr.LastPolled = mergeBase
+
+	rem.OnMerge(pr)
+
+	// Terminate was attempted.
+	if len(fa.terminated) != 0 {
+		t.Errorf("expected 0 terminated (errTerminate was set), got %d", len(fa.terminated))
+	}
+	// Sync must still fire.
+	if len(fa.synced) != 1 {
+		t.Errorf("expected 1 sync after benign terminate error, got %d", len(fa.synced))
+	}
+	// No error audit — the benign path is a warn, not an error audit.
+	for _, e := range ac.all() {
+		if e.Event == "argocd_auto_remediation_failed" && e.Action == "terminate_operation" {
+			t.Errorf("got argocd_auto_remediation_failed audit entry for benign terminate error")
+		}
+	}
+}
+
+// TestRemediation_V2cleanup38_OnMergeRefresh — OnMergeRefresh calls
+// RefreshApplication for the bootstrap app, and for the addon app when PR has
+// addon+cluster context.
+func TestRemediation_V2cleanup38_OnMergeRefresh(t *testing.T) {
+	mergeBase := time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC)
+	fa := &fakeArgo{}
+	rem, ac := makeRemediator(fa, func() time.Time { return mergeBase })
+
+	pr := makePR("keda", "moran-test", 55)
+	pr.LastPolled = mergeBase
+	rem.OnMergeRefresh(context.Background(), pr)
+
+	// Bootstrap app must be refreshed.
+	bootstrapFound := false
+	addonFound := false
+	for _, name := range fa.refreshed {
+		if name == "cluster-addons-bootstrap" {
+			bootstrapFound = true
+		}
+		if name == "keda-moran-test" {
+			addonFound = true
+		}
+	}
+	if !bootstrapFound {
+		t.Errorf("expected cluster-addons-bootstrap to be refreshed; refreshed=%v", fa.refreshed)
+	}
+	if !addonFound {
+		t.Errorf("expected keda-moran-test to be refreshed; refreshed=%v", fa.refreshed)
+	}
+
+	// Audit entries for both refreshes.
+	refreshAudits := 0
+	for _, e := range ac.all() {
+		if e.Event == "argocd_refreshed_after_merge" {
+			refreshAudits++
+		}
+	}
+	if refreshAudits != 2 {
+		t.Errorf("expected 2 argocd_refreshed_after_merge audit entries, got %d", refreshAudits)
+	}
+}
+
+// TestRemediation_V2cleanup38_OnMergeRefresh_NoAddon — OnMergeRefresh with no
+// addon context only refreshes the bootstrap app.
+func TestRemediation_V2cleanup38_OnMergeRefresh_NoAddon(t *testing.T) {
+	mergeBase := time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC)
+	fa := &fakeArgo{}
+	rem, _ := makeRemediator(fa, func() time.Time { return mergeBase })
+
+	pr := prtracker.PRInfo{PRID: 77, LastPolled: mergeBase} // no Addon/Cluster
+	rem.OnMergeRefresh(context.Background(), pr)
+
+	if len(fa.refreshed) != 1 || fa.refreshed[0] != "cluster-addons-bootstrap" {
+		t.Errorf("expected only bootstrap refresh for no-addon PR; refreshed=%v", fa.refreshed)
+	}
+}
+
+// TestRemediation_V2cleanup38_OnMergeRefresh_Error — refresh error must not
+// prevent audit from recording, and must not panic.
+func TestRemediation_V2cleanup38_OnMergeRefresh_Error(t *testing.T) {
+	mergeBase := time.Date(2026, 6, 11, 12, 0, 0, 0, time.UTC)
+	fa := &fakeArgo{errRefresh: fmt.Errorf("argocd unavailable")}
+	rem, ac := makeRemediator(fa, func() time.Time { return mergeBase })
+
+	pr := prtracker.PRInfo{PRID: 88, LastPolled: mergeBase}
+	rem.OnMergeRefresh(context.Background(), pr) // must not panic
+
+	// No success audit entries expected.
+	for _, e := range ac.all() {
+		if e.Event == "argocd_refreshed_after_merge" {
+			t.Errorf("got unexpected argocd_refreshed_after_merge audit entry on error")
+		}
+	}
 }

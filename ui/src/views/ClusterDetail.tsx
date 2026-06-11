@@ -616,13 +616,23 @@ export function ClusterDetail() {
     void fetchData();
   }, [fetchData]);
 
-  // Auto-refresh every 30s
+  // Adaptive polling: 10s while any addon is actively changing (deploying or
+  // sync_failing), 30s otherwise. The interval is recreated whenever the
+  // "active" state flips so the cadence adjusts immediately.
+  const hasActiveAddon = useMemo(() => {
+    if (!data) return false;
+    return data.addon_comparisons.some(
+      (a) => a.status === 'deploying' || a.status === 'sync_failing',
+    );
+  }, [data]);
+
   useEffect(() => {
+    const intervalMs = hasActiveAddon ? 10_000 : 30_000;
     const interval = setInterval(() => {
       void fetchData(true);
-    }, 30_000);
+    }, intervalMs);
     return () => clearInterval(interval);
-  }, [fetchData]);
+  }, [fetchData, hasActiveAddon]);
 
   useEffect(() => {
     if (activeSection === 'config' && !configFetched && name) {
@@ -1681,6 +1691,7 @@ export function ClusterDetail() {
                         argocdBaseURL={argocdBaseURL}
                         highlighted={highlightedAddon === addon.addon_name}
                         pendingPRs={pendingPRsByAddon[addon.addon_name] ?? []}
+                        onRefresh={() => void fetchData(true)}
                       />
                     ))}
                     {filteredAddons.length === 0 && (
@@ -1774,9 +1785,12 @@ interface ComparisonRowProps {
   // inline badges (newest-first) on the addon-name cell so operators see
   // "PR open" without leaving the addons sub-page.
   pendingPRs?: TrackedPR[];
+  // Called after a successful restart-sync so the parent immediately refetches
+  // the cluster status instead of waiting for the next poll cycle.
+  onRefresh?: () => void;
 }
 
-function ComparisonRow({ addon, clusterName, isExpanded, onToggleExpand, argocdBaseURL, highlighted, pendingPRs = [] }: ComparisonRowProps) {
+function ComparisonRow({ addon, clusterName, isExpanded, onToggleExpand, argocdBaseURL, highlighted, pendingPRs = [], onRefresh }: ComparisonRowProps) {
   const [restartLoading, setRestartLoading] = useState(false);
   const allIssues = addon.issues;
   const isTruncated = shouldTruncateIssues(allIssues);
@@ -1787,6 +1801,9 @@ function ComparisonRow({ addon, clusterName, isExpanded, onToggleExpand, argocdB
     try {
       await api.restartAddonSync(clusterName, addon.addon_name);
       showToast(`Sync restarted for ${addon.addon_name} on ${clusterName}.`, 'success');
+      // Immediately refetch cluster status so the UI reflects the new sync state
+      // without waiting for the next poll cycle.
+      onRefresh?.();
     } catch (err) {
       showToast(`Failed to restart sync: ${err instanceof Error ? err.message : String(err)}`, 'error');
     } finally {
@@ -1905,7 +1922,20 @@ function ComparisonRow({ addon, clusterName, isExpanded, onToggleExpand, argocdB
                 <li key={i}>{issue}</li>
               ))}
             </ul>
-            {isTruncated && (
+            {/* When the row is expanded AND there is a full operation message,
+                show it as a scrollable monospace block. The full message comes
+                from argocd_operation_message (up to 4000 chars, full text
+                including all lines) — the issues[] list above only has the
+                short first-line version. */}
+            {isExpanded && addon.argocd_operation_message && (
+              <pre
+                data-testid="full-operation-message"
+                className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-md bg-[#e8f4ff] p-2 font-mono text-xs text-[#0a2a4a] ring-2 ring-[#6aade0] dark:bg-gray-900 dark:text-gray-200"
+              >
+                {addon.argocd_operation_message}
+              </pre>
+            )}
+            {(isTruncated || (addon.argocd_operation_message && !isExpanded)) && (
               <button
                 type="button"
                 onClick={(e) => {

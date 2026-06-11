@@ -426,9 +426,11 @@ type AddonComparisonStatus struct {
 	ArgocdSourcePath        string `json:"argocd_source_path,omitempty"`
 	ArgocdDestinationServer string `json:"argocd_destination_server,omitempty"`
 	ArgocdOperationState    string `json:"argocd_operation_state,omitempty"`
-	// ArgocdOperationMessage carries the first line of operationState.message
-	// (capped at 300 chars) when the operation has a sync failure. Empty
-	// when there is no active failing operation.
+	// ArgocdOperationMessage carries the full operationState.message (capped at
+	// 4000 chars) when the operation has a sync failure. The UI uses this to
+	// render the complete error in the expanded comparison row. The issues[]
+	// field carries the short first-line version for badges/lists. Empty when
+	// there is no active failing operation.
 	ArgocdOperationMessage  string `json:"argocd_operation_message,omitempty"`
 
 	// Comparison results
