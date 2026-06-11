@@ -4,9 +4,12 @@
 package orchestrator
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // TestClassifyClusterSpecificFields_PositiveAndNegative pins each
@@ -168,11 +171,19 @@ image:
 		}
 	}
 
-	// `ingress.host` becomes a comment placeholder. Indentation now
-	// matches the upstream (no extra two-space wrap), so `# host:` is
-	// indented exactly two spaces as in the upstream.
-	if !strings.Contains(body, "  # host: <cluster-specific>") {
-		t.Errorf("expected commented host placeholder at upstream indent, got:\n%s", body)
+	// `ingress:` has only cluster-specific children (ingress.enabled and
+	// ingress.host both match the heuristic via *.ingress.*). The hollow-key
+	// post-processor comments the entire `ingress:` subtree so it doesn't
+	// emit a null-valued `ingress:` key. The commented host placeholder is
+	// still present, but now prefixed with `# ` by the hollow-key pass.
+	if !strings.Contains(body, "# host: <cluster-specific>") {
+		t.Errorf("expected commented host placeholder, got:\n%s", body)
+	}
+	// `ingress:` itself must be commented out (hollow subtree).
+	for _, line := range strings.Split(body, "\n") {
+		if line == "ingress:" {
+			t.Fatalf("hollow `ingress:` key must be commented out but survived as live line, got:\n%s", body)
+		}
 	}
 	// `replicaCount` becomes a comment placeholder at column 0 (top-level
 	// scalar in the chart values).
@@ -580,5 +591,329 @@ func TestSplitUpstreamValues_VeleroDoubleWrapAvoided(t *testing.T) {
 	}
 }
 
+// ─── V2-cleanup-41: hollow-key post-processor tests ──────────────────────────
+
+// assertNoNilValues parses emitted YAML and walks the resulting map to
+// ensure no key maps to a nil value anywhere in the tree. This is the
+// generic regression pin that EVERY fixture test calls.
+func assertNoNilValues(t *testing.T, emittedYAML string) {
+	t.Helper()
+	// Strip header lines (they start with `#` and are not YAML values)
+	// by finding the first non-comment, non-blank line. yaml.Unmarshal
+	// tolerates leading comments, so we can pass the whole thing directly.
+	var doc map[string]any
+	if err := yaml.Unmarshal([]byte(emittedYAML), &doc); err != nil {
+		t.Fatalf("emitted YAML failed to parse: %v\n--- output ---\n%s", err, emittedYAML)
+	}
+	walkNoNil(t, doc, "")
+}
+
+// walkNoNil recurses into a parsed YAML map and fails if any key's value is nil.
+func walkNoNil(t *testing.T, node any, path string) {
+	t.Helper()
+	switch v := node.(type) {
+	case map[string]any:
+		for k, child := range v {
+			full := k
+			if path != "" {
+				full = path + "." + k
+			}
+			if child == nil {
+				t.Errorf("key %q maps to nil in emitted YAML (hollow key survived post-processor)", full)
+				continue
+			}
+			walkNoNil(t, child, full)
+		}
+	case []any:
+		for i, elem := range v {
+			walkNoNil(t, elem, path+fmt.Sprintf("[%d]", i))
+		}
+	}
+}
+
+// TestSplitUpstreamValues_KedaHollowResources is the primary fixture for
+// V2-cleanup-41. The upstream has a `resources:` map where every scalar
+// leaf under every sub-key matches the cluster-specific heuristic
+// (resources.*.limits.cpu etc.). The emitted global file must:
+//   - have the entire `resources:` subtree commented out
+//   - parse to a map with NO nil-valued keys
+//   - leave ordinary keys (enabled, image.tag) untouched
+func TestSplitUpstreamValues_KedaHollowResources(t *testing.T) {
+	upstream := []byte(`resources:
+  # -- Manage [resource request & limits] of KEDA operator pod
+  operator:
+    limits:
+      cpu: 100m
+      memory: 128Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  # -- Manage [resource request & limits] of KEDA metrics apiserver pod
+  metricServer:
+    limits:
+      cpu: 1000m
+      memory: 1000Mi
+    requests:
+      cpu: 100m
+      memory: 100Mi
+  # -- Manage [resource request & limits] of KEDA admission webhooks pod
+  webhooks:
+    limits:
+      cpu: 500m
+      memory: 500Mi
+    requests:
+      cpu: 100m
+      memory: 100Mi
+enabled: true
+image:
+  tag: v2.15.0
+`)
+
+	out := SplitUpstreamValues(SmartValuesInput{
+		AddonName:      "keda",
+		Chart:          "keda",
+		Version:        "2.15.0",
+		RepoURL:        "https://kedacore.github.io/charts",
+		UpstreamValues: upstream,
+	})
+
+	body := string(out.File)
+
+	// The entire resources: subtree must be commented out.
+	for _, line := range strings.Split(body, "\n") {
+		// Any live (non-comment, non-blank) line whose trimmed form is
+		// exactly one of the hollow-parent keys is a failure.
+		trim := strings.TrimSpace(line)
+		for _, forbidden := range []string{"resources:", "operator:", "metricServer:", "webhooks:", "limits:", "requests:"} {
+			if trim == forbidden {
+				t.Errorf("hollow key %q survived as a live line in emitted output:\n%s", forbidden, body)
+			}
+		}
+	}
+
+	// Ordinary keys must survive untouched.
+	if !strings.Contains(body, "\nenabled: true") {
+		t.Errorf("expected 'enabled: true' to be preserved, got:\n%s", body)
+	}
+	if !strings.Contains(body, "  tag: v2.15.0") {
+		t.Errorf("expected 'image.tag' to be preserved, got:\n%s", body)
+	}
+
+	// Generic nil-value regression pin: parse the body and walk it.
+	assertNoNilValues(t, body)
+}
+
+// TestSplitUpstreamValues_PartialHollow exercises the partial case: a map
+// key with one cluster-specific scalar AND one ordinary scalar. The parent
+// must stay live (not hollow), the heuristic-matched leaf is commented,
+// the ordinary leaf is unchanged.
+func TestSplitUpstreamValues_PartialHollow(t *testing.T) {
+	upstream := []byte(`controller:
+  replicaCount: 1
+  image:
+    repository: ghcr.io/example/ctrl
+`)
+
+	out := SplitUpstreamValues(SmartValuesInput{
+		AddonName:      "myapp",
+		Chart:          "myapp",
+		Version:        "1.0.0",
+		RepoURL:        "https://charts.example.com",
+		UpstreamValues: upstream,
+	})
+
+	body := string(out.File)
+
+	// `controller:` must survive (it still has `image.repository` live).
+	if !strings.Contains(body, "\ncontroller:") {
+		t.Errorf("partial-hollow parent 'controller:' must stay live, got:\n%s", body)
+	}
+	// `replicaCount` is cluster-specific → commented.
+	if !strings.Contains(body, "# replicaCount: <cluster-specific>") {
+		t.Errorf("expected replicaCount to be commented, got:\n%s", body)
+	}
+	// `image.repository` is NOT cluster-specific → survives.
+	if !strings.Contains(body, "    repository: ghcr.io/example/ctrl") {
+		t.Errorf("expected image.repository to survive, got:\n%s", body)
+	}
+
+	assertNoNilValues(t, body)
+}
+
+// TestSplitUpstreamValues_DeepHollow verifies that 3+ nesting levels where
+// every scalar leaf is cluster-specific results in ALL ancestor keys being
+// commented out. The fixture uses `resources.operator.limits.{cpu,memory}` —
+// a real heuristic pattern (`*.resources.*`) — so the leaves ARE matched.
+func TestSplitUpstreamValues_DeepHollow(t *testing.T) {
+	upstream := []byte(`resources:
+  operator:
+    limits:
+      cpu: 100m
+      memory: 128Mi
+other: value
+`)
+
+	out := SplitUpstreamValues(SmartValuesInput{
+		AddonName:      "deep",
+		Chart:          "deep",
+		Version:        "1.0.0",
+		RepoURL:        "https://charts.example.com",
+		UpstreamValues: upstream,
+	})
+
+	body := string(out.File)
+
+	// All structural ancestors of the hollow subtree must be commented.
+	// Each key has only cluster-specific scalar descendants, so all three
+	// levels should be commented out.
+	for _, line := range strings.Split(body, "\n") {
+		trim := strings.TrimSpace(line)
+		for _, forbidden := range []string{"resources:", "operator:", "limits:"} {
+			if trim == forbidden {
+				t.Errorf("deep hollow key %q survived as live line, got:\n%s", forbidden, body)
+			}
+		}
+	}
+
+	// `other: value` must survive.
+	if !strings.Contains(body, "\nother: value") {
+		t.Errorf("expected 'other: value' to survive, got:\n%s", body)
+	}
+
+	assertNoNilValues(t, body)
+}
+
+// TestSplitUpstreamValues_AllExistingFixturesNoNil runs the assertNoNilValues
+// check over every existing golden fixture to pin the generic regression
+// guarantee that no emitted global file ever contains a nil-valued key.
+func TestSplitUpstreamValues_AllExistingFixturesNoNil(t *testing.T) {
+	fixtures := []struct {
+		name   string
+		input  SmartValuesInput
+	}{
+		{
+			name: "cert-manager global shape fixture",
+			input: SmartValuesInput{
+				AddonName: "cert-manager",
+				Chart:     "cert-manager",
+				Version:   "v1.14.4",
+				RepoURL:   "https://charts.jetstack.io",
+				UpstreamValues: []byte(`# Upstream comment
+ingress:
+  enabled: true
+  host: example.com
+replicaCount: 2
+image:
+  repository: ghcr.io/example/app
+`),
+			},
+		},
+		{
+			name: "velero double-wrap fixture",
+			input: SmartValuesInput{
+				AddonName: "velero",
+				Chart:     "velero",
+				Version:   "12.0.0",
+				RepoURL:   "https://vmware-tanzu.github.io/helm-charts",
+				UpstreamValues: []byte(`velero:
+  configuration:
+    defaultVolumesToFsBackup: false
+  metrics:
+    enabled: true
+  resources:
+    requests:
+      cpu: 500m
+`),
+			},
+		},
+		{
+			name: "no cluster-specific fields",
+			input: SmartValuesInput{
+				AddonName: "noop",
+				Chart:     "noop",
+				Version:   "v0.0.1",
+				RepoURL:   "https://charts.example.com",
+				UpstreamValues: []byte(`image:
+  repository: ghcr.io/example/app
+  tag: v1
+`),
+			},
+		},
+	}
+
+	for _, tc := range fixtures {
+		t.Run(tc.name, func(t *testing.T) {
+			out := SplitUpstreamValues(tc.input)
+			assertNoNilValues(t, string(out.File))
+		})
+	}
+}
+
+// TestCommentHollowMapKeys_Unit directly tests the post-processor with
+// representative line slices, including the keda exact shape, to pin the
+// function's behaviour independently of SplitUpstreamValues.
+func TestCommentHollowMapKeys_Unit(t *testing.T) {
+	cases := []struct {
+		name     string
+		in       []string
+		wantLive []string   // lines that MUST still be live (exact substring match)
+		wantGone []string   // trimmed forms that must NOT appear as live (uncommented) lines
+	}{
+		{
+			name: "fully hollow limits key",
+			in: []string{
+				"    limits:",
+				"      # cpu: <cluster-specific>",
+				"      # memory: <cluster-specific>",
+			},
+			wantGone: []string{"limits:"},
+		},
+		{
+			name: "partial hollow — one live child stays",
+			in: []string{
+				"  controller:",
+				"    # replicaCount: <cluster-specific>",
+				"    image: ghcr.io/example/app",
+			},
+			wantLive: []string{"  controller:"},
+		},
+		{
+			name: "already live key is untouched",
+			in: []string{
+				"enabled: true",
+			},
+			wantLive: []string{"enabled: true"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := commentHollowMapKeys(tc.in)
+			for _, want := range tc.wantLive {
+				found := false
+				for _, l := range got {
+					if l == want {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected live line %q to survive, got:\n%v", want, got)
+				}
+			}
+			for _, forbidden := range tc.wantGone {
+				for _, l := range got {
+					if strings.TrimSpace(l) == forbidden {
+						t.Errorf("hollow key %q must not appear as live line, got line: %q\nfull output: %v", forbidden, l, got)
+					}
+				}
+			}
+		})
+	}
+}
+
 // Use time import to keep imports stable when running this file in isolation.
 var _ = time.Now
+
+// Use fmt import (needed by walkNoNil).
+var _ = fmt.Sprintf

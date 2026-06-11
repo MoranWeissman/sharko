@@ -45,9 +45,12 @@
 //
 // The textual approach is intentionally conservative: when it sees a
 // scalar leaf at a path that matches the heuristic, it comments out that
-// single line and replaces the value with `<cluster-specific>`. It does
-// NOT recursively comment out an entire sub-map; that would change the
-// shape of the file in ways the per-cluster template block already covers.
+// single line and replaces the value with `<cluster-specific>`. After the
+// leaf-level pass, a hollow-key post-processor (commentHollowMapKeys)
+// recursively comments out any structural map key whose ENTIRE child block
+// has been reduced to comments and blank lines — preventing those keys
+// from emitting as `key: null` in the YAML, which Helm coalescing would
+// interpret as a directive to delete the chart's own defaults.
 
 package orchestrator
 
@@ -393,6 +396,14 @@ func SplitUpstreamValues(in SmartValuesInput) SmartValuesOutput {
 	// Cluster-specific scalar leaves are commented out with a
 	// `<cluster-specific>` placeholder so the file remains a sane
 	// "applies to all clusters" default.
+	//
+	// The body is first accumulated into bodyLines (a []string, one entry
+	// per logical line) rather than directly into the builder, so that the
+	// hollow-key post-processor (commentHollowMapKeys) can run a bottom-up
+	// pass before we join the lines. This step ensures that a structural
+	// map key whose ALL non-blank children ended up as comments is itself
+	// commented out — preventing `limits: null` semantics in the emitted
+	// YAML that would cause Helm value coalescing to wipe chart defaults.
 	var b strings.Builder
 	header := WriteSmartValuesHeader(SmartValuesHeader{
 		Chart:       in.Chart,
@@ -415,6 +426,8 @@ func SplitUpstreamValues(in SmartValuesInput) SmartValuesOutput {
 
 	// Track current map nesting so we can rebuild the dotted path per line.
 	var stack []smartFrame
+	// bodyLines collects the global-body lines before hollow-key processing.
+	var bodyLines []string
 
 	for _, raw := range strings.Split(string(in.UpstreamValues), "\n") {
 		line := raw
@@ -423,12 +436,11 @@ func SplitUpstreamValues(in SmartValuesInput) SmartValuesOutput {
 		// Blank lines / comments are passed through verbatim — no
 		// re-indent, no wrap.
 		if trim == "" {
-			b.WriteString("\n")
+			bodyLines = append(bodyLines, "")
 			continue
 		}
 		if strings.HasPrefix(trim, "#") {
-			b.WriteString(line)
-			b.WriteString("\n")
+			bodyLines = append(bodyLines, line)
 			continue
 		}
 
@@ -455,16 +467,14 @@ func SplitUpstreamValues(in SmartValuesInput) SmartValuesOutput {
 			// We never comment-out individual list children — list shape
 			// matters more than item-level annotation, and the per-cluster
 			// template carries the full sub-tree below. Pass through verbatim.
-			b.WriteString(line)
-			b.WriteString("\n")
+			bodyLines = append(bodyLines, line)
 			continue
 		}
 		colonIdx := strings.Index(trim, ":")
 		if colonIdx == -1 {
 			// Continuation of a multi-line scalar (block literal etc.) —
 			// pass through verbatim.
-			b.WriteString(line)
-			b.WriteString("\n")
+			bodyLines = append(bodyLines, line)
 			continue
 		}
 		key := strings.TrimSpace(trim[:colonIdx])
@@ -479,8 +489,7 @@ func SplitUpstreamValues(in SmartValuesInput) SmartValuesOutput {
 			// without a `.*` suffix is in the patterns), we DO NOT comment
 			// it out — sub-map children carry the cluster-specific bits
 			// via the template block. Pass through verbatim and push the frame.
-			b.WriteString(line)
-			b.WriteString("\n")
+			bodyLines = append(bodyLines, line)
 			stack = append(stack, smartFrame{indent: indent, key: key})
 			continue
 		}
@@ -492,16 +501,23 @@ func SplitUpstreamValues(in SmartValuesInput) SmartValuesOutput {
 			// dropped from the global file because it's not a sane
 			// cluster-default.
 			leadingPad := strings.Repeat(" ", indent)
-			b.WriteString(leadingPad)
-			b.WriteString("# ")
-			b.WriteString(key)
-			b.WriteString(": <cluster-specific>")
-			b.WriteString("\n")
+			bodyLines = append(bodyLines, leadingPad+"# "+key+": <cluster-specific>")
 			continue
 		}
 
 		// Pass-through verbatim.
-		b.WriteString(line)
+		bodyLines = append(bodyLines, line)
+	}
+
+	// Post-process: comment out any structural map key whose entire
+	// subtree consists only of comments and blank lines (hollow keys).
+	// This prevents `limits: null` semantics in the emitted YAML that
+	// Helm coalescing would misinterpret as "delete this key from the
+	// chart's defaults". See V2-cleanup-41 for the keda failure mode.
+	bodyLines = commentHollowMapKeys(bodyLines)
+
+	for _, bl := range bodyLines {
+		b.WriteString(bl)
 		b.WriteString("\n")
 	}
 
@@ -734,6 +750,154 @@ func unwrapChartNameRoot(values []byte, addonName, chartName string) []byte {
 		}
 	}
 	return []byte(b.String())
+}
+
+// ─── Hollow-key post-processor ─────────────────────────────────────────────
+
+// commentHollowMapKeys walks a slice of emitted global-body lines and
+// comments out any structural map key whose entire child block contains
+// only comment lines and blank lines (i.e. no live YAML values remain).
+//
+// Why: after the leaf-level comment-out pass, a map parent like `limits:`
+// whose only children are `# cpu: <cluster-specific>` and
+// `# memory: <cluster-specific>` would be emitted as `limits:` with no
+// real children — which is valid YAML for `limits: null`. Helm's value
+// coalescing treats null user-values as a DELETE signal, wiping the
+// chart's own defaults, which causes downstream errors (see keda bug in
+// V2-cleanup-41 for the concrete failure mode).
+//
+// Algorithm (bottom-up):
+//  1. Identify map-key lines: non-comment, non-blank, non-list-item lines
+//     where the trimmed content has a colon with no inline value (the
+//     parent-key shape in YAML).
+//  2. For each such key at indent I, collect its child block — all
+//     immediately-following lines whose leading indent is > I (stopping
+//     when we hit a line at indent ≤ I or the end of slice).
+//  3. If every non-blank line in the child block is already a comment
+//     (starts with `#` after trimming), the key is hollow. Mark it and
+//     all its child lines to be prefixed with `# `.
+//  4. After commenting out a key, re-check its own parent — the newly
+//     commented key might hollow out the parent too. The bottom-up
+//     iteration order ensures parents are checked after their children.
+//
+// Pre-existing comment lines within a hollow subtree DO receive an extra
+// `# ` prefix (resulting in `# # -- Manage …` for chart doc comments).
+// Choice rationale: this keeps the implementation simple and the output
+// unambiguous — the entire subtree is visibly commented and the file
+// parses with zero null values. The double-# is readable and the
+// alternative (stripping existing `#` during re-comment) risks
+// mangling user content.
+//
+// List-item lines (`- …`) and multi-line-scalar continuations are
+// treated as opaque live content: a map key that has ANY list-item
+// child is NOT hollow (lists are never commented by the heuristic and
+// must not be touched here).
+func commentHollowMapKeys(lines []string) []string {
+	out := make([]string, len(lines))
+	copy(out, lines)
+
+	// Iterate bottom-up so that when we comment a child key, its parent
+	// is re-evaluated correctly on a subsequent (higher-index) pass.
+	// We repeat until no changes occur, which handles arbitrary depth.
+	for {
+		changed := false
+		for i := 0; i < len(out); i++ {
+			line := out[i]
+			trim := strings.TrimSpace(line)
+
+			// Only process live (non-comment, non-blank) map-key lines.
+			if trim == "" || strings.HasPrefix(trim, "#") {
+				continue
+			}
+			// List items are not map keys — skip.
+			if strings.HasPrefix(trim, "-") {
+				continue
+			}
+			colonIdx := strings.Index(trim, ":")
+			if colonIdx == -1 {
+				continue
+			}
+			value := strings.TrimSpace(trim[colonIdx+1:])
+			// Skip scalar leaves (they have an inline value). Also skip
+			// `{}` and `[]` inline-empty forms — Helm treats those as
+			// real empty values, not null, so they are not hollow in the
+			// problematic sense.
+			if value != "" {
+				continue
+			}
+
+			keyIndent := leadingSpaces(line)
+
+			// Collect the child block: all following lines that are
+			// strictly more indented than keyIndent.
+			childStart := i + 1
+			childEnd := childStart
+			for j := childStart; j < len(out); j++ {
+				cl := out[j]
+				ctrim := strings.TrimSpace(cl)
+				if ctrim == "" {
+					// Blank lines are inside the block (they don't
+					// reset the nesting context).
+					childEnd = j + 1
+					continue
+				}
+				if leadingSpaces(cl) > keyIndent {
+					childEnd = j + 1
+					continue
+				}
+				break
+			}
+
+			if childEnd <= childStart {
+				// No children at all — empty map key with no content.
+				// Not hollow in the problematic sense; leave as-is.
+				continue
+			}
+
+			// Check whether every non-blank child line is a comment.
+			hollow := true
+			for j := childStart; j < childEnd; j++ {
+				ctrim := strings.TrimSpace(out[j])
+				if ctrim == "" {
+					continue // blank — not a live value
+				}
+				if strings.HasPrefix(ctrim, "#") {
+					continue // already a comment
+				}
+				// Live content — key is not hollow.
+				hollow = false
+				break
+			}
+
+			if !hollow {
+				continue
+			}
+
+			// Comment out the key line itself.
+			pad := strings.Repeat(" ", keyIndent)
+			keyContent := strings.TrimSpace(line)
+			out[i] = pad + "# " + keyContent
+			// Prefix every child line with `# ` (preserving blank lines
+			// as blank). Pre-existing comment lines get double-# which is
+			// the documented choice (see function doc above).
+			for j := childStart; j < childEnd; j++ {
+				cl := out[j]
+				ctrim := strings.TrimSpace(cl)
+				if ctrim == "" {
+					// Keep blank lines blank; do not prefix.
+					continue
+				}
+				childIndent := leadingSpaces(cl)
+				childContent := strings.TrimSpace(cl)
+				out[j] = strings.Repeat(" ", childIndent) + "# " + childContent
+			}
+			changed = true
+		}
+		if !changed {
+			break
+		}
+	}
+	return out
 }
 
 // GlobalValuesPath returns the canonical path inside the user's repo
