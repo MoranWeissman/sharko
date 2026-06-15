@@ -627,7 +627,14 @@ func (o *Orchestrator) UpdateClusterAddons(ctx context.Context, name string, ser
 		o.deleteAddonSecrets(ctx, rawKubeconfig, disabledAddons) //nolint:errcheck // best-effort
 	}
 
-	// Step 4: Update values file in Git.
+	// Step 4: Update values file in Git AND managed-clusters.yaml labels.
+	//
+	// The cluster reconciler reads managed-clusters.yaml as the source of
+	// truth. If we only write the per-cluster values file and leave the
+	// managed-clusters labels unchanged, the reconciler will re-enable any
+	// addon we just tried to disable on the next reconcile cycle. Both files
+	// must travel in the same PR so they never disagree (mirrors the
+	// no-half-write guard in DisableAddon / EnableAddon — V2-cleanup-44).
 	var catalog []models.AddonCatalogEntry
 	catalogData, catalogErr := o.git.GetFileContent(ctx, "configuration/addons-catalog.yaml", o.gitops.BaseBranch)
 	if catalogErr == nil && catalogData != nil {
@@ -638,6 +645,56 @@ func (o *Orchestrator) UpdateClusterAddons(ctx context.Context, name string, ser
 
 	files := map[string][]byte{
 		valuesPath: valuesContent,
+	}
+
+	// Read managed-clusters.yaml and apply addon label mutations for this
+	// cluster only. Each helper returns updated bytes; chain them so
+	// sequential mutations accumulate correctly. Mirror DisableAddon's
+	// no-half-write discipline: if the file is missing or a mutation fails,
+	// abort before opening the PR so we never commit a values-only change
+	// that diverges from the Git source of truth.
+	if len(addons) > 0 {
+		log := logging.LoggerFromContext(ctx)
+
+		clusterAddonsPath := o.paths.ManagedClusters
+		if clusterAddonsPath == "" {
+			clusterAddonsPath = "configuration/managed-clusters.yaml"
+		}
+
+		clusterAddonsData, mcErr := o.git.GetFileContent(ctx, clusterAddonsPath, o.gitops.BaseBranch)
+		if mcErr != nil || clusterAddonsData == nil {
+			log.Error("managed-clusters.yaml unavailable — aborting before PR (no half-write)",
+				"cluster", name, "error", mcErr)
+			result.Status = "failed"
+			result.CompletedSteps = []string{"create_secrets", "delete_secrets"}
+			result.FailedStep = "update_addon_label"
+			result.Error = "managed-clusters.yaml not found"
+			result.Message = fmt.Sprintf("Cluster %s is not registered in managed-clusters.yaml, so addon labels cannot be updated. No change was committed.", name)
+			return result, nil
+		}
+
+		updatedMC := clusterAddonsData
+		for addon, enabled := range addons {
+			var mutated []byte
+			var labelErr error
+			if enabled {
+				mutated, labelErr = gitops.EnableAddonLabel(updatedMC, name, addon)
+			} else {
+				mutated, labelErr = gitops.DisableAddonLabel(updatedMC, name, addon)
+			}
+			if labelErr != nil {
+				log.Error("failed to update addon label in managed-clusters.yaml — aborting before PR (no half-write)",
+					"cluster", name, "addon", addon, "enabled", enabled, "error", labelErr)
+				result.Status = "failed"
+				result.CompletedSteps = []string{"create_secrets", "delete_secrets"}
+				result.FailedStep = "update_addon_label"
+				result.Error = labelErr.Error()
+				result.Message = fmt.Sprintf("Could not update the addon label for %s on cluster %s; no change was committed. Make sure the cluster is registered in managed-clusters.yaml, then retry.", addon, name)
+				return result, nil
+			}
+			updatedMC = mutated
+		}
+		files[clusterAddonsPath] = updatedMC
 	}
 
 	gitResult, err := o.commitChangesWithMeta(ctx, files, nil, fmt.Sprintf("update addons for cluster %s", name),

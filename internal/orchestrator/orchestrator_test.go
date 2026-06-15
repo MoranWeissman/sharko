@@ -768,6 +768,10 @@ func TestDeregisterCluster(t *testing.T) {
 func TestUpdateClusterAddons(t *testing.T) {
 	argocd := newMockArgocd()
 	git := newMockGitProvider()
+	// V2-cleanup-44: UpdateClusterAddons now reads managed-clusters.yaml and
+	// writes it alongside the values file so disabled addons actually stick.
+	// Seed the file so the no-half-write guard doesn't abort the test.
+	git.files["configuration/managed-clusters.yaml"] = []byte("clusters:\n  - name: prod-eu\n    labels: {}\n")
 	orch := New(nil, defaultCreds(), argocd, git, defaultGitOps(), defaultPaths(), nil)
 
 	result, err := orch.UpdateClusterAddons(context.Background(), "prod-eu", "https://k8s.example.com:6443", "eu-west-1",
@@ -1090,6 +1094,9 @@ func TestUpdateClusterAddons_AutoMergeFails(t *testing.T) {
 	argocd := newMockArgocd()
 	git := newMockGitProvider()
 	git.mergeErr = fmt.Errorf("merge conflict")
+	// V2-cleanup-44: seed managed-clusters.yaml so the no-half-write guard
+	// passes and the auto-merge-fails path is exercised as intended.
+	git.files["configuration/managed-clusters.yaml"] = []byte("clusters:\n  - name: prod-eu\n    labels: {}\n")
 	orch := New(nil, defaultCreds(), argocd, git, autoMergeGitOps(), defaultPaths(), nil)
 
 	result, err := orch.UpdateClusterAddons(context.Background(), "prod-eu", "https://k8s.example.com:6443", "eu-west-1",
