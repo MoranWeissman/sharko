@@ -767,6 +767,9 @@ func (e *ToolExecutor) getAddonOnCluster(ctx context.Context, addonName, cluster
 				if app.ReconciledAt != "" {
 					fmt.Fprintf(&sb, "Last Reconciled: %s\n", app.ReconciledAt)
 				}
+				if app.OperationMessage != "" {
+					fmt.Fprintf(&sb, "Operation Message: %s\n", app.OperationMessage)
+				}
 			} else {
 				fmt.Fprintf(&sb, "ArgoCD Health: unable to fetch (app name tried: %s)\n", appName)
 			}
@@ -794,6 +797,9 @@ func (e *ToolExecutor) getUnhealthyAddons(ctx context.Context) (string, error) {
 			count++
 			fmt.Fprintf(&sb, "- %s: health=%s, sync=%s, cluster=%s\n",
 				app.Name, app.HealthStatus, app.SyncStatus, app.DestinationName)
+			if app.OperationMessage != "" {
+				fmt.Fprintf(&sb, "    message: %s\n", app.OperationMessage)
+			}
 		}
 	}
 

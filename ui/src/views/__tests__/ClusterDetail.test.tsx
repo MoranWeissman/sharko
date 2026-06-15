@@ -64,6 +64,10 @@ vi.mock('@/services/api', async () => {
       enableAddonOnCluster: vi.fn().mockResolvedValue({}),
       getAddonCatalog: (...args: unknown[]) => mockGetAddonCatalog(...args),
       restartAddonSync: (...args: unknown[]) => mockRestartAddonSync(...args),
+      // V2-cleanup-39: AI-status is fetched once on mount to gate "Ask AI"
+      // button rendering. Default to disabled so existing tests don't need
+      // to assert on AI-specific elements.
+      getAIStatus: vi.fn().mockResolvedValue({ enabled: false }),
     },
     testClusterConnection: (...args: unknown[]) => mockTestClusterConnection(...args),
     deregisterCluster: (...args: unknown[]) => mockDeregisterCluster(...args),
