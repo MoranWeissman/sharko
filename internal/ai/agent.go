@@ -263,9 +263,27 @@ func (a *Agent) Chat(ctx context.Context, userMessage string, callerRole authz.R
 
 		// If no tool calls, we have the final response
 		if len(resp.ToolCalls) == 0 {
-			a.messages = append(a.messages, ChatMessage{Role: "assistant", Content: resp.Content})
+			content := resp.Content
+			if strings.TrimSpace(content) == "" {
+				// Determine whether earlier iterations used tool calls so we can
+				// give a more informative fallback message.
+				usedTools := false
+				for _, m := range a.messages {
+					if len(m.ToolCalls) > 0 || m.Role == "tool" {
+						usedTools = true
+						break
+					}
+				}
+				if usedTools {
+					content = "I gathered data about your environment but wasn't able to generate a conclusion this time. Try rephrasing your question or asking about a specific addon or cluster."
+				} else {
+					content = "I wasn't able to generate a response. Try rephrasing your question or check that your AI provider is responding correctly."
+				}
+				log.Warn("agent returned empty response, using fallback", "iterations", i+1)
+			}
+			a.messages = append(a.messages, ChatMessage{Role: "assistant", Content: content})
 			log.Info("agent chat completed", "iterations", i+1, "duration", time.Since(chatStart))
-			return resp.Content, nil
+			return content, nil
 		}
 
 		// Process tool calls
