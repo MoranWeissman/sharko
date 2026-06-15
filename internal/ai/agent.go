@@ -55,6 +55,10 @@ type ollamaChatResponse struct {
 	Done    bool        `json:"done"`
 }
 
+// agentMaxOutputTokens is the output token cap for every agent-chat provider function.
+// The non-agent path (client.go) already uses 4096; this aligns the agent path.
+const agentMaxOutputTokens = 4096
+
 const systemPrompt = `You are an expert Kubernetes platform engineer assistant for Sharko.
 
 === PROJECT ARCHITECTURE ===
@@ -356,7 +360,7 @@ func (a *Agent) callOllamaChat(ctx context.Context) (*ChatResponse, error) {
 		Stream:   false,
 		Options: map[string]interface{}{
 			"temperature": 0.3,
-			"num_predict": 600,
+			"num_predict": agentMaxOutputTokens,
 		},
 	}
 
@@ -400,7 +404,7 @@ func (a *Agent) callClaudeChat(ctx context.Context) (*ChatResponse, error) {
 
 	reqBody := map[string]interface{}{
 		"model":      a.client.config.GetAgentModel(),
-		"max_tokens": 1024,
+		"max_tokens": agentMaxOutputTokens,
 		"system":     systemPrompt,
 		"messages":   claudeMessages,
 		"tools":      claudeTools,
@@ -473,9 +477,10 @@ func (a *Agent) callOpenAIChat(ctx context.Context) (*ChatResponse, error) {
 	openaiMessages := convertMessagesToOpenAI(a.messages)
 
 	reqBody := map[string]interface{}{
-		"model":    a.client.config.GetAgentModel(),
-		"messages": openaiMessages,
-		"tools":    openaiTools,
+		"model":      a.client.config.GetAgentModel(),
+		"messages":   openaiMessages,
+		"tools":      openaiTools,
+		"max_tokens": agentMaxOutputTokens,
 	}
 
 	body, err := json.Marshal(reqBody)
@@ -554,9 +559,10 @@ func (a *Agent) callCustomOpenAIChat(ctx context.Context) (*ChatResponse, error)
 	model := a.client.config.GetAgentModel()
 
 	reqBody := map[string]interface{}{
-		"model":    model,
-		"messages": openaiMessages,
-		"tools":    openaiTools,
+		"model":      model,
+		"messages":   openaiMessages,
+		"tools":      openaiTools,
+		"max_tokens": agentMaxOutputTokens,
 	}
 
 	body, err := json.Marshal(reqBody)
@@ -792,8 +798,8 @@ func (a *Agent) callGeminiChat(ctx context.Context) (*ChatResponse, error) {
 			},
 		},
 		"generationConfig": map[string]interface{}{
-			"temperature":    0.3,
-			"maxOutputTokens": 1024,
+			"temperature":     0.3,
+			"maxOutputTokens": agentMaxOutputTokens,
 		},
 	}
 
