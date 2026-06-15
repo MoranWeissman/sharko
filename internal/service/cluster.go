@@ -331,9 +331,14 @@ func (s *ClusterService) GetClusterComparison(ctx context.Context, clusterName s
 				// truncation. The field was previously set to the trimmed issueMsg.
 				comp.ArgocdOperationMessage = fullOperationMessage(app.OperationMessage)
 			}
-			if comp.Status == "healthy" {
+			switch comp.Status {
+			case "healthy":
 				totalHealthy++
-			} else {
+			case "deploying":
+				// Active rollout, no error — informational, not an issue.
+				// Must stay in sync with the UI with_issues filter in
+				// ui/src/views/ClusterDetail.tsx which also excludes "deploying".
+			default:
 				totalIssues++
 			}
 		} else {
