@@ -1,5 +1,194 @@
 package service
 
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/MoranWeissman/sharko/internal/argocd"
+	"github.com/MoranWeissman/sharko/internal/models"
+)
+
+// TestDeployingNotCountedAsIssue_V2cleanup45 verifies the fix for the With-Issues
+// count / With-Issues filter mismatch: a "deploying" addon must NOT increment
+// TotalWithIssues (the frontend filter excludes "deploying" from the issue set).
+//
+// The test drives GetClusterComparison with a stub ArgoCD server that returns
+// three apps for the test cluster:
+//
+//   - keda (Running phase, no failure) → classifyAddonApp → "deploying"
+//   - velero (Synced + Healthy)        → classifyAddonApp → "healthy"
+//   - cert-manager (Failed phase)      → classifyAddonApp → "sync_failing"
+//
+// Expected: TotalHealthy == 1, TotalWithIssues == 1, and keda appears in
+// AddonComparisons with Status=="deploying" but is NOT counted in either bucket.
+func TestDeployingNotCountedAsIssue_V2cleanup45(t *testing.T) {
+	const clusterName = "test-cluster"
+
+	// managedClustersYAML has a single cluster whose labels enable the three
+	// addons we're testing. The enveloped format is what the real service writes.
+	managedClustersYAML := `apiVersion: sharko.io/v1
+kind: ManagedClusters
+metadata:
+  name: managed-clusters
+spec:
+  clusters:
+    - name: test-cluster
+      region: us-east-1
+      labels:
+        keda: enabled
+        velero: enabled
+        cert-manager: enabled
+`
+
+	// addonsCatalogYAML declares the three addons.
+	addonsCatalogYAML := `apiVersion: sharko.io/v1
+kind: AddonCatalog
+metadata:
+  name: addon-catalog
+spec:
+  applicationsets:
+    - name: keda
+      repoURL: https://kedacore.github.io/charts
+      chart: keda
+      version: "2.13.0"
+      namespace: keda
+      syncWave: 0
+    - name: velero
+      repoURL: https://vmware-tanzu.github.io/helm-charts
+      chart: velero
+      version: "7.2.1"
+      namespace: velero
+      syncWave: 0
+    - name: cert-manager
+      repoURL: https://charts.jetstack.io
+      chart: cert-manager
+      version: "1.14.4"
+      namespace: cert-manager
+      syncWave: 0
+`
+
+	// Stub ArgoCD server: returns a matching cluster + the three apps.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/v1/clusters":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"items": []map[string]interface{}{
+					{
+						"name":   clusterName,
+						"server": "https://test-cluster.example.com",
+					},
+				},
+			})
+
+		case r.URL.Path == "/api/v1/applications":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"items": []map[string]interface{}{
+					// keda: Running phase, no failure → "deploying"
+					{
+						"metadata": map[string]interface{}{
+							"name": "keda-" + clusterName,
+						},
+						"spec": map[string]interface{}{
+							"destination": map[string]interface{}{
+								"server": "https://test-cluster.example.com",
+							},
+						},
+						"status": map[string]interface{}{
+							"sync":   map[string]interface{}{"status": "OutOfSync"},
+							"health": map[string]interface{}{"status": "Healthy"},
+							"operationState": map[string]interface{}{
+								"phase":   "Running",
+								"message": "Syncing resources",
+							},
+						},
+					},
+					// velero: Synced + Healthy → "healthy"
+					{
+						"metadata": map[string]interface{}{
+							"name": "velero-" + clusterName,
+						},
+						"spec": map[string]interface{}{
+							"destination": map[string]interface{}{
+								"server": "https://test-cluster.example.com",
+							},
+						},
+						"status": map[string]interface{}{
+							"sync":   map[string]interface{}{"status": "Synced"},
+							"health": map[string]interface{}{"status": "Healthy"},
+						},
+					},
+					// cert-manager: Failed phase → "sync_failing"
+					{
+						"metadata": map[string]interface{}{
+							"name": "cert-manager-" + clusterName,
+						},
+						"spec": map[string]interface{}{
+							"destination": map[string]interface{}{
+								"server": "https://test-cluster.example.com",
+							},
+						},
+						"status": map[string]interface{}{
+							"sync":   map[string]interface{}{"status": "OutOfSync"},
+							"health": map[string]interface{}{"status": "Degraded"},
+							"operationState": map[string]interface{}{
+								"phase":   "Failed",
+								"message": "rpc error: sync failed",
+							},
+						},
+					},
+				},
+			})
+
+		default:
+			// Return empty for anything else (connection info, etc.)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	ac := argocd.NewClient(srv.URL, "test-token", true)
+	svc := NewClusterService("")
+
+	gp := &fakeGP{
+		files: map[string][]byte{
+			"configuration/managed-clusters.yaml": []byte(managedClustersYAML),
+			"configuration/addons-catalog.yaml":   []byte(addonsCatalogYAML),
+		},
+	}
+
+	resp, err := svc.GetClusterComparison(context.Background(), clusterName, gp, ac)
+	if err != nil {
+		t.Fatalf("GetClusterComparison returned unexpected error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("GetClusterComparison returned nil response")
+	}
+
+	// Core assertion: deploying must NOT count as an issue.
+	if resp.TotalWithIssues != 1 {
+		t.Errorf("TotalWithIssues = %d, want 1 (only cert-manager is an issue; keda is deploying)", resp.TotalWithIssues)
+	}
+	if resp.TotalHealthy != 1 {
+		t.Errorf("TotalHealthy = %d, want 1 (only velero is healthy)", resp.TotalHealthy)
+	}
+
+	// Verify keda itself surfaces with the "deploying" status in comparisons.
+	var kedaStatus string
+	for _, comp := range resp.AddonComparisons {
+		if comp.AddonName == "keda-"+clusterName || comp.AddonName == "keda" {
+			kedaStatus = comp.Status
+		}
+	}
+	if kedaStatus != "deploying" {
+		t.Errorf("keda status = %q, want %q", kedaStatus, "deploying")
+	}
+}
+
 // TestClassifyAddonApp_V2cleanup36 tests the V2-cleanup-36 status classification
 // logic against live-captured ArgoCD payload shapes. Every case must match the
 // exact fixture observed in the keda rollout incident.
@@ -9,14 +198,6 @@ package service
 // Test structure mirrors review requirement: "table-driven; fixtures mirror
 // REAL data shapes verbatim; every fix ships with the test that fails on old
 // logic and passes now."
-
-import (
-	"strings"
-	"testing"
-
-	"github.com/MoranWeissman/sharko/internal/models"
-)
-
 func TestClassifyAddonApp_V2cleanup36(t *testing.T) {
 	cases := []struct {
 		name          string
@@ -249,9 +430,9 @@ func TestFullOperationMessage_V2cleanup38(t *testing.T) {
 		"field not declared in schema"
 
 	cases := []struct {
-		name    string
-		in      string
-		wantLen int    // 0 = check exact equality
+		name         string
+		in           string
+		wantLen      int // 0 = check exact equality
 		wantContains string
 	}{
 		{
@@ -266,8 +447,8 @@ func TestFullOperationMessage_V2cleanup38(t *testing.T) {
 			wantContains: "field not declared in schema",
 		},
 		{
-			name:    "multiline_preserved",
-			in:      "line one\nline two\nline three",
+			name:         "multiline_preserved",
+			in:           "line one\nline two\nline three",
 			wantContains: "line two", // newlines kept
 		},
 		{
