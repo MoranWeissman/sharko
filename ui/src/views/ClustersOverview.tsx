@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useContext, useRef } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Server,
@@ -25,7 +25,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { api, registerCluster, discoverEKSClusters, testClusterConnection, unadoptCluster, deleteOrphanCluster, isTestClusterUnavailable, type PRWriteResult } from '@/services/api';
-import { PRResultBanner, extractPR } from '@/components/PRFeedback';
+import { PRLifecycleProgress, extractPR } from '@/components/PRFeedback';
 import type { TestClusterUnavailable } from '@/services/api';
 import type {
   Cluster,
@@ -40,7 +40,6 @@ import type {
   RegisterClusterResult,
   VerifyStep,
 } from '@/services/models';
-import { AuthContext } from '@/hooks/useAuth';
 import { StatCard } from '@/components/StatCard';
 import { ConnectionStatus } from '@/components/ConnectionStatus';
 import { ConnectivityBadge } from '@/components/ConnectivityBadge';
@@ -170,9 +169,6 @@ export function ClustersOverview() {
   const TEST_BUTTON_DISABLED_TOOLTIP =
     'Cluster connectivity test is unavailable: no secrets backend (Vault / AWS Secrets Manager / file-store) is configured on the active connection. Configure one in Settings → Connections to enable.';
 
-  // Auth context for role-based auto-merge logic
-  const authCtx = useContext(AuthContext);
-
   // Add Cluster dialog state
   const [addClusterOpen, setAddClusterOpen] = useState(false);
   const [addClusterName, setAddClusterName] = useState('');
@@ -199,9 +195,6 @@ export function ClustersOverview() {
   const [discoveryError, setDiscoveryError] = useState<string | null>(null);
   const [discoveredItems, setDiscoveredItems] = useState<DiscoveredClusterItem[]>([]);
   const [selectedDiscovered, setSelectedDiscovered] = useState<Record<string, boolean>>({});
-
-  // Auto-merge checkbox
-  const [autoMerge, setAutoMerge] = useState(false);
 
   // Dry-run preview
   const [dryRunResult, setDryRunResult] = useState<DryRunResult | null>(null);
@@ -324,7 +317,6 @@ export function ClustersOverview() {
     setDiscoveryError(null);
     setDiscoveredItems([]);
     setSelectedDiscovered({});
-    setAutoMerge(false);
     setDryRunResult(null);
     setDryRunLoading(false);
     // Fetch catalog for addon multi-select
@@ -332,9 +324,6 @@ export function ClustersOverview() {
       api.getAddonCatalog().then(setCatalogAddons).catch(() => {});
     }
   }, [catalogAddons]);
-
-  // Determine if auto-merge checkbox should be disabled
-  const isAutoMergeDisabled = authCtx?.role === 'operator' || authCtx?.role === 'viewer';
 
   const handleDiscoverClusters = useCallback(async () => {
     const arns = discoveryRoleArns.split(',').map(a => a.trim()).filter(Boolean);
@@ -375,7 +364,6 @@ export function ClustersOverview() {
               name: clusterName || 'dry-run-preview',
               provider,
               kubeconfig: addClusterKubeconfig,
-              auto_merge: autoMerge,
               addons: Object.keys(selectedAddons).length > 0 ? selectedAddons : undefined,
               dry_run: true,
             }
@@ -385,7 +373,6 @@ export function ClustersOverview() {
               secret_path: addClusterSecretPath.trim() || undefined,
               provider,
               role_arn: addClusterRoleArn.trim() || undefined,
-              auto_merge: autoMerge,
               addons: Object.keys(selectedAddons).length > 0 ? selectedAddons : undefined,
               dry_run: true,
             },
@@ -398,7 +385,7 @@ export function ClustersOverview() {
     } finally {
       setDryRunLoading(false);
     }
-  }, [registrationMode, addClusterName, addClusterRegion, addClusterRoleArn, addClusterSecretPath, addClusterKubeconfig, provider, autoMerge, selectedAddons]);
+  }, [registrationMode, addClusterName, addClusterRegion, addClusterRoleArn, addClusterSecretPath, addClusterKubeconfig, provider, selectedAddons]);
 
   const handleAddCluster = useCallback(async () => {
     if (registrationMode === 'direct' && !addClusterName.trim()) return;
@@ -420,7 +407,6 @@ export function ClustersOverview() {
               region: cluster.region,
               provider,
               role_arn: cluster.arn || undefined,
-              auto_merge: autoMerge,
               addons: Object.keys(selectedAddons).length > 0 ? selectedAddons : undefined,
             });
           } catch (e: unknown) {
@@ -451,7 +437,6 @@ export function ClustersOverview() {
                 name: addClusterName.trim(),
                 provider,
                 kubeconfig: addClusterKubeconfig,
-                auto_merge: autoMerge,
                 addons: Object.keys(selectedAddons).length > 0 ? selectedAddons : undefined,
               }
             : {
@@ -460,12 +445,11 @@ export function ClustersOverview() {
                 secret_path: addClusterSecretPath.trim() || undefined,
                 provider,
                 role_arn: addClusterRoleArn.trim() || undefined,
-                auto_merge: autoMerge,
                 addons: Object.keys(selectedAddons).length > 0 ? selectedAddons : undefined,
               },
         );
         const prUrl = result?.git?.pr_url || result?.pr_url || result?.pull_request_url;
-        const merged = result?.git?.merged ?? autoMerge;
+        const merged = result?.git?.merged ?? false;
         // Manual-mode register opens a PR but the cluster is NOT actually
         // registered until merge. Branch on `merged` so the toast tells
         // the user the truth.
@@ -497,7 +481,7 @@ export function ClustersOverview() {
     } finally {
       setAddClusterSubmitting(false);
     }
-  }, [addClusterName, addClusterRegion, addClusterRoleArn, addClusterSecretPath, addClusterKubeconfig, provider, autoMerge, selectedAddons, fetchData, registrationMode, discoveredItems, selectedDiscovered]);
+  }, [addClusterName, addClusterRegion, addClusterRoleArn, addClusterSecretPath, addClusterKubeconfig, provider, selectedAddons, fetchData, registrationMode, discoveredItems, selectedDiscovered]);
 
   const handleTestCluster = useCallback(async (name: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -1155,34 +1139,14 @@ export function ClustersOverview() {
               </div>
             )}
 
-            {/* Auto-merge checkbox. Plain HTML `title` attribute surfaces
-              * the gate criteria (admin-only; merges immediately vs waits
-              * for human review) without bloating the visible label. */}
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                id="auto-merge-checkbox"
-                checked={autoMerge}
-                disabled={isAutoMergeDisabled}
-                onChange={(e) => setAutoMerge(e.target.checked)}
-                title={isAutoMergeDisabled
-                  ? "Admin-only. When checked, the registration PR auto-merges as soon as required checks pass; otherwise the PR is left open for human review."
-                  : "When checked, the registration PR auto-merges as soon as required checks pass. Uncheck to leave the PR open for review before the cluster is added to managed-clusters.yaml."}
-                className="rounded border-[#5a9dd0] dark:border-gray-600 disabled:opacity-50"
-              />
-              <label
-                htmlFor="auto-merge-checkbox"
-                title={isAutoMergeDisabled
-                  ? "Admin-only. When checked, the registration PR auto-merges as soon as required checks pass; otherwise the PR is left open for human review."
-                  : "When checked, the registration PR auto-merges as soon as required checks pass. Uncheck to leave the PR open for review before the cluster is added to managed-clusters.yaml."}
-                className={`text-sm font-medium ${isAutoMergeDisabled ? 'text-[#5a8aaa] dark:text-gray-500' : 'text-[#0a3a5a] dark:text-gray-300'}`}
-              >
-                Merge PR automatically
-              </label>
-              {isAutoMergeDisabled && (
-                <span className="text-xs text-[#5a8aaa] dark:text-gray-500">(admin only)</span>
-              )}
-            </div>
+            {/* Auto-merge is now a global setting — no per-flow checkbox. */}
+            <p className="text-xs text-[#5a8aaa] dark:text-gray-500">
+              Auto-merge follows your{' '}
+              <a href="/settings?section=gitops" className="underline hover:text-[#0a2a4a] dark:hover:text-gray-300">
+                global GitOps setting
+              </a>
+              .
+            </p>
 
             {/* Dry-run preview panel. Every array read is null-safe via
               * `?? []` so a partial DryRunResult shape (missing field,
@@ -2097,15 +2061,14 @@ export function ClustersOverview() {
         loading={orphanDeleteLoading}
       />
 
-      {/* Un-adopt result banner. Defect 2.2/2.4: when a PR is opened we render
-          the shared PRResultBanner with a clickable "View PR #N" link and a
-          merged-vs-open outcome instead of pasting the raw URL. */}
+      {/* Un-adopt result: init-style lifecycle progress. */}
       {unadoptResult?.pr && (
         <div className="relative">
-          <PRResultBanner
+          <PRLifecycleProgress
             result={unadoptResult.pr}
-            mergedMessage="PR merged — cluster un-adopted"
-            openMessage="PR opened — cluster is un-adopted once it merges"
+            autoMergeExpected={(unadoptResult.pr?.merged ?? unadoptResult.pr?.result?.merged) === true}
+            mergedLabel="PR merged — cluster un-adopted"
+            openLabel="PR open for review — cluster is un-adopted once it merges"
           />
           <button
             type="button"

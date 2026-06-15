@@ -39,11 +39,8 @@ import { RoleGuard } from '@/components/RoleGuard'
 import { MarketplaceTab } from '@/components/MarketplaceTab'
 import { VersionPicker } from '@/components/VersionPicker'
 import {
-  AutoMergeToggle,
   DryRunPreview,
   SubmitPhaseBanner,
-  SubmitResultBanner,
-  useAutoMergeGate,
   type SubmitPhase,
 } from '@/components/AddAddonFlow'
 import {
@@ -570,14 +567,9 @@ export function AddonCatalog() {
   const [addAddonError, setAddAddonError] = useState<string | null>(null)
 
   // V2-cleanup-15 — parity with the Marketplace add-addon flow (#397). The
-  // catalog "Register addon" dialog now offers the same admin-gated
-  // auto-merge toggle, a dry-run preview, branch→commit→PR→merge progress, a
-  // clickable PR link, and an HONEST merged-vs-open outcome (an open PR is
-  // never shown as already-cataloged). All inner surfaces come from the
-  // shared AddAddonFlow component so the two add paths can't drift again.
-  const [addAddonAutoMerge, setAddAddonAutoMerge] = useState(false)
-  const { isAutoMergeDisabled, autoMergeValue } =
-    useAutoMergeGate(addAddonAutoMerge)
+  // catalog "Register addon" dialog now offers a dry-run preview,
+  // branch→commit→PR→merge progress, a clickable PR link, and an HONEST
+  // merged-vs-open outcome. Auto-merge is now controlled globally.
   const [addAddonDryRun, setAddAddonDryRun] = useState<DryRunResult | null>(null)
   const [addAddonPreviewing, setAddAddonPreviewing] = useState(false)
   const [addAddonPhase, setAddAddonPhase] = useState<SubmitPhase>('idle')
@@ -647,7 +639,6 @@ export function AddonCatalog() {
     setChartVersionsLoading(false)
     setChartVersionsError(null)
     setChartShowPrereleases(false)
-    setAddAddonAutoMerge(false)
     setAddAddonDryRun(null)
     setAddAddonPreviewing(false)
     setAddAddonPhase('idle')
@@ -784,12 +775,10 @@ export function AddonCatalog() {
       // sync_wave intentionally omitted — operators set it on the addon's
       // ArgoCD App Options tab after creation.
       source: 'manual' as const,
-      // nil-equivalent fallback: admins send their choice; non-admins always
-      // open a PR for review (the toggle is disabled for them).
-      auto_merge: autoMergeValue,
+      // auto_merge omitted — falls back to the global GitOps setting.
       dry_run: dryRun,
     }),
-    [addonForm, autoMergeValue],
+    [addonForm],
   )
 
   const addAddonFormValid =
@@ -809,7 +798,6 @@ export function AddonCatalog() {
     addonForm.repo_url,
     addonForm.version,
     addonForm.namespace,
-    addAddonAutoMerge,
   ])
 
   // Preview step: dry-run the add and render the files it would write. No PR,
@@ -1294,16 +1282,15 @@ export function AddonCatalog() {
               addon&rsquo;s <strong>ArgoCD App Options</strong> tab.
             </div>
 
-            {/* Auto-merge toggle — shared admin-gated control (AddAddonFlow),
-                identical to the Marketplace add-addon flow and the
-                register/init dialogs. Sends auto_merge on the addAddon call. */}
+            {/* Auto-merge is now a global setting — no per-flow checkbox. */}
             {!addAddonResult && (
-              <AutoMergeToggle
-                id="add-addon-auto-merge"
-                checked={!isAutoMergeDisabled && addAddonAutoMerge}
-                disabled={isAutoMergeDisabled}
-                onChange={setAddAddonAutoMerge}
-              />
+              <p className="text-xs text-[#5a8aaa] dark:text-gray-500">
+                Auto-merge follows your{' '}
+                <a href="/settings?section=gitops" className="underline hover:text-[#0a2a4a] dark:hover:text-gray-300">
+                  global GitOps setting
+                </a>
+                .
+              </p>
             )}
 
             {/* Dry-run preview (shared AddAddonFlow render) — the files the
@@ -1312,14 +1299,11 @@ export function AddonCatalog() {
               <DryRunPreview result={addAddonDryRun} />
             )}
 
-            {/* Git progress — coarse branch → commit → PR → merge phase. */}
-            <SubmitPhaseBanner phase={addAddonPhase} />
-
-            {/* Terminal success — clickable PR link; branches on merged so an
-                open PR is shown as "merge it to apply", never as cataloged. */}
-            {addAddonResult && (
-              <SubmitResultBanner result={addAddonResult} />
-            )}
+            {/* PR lifecycle — init-style step list from submitting to terminal.
+                SubmitPhaseBanner upgrades to PRLifecycleProgress once the
+                POST resolves; SubmitResultBanner kept below as a fallback for
+                callers that haven't yet migrated to the lifecycle approach. */}
+            <SubmitPhaseBanner phase={addAddonPhase} result={addAddonResult} />
 
             {addAddonError && (
               <p className="text-sm text-red-600 dark:text-red-400">{addAddonError}</p>
