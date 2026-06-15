@@ -25,7 +25,7 @@ import { FloatingAssistant } from '@/components/FloatingAssistant'
 import { CommandPalette } from '@/components/CommandPalette'
 import { useTheme } from '@/hooks/useTheme'
 import { useAuth } from '@/hooks/useAuth'
-import { AIAssistant } from '@/views/AIAssistant'
+import { AIAssistant, type AIAssistantSeed } from '@/views/AIAssistant'
 import { NotificationBell } from '@/components/NotificationBell'
 import { ToastContainer } from '@/components/ToastNotification'
 import { fetchTrackedPRs } from '@/services/api'
@@ -137,7 +137,7 @@ export function Layout() {
   const location = useLocation()
   const [collapsed, setCollapsed] = useState(false)
   const [aiPanelOpen, setAiPanelOpen] = useState(false)
-  const [aiInitialMessage, setAiInitialMessage] = useState<string | undefined>()
+  const [aiSeed, setAiSeed] = useState<AIAssistantSeed | undefined>()
   const { theme, toggleTheme } = useTheme()
   const { logout, isAdmin } = useAuth()
 
@@ -197,9 +197,14 @@ export function Layout() {
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail
-      if (typeof detail === 'string' && detail) {
-        setAiInitialMessage(detail)
+      // Structured seed: { message: string, nonce: string }
+      if (detail && typeof detail === 'object' && typeof detail.message === 'string' && detail.message) {
+        setAiSeed({ message: detail.message, nonce: detail.nonce ?? crypto.randomUUID() })
+      } else if (typeof detail === 'string' && detail) {
+        // Backward-compat: plain string detail (legacy callers)
+        setAiSeed({ message: detail, nonce: crypto.randomUUID() })
       }
+      // detail is absent or empty → manual open; do not alter the seed
       openAiPanel()
     }
     window.addEventListener('open-assistant', handler)
@@ -438,7 +443,7 @@ export function Layout() {
               </div>
             </div>
             <button
-              onClick={() => { setAiPanelOpen(false); setAiInitialMessage(undefined) }}
+              onClick={() => { setAiPanelOpen(false); setAiSeed(undefined) }}
               className="rounded-lg p-1 text-white/80 hover:bg-white/20 hover:text-white"
               aria-label="Close AI panel"
             >
@@ -447,7 +452,7 @@ export function Layout() {
           </div>
           {/* Chat content */}
           <div className="flex-1 overflow-hidden">
-            <AIAssistant embedded pageContext={getAIPageContext(location.pathname)} initialMessage={aiInitialMessage} />
+            <AIAssistant embedded pageContext={getAIPageContext(location.pathname)} initialMessageSeed={aiSeed} />
           </div>
         </div>
         </>

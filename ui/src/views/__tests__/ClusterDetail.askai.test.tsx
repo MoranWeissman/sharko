@@ -189,10 +189,13 @@ describe('V2-cleanup-39: Ask AI button on sync_failing rows', () => {
     );
     expect(openAssistantCall).toBeDefined();
 
-    const detail = (openAssistantCall![0] as CustomEvent).detail as string;
-    expect(typeof detail).toBe('string');
-    expect(detail).toContain('keda');
-    expect(detail).toContain('prod-eu');
-    expect(detail).toContain('CRD name too long');
+    // V2-cleanup-42: detail is now { message: string, nonce: string }
+    const detail = (openAssistantCall![0] as CustomEvent).detail as { message: string; nonce: string };
+    expect(typeof detail).toBe('object');
+    expect(typeof detail.message).toBe('string');
+    expect(typeof detail.nonce).toBe('string');
+    expect(detail.message).toContain('keda');
+    expect(detail.message).toContain('prod-eu');
+    expect(detail.message).toContain('CRD name too long');
   });
 });

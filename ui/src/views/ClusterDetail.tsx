@@ -1160,7 +1160,7 @@ export function ClusterDetail() {
                         </div>
                       </div>
                       <button
-                        onClick={() => window.dispatchEvent(new CustomEvent('open-assistant', { detail: `ArgoCD cannot connect to cluster ${name}. Error: ${data.argocd_connection_message}. What could cause this and how do I fix it?` }))}
+                        onClick={() => window.dispatchEvent(new CustomEvent('open-assistant', { detail: { message: `ArgoCD cannot connect to cluster ${name}. Error: ${data.argocd_connection_message}. What could cause this and how do I fix it?`, nonce: crypto.randomUUID() } }))}
                         className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-800 dark:text-red-400"
                       >
                         <MessageSquare className="h-3.5 w-3.5" />
@@ -1183,7 +1183,7 @@ export function ClusterDetail() {
                       </div>
                     </div>
                     <button
-                      onClick={() => window.dispatchEvent(new CustomEvent('open-assistant', { detail: `Cluster ${name} is unreachable (${data.cluster_connection_state}). What could be wrong and how can I fix it?` }))}
+                      onClick={() => window.dispatchEvent(new CustomEvent('open-assistant', { detail: { message: `Cluster ${name} is unreachable (${data.cluster_connection_state}). What could be wrong and how can I fix it?`, nonce: crypto.randomUUID() } }))}
                       className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-800 dark:text-red-400"
                     >
                       <MessageSquare className="h-3.5 w-3.5" />
@@ -1248,7 +1248,7 @@ export function ClusterDetail() {
                       </div>
                     </div>
                     <button
-                      onClick={() => window.dispatchEvent(new CustomEvent('open-assistant', { detail: `ArgoCD cannot connect to cluster ${name}. Error: ${data.argocd_connection_message}. What could cause this and how do I fix it?` }))}
+                      onClick={() => window.dispatchEvent(new CustomEvent('open-assistant', { detail: { message: `ArgoCD cannot connect to cluster ${name}. Error: ${data.argocd_connection_message}. What could cause this and how do I fix it?`, nonce: crypto.randomUUID() } }))}
                       className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-800 dark:text-red-400"
                     >
                       <MessageSquare className="h-3.5 w-3.5" />
@@ -1972,8 +1972,8 @@ function ComparisonRow({ addon, clusterName, isExpanded, onToggleExpand, argocdB
                     data-testid="ask-ai-btn"
                     onClick={(e) => {
                       e.stopPropagation();
-                      const seed = `Addon "${addon.addon_name}" on cluster "${clusterName}" is failing to sync in ArgoCD. Here is the error:\n\n${addon.argocd_operation_message ?? '(no operation message available)'}\n\nWhat's wrong and how do I fix it?`;
-                      window.dispatchEvent(new CustomEvent('open-assistant', { detail: seed }));
+                      const message = `Addon "${addon.addon_name}" on cluster "${clusterName}" is failing to sync in ArgoCD. Here is the error:\n\n${addon.argocd_operation_message ?? '(no operation message available)'}\n\nWhat's wrong and how do I fix it?`;
+                      window.dispatchEvent(new CustomEvent('open-assistant', { detail: { message, nonce: crypto.randomUUID() } }));
                     }}
                     className="inline-flex items-center gap-1 rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-2 py-0.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
                   >

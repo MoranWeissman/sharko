@@ -282,13 +282,23 @@ function ThinkingProcess() {
 // Main component
 // ---------------------------------------------------------------------------
 
-export function AIAssistant({ embedded = false, pageContext, initialMessage }: { embedded?: boolean; pageContext?: string; initialMessage?: string } = {}) {
+// A seed carries both the message text and a nonce (fresh UUID per click) so
+// that re-clicking "Ask AI" for the same error fires a new request even when
+// the message string is identical.
+export interface AIAssistantSeed {
+  message: string
+  nonce: string
+}
+
+export function AIAssistant({ embedded = false, pageContext, initialMessageSeed }: { embedded?: boolean; pageContext?: string; initialMessageSeed?: AIAssistantSeed } = {}) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [sessionId, setSessionId] = useState(() => crypto.randomUUID())
   const [aiEnabled, setAiEnabled] = useState<boolean | null>(null)
   const [, setTick] = useState(0)
+  // Track the last nonce we acted on so we only fire once per distinct seed.
+  const lastHandledNonce = useRef<string | undefined>(undefined)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -300,13 +310,66 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
       .catch(() => setAiEnabled(false))
   }, [])
 
-  // Auto-send initialMessage when AI is ready
+  // When a new seed arrives (identified by a changed nonce), start a fresh
+  // conversation and immediately send the seeded message.  A manual open
+  // (no seed) must not wipe an in-progress conversation.
   useEffect(() => {
-    if (initialMessage && aiEnabled === true && messages.length === 0) {
-      void sendMessage(initialMessage)
-    }
+    if (!initialMessageSeed || aiEnabled !== true) return
+    if (initialMessageSeed.nonce === lastHandledNonce.current) return
+    lastHandledNonce.current = initialMessageSeed.nonce
+
+    // Reset conversation state inline — same as handleNewConversation but
+    // without the async agentReset round-trip blocking the send.
+    const newId = crypto.randomUUID()
+    setSessionId(newId)
+    setMessages([])
+    setInput('')
+    setLoading(false)
+
+    // sendMessage reads sessionId from closure; because setState is async we
+    // pass the new session id directly via the api call inside a local helper.
+    const message = initialMessageSeed.message
+    void (async () => {
+      const trimmed = message.trim()
+      if (!trimmed) return
+
+      const userMsg: ChatMessage = {
+        id: crypto.randomUUID(),
+        role: 'user',
+        content: trimmed,
+        timestamp: new Date(),
+      }
+      setMessages([userMsg])
+      setLoading(true)
+
+      try {
+        const res = await api.agentChat(newId, trimmed, pageContext)
+        const responseText = res.response && res.response.trim()
+          ? res.response
+          : "I couldn't generate a response — try rephrasing, or check the addon's logs."
+        const assistantMsg: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: responseText,
+          timestamp: new Date(),
+          streaming: true,
+        }
+        setMessages((prev) => [...prev, assistantMsg])
+      } catch (err) {
+        const errorMsg: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: `Sorry, I encountered an error: ${err instanceof Error ? err.message : 'Unknown error'}. Please try again.`,
+          timestamp: new Date(),
+        }
+        setMessages([userMsg, errorMsg])
+      } finally {
+        setLoading(false)
+        textareaRef.current?.focus()
+      }
+    })()
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialMessage, aiEnabled])
+  }, [initialMessageSeed?.nonce, aiEnabled])
 
   // Auto-scroll on new messages
   useEffect(() => {
@@ -336,10 +399,13 @@ export function AIAssistant({ embedded = false, pageContext, initialMessage }: {
 
       try {
         const res = await api.agentChat(sessionId, trimmed, pageContext)
+        const responseText = res.response && res.response.trim()
+          ? res.response
+          : "I couldn't generate a response — try rephrasing, or check the addon's logs."
         const assistantMsg: ChatMessage = {
           id: crypto.randomUUID(),
           role: 'assistant',
-          content: res.response,
+          content: responseText,
           timestamp: new Date(),
           streaming: true,
         }
