@@ -31,6 +31,7 @@ import {
   RotateCcw,
   X,
   ShieldCheck,
+  Sparkles,
 } from 'lucide-react';
 import {
   Dialog,
@@ -282,6 +283,10 @@ export function ClusterDetail() {
   // clickable PR link (PRResultBanner) instead of dumping the raw URL as text.
   // `message` carries the non-PR / error fallback.
   const [secretPathResult, setSecretPathResult] = useState<{ pr?: PRWriteResult; message?: string } | null>(null);
+
+  // AI-enabled state — fetched once on mount so the "Ask AI" button on
+  // sync_failing rows knows whether to render.
+  const [aiEnabled, setAiEnabled] = useState<boolean>(false);
 
   // Addon toggles
   const [addonToggles, setAddonToggles] = useState<Record<string, boolean>>({});
@@ -615,6 +620,15 @@ export function ClusterDetail() {
   useEffect(() => {
     void fetchData();
   }, [fetchData]);
+
+  // Fetch AI-enabled status once on mount so the "Ask AI" button on
+  // sync_failing rows knows whether to render.
+  useEffect(() => {
+    api
+      .getAIStatus()
+      .then((res) => setAiEnabled(res.enabled))
+      .catch(() => setAiEnabled(false));
+  }, []);
 
   // Adaptive polling: 10s while any addon is actively changing (deploying or
   // sync_failing), 30s otherwise. The interval is recreated whenever the
@@ -1692,6 +1706,7 @@ export function ClusterDetail() {
                         highlighted={highlightedAddon === addon.addon_name}
                         pendingPRs={pendingPRsByAddon[addon.addon_name] ?? []}
                         onRefresh={() => void fetchData(true)}
+                        aiEnabled={aiEnabled}
                       />
                     ))}
                     {filteredAddons.length === 0 && (
@@ -1788,9 +1803,12 @@ interface ComparisonRowProps {
   // Called after a successful restart-sync so the parent immediately refetches
   // the cluster status instead of waiting for the next poll cycle.
   onRefresh?: () => void;
+  // When true the "Ask AI" button is rendered next to "Restart sync" on
+  // sync_failing rows.  False/absent → button is absent.
+  aiEnabled?: boolean;
 }
 
-function ComparisonRow({ addon, clusterName, isExpanded, onToggleExpand, argocdBaseURL, highlighted, pendingPRs = [], onRefresh }: ComparisonRowProps) {
+function ComparisonRow({ addon, clusterName, isExpanded, onToggleExpand, argocdBaseURL, highlighted, pendingPRs = [], onRefresh, aiEnabled = false }: ComparisonRowProps) {
   const [restartLoading, setRestartLoading] = useState(false);
   const allIssues = addon.issues;
   const isTruncated = shouldTruncateIssues(allIssues);
@@ -1956,20 +1974,37 @@ function ComparisonRow({ addon, clusterName, isExpanded, onToggleExpand, argocdB
               </button>
             )}
             {addon.status === 'sync_failing' && (
-              <RoleGuard roles={['admin', 'operator']}>
-                <button
-                  type="button"
-                  data-testid="restart-sync-btn"
-                  onClick={(e) => { e.stopPropagation(); void handleRestartSync(); }}
-                  disabled={restartLoading}
-                  className="mt-2 inline-flex items-center gap-1 rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-2 py-0.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
-                >
-                  {restartLoading
-                    ? <Loader2 className="h-3 w-3 animate-spin" />
-                    : <RotateCcw className="h-3 w-3" />}
-                  Restart sync
-                </button>
-              </RoleGuard>
+              <div className="mt-2 flex flex-wrap gap-1">
+                <RoleGuard roles={['admin', 'operator']}>
+                  <button
+                    type="button"
+                    data-testid="restart-sync-btn"
+                    onClick={(e) => { e.stopPropagation(); void handleRestartSync(); }}
+                    disabled={restartLoading}
+                    className="inline-flex items-center gap-1 rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-2 py-0.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+                  >
+                    {restartLoading
+                      ? <Loader2 className="h-3 w-3 animate-spin" />
+                      : <RotateCcw className="h-3 w-3" />}
+                    Restart sync
+                  </button>
+                </RoleGuard>
+                {aiEnabled && (
+                  <button
+                    type="button"
+                    data-testid="ask-ai-btn"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const seed = `Addon "${addon.addon_name}" on cluster "${clusterName}" is failing to sync in ArgoCD. Here is the error:\n\n${addon.argocd_operation_message ?? '(no operation message available)'}\n\nWhat's wrong and how do I fix it?`;
+                      window.dispatchEvent(new CustomEvent('open-assistant', { detail: seed }));
+                    }}
+                    className="inline-flex items-center gap-1 rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-2 py-0.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+                  >
+                    <Sparkles className="h-3 w-3" />
+                    Ask AI
+                  </button>
+                )}
+              </div>
             )}
           </div>
         ) : hasProblems ? (
