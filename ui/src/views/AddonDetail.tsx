@@ -29,7 +29,7 @@ import {
   Star,
 } from 'lucide-react'
 import { api, removeAddon, upgradeAddon, configureAddon, getAddonPRs, type PRWriteResult } from '@/services/api'
-import { PRResultBanner, PRLink, extractPR } from '@/components/PRFeedback'
+import { PRLifecycleProgress, PRLink, extractPR } from '@/components/PRFeedback'
 import type { AddonCatalogItem, CatalogEntry, CatalogSourceRecord, ConnectionsListResponse, UpgradeCheckResponse, UpgradeRecommendations, RecommendationCard, ValueDiffEntry, ConflictCheckEntry, TrackedPR, AddonValuesSchemaResponse, MeResponse } from '@/services/models'
 import { ValuesEditor } from '@/components/ValuesEditor'
 import { RecentPRsPanel } from '@/components/RecentPRsPanel'
@@ -815,18 +815,11 @@ function InlineUpgradeResults({
       )}
       {upgradeDone && (
         <div className="mt-4 border-t border-[#c0ddf0] pt-4 dark:border-gray-700">
-          {/* Defect 2.3: branch on the response `merged` flag (and use pr_id)
-              instead of always saying "wait for merge". When auto-merge fired
-              the upgrade is already applied; only an open PR needs merging. */}
-          <PRResultBanner
+          <PRLifecycleProgress
             result={upgradeResult}
-            mergedMessage={`PR merged — ${addonName} upgraded to ${targetVersion}`}
-            openMessage={`PR opened — ${addonName} upgrades to ${targetVersion} once it merges`}
-            hint={
-              (upgradeResult?.merged ?? upgradeResult?.result?.merged)
-                ? 'ArgoCD will sync the new version shortly.'
-                : 'The addon updates once the PR merges and ArgoCD syncs. Track merge status in the Pending Upgrades panel above.'
-            }
+            autoMergeExpected={(upgradeResult?.merged ?? upgradeResult?.result?.merged) === true}
+            mergedLabel={`PR merged — ${addonName} upgraded to ${targetVersion}`}
+            openLabel={`PR open for review — ${addonName} upgrades to ${targetVersion} once it merges`}
           />
         </div>
       )}
@@ -1679,11 +1672,11 @@ export function AddonDetail() {
       )}
       {removeResult && (
         <div className="mb-2">
-          <PRResultBanner
+          <PRLifecycleProgress
             result={removeResult}
-            mergedMessage={`PR merged — ${name} removed from the catalog`}
-            openMessage={`PR opened — ${name} will be removed once it merges`}
-            hint="The addon stays in the catalog until the PR merges. Track it in the Recent changes panel."
+            autoMergeExpected={(removeResult?.merged ?? removeResult?.result?.merged) === true}
+            mergedLabel={`PR merged — ${name} removed from the catalog`}
+            openLabel={`PR open for review — ${name} will be removed once it merges`}
           />
         </div>
       )}
@@ -2395,10 +2388,11 @@ export function AddonDetail() {
                     text. */}
                 {configResult && (
                   <div className="mb-4">
-                    <PRResultBanner
+                    <PRLifecycleProgress
                       result={configResult}
-                      mergedMessage="PR merged — ArgoCD options updated"
-                      openMessage="PR opened — ArgoCD options update once it merges"
+                      autoMergeExpected={(configResult?.merged ?? configResult?.result?.merged) === true}
+                      mergedLabel="PR merged — ArgoCD options updated"
+                      openLabel="PR open for review — ArgoCD options update once it merges"
                     />
                   </div>
                 )}

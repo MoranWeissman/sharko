@@ -1,9 +1,13 @@
+import { useEffect, useRef, useState } from 'react'
 import {
   CheckCircle2,
+  Circle,
   ExternalLink,
+  GitMerge,
   GitPullRequest,
   Loader2,
 } from 'lucide-react'
+import { refreshPR } from '@/services/api'
 
 /**
  * PRFeedback — flow-agnostic, presentational building blocks for surfacing
@@ -200,6 +204,214 @@ export function PRProgressBanner({
           <span>{phase === 'merged' ? mergedMessage : openedMessage}</span>
         </>
       )}
+    </div>
+  )
+}
+
+// ─── PR Lifecycle Progress (init-style step list) ────────────────────────────
+
+/**
+ * Internal phase of the PR lifecycle progress window.
+ *  - creating  : POST in flight, PR not yet returned
+ *  - created   : PR opened, auto-merge is on, polling for merge
+ *  - merged    : PR merged (terminal, success)
+ *  - open      : PR is open but not merging (auto-merge off, or timed out)
+ */
+type LifecyclePhase = 'creating' | 'created' | 'merged' | 'open'
+
+export interface PRLifecycleProgressProps {
+  /**
+   * The PR result from the write endpoint. Pass null while the POST is
+   * still in flight, then pass the result once it resolves. The component
+   * advances through the step list automatically.
+   */
+  result: PRResult | null | undefined
+  /**
+   * When true the component polls `refreshPR` every ~7s (bounded at ~2 min)
+   * to detect an auto-merge. When false it goes straight to the "open for
+   * review" terminal state after showing PR created.
+   *
+   * If the result already says `merged: true`, polling is skipped entirely.
+   */
+  autoMergeExpected?: boolean
+  /** Flow-specific label for the "PR merged" step. */
+  mergedLabel?: string
+  /** Flow-specific label for the "PR opened for review" terminal step. */
+  openLabel?: string
+}
+
+/**
+ * PRLifecycleProgress — an init-style step-list window (CheckCircle / Loader2
+ * / Circle icons per step) driven by the PR lifecycle we already have.
+ *
+ * Steps shown:
+ *   1. Creating PR…      (spinner while POST in flight)
+ *   2. PR created ✓      (shown once we have a pr_id; shows PRLink)
+ *   3. Merging… / Merged ✓ / Open for review ✓
+ *
+ * When the POST returns `merged: true` the window jumps straight to step 3
+ * "Merged ✓". When auto-merge is on but the PR is still open we poll
+ * `refreshPR` every 7 s for up to ~2 min then fall back to "open for review".
+ * When auto-merge is off we show "Open for review" immediately after step 2.
+ *
+ * After reaching a terminal state the window stays visible as a compact
+ * confirmation. The durable record is the existing PullRequestsPanel merged
+ * section — we don't keep a loud persistent banner.
+ *
+ * The component is prop-driven: the PARENT controls all API calls. For the
+ * refresh polling the component drives it internally via useEffect so callers
+ * don't need to wire it.
+ */
+export function PRLifecycleProgress({
+  result,
+  autoMergeExpected = false,
+  mergedLabel = 'PR merged — change applied',
+  openLabel = 'PR open for review',
+}: PRLifecycleProgressProps) {
+  const { prUrl, prId, merged: initiallyMerged } = extractPR(result)
+
+  // Internal phase. Derived from props but can advance via the polling effect.
+  const [phase, setPhase] = useState<LifecyclePhase>('creating')
+
+  // Sync phase from props on first receipt and when the result changes.
+  useEffect(() => {
+    if (!result) {
+      setPhase('creating')
+      return
+    }
+    if (initiallyMerged) {
+      setPhase('merged')
+    } else if (prId !== null) {
+      // PR is open — decide whether to poll or go straight to "open".
+      setPhase(autoMergeExpected ? 'created' : 'open')
+    }
+  }, [result, initiallyMerged, prId, autoMergeExpected])
+
+  // Bounded polling: poll refreshPR every 7s, stop after ~2 min (≈18 polls).
+  const pollCount = useRef(0)
+  const MAX_POLLS = 18
+
+  useEffect(() => {
+    if (phase !== 'created' || prId === null) return
+
+    pollCount.current = 0
+
+    const interval = setInterval(async () => {
+      pollCount.current += 1
+      try {
+        const res = await refreshPR(prId)
+        if (res?.status === 'merged') {
+          clearInterval(interval)
+          setPhase('merged')
+          return
+        }
+        if (res?.status === 'closed') {
+          clearInterval(interval)
+          setPhase('open')
+          return
+        }
+      } catch {
+        // Transient error — keep polling.
+      }
+      if (pollCount.current >= MAX_POLLS) {
+        clearInterval(interval)
+        setPhase('open')
+      }
+    }, 7000)
+
+    return () => clearInterval(interval)
+  }, [phase, prId])
+
+  // Step definitions — rendered in order.
+  const steps = [
+    {
+      key: 'creating',
+      label: 'Creating PR…',
+      status:
+        phase === 'creating'
+          ? 'running'
+          : ('done' as 'running' | 'done' | 'pending'),
+    },
+    {
+      key: 'created',
+      label: prUrl ? undefined : 'PR created',
+      prUrl,
+      prId,
+      status:
+        phase === 'creating'
+          ? 'pending'
+          : ('done' as 'running' | 'done' | 'pending'),
+    },
+    {
+      key: 'merging',
+      label:
+        phase === 'merged'
+          ? mergedLabel
+          : phase === 'open'
+          ? openLabel
+          : 'Merging…',
+      status: (
+        phase === 'creating' || phase === 'created'
+          ? phase === 'created'
+            ? 'running'
+            : 'pending'
+          : 'done'
+      ) as 'running' | 'done' | 'pending',
+    },
+  ]
+
+  return (
+    <div
+      role="status"
+      className="space-y-2 rounded-md ring-2 ring-[#6aade0] bg-[#f0f7ff] p-3 text-sm dark:ring-gray-700 dark:bg-gray-900"
+    >
+      {steps.map((step) => (
+        <div key={step.key} className="flex items-center gap-2">
+          {step.status === 'done' ? (
+            <CheckCircle2
+              className="h-4 w-4 shrink-0 text-green-600 dark:text-green-400"
+              aria-hidden="true"
+            />
+          ) : step.status === 'running' ? (
+            <Loader2
+              className="h-4 w-4 shrink-0 animate-spin text-teal-600 dark:text-teal-400"
+              aria-hidden="true"
+            />
+          ) : (
+            <Circle
+              className="h-4 w-4 shrink-0 text-[#bee0ff] dark:text-gray-600"
+              aria-hidden="true"
+            />
+          )}
+          <span
+            className={
+              step.status === 'pending'
+                ? 'text-[#3a6a8a] dark:text-gray-500'
+                : 'text-[#0a2a4a] dark:text-gray-200'
+            }
+          >
+            {step.key === 'created' && step.prUrl ? (
+              <>
+                PR created{' '}
+                <PRLink
+                  url={step.prUrl}
+                  id={step.prId}
+                  size="xs"
+                  className="ml-1"
+                />
+              </>
+            ) : (
+              step.label
+            )}
+          </span>
+          {step.key === 'merging' && phase === 'merged' && (
+            <GitMerge
+              className="h-3.5 w-3.5 text-green-600 dark:text-green-400"
+              aria-hidden="true"
+            />
+          )}
+        </div>
+      ))}
     </div>
   )
 }

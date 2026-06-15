@@ -765,38 +765,49 @@ describe('ClusterDetail', () => {
     });
   });
 
-  // V2-cleanup-13: cluster removal now offers the same auto-merge vs
-  // manual-PR choice as init/register, and the success feedback tells the
-  // user whether the cluster was removed (PR merged) or a PR was opened for
-  // review (cluster stays listed until it merges).
-  describe('V2-cleanup-13: removal auto-merge choice + feedback', () => {
+  // V2-cleanup-13 → V2-cleanup-40: cluster removal uses the global auto-merge
+  // setting (no per-flow checkbox). The dialog shows a muted hint linking to
+  // Settings → GitOps instead.
+  describe('V2-cleanup-40: removal uses global auto-merge (no per-flow checkbox)', () => {
     async function openRemoveModal() {
       renderView();
       await waitFor(() => {
         expect(screen.getByText('prod-eu')).toBeInTheDocument();
       });
       fireEvent.click(screen.getByRole('button', { name: /Remove Cluster/i }));
-      // The confirmation dialog and its auto-merge toggle should appear.
+      // The confirmation dialog appears.
       await waitFor(() => {
         expect(screen.getByText(/Remove cluster "prod-eu"\?/i)).toBeInTheDocument();
       });
     }
 
-    it('renders the "Merge PR automatically" toggle in the remove dialog', async () => {
+    it('does NOT render the "Merge PR automatically" toggle — global setting governs', async () => {
       await openRemoveModal();
-      expect(screen.getByLabelText(/Merge PR automatically/i)).toBeInTheDocument();
+      expect(screen.queryByLabelText(/Merge PR automatically/i)).not.toBeInTheDocument();
     });
 
-    it('auto-merge ON: sends auto_merge=true, toasts "removed", navigates away', async () => {
+    it('shows the "global GitOps setting" hint instead', async () => {
+      await openRemoveModal();
+      expect(screen.getByText(/global GitOps setting/i)).toBeInTheDocument();
+    });
+
+    it('does NOT send auto_merge — falls back to connection default', async () => {
       mockDeregisterCluster.mockResolvedValue({ git: { merged: true, pr_id: 7 } });
       await openRemoveModal();
 
-      fireEvent.click(screen.getByLabelText(/Merge PR automatically/i));
       fireEvent.click(screen.getByRole('button', { name: /^Remove$/i }));
 
       await waitFor(() => {
-        expect(mockDeregisterCluster).toHaveBeenCalledWith('prod-eu', true);
+        // Called with only the cluster name — no auto_merge arg.
+        expect(mockDeregisterCluster).toHaveBeenCalledWith('prod-eu');
       });
+    });
+
+    it('merged: toasts "removed" and navigates away', async () => {
+      mockDeregisterCluster.mockResolvedValue({ git: { merged: true, pr_id: 7 } });
+      await openRemoveModal();
+      fireEvent.click(screen.getByRole('button', { name: /^Remove$/i }));
+
       await waitFor(() => {
         expect(mockShowToast).toHaveBeenCalledWith(
           expect.stringMatching(/removed/i),
@@ -806,21 +817,14 @@ describe('ClusterDetail', () => {
       expect(mockNavigate).toHaveBeenCalledWith('/clusters');
     });
 
-    it('auto-merge OFF: sends auto_merge=false, toasts "PR opened", stays on page', async () => {
+    it('open PR: toasts "PR opened", stays on page', async () => {
       mockDeregisterCluster.mockResolvedValue({
         git: { merged: false, pr_id: 12, pr_url: 'https://github.com/example/repo/pull/12' },
       });
       await openRemoveModal();
-
-      // Leave the toggle unchecked (default false), confirm removal.
       fireEvent.click(screen.getByRole('button', { name: /^Remove$/i }));
 
       await waitFor(() => {
-        expect(mockDeregisterCluster).toHaveBeenCalledWith('prod-eu', false);
-      });
-      await waitFor(() => {
-        // V2-cleanup-24: the PR id/url is now passed as a clickable link
-        // object on the toast instead of being baked into the message string.
         expect(mockShowToast).toHaveBeenCalledWith(
           expect.stringMatching(/PR opened for review/i),
           'success',

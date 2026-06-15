@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useContext } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
   CheckCircle,
   XCircle,
@@ -15,7 +15,6 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { testClusterConnection, adoptClusters, isTestClusterUnavailable } from '@/services/api'
-import { AuthContext } from '@/hooks/useAuth'
 import type { Cluster, AdoptResult, VerifyResult } from '@/services/models'
 
 interface AdoptClustersDialogProps {
@@ -42,14 +41,10 @@ export function AdoptClustersDialog({
   onSuccess,
   onDiagnose,
 }: AdoptClustersDialogProps) {
-  const authCtx = useContext(AuthContext)
   const [verifications, setVerifications] = useState<ClusterVerification[]>([])
   const [phase, setPhase] = useState<'verifying' | 'review' | 'adopting' | 'done'>('verifying')
-  const [autoMerge, setAutoMerge] = useState(false)
   const [adoptResults, setAdoptResults] = useState<AdoptResult[]>([])
   const [adoptError, setAdoptError] = useState<string | null>(null)
-
-  const isAutoMergeDisabled = authCtx?.role === 'operator' || authCtx?.role === 'viewer'
 
   // Initialize verifications when dialog opens
   useEffect(() => {
@@ -63,7 +58,6 @@ export function AdoptClustersDialog({
     setPhase('verifying')
     setAdoptResults([])
     setAdoptError(null)
-    setAutoMerge(false)
   }, [open, clusters])
 
   // Run verifications sequentially when phase is 'verifying'
@@ -172,9 +166,9 @@ export function AdoptClustersDialog({
     setPhase('adopting')
     setAdoptError(null)
     try {
+      // Let the global GitOps auto-merge setting decide — no per-flow override.
       const response = await adoptClusters({
         clusters: names,
-        auto_merge: autoMerge,
       })
       setAdoptResults(response.results)
       setPhase('done')
@@ -183,7 +177,7 @@ export function AdoptClustersDialog({
       setAdoptError(err instanceof Error ? err.message : 'Adoption failed')
       setPhase('review')
     }
-  }, [selectedClusters, autoMerge, onSuccess])
+  }, [selectedClusters, onSuccess])
 
   const handleClose = useCallback(() => {
     if (phase === 'adopting') return // prevent closing during adoption
@@ -302,27 +296,15 @@ export function AdoptClustersDialog({
             </div>
           )}
 
-          {/* Auto-merge option */}
+          {/* Auto-merge is now a global setting — no per-flow checkbox. */}
           {(phase === 'review') && (
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                id="adopt-auto-merge"
-                checked={autoMerge}
-                disabled={isAutoMergeDisabled}
-                onChange={(e) => setAutoMerge(e.target.checked)}
-                className="rounded border-[#5a9dd0] dark:border-gray-600 disabled:opacity-50"
-              />
-              <label
-                htmlFor="adopt-auto-merge"
-                className={`text-sm font-medium ${isAutoMergeDisabled ? 'text-[#5a8aaa] dark:text-gray-500' : 'text-[#0a3a5a] dark:text-gray-300'}`}
-              >
-                Merge PR automatically
-              </label>
-              {isAutoMergeDisabled && (
-                <span className="text-xs text-[#5a8aaa] dark:text-gray-500">(admin only)</span>
-              )}
-            </div>
+            <p className="text-xs text-[#5a8aaa] dark:text-gray-500">
+              Auto-merge follows your{' '}
+              <a href="/settings?section=gitops" className="underline hover:text-[#0a2a4a] dark:hover:text-gray-300">
+                global GitOps setting
+              </a>
+              .
+            </p>
           )}
 
           {/* Adoption error */}

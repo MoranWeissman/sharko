@@ -183,14 +183,16 @@ describe('ClustersOverview — V125-1.4 dry-run null safety + tooltips', () => {
     expect(title!.toLowerCase()).toContain('managed-clusters');
   });
 
-  it('Auto-merge checkbox carries a tooltip explaining when the PR auto-merges vs waits for review', async () => {
+  // V2-cleanup-40: per-flow auto-merge checkbox is gone. The dialog shows a
+  // muted hint linking to the global GitOps setting instead.
+  it('Shows "global GitOps setting" hint instead of auto-merge checkbox', async () => {
     renderView();
     await openAddDialog();
 
-    const checkbox = screen.getByRole('checkbox', { name: /merge pr automatically/i });
-    const title = checkbox.getAttribute('title');
-    expect(title).toBeTruthy();
-    expect(title!.toLowerCase()).toMatch(/auto-merge|auto merges/);
+    // No auto-merge checkbox.
+    expect(screen.queryByRole('checkbox', { name: /merge pr automatically/i })).not.toBeInTheDocument();
+    // Muted hint is visible.
+    expect(screen.getByText(/global GitOps setting/i)).toBeInTheDocument();
   });
 
   it('Scan button (discovery mode) carries a tooltip explaining what it does', async () => {

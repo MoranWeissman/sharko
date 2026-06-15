@@ -36,12 +36,10 @@ import { RichMarkdown } from '@/components/RichMarkdown'
 import { VersionPicker } from '@/components/VersionPicker'
 import { showToast } from '@/components/ToastNotification'
 import {
-  AutoMergeToggle,
   DryRunPreview,
   SubmitErrorBanner,
   SubmitPhaseBanner,
   SubmitResultBanner,
-  useAutoMergeGate,
   type SubmitPhase,
 } from '@/components/AddAddonFlow'
 
@@ -134,12 +132,7 @@ export function MarketplaceAddonDetail({
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [submitResult, setSubmitResult] = useState<AddAddonResponse | null>(null)
 
-  // ─── Auto-merge toggle (admin-gated, mirrors the register/init dialogs) ───
   const navigate = useNavigate()
-  const [autoMerge, setAutoMerge] = useState(false)
-  // Shared admin-gate (AddAddonFlow): only admins may flip auto-merge;
-  // operators/viewers always open a PR for review.
-  const { isAutoMergeDisabled, autoMergeValue } = useAutoMergeGate(autoMerge)
 
   // ─── Preview (dry-run) state ─────────────────────────────────────────────
   // Calling addAddon with dry_run:true returns the files it WOULD write with
@@ -478,10 +471,7 @@ export function MarketplaceAddonDetail({
       source: (source === 'curated' ? 'marketplace' : 'artifacthub') as
         | 'marketplace'
         | 'artifacthub',
-      // nil-equivalent fallback: admins send their choice; non-admins always
-      // open a PR (the toggle is disabled for them). Sending false here keeps
-      // the manual-review default for operators/viewers.
-      auto_merge: autoMergeValue,
+      // auto_merge omitted — falls back to the global GitOps setting.
       dry_run: dryRun,
     }
   }
@@ -811,16 +801,15 @@ export function MarketplaceAddonDetail({
               />
             </Field>
 
-            {/* Auto-merge toggle — shared admin-gated control (AddAddonFlow),
-              * identical to the register/init dialogs and the catalog
-              * "Register addon" dialog. */}
+            {/* Auto-merge is now a global setting — no per-flow checkbox. */}
             {!submitResult && (
-              <AutoMergeToggle
-                id="mp-add-auto-merge"
-                checked={!isAutoMergeDisabled && autoMerge}
-                disabled={isAutoMergeDisabled}
-                onChange={setAutoMerge}
-              />
+              <p className="text-xs text-[#5a8aaa] dark:text-gray-500">
+                Auto-merge follows your{' '}
+                <a href="/settings?section=gitops" className="underline hover:text-[#0a2a4a] dark:hover:text-gray-300">
+                  global GitOps setting
+                </a>
+                .
+              </p>
             )}
 
             {/* Dry-run preview panel (shared AddAddonFlow render). Shows the
@@ -829,9 +818,8 @@ export function MarketplaceAddonDetail({
               <DryRunPreview result={dryRunResult} />
             )}
 
-            {/* Git progress — coarse branch → commit → PR → merge phase
-              * (shared AddAddonFlow render). */}
-            <SubmitPhaseBanner phase={submitPhase} />
+            {/* PR lifecycle — init-style step list from submitting to terminal. */}
+            <SubmitPhaseBanner phase={submitPhase} result={submitResult} />
 
             {(inCatalog || duplicateInfo) && !submitResult && (
               <div
@@ -865,7 +853,10 @@ export function MarketplaceAddonDetail({
             {submitResult?.attribution_warning === 'no_per_user_pat' &&
               hasPersonalToken !== false && <AttributionNudge inline />}
 
-            {submitResult && prURL && (
+            {/* SubmitResultBanner is now redundant when SubmitPhaseBanner
+              * receives result — kept as a defensive fallback for the no-prURL
+              * edge case (submitResult with no PR link at all). */}
+            {submitResult && prURL && submitPhase === 'idle' && (
               <SubmitResultBanner result={submitResult} />
             )}
 

@@ -1,10 +1,8 @@
-import { useContext } from 'react'
 import { AlertCircle } from 'lucide-react'
 import type { DryRunResult } from '@/services/models'
 import type { AddAddonResponse } from '@/services/api'
-import { AuthContext } from '@/hooks/useAuth'
 import {
-  PRProgressBanner,
+  PRLifecycleProgress,
   PRResultBanner,
   type PRPhase,
 } from '@/components/PRFeedback'
@@ -42,78 +40,6 @@ import {
 
 /** The coarse submit phase shared by both add-addon callers. */
 export type SubmitPhase = PRPhase
-
-/**
- * useAutoMergeGate — the single source of truth for the admin-gated
- * auto-merge decision, mirroring the register/init/remove dialogs.
- *
- * Only admins may flip auto-merge; operators and viewers always open a PR
- * for human review (the toggle is disabled for them). `autoMergeValue`
- * resolves the choice to the boolean to send on the addAddon call: admins
- * send their toggle, everyone else sends false (manual review).
- */
-export function useAutoMergeGate(autoMerge: boolean): {
-  isAutoMergeDisabled: boolean
-  autoMergeValue: boolean
-} {
-  const authCtx = useContext(AuthContext)
-  const isAutoMergeDisabled =
-    authCtx?.role === 'operator' || authCtx?.role === 'viewer'
-  return {
-    isAutoMergeDisabled,
-    autoMergeValue: isAutoMergeDisabled ? false : autoMerge,
-  }
-}
-
-export interface AutoMergeToggleProps {
-  /** Stable DOM id for the checkbox/label pair. */
-  id: string
-  checked: boolean
-  disabled: boolean
-  onChange: (next: boolean) => void
-}
-
-/**
- * AutoMergeToggle — the admin-gated "Merge PR automatically" checkbox. Same
- * copy and admin-only hint the Marketplace screen and register/init dialogs
- * use. When checked (admins only) the catalog PR auto-merges as soon as
- * required checks pass; otherwise it's left open for review.
- */
-export function AutoMergeToggle({
-  id,
-  checked,
-  disabled,
-  onChange,
-}: AutoMergeToggleProps) {
-  const title = disabled
-    ? 'Admin-only. When checked, the catalog PR auto-merges as soon as required checks pass; otherwise the PR is left open for human review.'
-    : 'When checked, the catalog PR auto-merges as soon as required checks pass. Uncheck to leave the PR open for review before the addon is added.'
-  return (
-    <div className="flex items-center gap-2">
-      <input
-        type="checkbox"
-        id={id}
-        checked={checked}
-        disabled={disabled}
-        onChange={(e) => onChange(e.target.checked)}
-        title={title}
-        className="rounded border-[#5a9dd0] disabled:opacity-50 dark:border-gray-600"
-      />
-      <label
-        htmlFor={id}
-        title={title}
-        className={`text-sm font-medium ${disabled ? 'text-[#5a8aaa] dark:text-gray-500' : 'text-[#0a3a5a] dark:text-gray-300'}`}
-      >
-        Merge PR automatically
-      </label>
-      {disabled && (
-        <span className="text-xs text-[#5a8aaa] dark:text-gray-500">
-          (admin only)
-        </span>
-      )}
-    </div>
-  )
-}
 
 export interface DryRunPreviewProps {
   result: DryRunResult
@@ -168,22 +94,46 @@ export function DryRunPreview({ result }: DryRunPreviewProps) {
 }
 
 export interface SubmitPhaseBannerProps {
+  /** The coarse phase from the parent's state machine. */
   phase: SubmitPhase
+  /**
+   * The PR result once the POST resolves. When present the banner upgrades
+   * to the init-style lifecycle step-list (PRLifecycleProgress) so the user
+   * sees PR created → merging → merged/open-for-review instead of a plain
+   * static "PR opened" message. While null (POST still in flight) a spinner
+   * is shown.
+   */
+  result?: AddAddonResponse | null
 }
 
 /**
- * SubmitPhaseBanner — coarse branch → commit → PR → merge progress shown
- * while the submit request is in flight and on its terminal result. A single
- * synchronous POST can't stream the individual git steps, so we surface a
- * spinner while submitting and the merged/opened outcome afterwards.
+ * SubmitPhaseBanner — shows an init-style PR lifecycle progress when `result`
+ * is available, otherwise falls back to a spinner while the POST is in flight.
+ * The lifecycle window polls `refreshPR` automatically (bounded ~2 min) when
+ * the PR is not yet merged, so the user sees it move to "Merged ✓" without
+ * any manual refresh.
  */
-export function SubmitPhaseBanner({ phase }: SubmitPhaseBannerProps) {
+export function SubmitPhaseBanner({ phase, result }: SubmitPhaseBannerProps) {
+  if (phase === 'idle') return null
+  if (result) {
+    return (
+      <PRLifecycleProgress
+        result={result}
+        autoMergeExpected={phase === 'merged'}
+        mergedLabel="PR merged — addon added to your catalog"
+        openLabel="PR open for review — merge it to catalog the addon"
+      />
+    )
+  }
+  // POST still in flight — show a simple spinner row.
   return (
-    <PRProgressBanner
-      phase={phase}
-      mergedMessage="PR merged — addon added to your catalog"
-      openedMessage="PR opened — merge it to apply"
-    />
+    <div
+      role="status"
+      className="flex items-center gap-2 rounded-md ring-2 ring-[#6aade0] bg-[#f0f7ff] p-3 text-sm text-[#0a3a5a] dark:ring-gray-700 dark:bg-gray-900 dark:text-gray-300"
+    >
+      <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-teal-500 border-t-transparent" aria-hidden="true" />
+      <span>Creating branch, committing, opening PR…</span>
+    </div>
   )
 }
 
@@ -197,6 +147,10 @@ export interface SubmitResultBannerProps {
  * under `result` when an attribution warning fired) so an open PR is never
  * presented as already-cataloged. Returns null when there's no PR URL to
  * link — the caller surfaces a defensive fallback in that case.
+ *
+ * Note: when flows use SubmitPhaseBanner with `result=` this banner becomes
+ * redundant (the lifecycle step already shows the terminal state). It is kept
+ * so existing callers that render both are not broken.
  */
 export function SubmitResultBanner({ result }: SubmitResultBannerProps) {
   return (

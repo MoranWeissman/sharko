@@ -1,11 +1,18 @@
-import { describe, it, expect } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen, act } from '@testing-library/react'
 import {
   PRLink,
   PRResultBanner,
   PRProgressBanner,
+  PRLifecycleProgress,
   extractPR,
 } from '@/components/PRFeedback'
+
+// Mock the refreshPR api call used by PRLifecycleProgress polling.
+const mockRefreshPR = vi.fn()
+vi.mock('@/services/api', () => ({
+  refreshPR: (...args: unknown[]) => mockRefreshPR(...args),
+}))
 
 describe('extractPR', () => {
   it('reads top-level pr fields', () => {
@@ -114,5 +121,111 @@ describe('PRProgressBanner', () => {
   it('renders the opened terminal message', () => {
     render(<PRProgressBanner phase="opened" openedMessage="PR is open" />)
     expect(screen.getByText('PR is open')).toBeInTheDocument()
+  })
+})
+
+describe('PRLifecycleProgress', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('shows "Creating PR…" while result is null (POST in flight)', () => {
+    render(
+      <PRLifecycleProgress result={null} autoMergeExpected={false} />,
+    )
+    expect(screen.getByText('Creating PR…')).toBeInTheDocument()
+  })
+
+  it('shows all 3 steps; step 2 has PR link when result has merged:true', () => {
+    render(
+      <PRLifecycleProgress
+        result={{ pr_url: 'https://gh/pull/5', pr_id: 5, merged: true }}
+        autoMergeExpected={true}
+        mergedLabel="PR merged — done"
+        openLabel="PR open"
+      />,
+    )
+    // Step 1 done.
+    expect(screen.getByText('Creating PR…')).toBeInTheDocument()
+    // Step 2 shows the PR link.
+    const link = screen.getByRole('link', { name: /View PR #5 on GitHub/i })
+    expect(link).toHaveAttribute('href', 'https://gh/pull/5')
+    // Step 3 shows merged label — no polling needed because result.merged is true.
+    expect(screen.getByText('PR merged — done')).toBeInTheDocument()
+    expect(mockRefreshPR).not.toHaveBeenCalled()
+  })
+
+  it('shows "open for review" label immediately when autoMergeExpected=false', () => {
+    render(
+      <PRLifecycleProgress
+        result={{ pr_url: 'https://gh/pull/6', pr_id: 6, merged: false }}
+        autoMergeExpected={false}
+        openLabel="Open for review"
+      />,
+    )
+    expect(screen.getByText('Open for review')).toBeInTheDocument()
+    // No polling started.
+    expect(mockRefreshPR).not.toHaveBeenCalled()
+  })
+
+  it('polls refreshPR and transitions to merged when status=merged', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    mockRefreshPR.mockResolvedValue({ status: 'merged' })
+
+    render(
+      <PRLifecycleProgress
+        result={{ pr_url: 'https://gh/pull/7', pr_id: 7, merged: false }}
+        autoMergeExpected={true}
+        mergedLabel="All merged!"
+        openLabel="Open"
+      />,
+    )
+
+    // Advance one poll interval (7s) and drain the event loop.
+    await act(() => vi.advanceTimersByTimeAsync(7001))
+
+    expect(mockRefreshPR).toHaveBeenCalledWith(7)
+    expect(screen.getByText('All merged!')).toBeInTheDocument()
+    vi.useRealTimers()
+  })
+
+  it('stops polling and shows open label after timeout (MAX_POLLS reached)', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    mockRefreshPR.mockResolvedValue({ status: 'open' })
+
+    render(
+      <PRLifecycleProgress
+        result={{ pr_url: 'https://gh/pull/8', pr_id: 8, merged: false }}
+        autoMergeExpected={true}
+        openLabel="Timed out — open"
+      />,
+    )
+
+    // Advance past MAX_POLLS (18) × 7s = 126s.
+    await act(() => vi.advanceTimersByTimeAsync(130_000))
+
+    expect(screen.getByText('Timed out — open')).toBeInTheDocument()
+    // Capped at MAX_POLLS=18.
+    expect(mockRefreshPR.mock.calls.length).toBeLessThanOrEqual(18)
+    vi.useRealTimers()
+  })
+
+  it('stops polling immediately when status=closed (PR closed without merge)', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    mockRefreshPR.mockResolvedValue({ status: 'closed' })
+
+    render(
+      <PRLifecycleProgress
+        result={{ pr_url: 'https://gh/pull/9', pr_id: 9, merged: false }}
+        autoMergeExpected={true}
+        openLabel="Closed"
+      />,
+    )
+
+    await act(() => vi.advanceTimersByTimeAsync(7001))
+
+    expect(screen.getByText('Closed')).toBeInTheDocument()
+    expect(mockRefreshPR).toHaveBeenCalledTimes(1)
+    vi.useRealTimers()
   })
 })

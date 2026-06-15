@@ -46,7 +46,6 @@ interface ConnectionFormData {
   gitops_base_branch: string
   gitops_branch_prefix: string
   gitops_commit_prefix: string
-  gitops_pr_auto_merge: boolean
   gitops_host_cluster_name: string
   gitops_default_addons: string
 }
@@ -63,7 +62,6 @@ const emptyForm: ConnectionFormData = {
   gitops_base_branch: 'main',
   gitops_branch_prefix: 'sharko/',
   gitops_commit_prefix: 'sharko:',
-  gitops_pr_auto_merge: false,
   gitops_host_cluster_name: '',
   gitops_default_addons: '',
 }
@@ -92,7 +90,6 @@ function buildPayload(form: ConnectionFormData, name?: string) {
       base_branch: form.gitops_base_branch || 'main',
       branch_prefix: form.gitops_branch_prefix || 'sharko/',
       commit_prefix: form.gitops_commit_prefix || 'sharko:',
-      pr_auto_merge: form.gitops_pr_auto_merge,
       host_cluster_name: form.gitops_host_cluster_name || undefined,
       default_addons: form.gitops_default_addons || undefined,
     },
@@ -122,7 +119,6 @@ function formFromConnection(conn: ConnectionResponse): ConnectionFormData {
     gitops_base_branch: 'main',
     gitops_branch_prefix: 'sharko/',
     gitops_commit_prefix: 'sharko:',
-    gitops_pr_auto_merge: false,
     gitops_host_cluster_name: '',
     gitops_default_addons: '',
   }
@@ -169,7 +165,6 @@ function ConnectionFormFields({
     form.gitops_base_branch !== 'main' ||
     form.gitops_branch_prefix !== 'sharko/' ||
     form.gitops_commit_prefix !== 'sharko:' ||
-    form.gitops_pr_auto_merge ||
     !!form.gitops_host_cluster_name ||
     !!form.gitops_default_addons
 
@@ -361,24 +356,6 @@ function ConnectionFormFields({
                   />
                 </div>
               </div>
-            </div>
-
-            {/* Automation group */}
-            <div>
-              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-[#3a6a8a] dark:text-gray-500">Automation</p>
-              <label className="flex items-center gap-3 cursor-pointer">
-                <div className="relative">
-                  <input
-                    type="checkbox"
-                    className="sr-only peer"
-                    checked={form.gitops_pr_auto_merge}
-                    onChange={(e) => onChange({ gitops_pr_auto_merge: e.target.checked })}
-                  />
-                  <div className="h-5 w-9 rounded-full border border-[#5a9dd0] bg-[#f0f7ff] peer-checked:bg-teal-500 peer-checked:border-teal-500 transition-colors dark:border-gray-600 dark:bg-gray-700" />
-                  <div className="absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform peer-checked:translate-x-4" />
-                </div>
-                <span className="text-sm font-medium text-[#0a3a5a] dark:text-gray-300">Auto-merge PRs</span>
-              </label>
             </div>
 
             {/* Cluster group */}

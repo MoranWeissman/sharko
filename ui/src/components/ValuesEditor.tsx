@@ -13,7 +13,7 @@ import {
 } from 'lucide-react'
 import { AttributionNudge } from '@/components/AttributionNudge'
 import { showToast } from '@/components/ToastNotification'
-import { PRResultBanner } from '@/components/PRFeedback'
+import { PRLifecycleProgress } from '@/components/PRFeedback'
 import type { PreviewMergeResponse, ValuesEditResult } from '@/services/models'
 
 /**
@@ -549,16 +549,14 @@ export function ValuesEditor({
         </div>
       )}
 
-      {/* PR banner — neutral language; auto-merge may have already fired so
-          we don't claim "opened for review". "merged" is shown when the
-          response confirms it; otherwise just "opened". Shared PRResultBanner
-          renders the clickable "View PR #N" link (V2-cleanup-24). */}
+      {/* PR lifecycle — init-style step list from creating to terminal. */}
       {responsePR && (
         <div className="mt-4">
-          <PRResultBanner
+          <PRLifecycleProgress
             result={lastResult}
-            mergedMessage="PR merged — values applied"
-            openMessage="PR opened — values apply once it merges"
+            autoMergeExpected={(lastResult?.merged ?? lastResult?.result?.merged) === true}
+            mergedLabel="PR merged — values applied"
+            openLabel="PR open for review — values apply once it merges"
           />
         </div>
       )}

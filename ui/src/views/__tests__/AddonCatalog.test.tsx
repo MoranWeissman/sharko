@@ -492,7 +492,9 @@ describe('AddonCatalog — add-addon parity flow (V2-cleanup-15.1)', () => {
     )
   }
 
-  it('renders the admin-gated auto-merge toggle and sends auto_merge on submit', async () => {
+  // V2-cleanup-40: per-flow auto-merge toggle removed. The global GitOps
+  // setting governs; no auto_merge is sent on the addAddon call.
+  it('does NOT render the auto-merge toggle and does NOT send auto_merge', async () => {
     vi.mocked(addAddon).mockResolvedValue({
       pr_id: 7,
       pr_url: 'https://gh/pr/7',
@@ -501,13 +503,15 @@ describe('AddonCatalog — add-addon parity flow (V2-cleanup-15.1)', () => {
     const dialog = await renderAndOpenDialog()
     await fillSubmittableForm(dialog)
 
-    const toggle = within(dialog).getByLabelText(
-      /merge pr automatically/i,
-    ) as HTMLInputElement
-    expect(toggle).toBeInTheDocument()
-    expect(toggle).not.toBeDisabled() // admin
-    fireEvent.click(toggle)
-    expect(toggle.checked).toBe(true)
+    // The toggle must be gone.
+    expect(
+      within(dialog).queryByLabelText(/merge pr automatically/i),
+    ).not.toBeInTheDocument()
+
+    // Shows the global-setting hint text.
+    expect(
+      within(dialog).getByText(/global GitOps setting/i),
+    ).toBeInTheDocument()
 
     fireEvent.click(
       within(dialog).getByRole('button', { name: /register addon/i }),
@@ -515,7 +519,8 @@ describe('AddonCatalog — add-addon parity flow (V2-cleanup-15.1)', () => {
 
     await waitFor(() => expect(addAddon).toHaveBeenCalled())
     const arg = vi.mocked(addAddon).mock.calls[0][0]
-    expect(arg.auto_merge).toBe(true)
+    // auto_merge must NOT be present on the call.
+    expect(arg.auto_merge).toBeUndefined()
     expect(arg.dry_run).toBe(false)
   })
 
@@ -589,16 +594,18 @@ describe('AddonCatalog — add-addon parity flow (V2-cleanup-15.1)', () => {
       within(dialog).getByRole('button', { name: /register addon/i }),
     )
 
-    // Open PR → success banner with a clickable PR link to pr_url.
+    // Open PR → lifecycle progress window with a clickable PR link to pr_url.
     const prLink = await within(dialog).findByRole('link', {
       name: /view pr #9 on github/i,
     })
     expect(prLink).toHaveAttribute('href', 'https://gh/pr/9')
-    // The honest "merge it to apply" copy — NOT presented as cataloged.
-    // (Shown by both the phase banner and the result banner.)
-    expect(
-      within(dialog).getAllByText(/merge it to apply/i).length,
-    ).toBeGreaterThan(0)
+    // The honest "open for review" copy — NOT presented as cataloged.
+    // V2-cleanup-40: PRLifecycleProgress shows the openLabel.
+    await waitFor(() => {
+      expect(
+        within(dialog).getByText(/PR open for review/i),
+      ).toBeInTheDocument()
+    })
     // The catalog was NOT refetched while the PR is still open.
     expect(vi.mocked(api.getAddonCatalog).mock.calls.length).toBe(
       catalogCallsBefore,

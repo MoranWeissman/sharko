@@ -97,24 +97,24 @@ describe('MarketplaceAddonDetail — V2-cleanup-14 add-addon flow', () => {
     sessionStorage.clear()
   })
 
-  it('renders the admin-gated auto-merge toggle and sends auto_merge on submit', async () => {
+  // V2-cleanup-40: per-flow auto-merge toggle removed. Global GitOps setting governs.
+  it('does NOT render the auto-merge toggle and does NOT send auto_merge', async () => {
     mockAddAddon.mockResolvedValue({ pr_id: 8, pr_url: 'https://gh/pr/8', merged: false })
     renderDetail()
     await waitForActionPanel()
 
-    const toggle = screen.getByLabelText(/merge pr automatically/i) as HTMLInputElement
-    expect(toggle).toBeInTheDocument()
-    // Admin → not disabled.
-    expect(toggle).not.toBeDisabled()
+    // Toggle must be gone.
+    expect(screen.queryByLabelText(/merge pr automatically/i)).not.toBeInTheDocument()
 
-    fireEvent.click(toggle)
-    expect(toggle.checked).toBe(true)
+    // Shows the global-setting hint text.
+    expect(screen.getByText(/global GitOps setting/i)).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: /add to catalog/i }))
 
     await waitFor(() => expect(mockAddAddon).toHaveBeenCalled())
     const arg = mockAddAddon.mock.calls[0][0]
-    expect(arg.auto_merge).toBe(true)
+    // auto_merge must NOT be present on the call.
+    expect(arg.auto_merge).toBeUndefined()
     expect(arg.dry_run).toBe(false)
   })
 
