@@ -117,6 +117,8 @@ nav:
   - API Reference:
     - Overview: api/overview.md
     - Endpoints: api/endpoints.md
+    - 'API Walkthrough (do anything the UI does)': api/api-walkthrough.md
+    - 'Full API Reference (OpenAPI)': api/reference.md
   - Architecture:
     - Overview: architecture/overview.md
     - Repository Structure: architecture/repo-structure.md
@@ -151,6 +153,13 @@ markdown_extensions:
   - md_in_html
   - toc:
       permalink: true
+
+# Build hooks (pure-stdlib, no pip dependency). copy_openapi copies the
+# swag-generated docs/swagger/swagger.json (which lives outside docs_dir) into
+# the built site so api/reference.md can render it with Redoc — always in sync,
+# no committed duplicate.
+hooks:
+  - docs/hooks/copy_openapi.py
 
 plugins:
   - search
