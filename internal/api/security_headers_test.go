@@ -40,6 +40,66 @@ func TestSecurityHeadersPresent(t *testing.T) {
 	}
 }
 
+// TestSwaggerCSPAllowsInlineScript verifies that /swagger/-prefixed paths receive
+// a relaxed CSP whose script-src permits 'unsafe-inline' (the swagger-ui-dist page
+// bootstraps via an inline <script>), while normal API paths keep the strict
+// script-src 'self' with no inline. Both branches must still carry the other
+// security headers unchanged (V2-cleanup-46).
+func TestSwaggerCSPAllowsInlineScript(t *testing.T) {
+	srv := newTestServer()
+	router := NewRouter(srv, nil)
+
+	// scriptSrc extracts the script-src directive value from a full CSP string.
+	scriptSrc := func(csp string) string {
+		for _, d := range strings.Split(csp, ";") {
+			d = strings.TrimSpace(d)
+			if strings.HasPrefix(d, "script-src ") {
+				return d
+			}
+		}
+		return ""
+	}
+
+	t.Run("swagger path allows inline script", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/swagger/index.html", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		csp := w.Header().Get("Content-Security-Policy")
+		sd := scriptSrc(csp)
+		if !strings.Contains(sd, "'unsafe-inline'") {
+			t.Errorf("swagger CSP script-src should include 'unsafe-inline'; got: %s", sd)
+		}
+		if got := w.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+			t.Errorf("X-Content-Type-Options: got %q, want %q", got, "nosniff")
+		}
+		if got := w.Header().Get("X-Frame-Options"); got != "DENY" {
+			t.Errorf("X-Frame-Options: got %q, want %q", got, "DENY")
+		}
+	})
+
+	t.Run("api path keeps strict script-src self", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/health", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		csp := w.Header().Get("Content-Security-Policy")
+		sd := scriptSrc(csp)
+		if sd != "script-src 'self'" {
+			t.Errorf("api CSP script-src should be exactly \"script-src 'self'\"; got: %q", sd)
+		}
+		if strings.Contains(sd, "'unsafe-inline'") {
+			t.Errorf("api CSP script-src must NOT include 'unsafe-inline'; got: %s", sd)
+		}
+		if got := w.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+			t.Errorf("X-Content-Type-Options: got %q, want %q", got, "nosniff")
+		}
+		if got := w.Header().Get("X-Frame-Options"); got != "DENY" {
+			t.Errorf("X-Frame-Options: got %q, want %q", got, "DENY")
+		}
+	})
+}
+
 func TestHSTSPresentOverHTTPS(t *testing.T) {
 	srv := newTestServer()
 	router := NewRouter(srv, nil)

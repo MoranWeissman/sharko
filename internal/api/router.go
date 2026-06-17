@@ -1349,8 +1349,26 @@ func securityHeadersMiddleware(next http.Handler) http.Handler {
 		"base-uri 'self'; " +
 		"form-action 'self'"
 
+	// swaggerCSP is identical to csp except it allows inline scripts. The bundled
+	// swagger-ui-dist page bootstraps via an inline <script>, which the strict
+	// script-src 'self' policy blocks (blank page). This relaxed policy is sent
+	// ONLY for /swagger/-prefixed paths; every other route keeps the strict csp.
+	const swaggerCSP = "default-src 'self'; " +
+		"script-src 'self' 'unsafe-inline'; " +
+		"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
+		"img-src 'self' data:; " +
+		"font-src 'self' https://fonts.gstatic.com https://fonts.googleapis.com; " +
+		"connect-src 'self'; " +
+		"frame-ancestors 'none'; " +
+		"base-uri 'self'; " +
+		"form-action 'self'"
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Security-Policy", csp)
+		if strings.HasPrefix(r.URL.Path, "/swagger/") {
+			w.Header().Set("Content-Security-Policy", swaggerCSP)
+		} else {
+			w.Header().Set("Content-Security-Policy", csp)
+		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
