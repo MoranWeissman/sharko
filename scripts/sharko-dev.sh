@@ -13,6 +13,16 @@
 #   ./scripts/sharko-dev.sh help              # full subcommand list
 #   ./scripts/sharko-dev.sh <subcommand> --help
 #
+# CLUSTER TARGETING
+#   Every cluster-operating kubectl call runs against the kind cluster
+#   kind-${KIND_CLUSTER_NAME} via its OWN kubeconfig (fetched once per run with
+#   `kind get kubeconfig`). This means rebuild / install / status / creds /
+#   logs all work no matter which kubectl context you are currently on (e.g. an
+#   EKS context) — and the script NEVER runs `kubectl config use-context`, so
+#   your current kubectl context is left exactly as you had it.
+#   Override the target cluster with KIND_CLUSTER_NAME, or point at an explicit
+#   kubeconfig with SHARKO_KIND_KUBECONFIG (honored verbatim if already set).
+#
 # SOURCING MODEL
 #   Do NOT `source` this script. Use eval-via-pipe instead:
 #       eval "$(./scripts/sharko-dev.sh login --export)"
@@ -20,11 +30,16 @@
 #   The --export flag prints ONLY export lines so eval-via-pipe is clean.
 #
 # ENV VARS (override defaults)
-#   KIND_CLUSTER_NAME    default: sharko-e2e
-#   SHARKO_NAMESPACE     default: sharko
-#   SHARKO_LOCAL_PORT    default: 8080
-#   IMAGE_TAG            default: e2e
-#   SHARKO_DEV_PW_CACHE  default: ~/.sharko-dev-pw  (mode 0600)
+#   KIND_CLUSTER_NAME      default: sharko-e2e
+#   SHARKO_NAMESPACE       default: sharko
+#   SHARKO_LOCAL_PORT      default: 8080
+#   IMAGE_TAG              default: e2e
+#   SHARKO_DEV_PW_CACHE    default: ~/.sharko-dev-pw  (mode 0600)
+#   SHARKO_KIND_KUBECONFIG (advanced) path to a kubeconfig for the target kind
+#                          cluster. Leave unset and the script derives it from
+#                          `kind get kubeconfig --name ${KIND_CLUSTER_NAME}`.
+#                          If you set it, the script honors it verbatim and does
+#                          NOT regenerate or delete it.
 #
 
 # Deliberately NO `set -e` at top level. We use explicit error handling per
@@ -46,6 +61,28 @@ HOST="http://localhost:${SHARKO_LOCAL_PORT}"
 # Repo root — derived from script location so cwd doesn't matter.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+# ---- kind-cluster kubeconfig (context-independent targeting) ----
+# Every cluster-operating kubectl call goes through kctl(), which forces
+# KUBECONFIG to a kubeconfig that points ONLY at kind-${KIND_CLUSTER_NAME}.
+# This makes rebuild/install/status/creds/logs work regardless of the user's
+# current kubectl context (e.g. an EKS context) WITHOUT ever running
+# `kubectl config use-context` — the user's context is never mutated.
+#
+# SHARKO_KIND_KUBECONFIG holds the path. If the user already exported it we
+# honor it verbatim (and never delete it on exit). Otherwise ensure_kind_kubeconfig
+# fills it from `kind get kubeconfig` into a per-run temp file that we own and
+# clean up on exit.
+SHARKO_KIND_KUBECONFIG="${SHARKO_KIND_KUBECONFIG:-}"
+# Only paths WE create get auto-removed on exit; a user-provided override does not.
+_SHARKO_KIND_KC_OWNED=""
+
+# _sharko_dev_cleanup: EXIT trap — remove the kubeconfig temp file we created.
+# Safe to call multiple times; only touches files this process owns.
+_sharko_dev_cleanup() {
+    [ -n "${_SHARKO_KIND_KC_OWNED}" ] && rm -f "${_SHARKO_KIND_KC_OWNED}" 2>/dev/null
+}
+trap _sharko_dev_cleanup EXIT
 
 # ---- color (TTY-detected) ----
 if [ -t 1 ]; then
@@ -111,6 +148,51 @@ kind_cluster_exists() {
     kind get clusters 2>/dev/null | grep -qx "${KIND_CLUSTER_NAME}"
 }
 
+# ensure_kind_kubeconfig: make SHARKO_KIND_KUBECONFIG point at a kubeconfig for
+# kind-${KIND_CLUSTER_NAME}. Runs at most once per process (cached path).
+#
+#   - If the user already exported SHARKO_KIND_KUBECONFIG, honor it verbatim and
+#     return 0 (we do NOT regenerate or delete a user-provided path).
+#   - Otherwise run `kind get kubeconfig --name ${KIND_CLUSTER_NAME}` into a
+#     per-run temp file (mode 0600), cache its path, and mark it for cleanup.
+#   - If the kind cluster is missing, fail with the standard "not found" message.
+#
+# Every cluster-operating subcommand calls this before its first kctl() call.
+ensure_kind_kubeconfig() {
+    # Already resolved (user override or a previous call in this process)?
+    if [ -n "${SHARKO_KIND_KUBECONFIG}" ]; then
+        return 0
+    fi
+
+    if ! kind_cluster_exists; then
+        log_fail "kind cluster '${KIND_CLUSTER_NAME}' not found"
+        echo "       Run: ./scripts/sharko-dev.sh up" >&2
+        return 1
+    fi
+
+    local kc="${TMPDIR:-/tmp}/sharko-dev-kc-${KIND_CLUSTER_NAME}.$$.yaml"
+    if ! kind get kubeconfig --name "${KIND_CLUSTER_NAME}" > "$kc" 2>/dev/null; then
+        rm -f "$kc" 2>/dev/null
+        log_fail "kind cluster '${KIND_CLUSTER_NAME}' not found"
+        echo "       Run: ./scripts/sharko-dev.sh up" >&2
+        return 1
+    fi
+    chmod 600 "$kc" 2>/dev/null || true
+
+    SHARKO_KIND_KUBECONFIG="$kc"
+    export SHARKO_KIND_KUBECONFIG
+    _SHARKO_KIND_KC_OWNED="$kc"   # we created it → clean up on exit
+    return 0
+}
+
+# kctl: run kubectl against the target kind cluster's own kubeconfig, ignoring
+# whatever context the user is currently on. Requires ensure_kind_kubeconfig to
+# have run first (every cluster-operating subcommand calls it). Never switches
+# the user's current context.
+kctl() {
+    KUBECONFIG="${SHARKO_KIND_KUBECONFIG}" kubectl "$@"
+}
+
 # helm_release_exists: 0 if the sharko helm release is installed in the
 # configured namespace, 1 otherwise.
 helm_release_exists() {
@@ -132,8 +214,9 @@ kill_port_forward() {
 # start_port_forward: starts a backgrounded kubectl port-forward and waits up
 # to 30s for /api/v1/health to return 200. Returns 0 on success, 1 on failure.
 start_port_forward() {
+    ensure_kind_kubeconfig || return 1
     kill_port_forward
-    kubectl port-forward -n "${SHARKO_NAMESPACE}" svc/sharko \
+    kctl port-forward -n "${SHARKO_NAMESPACE}" svc/sharko \
         "${SHARKO_LOCAL_PORT}:${SHARKO_REMOTE_PORT}" >/tmp/sharko-dev-pf.log 2>&1 &
     disown 2>/dev/null || true
 
@@ -173,8 +256,9 @@ kill_argocd_port_forward() {
 # V124-12.2 — shared by argocd-token, port-forward, ready.
 start_argocd_port_forward() {
     local port="${1:-${ARGOCD_LOCAL_PORT}}"
+    ensure_kind_kubeconfig || return 1
     kill_argocd_port_forward
-    kubectl port-forward -n argocd svc/argocd-server "${port}:443" \
+    kctl port-forward -n argocd svc/argocd-server "${port}:443" \
         > /tmp/argocd-pf.log 2>&1 &
     disown 2>/dev/null || true
 
@@ -471,8 +555,9 @@ preflight_once() {
 
 # argocd_ready: 0 if argocd-server deployment exists and has >=1 available replica.
 argocd_ready() {
+    ensure_kind_kubeconfig || return 1
     local n
-    n=$(kubectl get deployment -n argocd argocd-server \
+    n=$(kctl get deployment -n argocd argocd-server \
         -o jsonpath='{.status.availableReplicas}' 2>/dev/null || true)
     [ -n "$n" ] && [ "$n" -ge 1 ] 2>/dev/null
 }
@@ -500,14 +585,14 @@ up_argocd_only() {
         return 0
     fi
     log_info "installing ArgoCD (server-side apply for large CRDs)"
-    kubectl create namespace argocd >/dev/null 2>&1 || true
-    if ! kubectl apply --server-side --force-conflicts -n argocd \
+    kctl create namespace argocd >/dev/null 2>&1 || true
+    if ! kctl apply --server-side --force-conflicts -n argocd \
          -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml; then
         log_fail "ArgoCD manifest apply failed"
         return 1
     fi
     log_info "waiting for argocd-server (timeout 180s)"
-    if ! kubectl wait --for=condition=available --timeout=180s deployment/argocd-server -n argocd; then
+    if ! kctl wait --for=condition=available --timeout=180s deployment/argocd-server -n argocd; then
         log_fail "argocd-server did not become available within 180s"
         return 1
     fi
@@ -596,12 +681,14 @@ EOF
 
     preflight_once || return $?
 
-    # 0. cluster present?
+    # 0. cluster present? (ensure_kind_kubeconfig also verifies this, but keep
+    #    the explicit check so the message order matches the original flow.)
     if ! kind_cluster_exists; then
         log_fail "kind cluster '${KIND_CLUSTER_NAME}' not found"
         echo "       Run: ./scripts/sharko-dev.sh up" >&2
         return 1
     fi
+    ensure_kind_kubeconfig || return 1
 
     # 1. docker daemon up?
     if ! docker info >/dev/null 2>&1; then
@@ -666,9 +753,9 @@ EOF
 
     # 6. rollout wait
     log_info "kubectl rollout status (timeout 120s)"
-    if ! kubectl rollout status -n "${SHARKO_NAMESPACE}" deployment/sharko --timeout=120s >/dev/null 2>&1; then
+    if ! kctl rollout status -n "${SHARKO_NAMESPACE}" deployment/sharko --timeout=120s >/dev/null 2>&1; then
         log_fail "deployment/sharko did not become ready within 120s"
-        kubectl logs -n "${SHARKO_NAMESPACE}" deployment/sharko --tail=20 >&2 || true
+        kctl logs -n "${SHARKO_NAMESPACE}" deployment/sharko --tail=20 >&2 || true
         return 1
     fi
     log_ok "deployment ready"
@@ -798,11 +885,13 @@ EOF
         "This will uninstall Sharko (helm release + secrets + cache) but keep the kind cluster. Continue?" \
         || return 1
 
+    ensure_kind_kubeconfig || return 1
+
     log_info "helm uninstall sharko -n ${SHARKO_NAMESPACE}"
     helm uninstall sharko -n "${SHARKO_NAMESPACE}" >/dev/null 2>&1 || true
 
     log_info "kubectl delete secrets (sharko, sharko-connections, sharko-initial-admin-secret)"
-    kubectl delete secret -n "${SHARKO_NAMESPACE}" \
+    kctl delete secret -n "${SHARKO_NAMESPACE}" \
         sharko sharko-connections sharko-initial-admin-secret \
         --ignore-not-found=true >/dev/null 2>&1 || true
 
@@ -856,11 +945,17 @@ EOF
         esac
     done
 
+    # Target the kind cluster's own kubeconfig for the secret/log lookups. If
+    # the cluster is gone, fall through to the cache-file path (Path 2) below,
+    # which does not need cluster access — so a missing cluster does not hard-fail
+    # creds when a cached password is still on disk.
+    ensure_kind_kubeconfig 2>/dev/null || true
+
     local pw=""
     local source=""
 
     # Path 1: V124-6.3 secret (best — persistent across rotations as of V124-7)
-    pw=$(kubectl get secret -n "${SHARKO_NAMESPACE}" sharko-initial-admin-secret \
+    pw=$(kctl get secret -n "${SHARKO_NAMESPACE}" sharko-initial-admin-secret \
         -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
     if [ -n "$pw" ]; then
         source="secret"
@@ -877,7 +972,7 @@ EOF
     # Path 3: current pod logs
     if [ -z "$pw" ]; then
         local raw
-        raw=$(kubectl logs -n "${SHARKO_NAMESPACE}" deployment/sharko 2>/dev/null \
+        raw=$(kctl logs -n "${SHARKO_NAMESPACE}" deployment/sharko 2>/dev/null \
             | grep "bootstrap admin generated" | head -1 || true)
         if [ -n "$raw" ]; then
             pw=$(extract_pw_from_log "$raw")
@@ -890,7 +985,7 @@ EOF
     # Path 4: previous pod logs
     if [ -z "$pw" ]; then
         local raw
-        raw=$(kubectl logs -n "${SHARKO_NAMESPACE}" deployment/sharko --previous 2>/dev/null \
+        raw=$(kctl logs -n "${SHARKO_NAMESPACE}" deployment/sharko --previous 2>/dev/null \
             | grep "bootstrap admin generated" | head -1 || true)
         if [ -n "$raw" ]; then
             pw=$(extract_pw_from_log "$raw")
@@ -1067,14 +1162,16 @@ EOF
         esac
     done
 
-    if ! kubectl get deployment -n "${SHARKO_NAMESPACE}" sharko >/dev/null 2>&1; then
+    ensure_kind_kubeconfig || return 1
+
+    if ! kctl get deployment -n "${SHARKO_NAMESPACE}" sharko >/dev/null 2>&1; then
         log_fail "deployment/sharko not found in namespace '${SHARKO_NAMESPACE}'"
         return 1
     fi
 
     log_info "running 'sharko reset-admin' in deployment/sharko"
     local raw
-    raw=$(kubectl exec -n "${SHARKO_NAMESPACE}" deployment/sharko -- \
+    raw=$(kctl exec -n "${SHARKO_NAMESPACE}" deployment/sharko -- \
         sharko reset-admin --namespace "${SHARKO_NAMESPACE}" --secret sharko 2>&1)
     local rc=$?
     if [ $rc -ne 0 ]; then
@@ -1110,7 +1207,7 @@ EOF
     # Give k8s a brief moment for the secret update to propagate.
     sleep 1
     local secret_pw
-    secret_pw=$(kubectl get secret -n "${SHARKO_NAMESPACE}" sharko-initial-admin-secret \
+    secret_pw=$(kctl get secret -n "${SHARKO_NAMESPACE}" sharko-initial-admin-secret \
         -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
 
     if [ -z "$secret_pw" ]; then
@@ -1219,7 +1316,14 @@ sharko-dev.sh status — show current dev-env state
 Reports: kind cluster, Sharko deployment, port-forward, /api/v1/health,
 admin password retrievability, current TOKEN validity, ArgoCD readiness.
 
-Exit code: 0 if all green, 1 if anything is broken.
+This command always targets the kind cluster kind-${KIND_CLUSTER_NAME} via
+its own kubeconfig, so it works no matter which kubectl context you are
+currently on — and it never changes your current context. Your current
+context is shown for information only; being on a different context (e.g.
+an EKS cluster) does NOT make status report an error.
+
+Exit code: 0 if the kind dev-env is healthy, 1 if a real dev-env piece is
+broken (cluster missing, Sharko down, port-forward dead, etc.).
 
 Usage: ./scripts/sharko-dev.sh status
 EOF
@@ -1233,16 +1337,22 @@ EOF
     echo "${BOLD}Sharko dev environment status${RESET}"
     echo "=============================="
 
-    # Cluster
+    # Cluster — the script always targets kind-${KIND_CLUSTER_NAME} via its own
+    # kubeconfig, independent of the user's current context. Being on a
+    # different context is NOT an error; we only fail if the kind cluster is
+    # actually missing or unreachable.
     if kind_cluster_exists; then
-        local current_ctx
-        current_ctx=$(kubectl config current-context 2>/dev/null || echo "?")
-        local expected_ctx="kind-${KIND_CLUSTER_NAME}"
-        if [ "$current_ctx" = "$expected_ctx" ]; then
-            printf '  cluster:        %skind-%s%s (current context)\n' "$GREEN" "${KIND_CLUSTER_NAME}" "$RESET"
+        if ensure_kind_kubeconfig 2>/dev/null \
+           && kctl get namespace "${SHARKO_NAMESPACE}" >/dev/null 2>&1; then
+            printf '  cluster:        %skind-%s%s (targeted via its own kubeconfig — reachable)\n' \
+                "$GREEN" "${KIND_CLUSTER_NAME}" "$RESET"
+        elif ensure_kind_kubeconfig 2>/dev/null && kctl version >/dev/null 2>&1; then
+            # API reachable but the sharko namespace isn't there yet (fresh cluster).
+            printf '  cluster:        %skind-%s%s (targeted via its own kubeconfig — reachable, ns=%s not present yet)\n' \
+                "$GREEN" "${KIND_CLUSTER_NAME}" "$RESET" "${SHARKO_NAMESPACE}"
         else
-            printf '  cluster:        %skind-%s%s (current ctx is %s — kubectl will not target sharko)\n' \
-                "$YELLOW" "${KIND_CLUSTER_NAME}" "$RESET" "$current_ctx"
+            printf '  cluster:        %skind-%s exists but is not reachable (control-plane may be wedged)%s\n' \
+                "$RED" "${KIND_CLUSTER_NAME}" "$RESET"
             exit_rc=1
         fi
     else
@@ -1250,16 +1360,23 @@ EOF
         exit_rc=1
     fi
 
+    # Current kubectl context — INFO only. The script does not use this for its
+    # own kubectl calls and never changes it.
+    local current_ctx
+    current_ctx=$(kubectl config current-context 2>/dev/null || echo "?")
+    printf '  your context:   %s%s%s (info only — unaffected; script targets kind-%s)\n' \
+        "$BLUE" "$current_ctx" "$RESET" "${KIND_CLUSTER_NAME}"
+
     # Sharko deployment
     local avail
-    avail=$(kubectl get deployment -n "${SHARKO_NAMESPACE}" sharko \
+    avail=$(kctl get deployment -n "${SHARKO_NAMESPACE}" sharko \
         -o jsonpath='{.status.availableReplicas}' 2>/dev/null || echo "")
     local desired
-    desired=$(kubectl get deployment -n "${SHARKO_NAMESPACE}" sharko \
+    desired=$(kctl get deployment -n "${SHARKO_NAMESPACE}" sharko \
         -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "")
     if [ -n "$avail" ] && [ "$avail" -ge 1 ] 2>/dev/null; then
         local pod
-        pod=$(kubectl get pod -n "${SHARKO_NAMESPACE}" -l app.kubernetes.io/name=sharko \
+        pod=$(kctl get pod -n "${SHARKO_NAMESPACE}" -l app.kubernetes.io/name=sharko \
             -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "?")
         printf '  Sharko:         %s%s %s/%s ready%s\n' "$GREEN" "$pod" "$avail" "${desired:-?}" "$RESET"
     else
@@ -1291,16 +1408,16 @@ EOF
 
     # Admin password retrievability — repeat the fallback chain logic
     local pw_path=""
-    if kubectl get secret -n "${SHARKO_NAMESPACE}" sharko-initial-admin-secret >/dev/null 2>&1 \
-       && [ -n "$(kubectl get secret -n "${SHARKO_NAMESPACE}" sharko-initial-admin-secret \
+    if kctl get secret -n "${SHARKO_NAMESPACE}" sharko-initial-admin-secret >/dev/null 2>&1 \
+       && [ -n "$(kctl get secret -n "${SHARKO_NAMESPACE}" sharko-initial-admin-secret \
             -o jsonpath='{.data.password}' 2>/dev/null)" ]; then
         pw_path="secret (V124-6.3)"
     elif [ -r "${SHARKO_DEV_PW_CACHE}" ] && [ -s "${SHARKO_DEV_PW_CACHE}" ]; then
         pw_path="cache (${SHARKO_DEV_PW_CACHE})"
-    elif kubectl logs -n "${SHARKO_NAMESPACE}" deployment/sharko 2>/dev/null \
+    elif kctl logs -n "${SHARKO_NAMESPACE}" deployment/sharko 2>/dev/null \
          | grep -q "bootstrap admin generated"; then
         pw_path="current pod logs"
-    elif kubectl logs -n "${SHARKO_NAMESPACE}" deployment/sharko --previous 2>/dev/null \
+    elif kctl logs -n "${SHARKO_NAMESPACE}" deployment/sharko --previous 2>/dev/null \
          | grep -q "bootstrap admin generated"; then
         pw_path="previous pod logs"
     fi
@@ -1331,7 +1448,7 @@ EOF
 
     # ArgoCD
     local argo_avail
-    argo_avail=$(kubectl get deployment -n argocd argocd-server \
+    argo_avail=$(kctl get deployment -n argocd argocd-server \
         -o jsonpath='{.status.availableReplicas}' 2>/dev/null || echo "")
     if [ -n "$argo_avail" ] && [ "$argo_avail" -ge 1 ] 2>/dev/null; then
         printf '  ArgoCD:         %sargocd-server %s/1 ready%s\n' "$GREEN" "$argo_avail" "$RESET"
@@ -1494,6 +1611,7 @@ EOF
         echo "       Run: ./scripts/sharko-dev.sh install" >&2
         return 1
     fi
+    ensure_kind_kubeconfig || return 1
 
     local chart="oci://ghcr.io/moranweissman/sharko/sharko"
 
@@ -1528,14 +1646,14 @@ EOF
     log_ok "helm upgrade complete"
 
     log_info "kubectl rollout restart deployment/sharko"
-    if ! kubectl rollout restart deployment/sharko -n "${SHARKO_NAMESPACE}" >/dev/null 2>&1; then
+    if ! kctl rollout restart deployment/sharko -n "${SHARKO_NAMESPACE}" >/dev/null 2>&1; then
         log_fail "rollout restart failed"
         return 1
     fi
     log_info "kubectl rollout status (timeout 90s)"
-    if ! kubectl rollout status deployment/sharko -n "${SHARKO_NAMESPACE}" --timeout=90s >/dev/null 2>&1; then
+    if ! kctl rollout status deployment/sharko -n "${SHARKO_NAMESPACE}" --timeout=90s >/dev/null 2>&1; then
         log_fail "deployment/sharko did not become ready within 90s"
-        kubectl logs -n "${SHARKO_NAMESPACE}" deployment/sharko --tail=20 >&2 || true
+        kctl logs -n "${SHARKO_NAMESPACE}" deployment/sharko --tail=20 >&2 || true
         return 1
     fi
     log_ok "rollout complete"
@@ -1570,7 +1688,7 @@ except Exception:
     # Print startup logs without health-check noise.
     echo
     log_info "recent startup logs:"
-    kubectl logs -n "${SHARKO_NAMESPACE}" -l app.kubernetes.io/name=sharko --since=30s 2>/dev/null \
+    kctl logs -n "${SHARKO_NAMESPACE}" -l app.kubernetes.io/name=sharko --since=30s 2>/dev/null \
         | grep -v "request completed" | head -20 || true
     echo
     log_ok "upgrade to v${version} complete"
@@ -1651,6 +1769,9 @@ EOF
         target_account="sharko"
     fi
 
+    # Target the kind cluster via its own kubeconfig (all kubectl below).
+    ensure_kind_kubeconfig || return 1
+
     # ---- 1. Port-forward up? ----
     # V124-12.2: delegate to shared helpers (argocd_pf_alive +
     # start_argocd_port_forward) so do_argocd_token, do_port_forward, and
@@ -1681,7 +1802,7 @@ EOF
     # right ConfigMap data field instead of trying to descend into 'accounts'.
     local cap_key_jp="${cap_key/./\\.}"
     local current_caps
-    current_caps=$(kubectl get configmap argocd-cm -n argocd \
+    current_caps=$(kctl get configmap argocd-cm -n argocd \
         -o "jsonpath={.data.${cap_key_jp}}" 2>/dev/null || true)
 
     local patched=0
@@ -1689,7 +1810,7 @@ EOF
         [ "$mode" = "default" ] && log_info "apiKey capability already enabled for account '${target_account}'"
     else
         [ "$mode" = "default" ] && log_info "patching argocd-cm: ${cap_key}=\"${desired_caps}\""
-        if ! kubectl patch configmap argocd-cm -n argocd --type merge \
+        if ! kctl patch configmap argocd-cm -n argocd --type merge \
              -p "{\"data\":{\"${cap_key}\":\"${desired_caps}\"}}" >/dev/null 2>&1; then
             log_fail "kubectl patch configmap argocd-cm failed"
             return 1
@@ -1717,7 +1838,7 @@ EOF
     # only if our line is not already present, then writing the merged
     # value back.
     local current_policy
-    current_policy=$(kubectl get configmap argocd-rbac-cm -n argocd \
+    current_policy=$(kctl get configmap argocd-rbac-cm -n argocd \
         -o jsonpath='{.data.policy\.csv}' 2>/dev/null || true)
 
     local account_rule="g, ${target_account}, role:admin"
@@ -1746,7 +1867,7 @@ print(json.dumps({"data": {"policy.csv": os.environ["NEW_POLICY"]}}))
             log_fail "failed to render argocd-rbac-cm patch JSON"
             return 1
         fi
-        if ! printf '%s' "$patch_json" | kubectl patch configmap argocd-rbac-cm \
+        if ! printf '%s' "$patch_json" | kctl patch configmap argocd-rbac-cm \
              -n argocd --type merge --patch-file=/dev/stdin >/dev/null 2>&1; then
             log_fail "kubectl patch configmap argocd-rbac-cm failed"
             return 1
@@ -1757,11 +1878,11 @@ print(json.dumps({"data": {"policy.csv": os.environ["NEW_POLICY"]}}))
     # ---- 4. Restart argocd-server (only if we patched argocd-cm) ----
     if [ "$patched" = "1" ]; then
         [ "$mode" = "default" ] && log_info "restarting argocd-server (apiKey capability change)"
-        if ! kubectl rollout restart -n argocd deployment/argocd-server >/dev/null 2>&1; then
+        if ! kctl rollout restart -n argocd deployment/argocd-server >/dev/null 2>&1; then
             log_fail "kubectl rollout restart deployment/argocd-server failed"
             return 1
         fi
-        if ! kubectl rollout status -n argocd deployment/argocd-server --timeout=90s >/dev/null 2>&1; then
+        if ! kctl rollout status -n argocd deployment/argocd-server --timeout=90s >/dev/null 2>&1; then
             log_fail "argocd-server rollout did not complete within 90s"
             return 1
         fi
@@ -1778,7 +1899,7 @@ print(json.dumps({"data": {"policy.csv": os.environ["NEW_POLICY"]}}))
 
     # ---- 5. Read admin password ----
     local admin_pw
-    admin_pw=$(kubectl get secret -n argocd argocd-initial-admin-secret \
+    admin_pw=$(kctl get secret -n argocd argocd-initial-admin-secret \
         -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
     if [ -z "$admin_pw" ]; then
         log_fail "argocd-initial-admin-secret not found or empty"
@@ -1912,10 +2033,12 @@ EOF
         shift
     done
 
+    ensure_kind_kubeconfig || return 1
+
     local rc=0
 
     if [ "$target" = "both" ] || [ "$target" = "sharko" ]; then
-        if ! kubectl get deployment -n "${SHARKO_NAMESPACE}" sharko >/dev/null 2>&1; then
+        if ! kctl get deployment -n "${SHARKO_NAMESPACE}" sharko >/dev/null 2>&1; then
             log_warn "deployment/sharko not found in namespace '${SHARKO_NAMESPACE}' — skipping Sharko port-forward"
             [ "$target" = "sharko" ] && rc=1
         else
@@ -1937,7 +2060,7 @@ EOF
     fi
 
     if [ "$target" = "both" ] || [ "$target" = "argocd" ]; then
-        if ! kubectl get deployment -n argocd argocd-server >/dev/null 2>&1; then
+        if ! kctl get deployment -n argocd argocd-server >/dev/null 2>&1; then
             log_warn "deployment/argocd-server not found — skipping ArgoCD port-forward"
             [ "$target" = "argocd" ] && rc=1
         else
@@ -2103,7 +2226,8 @@ EOF
         fi
     fi
 
-    argocd_pw=$(kubectl get secret -n argocd argocd-initial-admin-secret \
+    ensure_kind_kubeconfig || return 1
+    argocd_pw=$(kctl get secret -n argocd argocd-initial-admin-secret \
         -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
     if [ -z "$argocd_pw" ]; then
         log_warn "argocd-initial-admin-secret missing — token generation may have rotated it; password unavailable"
@@ -2274,19 +2398,21 @@ EOF
     log_info "Application + cluster-addons AppProject + any AppSets it created)."
     confirm_or_abort "$yes_flag" "Proceed?" || return 0
 
+    ensure_kind_kubeconfig || return 1
+
     # 1. Delete the root Application with cascade=foreground so the
     #    resources-finalizer fully cleans up before we move on. The 60s
     #    timeout is generous — finalizer cleanup of child AppSets is
     #    usually well under 10s on a kind cluster.
     log_info "deleting Application/cluster-addons-bootstrap (cascade=foreground)"
-    if ! kubectl -n argocd delete application cluster-addons-bootstrap \
+    if ! kctl -n argocd delete application cluster-addons-bootstrap \
             --cascade=foreground --ignore-not-found --timeout=60s; then
         log_warn "Application delete returned non-zero (may be a slow finalizer)"
     fi
 
     # 2. Delete the AppProject. Has no finalizer; should be instant.
     log_info "deleting AppProject/cluster-addons"
-    if ! kubectl -n argocd delete appproject cluster-addons --ignore-not-found; then
+    if ! kctl -n argocd delete appproject cluster-addons --ignore-not-found; then
         log_warn "AppProject delete returned non-zero"
     fi
 
@@ -2295,7 +2421,7 @@ EOF
     #    where the finalizer was bypassed (--cascade=orphan run elsewhere,
     #    manual kubectl edit, etc.).
     log_info "sweeping ApplicationSets labelled managed-by=cluster-addons-bootstrap"
-    if ! kubectl delete applicationset --all-namespaces \
+    if ! kctl delete applicationset --all-namespaces \
             -l app.kubernetes.io/managed-by=cluster-addons-bootstrap \
             --ignore-not-found; then
         log_warn "ApplicationSet sweep returned non-zero"
