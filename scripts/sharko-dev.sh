@@ -193,10 +193,20 @@ kctl() {
     KUBECONFIG="${SHARKO_KIND_KUBECONFIG}" kubectl "$@"
 }
 
+# khelm: run helm against the target kind cluster's own kubeconfig, ignoring
+# whatever context the user is currently on. Mirrors kctl() for the cluster-
+# operating helm calls (list/install/uninstall/upgrade). Requires
+# ensure_kind_kubeconfig to have run first. Never switches the user's context.
+khelm() {
+    KUBECONFIG="${SHARKO_KIND_KUBECONFIG}" helm "$@"
+}
+
 # helm_release_exists: 0 if the sharko helm release is installed in the
-# configured namespace, 1 otherwise.
+# configured namespace, 1 otherwise. Resolves the kind kubeconfig first so the
+# check targets the kind cluster regardless of the caller's current context.
 helm_release_exists() {
-    helm list -n "${SHARKO_NAMESPACE}" -q 2>/dev/null | grep -qx "sharko"
+    ensure_kind_kubeconfig || return 1
+    khelm list -n "${SHARKO_NAMESPACE}" -q 2>/dev/null | grep -qx "sharko"
 }
 
 # port_forward_alive: 0 if something is listening on $SHARKO_LOCAL_PORT.
@@ -738,7 +748,7 @@ EOF
     # the dev env honest and ready for that wiring; the `ready` Next steps note
     # spells out the wizard requirement.
     log_info "helm install sharko in namespace '${SHARKO_NAMESPACE}'"
-    if ! helm install sharko "${REPO_ROOT}/charts/sharko/" \
+    if ! khelm install sharko "${REPO_ROOT}/charts/sharko/" \
          --namespace "${SHARKO_NAMESPACE}" --create-namespace \
          --set image.repository=sharko \
          --set image.tag="${IMAGE_TAG}" \
@@ -888,7 +898,7 @@ EOF
     ensure_kind_kubeconfig || return 1
 
     log_info "helm uninstall sharko -n ${SHARKO_NAMESPACE}"
-    helm uninstall sharko -n "${SHARKO_NAMESPACE}" >/dev/null 2>&1 || true
+    khelm uninstall sharko -n "${SHARKO_NAMESPACE}" >/dev/null 2>&1 || true
 
     log_info "kubectl delete secrets (sharko, sharko-connections, sharko-initial-admin-secret)"
     kctl delete secret -n "${SHARKO_NAMESPACE}" \
@@ -1638,7 +1648,7 @@ EOF
     fi
 
     log_info "helm upgrade sharko ${chart} --version ${version} -n ${SHARKO_NAMESPACE}"
-    if ! helm upgrade sharko "$chart" --version "$version" -n "${SHARKO_NAMESPACE}" >/tmp/sharko-dev-upgrade.log 2>&1; then
+    if ! khelm upgrade sharko "$chart" --version "$version" -n "${SHARKO_NAMESPACE}" >/tmp/sharko-dev-upgrade.log 2>&1; then
         log_fail "helm upgrade failed (last 20 lines):"
         tail -20 /tmp/sharko-dev-upgrade.log >&2
         return 1
