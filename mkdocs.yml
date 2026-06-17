@@ -117,6 +117,7 @@ nav:
   - API Reference:
     - Overview: api/overview.md
     - Endpoints: api/endpoints.md
+    - 'API Walkthrough (do anything the UI does)': api/api-walkthrough.md
   - Architecture:
     - Overview: architecture/overview.md
     - Repository Structure: architecture/repo-structure.md
