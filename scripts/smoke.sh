@@ -17,11 +17,21 @@
 # neither is set, hints to run `./scripts/sharko-dev.sh ready` (which
 # bootstraps the dev env including the password file).
 #
+# CLUSTER TARGETING
+#   Every cluster-operating kubectl call goes through kctl() (from
+#   scripts/lib/sharko-kube.sh), which forces KUBECONFIG to a kubeconfig pointing
+#   ONLY at kind-${KIND_CLUSTER_NAME}. So smoke works no matter which kubectl
+#   context you are currently on, and it NEVER runs `kubectl config use-context`.
+#   The one exception is the Phase-1 "kubectl context" row, which deliberately
+#   reports the USER's current context for information only.
+#
 # ENV VARS
 #   ADMIN_PW          (optional)               — admin password (falls back to ~/.sharko-dev-pw)
-#   KIND_CLUSTER_NAME (default: sharko-e2e)    — kind cluster name (informational)
+#   KIND_CLUSTER_NAME (default: sharko-e2e)    — kind cluster name (target)
 #   SHARKO_NAMESPACE  (default: sharko)         — k8s namespace
 #   SHARKO_LOCAL_PORT (default: 8080)           — host port the kubectl port-forward listens on
+#   SHARKO_KIND_KUBECONFIG (advanced)           — explicit kubeconfig for the kind cluster
+#                                                 (honored verbatim if already set)
 #
 # OUTPUT
 #   5 sequential phases, PASS/FAIL per check, exit 0 if all pass else 1.
@@ -81,6 +91,14 @@ KIND_CLUSTER_NAME="${KIND_CLUSTER_NAME:-sharko-e2e}"
 SHARKO_NAMESPACE="${SHARKO_NAMESPACE:-sharko}"
 SHARKO_LOCAL_PORT="${SHARKO_LOCAL_PORT:-8080}"
 HOST="http://localhost:${SHARKO_LOCAL_PORT}"
+
+# ---- shared kind-kubeconfig targeting (kctl/khelm/ensure_kind_kubeconfig) ----
+# Source relative to this script's own dir so cwd doesn't matter. Cluster health
+# checks below run through kctl() so they target kind-${KIND_CLUSTER_NAME} no
+# matter which kubectl context the user is currently on.
+_SMOKE_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/lib/sharko-kube.sh disable=SC1091
+. "${_SMOKE_SCRIPT_DIR}/lib/sharko-kube.sh"
 
 # ---- counters ----
 TOTAL=0
@@ -166,18 +184,26 @@ echo
 # =====================================================================
 echo "${BOLD}[1/5] Pre-flight checks${RESET}"
 
-# kubectl context
+# kubectl context — INFO display of the USER's current context. This is the one
+# kubectl call we DON'T route through kctl(): the point is to show where the user
+# is pointed, not where the cluster checks run. All cluster checks below use kctl().
 if ctx=$(kubectl config current-context 2>/dev/null) && [ -n "$ctx" ]; then
     record_pass "kubectl context: $ctx"
 else
     record_fail "kubectl context not set"
 fi
 
+# Resolve the kind cluster's own kubeconfig so the cluster checks below target
+# kind-${KIND_CLUSTER_NAME} regardless of the user's current context.
+if ! ensure_kind_kubeconfig; then
+    record_fail "kind cluster '${KIND_CLUSTER_NAME}' not reachable (run: ./scripts/sharko-dev.sh up)"
+fi
+
 # Deployment available
-avail=$(kubectl get deployment -n "${SHARKO_NAMESPACE}" sharko \
+avail=$(kctl get deployment -n "${SHARKO_NAMESPACE}" sharko \
     -o jsonpath='{.status.availableReplicas}' 2>/dev/null || echo "0")
 if [ -n "$avail" ] && [ "$avail" -ge 1 ] 2>/dev/null; then
-    pod=$(kubectl get pod -n "${SHARKO_NAMESPACE}" -l app.kubernetes.io/name=sharko \
+    pod=$(kctl get pod -n "${SHARKO_NAMESPACE}" -l app.kubernetes.io/name=sharko \
         -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "?")
     record_pass "deployment ready: ${pod} (${avail} replica)"
 else
@@ -209,7 +235,7 @@ echo "${BOLD}[2/5] CLI sweep${RESET}"
 # Get the cobra-registered subcommand list. Use kubectl exec on the deployment;
 # kubectl resolves to a live pod automatically. The Sharko image installs the
 # binary at /usr/local/bin/sharko (resolvable as `sharko` via $PATH).
-sub_help=$(kubectl exec -n "${SHARKO_NAMESPACE}" deployment/sharko -- sharko --help 2>/dev/null || true)
+sub_help=$(kctl exec -n "${SHARKO_NAMESPACE}" deployment/sharko -- sharko --help 2>/dev/null || true)
 if [ -z "$sub_help" ]; then
     record_fail "could not exec sharko --help in pod"
     SUBCOMMANDS=""
@@ -228,7 +254,7 @@ if [ -n "$SUBCOMMANDS" ]; then
     n_cmds=$(printf '%s\n' $SUBCOMMANDS | wc -l | tr -d ' ')
     record_info "discovered ${n_cmds} subcommands"
     for cmd in $SUBCOMMANDS; do
-        out=$(kubectl exec -n "${SHARKO_NAMESPACE}" deployment/sharko -- sharko "$cmd" --help 2>&1 || true)
+        out=$(kctl exec -n "${SHARKO_NAMESPACE}" deployment/sharko -- sharko "$cmd" --help 2>&1 || true)
         # Pass if non-empty and contains "Usage:" (cobra help marker).
         if printf '%s' "$out" | grep -q "Usage:"; then
             record_pass "$cmd --help"
