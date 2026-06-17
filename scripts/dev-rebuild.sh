@@ -43,6 +43,15 @@
 #   8. POST /api/v1/auth/login → extract bearer token (also verifies the password)
 #   9. Either export ADMIN_PW + TOKEN (sourced) or print the export commands
 #
+# CLUSTER TARGETING
+#   Every cluster-operating kubectl call goes through kctl() (from
+#   scripts/lib/sharko-kube.sh), which forces KUBECONFIG to a kubeconfig pointing
+#   ONLY at kind-${KIND_CLUSTER_NAME}. So rebuild works no matter which kubectl
+#   context you are currently on (e.g. an EKS context), and it NEVER runs
+#   `kubectl config use-context` — your current context is left untouched.
+#   Override with KIND_CLUSTER_NAME, or point at an explicit kubeconfig with
+#   SHARKO_KIND_KUBECONFIG (honored verbatim if already set).
+#
 # IDEMPOTENT: rerun safely. Existing port-forwards are killed before being restarted.
 #
 # FLAGS
@@ -108,6 +117,14 @@ SHARKO_LOCAL_PORT="${SHARKO_LOCAL_PORT:-8080}"
 IMAGE_TAG="${IMAGE_TAG:-e2e}"
 SHARKO_REMOTE_PORT="${SHARKO_REMOTE_PORT:-80}"
 
+# ---- shared kind-kubeconfig targeting (kctl/khelm/ensure_kind_kubeconfig) ----
+# Source relative to this script's own dir so cwd doesn't matter. This is the
+# ONE source of truth that makes every dev-loop script talk to kind via its own
+# kubeconfig instead of the user's current kubectl context.
+_DEV_REBUILD_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/lib/sharko-kube.sh disable=SC1091
+. "${_DEV_REBUILD_SCRIPT_DIR}/lib/sharko-kube.sh"
+
 echo "Sharko dev-rebuild"
 echo "  cluster:    ${KIND_CLUSTER_NAME}"
 echo "  namespace:  ${SHARKO_NAMESPACE}"
@@ -142,7 +159,16 @@ if ! command -v kubectl >/dev/null 2>&1; then
     _exit_or_return 1
     return 1 2>/dev/null || exit 1
 fi
-if ! kubectl get deployment -n "${SHARKO_NAMESPACE}" sharko >/dev/null 2>&1; then
+
+# Resolve the kind cluster's own kubeconfig so every cluster call below targets
+# kind-${KIND_CLUSTER_NAME} regardless of the user's current context. Must run
+# before the first kctl() call.
+if ! ensure_kind_kubeconfig; then
+    _exit_or_return 1
+    return 1 2>/dev/null || exit 1
+fi
+
+if ! kctl get deployment -n "${SHARKO_NAMESPACE}" sharko >/dev/null 2>&1; then
     if [ "$AUTO_INSTALL" = "1" ]; then
         # V124-8.2: auto-install fallback. Forward to sharko-dev.sh install,
         # which knows how to docker build, kind load, helm install, and start
@@ -203,7 +229,7 @@ echo "      ok"
 # ---- 3. rollout restart ----
 # V124-8.2: explicit error check (was implicit via `set -e` before).
 echo "[3/6] kubectl rollout restart -n ${SHARKO_NAMESPACE} deployment/sharko"
-if ! kubectl rollout restart -n "${SHARKO_NAMESPACE}" deployment/sharko >/dev/null 2>&1; then
+if ! kctl rollout restart -n "${SHARKO_NAMESPACE}" deployment/sharko >/dev/null 2>&1; then
     echo "[FAIL] kubectl rollout restart failed" >&2
     _exit_or_return 1
     return 1 2>/dev/null || exit 1
@@ -211,9 +237,9 @@ fi
 
 # ---- 4. wait for rollout ----
 echo "[4/6] kubectl rollout status (timeout 120s)"
-if ! kubectl rollout status -n "${SHARKO_NAMESPACE}" deployment/sharko --timeout=120s >/dev/null 2>&1; then
+if ! kctl rollout status -n "${SHARKO_NAMESPACE}" deployment/sharko --timeout=120s >/dev/null 2>&1; then
     echo "[FAIL] rollout did not finish within 120s. Recent pod logs:" >&2
-    kubectl logs -n "${SHARKO_NAMESPACE}" deployment/sharko --tail=20 >&2 || true
+    kctl logs -n "${SHARKO_NAMESPACE}" deployment/sharko --tail=20 >&2 || true
     _exit_or_return 1
     return 1 2>/dev/null || exit 1
 fi
@@ -255,7 +281,7 @@ admin_pw=""
 
 # (a) Poll the current pod's logs (first-install case)
 for i in $(seq 1 8); do
-    raw=$(kubectl logs -n "${SHARKO_NAMESPACE}" deployment/sharko 2>/dev/null \
+    raw=$(kctl logs -n "${SHARKO_NAMESPACE}" deployment/sharko 2>/dev/null \
         | grep "bootstrap admin generated" | head -1 || true)
     if [ -n "$raw" ]; then
         admin_pw=$(extract_pw_from_log "$raw")
@@ -271,7 +297,7 @@ done
 
 # (b) Try the previous pod's logs
 if [ -z "$admin_pw" ]; then
-    raw=$(kubectl logs -n "${SHARKO_NAMESPACE}" deployment/sharko --previous 2>/dev/null \
+    raw=$(kctl logs -n "${SHARKO_NAMESPACE}" deployment/sharko --previous 2>/dev/null \
         | grep "bootstrap admin generated" | head -1 || true)
     if [ -n "$raw" ]; then
         admin_pw=$(extract_pw_from_log "$raw")
@@ -300,7 +326,7 @@ if [ -z "$admin_pw" ]; then
     echo "         (1) helm uninstall sharko -n ${SHARKO_NAMESPACE} && bash tests/e2e/setup.sh" >&2
     echo "         (2) Set the password manually: echo '<pw>' > ${PW_CACHE} && chmod 600 ${PW_CACHE}" >&2
     echo "       Recent log tail (current pod):" >&2
-    kubectl logs -n "${SHARKO_NAMESPACE}" deployment/sharko --tail=15 >&2 || true
+    kctl logs -n "${SHARKO_NAMESPACE}" deployment/sharko --tail=15 >&2 || true
     _exit_or_return 1
     return 1 2>/dev/null || exit 1
 fi
@@ -314,7 +340,7 @@ echo "[6/6] port-forward + login"
 pkill -f "kubectl port-forward.*${SHARKO_NAMESPACE}.*${SHARKO_LOCAL_PORT}:" 2>/dev/null || true
 sleep 1
 
-kubectl port-forward -n "${SHARKO_NAMESPACE}" svc/sharko \
+kctl port-forward -n "${SHARKO_NAMESPACE}" svc/sharko \
     "${SHARKO_LOCAL_PORT}:${SHARKO_REMOTE_PORT}" >/tmp/sharko-dev-rebuild-pf.log 2>&1 &
 PF_PID=$!
 disown 2>/dev/null || true

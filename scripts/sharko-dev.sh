@@ -69,20 +69,13 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # current kubectl context (e.g. an EKS context) WITHOUT ever running
 # `kubectl config use-context` — the user's context is never mutated.
 #
-# SHARKO_KIND_KUBECONFIG holds the path. If the user already exported it we
-# honor it verbatim (and never delete it on exit). Otherwise ensure_kind_kubeconfig
-# fills it from `kind get kubeconfig` into a per-run temp file that we own and
-# clean up on exit.
-SHARKO_KIND_KUBECONFIG="${SHARKO_KIND_KUBECONFIG:-}"
-# Only paths WE create get auto-removed on exit; a user-provided override does not.
-_SHARKO_KIND_KC_OWNED=""
-
-# _sharko_dev_cleanup: EXIT trap — remove the kubeconfig temp file we created.
-# Safe to call multiple times; only touches files this process owns.
-_sharko_dev_cleanup() {
-    [ -n "${_SHARKO_KIND_KC_OWNED}" ] && rm -f "${_SHARKO_KIND_KC_OWNED}" 2>/dev/null
-}
-trap _sharko_dev_cleanup EXIT
+# The kubeconfig plumbing (ensure_kind_kubeconfig / kctl / khelm /
+# kind_cluster_exists + the temp-file cleanup trap) lives in the shared lib so
+# every dev-loop script (sharko-dev.sh, dev-rebuild.sh, smoke.sh) targets kind
+# the SAME way — one source of truth. Source it relative to this script's dir so
+# cwd doesn't matter. SHARKO_KIND_KUBECONFIG is honored verbatim if already set.
+# shellcheck source=scripts/lib/sharko-kube.sh disable=SC1091
+. "${SCRIPT_DIR}/lib/sharko-kube.sh"
 
 # ---- color (TTY-detected) ----
 if [ -t 1 ]; then
@@ -142,64 +135,10 @@ preflight_tools() {
 }
 
 # ---- shared helpers ----
-
-# kind_cluster_exists: 0 if the configured cluster is present, 1 otherwise.
-kind_cluster_exists() {
-    kind get clusters 2>/dev/null | grep -qx "${KIND_CLUSTER_NAME}"
-}
-
-# ensure_kind_kubeconfig: make SHARKO_KIND_KUBECONFIG point at a kubeconfig for
-# kind-${KIND_CLUSTER_NAME}. Runs at most once per process (cached path).
 #
-#   - If the user already exported SHARKO_KIND_KUBECONFIG, honor it verbatim and
-#     return 0 (we do NOT regenerate or delete a user-provided path).
-#   - Otherwise run `kind get kubeconfig --name ${KIND_CLUSTER_NAME}` into a
-#     per-run temp file (mode 0600), cache its path, and mark it for cleanup.
-#   - If the kind cluster is missing, fail with the standard "not found" message.
-#
-# Every cluster-operating subcommand calls this before its first kctl() call.
-ensure_kind_kubeconfig() {
-    # Already resolved (user override or a previous call in this process)?
-    if [ -n "${SHARKO_KIND_KUBECONFIG}" ]; then
-        return 0
-    fi
-
-    if ! kind_cluster_exists; then
-        log_fail "kind cluster '${KIND_CLUSTER_NAME}' not found"
-        echo "       Run: ./scripts/sharko-dev.sh up" >&2
-        return 1
-    fi
-
-    local kc="${TMPDIR:-/tmp}/sharko-dev-kc-${KIND_CLUSTER_NAME}.$$.yaml"
-    if ! kind get kubeconfig --name "${KIND_CLUSTER_NAME}" > "$kc" 2>/dev/null; then
-        rm -f "$kc" 2>/dev/null
-        log_fail "kind cluster '${KIND_CLUSTER_NAME}' not found"
-        echo "       Run: ./scripts/sharko-dev.sh up" >&2
-        return 1
-    fi
-    chmod 600 "$kc" 2>/dev/null || true
-
-    SHARKO_KIND_KUBECONFIG="$kc"
-    export SHARKO_KIND_KUBECONFIG
-    _SHARKO_KIND_KC_OWNED="$kc"   # we created it → clean up on exit
-    return 0
-}
-
-# kctl: run kubectl against the target kind cluster's own kubeconfig, ignoring
-# whatever context the user is currently on. Requires ensure_kind_kubeconfig to
-# have run first (every cluster-operating subcommand calls it). Never switches
-# the user's current context.
-kctl() {
-    KUBECONFIG="${SHARKO_KIND_KUBECONFIG}" kubectl "$@"
-}
-
-# khelm: run helm against the target kind cluster's own kubeconfig, ignoring
-# whatever context the user is currently on. Mirrors kctl() for the cluster-
-# operating helm calls (list/install/uninstall/upgrade). Requires
-# ensure_kind_kubeconfig to have run first. Never switches the user's context.
-khelm() {
-    KUBECONFIG="${SHARKO_KIND_KUBECONFIG}" helm "$@"
-}
+# kind_cluster_exists / ensure_kind_kubeconfig / kctl / khelm are provided by
+# scripts/lib/sharko-kube.sh (sourced above). They are NOT redefined here so
+# there is ONE source of truth across every dev-loop script.
 
 # helm_release_exists: 0 if the sharko helm release is installed in the
 # configured namespace, 1 otherwise. Resolves the kind kubeconfig first so the
