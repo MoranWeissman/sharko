@@ -94,10 +94,11 @@ describe('ClustersOverview — V125-1.4 dry-run null safety + tooltips', () => {
     renderView();
     await openAddDialog();
 
-    // Switch to kubeconfig + fill the minimum fields needed to enable the
-    // Preview button (cluster name + kubeconfig text).
-    const select = screen.getByDisplayValue('Amazon EKS') as HTMLSelectElement;
-    fireEvent.change(select, { target: { value: 'kubeconfig' } });
+    // Choose "Paste a kubeconfig" + fill the minimum fields needed to enable
+    // the Preview button (cluster name + kubeconfig text). creds-reframe-2:
+    // the creds-source <select> replaced the old Provider dropdown.
+    const select = screen.getByDisplayValue(/Amazon EKS — generate a token/i) as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: 'inline-kubeconfig' } });
     fireEvent.change(screen.getByPlaceholderText(/prod-us-east-1/i), {
       target: { value: 'kind-test' },
     });

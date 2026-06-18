@@ -1010,7 +1010,27 @@ export interface DriftAlert {
 // disabled options surfaced as "coming soon" — no backend support yet.
 // 'generic' is kept in the union for backwards compatibility with
 // persisted UI state; the wizard no longer emits it.
+//
+// As of the creds-reframe (creds-reframe-2), the registration dialog no
+// longer asks "which platform?" first — it asks "how should Sharko get
+// this cluster's credentials?" (see CredsSource below). `provider` is kept
+// as optional cluster-type metadata and is sent alongside `creds_source`
+// so anything that still reads `provider` keeps working; the backend keys
+// on the effective creds source.
 export type ClusterProvider = 'eks' | 'gke' | 'aks' | 'generic' | 'kubeconfig'
+
+// CredsSource is the primary question the Register New Cluster dialog asks:
+// "How should Sharko get this cluster's credentials?" It maps 1:1 to the
+// backend's `creds_source` field (locked in creds-reframe story 1). When
+// set, it WINS over the legacy `provider` field for edge-validation,
+// audit-event split, and PR-title hints.
+//
+//   - 'inline-kubeconfig'  → user pastes a kubeconfig YAML inline.
+//   - 'secret-kubeconfig'  → Sharko reads the kubeconfig from a named
+//                            secret in the configured backend.
+//   - 'eks-token'          → Sharko generates a token from cloud identity
+//                            (EKS / IRSA) using region + role ARN.
+export type CredsSource = 'inline-kubeconfig' | 'secret-kubeconfig' | 'eks-token'
 
 export interface DiscoveredClusterItem {
   name: string

@@ -11,6 +11,7 @@ import type {
   ClusterProvider,
   ClustersResponse,
   ConfigDiffResponse,
+  CredsSource,
   ConnectionsListResponse,
   DashboardStats,
   DiagnosticReport,
@@ -195,9 +196,14 @@ export async function registerCluster(data: {
   role_arn?: string;
   auto_merge?: boolean;
   dry_run?: boolean;
-  // Required when provider === 'kubeconfig'. Bearer-token authentication
-  // only — see internal/providers/kubeconfig_parser.go.
+  // Required when the inline-kubeconfig creds source is chosen. Bearer-token
+  // authentication only — see internal/providers/kubeconfig_parser.go.
   kubeconfig?: string;
+  // Primary credential signal (creds-reframe story 1). When set it WINS over
+  // `provider` on the backend. The dialog always sends this alongside a
+  // consistent `provider` for backward-compat with anything still reading
+  // `provider`.
+  creds_source?: CredsSource;
 }) {
   return postJSON<RegisterClusterResult>('/clusters', data)
 }

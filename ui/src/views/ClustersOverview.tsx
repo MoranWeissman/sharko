@@ -31,6 +31,7 @@ import type {
   Cluster,
   ClusterHealthStats,
   ClusterProvider,
+  CredsSource,
   ClustersResponse,
   AddonCatalogResponse,
   DiscoveredClusterItem,
@@ -184,8 +185,25 @@ export function ClustersOverview() {
   const [catalogAddons, setCatalogAddons] = useState<AddonCatalogResponse | null>(null);
   const [selectedAddons, setSelectedAddons] = useState<Record<string, boolean>>({});
 
-  // Provider selection
-  const [provider, setProvider] = useState<ClusterProvider>('eks');
+  // Credential-source selection (creds-reframe-2). This is the PRIMARY
+  // question the Direct-mode form asks: "How should Sharko get this
+  // cluster's credentials?" It drives which inputs are shown and is sent
+  // to the backend as `creds_source`. Default to the EKS token path to
+  // preserve the pre-reframe default behavior (the dialog used to open on
+  // the EKS provider).
+  const [credsSource, setCredsSource] = useState<CredsSource>('eks-token');
+
+  // Legacy `provider` value, kept in sync with `credsSource` so anything
+  // that still reads `provider` (audit trails, persisted state) sees a
+  // sensible value. The backend keys on `creds_source` (it wins), so this
+  // is metadata only — we just never send a value that contradicts the
+  // chosen creds source:
+  //   inline-kubeconfig → 'kubeconfig'   (today's inline-paste ELSE branch)
+  //   secret-kubeconfig → 'eks'          (non-kubeconfig; secret-backed)
+  //   eks-token         → 'eks'          (the AWS token path)
+  const providerForCredsSource = (cs: CredsSource): ClusterProvider =>
+    cs === 'inline-kubeconfig' ? 'kubeconfig' : 'eks';
+  const provider: ClusterProvider = providerForCredsSource(credsSource);
 
   // Discovery mode
   const [registrationMode, setRegistrationMode] = useState<'direct' | 'discovery'>('direct');
@@ -309,7 +327,7 @@ export function ClustersOverview() {
     setAddClusterSecretPath('');
     setAddClusterKubeconfig('');
     setSelectedAddons({});
-    setProvider('eks');
+    setCredsSource('eks-token');
     setRegistrationMode('direct');
     setDiscoveryRoleArns('');
     setDiscoveryRegion('');
@@ -348,6 +366,43 @@ export function ClustersOverview() {
     }
   }, [discoveryRoleArns, discoveryRegion]);
 
+  // Build the Direct-mode register payload for the chosen credential source
+  // (creds-reframe-2). `creds_source` is the authoritative signal; we also
+  // send a consistent `provider` for backward-compat. Each source sends a
+  // DISJOINT field set so the backend's per-source validation is happy:
+  //   inline-kubeconfig → name + creds_source + provider + kubeconfig
+  //   secret-kubeconfig → name + creds_source + provider + secret_path (+region)
+  //   eks-token         → name + creds_source + provider + region/role_arn/secret_path
+  const buildRegisterPayload = useCallback(
+    (name: string, extra?: { dry_run?: boolean }): Parameters<typeof registerCluster>[0] => {
+      const addons = Object.keys(selectedAddons).length > 0 ? selectedAddons : undefined;
+      const base = { name, creds_source: credsSource, provider, addons, ...extra };
+      switch (credsSource) {
+        case 'inline-kubeconfig':
+          // Inline paste — server rejects AWS-shaped fields here, so omit them.
+          return { ...base, kubeconfig: addClusterKubeconfig };
+        case 'secret-kubeconfig':
+          // Stored kubeconfig — the secret name/path is the key input. Region
+          // is optional metadata.
+          return {
+            ...base,
+            secret_path: addClusterSecretPath.trim() || undefined,
+            region: addClusterRegion.trim() || undefined,
+          };
+        case 'eks-token':
+        default:
+          // EKS token from cloud identity — AWS-shaped fields.
+          return {
+            ...base,
+            region: addClusterRegion.trim() || undefined,
+            secret_path: addClusterSecretPath.trim() || undefined,
+            role_arn: addClusterRoleArn.trim() || undefined,
+          };
+      }
+    },
+    [credsSource, provider, selectedAddons, addClusterKubeconfig, addClusterSecretPath, addClusterRegion, addClusterRoleArn],
+  );
+
   const handleDryRun = useCallback(async () => {
     const clusterName = registrationMode === 'direct' ? addClusterName.trim() : '';
     if (registrationMode === 'direct' && !clusterName) return;
@@ -355,27 +410,8 @@ export function ClustersOverview() {
     setDryRunResult(null);
     setAddClusterError(null);
     try {
-      // Kubeconfig path uses a disjoint field set — server rejects AWS-
-      // shaped fields (region/secret_path/role_arn) when
-      // provider==='kubeconfig', so do NOT include them in the payload.
       const result = await registerCluster(
-        provider === 'kubeconfig'
-          ? {
-              name: clusterName || 'dry-run-preview',
-              provider,
-              kubeconfig: addClusterKubeconfig,
-              addons: Object.keys(selectedAddons).length > 0 ? selectedAddons : undefined,
-              dry_run: true,
-            }
-          : {
-              name: clusterName || 'dry-run-preview',
-              region: addClusterRegion.trim() || undefined,
-              secret_path: addClusterSecretPath.trim() || undefined,
-              provider,
-              role_arn: addClusterRoleArn.trim() || undefined,
-              addons: Object.keys(selectedAddons).length > 0 ? selectedAddons : undefined,
-              dry_run: true,
-            },
+        buildRegisterPayload(clusterName || 'dry-run-preview', { dry_run: true }),
       );
       if (result?.dry_run) {
         setDryRunResult(result.dry_run);
@@ -385,7 +421,7 @@ export function ClustersOverview() {
     } finally {
       setDryRunLoading(false);
     }
-  }, [registrationMode, addClusterName, addClusterRegion, addClusterRoleArn, addClusterSecretPath, addClusterKubeconfig, provider, selectedAddons]);
+  }, [registrationMode, addClusterName, buildRegisterPayload]);
 
   const handleAddCluster = useCallback(async () => {
     if (registrationMode === 'direct' && !addClusterName.trim()) return;
@@ -402,10 +438,13 @@ export function ClustersOverview() {
         let lastResult: RegisterClusterResult | null = null;
         for (const cluster of selected) {
           try {
+            // Discovered clusters are EKS clusters found by scanning IAM
+            // roles, so they always use the EKS token creds source.
             lastResult = await registerCluster({
               name: cluster.name,
               region: cluster.region,
-              provider,
+              creds_source: 'eks-token',
+              provider: 'eks',
               role_arn: cluster.arn || undefined,
               addons: Object.keys(selectedAddons).length > 0 ? selectedAddons : undefined,
             });
@@ -427,27 +466,11 @@ export function ClustersOverview() {
         setAddClusterOpen(false);
         void fetchData();
       } else {
-        // Direct registration. Kubeconfig path uses a disjoint payload —
-        // only `name`, `provider`, `kubeconfig`, `auto_merge`, `addons`
-        // are valid for that branch (server returns 400 if
-        // region/secret_path/role_arn appear).
-        const result = await registerCluster(
-          provider === 'kubeconfig'
-            ? {
-                name: addClusterName.trim(),
-                provider,
-                kubeconfig: addClusterKubeconfig,
-                addons: Object.keys(selectedAddons).length > 0 ? selectedAddons : undefined,
-              }
-            : {
-                name: addClusterName.trim(),
-                region: addClusterRegion.trim() || undefined,
-                secret_path: addClusterSecretPath.trim() || undefined,
-                provider,
-                role_arn: addClusterRoleArn.trim() || undefined,
-                addons: Object.keys(selectedAddons).length > 0 ? selectedAddons : undefined,
-              },
-        );
+        // Direct registration. The chosen creds source (creds-reframe-2)
+        // decides which disjoint field set is sent — see
+        // buildRegisterPayload. `creds_source` is authoritative; `provider`
+        // rides along for backward-compat.
+        const result = await registerCluster(buildRegisterPayload(addClusterName.trim()));
         const prUrl = result?.git?.pr_url || result?.pr_url || result?.pull_request_url;
         const merged = result?.git?.merged ?? false;
         // Manual-mode register opens a PR but the cluster is NOT actually
@@ -481,7 +504,7 @@ export function ClustersOverview() {
     } finally {
       setAddClusterSubmitting(false);
     }
-  }, [addClusterName, addClusterRegion, addClusterRoleArn, addClusterSecretPath, addClusterKubeconfig, provider, selectedAddons, fetchData, registrationMode, discoveredItems, selectedDiscovered]);
+  }, [addClusterName, buildRegisterPayload, selectedAddons, fetchData, registrationMode, discoveredItems, selectedDiscovered]);
 
   const handleTestCluster = useCallback(async (name: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -742,6 +765,17 @@ export function ClustersOverview() {
     [discoveredClusters, selectedDiscoveredForAdopt],
   );
 
+  // Client-side mirror of the backend's per-source required-field validation
+  // (creds-reframe-2). Blocks the Preview/Register buttons before the user
+  // can submit a combo the backend would 400 on:
+  //   inline-kubeconfig → kubeconfig YAML required
+  //   secret-kubeconfig → secret name / path required
+  //   eks-token         → no extra required field (region/role optional)
+  const directRequiredMissing =
+    registrationMode === 'direct' &&
+    ((credsSource === 'inline-kubeconfig' && !addClusterKubeconfig.trim()) ||
+      (credsSource === 'secret-kubeconfig' && !addClusterSecretPath.trim()));
+
   const handleStatusFilter = (filter: StatusFilter) => {
     setStatusFilter(statusFilter === filter ? 'all' : filter);
   };
@@ -876,22 +910,29 @@ export function ClustersOverview() {
             <DialogDescription>Add a new cluster to the Git catalog.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
-            {/* Provider Selection */}
-            <div>
-              <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
-                Provider
-              </label>
-              <select
-                value={provider}
-                onChange={(e) => setProvider(e.target.value as ClusterProvider)}
-                className="w-full rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
-              >
-                <option value="eks">Amazon EKS</option>
-                <option value="gke" disabled>Google GKE (coming soon)</option>
-                <option value="aks" disabled>Azure AKS (coming soon)</option>
-                <option value="kubeconfig">Generic K8s (kubeconfig)</option>
-              </select>
-            </div>
+            {/* Credential source — the PRIMARY question (creds-reframe-2).
+              * This replaces the old platform-first "Provider" dropdown:
+              * we ask HOW Sharko should get the cluster's credentials, and
+              * that choice drives which inputs show below. Cluster platform
+              * (EKS/GKE/AKS) is now implied metadata, not the gate. Only
+              * shown in Direct mode — Discovery scans EKS and always uses
+              * the token path. */}
+            {registrationMode === 'direct' && (
+              <div>
+                <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
+                  How should Sharko get this cluster's credentials?
+                </label>
+                <select
+                  value={credsSource}
+                  onChange={(e) => setCredsSource(e.target.value as CredsSource)}
+                  className="w-full rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                >
+                  <option value="inline-kubeconfig">Paste a kubeconfig</option>
+                  <option value="secret-kubeconfig">Use a stored kubeconfig (from your secret store)</option>
+                  <option value="eks-token">Amazon EKS — generate a token from cloud identity</option>
+                </select>
+              </div>
+            )}
 
             {/* Registration Mode Toggle */}
             <div>
@@ -939,9 +980,9 @@ export function ClustersOverview() {
                     className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
                   />
                 </div>
-                {provider === 'kubeconfig' ? (
+                {credsSource === 'inline-kubeconfig' && (
                   <>
-                    {/* Kubeconfig path — paste YAML inline. */}
+                    {/* Paste a kubeconfig — inline YAML. */}
                     <div>
                       <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
                         Kubeconfig <span className="text-red-500">*</span>
@@ -958,9 +999,47 @@ export function ClustersOverview() {
                       </p>
                     </div>
                   </>
-                ) : (
+                )}
+
+                {credsSource === 'secret-kubeconfig' && (
                   <>
-                    {/* EKS path — existing AWS-shaped fields. */}
+                    {/* Use a stored kubeconfig — the secret name/path is the
+                      * key input (promoted from the old buried "Secret Path"
+                      * field to a first-class, required field). */}
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
+                        Secret name / path <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={addClusterSecretPath}
+                        onChange={(e) => setAddClusterSecretPath(e.target.value)}
+                        placeholder="e.g. k8s-my-cluster or secret/data/clusters/my-cluster"
+                        className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
+                      />
+                      <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
+                        The secret in your configured backend holds this cluster's kubeconfig.
+                      </p>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
+                        Region (optional)
+                      </label>
+                      <input
+                        type="text"
+                        value={addClusterRegion}
+                        onChange={(e) => setAddClusterRegion(e.target.value)}
+                        placeholder="e.g. us-east-1"
+                        className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
+                      />
+                    </div>
+                  </>
+                )}
+
+                {credsSource === 'eks-token' && (
+                  <>
+                    {/* Amazon EKS — generate a token from cloud identity
+                      * (IRSA / role assumption). The AWS-shaped fields. */}
                     <div>
                       <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
                         Region (optional)
@@ -1215,7 +1294,7 @@ export function ClustersOverview() {
                 dryRunLoading ||
                 addClusterSubmitting ||
                 (registrationMode === 'direct' && !addClusterName.trim()) ||
-                (registrationMode === 'direct' && provider === 'kubeconfig' && !addClusterKubeconfig.trim()) ||
+                directRequiredMissing ||
                 (registrationMode === 'discovery' && !Object.values(selectedDiscovered).some(Boolean))
               }
               title="Dry-run: show the PR title, files that would be committed, and ArgoCD secret that would be created — without actually applying anything."
@@ -1230,7 +1309,7 @@ export function ClustersOverview() {
               disabled={
                 addClusterSubmitting ||
                 (registrationMode === 'direct' && !addClusterName.trim()) ||
-                (registrationMode === 'direct' && provider === 'kubeconfig' && !addClusterKubeconfig.trim()) ||
+                directRequiredMissing ||
                 (registrationMode === 'discovery' && !Object.values(selectedDiscovered).some(Boolean))
               }
               title="Create the ArgoCD cluster Secret, add the cluster to managed-clusters.yaml, and open a PR (or auto-merge if the box above is checked)."
