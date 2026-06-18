@@ -25,12 +25,38 @@ type RepoPathsConfig struct {
 	ManagedClusters string // e.g. "configuration/managed-clusters.yaml"
 }
 
+// CredsSource is the explicit, honest axis describing WHERE a cluster's
+// credentials come from. It is the creds-reframe-1 keystone contract:
+// instead of inferring the credential origin from Provider (and from how
+// the secret backend happens to sniff its payload), the caller may state
+// it directly. The field is optional and additive — when empty, the
+// effective source is DERIVED from the existing fields so every request
+// that works today keeps working byte-for-byte (see deriveCredsSource).
+type CredsSource string
+
+const (
+	// CredsSourceInlineKubeconfig — the caller pastes a raw kubeconfig YAML
+	// in the Kubeconfig field; ParseInlineKubeconfig handles it and the
+	// credProvider backend is NOT required.
+	CredsSourceInlineKubeconfig CredsSource = "inline-kubeconfig"
+	// CredsSourceSecretKubeconfig — a kubeconfig stored in the secret backend
+	// (AWS-SM / k8s-secrets). Resolved through credProvider.GetCredentials.
+	CredsSourceSecretKubeconfig CredsSource = "secret-kubeconfig"
+	// CredsSourceEKSToken — structured EKS JSON stored in the secret backend
+	// that mints a short-lived STS token. Resolved through the same
+	// credProvider.GetCredentials path; v1 does NOT split the backend sniff,
+	// so secret-kubeconfig and eks-token share the orchestrator route — the
+	// win is the explicit, validated, honest label, not a routing change.
+	CredsSourceEKSToken CredsSource = "eks-token"
+)
+
 // RegisterClusterRequest is the input for cluster registration.
 //
-// Kubeconfig is required when Provider == "kubeconfig" and MUST be empty
-// for any other provider. SecretPath / Region / RoleARN (carried
-// separately on the API surface) are EKS-only and MUST be empty when
-// Provider == "kubeconfig". The handler enforces those cross-field
+// Kubeconfig is required when the effective creds source is inline (either
+// Provider == "kubeconfig" or CredsSource == inline-kubeconfig) and MUST be
+// empty for any backend source. SecretPath / Region / RoleARN (carried
+// separately on the API surface) are EKS-only and MUST be empty when the
+// effective source is inline. The handler enforces those cross-field
 // exclusions and returns 400 on violation.
 type RegisterClusterRequest struct {
 	Name       string          `json:"name"`
@@ -40,11 +66,19 @@ type RegisterClusterRequest struct {
 	Region     string          `json:"region"`
 	DryRun     bool            `json:"dry_run,omitempty"`
 
+	// CredsSource is the explicit, optional, additive declaration of where
+	// the cluster credentials come from: "inline-kubeconfig",
+	// "secret-kubeconfig", or "eks-token". When empty it is derived from
+	// Provider so existing callers are unaffected (see deriveCredsSource).
+	// When set it is the authoritative axis: if it disagrees with Provider,
+	// CredsSource wins and Provider becomes optional cluster-type metadata.
+	CredsSource CredsSource `json:"creds_source,omitempty"`
+
 	// Kubeconfig is the raw kubeconfig YAML supplied inline by the caller
-	// when Provider == "kubeconfig". Bearer-token authentication only in
-	// v1.25 — cert-based and exec-plugin auth return a 400 with guidance
-	// to generate a token via `kubectl create token`. Ignored for any
-	// other provider.
+	// when the effective creds source is inline-kubeconfig. Bearer-token
+	// authentication only in v1.25 — cert-based and exec-plugin auth return
+	// a 400 with guidance to generate a token via `kubectl create token`.
+	// Ignored for any backend (secret) source.
 	Kubeconfig string `json:"kubeconfig,omitempty"`
 
 	// AutoMerge is the per-request auto-merge decision. nil means "fall
