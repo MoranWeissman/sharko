@@ -66,6 +66,21 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		return nil, fmt.Errorf("provider %q not yet implemented; supported: eks, kubeconfig", req.Provider)
 	}
 
+	// Step 1a': Resolve the effective creds source (creds-reframe-1).
+	//
+	// When req.CredsSource is empty it is DERIVED from Provider so existing
+	// requests are unaffected (kubeconfig→inline, anything-else→backend).
+	// When req.CredsSource is set it is authoritative and wins over Provider.
+	// An unknown value, or an inline source with no kubeconfig, is a caller
+	// error → *InvalidCredsSourceError → 400 at the handler.
+	credsSource, err := ResolveCredsSource(req)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateCredsSource(credsSource, req); err != nil {
+		return nil, err
+	}
+
 	// Step 1b: Merge default addons if no addons specified.
 	if len(req.Addons) == 0 && len(o.defaultAddons) > 0 {
 		req.Addons = make(map[string]bool)
@@ -117,14 +132,16 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	var steps []string
 
 	// Step 3: Acquire credentials.
-	// When Provider == "kubeconfig" the caller supplies the kubeconfig YAML
-	// inline on the request, so we parse it directly and skip
-	// o.credProvider.GetCredentials (the credProvider may legitimately be
-	// nil in this path — generic-K8s registration must not require an
-	// AWS-SM/k8s-secrets backend to be configured). For every other
-	// provider we keep the original credProvider lookup.
+	// When the effective creds source is inline-kubeconfig the caller
+	// supplies the kubeconfig YAML inline on the request, so we parse it
+	// directly and skip o.credProvider.GetCredentials (the credProvider may
+	// legitimately be nil in this path — generic-K8s registration must not
+	// require an AWS-SM/k8s-secrets backend to be configured). For every
+	// backend source (secret-kubeconfig / eks-token) we keep the original
+	// credProvider lookup; v1 does not split the backend sniff, so both
+	// backend labels share this one route (the provider sniffs the payload).
 	var creds *providers.Kubeconfig
-	if req.Provider == "kubeconfig" {
+	if isInlineSource(credsSource) {
 		var parseErr error
 		creds, parseErr = providers.ParseInlineKubeconfig(req.Kubeconfig)
 		if parseErr != nil {
@@ -206,7 +223,7 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		// cluster_registered_kubeconfig) so the preview tells the operator
 		// which credentials path will be used.
 		prTitle := fmt.Sprintf("%s register cluster %s", o.gitops.CommitPrefix, req.Name)
-		if req.Provider == "kubeconfig" {
+		if isInlineSource(credsSource) {
 			prTitle = fmt.Sprintf("%s register cluster %s (kubeconfig provider)", o.gitops.CommitPrefix, req.Name)
 		}
 
@@ -251,7 +268,7 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	// best-effort: a failure is logged and recorded but does not abort
 	// registration (the Git source of truth and reconciler can still
 	// converge). When no manager is wired (out-of-cluster), this is skipped.
-	if req.Provider == "kubeconfig" && o.argoSecretManager != nil && creds.Token != "" {
+	if isInlineSource(credsSource) && o.argoSecretManager != nil && creds.Token != "" {
 		// Addon labels in the canonical "enabled"/"disabled" vocabulary —
 		// the SAME value the reconciler writes when it later reconciles this
 		// cluster from managed-clusters.yaml (which we also write in this

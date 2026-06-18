@@ -2586,7 +2586,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Registers a new cluster in ArgoCD and creates its GitOps configuration.\nPass \"dry_run\": true to preview what would happen without making changes.\nProvider may be \"eks\" (default; uses configured secrets provider) or\n\"kubeconfig\" (caller supplies kubeconfig YAML inline via the\n\"kubeconfig\" field — bearer-token auth only).",
+                "description": "Registers a new cluster in ArgoCD and creates its GitOps configuration.\nPass \"dry_run\": true to preview what would happen without making changes.\nProvider may be \"eks\" (default; uses configured secrets provider) or\n\"kubeconfig\" (caller supplies kubeconfig YAML inline via the\n\"kubeconfig\" field — bearer-token auth only).\nOptionally set \"creds_source\" to state explicitly where credentials come\nfrom: \"inline-kubeconfig\", \"secret-kubeconfig\", or \"eks-token\". When omitted\nit is derived from \"provider\" (kubeconfig→inline, else→backend) so existing\nrequests are unchanged; when set it wins over \"provider\".",
                 "consumes": [
                     "application/json"
                 ],
@@ -7660,6 +7660,19 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_MoranWeissman_sharko_internal_orchestrator.CredsSource": {
+            "type": "string",
+            "enum": [
+                "inline-kubeconfig",
+                "secret-kubeconfig",
+                "eks-token"
+            ],
+            "x-enum-varnames": [
+                "CredsSourceInlineKubeconfig",
+                "CredsSourceSecretKubeconfig",
+                "CredsSourceEKSToken"
+            ]
+        },
         "github_com_MoranWeissman_sharko_internal_orchestrator.DisableAddonRequest": {
             "type": "object",
             "properties": {
@@ -7885,11 +7898,19 @@ const docTemplate = `{
                     "description": "AutoMerge is the per-request auto-merge decision. nil means \"fall\nback to the connection-level PRAutoMerge default\"; a non-nil\nvalue overrides the default for this operation only. Resolved via\nresolveAutoMerge — never mutate o.gitops.PRAutoMerge.",
                     "type": "boolean"
                 },
+                "creds_source": {
+                    "description": "CredsSource is the explicit, optional, additive declaration of where\nthe cluster credentials come from: \"inline-kubeconfig\",\n\"secret-kubeconfig\", or \"eks-token\". When empty it is derived from\nProvider so existing callers are unaffected (see deriveCredsSource).\nWhen set it is the authoritative axis: if it disagrees with Provider,\nCredsSource wins and Provider becomes optional cluster-type metadata.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.CredsSource"
+                        }
+                    ]
+                },
                 "dry_run": {
                     "type": "boolean"
                 },
                 "kubeconfig": {
-                    "description": "Kubeconfig is the raw kubeconfig YAML supplied inline by the caller\nwhen Provider == \"kubeconfig\". Bearer-token authentication only in\nv1.25 — cert-based and exec-plugin auth return a 400 with guidance\nto generate a token via ` + "`" + `kubectl create token` + "`" + `. Ignored for any\nother provider.",
+                    "description": "Kubeconfig is the raw kubeconfig YAML supplied inline by the caller\nwhen the effective creds source is inline-kubeconfig. Bearer-token\nauthentication only in v1.25 — cert-based and exec-plugin auth return\na 400 with guidance to generate a token via ` + "`" + `kubectl create token` + "`" + `.\nIgnored for any backend (secret) source.",
                     "type": "string"
                 },
                 "name": {

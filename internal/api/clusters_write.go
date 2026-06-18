@@ -31,6 +31,10 @@ var validClusterNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]*$`)
 // @Description Provider may be "eks" (default; uses configured secrets provider) or
 // @Description "kubeconfig" (caller supplies kubeconfig YAML inline via the
 // @Description "kubeconfig" field — bearer-token auth only).
+// @Description Optionally set "creds_source" to state explicitly where credentials come
+// @Description from: "inline-kubeconfig", "secret-kubeconfig", or "eks-token". When omitted
+// @Description it is derived from "provider" (kubeconfig→inline, else→backend) so existing
+// @Description requests are unchanged; when set it wins over "provider".
 // @Tags clusters
 // @Accept json
 // @Produce json
@@ -91,28 +95,39 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 	// that pastes a kubeconfig wants the kubeconfig path). Catching this
 	// at the handler edge keeps the orchestrator branch logic
 	// straightforward and gives the caller a clear, field-specific 400.
-	switch req.Provider {
-	case "kubeconfig":
+	//
+	// creds-reframe-1: the edge checks now key on the EFFECTIVE creds
+	// source, not on Provider alone. When creds_source is set it wins over
+	// Provider (it is the new honest axis); when it is absent the source is
+	// derived from Provider so existing requests behave exactly as before.
+	// An unknown creds_source value is a caller error → 400 (the orchestrator
+	// validates it too, but rejecting here avoids a wasted upstream call).
+	effectiveSource, srcErr := orchestrator.ResolveCredsSource(req)
+	if srcErr != nil {
+		writeError(w, http.StatusBadRequest, srcErr.Error())
+		return
+	}
+	if effectiveSource == orchestrator.CredsSourceInlineKubeconfig {
 		if strings.TrimSpace(req.Kubeconfig) == "" {
-			writeError(w, http.StatusBadRequest, "kubeconfig is required when provider is \"kubeconfig\"")
+			writeError(w, http.StatusBadRequest, "kubeconfig is required for an inline-kubeconfig registration")
 			return
 		}
 		if req.SecretPath != "" {
-			writeError(w, http.StatusBadRequest, "field \"secret_path\" is not valid for provider \"kubeconfig\"")
+			writeError(w, http.StatusBadRequest, "field \"secret_path\" is not valid for an inline-kubeconfig registration")
 			return
 		}
 		if req.Region != "" {
-			writeError(w, http.StatusBadRequest, "field \"region\" is not valid for provider \"kubeconfig\"")
+			writeError(w, http.StatusBadRequest, "field \"region\" is not valid for an inline-kubeconfig registration")
 			return
 		}
-	default:
-		// Empty provider == legacy EKS path.
+	} else {
+		// Backend (secret) source: secret-kubeconfig / eks-token.
 		if req.Kubeconfig != "" {
-			writeError(w, http.StatusBadRequest, "field \"kubeconfig\" is only valid when provider is \"kubeconfig\"")
+			writeError(w, http.StatusBadRequest, "field \"kubeconfig\" is only valid for an inline-kubeconfig registration")
 			return
 		}
-		// EKS path still needs the secrets provider configured at
-		// runtime — return 503. The kubeconfig path explicitly does
+		// The backend path still needs the secrets provider configured at
+		// runtime — return 503. The inline-kubeconfig path explicitly does
 		// NOT require credProvider (the whole point of the inline path).
 		if s.credProvider == nil {
 			writeMissingProviderError(w)
@@ -148,6 +163,12 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := orch.RegisterCluster(ctx, req)
 	if err != nil {
+		// Invalid creds_source (creds-reframe-1): unknown value, or an
+		// inline source with no kubeconfig. Caller error → 400.
+		if orchestrator.IsInvalidCredsSource(err) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		// Referential-integrity rejection (V2-cleanup-22): one or more
 		// requested addons are not in the catalog. Caller error → 422 with
 		// the orchestrator's message listing the bad name(s).
@@ -183,11 +204,13 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusMultiStatus
 	}
 
-	// Distinct audit event for the kubeconfig registration path so
-	// audit history can tell EKS-via-AWS-SM from inline-kubeconfig
-	// registrations without parsing the resource string.
+	// Distinct audit event for the inline-kubeconfig registration path so
+	// audit history can tell backend (EKS-via-AWS-SM / secret-kubeconfig)
+	// registrations from inline-kubeconfig ones without parsing the
+	// resource string. Keys on the effective creds source so an explicit
+	// creds_source is honored even when Provider is left blank.
 	auditEvent := "cluster_registered"
-	if req.Provider == "kubeconfig" {
+	if effectiveSource == orchestrator.CredsSourceInlineKubeconfig {
 		auditEvent = "cluster_registered_kubeconfig"
 	}
 	audit.Enrich(ctx, audit.Fields{
