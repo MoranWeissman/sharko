@@ -121,45 +121,86 @@ curl -s "${auth[@]}" "$SH/clusters/my-cluster" | jq
 ### Register a new cluster
 
 Adds a brand-new cluster: registers it in ArgoCD and creates its GitOps
-configuration via a PR. There are two ways to supply credentials:
+configuration via a PR.
 
-- **EKS (default):** Sharko looks the cluster's credentials up from the
-  configured secrets backend. Leave `provider` empty.
-- **Inline kubeconfig:** you paste a kubeconfig (bearer-token auth only) right in
-  the request. Set `provider` to `"kubeconfig"` and put the YAML in the
-  `kubeconfig` field. For this path, `secret_path` and `region` must be empty.
+The first thing to settle is one question: **how should Sharko get this
+cluster's credentials?** There are three honest answers, and you pick one with
+the optional `creds_source` field:
 
-Required field: `name` (alphanumeric, may contain hyphens, must start with a
-letter or digit). The `addons` field is a map of addon name to on/off.
+| `creds_source` | What it means | You supply |
+|----------------|---------------|------------|
+| `inline-kubeconfig` | You paste a kubeconfig right in the request. Bearer-token auth only. | `kubeconfig` (the YAML) |
+| `secret-kubeconfig` | You point at a kubeconfig already stored in your secret backend. Works for **any** cluster, including local / on-prem. | `secret_path` |
+| `eks-token` | Sharko mints a short-lived token from your EKS cloud identity. Amazon EKS only. | `region` |
 
-EKS-style registration:
+Required field in every case: `name` (alphanumeric, may contain hyphens, must
+start with a letter or digit). The `addons` field is a map of addon name to
+on/off.
 
-```bash
-curl -s "${auth[@]}" -X POST "$SH/clusters" \
-  -H "Content-Type: application/json" \
-  -d '{
-        "name": "my-cluster",
-        "region": "us-east-1",
-        "addons": { "keda": true }
-      }' | jq
-```
+#### Paste a kubeconfig (`inline-kubeconfig`)
 
-Inline-kubeconfig registration:
+You hand Sharko the kubeconfig YAML directly in the request. The kubeconfig must
+use bearer-token auth.
 
 ```bash
 curl -s "${auth[@]}" -X POST "$SH/clusters" \
   -H "Content-Type: application/json" \
   -d '{
         "name": "my-cluster",
-        "provider": "kubeconfig",
+        "creds_source": "inline-kubeconfig",
         "kubeconfig": "apiVersion: v1\nkind: Config\n...",
         "addons": { "keda": true }
       }' | jq
 ```
 
+#### Point at a stored kubeconfig (`secret-kubeconfig`)
+
+The kubeconfig already lives in your configured secret backend (AWS Secrets
+Manager, GCP Secret Manager, Azure Key Vault, or a Kubernetes Secret). You give
+Sharko the path/name to look it up. The secret holds a raw kubeconfig YAML. This
+works for **any** cluster type — including a local or on-prem cluster that has
+nothing to do with EKS.
+
+```bash
+curl -s "${auth[@]}" -X POST "$SH/clusters" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "name": "my-cluster",
+        "creds_source": "secret-kubeconfig",
+        "secret_path": "clusters/prod/my-cluster",
+        "addons": { "keda": true }
+      }' | jq
+```
+
+#### Amazon EKS token (`eks-token`)
+
+Sharko mints a short-lived token from your EKS cloud identity, so you don't store
+or paste any long-lived credential. You give it the cluster's region.
+
+```bash
+curl -s "${auth[@]}" -X POST "$SH/clusters" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "name": "my-cluster",
+        "creds_source": "eks-token",
+        "region": "us-east-1",
+        "addons": { "keda": true }
+      }' | jq
+```
+
 A good answer is HTTP 201 with a body whose `status` is `"success"` and a `git`
-block containing the `pr_url`. (Two addons requested in conflicting ways, or a
-provider mismatch, comes back as a 400 with a clear message.)
+block containing the `pr_url`. A bad combination — for example
+`inline-kubeconfig` with no `kubeconfig`, or `eks-token` with no `region` —
+comes back as a 400 with a clear message telling you what's missing.
+
+!!! note "`creds_source` is optional — old requests still work"
+    `creds_source` was added on top of the existing fields, and it's optional.
+    If you leave it out, Sharko figures out the credential source from the fields
+    you do send, exactly as it always has: `provider: "kubeconfig"` with a
+    `kubeconfig` still means paste, and a request with a `secret_path` still
+    means look it up in the backend. **Every request that worked before keeps
+    working unchanged.** When you do set `creds_source`, it wins, and `provider`
+    becomes optional cluster-type metadata.
 
 !!! tip "Preview first"
     Add `"dry_run": true` to see exactly which files would be written and which

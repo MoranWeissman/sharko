@@ -28,6 +28,16 @@ Or in the UI: **Clusters → Register Cluster → Browse Available**.
 
 ## Adding a Cluster
 
+When you register a cluster, the first thing to settle is one question: **how should Sharko get this cluster's credentials?** There are three answers, and you pick one:
+
+| Credentials source | What it means | You supply |
+|--------------------|---------------|------------|
+| **Paste a kubeconfig** | You hand Sharko the kubeconfig directly. Bearer-token auth only. | The kubeconfig YAML |
+| **Point at a stored kubeconfig** | The kubeconfig already lives in your secret backend (AWS Secrets Manager, GCP Secret Manager, Azure Key Vault, or a Kubernetes Secret). Works for **any** cluster, including local / on-prem. | The secret path/name |
+| **Amazon EKS token** | Sharko mints a short-lived token from your EKS cloud identity, so nothing long-lived is stored or pasted. EKS only. | The AWS region |
+
+The credentials source is the *only* thing that changes between these three. Everything else — which addons to enable, the environment label, the cluster name — works the same way no matter how Sharko reaches the cluster.
+
 ### Via CLI
 
 ```bash
@@ -41,16 +51,23 @@ Flags:
 | Flag | Description |
 |------|-------------|
 | `--addons` | Comma-separated list of addons to enable on this cluster |
-| `--region` | AWS region (for `aws-sm` secrets provider) |
+| `--region` | AWS region — use this for the **Amazon EKS token** source |
 | `--env` | Environment label (e.g., `prod`, `staging`) — auto-detected from name if `config.environments` is set |
-| `--secret-path` | Override the path used to look up credentials in the secrets provider (see [Secret Path](#secret-path)) |
+| `--secret-path` | The path/name of a stored kubeconfig — use this for the **stored kubeconfig** source (see [Secret Path](#secret-path)) |
 
 ### Via UI
 
 1. Navigate to **Clusters → Register Cluster**
-2. Select the cluster from the list of available clusters (fetched from your secrets provider)
-3. Choose which addons to enable
-4. Click **Register** — Sharko creates a PR in your Git repo
+2. Choose **how Sharko should get the credentials** — paste a kubeconfig, point at a stored kubeconfig, or mint an Amazon EKS token
+3. Fill in what that source needs (the kubeconfig YAML, the secret path, or the AWS region)
+4. Choose which addons to enable
+5. Click **Register** — Sharko creates a PR in your Git repo
+
+!!! note "Old registrations still work the same"
+    The credentials source is optional behind the scenes. A registration that doesn't name one keeps behaving exactly as it did before — Sharko figures out the source from the fields you provide. Nothing you set up earlier changes.
+
+!!! info "Planned — finer-grained credentials"
+    Today the stored-kubeconfig source points at a *whole* kubeconfig. A future release plans to let you point at individual pieces (server URL, CA data, token) separately. This is **not available yet**.
 
 ### Batch Registration
 
