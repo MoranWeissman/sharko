@@ -207,9 +207,10 @@ describe('ClustersOverview — V125-1.5 manual-mode register toast (BUG-050)', (
       expect(screen.getByText('Register New Cluster')).toBeInTheDocument();
     });
 
-    // Switch to kubeconfig (the simplest "no AWS fields needed" path so
-    // we don't need to mock additional discovery calls).
-    fireEvent.change(screen.getByDisplayValue('Amazon EKS'), { target: { value: 'kubeconfig' } });
+    // Choose "Paste a kubeconfig" (the simplest "no AWS fields needed" path
+    // so we don't need to mock additional discovery calls). creds-reframe-2:
+    // the creds-source <select> replaced the old Provider dropdown.
+    fireEvent.change(screen.getByDisplayValue(/Amazon EKS — generate a token/i), { target: { value: 'inline-kubeconfig' } });
     fireEvent.change(screen.getByPlaceholderText(/prod-us-east-1/i), { target: { value: 'kind-local' } });
     fireEvent.change(screen.getByPlaceholderText(/apiVersion: v1/i), {
       target: { value: 'apiVersion: v1\nkind: Config\nusers:\n- name: u\n  user:\n    token: abc' },
