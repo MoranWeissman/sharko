@@ -19,8 +19,8 @@ import (
 // degraded — without this signal, the user would land on a dashboard
 // full of errors instead of a recovery surface.
 //
-// `Reason` is a short machine-readable tag (only set when Initialized=false)
-// that helps the UI distinguish the not-initialized cases from one another:
+// `Reason` is a short machine-readable tag that helps the UI distinguish the
+// not-ready cases from one another. When Initialized=false (Git side):
 //   - "no_connection"    — no active Git connection is configured.
 //   - "not_bootstrapped" — the repo IS reachable but bootstrap/Chart.yaml is
 //     genuinely absent (a real "never set up" state — the wizard should fire).
@@ -28,6 +28,19 @@ import (
 //     TLS/transport/auth failure). This is an environment problem, NOT a setup
 //     problem, so the UI must KEEP the user in their working app and surface
 //     the broken connection rather than forcing a re-bootstrap.
+//
+// When Initialized=true but BootstrapSynced=false (repo files present, but the
+// ArgoCD bootstrap app is not Synced+Healthy), Reason distinguishes (V2-cleanup-51):
+//   - "bootstrap_unreachable" — the bootstrap app reports Sync=Unknown, i.e.
+//     ArgoCD's repo-server cannot reach/evaluate the Git repo (a connection
+//     problem, often a TLS-inspection proxy the repo-server doesn't trust).
+//     Re-running Initialize CANNOT fix this, so the UI must NOT auto-trap the
+//     user in the re-bootstrap wizard.
+//   - "bootstrap_degraded"    — the bootstrap app is genuinely degraded
+//     (OutOfSync/Degraded/absent); ArgoCD read the repo and found a fixable
+//     problem, so offering a repair (re-run Initialize) is appropriate.
+//
+// If no ArgoCD client is available, Reason is left empty (we can't classify).
 type RepoStatusResponse struct {
 	Initialized     bool   `json:"initialized"`
 	BootstrapSynced bool   `json:"bootstrap_synced"`
@@ -93,13 +106,27 @@ func (s *Server) handleRepoStatus(w http.ResponseWriter, r *http.Request) {
 	// "the connection has Git but no usable ArgoCD" is exactly the
 	// degraded state the wizard exists to repair.
 	bootstrapSynced := false
+	reason := ""
 	if ac, acErr := s.connSvc.GetActiveOrchestratorArgocdClient(); acErr == nil {
 		status, _ := ProbeBootstrapApp(r.Context(), ac)
-		bootstrapSynced = status == "healthy"
+		bootstrapSynced = status == bootstrapHealthy
+		if !bootstrapSynced {
+			// Repo files exist but the bootstrap app is not Synced+Healthy.
+			// Distinguish "ArgoCD can't reach the repo" (re-init won't help)
+			// from a genuinely degraded bootstrap (re-init may repair it), so
+			// the wizard gate in App.tsx can avoid trapping the user when the
+			// problem is a connection one (V2-cleanup-51).
+			if status == bootstrapUnreachable {
+				reason = "bootstrap_unreachable"
+			} else {
+				reason = "bootstrap_degraded"
+			}
+		}
 	}
 
 	writeJSON(w, http.StatusOK, RepoStatusResponse{
 		Initialized:     true,
 		BootstrapSynced: bootstrapSynced,
+		Reason:          reason,
 	})
 }

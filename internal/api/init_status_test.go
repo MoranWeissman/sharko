@@ -139,6 +139,24 @@ func TestHandleInitStatus_Partial_AppDegraded(t *testing.T) {
 	}
 }
 
+// V2-cleanup-51.1: bootstrap app reports Sync=Unknown → state "unreachable".
+// ArgoCD's repo-server can't reach the Git repo; the wizard must distinguish
+// this from a repairable "partial" so it doesn't auto-trap the user (Story 2).
+func TestHandleInitStatus_Unreachable_SyncUnknown(t *testing.T) {
+	ac := &initFakeArgocd{app: &models.ArgocdApplication{
+		Name:         orchestrator.BootstrapRootAppName,
+		SyncStatus:   "Unknown",
+		HealthStatus: "Error",
+	}}
+	body := initStatusBody(t, initializedRepoGit(), ac)
+	if body.State != RepoStateUnreachable {
+		t.Errorf("expected state=%q, got %q", RepoStateUnreachable, body.State)
+	}
+	if body.Detail == "" {
+		t.Error("expected a non-empty detail for unreachable state")
+	}
+}
+
 // V2-cleanup-10: a 403 from ArgoCD (token lacks RBAC) must classify as
 // "forbidden" with an actionable permission message — NOT "partial"
 // (missing/unhealthy), which would send the user chasing a phantom broken
@@ -199,6 +217,39 @@ func TestProbeRepoState_Partial(t *testing.T) {
 	}
 }
 
+// V2-cleanup-51.1: a bootstrap app with Sync=Unknown classifies as
+// "unreachable" — distinct from "partial". ArgoCD can't reach the repo, so
+// re-init won't help; the wizard must not auto-trap the user (Story 2).
+func TestProbeRepoState_Unreachable(t *testing.T) {
+	ac := &initFakeArgocd{app: &models.ArgocdApplication{
+		Name:         orchestrator.BootstrapRootAppName,
+		SyncStatus:   "Unknown",
+		HealthStatus: "Error",
+	}}
+	state, detail := probeRepoState(context.Background(), initializedRepoGit(), ac, "main")
+	if state != RepoStateUnreachable {
+		t.Errorf("expected state=unreachable, got %q", state)
+	}
+	if detail == "" {
+		t.Error("expected non-empty detail for unreachable state")
+	}
+}
+
+// V2-cleanup-51.1: a genuinely degraded bootstrap (OutOfSync/Degraded) stays
+// "partial", NOT "unreachable" — ArgoCD read the repo and found a fixable
+// problem, so re-init/repair is the right move.
+func TestProbeRepoState_Degraded_StaysPartial(t *testing.T) {
+	ac := &initFakeArgocd{app: &models.ArgocdApplication{
+		Name:         orchestrator.BootstrapRootAppName,
+		SyncStatus:   "OutOfSync",
+		HealthStatus: "Degraded",
+	}}
+	state, _ := probeRepoState(context.Background(), initializedRepoGit(), ac, "main")
+	if state != RepoStatePartial {
+		t.Errorf("expected degraded bootstrap to stay partial, got %q", state)
+	}
+}
+
 // V2-cleanup-10: a permission-denied error classifies as "forbidden" with the
 // actionable message — distinct from "partial".
 func TestProbeRepoState_Forbidden(t *testing.T) {
@@ -237,6 +288,27 @@ func TestProbeBootstrapApp_NotFound(t *testing.T) {
 	}
 	if detail == "" {
 		t.Error("expected non-empty detail for missing app")
+	}
+}
+
+// V2-cleanup-51.1: an app whose Sync=Unknown means ArgoCD's repo-server
+// could not reach/evaluate the Git repo → "unreachable", a connection problem
+// re-init cannot fix. Distinct from "unhealthy" (OutOfSync/Degraded).
+func TestProbeBootstrapApp_Unreachable_SyncUnknown(t *testing.T) {
+	ac := &initFakeArgocd{app: &models.ArgocdApplication{
+		Name:         orchestrator.BootstrapRootAppName,
+		SyncStatus:   "Unknown",
+		HealthStatus: "Error",
+	}}
+	status, detail := ProbeBootstrapApp(context.Background(), ac)
+	if status != "unreachable" {
+		t.Errorf("expected status=unreachable for Sync=Unknown, got %q", status)
+	}
+	if detail == "" {
+		t.Error("expected a non-empty detail for the unreachable bootstrap app")
+	}
+	if detail == permissionDeniedDetail {
+		t.Errorf("unreachable app must NOT use the permission message, got %q", detail)
 	}
 }
 
