@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -22,18 +23,29 @@ import (
 // ---------------------------------------------------------------------------
 
 // handlerFakeGitProvider is a minimal gitprovider.GitProvider that returns a
-// fixed set of file contents. Missing paths return a non-nil error.
+// fixed set of file contents. Missing paths return a non-nil error that wraps
+// gitprovider.ErrFileNotFound — mirroring the real GitHub/Azure providers so
+// callers using errors.Is(err, gitprovider.ErrFileNotFound) classify a genuine
+// missing file (not a broken connection).
+//
+// To simulate a transport/TLS failure (where the repo can't be reached at all),
+// set `getErr` — it is returned verbatim from GetFileContent and does NOT wrap
+// the sentinel, so callers classify it as a connection error.
 // Tests that exercise recent-PRs endpoints can optionally set `prs` to stub
 // the ListPullRequests response.
 type handlerFakeGitProvider struct {
-	files map[string][]byte
-	prs   []gitprovider.PullRequest
+	files  map[string][]byte
+	prs    []gitprovider.PullRequest
+	getErr error // when set, GetFileContent returns this verbatim (connection failure)
 }
 
 func (f *handlerFakeGitProvider) GetFileContent(_ context.Context, path, _ string) ([]byte, error) {
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
 	data, ok := f.files[path]
 	if !ok {
-		return nil, errors.New("not found: " + path)
+		return nil, fmt.Errorf("get file content: path %q not found: %w", path, gitprovider.ErrFileNotFound)
 	}
 	return data, nil
 }
@@ -145,6 +157,47 @@ func TestHandleRepoStatus_NotInitialized_NotBootstrapped(t *testing.T) {
 	}
 	if body["reason"] != "not_bootstrapped" {
 		t.Errorf("expected reason=not_bootstrapped, got %v", body["reason"])
+	}
+	if body["bootstrap_synced"] != false {
+		t.Errorf("expected bootstrap_synced=false, got %v", body["bootstrap_synced"])
+	}
+}
+
+// TestHandleRepoStatus_NotInitialized_ConnectionError is the V2-cleanup-50
+// reproducer: a corporate TLS-inspection proxy (Zscaler) makes the
+// bootstrap/Chart.yaml fetch fail with an x509 "unknown authority" error.
+// That is NOT a missing file — it does not wrap gitprovider.ErrFileNotFound —
+// so the handler must classify it as "connection_error". Pre-fix this was
+// reported as "not_bootstrapped", which threw the user into the re-bootstrap
+// wizard even though a working bootstrap was already in place.
+func TestHandleRepoStatus_NotInitialized_ConnectionError(t *testing.T) {
+	srv := newTestServer()
+	// getErr is a generic transport/TLS error that does NOT wrap
+	// gitprovider.ErrFileNotFound — i.e. the repo could not be reached.
+	gp := &handlerFakeGitProvider{
+		files:  map[string][]byte{},
+		getErr: errors.New("tls: failed to verify certificate: x509: certificate signed by unknown authority"),
+	}
+	srv.connSvc.SetGitProviderOverride(gp)
+
+	router := NewRouter(srv, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/repo/status", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var body map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body["initialized"] != false {
+		t.Errorf("expected initialized=false, got %v", body["initialized"])
+	}
+	if body["reason"] != "connection_error" {
+		t.Errorf("expected reason=connection_error, got %v", body["reason"])
 	}
 	if body["bootstrap_synced"] != false {
 		t.Errorf("expected bootstrap_synced=false, got %v", body["bootstrap_synced"])

@@ -1,7 +1,10 @@
 package api
 
 import (
+	"errors"
 	"net/http"
+
+	"github.com/MoranWeissman/sharko/internal/gitprovider"
 )
 
 // RepoStatusResponse is the body returned by GET /api/v1/repo/status.
@@ -17,7 +20,14 @@ import (
 // full of errors instead of a recovery surface.
 //
 // `Reason` is a short machine-readable tag (only set when Initialized=false)
-// that helps the UI distinguish e.g. "no_connection" from "not_bootstrapped".
+// that helps the UI distinguish the not-initialized cases from one another:
+//   - "no_connection"    — no active Git connection is configured.
+//   - "not_bootstrapped" — the repo IS reachable but bootstrap/Chart.yaml is
+//     genuinely absent (a real "never set up" state — the wizard should fire).
+//   - "connection_error" — the repo could NOT be reached or verified (e.g. a
+//     TLS/transport/auth failure). This is an environment problem, NOT a setup
+//     problem, so the UI must KEEP the user in their working app and surface
+//     the broken connection rather than forcing a re-bootstrap.
 type RepoStatusResponse struct {
 	Initialized     bool   `json:"initialized"`
 	BootstrapSynced bool   `json:"bootstrap_synced"`
@@ -53,10 +63,22 @@ func (s *Server) handleRepoStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	_, err = gp.GetFileContent(r.Context(), "bootstrap/Chart.yaml", baseBranch)
 	if err != nil {
+		// The gitprovider layer already distinguishes the two cases:
+		// a genuinely-missing file is wrapped with gitprovider.ErrFileNotFound,
+		// while a transport/TLS/auth failure stays a plain wrapped error.
+		// Detect via errors.Is (provider-agnostic — GitHub and Azure DevOps
+		// both wrap the sentinel) so we DON'T mistake a broken connection for
+		// "the repo was never set up".
+		reason := "connection_error"
+		if errors.Is(err, gitprovider.ErrFileNotFound) {
+			// The repo is reachable, the file is genuinely absent — this is a
+			// real "never bootstrapped" state, so the wizard SHOULD fire.
+			reason = "not_bootstrapped"
+		}
 		writeJSON(w, http.StatusOK, RepoStatusResponse{
 			Initialized:     false,
 			BootstrapSynced: false,
-			Reason:          "not_bootstrapped",
+			Reason:          reason,
 		})
 		return
 	}

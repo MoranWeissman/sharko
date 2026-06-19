@@ -73,4 +73,40 @@ describe('shouldShowSetupWizard', () => {
       shouldShowSetupWizard({ initialized: true } as { initialized: boolean }, false),
     ).toBe(true)
   })
+
+  // V2-cleanup-50 — a BROKEN connection (TLS/transport/auth failure) must NOT
+  // throw the user into the re-bootstrap wizard. The reason tag tells the gate
+  // "this is an environment problem, keep the user in their working app". The
+  // banner surfaces the problem separately.
+  it('returns false when not initialized because of a connection_error (V2-cleanup-50)', () => {
+    expect(
+      shouldShowSetupWizard({ initialized: false, reason: 'connection_error' }, false),
+    ).toBe(false)
+  })
+
+  it('returns false when not initialized because of no_connection (V2-cleanup-50)', () => {
+    expect(
+      shouldShowSetupWizard({ initialized: false, reason: 'no_connection' }, false),
+    ).toBe(false)
+  })
+
+  it('returns false when not initialized because the probe itself failed (reason: error) (V2-cleanup-50)', () => {
+    expect(
+      shouldShowSetupWizard({ initialized: false, reason: 'error' }, false),
+    ).toBe(false)
+  })
+
+  // CRITICAL GUARD — the connection-error exclusion must NOT swallow the two
+  // genuine wizard states.
+  it('still fires the wizard for a genuine not_bootstrapped state (guard against the exclusion swallowing real setup)', () => {
+    expect(
+      shouldShowSetupWizard({ initialized: false, reason: 'not_bootstrapped' }, false),
+    ).toBe(true)
+  })
+
+  it('still fires the wizard for initialized-but-degraded recovery even though it has no connection reason (guard)', () => {
+    expect(
+      shouldShowSetupWizard({ initialized: true, bootstrap_synced: false }, false),
+    ).toBe(true)
+  })
 })
