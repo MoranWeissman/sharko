@@ -8,6 +8,7 @@ import { AddonStatesProvider } from '@/hooks/useAddonStates'
 import { Layout } from '@/components/Layout'
 import { Login } from '@/views/Login'
 import { FirstRunWizard } from '@/components/FirstRunWizard'
+import { ConnectionErrorBanner } from '@/components/ConnectionErrorBanner'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { api } from '@/services/api'
 
@@ -33,10 +34,46 @@ function PageLoader() {
 }
 
 /**
+ * The set of `reason` tags that mean "Sharko couldn't reach or verify the Git
+ * connection" — a BROKEN connection, not a fresh install. (`connections.length
+ * === 0`, the genuine fresh-install path, is handled upstream by
+ * <FirstRunWizard/> before this gate ever runs, so any of these reaching the
+ * gate means an existing-but-broken connection.)
+ *
+ *   - "connection_error" — backend reached the repo step but the fetch failed
+ *     (TLS/transport/auth, e.g. a corporate Zscaler proxy x509 error).
+ *   - "no_connection"    — backend has no usable active Git provider.
+ *   - "error"            — the HTTP probe itself failed (set by the .catch).
+ *
+ * V2-cleanup-50: a broken connection must NOT throw the user into the
+ * re-bootstrap wizard. It belongs in Settings → Connections, surfaced via a
+ * non-blocking banner.
+ */
+export const CONNECTION_ERROR_REASONS = ['connection_error', 'no_connection', 'error'] as const
+
+export function isConnectionErrorReason(reason?: string): boolean {
+  return reason != null && (CONNECTION_ERROR_REASONS as readonly string[]).includes(reason)
+}
+
+/**
  * Pure helper for the wizard gate. Returns true when the wizard should auto-
  * open at Step 4 because either the GitOps repo isn't initialized yet, OR it
  * is initialized but the cluster-side ArgoCD bootstrap
  * (`cluster-addons-bootstrap`) is missing/degraded.
+ *
+ * V2-cleanup-50: when the repo is NOT initialized BUT the reason is a broken
+ * connection (TLS/transport/auth failure — `connection_error`/`no_connection`/
+ * `error`), we deliberately return false so the user KEEPS their working app
+ * instead of being forced to re-bootstrap. A non-blocking banner surfaces the
+ * connection problem and points at Settings → Connections.
+ *
+ * The connection-error exclusion applies ONLY to the not-initialized branch.
+ * The two genuine wizard states still fire unconditionally:
+ *   - `reason === "not_bootstrapped"` (repo reachable, files genuinely absent).
+ *   - `initialized === true && !bootstrap_synced` (repo seeded but the
+ *     cluster-side ArgoCD bootstrap is missing/degraded — the recovery
+ *     surface). This carries no connection-error reason, so the exclusion can
+ *     never swallow it.
  *
  * `dismissed` is the session-scoped escape hatch (sessionStorage
  * `sharko:dismiss-wizard=1`). When true, the user can explore the (degraded)
@@ -51,10 +88,38 @@ export function shouldShowSetupWizard(
 ): boolean {
   if (dismissed) return false
   if (!repoStatus) return false
-  return !repoStatus.initialized || !repoStatus.bootstrap_synced
+
+  // Initialized-but-degraded recovery surface — always fires. It never carries
+  // a connection-error reason, so it must be evaluated before the exclusion.
+  if (repoStatus.initialized) {
+    return !repoStatus.bootstrap_synced
+  }
+
+  // Not initialized: a broken connection is an environment problem, not a setup
+  // problem. Suppress the wizard and let the banner surface it instead.
+  if (isConnectionErrorReason(repoStatus.reason)) {
+    return false
+  }
+
+  // Not initialized for a genuine reason (e.g. "not_bootstrapped") — fire.
+  return true
 }
 
-function ConnectedApp() {
+/**
+ * Whether the connection-error banner should be shown: the wizard is suppressed
+ * BECAUSE of a broken connection (not a fresh install — that path is handled by
+ * the upstream <FirstRunWizard/>). Mirrors the suppression branch in
+ * shouldShowSetupWizard so the two stay in lockstep.
+ */
+export function shouldShowConnectionErrorBanner(
+  repoStatus: { initialized: boolean; bootstrap_synced?: boolean; reason?: string } | null,
+): boolean {
+  if (!repoStatus) return false
+  if (repoStatus.initialized) return false
+  return isConnectionErrorReason(repoStatus.reason)
+}
+
+export function ConnectedApp() {
   const { connections, loading } = useConnections()
   const [repoStatus, setRepoStatus] = useState<{ initialized: boolean; bootstrap_synced?: boolean; reason?: string } | null>(null)
   const [checkingRepo, setCheckingRepo] = useState(true)
@@ -101,8 +166,14 @@ function ConnectedApp() {
     return <FirstRunWizard initialStep={4} />
   }
 
+  // V2-cleanup-50: when the wizard is suppressed because the Git connection is
+  // broken (not a fresh install — that's handled above), surface it as a
+  // non-blocking banner above the app instead of hard-blocking the user.
+  const showConnError = shouldShowConnectionErrorBanner(repoStatus)
+
   return (
     <Suspense fallback={<PageLoader />}>
+      {showConnError && <ConnectionErrorBanner reason={repoStatus?.reason} />}
       <Routes>
         <Route path="/" element={<Layout />}>
           <Route index element={<Navigate to="/dashboard" replace />} />
