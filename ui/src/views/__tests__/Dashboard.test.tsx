@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { Dashboard } from '@/views/Dashboard';
+import { Dashboard, isBootstrapBlocking, BOOTSTRAP_BLOCKING_HEALTH } from '@/views/Dashboard';
+import { api } from '@/services/api';
 // v1.21 Bundle 3 — Dashboard now consumes addon state via the unified
 // provider. Tests have to mount it inside one or the hook throws.
 import { AddonStatesProvider } from '@/hooks/useAddonStates';
@@ -62,6 +63,21 @@ function renderDashboard() {
   );
 }
 
+// Base stats used by the bootstrap-banner gating tests. We override
+// bootstrap_app_health per case via the mocked api.getDashboardStats.
+const baseStats = {
+  connections: { total: 1, active: 'dev' },
+  clusters: { total: 10, connected_to_argocd: 8, disconnected_from_argocd: 2 },
+  applications: {
+    total: 50,
+    by_sync_status: { synced: 40, out_of_sync: 8, unknown: 2 },
+    by_health_status: { healthy: 45, progressing: 2, degraded: 2, unknown: 1 },
+  },
+  addons: { total_available: 15, total_deployments: 100, enabled_deployments: 85 },
+};
+
+const BOOTSTRAP_BANNER_TEXT = 'ArgoCD Bootstrap Application Issue';
+
 describe('Dashboard', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -112,5 +128,78 @@ describe('Dashboard', () => {
     fireEvent.click(btn);
 
     expect(mockNavigate).toHaveBeenCalledWith('/clusters?status=disconnected');
+  });
+});
+
+// connhealth-2: the inline bootstrap banner is now gated to genuinely
+// BLOCKING bootstrap states only. Softer / transient states (e.g. Unknown)
+// are surfaced through the notification bell instead, so they must NOT show
+// the inline banner.
+describe('isBootstrapBlocking (banner gate)', () => {
+  it('blocking set is exactly Error/Missing/Degraded', () => {
+    expect([...BOOTSTRAP_BLOCKING_HEALTH]).toEqual(['Error', 'Missing', 'Degraded']);
+  });
+
+  it('returns true for blocking states', () => {
+    expect(isBootstrapBlocking('Error')).toBe(true);
+    expect(isBootstrapBlocking('Missing')).toBe(true);
+    expect(isBootstrapBlocking('Degraded')).toBe(true);
+  });
+
+  it('returns false for softer / non-blocking states', () => {
+    expect(isBootstrapBlocking('Unknown')).toBe(false);
+    expect(isBootstrapBlocking('Progressing')).toBe(false);
+    expect(isBootstrapBlocking('Healthy')).toBe(false);
+    expect(isBootstrapBlocking(undefined)).toBe(false);
+    expect(isBootstrapBlocking(null)).toBe(false);
+    expect(isBootstrapBlocking('')).toBe(false);
+  });
+});
+
+describe('Dashboard bootstrap banner gating (connhealth-2)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('shows the inline banner for a blocking state (Error)', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...baseStats,
+      bootstrap_app_health: 'Error',
+      bootstrap_app_sync: 'OutOfSync',
+    });
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText('Sharko')).toBeInTheDocument();
+    });
+    expect(screen.getByText(BOOTSTRAP_BANNER_TEXT)).toBeInTheDocument();
+  });
+
+  it('does NOT show the inline banner for a softer state (Unknown) — bell-only', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...baseStats,
+      bootstrap_app_health: 'Unknown',
+      bootstrap_app_sync: 'Unknown',
+    });
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText('Sharko')).toBeInTheDocument();
+    });
+    expect(screen.queryByText(BOOTSTRAP_BANNER_TEXT)).not.toBeInTheDocument();
+  });
+
+  it('does NOT show the inline banner when Healthy', async () => {
+    (api.getDashboardStats as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...baseStats,
+      bootstrap_app_health: 'Healthy',
+      bootstrap_app_sync: 'Synced',
+    });
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText('Sharko')).toBeInTheDocument();
+    });
+    expect(screen.queryByText(BOOTSTRAP_BANNER_TEXT)).not.toBeInTheDocument();
   });
 });

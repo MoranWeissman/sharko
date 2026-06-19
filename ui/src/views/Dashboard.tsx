@@ -74,6 +74,24 @@ function timeAgo(timestamp: string): string {
 
 // --- Bootstrap Health Banner ---
 
+// connhealth-2: the inline bootstrap banner now renders ONLY for bootstrap
+// states that genuinely BLOCK addon deploys. Softer / transient states
+// (Unknown, Progressing, or anything not listed here) are surfaced through
+// the notification bell instead (Story 1's "ArgoCD can't sync the repo"
+// alert), so they no longer get a redundant inline banner.
+//   Blocking set: Error, Missing, Degraded.
+//   - Error / Missing: the bootstrap Application failed or doesn't exist —
+//     nothing can deploy.
+//   - Degraded: the bootstrap Application is unhealthy enough to stall child
+//     addon syncs.
+// Anything else (Unknown = ArgoCD hasn't reported yet, Progressing =
+// mid-sync, Healthy) is bell-only / no banner.
+export const BOOTSTRAP_BLOCKING_HEALTH = ['Error', 'Missing', 'Degraded'] as const;
+
+export function isBootstrapBlocking(health: string | undefined | null): boolean {
+  return !!health && (BOOTSTRAP_BLOCKING_HEALTH as readonly string[]).includes(health);
+}
+
 interface BootstrapHealthBannerProps {
   health: string;
   sync: string;
@@ -83,7 +101,10 @@ function BootstrapHealthBanner({ health, sync }: BootstrapHealthBannerProps) {
   const [dismissed, setDismissed] = useState(false);
   if (dismissed) return null;
 
-  // Red for Degraded/Missing/Error/Unknown, amber for anything else non-Healthy
+  // The render gate (isBootstrapBlocking) only passes Error/Missing/Degraded
+  // through to this banner now, so these are always "critical" (red). The
+  // amber branch is kept for defensive styling in case the banner is ever
+  // shown for a softer state.
   const isCritical = health === 'Degraded' || health === 'Missing' || health === 'Error' || health === 'Unknown';
   const borderClass = isCritical
     ? 'border-red-300 dark:border-red-700'
@@ -331,10 +352,17 @@ export function Dashboard() {
       {/* ArgoCD Status Banner */}
       <ArgoCDStatusBanner visible={argoCDUnreachable} />
 
-      {/* Bootstrap App Health Banner */}
-      {stats.bootstrap_app_health && stats.bootstrap_app_health !== 'Healthy' && (
+      {/* Bootstrap App Health Banner — inline only for genuinely BLOCKING
+          states. Per the "bell absorbs everything" decision (connhealth-2),
+          the ArgoCD repo connection now also surfaces in the notification
+          bell (Story 1's "ArgoCD can't sync the repo" alert), so softer /
+          transient bootstrap states (e.g. Unknown, Progressing) are
+          bell-only and do NOT get an inline banner. Only Error, Missing,
+          and Degraded actually prevent addon deploys, so only those keep
+          the banner. See BOOTSTRAP_BLOCKING_HEALTH. */}
+      {isBootstrapBlocking(stats.bootstrap_app_health) && (
         <BootstrapHealthBanner
-          health={stats.bootstrap_app_health}
+          health={stats.bootstrap_app_health!}
           sync={stats.bootstrap_app_sync ?? 'Unknown'}
         />
       )}

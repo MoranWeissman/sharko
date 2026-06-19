@@ -1,20 +1,28 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Bell } from 'lucide-react'
 import { api } from '@/services/api'
 
 interface Notification {
   id: string
-  type: 'upgrade' | 'security' | 'drift'
+  type: 'upgrade' | 'security' | 'drift' | 'connection'
   title: string
   description: string
   timestamp: string
   read: boolean
 }
 
+// Where a connection-health alert (NotificationType `connection`, written by
+// the Story 1 backend poller) takes the user when clicked: Settings →
+// Connection, where the Git + ArgoCD connections are edited/tested. The
+// section param is verified against Settings.tsx (default + valid key).
+const CONNECTION_SETTINGS_ROUTE = '/settings?section=connections'
+
 export function NotificationBell() {
   const [open, setOpen] = useState(false)
   const [notifications, setNotifications] = useState<Notification[]>([])
   const ref = useRef<HTMLDivElement>(null)
+  const navigate = useNavigate()
 
   // Fetch notifications from API
   const fetchNotifications = useCallback(() => {
@@ -69,7 +77,19 @@ export function NotificationBell() {
       case 'security': return '🔒'
       case 'upgrade': return '⬆️'
       case 'drift': return '⚠️'
+      case 'connection': return '🔌'
       default: return 'ℹ️'
+    }
+  }
+
+  // Connection-health alerts are actionable: clicking one takes the user to
+  // Settings → Connection so they can inspect/fix the Git or ArgoCD link.
+  // Other notification types remain non-navigating. Mark-read behavior is
+  // unchanged (the bell still uses mark-all-as-read).
+  const handleItemClick = (n: Notification) => {
+    if (n.type === 'connection') {
+      setOpen(false)
+      navigate(CONNECTION_SETTINGS_ROUTE)
     }
   }
 
@@ -110,12 +130,27 @@ export function NotificationBell() {
                 No notifications
               </p>
             ) : (
-              notifications.map(n => (
+              notifications.map(n => {
+                const actionable = n.type === 'connection'
+                return (
                 <div
                   key={n.id}
+                  role={actionable ? 'button' : undefined}
+                  tabIndex={actionable ? 0 : undefined}
+                  onClick={actionable ? () => handleItemClick(n) : undefined}
+                  onKeyDown={
+                    actionable
+                      ? (e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault()
+                            handleItemClick(n)
+                          }
+                        }
+                      : undefined
+                  }
                   className={`border-b border-[#d6eeff] px-4 py-3 last:border-0 ${
                     !n.read ? 'bg-[#e0f0ff]' : ''
-                  }`}
+                  } ${actionable ? 'cursor-pointer hover:bg-[#d6eeff] dark:hover:bg-gray-700' : ''}`}
                 >
                   <div className="flex items-start gap-2">
                     <span className="mt-0.5 text-sm">{typeIcon(n.type)}</span>
@@ -125,13 +160,19 @@ export function NotificationBell() {
                       </p>
                       <p className="mt-0.5 text-xs text-[#3a6a8a]">{n.description}</p>
                       <p className="mt-1 text-[10px] text-[#5a8aaa]">{timeAgo(n.timestamp)}</p>
+                      {actionable && (
+                        <p className="mt-1 text-[10px] font-medium text-teal-600 dark:text-teal-400">
+                          Open Settings → Connection
+                        </p>
+                      )}
                     </div>
                     {!n.read && (
                       <div className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-blue-500" />
                     )}
                   </div>
                 </div>
-              ))
+                )
+              })
             )}
           </div>
         </div>
