@@ -1095,3 +1095,88 @@ describe('FirstRunWizard — Step 4 conditional render by repo state (V2-cleanup
     ).toBeInTheDocument()
   })
 })
+
+// V2-cleanup-51 — Step 4 renders connection-problem guidance for the new
+// `unreachable` state, and does NOT offer to re-initialize.
+//
+// THE BUG: ArgoCD can't reach the Git repo (a connection/network problem, e.g.
+// a corporate Zscaler proxy), so the bootstrap app sits sync=Unknown
+// health=Error. The old "partial" copy told the user to "re-run initialize to
+// repair it" — but re-initializing CAN'T fix a connection problem. The backend
+// now distinguishes this as state="unreachable"; the wizard must show honest
+// connection-problem guidance and point at Settings → Connections instead.
+describe('FirstRunWizard — Step 4 unreachable state (V2-cleanup-51)', () => {
+  const getInitStatusMock = () =>
+    apiModule.getInitStatus as ReturnType<typeof vi.fn>
+
+  afterEach(() => {
+    getInitStatusMock().mockResolvedValue({ state: 'empty', detail: '' })
+  })
+
+  it('unreachable → shows connection-problem copy + a Settings → Connections link, and does NOT show the Initialize buttons', async () => {
+    getInitStatusMock().mockResolvedValueOnce({
+      state: 'unreachable',
+      detail: 'argocd app "cluster-addons-bootstrap" sync=Unknown health=Error',
+    })
+    renderWizard(4)
+
+    // Connection-problem guidance, not re-init advice.
+    expect(
+      await screen.findByText(
+        /ArgoCD can't reach your Git repo right now — this is usually a connection or network problem, not a setup problem\./i,
+      ),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/Re-initializing won't fix it/i),
+    ).toBeInTheDocument()
+
+    // The ArgoCD detail is surfaced verbatim as secondary text.
+    expect(
+      screen.getByText(/sync=Unknown health=Error/i),
+    ).toBeInTheDocument()
+
+    // A link/button to Settings → Connections is present.
+    expect(
+      screen.getByRole('button', { name: /Go to Settings → Connections/i }),
+    ).toBeInTheDocument()
+
+    // CRITICAL: the Initialize buttons must NOT be shown — re-init can't fix a
+    // connection problem.
+    expect(
+      screen.queryByRole('button', { name: /Initialize.*Auto-merge/i }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /Initialize \(manual PR review\)/i }),
+    ).not.toBeInTheDocument()
+
+    // The old re-init repair copy must NOT appear for the unreachable state.
+    expect(
+      screen.queryByText(/Re-run initialize to repair it/i),
+    ).not.toBeInTheDocument()
+  })
+
+  it('partial → STILL shows the repair copy + Initialize buttons (genuine degraded path unchanged)', async () => {
+    getInitStatusMock().mockResolvedValueOnce({
+      state: 'partial',
+      detail: 'argocd app "cluster-addons-bootstrap" sync=OutOfSync health=Degraded',
+    })
+    renderWizard(4)
+
+    expect(
+      await screen.findByText(
+        /This repo has Sharko files but the ArgoCD bootstrap is missing or unhealthy/i,
+      ),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/Re-run initialize to repair it/i),
+    ).toBeInTheDocument()
+    // Repair path stays available — re-init CAN fix a genuinely degraded bootstrap.
+    expect(
+      screen.getByRole('button', { name: /Initialize.*Auto-merge/i }),
+    ).toBeInTheDocument()
+    // And the connection-problem copy must NOT leak into the partial branch.
+    expect(
+      screen.queryByText(/ArgoCD can't reach your Git repo right now/i),
+    ).not.toBeInTheDocument()
+  })
+})

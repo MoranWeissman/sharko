@@ -15,6 +15,8 @@ import {
   ChevronDown,
   ChevronRight,
   KeyRound,
+  WifiOff,
+  Settings as SettingsIcon,
 } from 'lucide-react'
 import {
   api,
@@ -494,6 +496,7 @@ function StepArgoCD({
 /* ------------------------------------------------------------------ */
 
 function StepInit({ onDone, resumed, onBack }: { onDone: () => void; resumed?: boolean; onBack?: () => void }) {
+  const navigate = useNavigate()
   const [state, setState] = useState<'idle' | 'running' | 'done' | 'error'>('idle')
   const [error, setError] = useState<string | null>(null)
   const [operationId, setOperationId] = useState<string | null>(null)
@@ -512,7 +515,7 @@ function StepInit({ onDone, resumed, onBack }: { onDone: () => void; resumed?: b
   // network/probe failure we fall back to the Initialize offer ('empty') so a
   // flaky probe never blocks the user.
   const [repoState, setRepoState] = useState<
-    'loading' | 'empty' | 'initialized' | 'partial'
+    'loading' | 'empty' | 'initialized' | 'partial' | 'unreachable'
   >('loading')
   const [probeDetail, setProbeDetail] = useState<string>('')
   const [probeFailed, setProbeFailed] = useState(false)
@@ -670,6 +673,52 @@ function StepInit({ onDone, resumed, onBack }: { onDone: () => void; resumed?: b
           <p className="text-sm text-amber-700 dark:text-amber-400">
             Re-run initialize to repair it — Sharko opens a PR for your review.
           </p>
+        </div>
+      )}
+
+      {/* Unreachable state (V2-cleanup-51) — repo files exist, but ArgoCD
+          simply can't reach/compare the repo right now. That's a connection /
+          network problem, not a setup problem, so re-initializing won't fix it.
+          We deliberately do NOT show the Initialize buttons here; instead we
+          point the user at Settings → Connections. */}
+      {repoState === 'unreachable' && state === 'idle' && (
+        <div className="space-y-3">
+          <div className="rounded-xl ring-2 ring-amber-300 bg-amber-50 p-5 dark:bg-amber-900/20">
+            <p className="flex items-start gap-2 text-sm font-medium text-amber-800 dark:text-amber-300">
+              <WifiOff className="h-4 w-4 mt-0.5 shrink-0" />
+              <span>
+                ArgoCD can't reach your Git repo right now — this is usually a
+                connection or network problem, not a setup problem.
+                Re-initializing won't fix it. Check your connection in Settings →
+                Connections (and your network / proxy).
+              </span>
+            </p>
+            {probeDetail && (
+              <p className="mt-2 pl-6 text-xs text-amber-700 dark:text-amber-400">
+                {probeDetail}
+              </p>
+            )}
+          </div>
+          <div className="flex flex-col gap-3 sm:flex-row">
+            <button
+              type="button"
+              onClick={() => {
+                navigate('/settings?section=connections')
+                onDone()
+              }}
+              className="inline-flex items-center gap-2 rounded-full bg-[#0a2a4a] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#14466e] focus:outline-none focus:ring-2 focus:ring-[#6aade0]"
+            >
+              <SettingsIcon className="h-4 w-4" />
+              Go to Settings → Connections
+            </button>
+            <button
+              type="button"
+              onClick={onDone}
+              className="rounded-lg px-4 py-2 text-sm font-medium text-[#1a4a6a] hover:text-[#0a3a5a] dark:text-gray-400"
+            >
+              Back to Dashboard
+            </button>
+          </div>
         </div>
       )}
 

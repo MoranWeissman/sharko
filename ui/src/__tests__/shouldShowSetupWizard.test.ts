@@ -109,4 +109,36 @@ describe('shouldShowSetupWizard', () => {
       shouldShowSetupWizard({ initialized: true, bootstrap_synced: false }, false),
     ).toBe(true)
   })
+
+  // V2-cleanup-51 — initialized repo, but the bootstrap is unhealthy ONLY
+  // because ArgoCD can't reach/compare the repo (a connection problem). The
+  // backend tags this `bootstrap_unreachable`. Re-init can't fix a connection
+  // problem, so the wizard must stay closed and the user keeps their working
+  // app — the bell alert + Dashboard banner surface the connection problem.
+  it('returns false when initialized but bootstrap is unreachable (connection problem, V2-cleanup-51)', () => {
+    expect(
+      shouldShowSetupWizard(
+        { initialized: true, bootstrap_synced: false, reason: 'bootstrap_unreachable' },
+        false,
+      ),
+    ).toBe(false)
+  })
+
+  // CRITICAL GUARD — only `bootstrap_unreachable` is suppressed. A genuinely
+  // degraded bootstrap still fires the recovery wizard (re-init may repair it).
+  it('still fires the wizard when initialized but bootstrap is genuinely degraded (V2-cleanup-51 guard)', () => {
+    expect(
+      shouldShowSetupWizard(
+        { initialized: true, bootstrap_synced: false, reason: 'bootstrap_degraded' },
+        false,
+      ),
+    ).toBe(true)
+  })
+
+  // And the no-reason initialized-but-unhealthy case is unchanged — still fires.
+  it('still fires the wizard when initialized but bootstrap is unhealthy with no reason (V2-cleanup-51 guard)', () => {
+    expect(
+      shouldShowSetupWizard({ initialized: true, bootstrap_synced: false }, false),
+    ).toBe(true)
+  })
 })

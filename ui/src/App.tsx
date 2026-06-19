@@ -67,13 +67,19 @@ export function isConnectionErrorReason(reason?: string): boolean {
  * instead of being forced to re-bootstrap. A non-blocking banner surfaces the
  * connection problem and points at Settings → Connections.
  *
- * The connection-error exclusion applies ONLY to the not-initialized branch.
- * The two genuine wizard states still fire unconditionally:
+ * The #435 connection-error exclusion applies ONLY to the not-initialized
+ * branch. The genuine wizard states still fire:
  *   - `reason === "not_bootstrapped"` (repo reachable, files genuinely absent).
  *   - `initialized === true && !bootstrap_synced` (repo seeded but the
- *     cluster-side ArgoCD bootstrap is missing/degraded — the recovery
- *     surface). This carries no connection-error reason, so the exclusion can
- *     never swallow it.
+ *     cluster-side ArgoCD bootstrap is genuinely missing/degraded — the
+ *     recovery surface).
+ *
+ * V2-cleanup-51: the initialized-but-unhealthy branch gets ONE new exception.
+ * When `reason === "bootstrap_unreachable"` the bootstrap is unhealthy only
+ * because ArgoCD can't reach/compare the repo (a connection problem), so we
+ * return false — re-init can't fix a connection problem. Any other reason
+ * (including "bootstrap_degraded" or no reason) still fires the recovery
+ * wizard.
  *
  * `dismissed` is the session-scoped escape hatch (sessionStorage
  * `sharko:dismiss-wizard=1`). When true, the user can explore the (degraded)
@@ -89,9 +95,19 @@ export function shouldShowSetupWizard(
   if (dismissed) return false
   if (!repoStatus) return false
 
-  // Initialized-but-degraded recovery surface — always fires. It never carries
-  // a connection-error reason, so it must be evaluated before the exclusion.
+  // Initialized-but-unhealthy bootstrap. There are two sub-cases:
+  //
+  //   - reason === "bootstrap_unreachable" — ArgoCD simply can't reach/compare
+  //     the repo right now (a connection/network problem, e.g. a corporate
+  //     Zscaler proxy). Re-initializing CAN'T fix a connection problem, so we
+  //     must NOT trap the user in the re-init wizard. Keep them in their working
+  //     app — the connection-health bell alert + the Dashboard banner already
+  //     surface this honestly. (V2-cleanup-51)
+  //   - any OTHER reason (incl. "bootstrap_degraded" or no reason) — the
+  //     bootstrap is genuinely missing/degraded and re-init may repair it, so
+  //     the recovery wizard still fires (unchanged V124-22 behaviour).
   if (repoStatus.initialized) {
+    if (repoStatus.reason === 'bootstrap_unreachable') return false
     return !repoStatus.bootstrap_synced
   }
 
