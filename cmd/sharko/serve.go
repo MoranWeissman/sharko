@@ -347,6 +347,55 @@ var serveCmd = &cobra.Command{
 		notifChecker.Start()
 		defer notifChecker.Stop()
 
+		// Start connection-health poller (background goroutine, ~60s by default).
+		// It watches Sharko's OWN two connections — Sharko→Git (used for every
+		// commit/PR) and ArgoCD→repo — and pushes a bell alert when either
+		// breaks, auto-clearing it when the connection recovers. The two health
+		// probes are injected as closures here because this is the one place
+		// that can reach both connSvc (for the active Git provider + ArgoCD
+		// client) and api.ProbeBootstrapApp without an import cycle.
+		connCheckInterval := getEnvDefault("SHARKO_CONNECTION_CHECK_INTERVAL", "60s")
+		connDur, connParseErr := time.ParseDuration(connCheckInterval)
+		if connParseErr != nil || connDur <= 0 {
+			slog.Warn("invalid connection check interval, using 60s", "interval", connCheckInterval)
+			connDur = notifications.DefaultConnectionCheckInterval
+		}
+
+		// gitHealthFn: Sharko→Git. An error from GetActiveGitProvider (or a nil
+		// provider) means no active connection — undetermined, not broken.
+		gitHealthFn := func(ctx context.Context) notifications.HealthResult {
+			gp, gpErr := connSvc.GetActiveGitProvider()
+			if gpErr != nil || gp == nil {
+				return notifications.UndeterminedResult()
+			}
+			if err := gp.TestConnection(ctx); err != nil {
+				return notifications.UnhealthyResult(err.Error())
+			}
+			return notifications.HealthyResult()
+		}
+
+		// argoHealthFn: ArgoCD→repo. A client error means no active connection —
+		// undetermined. Otherwise probe the bootstrap app; any non-"healthy"
+		// status is a break, with the probe's detail as the reason.
+		argoHealthFn := func(ctx context.Context) notifications.HealthResult {
+			ac, acErr := connSvc.GetActiveOrchestratorArgocdClient()
+			if acErr != nil || ac == nil {
+				return notifications.UndeterminedResult()
+			}
+			status, detail := api.ProbeBootstrapApp(ctx, ac)
+			if status != "healthy" {
+				if detail == "" {
+					detail = "argocd repo sync status: " + status
+				}
+				return notifications.UnhealthyResult(detail)
+			}
+			return notifications.HealthyResult()
+		}
+
+		connPoller := notifications.NewConnectionPoller(srv.NotificationStore(), connDur, gitHealthFn, argoHealthFn)
+		connPoller.Start()
+		defer connPoller.Stop()
+
 		// Demo mode: wire up mock backends and skip all real provider setup.
 		if demoMode {
 			slog.Info("demo mode: running with mock backends", "users", "admin/admin, qa/sharko")

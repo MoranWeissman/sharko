@@ -13,9 +13,10 @@ import (
 type NotificationType string
 
 const (
-	TypeUpgrade  NotificationType = "upgrade"
-	TypeSecurity NotificationType = "security"
-	TypeDrift    NotificationType = "drift"
+	TypeUpgrade    NotificationType = "upgrade"
+	TypeSecurity   NotificationType = "security"
+	TypeDrift      NotificationType = "drift"
+	TypeConnection NotificationType = "connection"
 )
 
 // Notification is a single notification item.
@@ -107,6 +108,25 @@ func (s *Store) MarkAllRead() {
 	}
 	if err := s.saveLocked(); err != nil {
 		slog.Warn("could not persist after mark all read", "error", err, "component", "notifications")
+	}
+}
+
+// Resolve removes every notification whose Title matches the given title,
+// regardless of read/unread state. It is how a previously-reported problem
+// clears itself once the underlying condition recovers (e.g. a broken
+// connection that comes back healthy). A title with no matches is a no-op.
+func (s *Store) Resolve(title string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	kept := s.notifications[:0]
+	for _, n := range s.notifications {
+		if n.Title != title {
+			kept = append(kept, n)
+		}
+	}
+	s.notifications = kept
+	if err := s.saveLocked(); err != nil {
+		slog.Warn("could not persist after resolve", "error", err, "component", "notifications")
 	}
 }
 

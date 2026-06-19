@@ -177,3 +177,67 @@ func TestStore_Persistence_FileContentsAreValidJSON(t *testing.T) {
 		t.Errorf("unexpected file contents: %+v", items)
 	}
 }
+
+func TestStore_Resolve_RemovesReadAndUnread(t *testing.T) {
+	s := NewStore(10, "")
+
+	s.Add(Notification{ID: "1", Title: "Broken connection", Type: TypeConnection, Timestamp: time.Now()})
+	s.Add(Notification{ID: "2", Title: "Other alert", Type: TypeUpgrade, Timestamp: time.Now()})
+	// Mark everything read so we prove Resolve removes read entries too.
+	s.MarkAllRead()
+	// Add a second unread entry under the same title (post mark-read) to prove
+	// Resolve removes BOTH the read and the unread same-title entries.
+	s.Add(Notification{ID: "3", Title: "Broken connection", Type: TypeConnection, Timestamp: time.Now()})
+
+	s.Resolve("Broken connection")
+
+	items := s.List()
+	if len(items) != 1 {
+		t.Fatalf("expected 1 notification left after resolve, got %d: %+v", len(items), items)
+	}
+	if items[0].Title != "Other alert" {
+		t.Errorf("Resolve removed the wrong notification; left %q", items[0].Title)
+	}
+}
+
+func TestStore_Resolve_UnknownTitleIsNoOp(t *testing.T) {
+	s := NewStore(10, "")
+	s.Add(Notification{ID: "1", Title: "Keep me", Type: TypeUpgrade, Timestamp: time.Now()})
+
+	s.Resolve("does not exist")
+
+	if got := len(s.List()); got != 1 {
+		t.Fatalf("expected Resolve of unknown title to be a no-op, got %d items", got)
+	}
+}
+
+func TestStore_Resolve_Persists(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "notifications.json")
+
+	s := NewStore(10, filePath)
+	s.Add(Notification{ID: "1", Title: "Broken connection", Type: TypeConnection, Timestamp: time.Now()})
+	s.Resolve("Broken connection")
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("reading file: %v", err)
+	}
+	var items []Notification
+	if err := json.Unmarshal(data, &items); err != nil {
+		t.Fatalf("file is not valid JSON: %v", err)
+	}
+	if len(items) != 0 {
+		t.Errorf("expected resolved notification to be persisted as removed, got %+v", items)
+	}
+}
+
+func TestStore_Add_DedupStillWorks(t *testing.T) {
+	s := NewStore(10, "")
+	s.Add(Notification{ID: "1", Title: "Broken connection", Type: TypeConnection, Timestamp: time.Now()})
+	s.Add(Notification{ID: "2", Title: "Broken connection", Type: TypeConnection, Timestamp: time.Now()})
+
+	if got := len(s.List()); got != 1 {
+		t.Fatalf("expected Add dedup on unread same-title, got %d items", got)
+	}
+}
