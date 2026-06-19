@@ -5213,10 +5213,12 @@ paths:
         present on the base branch, "initialized" when it is present and the ArgoCD
         bootstrap application is Synced + Healthy, "forbidden" when the file is present
         but ArgoCD rejected the read with a 403 because the token lacks RBAC permission
-        (detail carries an actionable permission message), and "partial" when the
-        file is present but the ArgoCD bootstrap is missing or unhealthy (detail carries
-        the ArgoCD diagnostic). Performs no writes and creates no operation session.
-        Requires an active Git connection.
+        (detail carries an actionable permission message), "unreachable" when the
+        file is present but the ArgoCD bootstrap reports Sync=Unknown because ArgoCD
+        cannot reach/evaluate the Git repo (a connection problem re-init cannot fix),
+        and "partial" when the file is present but the ArgoCD bootstrap is missing
+        or genuinely degraded (detail carries the ArgoCD diagnostic). Performs no
+        writes and creates no operation session. Requires an active Git connection.
       produces:
       - application/json
       responses:

@@ -253,6 +253,10 @@ func TestHandleRepoStatus_Initialized_BootstrapHealthy(t *testing.T) {
 		t.Errorf("expected bootstrap_synced=true (Synced+Healthy app), got %v",
 			body["bootstrap_synced"])
 	}
+	// A healthy bootstrap carries no reason (reason is omitempty, so absent).
+	if r, ok := body["reason"]; ok && r != "" {
+		t.Errorf("expected no reason for a healthy bootstrap, got %v", r)
+	}
 }
 
 // V124-22 / BUG-046 — repo initialized + bootstrap missing → bootstrap_synced=false.
@@ -267,6 +271,50 @@ func TestHandleRepoStatus_Initialized_BootstrapMissing(t *testing.T) {
 	if body["bootstrap_synced"] != false {
 		t.Errorf("expected bootstrap_synced=false (app missing), got %v",
 			body["bootstrap_synced"])
+	}
+}
+
+// V2-cleanup-51.1 — repo initialized + bootstrap app Sync=Unknown (ArgoCD's
+// repo-server can't reach the Git repo) → bootstrap_synced=false AND
+// reason="bootstrap_unreachable". This is the live Zscaler bug: re-init can't
+// fix a connection problem, so the UI must NOT auto-trap the user.
+func TestHandleRepoStatus_Initialized_BootstrapUnreachable(t *testing.T) {
+	ac := &initFakeArgocd{
+		app: &models.ArgocdApplication{
+			Name:         orchestrator.BootstrapRootAppName,
+			SyncStatus:   "Unknown",
+			HealthStatus: "Error",
+		},
+	}
+	body := repoStatusInitializedTestSetup(t, ac)
+	if body["bootstrap_synced"] != false {
+		t.Errorf("expected bootstrap_synced=false (Sync=Unknown), got %v",
+			body["bootstrap_synced"])
+	}
+	if body["reason"] != "bootstrap_unreachable" {
+		t.Errorf("expected reason=bootstrap_unreachable, got %v", body["reason"])
+	}
+}
+
+// V2-cleanup-51.1 — repo initialized + bootstrap genuinely degraded
+// (OutOfSync/Degraded) → bootstrap_synced=false AND reason="bootstrap_degraded".
+// ArgoCD read the repo and found a fixable problem, so re-init/repair is the
+// right move — distinct from the unreachable (connection) case above.
+func TestHandleRepoStatus_Initialized_BootstrapDegradedReason(t *testing.T) {
+	ac := &initFakeArgocd{
+		app: &models.ArgocdApplication{
+			Name:         orchestrator.BootstrapRootAppName,
+			SyncStatus:   "OutOfSync",
+			HealthStatus: "Degraded",
+		},
+	}
+	body := repoStatusInitializedTestSetup(t, ac)
+	if body["bootstrap_synced"] != false {
+		t.Errorf("expected bootstrap_synced=false (OutOfSync+Degraded), got %v",
+			body["bootstrap_synced"])
+	}
+	if body["reason"] != "bootstrap_degraded" {
+		t.Errorf("expected reason=bootstrap_degraded, got %v", body["reason"])
 	}
 }
 

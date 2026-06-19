@@ -199,7 +199,15 @@ func (s *Server) runInitOperation(
 		// instead of mislabeling it as "missing or unhealthy" (V2-cleanup-10).
 		s.opsStore.Fail(sessionID, detail)
 		return
-	case RepoStatePartial:
+	case RepoStatePartial, RepoStateUnreachable:
+		// Both mean: repo files exist but the ArgoCD bootstrap is not healthy.
+		// On the POST /init (repair) path we Fail identically — re-bootstrapping
+		// an already-seeded repo is not the move, and a Sync=Unknown
+		// (unreachable) repo can't be repaired by re-init either. The
+		// unreachable/partial distinction is only surfaced on the read-only
+		// GET /init/status path (which feeds the wizard); here we MUST NOT fall
+		// through to the bootstrap flow, so we keep both in this Fail branch
+		// (V2-cleanup-51).
 		s.opsStore.Fail(sessionID,
 			fmt.Sprintf("repo initialized but ArgoCD bootstrap is missing or unhealthy: %s",
 				detail))
@@ -420,8 +428,21 @@ func (s *Server) pollPRMerge(ctx context.Context, sessionID string, gp gitprovid
 const (
 	// bootstrapHealthy — the app is present, Sync=Synced, Health=Healthy.
 	bootstrapHealthy = "healthy"
-	// bootstrapUnhealthy — the app is present but not Synced+Healthy.
+	// bootstrapUnhealthy — the app is present but not Synced+Healthy, AND
+	// ArgoCD WAS able to read the repo (e.g. Sync=OutOfSync, Health=Degraded).
+	// This is a genuinely degraded bootstrap — ArgoCD compared the live tree
+	// against the source and found a fixable problem, so re-running Initialize
+	// (repair) may help.
 	bootstrapUnhealthy = "unhealthy"
+	// bootstrapUnreachable — the app is present but ArgoCD could NOT reach or
+	// evaluate the repo: Sync=Unknown is ArgoCD's standard semantic for
+	// "couldn't compare the working tree against the source" (repo-server can't
+	// reach the Git host, e.g. a TLS-inspection proxy the repo-server doesn't
+	// trust). This is a CONNECTION problem, not a degraded-deployment problem —
+	// re-running Initialize cannot fix it, so the wizard must NOT auto-trap the
+	// user in a re-bootstrap loop (V2-cleanup-51). Distinct from
+	// bootstrapUnhealthy (OutOfSync/Degraded), which IS repair-able.
+	bootstrapUnreachable = "unreachable"
 	// bootstrapAbsent — the app is genuinely not created on this ArgoCD yet
 	// (LIST succeeded, the app is not in the results). NOT a permission
 	// problem and NOT an unhealthy app — the repo has bootstrap files but
@@ -444,18 +465,26 @@ const (
 // message whenever a populated repo was pointed at a fresh ArgoCD
 // (V2-cleanup-11.2). LIST-and-filter removes that ambiguity:
 //
-//   - LIST ok, app present, Synced+Healthy        → ("healthy",   "")
-//   - LIST ok, app present, not Synced+Healthy     → ("unhealthy", <detail>)
-//   - LIST ok, app absent (not in results)         → ("absent",    <detail>)
-//   - LIST itself 403 (ErrPermissionDenied)        → ("forbidden", <permMsg>)
-//   - LIST fails for any other reason              → ("unhealthy", <detail>)
+//   - LIST ok, app present, Synced+Healthy         → ("healthy",     "")
+//   - LIST ok, app present, Sync=Unknown            → ("unreachable", <detail>)
+//   - LIST ok, app present, otherwise not S+H       → ("unhealthy",   <detail>)
+//   - LIST ok, app absent (not in results)          → ("absent",      <detail>)
+//   - LIST itself 403 (ErrPermissionDenied)         → ("forbidden",   <permMsg>)
+//   - LIST fails for any other reason               → ("unhealthy",   <detail>)
+//
+// The unreachable vs unhealthy split (V2-cleanup-51) keys off the bootstrap
+// app's Sync status: ArgoCD reports Sync=Unknown exactly when its repo-server
+// could not compare the live tree against the Git source (repo unreachable /
+// comparison error). That is a CONNECTION problem re-init cannot fix. Any other
+// non-(Synced+Healthy) combination (OutOfSync/Degraded/Progressing) means
+// ArgoCD DID read the repo and found a fixable problem → "unhealthy".
 //
 // Used to disambiguate "repo file exists" between idempotent-success and
 // partial-state on first-run init retry. Exported so the /repo/status handler
 // can reuse the same probe semantics — the wizard gate reads `bootstrap_synced`
 // from /repo/status to auto-open the wizard when the bootstrap is
-// absent/degraded. ("forbidden", "unhealthy", and "absent" are all
-// non-healthy, so that gate keeps treating them as not-synced.)
+// absent/degraded. ("forbidden", "unhealthy", "unreachable", and "absent" are
+// all non-healthy, so that gate keeps treating them as not-synced.)
 func ProbeBootstrapApp(ctx context.Context, ac orchestrator.ArgocdClient) (status, detail string) {
 	if ac == nil {
 		return bootstrapUnhealthy, "no ArgoCD client configured"
@@ -486,8 +515,17 @@ func ProbeBootstrapApp(ctx context.Context, ac orchestrator.ArgocdClient) (statu
 			orchestrator.BootstrapRootAppName)
 	}
 	if found.SyncStatus != "Synced" || found.HealthStatus != "Healthy" {
-		return bootstrapUnhealthy, fmt.Sprintf("argocd app %q sync=%s health=%s",
+		detail := fmt.Sprintf("argocd app %q sync=%s health=%s",
 			orchestrator.BootstrapRootAppName, found.SyncStatus, found.HealthStatus)
+		// Predicate (locked, V2-cleanup-51.1): Sync=Unknown ⟺ ArgoCD's
+		// repo-server could not reach/evaluate the repo (comparison error /
+		// unreachable Git host). Classify that as unreachable — a connection
+		// problem re-init cannot repair — distinct from a genuinely degraded
+		// bootstrap (OutOfSync/Degraded), which stays "unhealthy".
+		if found.SyncStatus == "Unknown" {
+			return bootstrapUnreachable, detail
+		}
+		return bootstrapUnhealthy, detail
 	}
 	return bootstrapHealthy, ""
 }
