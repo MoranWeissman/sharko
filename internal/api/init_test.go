@@ -443,3 +443,66 @@ func TestNewRouter_StillBuildsAfterV12415(t *testing.T) {
 		t.Errorf("expected 200 from /api/v1/health, got %d", w.Code)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// V2-cleanup-52 — ProbeBootstrapApp detail includes repo URL when available
+// ---------------------------------------------------------------------------
+
+// TestProbeBootstrapApp_UnreachableWithRepoURL verifies that when the bootstrap
+// app is present but unreachable (Sync=Unknown) AND SourceRepoURL is set, the
+// returned detail contains the repo URL. The poller composes the bell
+// Description as "lead + ' Reason: ' + detail", so this makes the bell alert
+// name the failing repo (V2-cleanup-52).
+func TestProbeBootstrapApp_UnreachableWithRepoURL(t *testing.T) {
+	const repoURL = "https://github.com/example/gitops"
+	ac := &initFakeArgocd{
+		// listApps is set directly so ListApplications returns the app with
+		// SourceRepoURL populated — ProbeBootstrapApp uses LIST-and-filter.
+		listApps: []models.ArgocdApplication{
+			{
+				Name:          orchestrator.BootstrapRootAppName,
+				SyncStatus:    "Unknown",
+				HealthStatus:  "Missing",
+				SourceRepoURL: repoURL,
+			},
+		},
+	}
+
+	status, detail := ProbeBootstrapApp(context.Background(), ac)
+
+	if status != bootstrapUnreachable {
+		t.Errorf("expected status=%q, got %q", bootstrapUnreachable, status)
+	}
+	if !strings.Contains(detail, repoURL) {
+		t.Errorf("expected detail to contain repo URL %q, got %q", repoURL, detail)
+	}
+	// V2-cleanup-51 contract: sync= and health= must still be present.
+	if !strings.Contains(detail, "sync=Unknown") {
+		t.Errorf("expected detail to contain sync=Unknown, got %q", detail)
+	}
+	if !strings.Contains(detail, "health=Missing") {
+		t.Errorf("expected detail to contain health=Missing, got %q", detail)
+	}
+}
+
+// TestProbeBootstrapApp_UnhealthyEmptyRepoURL verifies that when SourceRepoURL
+// is empty the detail does NOT contain a trailing "repo=" artifact — the string
+// must read cleanly without an empty URL field (V2-cleanup-52).
+func TestProbeBootstrapApp_UnhealthyEmptyRepoURL(t *testing.T) {
+	ac := &initFakeArgocd{
+		listApps: []models.ArgocdApplication{
+			{
+				Name:          orchestrator.BootstrapRootAppName,
+				SyncStatus:    "OutOfSync",
+				HealthStatus:  "Degraded",
+				SourceRepoURL: "", // empty — must produce no repo= artifact
+			},
+		},
+	}
+
+	_, detail := ProbeBootstrapApp(context.Background(), ac)
+
+	if strings.Contains(detail, "repo=") {
+		t.Errorf("expected no repo= artifact in detail when SourceRepoURL is empty, got %q", detail)
+	}
+}
