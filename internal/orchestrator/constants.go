@@ -1,5 +1,7 @@
 package orchestrator
 
+import "strings"
+
 // BootstrapRootAppName is the canonical ArgoCD application name created during
 // first-run init. It MUST match metadata.name in templates/bootstrap/root-app.yaml.
 //
@@ -7,6 +9,19 @@ package orchestrator
 // non-existent ArgoCD application during step 4 of the first-run wizard,
 // leading to a 2-minute timeout.
 const BootstrapRootAppName = "cluster-addons-bootstrap"
+
+// ConnectivityCheckAppPrefix is the prefix of the host-side ArgoCD
+// connectivity-probe Application, named "connectivity-check-<clusterName>".
+const ConnectivityCheckAppPrefix = "connectivity-check-"
+
+// IsSharkoSystemApp reports whether name is one of Sharko's own ArgoCD system
+// apps (the bootstrap root Application or a per-cluster connectivity-check
+// probe). These apps are NOT catalog addons and must not be rendered as
+// clickable addon links in the UI — doing so causes 404s because the name
+// does not map to any catalog entry.
+func IsSharkoSystemApp(name string) bool {
+	return name == BootstrapRootAppName || strings.HasPrefix(name, ConnectivityCheckAppPrefix)
+}
 
 // BootstrapRootAppPath is the canonical commit path of the ArgoCD root
 // application YAML in the GitOps repo. The orchestrator commits the file at

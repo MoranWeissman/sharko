@@ -8,6 +8,7 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/metrics"
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
 // observeDashboardRead is the V2-3 SLO instrumentation shared across the
@@ -77,7 +78,7 @@ func (s *Server) handleGetDashboardStats(w http.ResponseWriter, r *http.Request)
 func (s *Server) handleGetAttentionItems(w http.ResponseWriter, r *http.Request) {
 	defer observeDashboardRead(r, &w, "attention")()
 
-	ac, err := s.connSvc.GetActiveArgocdClient()
+	ac, err := s.connSvc.GetActiveOrchestratorArgocdClient()
 	if err != nil {
 		writeServerError(w, http.StatusServiceUnavailable, "get_active_argocd_client", err)
 		return
@@ -105,6 +106,13 @@ func (s *Server) handleGetAttentionItems(w http.ResponseWriter, r *http.Request)
 
 	var items []AttentionItem
 	for _, app := range apps {
+		// Sharko's own ArgoCD system apps (bootstrap root + per-cluster
+		// connectivity-check probes) are not catalog addons. The frontend renders
+		// each item as a link to /addons/<name>, which 404s for these. Exclude them
+		// from the Needs-Attention feed entirely (V2-cleanup-52).
+		if orchestrator.IsSharkoSystemApp(app.Name) {
+			continue
+		}
 		if app.HealthStatus == "Healthy" && len(app.Conditions) == 0 {
 			continue
 		}

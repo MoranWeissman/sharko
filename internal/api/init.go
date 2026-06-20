@@ -515,8 +515,16 @@ func ProbeBootstrapApp(ctx context.Context, ac orchestrator.ArgocdClient) (statu
 			orchestrator.BootstrapRootAppName)
 	}
 	if found.SyncStatus != "Synced" || found.HealthStatus != "Healthy" {
+		// Build the base detail with sync and health status (V2-cleanup-51.1
+		// test asserts sync= and health= are present; do not reorder them).
 		detail := fmt.Sprintf("argocd app %q sync=%s health=%s",
 			orchestrator.BootstrapRootAppName, found.SyncStatus, found.HealthStatus)
+		// Append repo URL when available so the bell alert "ArgoCD can't sync
+		// the repo" names WHICH repo is failing (V2-cleanup-52). Empty URL
+		// produces no trailing artifact.
+		if found.SourceRepoURL != "" {
+			detail += " repo=" + found.SourceRepoURL
+		}
 		// Predicate (locked, V2-cleanup-51.1): Sync=Unknown ⟺ ArgoCD's
 		// repo-server could not reach/evaluate the repo (comparison error /
 		// unreachable Git host). Classify that as unreachable — a connection

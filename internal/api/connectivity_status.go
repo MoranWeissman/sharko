@@ -6,6 +6,7 @@ import (
 
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/observations"
+	"github.com/MoranWeissman/sharko/internal/orchestrator"
 )
 
 // checkPendingEscalation is the age after which a still-pending check app is
@@ -55,7 +56,7 @@ func computeConnectivityVerdictAt(clusterName, connectionStatus string, apps []m
 	}
 
 	// Find the connectivity-check Application in the pre-fetched app list.
-	checkAppName := "connectivity-check-" + clusterName
+	checkAppName := orchestrator.ConnectivityCheckAppPrefix + clusterName
 	var checkApp *models.ArgocdApplication
 	for i := range apps {
 		if apps[i].Name == checkAppName {
