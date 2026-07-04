@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { SecretsProviderSection } from '@/views/settings/SecretsProviderSection'
 import { VALID_PROVIDER_TYPES } from '@/generated/provider-types'
+import { showToast } from '@/components/ToastNotification'
 
 /*
  * V125-1-13.7 — Settings → SecretsProviderSection dropdown is now driven
@@ -30,6 +31,10 @@ vi.mock('@/services/api', () => ({
     getProviders: () => getProvidersMock(),
     updateConnection: (name: string, data: unknown) => updateConnectionMock(name, data),
   },
+}))
+
+vi.mock('@/components/ToastNotification', () => ({
+  showToast: vi.fn(),
 }))
 
 const refreshConnectionsMock = vi.fn()
@@ -69,6 +74,7 @@ describe('SecretsProviderSection', () => {
     updateConnectionMock.mockReset()
     refreshConnectionsMock.mockReset()
     useConnectionsMock.mockReset()
+    vi.mocked(showToast).mockReset()
 
     // Default: getProviders returns "no provider configured" (fresh install).
     getProvidersMock.mockResolvedValue({
@@ -220,5 +226,99 @@ describe('SecretsProviderSection', () => {
     await waitFor(() => expect(updateConnectionMock).toHaveBeenCalledTimes(1))
     const body = updateConnectionMock.mock.calls[0][1] as { provider?: unknown }
     expect(body.provider).toBeUndefined()
+  })
+
+  // V2-cleanup-53.2 — Save Provider must give explicit feedback. Live bug:
+  // the PUT succeeded (200) but the maintainer saw "it glitches and nothing
+  // happens" — refreshConnections() flipped the shared loading flag, the
+  // whole section swapped to LoadingState, and the tiny inline chip was
+  // lost in the flash.
+  describe('Save feedback (V2-cleanup-53.2)', () => {
+    it('successful save fires the app-wide success toast and shows the inline Saved chip', async () => {
+      setupHook()
+      const user = userEvent.setup()
+      render(<SecretsProviderSection />)
+
+      const select = await screen.findByRole('combobox')
+      await user.selectOptions(select, 'argocd')
+      await user.click(screen.getByRole('button', { name: /Save Provider/i }))
+
+      await waitFor(() => expect(updateConnectionMock).toHaveBeenCalledTimes(1))
+      expect(showToast).toHaveBeenCalledWith('Secrets provider saved', 'success')
+      expect(await screen.findByText('Saved')).toBeInTheDocument()
+      // No error text on the happy path.
+      expect(screen.queryByText(/failed/i)).toBeNull()
+    })
+
+    it('failed save surfaces the server error inline near the button and fires no success toast', async () => {
+      setupHook()
+      updateConnectionMock.mockRejectedValue(new Error('provider validation failed: unknown region'))
+      const user = userEvent.setup()
+      render(<SecretsProviderSection />)
+
+      const select = await screen.findByRole('combobox')
+      await user.selectOptions(select, 'aws-sm')
+      await user.click(screen.getByRole('button', { name: /Save Provider/i }))
+
+      expect(
+        await screen.findByText('provider validation failed: unknown region'),
+      ).toBeInTheDocument()
+      expect(showToast).not.toHaveBeenCalled()
+      expect(screen.queryByText('Saved')).toBeNull()
+      // Button is re-enabled so the user can retry.
+      expect(screen.getByRole('button', { name: /Save Provider/i })).toBeEnabled()
+    })
+
+    it('Save button is disabled while the PUT is in flight', async () => {
+      setupHook()
+      let resolveSave: (v: unknown) => void = () => {}
+      updateConnectionMock.mockImplementation(
+        () => new Promise((resolve) => { resolveSave = resolve }),
+      )
+      const user = userEvent.setup()
+      render(<SecretsProviderSection />)
+
+      const select = await screen.findByRole('combobox')
+      await user.selectOptions(select, 'argocd')
+      const saveBtn = screen.getByRole('button', { name: /Save Provider/i })
+      await user.click(saveBtn)
+
+      expect(saveBtn).toBeDisabled()
+      resolveSave({})
+      await waitFor(() => expect(saveBtn).toBeEnabled())
+    })
+
+    it('regression: a connections refresh does NOT blank the form when a connection already exists', async () => {
+      // loading=true with a populated connections list is exactly the
+      // post-save refreshConnections() state that used to swap the whole
+      // section to LoadingState and swallow the confirmation.
+      useConnectionsMock.mockReturnValue({
+        connections: [sampleConnection],
+        activeConnection: sampleConnection.name,
+        loading: true,
+        error: null,
+        setActiveConnection: vi.fn(),
+        refreshConnections: refreshConnectionsMock,
+      })
+      render(<SecretsProviderSection />)
+
+      expect(screen.queryByText(/Loading secrets provider/i)).toBeNull()
+      expect(await screen.findByRole('button', { name: /Save Provider/i })).toBeInTheDocument()
+    })
+
+    it('initial load (no connection data yet) still shows the loading state', () => {
+      useConnectionsMock.mockReturnValue({
+        connections: [],
+        activeConnection: null,
+        loading: true,
+        error: null,
+        setActiveConnection: vi.fn(),
+        refreshConnections: refreshConnectionsMock,
+      })
+      render(<SecretsProviderSection />)
+
+      expect(screen.getByText(/Loading secrets provider/i)).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /Save Provider/i })).toBeNull()
+    })
   })
 })

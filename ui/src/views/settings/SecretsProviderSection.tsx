@@ -4,6 +4,7 @@ import { useConnections } from '@/hooks/useConnections'
 import { api } from '@/services/api'
 import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
+import { showToast } from '@/components/ToastNotification'
 import {
   VALID_PROVIDER_TYPES,
   type ProviderType as GeneratedProviderType,
@@ -124,6 +125,11 @@ export function SecretsProviderSection() {
       // Build minimal payload preserving existing connection data
       const connPayload = buildConnectionPayload(existingConn, form)
       await api.updateConnection(existingConn.name, connPayload)
+      // Toast first: refreshConnections() flips the shared loading flag,
+      // and feedback rendered inside this section would be swallowed by
+      // the transient re-render. The app-wide toast (ToastContainer in
+      // Layout) survives it.
+      showToast('Secrets provider saved', 'success')
       refreshConnections()
       fetchProviderInfo()
       setJustSaved(true)
@@ -135,7 +141,12 @@ export function SecretsProviderSection() {
     }
   }
 
-  if (loading) return <LoadingState message="Loading secrets provider..." />
+  // Only blank the section into a spinner on the INITIAL load (no
+  // connection data yet). refreshConnections() after a successful save
+  // also sets loading=true; replacing the whole form with LoadingState
+  // at that moment was the "click Save and it glitches, nothing happens"
+  // bug — the button and its Saved indicator vanished mid-confirmation.
+  if (loading && !existingConn) return <LoadingState message="Loading secrets provider..." />
   if (error) return <ErrorState message={error} onRetry={refreshConnections} />
 
   return (
