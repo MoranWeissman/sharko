@@ -53,20 +53,24 @@ type AddonSecretProviderConfig struct {
 // ClusterTestProviderConfig configures the backend that resolves cluster
 // CONNECTIVITY credentials — i.e. the kubeconfig used to verify a target
 // cluster is reachable + auth works + RBAC is sufficient (the POST
-// /api/v1/clusters/{name}/test surface, the dashboard "Verified" state).
+// /api/v1/clusters/{name}/test surface, the dashboard "Verified" state)
+// AND the kubeconfig used when REGISTERING a cluster from a secret backend
+// (creds_source=secret-kubeconfig / eks-token on POST /api/v1/clusters).
 //
-// Scope: argocd-only. Sharko's canonical cluster-connectivity backend
-// reads ArgoCD's cluster Secret in the argocd namespace (the same
-// secret the reconciler writes). Legacy aws-sm / k8s-secrets / gcp-sm /
-// azure-kv cluster-credentials backends are retired here; addon-secret
-// consumers of those backends remain via NewAddonSecretProvider.
+// Scope (V2-cleanup-53.1): argocd, aws-sm, and k8s-secrets. The aws-sm and
+// k8s-secrets cluster-credentials arms were retired in the V125-1-10.x
+// redesign and RESTORED by V2-cleanup-53.1 — the secret-backend registration
+// path (creds_source=secret-kubeconfig / eks-token) is an advertised core
+// feature and must reach the configured backend. gcp-sm / azure-kv stay
+// retired (stubs; addon-secret consumers only via NewAddonSecretProvider).
 //
-// Future: IAMRoleARN (EKS IAM token minting), ExecPluginAllowList
-// (when/if exec-plugin auth becomes supported).
+// Future: ExecPluginAllowList (when/if exec-plugin auth becomes supported).
 type ClusterTestProviderConfig struct {
 	// Type selects the backend. Valid values:
-	//   "argocd"  — ArgoCDProvider (reads cluster Secrets from ArgoCD namespace)
-	//   ""        — auto-default: argocd when running in-cluster, error otherwise
+	//   "argocd"                          — ArgoCDProvider (reads cluster Secrets from ArgoCD namespace)
+	//   "aws-sm" / "aws-secrets-manager"  — AWS Secrets Manager (kubeconfig or EKS-JSON secrets)
+	//   "k8s-secrets" / "kubernetes"      — Kubernetes Secrets in Namespace (key "kubeconfig")
+	//   ""                                — auto-default: argocd when running in-cluster, error otherwise
 	Type string
 
 	// ArgoCDNamespace is the typed source for the argocd namespace.
@@ -74,7 +78,72 @@ type ClusterTestProviderConfig struct {
 	//   1. SHARKO_ARGOCD_NAMESPACE env var (DEPRECATED — emits slog.Warn,
 	//      removal slated for the next minor release)
 	//   2. hardcoded "argocd" default
+	//
+	// NEVER populate this from the connection-level provider Namespace field —
+	// that slot is addon-secrets-shaped (V125-1-10.8 cross-contamination guard;
+	// see ClusterTestConfigFromConnection).
 	ArgoCDNamespace string
+
+	// Region is the AWS region for the "aws-sm" backend.
+	// Used ONLY by aws-sm; ignored by all other backends.
+	Region string
+
+	// Prefix is an optional secret-name prefix for the "aws-sm" backend
+	// (e.g. "clusters/" → fully-qualified secret name "clusters/<name>").
+	// Used ONLY by aws-sm; ignored by all other backends.
+	Prefix string
+
+	// RoleARN is the default IAM role to assume for STS-based EKS token
+	// generation when an aws-sm structured-EKS secret omits its own roleArn.
+	// Used ONLY by aws-sm; ignored by all other backends.
+	RoleARN string
+
+	// Namespace is the K8s namespace where the "k8s-secrets" backend reads
+	// cluster kubeconfig Secrets (secret name = cluster name, data key
+	// "kubeconfig"). Default "sharko" — same convention as the addon-secret
+	// k8s-secrets backend. Used ONLY by k8s-secrets; ignored by all other
+	// backends. Semantically DISTINCT from ArgoCDNamespace.
+	Namespace string
+}
+
+// ClusterTestConfigFromConnection maps the connection-level provider block
+// (Settings → Secrets Provider) into the typed ClusterTestProviderConfig.
+// This is the SINGLE source of truth for the fan-through — both boot-time
+// wiring (cmd/sharko/serve.go) and the hot-reload path
+// (api.Server.ReinitializeFromConnection) call it, so the two can never
+// drift (the V2-cleanup-53.1 bug was exactly this drift: only "argocd"
+// fanned through, so aws-sm/k8s-secrets registrations silently fell back
+// to the ArgoCD provider).
+//
+// V125-1-10.8 cross-contamination guard, preserved: the connection-level
+// namespace is NEVER copied into ArgoCDNamespace. For the "argocd" type the
+// namespace parameter is ignored entirely — an empty ArgoCDNamespace lets
+// resolveArgoCDNamespaceTyped fall back through SHARKO_ARGOCD_NAMESPACE →
+// "argocd". For "k8s-secrets" the namespace flows into the (distinct)
+// Namespace field, matching the addon-side k8s-secrets convention.
+//
+// Unknown / retired types (gcp-sm, azure-kv, ...) and the empty type return
+// a zero config so the factory's auto-default path decides — identical to
+// the pre-53.1 behavior for those types.
+func ClusterTestConfigFromConnection(provType, region, prefix, namespace, roleARN string) ClusterTestProviderConfig {
+	switch provType {
+	case "argocd":
+		return ClusterTestProviderConfig{Type: "argocd", ArgoCDNamespace: ""}
+	case "aws-sm", "aws-secrets-manager":
+		return ClusterTestProviderConfig{
+			Type:    provType,
+			Region:  region,
+			Prefix:  prefix,
+			RoleARN: roleARN,
+		}
+	case "k8s-secrets", "kubernetes":
+		return ClusterTestProviderConfig{
+			Type:      provType,
+			Namespace: namespace,
+		}
+	default:
+		return ClusterTestProviderConfig{}
+	}
 }
 
 // ClusterRegistrationSourceConfig configures where Sharko WRITES

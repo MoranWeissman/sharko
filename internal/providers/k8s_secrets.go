@@ -19,16 +19,12 @@ type KubernetesSecretProvider struct {
 	namespace string
 }
 
-// NewKubernetesSecretProviderFromAddonConfig creates a provider that reads from
-// K8s Secrets from the canonical AddonSecretProviderConfig.
-// Uses in-cluster config when running inside Kubernetes, falls back to default
-// kubeconfig for local dev.
-//
-// Only AddonSecretProviderConfig.Namespace is read — Type is consumed by the
-// upstream dispatcher (NewAddonSecretProvider) and Region/Prefix/RoleARN are
-// AWS-SM specific and ignored here.
-func NewKubernetesSecretProviderFromAddonConfig(cfg AddonSecretProviderConfig) (*KubernetesSecretProvider, error) {
-	namespace := cfg.Namespace
+// newKubernetesSecretProviderForNamespace is the shared builder behind both
+// public constructors. Uses in-cluster config when running inside Kubernetes,
+// falls back to default kubeconfig for local dev. Empty namespace defaults to
+// "sharko" (the provider convention: cluster kubeconfig Secrets live in the
+// Sharko namespace, secret name = cluster name, data key "kubeconfig").
+func newKubernetesSecretProviderForNamespace(namespace string) (*KubernetesSecretProvider, error) {
 	if namespace == "" {
 		namespace = "sharko"
 	}
@@ -48,6 +44,28 @@ func NewKubernetesSecretProviderFromAddonConfig(cfg AddonSecretProviderConfig) (
 	}
 
 	return &KubernetesSecretProvider{client: client, namespace: namespace}, nil
+}
+
+// NewKubernetesSecretProviderFromAddonConfig creates a provider that reads from
+// K8s Secrets from the canonical AddonSecretProviderConfig.
+//
+// Only AddonSecretProviderConfig.Namespace is read — Type is consumed by the
+// upstream dispatcher (NewAddonSecretProvider) and Region/Prefix/RoleARN are
+// AWS-SM specific and ignored here.
+func NewKubernetesSecretProviderFromAddonConfig(cfg AddonSecretProviderConfig) (*KubernetesSecretProvider, error) {
+	return newKubernetesSecretProviderForNamespace(cfg.Namespace)
+}
+
+// NewKubernetesSecretProviderFromClusterTestConfig creates a provider that
+// reads cluster kubeconfig Secrets from the canonical ClusterTestProviderConfig
+// — the cluster-credentials arm restored by V2-cleanup-53.1 so registrations
+// with creds_source=secret-kubeconfig reach the configured K8s namespace.
+//
+// Only ClusterTestProviderConfig.Namespace is read (default "sharko") — NOT
+// ArgoCDNamespace, which belongs to the argocd backend and must stay isolated
+// (V125-1-10.8 cross-contamination guard).
+func NewKubernetesSecretProviderFromClusterTestConfig(cfg ClusterTestProviderConfig) (*KubernetesSecretProvider, error) {
+	return newKubernetesSecretProviderForNamespace(cfg.Namespace)
 }
 
 // newKubernetesSecretProviderWithClient creates a provider with an injected client (for testing).

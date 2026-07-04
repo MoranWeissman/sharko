@@ -344,6 +344,15 @@ func (s *Server) ReconcilerTrigger() func() {
 // and rebuilds credProvider + providerCfg + gitopsCfg. Called after connection create/update/set-active
 // so that write-API operations pick up the new settings immediately without a restart.
 // Also called at startup so that a pod restart does not leave the provider nil.
+//
+// HOT-RELOAD CONSTRAINT (V2-cleanup-53.1): this is the seam that keeps the
+// registration/cluster-test credProvider tracking the ACTIVE connection
+// without a pod restart. Register/test handlers build a per-request
+// orchestrator from s.credProvider, so swapping it here is sufficient — but
+// the fan-through below MUST route every supported provider type (via the
+// shared providers.ClusterTestConfigFromConnection mapper). Dropping a type
+// here silently reverts registrations to the in-cluster ArgoCD auto-default
+// until the next restart — exactly the live bug this story fixed.
 func (s *Server) ReinitializeFromConnection() {
 	slog.Info("[startup] ReinitializeFromConnection called")
 
@@ -394,26 +403,24 @@ func (s *Server) ReinitializeFromConnection() {
 				Namespace: namespace,
 				RoleARN:   pc.RoleARN,
 			}
-			// Cluster-test fans only the connection-level Type — NEVER
-			// pc.Namespace — into the typed cluster-test config. The
-			// addon-secrets-shaped pc.Namespace value MUST NOT bleed
-			// into ArgoCDNamespace (the slot for the argocd-install
-			// namespace, semantically different — typically "argocd").
-			// Leaving ArgoCDNamespace empty lets the canonical
-			// resolveArgoCDNamespaceTyped precedence take over:
+			// Cluster-test fan-through goes through the SINGLE shared
+			// mapper (providers.ClusterTestConfigFromConnection) — the
+			// same one serve.go uses at boot, so boot and hot-reload
+			// wiring can never drift (V2-cleanup-53.1). aws-sm and
+			// k8s-secrets now fan through to their restored cluster-creds
+			// arms; gcp-sm/azure-kv and unknown types still fall to the
+			// auto-default. The V125-1-10.8 guard is preserved inside the
+			// mapper: pc.Namespace (addon-secrets-shaped) is NEVER copied
+			// into ArgoCDNamespace — empty ArgoCDNamespace lets the
+			// canonical resolveArgoCDNamespaceTyped precedence take over:
 			//   1. cfg.ArgoCDNamespace (empty here, by design)
 			//   2. SHARKO_ARGOCD_NAMESPACE env (deprecated compat alias)
 			//   3. "argocd" hardcoded default
-			if pc.Type == "argocd" {
-				testCfg = providers.ClusterTestProviderConfig{
-					Type:            pc.Type,
-					ArgoCDNamespace: "",
-				}
-			} else {
-				// Non-argocd Type values are addon-secret backends; cluster-
-				// test stays on auto-default (empty Type → in-cluster argocd).
-				testCfg = providers.ClusterTestProviderConfig{}
-			}
+			// For k8s-secrets, namespace (SHARKO_NAMESPACE default,
+			// overridden by pc.Namespace) flows into the DISTINCT
+			// Namespace field, matching the addon-side convention.
+			testCfg = providers.ClusterTestConfigFromConnection(
+				pc.Type, pc.Region, pc.Prefix, namespace, pc.RoleARN)
 			if pc.Type != "" {
 				slog.Info("[startup] initializing provider", "type", pc.Type, "region", pc.Region)
 			} else {

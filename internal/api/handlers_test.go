@@ -15,6 +15,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/gitprovider"
 	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
+	"github.com/MoranWeissman/sharko/internal/providers"
 	"github.com/MoranWeissman/sharko/internal/service"
 )
 
@@ -622,18 +623,24 @@ func TestReinitializeFromConnection_SetsProvider(t *testing.T) {
 
 	srv.ReinitializeFromConnection()
 
-	// V125-1-11.6: aws-sm is an addon-secret backend; the cluster-test
-	// dispatcher accepts argocd + "" only. With provider.type="aws-sm" the
-	// cluster-test auto-default path runs (Type="" effectively at the
-	// cluster-test layer) — out-of-cluster it returns the legacy error so
-	// credProvider stays nil. In-cluster it auto-defaults to ArgoCDProvider.
-	// We assert the addon-secret typed config is populated either way so
-	// downstream handlers can still read RoleARN/Region.
-	if srv.addonSecretCfg == nil && srv.credProvider != nil {
-		t.Error("expected addonSecretCfg to be set after ReinitializeFromConnection when credProvider succeeded")
+	// V2-cleanup-53.1: the aws-sm cluster-creds arm is RESTORED. With
+	// provider.type="aws-sm" the cluster-test fan-through now routes to the
+	// SM-backed provider — construction succeeds without real credentials
+	// (the AWS SDK defers resolution to the first API call), so this is
+	// deterministic in CI. This is also the hot-reload contract: this same
+	// method runs on every connection save, so the swap here IS what makes
+	// a Settings change take effect without a pod restart.
+	if _, ok := srv.credProvider.(*providers.AWSSecretsManagerProvider); !ok {
+		t.Fatalf("credProvider = %T, want *providers.AWSSecretsManagerProvider (restored aws-sm cluster-creds arm)", srv.credProvider)
 	}
-	if srv.addonSecretCfg != nil && srv.addonSecretCfg.Type != "aws-sm" {
-		t.Errorf("expected addonSecretCfg.Type=aws-sm, got %q", srv.addonSecretCfg.Type)
+	if srv.clusterTestCfg == nil || srv.clusterTestCfg.Type != "aws-sm" {
+		t.Errorf("expected clusterTestCfg.Type=aws-sm, got %+v", srv.clusterTestCfg)
+	}
+	if srv.clusterTestCfg != nil && srv.clusterTestCfg.ArgoCDNamespace != "" {
+		t.Errorf("ArgoCDNamespace = %q, want empty (V125-1-10.8 guard)", srv.clusterTestCfg.ArgoCDNamespace)
+	}
+	if srv.addonSecretCfg == nil || srv.addonSecretCfg.Type != "aws-sm" {
+		t.Errorf("expected addonSecretCfg.Type=aws-sm, got %+v", srv.addonSecretCfg)
 	}
 }
 

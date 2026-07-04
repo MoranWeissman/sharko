@@ -96,14 +96,21 @@ func NewAddonSecretProvider(cfg AddonSecretProviderConfig) (SecretProvider, erro
 // configured" error is returned so out-of-cluster callers get an
 // actionable message.
 //
-// Only argocd + "" (auto-default) are accepted. Legacy aws-sm /
-// k8s-secrets / gcp-sm / azure-kv cluster-credentials arms are
-// retired; addon-secret consumers of those backends remain fully
-// functional via NewAddonSecretProvider.
+// Accepted types: argocd, aws-sm, k8s-secrets, and "" (auto-default).
+// The aws-sm / k8s-secrets cluster-credentials arms were retired in the
+// V125-1-10.x redesign and restored in V2-cleanup-53.1 — without them,
+// registrations with creds_source=secret-kubeconfig / eks-token could
+// never reach the configured secret backend. gcp-sm / azure-kv stay
+// retired for cluster credentials; addon-secret consumers of every
+// backend remain fully functional via NewAddonSecretProvider.
 func NewClusterTestProvider(cfg ClusterTestProviderConfig) (ClusterCredentialsProvider, error) {
 	switch cfg.Type {
 	case "argocd":
 		return NewArgoCDProviderFromConfig(cfg)
+	case "aws-sm", "aws-secrets-manager":
+		return NewAWSSecretsManagerProviderFromClusterTestConfig(cfg)
+	case "k8s-secrets", "kubernetes":
+		return NewKubernetesSecretProviderFromClusterTestConfig(cfg)
 	case "":
 		// Auto-default: argocd when in-cluster, legacy error otherwise.
 		// We capture the *rest.Config returned by the probe and pass it through
@@ -123,6 +130,6 @@ func NewClusterTestProvider(cfg ClusterTestProviderConfig) (ClusterCredentialsPr
 		}
 		return nil, fmt.Errorf("no secrets provider configured — configure provider in Settings or via API")
 	default:
-		return nil, fmt.Errorf("unknown cluster-test provider type %q — valid options: argocd, \"\" (auto-default)", cfg.Type)
+		return nil, fmt.Errorf("unknown cluster-test provider type %q — valid options: argocd, aws-sm, k8s-secrets, \"\" (auto-default)", cfg.Type)
 	}
 }

@@ -82,9 +82,9 @@ func (s *Server) handleGetProviders(w http.ResponseWriter, r *http.Request) {
 // Reads optional type/region from request body. If empty, tests the configured provider.
 //
 // This endpoint tests cluster-test (ClusterCredentialsProvider) backends
-// only — the cluster-test factory accepts argocd + "" (auto-default). For
-// req.Type other than those two, the endpoint returns an error message
-// advising the caller to migrate.
+// only — the cluster-test factory accepts argocd, aws-sm, k8s-secrets, and
+// "" (auto-default) since the V2-cleanup-53.1 arm restore. For any other
+// req.Type the factory's error message lists the valid options.
 func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Type   string `json:"type"`
@@ -102,7 +102,8 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 
 	if req.Type != "" {
 		prov, err := providers.NewClusterTestProvider(providers.ClusterTestProviderConfig{
-			Type: req.Type,
+			Type:   req.Type,
+			Region: req.Region,
 		})
 		if err != nil {
 			writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -159,10 +160,12 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 // @Router /providers/test-config [post]
 // handleTestProviderConfig tests an ad-hoc cluster-test provider configuration.
 //
-// The cluster-test factory accepts argocd + "" only. Legacy aws-sm /
-// k8s-secrets cluster-creds arms are retired; configure those via the
-// addon-secret factory if the caller is testing addon-secret backend
-// access.
+// The cluster-test factory accepts argocd, aws-sm, k8s-secrets, and ""
+// (auto-default) since the V2-cleanup-53.1 arm restore. req.Namespace is
+// passed to BOTH namespace slots because this is an ad-hoc, explicitly-typed
+// test (each factory arm reads only its own field, so there is no
+// cross-contamination risk here — unlike the connection fan-through, where
+// the stored namespace's provenance is ambiguous).
 func (s *Server) handleTestProviderConfig(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Type      string `json:"type"`
@@ -178,6 +181,9 @@ func (s *Server) handleTestProviderConfig(w http.ResponseWriter, r *http.Request
 	prov, err := providers.NewClusterTestProvider(providers.ClusterTestProviderConfig{
 		Type:            req.Type,
 		ArgoCDNamespace: req.Namespace,
+		Region:          req.Region,
+		Prefix:          req.Prefix,
+		Namespace:       req.Namespace,
 	})
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
