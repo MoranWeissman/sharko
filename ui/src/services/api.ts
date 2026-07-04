@@ -1004,10 +1004,6 @@ export const api = {
   // Dashboard
   getAttentionItems: () => fetchJSON<{ app_name: string; addon_name: string; cluster: string; health: string; sync: string; error?: string; error_type?: string }[]>('/dashboard/attention'),
 
-  // Docs
-  docsList: () => fetchJSON<{ slug: string; title: string; order: number }[]>('/docs/list'),
-  docsGet: (slug: string) => fetchJSON<{ slug: string; content: string }>(`/docs/${encodeURIComponent(slug)}`),
-
   // Providers — `type` is narrowed to the generated `ProviderType` union
   // (sourced from internal/providers/provider.go via cmd/gen-provider-types)
   // so callers see a compile error if they accept a value the backend
