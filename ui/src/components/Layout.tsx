@@ -28,7 +28,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { AIAssistant, type AIAssistantSeed } from '@/views/AIAssistant'
 import { NotificationBell } from '@/components/NotificationBell'
 import { ToastContainer } from '@/components/ToastNotification'
-import { fetchTrackedPRs } from '@/services/api'
+import { api, fetchTrackedPRs } from '@/services/api'
 
 interface NavItem {
   to: string
@@ -141,6 +141,33 @@ export function Layout() {
   const { theme, toggleTheme } = useTheme()
   const { logout, isAdmin } = useAuth()
 
+  // -------------------------------------------------------------------------
+  // AI assistant opt-in gate (V2-cleanup-55.4). THIS is where the gate lives.
+  //
+  // The assistant is OPT-IN and hidden by default: every entry point rendered
+  // by this layout — the "Ask AI" top-bar button, the right-side chat panel,
+  // the floating bubble (FloatingAssistant), and the `open-assistant` event
+  // listener — renders/fires only when an AI provider is actually configured.
+  //
+  // "Configured" comes from GET /api/v1/upgrade/ai-status, which reports
+  // `enabled: true` only when Settings → AI has a provider other than "none"
+  // (see internal/ai/client.go IsEnabled). A default deployment has no AI
+  // provider, so no assistant UI appears at all.
+  //
+  // To enable the assistant: Settings → AI → configure a provider.
+  // The ask-AI affordances inside AddonDetail / ClusterDetail apply the same
+  // gate via their own `aiEnabled` state.
+  // -------------------------------------------------------------------------
+  const [aiConfigured, setAiConfigured] = useState(false)
+  useEffect(() => {
+    // Defensive — older test fixtures may not mock getAIStatus.
+    if (typeof api.getAIStatus !== 'function') return
+    api
+      .getAIStatus()
+      .then((res) => setAiConfigured(!!res.enabled))
+      .catch(() => setAiConfigured(false))
+  }, [])
+
   const [appVersion, setAppVersion] = useState('')
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -195,6 +222,9 @@ export function Layout() {
   }, [])
 
   useEffect(() => {
+    // Assistant hidden by default (opt-in gate above): ignore open-assistant
+    // events entirely when no AI provider is configured.
+    if (!aiConfigured) return
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail
       // Structured seed: { message: string, nonce: string }
@@ -209,7 +239,7 @@ export function Layout() {
     }
     window.addEventListener('open-assistant', handler)
     return () => window.removeEventListener('open-assistant', handler)
-  }, [openAiPanel])
+  }, [openAiPanel, aiConfigured])
 
   return (
     <div className="flex h-screen bg-[#bee0ff] dark:bg-gray-950">
@@ -326,25 +356,27 @@ export function Layout() {
 
           {/* Right: search + connection + user dropdown */}
           <div className="flex items-center gap-3">
-            {/* AI panel toggle */}
-            <button
-              onClick={() => {
-                if (aiPanelOpen) {
-                  setAiPanelOpen(false)
-                } else {
-                  openAiPanel()
-                }
-              }}
-              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs transition-colors ${
-                aiPanelOpen
-                  ? 'bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400'
-                  : 'ring-2 ring-[#6aade0] bg-[#e8f4ff] text-[#2a5a7a] hover:bg-[#d6eeff] dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
-              }`}
-              aria-label="Toggle AI Assistant"
-            >
-              <Sparkles className="h-3.5 w-3.5" />
-              {!aiPanelOpen && <span className="hidden sm:inline">Ask AI</span>}
-            </button>
+            {/* AI panel toggle — only when an AI provider is configured (opt-in gate) */}
+            {aiConfigured && (
+              <button
+                onClick={() => {
+                  if (aiPanelOpen) {
+                    setAiPanelOpen(false)
+                  } else {
+                    openAiPanel()
+                  }
+                }}
+                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs transition-colors ${
+                  aiPanelOpen
+                    ? 'bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400'
+                    : 'ring-2 ring-[#6aade0] bg-[#e8f4ff] text-[#2a5a7a] hover:bg-[#d6eeff] dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
+                }`}
+                aria-label="Toggle AI Assistant"
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                {!aiPanelOpen && <span className="hidden sm:inline">Ask AI</span>}
+              </button>
+            )}
 
             <NotificationBell />
 
@@ -416,8 +448,8 @@ export function Layout() {
         </main>
       </div>
 
-      {/* AI Panel — right side */}
-      {aiPanelOpen && (
+      {/* AI Panel — right side; only when an AI provider is configured (opt-in gate) */}
+      {aiConfigured && aiPanelOpen && (
         <>
           {/* Resize handle */}
           <div
@@ -458,8 +490,8 @@ export function Layout() {
         </>
       )}
 
-      {/* Floating AI Assistant */}
-      <FloatingAssistant />
+      {/* Floating AI Assistant — only when an AI provider is configured (opt-in gate) */}
+      {aiConfigured && <FloatingAssistant />}
 
       {/* Command Palette (Cmd+K) */}
       <CommandPalette />

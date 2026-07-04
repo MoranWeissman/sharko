@@ -49,7 +49,6 @@ If DIY serves you well, keep it. Sharko is for teams who want that same pattern 
 - **No lock-in** — everything ArgoCD runs is rendered from your repo; remove Sharko and every addon keeps running and syncing. See [If you remove Sharko](docs/site/operator/removing-sharko.md)
 - **Managed vs discovered clusters** — Sharko surfaces all ArgoCD clusters; adopt discovered clusters into full management in one click
 - **Secrets provider** — deliver addon credentials to remote clusters via AWS Secrets Manager or Kubernetes Secrets (no External Secrets Operator required)
-- **AI assistant** — side panel that knows which page you're on. When an error is visible, the prompt is pre-filled with the error text so the user can just hit send. The panel is resizable. Supports OpenAI, Claude, Gemini, Ollama, and any OpenAI-compatible API.
 - **API keys** — long-lived tokens for Backstage, Terraform, and CI/CD integrations
 - **Unified API** — CLI, UI, and external integrations all use the same REST API
 - **Upgrade management** — upgrade recommendation cards that pull advisories from ArtifactHub, flag security fixes and breaking changes, and score the safest upgrade path. Analyze-before-upgrade is enforced. Each upgrade shows step-by-step progress; multiple addons can be upgraded in a single batch.
@@ -57,7 +56,6 @@ If DIY serves you well, keep it. Sharko is for teams who want that same pattern 
 - **Auto-refresh** — dashboard, cluster detail, cluster overview, and addon detail pages refresh automatically (30s); addon catalog refreshes every 60s
 
 - **Addon dependency ordering** — declare `dependsOn` in the catalog to enforce deployment order; cycle detection prevents invalid graphs
-- **AI addon summaries** — AI-generated summaries of each addon's purpose and release notes, shown in the addon detail view
 - **Audit log** — every write operation recorded with actor, action, result, and timestamp; queryable via `GET /api/v1/audit`
 - **Multi-cloud provider stubs** — interface stubs for GCP and Azure so contributors can fill in those providers without redesigning the secrets layer
 - **End-to-end test framework** — test against a real ArgoCD + Kind cluster (`make e2e-setup && make e2e`)
@@ -138,7 +136,7 @@ Sharko Server (in-cluster):
   +-- Git client (GitHub, Azure DevOps)
   +-- Secrets provider (AWS SM, K8s Secrets)
   +-- Remote client (deliver secrets to remote clusters)
-  +-- AI assistant (multi-provider)
+  +-- AI assistant (optional, off by default)
   +-- Swagger UI (/swagger/index.html)
 ```
 
@@ -154,7 +152,7 @@ The server holds all credentials. The CLI is a thin HTTP client — like `kubect
 | GitOps | ArgoCD ApplicationSets, Helm charts |
 | API docs | Swagger / OpenAPI (swag) |
 | Secrets | AWS Secrets Manager, Kubernetes Secrets |
-| AI | OpenAI, Claude, Gemini, Ollama, custom OpenAI-compatible |
+| AI (optional) | OpenAI, Claude, Gemini, Ollama, custom OpenAI-compatible |
 
 ## CLI Commands
 
@@ -250,18 +248,9 @@ After the wizard, the **Settings** page has six sections:
 | API Keys | Create and revoke long-lived tokens for CI/CD |
 | AI | Provider (OpenAI, Claude, Gemini, Ollama, custom), model, API key |
 
-## AI Assistant
+## AI Assistant (optional)
 
-Built-in assistant accessible from any page. Knows which cluster or addon you are viewing and can answer questions about health, configuration, and version drift.
-
-**Supported providers:** OpenAI, Claude, Gemini, Ollama, or any OpenAI-compatible API.
-
-**Capabilities:** 24 read tools and 5 write tools (admin-only, opt-in):
-- List clusters, addons, and health status
-- Inspect per-cluster addon configuration
-- Query ArgoCD application health, resources, events, and pod logs
-- Compare Helm chart versions and fetch release notes
-- Enable/disable addons, update versions, sync and refresh ArgoCD apps
+Sharko includes an optional assistant that is opt-in and off by default — no assistant UI appears until you configure an AI provider (OpenAI, Claude, Gemini, Ollama, or any OpenAI-compatible API) in **Settings → AI**.
 
 ## Secrets Provider
 

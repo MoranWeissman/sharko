@@ -405,6 +405,7 @@ function InlineUpgradeResults({
   onClose,
   onUpgrade,
   onUpgradeComplete,
+  aiEnabled = false,
 }: {
   addonName: string
   targetVersion: string
@@ -416,6 +417,10 @@ function InlineUpgradeResults({
   onClose: () => void
   onUpgrade: (version: string) => Promise<PRWriteResult>
   onUpgradeComplete?: () => void
+  // AI assistant opt-in gate (V2-cleanup-55.4): the AI Analysis and Ask AI
+  // affordances render only when an AI provider is configured. The master
+  // gate lives in Layout.tsx; the parent passes its aiEnabled state down.
+  aiEnabled?: boolean
 }) {
   const [activeTab, setActiveTab] = useState<InlineChangeTab>('added')
   const [aiSummary, setAiSummary] = useState<string | null>(null)
@@ -689,7 +694,8 @@ function InlineUpgradeResults({
         </details>
       )}
 
-      {/* AI Analysis button */}
+      {/* AI Analysis button — hidden unless an AI provider is configured (opt-in) */}
+      {aiEnabled && (
       <div className="mt-4">
         {!aiSummary && !aiLoading && !aiError && (
           <button
@@ -730,6 +736,7 @@ function InlineUpgradeResults({
           </div>
         )}
       </div>
+      )}
 
       {/* Downgrade typed-confirmation modal */}
       <ConfirmationModal
@@ -826,18 +833,21 @@ function InlineUpgradeResults({
       {upgradeError && (
         <div className="mt-4 border-t border-[#c0ddf0] pt-4 dark:border-gray-700">
           <p className="text-sm text-red-600 dark:text-red-400">{upgradeError}</p>
-          <button
-            type="button"
-            onClick={() => {
-              window.dispatchEvent(new CustomEvent('open-assistant', {
-                detail: `Addon ${addonName} upgrade to ${targetVersion} failed with error: ${upgradeError}. Why did this fail and how do I fix it?`,
-              }))
-            }}
-            className="mt-2 inline-flex items-center gap-2 rounded-lg border border-[#6aade0] bg-[#f0f7ff] px-3 py-1.5 text-xs font-medium text-[#0a2a4a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
-          >
-            <MessageSquare className="h-3.5 w-3.5" />
-            Ask AI
-          </button>
+          {/* Ask AI — hidden unless an AI provider is configured (opt-in) */}
+          {aiEnabled && (
+            <button
+              type="button"
+              onClick={() => {
+                window.dispatchEvent(new CustomEvent('open-assistant', {
+                  detail: `Addon ${addonName} upgrade to ${targetVersion} failed with error: ${upgradeError}. Why did this fail and how do I fix it?`,
+                }))
+              }}
+              className="mt-2 inline-flex items-center gap-2 rounded-lg border border-[#6aade0] bg-[#f0f7ff] px-3 py-1.5 text-xs font-medium text-[#0a2a4a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+            >
+              <MessageSquare className="h-3.5 w-3.5" />
+              Ask AI
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -1060,9 +1070,11 @@ export function AddonDetail() {
   const [catalogSources, setCatalogSources] = useState<CatalogSourceRecord[]>([])
 
   // AI configuration. Pulled once for the Values + Catalog tabs to render
-  // the "AI not configured" banner and the per-addon opt-out toggle.
-  // Not refreshed — Settings changes are infrequent and the user can
-  // soft-refresh to pick up changes.
+  // the "AI not configured" banner and the per-addon opt-out toggle, and
+  // (V2-cleanup-55.4) to gate the opt-in AI affordances — AI Analysis and
+  // Ask AI in the inline upgrade results — which are hidden unless an AI
+  // provider is configured. Not refreshed — Settings changes are infrequent
+  // and the user can soft-refresh to pick up changes.
   const [aiEnabled, setAIEnabled] = useState<boolean>(false)
   useEffect(() => {
     // Defensive — older test fixtures may not mock getAIConfig.
@@ -2151,6 +2163,7 @@ export function AddonDetail() {
                     onClose={handleCloseInlineAnalysis}
                     onUpgrade={handleUpgradeAddon}
                     onUpgradeComplete={() => fetchAddonData(true)}
+                    aiEnabled={aiEnabled}
                   />
                 </div>
               )}
