@@ -22,6 +22,20 @@
 
 Sharko is a server that runs in your Kubernetes cluster, next to ArgoCD, and manages the lifecycle of addons across your fleet. Install it with a single Helm command, and a guided wizard walks you through connecting your Git repo, ArgoCD instance, and optional secrets provider — no config files, no env vars to set by hand.
 
+## Why not just ApplicationSets?
+
+Fair question — it's usually the first one ArgoCD users ask. If your platform team is comfortable with ApplicationSets, the app-of-apps pattern, and the public [gitops-bridge](https://github.com/gitops-bridge-dev/gitops-bridge) approach, you can build most of this yourselves: fleet-wide addon rollout, per-cluster values selected by labels on ArgoCD cluster secrets, Git as the source of truth. That's a legitimate choice, and Sharko doesn't replace that pattern — it sits on top of the exact same one.
+
+What Sharko adds on top:
+
+- A UI, REST API, and audit trail that people who *didn't* author the repo can use safely
+- A curated catalog with cosign-signed entries and OpenSSF Scorecard data
+- An upgrade advisor that flags security fixes and breaking changes before you commit to a version
+- Every change is a reviewable Git PR, gated by RBAC and recorded in the audit log
+- Non-destructive adoption of an existing shared ArgoCD — Sharko joins as a guest, never takes ownership
+
+If DIY serves you well, keep it. Sharko is for teams who want that same pattern productized.
+
 ## Features
 
 - **Wizard-based setup** — first run opens a step-by-step wizard: Git connection, ArgoCD connection, secrets provider, and repo initialization
@@ -32,6 +46,7 @@ Sharko is a server that runs in your Kubernetes cluster, next to ArgoCD, and man
 - **Daily catalog scanner** — a daily GitHub Action scans the CNCF Landscape and AWS EKS Blueprints, then opens draft PRs proposing additions or updates to the built-in catalog.
 - **Addon catalog** — version matrix across every cluster, drift detection, and contextual help on all advanced config fields
 - **GitOps-native** — every write operation creates a PR (auto-merge optional); branches cleaned up after merge
+- **No lock-in** — everything ArgoCD runs is rendered from your repo; remove Sharko and every addon keeps running and syncing. See [If you remove Sharko](docs/site/operator/removing-sharko.md)
 - **Managed vs discovered clusters** — Sharko surfaces all ArgoCD clusters; adopt discovered clusters into full management in one click
 - **Secrets provider** — deliver addon credentials to remote clusters via AWS Secrets Manager or Kubernetes Secrets (no External Secrets Operator required)
 - **AI assistant** — side panel that knows which page you're on. When an error is visible, the prompt is pre-filled with the error text so the user can just hit send. The panel is resizable. Supports OpenAI, Claude, Gemini, Ollama, and any OpenAI-compatible API.
@@ -301,7 +316,7 @@ swag init -g cmd/sharko/serve.go -o docs/swagger --parseDependency --parseIntern
 
 ## Community
 
-Sharko is an open project building toward [CNCF Sandbox](https://github.com/cncf/sandbox) acceptance. Contributions, adopters, and feedback are all welcome.
+Sharko is an open project that follows CNCF-style governance and community conventions — public governance, DCO sign-off, a code of conduct, and a security disclosure policy. Contributions, adopters, and feedback are all welcome.
 
 | Resource | Description |
 |----------|-------------|
@@ -316,4 +331,4 @@ For project Q&A and design discussion, please use [GitHub Discussions](https://g
 
 ## License
 
-[MIT](LICENSE)
+[Apache-2.0](LICENSE)

@@ -25,7 +25,7 @@ release notes describe reality.
 **Isn't:**
 
 - A commitment to ship any specific theme in any specific release.
-- A schedule. Sharko is solo-maintained pre-CNCF-sandbox; **themes
+- A schedule. Sharko is solo-maintained; **themes
   reflect intent, commit dates depend on community + maintainer
   capacity**, and the order can shift as adopter feedback arrives.
 - A contract with integrators. The API stability contract lives at

@@ -269,7 +269,7 @@ git rebase --signoff main
 By signing off, you certify the contents of the [DCO
 text](https://developercertificate.org/) — most importantly that you
 have the legal right to contribute the code and that you are doing so
-under the project's open source license (MIT, see
+under the project's open source license (Apache-2.0, see
 [LICENSE](LICENSE)).
 
 ### CI enforcement

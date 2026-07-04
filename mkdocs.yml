@@ -60,6 +60,7 @@ nav:
   - Operator Manual:
     - Installation: operator/installation.md
     - Configuration: operator/configuration.md
+    - 'If You Remove Sharko (no lock-in)': operator/removing-sharko.md
     - 'Reference — Cluster Reconciler (architecture + embedded troubleshooting)': operator/cluster-reconciler.md
     - 'Reference — AI Configuration': operator/ai-config.md
     - 'Reference — Security': operator/security.md

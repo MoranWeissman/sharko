@@ -25,7 +25,7 @@ runbooks](#developer-guide-vs-operator-runbooks).
 
 ## Why runbooks matter
 
-Sharko is a CNCF-sandbox-aspiring project that ships into someone else's
+Sharko is an open-source project that ships into someone else's
 production cluster. The operator who hits a Sharko failure is **rarely
 the person who wrote the code**. They are an SRE who installed a Helm
 chart, set up an Ingress, and now their pager is going off. They have a
@@ -403,13 +403,14 @@ email the maintainer: `moran.weissman@gmail.com`. Include:
   [correlation pattern](../developer-guide/logging.md#correlation-ids))
 
 The maintainer is a single human, not a 24×7 rotation. Expect a
-business-day SLA, not a paged response. As Sharko matures past CNCF
-sandbox, this section will be replaced with on-call rotation details.
+business-day SLA, not a paged response. If the project grows a
+multi-maintainer team, this section will be replaced with on-call
+rotation details.
 ```
 
 This is a **transition state**. The section as written acknowledges
 that Sharko is a small-maintainer project, sets a realistic SLA
-expectation, and reserves a slot for the post-CNCF-sandbox on-call
+expectation, and reserves a slot for a future multi-maintainer on-call
 rotation. Do not pretend Sharko has 24×7 escalation paths it does not
 have.
 
