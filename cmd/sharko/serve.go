@@ -495,10 +495,17 @@ var serveCmd = &cobra.Command{
 		//                                 "no provider configured" error → log
 		//                                 + leave credProvider nil → existing
 		//                                 no_secrets_backend surface.
-		// When Type ∈ {aws-sm, k8s-secrets, ...}: cluster-test rejects the type;
-		//                                          the addon-secret reconciler
-		//                                          still wires those backends
-		//                                          via NewAddonSecretProvider.
+		// When Type ∈ {aws-sm, k8s-secrets}: cluster-test builds the matching
+		//                                    secret-backend provider so the
+		//                                    registration path (creds_source=
+		//                                    secret-kubeconfig / eks-token)
+		//                                    reaches the configured backend
+		//                                    (V2-cleanup-53.1 restored arms).
+		// When Type ∈ {gcp-sm, azure-kv, ...}: still retired for cluster creds —
+		//                                      the fan-out returns a zero config
+		//                                      → auto-default, as before. The
+		//                                      addon-secret reconciler wires all
+		//                                      backends via NewAddonSecretProvider.
 		var resolvedAddonCfg providers.AddonSecretProviderConfig
 		var resolvedTestCfg providers.ClusterTestProviderConfig
 		{
@@ -517,23 +524,23 @@ var serveCmd = &cobra.Command{
 					Namespace: ns,
 					RoleARN:   connProv.RoleARN,
 				}
-				// Cluster-test fans only the connection-level Type into the
-				// typed config when it's argocd — NEVER connProv.Namespace,
-				// which is the addon-secrets-shaped slot. Copying
-				// connProv.Namespace into ArgoCDNamespace would cross-
-				// contaminate (e.g. connProv.Namespace="sharko" leftover
-				// from a prior k8s-secrets selection would make
-				// ArgoCDProvider look for cluster Secrets in "sharko"
-				// instead of "argocd"). Empty ArgoCDNamespace lets
-				// resolveArgoCDNamespaceTyped fall back through
-				// cfg.ArgoCDNamespace → SHARKO_ARGOCD_NAMESPACE env →
-				// "argocd" default.
-				if connProv.Type == "argocd" {
-					resolvedTestCfg = providers.ClusterTestProviderConfig{
-						Type:            "argocd",
-						ArgoCDNamespace: "",
-					}
-				}
+				// Cluster-test fan-through goes through the SINGLE shared
+				// mapper (providers.ClusterTestConfigFromConnection) — the
+				// same one ReinitializeFromConnection uses on connection
+				// save, so boot and hot-reload wiring can never drift
+				// (V2-cleanup-53.1). The mapper preserves the V125-1-10.8
+				// cross-contamination guard: connProv.Namespace is NEVER
+				// copied into ArgoCDNamespace (it's the addon-secrets-shaped
+				// slot; e.g. a leftover "sharko" from a prior k8s-secrets
+				// selection would make ArgoCDProvider look for cluster
+				// Secrets in "sharko" instead of "argocd"). Empty
+				// ArgoCDNamespace lets resolveArgoCDNamespaceTyped fall back
+				// through SHARKO_ARGOCD_NAMESPACE env → "argocd" default.
+				// For k8s-secrets, ns (SHARKO_NAMESPACE default, overridden
+				// by connProv.Namespace) flows into the DISTINCT Namespace
+				// field, matching the addon-side k8s-secrets convention.
+				resolvedTestCfg = providers.ClusterTestConfigFromConnection(
+					connProv.Type, connProv.Region, connProv.Prefix, ns, connProv.RoleARN)
 				if connProv.Type != "" {
 					slog.Info("secrets provider configured from connection", "type", connProv.Type)
 				} else {

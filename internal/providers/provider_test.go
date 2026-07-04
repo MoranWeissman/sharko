@@ -97,14 +97,59 @@ func TestNewClusterTestProvider_AutoDefaultProbeFails(t *testing.T) {
 	}
 }
 
-// Case: NewClusterTestProvider rejects legacy aws-sm cluster-creds type. After
-// V125-1-11.6 the cluster-test dispatcher accepts ONLY argocd + "" — the
-// legacy aws-sm/k8s-secrets/gcp-sm/azure-kv arms (deprecated since V125-1-10.2
-// auto-default) are retired one cycle earlier than the provider.go doc-comment
-// promise. Addon-secret consumers of those backends remain functional via
-// NewAddonSecretProvider — only the cluster-creds usage is killed.
-func TestNewClusterTestProvider_RejectsLegacyClusterCredsTypes(t *testing.T) {
-	for _, typ := range []string{"aws-sm", "aws-secrets-manager", "k8s-secrets", "kubernetes", "gcp", "gcp-sm", "azure", "azure-kv"} {
+// Case (V2-cleanup-53.1): the aws-sm cluster-creds arm is RESTORED. The
+// factory must return the SM-backed provider type — construction succeeds
+// without real AWS credentials (the SDK defers credential resolution to the
+// first API call), so this assertion is deterministic in CI.
+func TestNewClusterTestProvider_AWSSMArm_ReturnsSMProvider(t *testing.T) {
+	for _, typ := range []string{"aws-sm", "aws-secrets-manager"} {
+		prov, err := NewClusterTestProvider(ClusterTestProviderConfig{
+			Type:    typ,
+			Region:  "eu-west-1",
+			Prefix:  "clusters/",
+			RoleARN: "arn:aws:iam::000000000000:role/sharko-test",
+		})
+		if err != nil {
+			t.Fatalf("expected aws-sm arm to construct for type %q, got error: %v", typ, err)
+		}
+		smProv, ok := prov.(*AWSSecretsManagerProvider)
+		if !ok {
+			t.Fatalf("expected *AWSSecretsManagerProvider for type %q, got %T", typ, prov)
+		}
+		if smProv.prefix != "clusters/" {
+			t.Errorf("expected configured prefix to reach the provider, got %q", smProv.prefix)
+		}
+		if smProv.roleARN != "arn:aws:iam::000000000000:role/sharko-test" {
+			t.Errorf("expected configured roleARN to reach the provider, got %q", smProv.roleARN)
+		}
+	}
+}
+
+// Case (V2-cleanup-53.1): the k8s-secrets cluster-creds arm is RESTORED. The
+// factory must ROUTE to the K8s constructor — full construction needs an
+// in-cluster config or ~/.kube/config, which CI may not have, so on error we
+// assert only that we did not fall through to "unknown cluster-test provider
+// type"; on success we assert the concrete type.
+func TestNewClusterTestProvider_K8sSecretsArm_Routes(t *testing.T) {
+	for _, typ := range []string{"k8s-secrets", "kubernetes"} {
+		prov, err := NewClusterTestProvider(ClusterTestProviderConfig{Type: typ, Namespace: "sharko"})
+		if err != nil {
+			if strings.Contains(err.Error(), "unknown cluster-test provider type") {
+				t.Errorf("factory should have routed to K8s provider for %q, got: %v", typ, err)
+			}
+			continue
+		}
+		if _, ok := prov.(*KubernetesSecretProvider); !ok {
+			t.Errorf("expected *KubernetesSecretProvider for type %q, got %T", typ, prov)
+		}
+	}
+}
+
+// Case: gcp/azure cluster-creds arms STAY retired (V2-cleanup-53.1 scope
+// guard) — only aws-sm + k8s-secrets were restored. Addon-secret consumers
+// of gcp/azure remain reachable via NewAddonSecretProvider (stubs).
+func TestNewClusterTestProvider_GCPAzureStayRetired(t *testing.T) {
+	for _, typ := range []string{"gcp", "gcp-sm", "google-secret-manager", "azure", "azure-kv", "azure-key-vault"} {
 		_, err := NewClusterTestProvider(ClusterTestProviderConfig{Type: typ})
 		if err == nil {
 			t.Errorf("expected error for retired cluster-creds type %q, got nil", typ)
@@ -124,9 +169,79 @@ func TestNewClusterTestProvider_UnknownType(t *testing.T) {
 	if !strings.Contains(err.Error(), "unknown cluster-test provider type") {
 		t.Errorf("expected error to mention unknown cluster-test provider type, got: %v", err)
 	}
-	// Verify the help text advertises the supported options.
-	if !strings.Contains(err.Error(), "argocd") {
-		t.Errorf("expected unknown-type error to advertise the 'argocd' option, got: %v", err)
+	// Verify the help text advertises the full supported option set
+	// (argocd + the V2-cleanup-53.1 restored arms).
+	for _, want := range []string{"argocd", "aws-sm", "k8s-secrets"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("expected unknown-type error to advertise the %q option, got: %v", want, err)
+		}
+	}
+}
+
+// --- ClusterTestConfigFromConnection (shared boot/hot-reload mapper) -------
+
+// The mapper is the single source of truth for connection→cluster-test config
+// fan-through (V2-cleanup-53.1). These tests pin each branch, most importantly
+// the V125-1-10.8 cross-contamination guard: the connection-level namespace
+// must NEVER land in ArgoCDNamespace.
+func TestClusterTestConfigFromConnection(t *testing.T) {
+	cases := []struct {
+		name string
+		typ  string
+		want ClusterTestProviderConfig
+	}{
+		{
+			name: "argocd ignores namespace entirely (V125-1-10.8 guard)",
+			typ:  "argocd",
+			want: ClusterTestProviderConfig{Type: "argocd", ArgoCDNamespace: ""},
+		},
+		{
+			name: "aws-sm carries region/prefix/roleARN, never namespaces",
+			typ:  "aws-sm",
+			want: ClusterTestProviderConfig{Type: "aws-sm", Region: "eu-west-1", Prefix: "clusters/", RoleARN: "arn:aws:iam::000000000000:role/x"},
+		},
+		{
+			name: "aws-secrets-manager alias behaves like aws-sm",
+			typ:  "aws-secrets-manager",
+			want: ClusterTestProviderConfig{Type: "aws-secrets-manager", Region: "eu-west-1", Prefix: "clusters/", RoleARN: "arn:aws:iam::000000000000:role/x"},
+		},
+		{
+			name: "k8s-secrets carries namespace into the distinct Namespace field",
+			typ:  "k8s-secrets",
+			want: ClusterTestProviderConfig{Type: "k8s-secrets", Namespace: "sharko"},
+		},
+		{
+			name: "kubernetes alias behaves like k8s-secrets",
+			typ:  "kubernetes",
+			want: ClusterTestProviderConfig{Type: "kubernetes", Namespace: "sharko"},
+		},
+		{
+			name: "empty type returns zero config (auto-default decides)",
+			typ:  "",
+			want: ClusterTestProviderConfig{},
+		},
+		{
+			name: "retired gcp-sm returns zero config (auto-default, pre-53.1 behavior)",
+			typ:  "gcp-sm",
+			want: ClusterTestProviderConfig{},
+		},
+		{
+			name: "retired azure-kv returns zero config (auto-default, pre-53.1 behavior)",
+			typ:  "azure-kv",
+			want: ClusterTestProviderConfig{},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ClusterTestConfigFromConnection(tc.typ, "eu-west-1", "clusters/", "sharko", "arn:aws:iam::000000000000:role/x")
+			if got != tc.want {
+				t.Errorf("ClusterTestConfigFromConnection(%q, ...) = %+v, want %+v", tc.typ, got, tc.want)
+			}
+			if got.ArgoCDNamespace != "" {
+				t.Errorf("ArgoCDNamespace must NEVER be populated from the connection namespace (V125-1-10.8 guard), got %q", got.ArgoCDNamespace)
+			}
+		})
 	}
 }
 

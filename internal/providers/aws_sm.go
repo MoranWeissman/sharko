@@ -21,20 +21,22 @@ type AWSSecretsManagerProvider struct {
 	client  *secretsmanager.Client
 	prefix  string
 	roleARN string // default IAM role to assume for EKS token generation
+
+	// eksTokenFn is the per-instance test seam over getEKSToken (STS
+	// presigned-URL token minting). Defaulted in the constructors;
+	// overridden in unit tests so the structured-EKS payload path can be
+	// exercised without real AWS credentials.
+	eksTokenFn func(ctx context.Context, clusterName, region, roleARN string) (string, error)
 }
 
-// NewAWSSecretsManagerProviderFromAddonConfig creates a provider backed by AWS
-// Secrets Manager from the canonical AddonSecretProviderConfig.
-// Uses default AWS credential chain (IRSA when in-cluster, env vars or profile
-// for local dev).
-//
-// Only AddonSecretProviderConfig fields Region, Prefix, and RoleARN are read —
-// Type is consumed by the upstream dispatcher (NewAddonSecretProvider) and
-// Namespace is ignored (AWS Secrets Manager has no namespace concept).
-func NewAWSSecretsManagerProviderFromAddonConfig(cfg AddonSecretProviderConfig) (*AWSSecretsManagerProvider, error) {
+// newAWSSecretsManagerProvider is the shared builder behind both public
+// constructors. Uses the default AWS credential chain (IRSA when in-cluster,
+// env vars or profile for local dev). No default prefix — secret name equals
+// cluster name unless a prefix is configured.
+func newAWSSecretsManagerProvider(region, prefix, roleARN string) (*AWSSecretsManagerProvider, error) {
 	opts := []func(*awsconfig.LoadOptions) error{}
-	if cfg.Region != "" {
-		opts = append(opts, awsconfig.WithRegion(cfg.Region))
+	if region != "" {
+		opts = append(opts, awsconfig.WithRegion(region))
 	}
 
 	awsCfg, err := awsconfig.LoadDefaultConfig(context.Background(), opts...)
@@ -42,13 +44,33 @@ func NewAWSSecretsManagerProviderFromAddonConfig(cfg AddonSecretProviderConfig) 
 		return nil, fmt.Errorf("loading AWS config: %w", err)
 	}
 
-	client := secretsmanager.NewFromConfig(awsCfg)
+	return &AWSSecretsManagerProvider{
+		client:     secretsmanager.NewFromConfig(awsCfg),
+		prefix:     prefix,
+		roleARN:    roleARN,
+		eksTokenFn: getEKSToken,
+	}, nil
+}
 
-	// No default prefix — secret name equals cluster name by default.
-	// Users who want a prefix can set SHARKO_PROVIDER_PREFIX.
-	prefix := cfg.Prefix
+// NewAWSSecretsManagerProviderFromAddonConfig creates a provider backed by AWS
+// Secrets Manager from the canonical AddonSecretProviderConfig.
+//
+// Only AddonSecretProviderConfig fields Region, Prefix, and RoleARN are read —
+// Type is consumed by the upstream dispatcher (NewAddonSecretProvider) and
+// Namespace is ignored (AWS Secrets Manager has no namespace concept).
+func NewAWSSecretsManagerProviderFromAddonConfig(cfg AddonSecretProviderConfig) (*AWSSecretsManagerProvider, error) {
+	return newAWSSecretsManagerProvider(cfg.Region, cfg.Prefix, cfg.RoleARN)
+}
 
-	return &AWSSecretsManagerProvider{client: client, prefix: prefix, roleARN: cfg.RoleARN}, nil
+// NewAWSSecretsManagerProviderFromClusterTestConfig creates a provider backed
+// by AWS Secrets Manager from the canonical ClusterTestProviderConfig — the
+// cluster-credentials arm restored by V2-cleanup-53.1 so registrations with
+// creds_source=secret-kubeconfig / eks-token reach AWS SM. Reads Region,
+// Prefix, and RoleARN; Type is consumed by the upstream dispatcher
+// (NewClusterTestProvider) and ArgoCDNamespace/Namespace are other backends'
+// fields.
+func NewAWSSecretsManagerProviderFromClusterTestConfig(cfg ClusterTestProviderConfig) (*AWSSecretsManagerProvider, error) {
+	return newAWSSecretsManagerProvider(cfg.Region, cfg.Prefix, cfg.RoleARN)
 }
 
 // GetSecretValue retrieves a raw secret value from AWS Secrets Manager.
@@ -101,10 +123,10 @@ func (p *AWSSecretsManagerProvider) fetchSecret(secretName string) (*Kubeconfig,
 
 	raw := []byte(*output.SecretString)
 
-	// Try structured JSON first. If the secret contains an EKS cluster descriptor
-	// (host + caData + region), build credentials via STS token generation.
-	var structured structuredEKSSecret
-	if err := json.Unmarshal(raw, &structured); err == nil && structured.Host != "" {
+	// Payload sniff: structured EKS-JSON → STS token path; anything else →
+	// raw kubeconfig YAML. This dispatch is what makes creds_source=eks-token
+	// flow through the aws-sm arm with no separate wiring (V2-cleanup-53.1).
+	if structured, ok := sniffStructuredEKSSecret(raw); ok {
 		slog.Info("[provider] secret fetched", "secretName", secretName, "format", "structured", "size", len(raw))
 		return p.buildFromStructured(structured)
 	}
@@ -112,6 +134,19 @@ func (p *AWSSecretsManagerProvider) fetchSecret(secretName string) (*Kubeconfig,
 	// Fallback: treat the secret value as raw kubeconfig YAML.
 	slog.Info("[provider] secret fetched", "secretName", secretName, "format", "raw", "size", len(raw))
 	return p.buildFromRawKubeconfig(raw, secretName)
+}
+
+// sniffStructuredEKSSecret reports whether a secret payload is the structured
+// EKS-JSON descriptor (as opposed to raw kubeconfig YAML). The signal is
+// "parses as JSON AND has a non-empty host" — kubeconfig YAML fails the JSON
+// parse. Extracted so the dispatch decision is unit-testable without an SM
+// client.
+func sniffStructuredEKSSecret(raw []byte) (structuredEKSSecret, bool) {
+	var structured structuredEKSSecret
+	if err := json.Unmarshal(raw, &structured); err == nil && structured.Host != "" {
+		return structured, true
+	}
+	return structuredEKSSecret{}, false
 }
 
 // GetCredentials fetches credentials for the named cluster using a multi-step lookup:
@@ -235,7 +270,11 @@ func (p *AWSSecretsManagerProvider) buildFromStructured(s structuredEKSSecret) (
 		roleARN = p.roleARN
 	}
 
-	token, err := getEKSToken(context.Background(), name, s.Region, roleARN)
+	tokenFn := p.eksTokenFn
+	if tokenFn == nil {
+		tokenFn = getEKSToken // nil-safe for struct-literal construction in tests
+	}
+	token, err := tokenFn(context.Background(), name, s.Region, roleARN)
 	if err != nil {
 		slog.Error("[provider] GetCredentials failed", "cluster", name, "step", "sts", "error", err)
 		return nil, fmt.Errorf("generating EKS token for cluster %q: %w", name, err)
