@@ -5,23 +5,28 @@ import { api } from '@/services/api'
 import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
 import { showToast } from '@/components/ToastNotification'
-import {
-  VALID_PROVIDER_TYPES,
-  type ProviderType as GeneratedProviderType,
-} from '@/generated/provider-types'
+import { type ProviderType as GeneratedProviderType } from '@/generated/provider-types'
 
-// The dropdown options are generated from the backend factory in
+// The set of accepted type STRINGS is generated from the backend factory in
 // internal/providers/provider.go via cmd/gen-provider-types — see
 // ui/src/generated/provider-types.ts and the "Provider Types Up To Date"
-// CI check. A new arm in providers.New()'s switch + `make
-// generate-provider-types` is the only edit required to surface a new
-// provider in the UI.
-//
-// `'' | GeneratedProviderType` because the form's empty value represents
-// "no provider configured", which corresponds to providers.New()'s
-// auto-default arm — that arm is intentionally filtered out of the
-// generated const because it isn't a user-selectable type.
-type ProviderType = '' | GeneratedProviderType
+// CI check. The generated union includes every alias each switch arm
+// accepts (aws-sm / aws-secrets-manager, kubernetes / k8s-secrets, ...).
+// Rendering one dropdown row per accepted STRING showed ~12 rows for 5
+// real backends (V2-cleanup-55.2 Bug A), so the dropdown renders one row
+// per canonical backend and CANONICAL_TYPE below collapses every alias
+// onto its row. The generated file stays untouched — it remains the
+// contract for "strings the backend will accept", not for UI copy.
+
+// One canonical value per real backend. This is the value the form saves;
+// every canonical value is a member of the generated union, so anything
+// the form submits is guaranteed backend-acceptable.
+type CanonicalProviderType = 'argocd' | 'aws-sm' | 'k8s-secrets' | 'azure' | 'gcp'
+
+// `'' | CanonicalProviderType` because the form's empty value represents
+// "no provider configured", which corresponds to the factory's
+// auto-default arm — that arm isn't a user-selectable type.
+type ProviderType = '' | CanonicalProviderType
 
 interface ProviderFormData {
   provider_type: ProviderType
@@ -29,41 +34,74 @@ interface ProviderFormData {
   provider_prefix: string
 }
 
-// Per-option display labels. Centralised here (not in the generator) because
-// labels are UI copy, not backend contract. The keys are typed against the
-// generated `GeneratedProviderType` so adding a new arm to providers.New()
-// will produce a TypeScript compile error here — forcing the implementer
-// to author a friendly label before the dropdown can ship.
-const PROVIDER_LABELS: Record<GeneratedProviderType, string> = {
-  argocd: 'ArgoCD (auto — reads cluster credentials from the ArgoCD Secret)',
-  'aws-sm': 'AWS Secrets Manager (aws-sm)',
-  'aws-secrets-manager': 'AWS Secrets Manager (aws-secrets-manager alias)',
-  azure: 'Azure Key Vault (azure)',
-  'azure-kv': 'Azure Key Vault (azure-kv alias)',
-  'azure-key-vault': 'Azure Key Vault (azure-key-vault alias)',
-  gcp: 'GCP Secret Manager (gcp)',
-  'gcp-sm': 'GCP Secret Manager (gcp-sm alias)',
-  'google-secret-manager': 'GCP Secret Manager (google-secret-manager alias)',
-  'k8s-secrets': 'Kubernetes Secrets (k8s-secrets)',
-  kubernetes: 'Kubernetes Secrets (kubernetes alias)',
+// Maps every backend-accepted type string (including aliases) onto its
+// canonical dropdown row. Typed as a TOTAL Record over the generated
+// union so a new arm in the backend factory (after `make
+// generate-provider-types`) is a TypeScript compile error here until the
+// implementer maps it — the same drift guard the old per-string label
+// record provided, now at the canonicalisation layer.
+const CANONICAL_TYPE: Record<GeneratedProviderType, CanonicalProviderType> = {
+  argocd: 'argocd',
+  'aws-sm': 'aws-sm',
+  'aws-secrets-manager': 'aws-sm',
+  azure: 'azure',
+  'azure-kv': 'azure',
+  'azure-key-vault': 'azure',
+  gcp: 'gcp',
+  'gcp-sm': 'gcp',
+  'google-secret-manager': 'gcp',
+  'k8s-secrets': 'k8s-secrets',
+  kubernetes: 'k8s-secrets',
+}
+
+// Collapses any stored provider type (canonical or alias) onto the
+// canonical row so a connection saved under e.g. "kubernetes" still
+// selects the "Kubernetes Secrets" row. Unknown / empty input maps to ''
+// ("None"). Exported for the dropdown drift-guard test.
+export function canonicalizeProviderType(raw: string | undefined | null): ProviderType {
+  if (!raw) return ''
+  return (CANONICAL_TYPE as Record<string, CanonicalProviderType>)[raw] ?? ''
+}
+
+interface ProviderOption {
+  value: CanonicalProviderType
+  label: string
+  // Azure Key Vault and GCP Secret Manager exist as factory arms but
+  // their constructors unconditionally return "not yet implemented"
+  // (internal/providers/azure.go / gcp.go), and the cluster-creds
+  // factory (NewClusterTestProvider) doesn't accept them at all. They
+  // render disabled with a "not yet supported" note instead of
+  // masquerading as working backends.
+  supported: boolean
+}
+
+// One row per real backend, human labels. UI copy lives here, not in the
+// generator, because labels are presentation — the backend contract is
+// only the accepted strings.
+const PROVIDER_OPTIONS: readonly ProviderOption[] = [
+  { value: 'argocd', label: 'ArgoCD (auto — reads cluster credentials from the ArgoCD Secret)', supported: true },
+  { value: 'aws-sm', label: 'AWS Secrets Manager', supported: true },
+  { value: 'k8s-secrets', label: 'Kubernetes Secrets', supported: true },
+  { value: 'azure', label: 'Azure Key Vault — not yet supported', supported: false },
+  { value: 'gcp', label: 'GCP Secret Manager — not yet supported', supported: false },
+]
+
+function isSupported(t: ProviderType): boolean {
+  return PROVIDER_OPTIONS.find((o) => o.value === t)?.supported ?? true
 }
 
 // Provider types that surface the AWS-style Region input. AWS Secrets
 // Manager is the only provider that requires a region today; this set
 // stays a hand-curated UI affordance because the backend has no
-// per-provider input-shape metadata to derive from.
-const REGION_PROVIDERS: ReadonlySet<GeneratedProviderType> = new Set<GeneratedProviderType>([
-  'aws-sm',
-  'aws-secrets-manager',
-])
+// per-provider input-shape metadata to derive from. Canonical values
+// only — the form value is always canonicalized on hydration.
+const REGION_PROVIDERS: ReadonlySet<ProviderType> = new Set<ProviderType>(['aws-sm'])
 
 // Provider types that surface the Prefix input. Both AWS Secrets Manager
 // and the Kubernetes-Secrets backend honour a name prefix.
-const PREFIX_PROVIDERS: ReadonlySet<GeneratedProviderType> = new Set<GeneratedProviderType>([
+const PREFIX_PROVIDERS: ReadonlySet<ProviderType> = new Set<ProviderType>([
   'aws-sm',
-  'aws-secrets-manager',
   'k8s-secrets',
-  'kubernetes',
 ])
 
 interface ProviderInfo {
@@ -96,18 +134,18 @@ export function SecretsProviderSection() {
   const [saveError, setSaveError] = useState<string | null>(null)
   const [justSaved, setJustSaved] = useState(false)
 
+  // GET /providers feeds the STATUS card only (type / region / live
+  // health). It is deliberately NOT the source the form hydrates from:
+  // the server builds that payload without the prefix field
+  // (internal/api/system.go handleGetProviders — providerDisplay()
+  // returns the prefix but it never enters the JSON), which was the
+  // V2-cleanup-55.2 Bug B "saved prefix comes back blank" live bug.
   const fetchProviderInfo = useCallback(() => {
     api
       .getProviders()
       .then((data) => {
         if (data.configured_provider) {
           setProviderInfo(data.configured_provider as ProviderInfo)
-          const p = data.configured_provider as ProviderInfo
-          setForm({
-            provider_type: (p.type as ProviderType) || '',
-            provider_region: p.region || '',
-            provider_prefix: p.prefix || '',
-          })
         }
       })
       .catch(() => setProviderInfo(null))
@@ -116,6 +154,41 @@ export function SecretsProviderSection() {
   useEffect(() => {
     fetchProviderInfo()
   }, [fetchProviderInfo])
+
+  // Form hydration source of truth: the connection's own stored provider
+  // config. GET /connections round-trips type + region + prefix in full
+  // (models.ConnectionResponse.Provider), and it's the exact record the
+  // Save button writes — so what you saved is what you see when you come
+  // back. Types stored under an alias (e.g. "kubernetes") canonicalize
+  // onto their dropdown row.
+  const connProvider = existingConn?.provider ?? null
+  const hasConnProvider = connProvider != null
+  const connType = connProvider?.type ?? ''
+  const connRegion = connProvider?.region ?? ''
+  const connPrefix = connProvider?.prefix ?? ''
+
+  useEffect(() => {
+    if (!hasConnProvider) return
+    setForm({
+      provider_type: canonicalizeProviderType(connType),
+      provider_region: connRegion,
+      provider_prefix: connPrefix,
+    })
+  }, [hasConnProvider, connType, connRegion, connPrefix])
+
+  // Fallback for installs where the provider is configured via env vars
+  // only (no provider block on the connection): hydrate type/region from
+  // the /providers status payload so the form still reflects reality.
+  // Prefix is unavailable on that payload (see above) — nothing stored on
+  // the connection means nothing to lose.
+  useEffect(() => {
+    if (hasConnProvider || !providerInfo) return
+    setForm({
+      provider_type: canonicalizeProviderType(providerInfo.type),
+      provider_region: providerInfo.region || '',
+      provider_prefix: providerInfo.prefix || '',
+    })
+  }, [hasConnProvider, providerInfo])
 
   async function handleSave() {
     if (!existingConn) return
@@ -214,15 +287,19 @@ export function SecretsProviderSection() {
                 onChange={(e) => setForm(prev => ({ ...prev, provider_type: e.target.value as ProviderType }))}
               >
                 <option value="">None</option>
-                {VALID_PROVIDER_TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {PROVIDER_LABELS[t]}
+                {PROVIDER_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value} disabled={!opt.supported}>
+                    {opt.label}
                   </option>
                 ))}
               </select>
               {form.provider_type === 'argocd' ? (
                 <p className="mt-1 text-[10px] text-[#3a6a8a]">
                   Sharko reads credentials from the ArgoCD cluster Secret it creates during register-cluster. No additional setup required when Sharko runs in-cluster.
+                </p>
+              ) : form.provider_type !== '' && !isSupported(form.provider_type) ? (
+                <p className="mt-1 text-[10px] text-amber-600 dark:text-amber-400">
+                  This provider is not yet supported — Sharko can't retrieve cluster credentials with it. Pick AWS Secrets Manager, Kubernetes Secrets, or ArgoCD.
                 </p>
               ) : (
                 <p className="mt-1 text-[10px] text-[#3a6a8a]">How Sharko retrieves cluster credentials for secret-based providers.</p>
