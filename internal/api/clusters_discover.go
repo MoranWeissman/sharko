@@ -172,18 +172,12 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Resolve the credential lookup name. If the cluster is registered and has
-	// a SecretPath override, use that instead of the cluster name.
-	credLookupName := name
-	if s.clusterSvc != nil {
-		if gp, gpErr := s.connSvc.GetActiveGitProvider(); gpErr == nil {
-			if ac, acErr := s.connSvc.GetActiveArgocdClient(); acErr == nil {
-				detail, detailErr := s.clusterSvc.GetClusterDetail(r.Context(), name, gp, ac)
-				if detailErr == nil && detail != nil && detail.Cluster.SecretPath != "" {
-					credLookupName = detail.Cluster.SecretPath
-					slog.Info("[cluster-test] using secretPath override", "name", name, "secretPath", credLookupName)
-				}
-			}
-		}
+	// a SecretPath override, use that instead of the cluster name. Shared
+	// resolver (V2-cleanup-55.1) — reads the stored managed-clusters.yaml
+	// record via the active Git connection; falls back to the plain name.
+	credLookupName := s.credentialLookupKey(r.Context(), name)
+	if credLookupName != name {
+		slog.Info("[cluster-test] using secretPath override", "name", name, "secretPath", credLookupName)
 	}
 
 	slog.Info("[cluster-test] fetching credentials", "name", name, "lookupName", credLookupName)

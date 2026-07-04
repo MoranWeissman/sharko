@@ -533,8 +533,9 @@ func (o *Orchestrator) DeregisterCluster(ctx context.Context, name string, serve
 	}
 
 	// Step 3: Delete Sharko-managed secrets from remote cluster (best-effort).
+	// Resolve the stored secretPath override (if any) — V2-cleanup-55.1.
 	if o.credProvider != nil {
-		creds, credErr := o.credProvider.GetCredentials(name)
+		creds, credErr := o.credProvider.GetCredentials(o.credentialLookupKey(ctx, name))
 		if credErr == nil {
 			o.deleteAllAddonSecrets(ctx, creds.Raw) // best-effort, don't fail deregister for this
 		}
@@ -608,9 +609,10 @@ func (o *Orchestrator) UpdateClusterAddons(ctx context.Context, name string, ser
 	}
 
 	// Step 1: Fetch credentials if provider is configured (needed for secret operations).
+	// Resolve the stored secretPath override (if any) — V2-cleanup-55.1.
 	var rawKubeconfig []byte
 	if o.credProvider != nil {
-		creds, credErr := o.credProvider.GetCredentials(name)
+		creds, credErr := o.credProvider.GetCredentials(o.credentialLookupKey(ctx, name))
 		if credErr == nil {
 			rawKubeconfig = creds.Raw
 		}
@@ -766,14 +768,15 @@ func (o *Orchestrator) UpdateClusterAddons(ctx context.Context, name string, ser
 // safety-net tick. The reconciler owns the direct Secret write — this
 // probe is kept so the API endpoint can fail fast (404 / 401) without
 // dispatching a no-op reconcile.
-func (o *Orchestrator) RefreshClusterCredentials(_ context.Context, name string, _ string) error {
+func (o *Orchestrator) RefreshClusterCredentials(ctx context.Context, name string, _ string) error {
 	if o.credProvider == nil {
 		// No credProvider configured (e.g. kubeconfig-only deployment) —
 		// nothing to refresh; let the reconciler drive on its own cadence.
 		o.fireReconcilerTrigger()
 		return nil
 	}
-	if _, err := o.credProvider.GetCredentials(name); err != nil {
+	// Resolve the stored secretPath override (if any) — V2-cleanup-55.1.
+	if _, err := o.credProvider.GetCredentials(o.credentialLookupKey(ctx, name)); err != nil {
 		return fmt.Errorf("fetching fresh credentials for cluster %q: %w", name, err)
 	}
 	// Probe succeeded — hand off to reconciler. Secret write happens

@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"path"
 
-	"github.com/MoranWeissman/sharko/internal/logging"
+	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/gitops"
+	"github.com/MoranWeissman/sharko/internal/logging"
 )
 
 // RemoveCluster orchestrates cluster removal with configurable cleanup scope.
@@ -90,6 +91,12 @@ func (o *Orchestrator) RemoveCluster(ctx context.Context, req RemoveClusterReque
 		log.Warn("managed-clusters.yaml not found — skipping removal from it", "cluster", req.Name)
 	}
 
+	// Resolve the credential lookup key NOW, from the bytes we just read —
+	// the PR below removes this cluster's entry (and may auto-merge), so a
+	// post-PR resolution would no longer find the stored secretPath
+	// override (V2-cleanup-55.1).
+	credLookupKey := config.ResolveCredentialLookupKeyFromData(clusterAddonsData, req.Name)
+
 	var files map[string][]byte
 	var deletePaths []string
 
@@ -140,7 +147,7 @@ func (o *Orchestrator) RemoveCluster(ctx context.Context, req RemoveClusterReque
 
 	// Step 2: If cleanup=all, delete addon secrets from remote cluster (best-effort).
 	if cleanup == "all" && o.credProvider != nil {
-		creds, credErr := o.credProvider.GetCredentials(req.Name)
+		creds, credErr := o.credProvider.GetCredentials(credLookupKey)
 		if credErr == nil {
 			deleted, _ := o.deleteAllAddonSecrets(ctx, creds.Raw)
 			if len(deleted) > 0 {

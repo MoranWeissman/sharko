@@ -718,11 +718,8 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 	// Resolve credentials. SecretPath overrides Name for the vault lookup
 	// (matches argosecrets.Reconciler — same contract so a single repo's
 	// managed-clusters.yaml works across both writers during the
-	// transition window).
-	credKey := entry.Name
-	if entry.SecretPath != "" {
-		credKey = entry.SecretPath
-	}
+	// transition window; shared resolver — V2-cleanup-55.1).
+	credKey := entry.CredentialLookupKey()
 	creds, vaultErr := r.deps.Vault.GetCredentials(credKey)
 	if vaultErr != nil {
 		stats.Errors++

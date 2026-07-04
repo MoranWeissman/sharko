@@ -62,8 +62,10 @@ func (o *Orchestrator) UnadoptCluster(ctx context.Context, name string, req Unad
 	}
 
 	// Step 3: Delete Sharko-created addon secrets from remote cluster (best-effort).
+	// Resolve the stored secretPath override BEFORE step 4 removes the
+	// cluster's managed-clusters.yaml entry (V2-cleanup-55.1).
 	if o.credProvider != nil {
-		creds, credErr := o.credProvider.GetCredentials(name)
+		creds, credErr := o.credProvider.GetCredentials(o.credentialLookupKey(ctx, name))
 		if credErr == nil {
 			o.deleteAllAddonSecrets(ctx, creds.Raw) // best-effort
 		} else {
