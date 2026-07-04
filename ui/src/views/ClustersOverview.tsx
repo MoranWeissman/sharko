@@ -48,6 +48,11 @@ import { LoadingState } from '@/components/LoadingState';
 import { ErrorState } from '@/components/ErrorState';
 import { RoleGuard } from '@/components/RoleGuard';
 import { StatusBadge, isClusterStatus } from '@/components/StatusBadge';
+import {
+  WhoseConnectionLabel,
+  ARGOCD_CONN_TOOLTIP,
+  SHARKO_CONN_TOOLTIP,
+} from '@/components/WhoseConnectionLabel';
 import { ClusterTypeBadge } from '@/components/ClusterTypeBadge';
 import { ClusterStatusLegend } from '@/components/ClusterStatusLegend';
 import { DiagnoseModal } from '@/components/DiagnoseModal';
@@ -80,6 +85,18 @@ interface Filters {
   versions: string[];
   connectionTypes: string[];
 }
+
+// V2-cleanup-55.3: one plain-English line per credential-source option,
+// shown under the dropdown so a non-expert knows what each choice means
+// before the option-specific fields appear.
+const CREDS_SOURCE_HINTS: Record<CredsSource, string> = {
+  'inline-kubeconfig':
+    'Paste the file contents here once — Sharko stores it for this cluster.',
+  'secret-kubeconfig':
+    'Sharko fetches the kubeconfig from your configured secrets backend (the secret name/path below).',
+  'eks-token':
+    'No stored kubeconfig — Sharko generates short-lived AWS tokens using its own AWS identity.',
+};
 
 export function ClustersOverview() {
   const [allClusters, setAllClusters] = useState<Cluster[]>([]);
@@ -544,6 +561,8 @@ export function ClustersOverview() {
 
     return (
       <div className="flex flex-col gap-1">
+        {/* The Test flow is Sharko's own connection — say so (V2-cleanup-55.3). */}
+        <WhoseConnectionLabel who="sharko" />
         <button
           type="button"
           onClick={(e) => steps && steps.length > 0 ? toggleTestSteps(clusterName, e) : e.stopPropagation()}
@@ -931,6 +950,10 @@ export function ClustersOverview() {
                   <option value="secret-kubeconfig">Use a stored kubeconfig (from your secret store)</option>
                   <option value="eks-token">Amazon EKS — generate a token from cloud identity</option>
                 </select>
+                {/* Plain-English hint for the selected option (V2-cleanup-55.3). */}
+                <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
+                  {CREDS_SOURCE_HINTS[credsSource]}
+                </p>
               </div>
             )}
 
@@ -1444,9 +1467,10 @@ export function ClustersOverview() {
                 setConnectionDropdownOpen(!connectionDropdownOpen);
                 setVersionDropdownOpen(false);
               }}
+              title={ARGOCD_CONN_TOOLTIP}
               className="rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
             >
-              Connection Status{filters.connectionTypes.length > 0 ? ` (${filters.connectionTypes.length})` : ''}
+              ArgoCD Connection{filters.connectionTypes.length > 0 ? ` (${filters.connectionTypes.length})` : ''}
             </button>
             {connectionDropdownOpen && (
               <div className="absolute left-0 top-full z-10 mt-1 min-w-[200px] rounded-md ring-2 ring-[#6aade0] bg-[#f0f7ff] py-1 shadow-lg dark:border-gray-600 dark:bg-gray-800">
@@ -1742,6 +1766,8 @@ export function ClustersOverview() {
                       </td>
                       <td className="px-6 py-3">
                         <div className="flex flex-col gap-1">
+                          {/* connection_status is ArgoCD's own connection — say so (V2-cleanup-55.3). */}
+                          <WhoseConnectionLabel who="argocd" />
                           {isClusterStatus(cluster.connection_status ?? 'unknown')
                             ? <StatusBadge status={cluster.connection_status ?? 'unknown'} />
                             : <ConnectionStatus status={cluster.connection_status ?? 'unknown'} />
@@ -1768,7 +1794,7 @@ export function ClustersOverview() {
                             type="button"
                             onClick={(e) => handleTestCluster(cluster.name, e)}
                             disabled={testResult === 'testing' || !clusterTestAvailable}
-                            title={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : undefined}
+                            title={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : SHARKO_CONN_TOOLTIP}
                             aria-label={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : 'Test'}
                             className="inline-flex items-center gap-1 rounded border border-[#5a9dd0] px-2 py-1 text-xs text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 disabled:cursor-not-allowed dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
                           >
@@ -1841,7 +1867,7 @@ export function ClustersOverview() {
                         type="button"
                         onClick={(e) => handleTestCluster(cluster.name, e)}
                         disabled={testResult === 'testing' || !clusterTestAvailable}
-                        title={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : undefined}
+                        title={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : SHARKO_CONN_TOOLTIP}
                         aria-label={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : 'Test'}
                         className="inline-flex items-center gap-1 rounded border border-[#5a9dd0] px-2 py-1 text-xs text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 disabled:cursor-not-allowed dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
                       >
@@ -1863,6 +1889,8 @@ export function ClustersOverview() {
                     </div>
                   )}
                   <div className="mb-2 flex flex-col gap-1">
+                    {/* connection_status is ArgoCD's own connection — say so (V2-cleanup-55.3). */}
+                    <WhoseConnectionLabel who="argocd" />
                     {isClusterStatus(cluster.connection_status ?? 'unknown')
                       ? <StatusBadge status={cluster.connection_status ?? 'unknown'} />
                       : <ConnectionStatus status={cluster.connection_status ?? 'unknown'} />
@@ -1984,7 +2012,11 @@ export function ClustersOverview() {
                           {cluster.server_url ?? '--'}
                         </td>
                         <td className="px-6 py-3">
-                          <ConnectionStatus status={cluster.connection_status ?? 'unknown'} />
+                          <div className="flex flex-col gap-0.5">
+                            {/* connection_status is ArgoCD's own connection — say so (V2-cleanup-55.3). */}
+                            <WhoseConnectionLabel who="argocd" />
+                            <ConnectionStatus status={cluster.connection_status ?? 'unknown'} />
+                          </div>
                         </td>
                         <td className="px-6 py-3 font-mono text-xs text-[#2a5a7a] dark:text-gray-400">
                           {cluster.server_version ?? '--'}
@@ -1996,7 +2028,7 @@ export function ClustersOverview() {
                                 type="button"
                                 onClick={(e) => handleTestCluster(cluster.name, e)}
                                 disabled={testResult === 'testing' || !clusterTestAvailable}
-                                title={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : undefined}
+                                title={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : SHARKO_CONN_TOOLTIP}
                                 aria-label={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : 'Test'}
                                 className="inline-flex items-center gap-1 rounded border border-[#5a9dd0] px-2 py-1 text-xs text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 disabled:cursor-not-allowed dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
                               >
@@ -2055,7 +2087,7 @@ export function ClustersOverview() {
                         type="button"
                         onClick={(e) => handleTestCluster(cluster.name, e)}
                         disabled={testResult === 'testing' || !clusterTestAvailable}
-                        title={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : undefined}
+                        title={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : SHARKO_CONN_TOOLTIP}
                         aria-label={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : 'Test'}
                         className="inline-flex items-center gap-1 rounded border border-[#5a9dd0] px-2 py-1 text-xs text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 disabled:cursor-not-allowed dark:border-gray-600 dark:text-gray-300"
                       >
@@ -2073,7 +2105,9 @@ export function ClustersOverview() {
                         {renderTestResult(cluster.name, testResult)}
                       </div>
                     )}
-                    <div className="mb-3">
+                    <div className="mb-3 flex flex-col gap-0.5">
+                      {/* connection_status is ArgoCD's own connection — say so (V2-cleanup-55.3). */}
+                      <WhoseConnectionLabel who="argocd" />
                       <ConnectionStatus status={cluster.connection_status ?? 'unknown'} />
                     </div>
                     <p className="mb-3 font-mono text-xs text-[#2a5a7a] dark:text-gray-400">

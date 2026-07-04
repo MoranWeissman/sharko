@@ -50,6 +50,7 @@ import type { ClusterComparisonResponse, AddonComparisonStatus, ConfigDiffRespon
 import { StatCard } from '@/components/StatCard';
 import { StatusBadge } from '@/components/StatusBadge';
 import { ConnectivityBadge } from '@/components/ConnectivityBadge';
+import { SHARKO_CONN_LABEL, SHARKO_CONN_TOOLTIP } from '@/components/WhoseConnectionLabel';
 import { ClusterTypeBadge } from '@/components/ClusterTypeBadge';
 import { LoadingState } from '@/components/LoadingState';
 import { ErrorState } from '@/components/ErrorState';
@@ -850,7 +851,10 @@ export function ClusterDetail() {
               {/* Step-by-step test results */}
               {testResult.steps && testResult.steps.length > 0 && (
                 <div className="mb-2 rounded-lg bg-[#f8fbff] p-3 ring-1 ring-[#d0e4f5] dark:bg-gray-800 dark:ring-gray-700">
-                  <p className="mb-2 text-xs font-semibold text-[#0a2a4a] dark:text-gray-200">Test Results:</p>
+                  {/* The Test flow is Sharko's own connection — say so (V2-cleanup-55.3). */}
+                  <p className="mb-2 cursor-help text-xs font-semibold text-[#0a2a4a] dark:text-gray-200" title={SHARKO_CONN_TOOLTIP}>
+                    Test results ({SHARKO_CONN_LABEL}):
+                  </p>
                   <div className="space-y-1">
                     {testResult.steps.map((step, i) => (
                       <div key={i} className="flex items-center gap-2 text-xs">
@@ -885,8 +889,8 @@ export function ClusterDetail() {
                   </div>
                 </div>
               )}
-              {/* Summary badge */}
-              <div className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${
+              {/* Summary badge — Sharko's own connection result (V2-cleanup-55.3). */}
+              <div title={SHARKO_CONN_TOOLTIP} className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${
                 testResult.reachable || testResult.success
                   ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
                   : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
@@ -932,6 +936,7 @@ export function ClusterDetail() {
             <button
               onClick={handleTestConnection}
               disabled={testResult === 'testing'}
+              title={SHARKO_CONN_TOOLTIP}
               className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
             >
               {testResult === 'testing' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wifi className="h-3.5 w-3.5" />}
