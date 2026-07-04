@@ -32,9 +32,9 @@ material.
 - **Secret safety** — credential-shaped values are redacted at the handler
   boundary. A leak in a log line is a leak in a SOC2 audit, a CNCF
   due-diligence review, and an angry customer email at the same time.
-- **CNCF maturity expectation** — incubation-grade projects ship
+- **Maturity expectation** — mature open-source projects ship
   structured-logging discipline, request correlation, and redaction. We
-  bake them in now so they don't become a graduation blocker later.
+  bake them in now so they never have to be retrofitted later.
 
 ---
 

@@ -783,7 +783,7 @@ Concrete, sequenced. This is the plan, not a wishlist.
 2. **CI roundtrip test for cosign sign/verify.** Adds an automated verification that signed catalog entries verify after a release.
 3. **Adopt Hurl for `tests/api/`.** Add 5–10 contract tests covering the catalog-extensibility surface (`/api/v1/catalog/sources`, `/api/v1/catalog/validate`, signed-entry verification, source merging). Wire into Layer 5 so `make smoke` runs the pack.
 4. **Flip `e2e.yml` from manual to PR-triggered.** Prerequisite: 3 more E2E flows (`TestRegisterCluster`, `TestAddAddon_AppearsInArgoCD`, `TestArgoCDSyncCompletes`) so the suite has real coverage.
-5. **Maturity work for CNCF incubation.** Playwright UI E2E, k6 load tests, chaos / disruption tests, multi-version ArgoCD compatibility matrix.
+5. **Long-horizon maturity work.** Playwright UI E2E, k6 load tests, chaos / disruption tests, multi-version ArgoCD compatibility matrix.
 
 ---
 

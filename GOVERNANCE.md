@@ -34,10 +34,10 @@ The BDFL still operates transparently:
 
 ## Transition Plan: From BDFL to Steering Committee
 
-The BDFL model is a **transitional** structure, not the end state. As
-Sharko approaches CNCF Sandbox acceptance and grows its contributor
-base, governance will evolve toward a multi-maintainer steering
-committee.
+The BDFL model is a **transitional** structure, not the end state. If
+Sharko grows its contributor base and moves toward a neutral
+foundation home (such as the CNCF Sandbox), governance will evolve
+toward a multi-maintainer steering committee.
 
 ### Trigger conditions
 
