@@ -1,26 +1,35 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { SecretsProviderSection } from '@/views/settings/SecretsProviderSection'
+import {
+  SecretsProviderSection,
+  canonicalizeProviderType,
+} from '@/views/settings/SecretsProviderSection'
 import { VALID_PROVIDER_TYPES } from '@/generated/provider-types'
 import { showToast } from '@/components/ToastNotification'
 
 /*
- * V125-1-13.7 — Settings → SecretsProviderSection dropdown is now driven
- * by ui/src/generated/provider-types.ts (auto-generated from
- * internal/providers/provider.go::New). The "argocd missing from dropdown"
- * regression that V125-1-10.7 hand-fixed cannot recur: the dropdown
- * literally cannot drift from the backend factory now, and a CI check
- * ("Provider Types Up To Date") fails if the generator output is stale.
+ * V2-cleanup-55.2 — the dropdown collapses the generated alias strings
+ * (ui/src/generated/provider-types.ts, one entry per string the backend
+ * factory accepts) into ONE row per real backend. The drift guard moved
+ * with it: CANONICAL_TYPE in the component is a total Record over the
+ * generated union, so a new factory arm still breaks the TypeScript
+ * build until it's mapped to a row, and the canonicalizeProviderType
+ * test below proves every generated string lands on a rendered row.
  *
- * Cases covered (in order of acceptance criteria):
- *   1. Dropdown renders one option per VALID_PROVIDER_TYPES entry plus
- *      a leading "None" — the count regression test for V125-1-13.7
- *   2. Each generated provider type appears as an <option value="...">
+ * Cases covered:
+ *   1. Dropdown renders exactly the 5 canonical rows plus "None"; alias
+ *      strings are NOT separate rows; azure/gcp are disabled stubs
+ *   2. Every generated provider string canonicalizes onto a rendered row
+ *      (successor of the V125-1-13.7 count regression test)
  *   3. Selecting "argocd" sets provider_type=argocd and hides the AWS
  *      Region + shared Prefix inputs
  *   4. Save flow sends {provider: {type: "argocd"}} via api.updateConnection
  *   5. Regression: existing None / aws-sm / k8s-secrets cases still work
+ *   6. A connection stored under an alias selects the canonical row and
+ *      re-saves the canonical value
+ *   7. Bug B pin: the saved prefix round-trips into the form even though
+ *      GET /providers omits it (form hydrates from the connection)
  */
 
 const getProvidersMock = vi.fn()
@@ -57,7 +66,11 @@ const sampleConnection = {
   is_active: true,
 }
 
-function setupHook(connections: typeof sampleConnection[] = [sampleConnection]) {
+type TestConnection = typeof sampleConnection & {
+  provider?: { type: string; region?: string; prefix?: string }
+}
+
+function setupHook(connections: TestConnection[] = [sampleConnection]) {
   useConnectionsMock.mockReturnValue({
     connections,
     activeConnection: connections[0]?.name ?? null,
@@ -84,36 +97,73 @@ describe('SecretsProviderSection', () => {
     updateConnectionMock.mockResolvedValue({})
   })
 
-  it('renders one dropdown option per VALID_PROVIDER_TYPES entry plus None', async () => {
+  it('renders exactly 5 canonical rows plus None — aliases collapsed, azure/gcp disabled (V2-cleanup-55.2 Bug A)', async () => {
     setupHook()
     render(<SecretsProviderSection />)
 
     // The dropdown is the only <select> in the section.
     const select = await screen.findByRole('combobox')
-    const options = Array.from(select.querySelectorAll('option')).map(o => ({
-      value: o.value,
-      label: o.textContent ?? '',
-    }))
+    const options = Array.from(select.querySelectorAll('option'))
 
-    // The dropdown is driven by the generated const — its length is the
-    // generated set + the leading "None" option. This is the count
-    // regression that would have CAUGHT V125-1-10.7's missing 'argocd':
-    // any new arm in providers.New()'s switch that's regenerated will
-    // automatically be reflected here, and any stale generated file is
-    // caught by the "Provider Types Up To Date" CI check.
-    expect(options).toHaveLength(VALID_PROVIDER_TYPES.length + 1)
-    expect(options[0]).toEqual({ value: '', label: 'None' })
+    // One row per real backend + the leading "None". Rendering one row
+    // per accepted STRING (11 aliases) was the live Bug A.
+    expect(options.map(o => o.value)).toEqual([
+      '',
+      'argocd',
+      'aws-sm',
+      'k8s-secrets',
+      'azure',
+      'gcp',
+    ])
+    expect(options[0].textContent).toBe('None')
 
-    // Every generated type must appear as an <option value="...">.
-    const renderedValues = options.slice(1).map(o => o.value)
-    for (const t of VALID_PROVIDER_TYPES) {
-      expect(renderedValues).toContain(t)
+    // Clean human labels, no alias noise.
+    const byValue = Object.fromEntries(options.map(o => [o.value, o]))
+    expect(byValue['aws-sm'].textContent).toBe('AWS Secrets Manager')
+    expect(byValue['k8s-secrets'].textContent).toBe('Kubernetes Secrets')
+
+    // Alias strings must NOT be their own rows.
+    for (const alias of [
+      'aws-secrets-manager',
+      'kubernetes',
+      'azure-kv',
+      'azure-key-vault',
+      'gcp-sm',
+      'google-secret-manager',
+    ]) {
+      expect(byValue[alias]).toBeUndefined()
     }
 
-    // Backwards-compat sanity: the well-known stable types are present.
-    expect(renderedValues).toContain('argocd')
-    expect(renderedValues).toContain('aws-sm')
-    expect(renderedValues).toContain('k8s-secrets')
+    // Azure / GCP are server-side stubs (constructors unconditionally
+    // return "not yet implemented"): shown, but disabled and labelled.
+    expect(byValue['azure'].disabled).toBe(true)
+    expect(byValue['azure'].textContent).toMatch(/not yet supported/i)
+    expect(byValue['gcp'].disabled).toBe(true)
+    expect(byValue['gcp'].textContent).toMatch(/not yet supported/i)
+
+    // Functional backends stay enabled.
+    expect(byValue['argocd'].disabled).toBe(false)
+    expect(byValue['aws-sm'].disabled).toBe(false)
+    expect(byValue['k8s-secrets'].disabled).toBe(false)
+  })
+
+  it('every generated provider string canonicalizes onto a rendered row (drift guard)', async () => {
+    setupHook()
+    render(<SecretsProviderSection />)
+
+    const select = await screen.findByRole('combobox')
+    const renderedValues = Array.from(select.querySelectorAll('option')).map(o => o.value)
+
+    // Successor of the V125-1-13.7 count regression: a new arm in the
+    // backend factory regenerates VALID_PROVIDER_TYPES; CANONICAL_TYPE
+    // (a total Record over that union) then fails to compile until the
+    // new string is mapped, and this test proves the mapping lands on a
+    // row that actually renders.
+    for (const t of VALID_PROVIDER_TYPES) {
+      const canonical = canonicalizeProviderType(t)
+      expect(canonical, `generated type ${t} must map to a canonical row`).not.toBe('')
+      expect(renderedValues).toContain(canonical)
+    }
   })
 
   it('selecting ArgoCD sets provider_type=argocd and hides AWS-only + Prefix fields', async () => {
@@ -226,6 +276,94 @@ describe('SecretsProviderSection', () => {
     await waitFor(() => expect(updateConnectionMock).toHaveBeenCalledTimes(1))
     const body = updateConnectionMock.mock.calls[0][1] as { provider?: unknown }
     expect(body.provider).toBeUndefined()
+  })
+
+  // V2-cleanup-55.2 Bug A — alias collapse must not orphan existing data:
+  // a connection saved under an alias string selects the canonical row,
+  // and re-saving writes the canonical value.
+  it('a connection stored under an alias selects the canonical row and re-saves the canonical value', async () => {
+    setupHook([{
+      ...sampleConnection,
+      provider: { type: 'kubernetes', prefix: 'team-' },
+    }])
+    const user = userEvent.setup()
+    render(<SecretsProviderSection />)
+
+    const select = await screen.findByRole('combobox') as HTMLSelectElement
+    // Stored alias "kubernetes" lands on the canonical k8s-secrets row.
+    await waitFor(() => expect(select.value).toBe('k8s-secrets'))
+    // Its stored prefix hydrates alongside.
+    expect(screen.getByPlaceholderText(/prepended to cluster name/i)).toHaveValue('team-')
+
+    await user.click(screen.getByRole('button', { name: /Save Provider/i }))
+    await waitFor(() => expect(updateConnectionMock).toHaveBeenCalledTimes(1))
+    const body = updateConnectionMock.mock.calls[0][1] as { provider: { type: string; prefix?: string } }
+    // Canonical value is what gets saved — the alias is retired on rewrite.
+    expect(body.provider.type).toBe('k8s-secrets')
+    expect(body.provider.prefix).toBe('team-')
+  })
+
+  // V2-cleanup-55.2 Bug B — the maintainer saved a prefix, came back, and
+  // the field was empty although the value WAS stored. Root cause: GET
+  // /api/v1/providers builds configured_provider without the prefix field
+  // (internal/api/system.go handleGetProviders — providerDisplay()
+  // computes it but it never enters the JSON), and the form used to
+  // hydrate from that payload. The form now hydrates from the
+  // connection's own stored provider block, which round-trips prefix.
+  describe('Prefix round-trip (V2-cleanup-55.2 Bug B)', () => {
+    it('stored prefix hydrates the field even though GET /providers omits it', async () => {
+      // Mirror the LIVE server payload: no prefix key at all.
+      getProvidersMock.mockResolvedValue({
+        configured_provider: { type: 'aws-sm', region: 'eu-west-1', status: 'connected' },
+        available_types: ['aws-sm', 'k8s-secrets'],
+      })
+      setupHook([{
+        ...sampleConnection,
+        provider: { type: 'aws-sm', region: 'eu-west-1', prefix: 'clusters/' },
+      }])
+      render(<SecretsProviderSection />)
+
+      const select = await screen.findByRole('combobox') as HTMLSelectElement
+      await waitFor(() => expect(select.value).toBe('aws-sm'))
+      expect(screen.getByPlaceholderText(/eu-west-1/i)).toHaveValue('eu-west-1')
+      // The pin: prefix displays although /providers never sent it.
+      expect(screen.getByPlaceholderText(/prepended to cluster name/i)).toHaveValue('clusters/')
+    })
+
+    it('save with prefix → reload → field shows it (full round-trip)', async () => {
+      // Step 1: fresh connection with no provider; user configures one.
+      setupHook([sampleConnection])
+      const user = userEvent.setup()
+      const first = render(<SecretsProviderSection />)
+
+      const select = await screen.findByRole('combobox')
+      await user.selectOptions(select, 'aws-sm')
+      await user.type(screen.getByPlaceholderText(/eu-west-1/i), 'us-east-1')
+      await user.type(screen.getByPlaceholderText(/prepended to cluster name/i), 'k8s-')
+      await user.click(screen.getByRole('button', { name: /Save Provider/i }))
+
+      await waitFor(() => expect(updateConnectionMock).toHaveBeenCalledTimes(1))
+      const body = updateConnectionMock.mock.calls[0][1] as {
+        provider: { type: string; region?: string; prefix?: string }
+      }
+      expect(body.provider).toEqual({ type: 'aws-sm', region: 'us-east-1', prefix: 'k8s-' })
+
+      // Step 2: simulate navigating away and back — a fresh mount where
+      // the connection now carries the saved provider block, while
+      // /providers (live server shape) still omits prefix.
+      first.unmount()
+      getProvidersMock.mockResolvedValue({
+        configured_provider: { type: 'aws-sm', region: 'us-east-1', status: 'connected' },
+        available_types: ['aws-sm', 'k8s-secrets'],
+      })
+      setupHook([{ ...sampleConnection, provider: body.provider }])
+      render(<SecretsProviderSection />)
+
+      const select2 = await screen.findByRole('combobox') as HTMLSelectElement
+      await waitFor(() => expect(select2.value).toBe('aws-sm'))
+      expect(screen.getByPlaceholderText(/prepended to cluster name/i)).toHaveValue('k8s-')
+      expect(screen.getByPlaceholderText(/eu-west-1/i)).toHaveValue('us-east-1')
+    })
   })
 
   // V2-cleanup-53.2 — Save Provider must give explicit feedback. Live bug:
