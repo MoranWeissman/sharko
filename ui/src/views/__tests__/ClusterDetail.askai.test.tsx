@@ -113,10 +113,10 @@ const syncFailingResponse = {
   total_disabled_in_git: 0,
 };
 
-function renderView() {
+function renderView(initialEntry = '/clusters/prod-eu?section=addons') {
   return render(
     <AuthContext.Provider value={adminAuth}>
-      <MemoryRouter initialEntries={['/clusters/prod-eu?section=addons']}>
+      <MemoryRouter initialEntries={[initialEntry]}>
         <Routes>
           <Route path="/clusters/:name" element={<ClusterDetail />} />
         </Routes>
@@ -197,5 +197,51 @@ describe('V2-cleanup-39: Ask AI button on sync_failing rows', () => {
     expect(detail.message).toContain('keda');
     expect(detail.message).toContain('prod-eu');
     expect(detail.message).toContain('CRD name too long');
+  });
+});
+
+// V2-cleanup-55.4: the AI assistant is OPT-IN. The "Ask AI" buttons on the
+// connection banners (overview section) must also be hidden unless an AI
+// provider is configured.
+describe('V2-cleanup-55.4: Ask AI on connection banners is opt-in', () => {
+  const argoFailedResponse = {
+    ...syncFailingResponse,
+    argocd_connection_status: 'Failed',
+    argocd_connection_message: 'unable to reach apiserver',
+    cluster_connection_state: '',
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetClusterComparison.mockResolvedValue(argoFailedResponse);
+    mockFetchTrackedPRs.mockResolvedValue({ prs: [] });
+    mockGetNodeInfo.mockResolvedValue(null);
+  });
+
+  it('renders Ask AI on the ArgoCD Connection Failed banner when AI is enabled', async () => {
+    mockGetAIStatus.mockResolvedValue({ enabled: true });
+
+    renderView('/clusters/prod-eu');
+    await screen.findByText('prod-eu', {}, { timeout: 5000 });
+
+    await waitFor(() => {
+      expect(screen.getByText('ArgoCD Connection Failed')).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(screen.getByText('Ask AI')).toBeInTheDocument();
+    });
+  });
+
+  it('does NOT render Ask AI on the banner when AI is disabled (default deployment)', async () => {
+    mockGetAIStatus.mockResolvedValue({ enabled: false });
+
+    renderView('/clusters/prod-eu');
+    await screen.findByText('prod-eu', {}, { timeout: 5000 });
+
+    // The banner itself still renders — only the AI affordance is gone.
+    await waitFor(() => {
+      expect(screen.getByText('ArgoCD Connection Failed')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Ask AI')).not.toBeInTheDocument();
   });
 });

@@ -1,5 +1,13 @@
 import { MessageSquare } from 'lucide-react'
 
+/**
+ * Floating "open assistant" bubble.
+ *
+ * The AI assistant is OPT-IN and hidden by default (V2-cleanup-55.4): this
+ * component is only mounted by Layout.tsx when its `aiConfigured` gate says
+ * an AI provider is configured (GET /upgrade/ai-status → enabled). Do not
+ * mount it unconditionally elsewhere — the gate lives in Layout.tsx.
+ */
 export function FloatingAssistant() {
   return (
     <button

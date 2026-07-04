@@ -483,7 +483,10 @@ export function AIAssistant({ embedded = false, pageContext, initialMessageSeed 
     }
   }
 
-  // AI not configured state
+  // AI not configured state. The assistant is OPT-IN and hidden by default —
+  // Layout.tsx removes every entry point (Ask AI button, panel, floating
+  // bubble) when no AI provider is configured, so this fallback only shows
+  // if the component is reached some other way while the assistant is off.
   if (aiEnabled === false) {
     return (
       <div className={`flex flex-col items-center justify-center gap-4 text-center ${embedded ? 'h-full p-6' : 'h-[calc(100vh-7rem)]'}`}>
@@ -492,11 +495,11 @@ export function AIAssistant({ embedded = false, pageContext, initialMessageSeed 
           AI not configured
         </h2>
         <p className="max-w-md text-[#2a5a7a] dark:text-gray-400">
-          Go to{' '}
+          The AI assistant is optional and off by default. Go to{' '}
           <a href="/settings" className="font-medium text-teal-600 underline hover:text-teal-700 dark:text-teal-400 dark:hover:text-teal-300">
             Settings
           </a>{' '}
-          to configure an AI provider.
+          to configure an AI provider and enable it.
         </p>
       </div>
     )

@@ -611,8 +611,10 @@ export function ClusterDetail() {
     void fetchData();
   }, [fetchData]);
 
-  // Fetch AI-enabled status once on mount so the "Ask AI" button on
-  // sync_failing rows knows whether to render.
+  // Fetch AI-enabled status once on mount. The AI assistant is OPT-IN and
+  // hidden by default (V2-cleanup-55.4, master gate in Layout.tsx): every
+  // "Ask AI" affordance on this page — the connection banners and the
+  // sync_failing rows — renders only when an AI provider is configured.
   useEffect(() => {
     api
       .getAIStatus()
@@ -1164,13 +1166,16 @@ export function ClusterDetail() {
                           <p className="mt-1 text-xs text-red-600 dark:text-red-400">Addon health data below reflects the last known state and may be stale.</p>
                         </div>
                       </div>
-                      <button
-                        onClick={() => window.dispatchEvent(new CustomEvent('open-assistant', { detail: { message: `ArgoCD cannot connect to cluster ${name}. Error: ${data.argocd_connection_message}. What could cause this and how do I fix it?`, nonce: crypto.randomUUID() } }))}
-                        className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-800 dark:text-red-400"
-                      >
-                        <MessageSquare className="h-3.5 w-3.5" />
-                        Ask AI
-                      </button>
+                      {/* Ask AI — hidden unless an AI provider is configured (opt-in, V2-cleanup-55.4) */}
+                      {aiEnabled && (
+                        <button
+                          onClick={() => window.dispatchEvent(new CustomEvent('open-assistant', { detail: { message: `ArgoCD cannot connect to cluster ${name}. Error: ${data.argocd_connection_message}. What could cause this and how do I fix it?`, nonce: crypto.randomUUID() } }))}
+                          className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-800 dark:text-red-400"
+                        >
+                          <MessageSquare className="h-3.5 w-3.5" />
+                          Ask AI
+                        </button>
+                      )}
                     </div>
                   );
                 }
@@ -1187,13 +1192,16 @@ export function ClusterDetail() {
                         <p className="text-xs text-red-600 dark:text-red-400">Addon health data below reflects the last known state and may be stale.</p>
                       </div>
                     </div>
-                    <button
-                      onClick={() => window.dispatchEvent(new CustomEvent('open-assistant', { detail: { message: `Cluster ${name} is unreachable (${data.cluster_connection_state}). What could be wrong and how can I fix it?`, nonce: crypto.randomUUID() } }))}
-                      className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-800 dark:text-red-400"
-                    >
-                      <MessageSquare className="h-3.5 w-3.5" />
-                      Ask AI
-                    </button>
+                    {/* Ask AI — hidden unless an AI provider is configured (opt-in, V2-cleanup-55.4) */}
+                    {aiEnabled && (
+                      <button
+                        onClick={() => window.dispatchEvent(new CustomEvent('open-assistant', { detail: { message: `Cluster ${name} is unreachable (${data.cluster_connection_state}). What could be wrong and how can I fix it?`, nonce: crypto.randomUUID() } }))}
+                        className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-800 dark:text-red-400"
+                      >
+                        <MessageSquare className="h-3.5 w-3.5" />
+                        Ask AI
+                      </button>
+                    )}
                   </div>
                 );
               })()}
@@ -1252,13 +1260,16 @@ export function ClusterDetail() {
                         )}
                       </div>
                     </div>
-                    <button
-                      onClick={() => window.dispatchEvent(new CustomEvent('open-assistant', { detail: { message: `ArgoCD cannot connect to cluster ${name}. Error: ${data.argocd_connection_message}. What could cause this and how do I fix it?`, nonce: crypto.randomUUID() } }))}
-                      className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-800 dark:text-red-400"
-                    >
-                      <MessageSquare className="h-3.5 w-3.5" />
-                      Ask AI
-                    </button>
+                    {/* Ask AI — hidden unless an AI provider is configured (opt-in, V2-cleanup-55.4) */}
+                    {aiEnabled && (
+                      <button
+                        onClick={() => window.dispatchEvent(new CustomEvent('open-assistant', { detail: { message: `ArgoCD cannot connect to cluster ${name}. Error: ${data.argocd_connection_message}. What could cause this and how do I fix it?`, nonce: crypto.randomUUID() } }))}
+                        className="flex shrink-0 items-center gap-1.5 rounded-lg border border-red-200 bg-[#f0f7ff] px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-gray-800 dark:text-red-400"
+                      >
+                        <MessageSquare className="h-3.5 w-3.5" />
+                        Ask AI
+                      </button>
+                    )}
                   </div>
                 );
               })()}
