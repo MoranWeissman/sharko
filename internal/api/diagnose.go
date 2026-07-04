@@ -39,9 +39,12 @@ func (s *Server) handleDiagnoseCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	creds, err := s.credProvider.GetCredentials(name)
+	// Resolve the stored secretPath override (if any) — never pass the raw
+	// cluster name to the provider (V2-cleanup-55.1).
+	lookupKey := s.credentialLookupKey(r.Context(), name)
+	creds, err := s.credProvider.GetCredentials(lookupKey)
 	if err != nil {
-		slog.Error("[cluster-diagnose] failed to fetch credentials", "name", name, "error", err)
+		slog.Error("[cluster-diagnose] failed to fetch credentials", "name", name, "lookupKey", lookupKey, "error", err)
 		writeError(w, http.StatusBadGateway, "failed to fetch credentials: "+err.Error())
 		return
 	}

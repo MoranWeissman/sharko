@@ -170,8 +170,10 @@ func (o *Orchestrator) DisableAddon(ctx context.Context, req DisableAddonRequest
 	steps = append(steps, "git_commit")
 
 	// Step 4: If cleanup=all, delete addon secrets from remote cluster (best-effort).
+	// The cluster's entry stays in managed-clusters.yaml (only its addon label
+	// changed), so the stored secretPath override resolves post-merge (V2-cleanup-55.1).
 	if cleanup == "all" && o.credProvider != nil {
-		creds, credErr := o.credProvider.GetCredentials(req.Cluster)
+		creds, credErr := o.credProvider.GetCredentials(o.credentialLookupKey(ctx, req.Cluster))
 		if credErr == nil {
 			disabledAddons := map[string]bool{req.Addon: false}
 			deleted, _ := o.deleteAddonSecrets(ctx, creds.Raw, disabledAddons)
@@ -347,8 +349,9 @@ func (o *Orchestrator) EnableAddon(ctx context.Context, req EnableAddonRequest) 
 	steps = append(steps, "git_commit")
 
 	// Step 4: Create addon secrets on remote cluster (best-effort).
+	// Resolve the stored secretPath override (if any) — V2-cleanup-55.1.
 	if o.credProvider != nil {
-		creds, credErr := o.credProvider.GetCredentials(req.Cluster)
+		creds, credErr := o.credProvider.GetCredentials(o.credentialLookupKey(ctx, req.Cluster))
 		if credErr == nil {
 			enabledAddons := map[string]bool{req.Addon: true}
 			secretRes, _ := o.createAddonSecrets(ctx, creds.Raw, enabledAddons)

@@ -374,11 +374,9 @@ func (r *Reconciler) ReconcileOnce(ctx context.Context) {
 // created is true only when the secret was newly created (not in existingSet before the call).
 // existingSet is the pre-fetched map of already-managed secret names.
 func (r *Reconciler) reconcileCluster(ctx context.Context, cluster models.Cluster, existingSet map[string]bool) (changed, created bool, err error) {
-	// 1. Resolve credential lookup key — secretPath overrides name.
-	credLookup := cluster.Name
-	if cluster.SecretPath != "" {
-		credLookup = cluster.SecretPath
-	}
+	// 1. Resolve credential lookup key — secretPath overrides name
+	// (shared resolver — V2-cleanup-55.1).
+	credLookup := cluster.CredentialLookupKey()
 
 	secretExistedBefore := existingSet[cluster.Name]
 

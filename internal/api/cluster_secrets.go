@@ -39,7 +39,7 @@ func (s *Server) handleListClusterSecrets(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	creds, err := s.credProvider.GetCredentials(name)
+	creds, err := s.credProvider.GetCredentials(s.credentialLookupKey(r.Context(), name))
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "fetching cluster credentials: "+err.Error())
 		return
@@ -118,7 +118,7 @@ func (s *Server) handleRefreshClusterSecrets(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	creds, err := s.credProvider.GetCredentials(name)
+	creds, err := s.credProvider.GetCredentials(s.credentialLookupKey(r.Context(), name))
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "fetching cluster credentials: "+err.Error())
 		return
