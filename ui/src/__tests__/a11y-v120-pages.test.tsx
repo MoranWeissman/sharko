@@ -4,13 +4,16 @@
  * Sister file to `a11y.test.tsx`, which only covers the v1.21 Marketplace
  * pages. v1.21 shipped axe-core for new pages but explicitly deferred the
  * v1.20 pages to v1.22 (see header in `a11y.test.tsx`). This file closes
- * that gap for the five top-level v1.20 pages:
+ * that gap for the four top-level v1.20 pages:
  *
  *   1. AddonDetail
  *   2. ClusterDetail
  *   3. Settings (with all sections)
  *   4. AuditViewer
- *   5. Connections (also reachable via Settings → Connection)
+ *
+ * (The standalone Connections view was covered here until V2-cleanup-54.2
+ * deleted it as unreachable dead code; its functionality lives in Settings → Connection,
+ * which the Settings test exercises.)
  *
  * jsdom limitations apply (color-contrast disabled — see a11y.test.tsx).
  * The suite fails on any serious or critical violation under the
@@ -25,7 +28,6 @@ import { AddonDetail } from '@/views/AddonDetail'
 import { ClusterDetail } from '@/views/ClusterDetail'
 import { Settings } from '@/views/Settings'
 import { AuditViewer } from '@/views/AuditViewer'
-import { Connections } from '@/views/Connections'
 
 /* ------------------------------------------------------------------ */
 /*  Mocks                                                              */
@@ -331,17 +333,5 @@ describe('v1.20 pages — WCAG 2.1 AA (axe-core retrofit, V122-1)', () => {
       expect(screen.getByRole('heading', { level: 1, name: /Audit Log/i })).toBeInTheDocument()
     })
     await expectNoSeriousViolations(container, 'AuditViewer')
-  })
-
-  it('Connections (standalone) has no serious violations', async () => {
-    const { container } = render(
-      <MemoryRouter>
-        <Connections />
-      </MemoryRouter>,
-    )
-    await waitFor(() => {
-      expect(screen.getByRole('heading', { name: /^Settings$/ })).toBeInTheDocument()
-    })
-    await expectNoSeriousViolations(container, 'Connections')
   })
 })
