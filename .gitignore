@@ -72,3 +72,5 @@ docs/superpowers/
 # Agent worktree dirs (used by code-agent dispatch)
 .claire/
 .clone/
+
+.workflow-playbook/
