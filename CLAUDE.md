@@ -79,6 +79,16 @@ BMAD drives the *workflow* (epics, stories, acceptance criteria, review gates). 
 
 If the rule feels like friction, that's the point — the friction prevents the drift that produces flip-flopping recommendations and wasted agent runs.
 
+#### Who owns what, and who wins
+
+Two systems run side by side. They do NOT overlap — each owns a different layer, and when both seem to apply, this is the order:
+
+- **BMAD owns the *process*** — deciding scope, sequencing work, breaking work into epics/stories, acceptance criteria, design exploration, and the review gates. Any planning, design, or kickoff decision is BMAD's call. **BMAD comes first and BMAD wins** for anything in its domain (see "MANDATORY BMAD FLOW" above).
+- **`.claude/team/` agents own the *doing*** — once BMAD has produced the plan, the named role agents (implementer, go-expert, k8s-expert, etc.) carry out each story with Sharko domain knowledge. They execute the plan; they do not decide the plan.
+- **The tech lead (you, the main chat) owns *orchestration*** — read the request, run BMAD to plan, dispatch role agents to build, validate the result, report back. The tech lead never writes code and never skips the BMAD step.
+
+The handoff: **BMAD plans → tech lead dispatches → role agents build → tech lead validates.** When in doubt about whether a request is a "plan it with BMAD" thing or a "just answer it" thing, treat it as a planning thing and run BMAD — the only exceptions are the quick operational answers listed under "MANDATORY BMAD FLOW".
+
 ## Agent Team
 
 **The tech lead NEVER writes code directly.** Every change — no matter how small — is dispatched to an agent with a role. Read the relevant role file from `.claude/team/` and include it as context. Update role files as the product evolves — they are living documents.
