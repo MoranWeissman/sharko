@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router-dom'
 import { Server } from 'lucide-react'
 import { AddonDots } from '@/components/AddonDots'
 import { ClusterTypeBadge } from '@/components/ClusterTypeBadge'
+import { WhoseConnectionLabel } from '@/components/WhoseConnectionLabel'
 import { classifyClusterConnection } from '@/lib/clusterStatus'
 
 interface ClusterAddonSummary {
@@ -72,9 +73,13 @@ export function ClusterCard({
         {/* Cosmetic type pill derived from server hostname. */}
         {serverUrl !== undefined && <ClusterTypeBadge server={serverUrl} compact />}
       </div>
-      <div className="mb-2 flex items-center gap-1.5">
-        <div className={`h-2 w-2 rounded-full ${pill.dot}`} />
-        <span className={`text-xs ${pill.text}`}>{pill.label}</span>
+      <div className="mb-2 flex flex-col gap-0.5">
+        {/* connection_status is ArgoCD's own connection — say so (V2-cleanup-55.3/55.5). */}
+        <WhoseConnectionLabel who="argocd" />
+        <div className="flex items-center gap-1.5">
+          <div className={`h-2 w-2 rounded-full ${pill.dot}`} />
+          <span className={`text-xs ${pill.text}`}>{pill.label}</span>
+        </div>
       </div>
       <p className="mb-2 text-xs text-[#2a5a7a] dark:text-gray-400">
         {totalCount > 0 ? `${healthyCount}/${totalCount} healthy` : 'No addons'}

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { ClusterCard } from '@/components/ClusterCard';
+import { ARGOCD_CONN_LABEL, ARGOCD_CONN_TOOLTIP } from '@/components/WhoseConnectionLabel';
 
 function renderCard(connectionStatus: string) {
   return render(
@@ -67,5 +68,25 @@ describe('ClusterCard connection pill', () => {
     renderCard('missing');
     expect(screen.getByText('Connecting…')).toBeInTheDocument();
     expect(screen.queryByText('Disconnected')).not.toBeInTheDocument();
+  });
+});
+
+// V2-cleanup-55.5 — whose-connection attribution on the dashboard cluster
+// cards. The connection pill renders `connection_status`, which is ArgoCD's
+// OWN connection to the cluster (from its cluster secret) — not Sharko's.
+// The card must carry the same "ArgoCD → cluster" caption + tooltip used
+// on ClustersOverview (V2-cleanup-55.3) so the two pages read consistently.
+describe('ClusterCard whose-connection attribution', () => {
+  it('captions the connection pill "ArgoCD → cluster" with the explanatory tooltip', () => {
+    renderCard('Successful');
+    const caption = screen.getByText(ARGOCD_CONN_LABEL);
+    expect(caption).toBeInTheDocument();
+    expect(caption).toHaveAttribute('title', ARGOCD_CONN_TOOLTIP);
+  });
+
+  it('shows the attribution regardless of connection state (failed too)', () => {
+    renderCard('Failed');
+    expect(screen.getByText(ARGOCD_CONN_LABEL)).toBeInTheDocument();
+    expect(screen.getByText('Disconnected')).toBeInTheDocument();
   });
 });

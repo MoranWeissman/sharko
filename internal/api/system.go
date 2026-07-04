@@ -53,6 +53,11 @@ func (s *Server) handleGetProviders(w http.ResponseWriter, r *http.Request) {
 	providerInfo := map[string]interface{}{
 		"type":   displayType,
 		"region": displayRegion,
+		// prefix was previously computed (providerDisplay) but only ever
+		// warn-logged — the response silently dropped it. Report it so
+		// API consumers see the same provider identity the server uses
+		// (V2-cleanup-55.5).
+		"prefix": displayPrefix,
 		"status": status,
 	}
 	if statusError != "" {
