@@ -86,6 +86,20 @@ type RegisterClusterRequest struct {
 	// value overrides the default for this operation only. Resolved via
 	// resolveAutoMerge — never mutate o.gitops.PRAutoMerge.
 	AutoMerge *bool `json:"auto_merge,omitempty"`
+
+	// ConnectionManagedBy declares who owns this cluster's ArgoCD cluster
+	// Secret (V2-cleanup-57.2): "" or "sharko" (default) — Sharko writes and
+	// rotates the Secret exactly as before; "user" — the caller creates and
+	// maintains the Secret by hand and Sharko NEVER writes it (registration
+	// skips the direct Secret write; the reconcilers only sync addon labels
+	// onto the existing user-created Secret). For a self-managed
+	// registration, credentials become OPTIONAL: when supplied (inline
+	// kubeconfig or a resolvable backend secret) Stage-1 connectivity
+	// verification still runs as a fail-fast courtesy; when absent the
+	// verification is skipped and registration proceeds straight to the Git
+	// record. The value is recorded in the cluster's managed-clusters.yaml
+	// entry as connectionManagedBy.
+	ConnectionManagedBy string `json:"connection_managed_by,omitempty"`
 }
 
 // UpdateClusterAddonsRequest is the input for PATCH /clusters/{name}.

@@ -77,8 +77,26 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	if err != nil {
 		return nil, err
 	}
-	if err := validateCredsSource(credsSource, req); err != nil {
+
+	// Step 1a'': Validate + resolve the connection-ownership mode
+	// (V2-cleanup-57.2). "" / "sharko" → Sharko owns the ArgoCD cluster
+	// Secret (today's behavior, byte-for-byte). "user" → self-managed: the
+	// user creates the Secret by hand; Sharko NEVER writes it and only
+	// syncs addon labels onto it via the reconcilers.
+	if err := validateConnectionMode(req.ConnectionManagedBy); err != nil {
 		return nil, err
+	}
+	selfManaged := models.IsUserManagedConnection(req.ConnectionManagedBy)
+
+	if err := validateCredsSource(credsSource, req); err != nil {
+		// Self-managed registrations may omit credentials entirely — Sharko
+		// never writes the ArgoCD cluster Secret for them, so there is
+		// nothing the credentials are strictly REQUIRED for. An inline
+		// source with an empty kubeconfig therefore passes (verification is
+		// simply skipped); every other validation still applies.
+		if !(selfManaged && isInlineSource(credsSource) && req.Kubeconfig == "") {
+			return nil, err
+		}
 	}
 
 	// Step 1b: Merge default addons if no addons specified.
@@ -140,36 +158,74 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	// backend source (secret-kubeconfig / eks-token) we keep the original
 	// credProvider lookup; v1 does not split the backend sniff, so both
 	// backend labels share this one route (the provider sniffs the payload).
+	// For a SELF-MANAGED connection credentials are OPTIONAL: Sharko never
+	// writes the ArgoCD cluster Secret, so credentials are only useful as a
+	// fail-fast Stage-1 verification. When they are supplied (inline
+	// kubeconfig pasted, or a backend lookup that succeeds) verification
+	// still runs exactly as for Sharko-managed clusters; when they are
+	// absent (or the backend lookup fails) registration logs the reason,
+	// skips verification + addon-secret creation, and proceeds straight to
+	// the Git record. creds == nil downstream means "no credentials
+	// available" and every consumer guards on it.
 	var creds *providers.Kubeconfig
+	credsSkippedReason := ""
 	if isInlineSource(credsSource) {
-		var parseErr error
-		creds, parseErr = providers.ParseInlineKubeconfig(req.Kubeconfig)
-		if parseErr != nil {
-			return nil, fmt.Errorf("parsing inline kubeconfig for cluster %q: %w", req.Name, parseErr)
+		if selfManaged && req.Kubeconfig == "" {
+			credsSkippedReason = "no kubeconfig supplied"
+		} else {
+			var parseErr error
+			creds, parseErr = providers.ParseInlineKubeconfig(req.Kubeconfig)
+			if parseErr != nil {
+				// A pasted-but-broken kubeconfig is a caller error in BOTH
+				// modes — silently ignoring it for self-managed would hide a
+				// typo the caller clearly wanted validated.
+				return nil, fmt.Errorf("parsing inline kubeconfig for cluster %q: %w", req.Name, parseErr)
+			}
+			steps = append(steps, "parse_kubeconfig")
 		}
-		steps = append(steps, "parse_kubeconfig")
 	} else {
 		if o.credProvider == nil {
-			return nil, fmt.Errorf("credentials provider not configured (required for provider %q)", req.Provider)
+			if !selfManaged {
+				return nil, fmt.Errorf("credentials provider not configured (required for provider %q)", req.Provider)
+			}
+			credsSkippedReason = "no credentials provider configured"
+		} else {
+			// If an explicit secretPath is provided, use it directly (bypasses prefix logic).
+			credLookupName := req.Name
+			if req.SecretPath != "" {
+				credLookupName = req.SecretPath
+			}
+			var fetchErr error
+			creds, fetchErr = o.credProvider.GetCredentials(credLookupName)
+			if fetchErr != nil {
+				if !selfManaged {
+					return nil, fmt.Errorf("fetching credentials for cluster %q: %w", req.Name, fetchErr)
+				}
+				// Self-managed: the backend routinely holds nothing for this
+				// cluster (the user keeps the credentials in their own
+				// Secret). Log + continue without verification.
+				log.Warn("self-managed registration: credentials lookup failed — skipping connectivity verification",
+					"cluster", req.Name, "error", fetchErr)
+				creds = nil
+				credsSkippedReason = "credentials lookup failed: " + fetchErr.Error()
+			} else {
+				steps = append(steps, "fetch_credentials")
+			}
 		}
-		// If an explicit secretPath is provided, use it directly (bypasses prefix logic).
-		credLookupName := req.Name
-		if req.SecretPath != "" {
-			credLookupName = req.SecretPath
-		}
-		var fetchErr error
-		creds, fetchErr = o.credProvider.GetCredentials(credLookupName)
-		if fetchErr != nil {
-			return nil, fmt.Errorf("fetching credentials for cluster %q: %w", req.Name, fetchErr)
-		}
-		steps = append(steps, "fetch_credentials")
 	}
-	result.Cluster.Server = creds.Server
+	if creds != nil {
+		result.Cluster.Server = creds.Server
+	}
+	if credsSkippedReason != "" {
+		steps = append(steps, "skip_credentials_self_managed")
+		log.Info("self-managed registration: proceeding without credentials — Sharko never writes the ArgoCD cluster Secret for this cluster",
+			"cluster", req.Name, "reason", credsSkippedReason)
+	}
 
 	// Step 3a: Verify connectivity via Stage 1 (secret CRUD cycle on remote cluster).
 	// Only runs when the remote client factory is available (always in production,
 	// may be nil in legacy tests that don't call SetSecretManagement).
-	if o.remoteClientFn != nil && creds.Raw != nil {
+	if o.remoteClientFn != nil && creds != nil && creds.Raw != nil {
 		remoteClient, clientErr := o.remoteClientFn(creds.Raw)
 		if clientErr != nil {
 			return nil, fmt.Errorf("building remote client for verification of cluster %q: %w", req.Name, clientErr)
@@ -269,8 +325,13 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	// best-effort: a failure is logged and recorded but does not abort
 	// registration (the Git source of truth and reconciler can still
 	// converge). When no manager is wired (out-of-cluster), this is skipped.
-	hasInlineCertPair := len(creds.CertData) > 0 && len(creds.KeyData) > 0
-	if isInlineSource(credsSource) && o.argoSecretManager != nil && (creds.Token != "" || hasInlineCertPair) {
+	// SELF-MANAGED GUARD (V2-cleanup-57.2): when the connection is managed by
+	// the user, Sharko NEVER writes the ArgoCD cluster Secret — not here at
+	// registration, not in the reconcilers. The user creates the Secret by
+	// hand (see the operator guide "Managing cluster connections yourself");
+	// the reconcilers only sync addon labels onto it.
+	hasInlineCertPair := creds != nil && len(creds.CertData) > 0 && len(creds.KeyData) > 0
+	if !selfManaged && isInlineSource(credsSource) && o.argoSecretManager != nil && creds != nil && (creds.Token != "" || hasInlineCertPair) {
 		// Addon labels in the canonical "enabled"/"disabled" vocabulary —
 		// the SAME value the reconciler writes when it later reconciles this
 		// cluster from managed-clusters.yaml (which we also write in this
@@ -321,20 +382,25 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 
 	// Step 4: Create addon secrets on remote cluster (if configured).
 	// Uses partial-success semantics: individual failures are tracked but don't stop the flow.
-	secretResult, secretErr := o.createAddonSecrets(ctx, creds.Raw, req.Addons)
-	if secretErr != nil {
-		// Fatal error (e.g. can't connect to remote cluster at all).
-		result.Status = "partial"
-		result.CompletedSteps = steps
-		result.FailedStep = "create_secrets"
-		result.Error = secretErr.Error()
-		result.Message = "Addon secret creation failed. ArgoCD registration and PR not started."
-		return result, nil
-	}
-	if len(secretResult.Created) > 0 || len(secretResult.Failed) > 0 {
-		steps = append(steps, "create_secrets")
-		result.Secrets = secretResult.Created
-		result.FailedSecrets = secretResult.Failed
+	// Skipped entirely when no credentials are available (self-managed
+	// registration without creds) — Sharko cannot reach the cluster, and the
+	// operator guide covers creating addon secrets by hand in that case.
+	if creds != nil {
+		secretResult, secretErr := o.createAddonSecrets(ctx, creds.Raw, req.Addons)
+		if secretErr != nil {
+			// Fatal error (e.g. can't connect to remote cluster at all).
+			result.Status = "partial"
+			result.CompletedSteps = steps
+			result.FailedStep = "create_secrets"
+			result.Error = secretErr.Error()
+			result.Message = "Addon secret creation failed. ArgoCD registration and PR not started."
+			return result, nil
+		}
+		if len(secretResult.Created) > 0 || len(secretResult.Failed) > 0 {
+			steps = append(steps, "create_secrets")
+			result.Secrets = secretResult.Created
+			result.FailedSecrets = secretResult.Failed
+		}
 	}
 
 	// Step 5: Generate cluster values file and commit to Git via PR.
@@ -398,13 +464,22 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		clusterLabels[addon] = models.AddonLabelValue(enabled)
 	}
 
+	// Record the connection-ownership mode on the managed-clusters entry.
+	// Only the non-default "user" mode is written; Sharko-managed entries
+	// omit the field so pre-57.2 files stay byte-identical (absent == sharko).
+	connMode := ""
+	if selfManaged {
+		connMode = models.ConnectionManagedByUser
+	}
+
 	// AddClusterEntry is itself idempotent — if the cluster already exists, it returns
 	// the data unchanged (no error). This makes retry-after-partial-failure safe.
 	updatedClusterAddons, addEntryErr := gitops.AddClusterEntry(clusterAddonsData, gitops.ClusterEntryInput{
-		Name:       req.Name,
-		Region:     req.Region,
-		SecretPath: req.SecretPath,
-		Labels:     clusterLabels,
+		Name:                req.Name,
+		Region:              req.Region,
+		SecretPath:          req.SecretPath,
+		Labels:              clusterLabels,
+		ConnectionManagedBy: connMode,
 	})
 	if addEntryErr != nil {
 		log.Error("failed to add cluster entry to cluster-addons.yaml — continuing with values file only",

@@ -325,6 +325,8 @@ type reconcileStats struct {
 	SkippedPending   int // orphan candidate skipped — registration-pending within grace (V2-cleanup-11.1)
 	SkippedAdopted   int // orphan candidate skipped — adopted annotation present (V2-cleanup-28)
 	ClearedPending   int // pending annotation stripped — cluster became managed (V2-cleanup-11.1)
+	UserLabelSynced  int // self-managed connection — addon labels merged onto the user's Secret (V2-cleanup-57.2)
+	UserPending      int // self-managed connection — user's Secret not created yet; visible wait, no write (V2-cleanup-57.2)
 	Errors           int
 }
 
@@ -480,8 +482,20 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 	}
 
 	// Compute set diffs in O(n+m) via map lookups.
+	//
+	// Self-managed connections (connectionManagedBy: user — V2-cleanup-57.2)
+	// are partitioned OUT of the create set: Sharko never creates (or
+	// rotates, or deletes) their ArgoCD cluster Secret. Instead each gets a
+	// label-only sync onto the user-created Secret every tick — see
+	// syncSelfManaged. They stay in `desired` so the orphan sweep below can
+	// never treat their Secret as an orphan while the cluster is in git.
 	toCreate := make([]models.ManagedClusterEntry, 0, len(desired))
+	selfManaged := make([]models.ManagedClusterEntry, 0)
 	for name, entry := range desired {
+		if entry.UserManagedConnection() {
+			selfManaged = append(selfManaged, entry)
+			continue
+		}
 		if _, present := existing[name]; !present {
 			toCreate = append(toCreate, entry)
 		}
@@ -559,12 +573,27 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 		r.deleteOne(ctx, name, secret, stats)
 	}
 
+	// Label-only sync for self-managed connections (V2-cleanup-57.2). Runs
+	// every tick so addon toggles converge onto the user's Secret with the
+	// same latency Sharko-managed clusters get.
+	for _, entry := range selfManaged {
+		r.syncSelfManaged(ctx, entry, stats)
+	}
+
 	// Convert pending → managed: any Secret that is now in BOTH git and
 	// argocd AND still carries the registration-pending annotation has had
 	// its registration PR merged — strip the annotation so it becomes a
 	// normal managed Secret (and is no longer immune to a future orphan
 	// sweep). Idempotent: Secrets without the annotation are untouched.
+	//
+	// Self-managed entries are EXCLUDED: their Secret is the user's (the
+	// registration flow never direct-writes one for them), and this pass
+	// updates from the pre-sync cached object — running it after
+	// syncSelfManaged could clobber the label handover with stale metadata.
 	for name := range desired {
+		if desired[name].UserManagedConnection() {
+			continue
+		}
 		secret, present := existing[name]
 		if !present {
 			continue // will be created above; nothing to clear.
@@ -572,6 +601,96 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 		if _, has := annotationsOf(secret)[models.AnnotationRegistrationPending]; has {
 			r.clearRegistrationPending(ctx, name, secret, stats)
 		}
+	}
+}
+
+// syncSelfManaged converges ONLY the addon labels onto the user-created
+// ArgoCD cluster Secret of a self-managed connection (connectionManagedBy:
+// user — V2-cleanup-57.2). Delegates to argosecrets.Manager.SyncLabelsOnly
+// so both reconcilers share one label-only write primitive:
+//
+//   - Data / StringData / annotations are never touched (the connection
+//     credentials are the user's, verbatim).
+//   - No managed-by ownership label, no secret-type label, no
+//     connectivity-check label is ever stamped.
+//   - A leftover managed-by=sharko label from a Sharko-managed past is
+//     stripped (non-adopted Secrets only) so the orphan sweep can never
+//     reclaim the user's connection.
+//   - Secret missing → a VISIBLE pending state (Info log + audit entry +
+//     UserPending counter), not an error loop. The user creates the Secret
+//     per the operator guide; the next tick picks it up.
+//
+// Per-cluster error isolation matches createOne: failures log + audit +
+// count, and the next cluster still gets its turn.
+func (r *Reconciler) syncSelfManaged(ctx context.Context, entry models.ManagedClusterEntry, stats *reconcileStats) {
+	log := logging.LoggerFromContext(ctx)
+
+	// Addon labels in the canonical vocabulary, self-healing legacy
+	// "true"/"false" values exactly like the create path does — the label
+	// payload must be identical no matter who owns the connection.
+	clusterLabels := normalizeLabels(entry.Labels)
+	for k, v := range clusterLabels {
+		if normalized, changed := models.NormalizeAddonLabelValue(v); changed {
+			clusterLabels[k] = normalized
+		}
+	}
+	// NOTE: no ApplyConnectivityCheckLabel here — the check label is never
+	// stamped on a connection Sharko does not own (guest stance, same as
+	// adopted clusters). SyncLabelsOnly strips it defensively as well.
+
+	mgr := argosecrets.NewManager(r.deps.ArgoClient, r.namespace)
+	changed, found, err := mgr.SyncLabelsOnly(ctx, entry.Name, clusterLabels)
+	if err != nil {
+		stats.Errors++
+		log.Error("[clusterreconciler] self-managed label sync failed — continuing to next cluster",
+			"cluster", entry.Name, "namespace", r.namespace, "error", err,
+		)
+		r.audit(audit.Entry{
+			Level:     "error",
+			Event:     "cluster_secret_user_label_sync",
+			User:      "sharko",
+			Action:    "sync_labels",
+			Resource:  fmt.Sprintf("cluster:%s", entry.Name),
+			Source:    "reconciler",
+			Result:    "failure",
+			Error:     err.Error(),
+			RequestID: logging.RequestID(ctx),
+		})
+		return
+	}
+	if !found {
+		stats.UserPending++
+		log.Info("[clusterreconciler] self-managed connection: ArgoCD cluster Secret not created yet — waiting for the user (no write attempted)",
+			"cluster", entry.Name, "namespace", r.namespace,
+		)
+		r.audit(audit.Entry{
+			Level:     "info",
+			Event:     "cluster_secret_user_pending",
+			User:      "sharko",
+			Action:    "wait_user_secret",
+			Resource:  fmt.Sprintf("cluster:%s", entry.Name),
+			Source:    "reconciler",
+			Result:    "partial",
+			Detail:    "connection is managed by the user; create the ArgoCD cluster Secret by hand (see operator guide: self-managed connections)",
+			RequestID: logging.RequestID(ctx),
+		})
+		return
+	}
+	if changed {
+		stats.UserLabelSynced++
+		log.Info("[clusterreconciler] self-managed connection: addon labels synced — connection data untouched",
+			"cluster", entry.Name, "namespace", r.namespace,
+		)
+		r.audit(audit.Entry{
+			Level:     "info",
+			Event:     "cluster_secret_user_label_sync",
+			User:      "sharko",
+			Action:    "sync_labels",
+			Resource:  fmt.Sprintf("cluster:%s", entry.Name),
+			Source:    "reconciler",
+			Result:    "success",
+			RequestID: logging.RequestID(ctx),
+		})
 	}
 }
 
@@ -922,8 +1041,8 @@ func (r *Reconciler) emitSummaryAudit(ctx context.Context, stats reconcileStats)
 		Event:  "cluster_secret_reconcile_tick",
 		User:   "sharko",
 		Action: "reconcile",
-		Resource: fmt.Sprintf("created:%d deleted:%d skipped_unlabeled:%d skipped_pending:%d skipped_adopted:%d cleared_pending:%d errors:%d",
-			stats.Created, stats.Deleted, stats.SkippedUnlabeled, stats.SkippedPending, stats.SkippedAdopted, stats.ClearedPending, stats.Errors),
+		Resource: fmt.Sprintf("created:%d deleted:%d skipped_unlabeled:%d skipped_pending:%d skipped_adopted:%d cleared_pending:%d user_label_synced:%d user_pending:%d errors:%d",
+			stats.Created, stats.Deleted, stats.SkippedUnlabeled, stats.SkippedPending, stats.SkippedAdopted, stats.ClearedPending, stats.UserLabelSynced, stats.UserPending, stats.Errors),
 		Source:    "reconciler",
 		Result:    result,
 		RequestID: logging.RequestID(ctx),

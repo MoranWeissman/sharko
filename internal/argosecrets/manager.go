@@ -481,6 +481,96 @@ func (m *Manager) Ensure(ctx context.Context, spec ClusterSecretSpec) (bool, err
 	return true, nil
 }
 
+// SyncLabelsOnly converges ONLY the addon labels on an existing ArgoCD
+// cluster Secret — the write primitive for self-managed connections
+// (connectionManagedBy: user, V2-cleanup-57.2). The user creates and
+// maintains the Secret; Sharko is a guest that merges addon labels onto it
+// and touches NOTHING else:
+//
+//   - Data / StringData / annotations are never modified — the connection
+//     config (bearer token, cert pair, exec details, shard, namespaces) is
+//     the user's, verbatim.
+//   - Sharko does NOT stamp the managed-by ownership label and does NOT
+//     stamp argocd.argoproj.io/secret-type — the user authored the Secret;
+//     claiming ownership would put it back in scope for the orphan sweeps.
+//   - The connectivity-check label is stripped from both the desired set
+//     and the live Secret (same guest stance as adopted clusters —
+//     V2-cleanup-29).
+//   - Mode-switch handover (sharko → user): if the Secret still carries the
+//     managed-by=sharko label from its earlier Sharko-managed life AND does
+//     NOT carry the adopted annotation, the label is removed so the orphan
+//     sweeps can never reclaim (delete) the user's connection later. An
+//     ADOPTED Secret keeps its label + annotation — the adopt rail is
+//     already delete-proof and Unadopt depends on them.
+//
+// Merge semantics match the adopted path: desired addon labels win on
+// conflict, foreign labels are kept. The mutation is metadata-only on a
+// DeepCopy followed by a single Update — the same "label-only patch" idiom
+// Ensure's adopted branch uses.
+//
+// Returns:
+//   - found == false → no Secret with that name exists yet. NOT an error:
+//     the caller surfaces a visible "waiting for user-created Secret"
+//     pending state instead of an error loop.
+//   - changed == true → a label write occurred.
+//   - changed == false, found == true → labels already converged; no write.
+func (m *Manager) SyncLabelsOnly(ctx context.Context, name string, addonLabels map[string]string) (changed bool, found bool, err error) {
+	existing, getErr := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(getErr) {
+		return false, false, nil
+	}
+	if getErr != nil {
+		return false, false, fmt.Errorf("getting secret %q in namespace %q: %w", name, m.namespace, getErr)
+	}
+
+	// Desired = the caller's addon labels, minus the connectivity-check
+	// label (guest stance — never stamped on a connection Sharko does not
+	// own). We deliberately do NOT add LabelManagedBy or LabelSecretType.
+	desired := make(map[string]string, len(addonLabels))
+	for k, v := range addonLabels {
+		desired[k] = v
+	}
+	delete(desired, models.LabelConnectivityCheck)
+
+	isAdopted := existing.Annotations[AnnotationAdopted] == "true"
+	// Handover check: strip Sharko's ownership label on a plain (non-adopted)
+	// Secret so the orphan sweeps never treat the user's connection as
+	// Sharko-owned again.
+	stripManagedBy := !isAdopted && existing.Labels[LabelManagedBy] == ManagedByValue
+	// The check label must not linger from a Sharko-managed past either.
+	stripCheckLabel := func() bool {
+		_, has := existing.Labels[models.LabelConnectivityCheck]
+		return has
+	}()
+
+	if !stripManagedBy && !stripCheckLabel && desiredLabelsSubset(existing.Labels, desired) {
+		slog.Debug("[argosecrets] self-managed cluster secret labels up-to-date, skipping",
+			"cluster", name, "namespace", m.namespace,
+		)
+		return false, true, nil
+	}
+
+	updated := existing.DeepCopy()
+	if updated.Labels == nil {
+		updated.Labels = make(map[string]string, len(desired))
+	}
+	for k, v := range desired {
+		updated.Labels[k] = v
+	}
+	delete(updated.Labels, models.LabelConnectivityCheck)
+	if stripManagedBy {
+		delete(updated.Labels, LabelManagedBy)
+	}
+	// Do NOT touch updated.Data, updated.StringData, or updated.Annotations.
+	if _, updateErr := m.client.CoreV1().Secrets(m.namespace).Update(ctx, updated, metav1.UpdateOptions{}); updateErr != nil {
+		return false, true, fmt.Errorf("syncing labels on self-managed secret %q in namespace %q: %w", name, m.namespace, updateErr)
+	}
+	slog.Info("[argosecrets] self-managed cluster secret labels converged — connection data untouched",
+		"cluster", name, "namespace", m.namespace, "ownership_label_stripped", stripManagedBy,
+	)
+	return true, true, nil
+}
+
 // desiredLabelsSubset reports whether all key-value pairs in desired are
 // present in current. Foreign keys in current (not in desired) are ignored —
 // they are kept by the merge semantics of the adopted path.

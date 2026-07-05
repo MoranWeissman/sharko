@@ -187,9 +187,18 @@ func (o *Orchestrator) adoptSingleCluster(ctx context.Context, name, serverURL s
 		clusterLabels[addon] = models.AddonLabelValue(enabled)
 	}
 
+	// Adopted clusters default to a SELF-MANAGED connection (V2-cleanup-57.2):
+	// they already have a user-created ArgoCD cluster Secret — that is the
+	// whole point of Adopt. Recording connectionManagedBy: user means the
+	// reconcilers will only ever sync addon labels onto that Secret and
+	// never rewrite or rotate its credential material, and the remove flow
+	// will leave the Secret in place. This kills the "Sharko took over my
+	// connection" failure mode at the source-of-truth level instead of
+	// relying solely on the adopted annotation living on the Secret.
 	updatedClusterAddons, addEntryErr := gitops.AddClusterEntry(clusterAddonsData, gitops.ClusterEntryInput{
-		Name:   name,
-		Labels: clusterLabels,
+		Name:                name,
+		Labels:              clusterLabels,
+		ConnectionManagedBy: models.ConnectionManagedByUser,
 	})
 	if addEntryErr != nil {
 		log.Error("failed to add cluster entry", "cluster", name, "error", addEntryErr)

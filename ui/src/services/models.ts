@@ -15,6 +15,11 @@ export interface Cluster {
   connection_status?: string
   managed?: boolean
   adopted?: boolean
+  // Who owns this cluster's ArgoCD cluster secret (V2-cleanup-57.2):
+  // absent/'' or 'sharko' = Sharko writes and rotates it (default);
+  // 'user' = self-managed — the user created the secret by hand and
+  // Sharko only syncs addon labels onto it.
+  connection_managed_by?: string
   // Connectivity check fields (V2-cleanup-29/30)
   // connectivity_status values: 'verified_argocd' | 'verified_check' | 'check_pending' | 'check_failed' | ''
   connectivity_status?: string

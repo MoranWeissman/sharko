@@ -45,6 +45,13 @@
                   "type": "string"
                 },
                 "type": "object"
+              },
+              "connectionManagedBy": {
+                "type": "string",
+                "enum": [
+                  "sharko",
+                  "user"
+                ]
               }
             },
             "additionalProperties": false,

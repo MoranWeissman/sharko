@@ -204,6 +204,11 @@ export async function registerCluster(data: {
   // consistent `provider` for backward-compat with anything still reading
   // `provider`.
   creds_source?: CredsSource;
+  // Who manages the ArgoCD cluster secret (V2-cleanup-57.2). Omitted or
+  // 'sharko' = Sharko writes and rotates it (default). 'user' = the caller
+  // creates the secret by hand; Sharko never writes it and only syncs
+  // addon labels onto it. Credentials become optional in that mode.
+  connection_managed_by?: 'sharko' | 'user';
 }) {
   return postJSON<RegisterClusterResult>('/clusters', data)
 }
