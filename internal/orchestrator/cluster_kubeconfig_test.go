@@ -16,9 +16,11 @@ import (
 //   - The kubeconfig string is parsed via providers.ParseInlineKubeconfig,
 //     and the resulting Server / CAData / Token flow into the same Git +
 //     ArgoCD steps the EKS path uses.
-//   - Cert-based / exec-plugin auth must fail at the provider whitelist
-//     boundary (covered exhaustively in providers/kubeconfig_parser_test.go;
-//     this file just guards the orchestrator wrapping path).
+//   - Client-certificate kubeconfigs are ACCEPTED since V2-cleanup-56.1 and
+//     flow their cert pair into the direct ArgoCD Secret write; exec-plugin
+//     auth still fails at the parser boundary (covered exhaustively in
+//     providers/kubeconfig_parser_test.go; this file just guards the
+//     orchestrator wrapping path).
 //   - The "kubeconfig" provider MUST appear in the supportedProviders set;
 //     a typo there would silently regress generic-K8s registration.
 const v125TestBearerKubeconfig = `apiVersion: v1
@@ -176,12 +178,19 @@ func TestRegisterCluster_Kubeconfig_NoManager_NoWrite(t *testing.T) {
 	}
 }
 
-func TestRegisterCluster_Kubeconfig_RejectsCertBased(t *testing.T) {
+// TestRegisterCluster_Kubeconfig_CertPair_WritesArgoSecret pins the
+// V2-cleanup-56.1 registration path: a client-certificate kubeconfig
+// (kind / kubeadm / on-prem) is ACCEPTED, and the direct ArgoCD Secret write
+// carries the base64 cert pair — no bearer token — so the manager emits the
+// plain-TLS shape instead of misclassifying the cluster as EKS exec.
+func TestRegisterCluster_Kubeconfig_CertPair_WritesArgoSecret(t *testing.T) {
 	argocd := newMockArgocd()
 	git := newMockGitProvider()
+	asm := newMockArgoSecretManager()
 	orch := New(nil, nil, argocd, git, defaultGitOps(), defaultPaths(), nil)
+	orch.SetArgoSecretManager(asm, "")
 
-	_, err := orch.RegisterCluster(context.Background(), RegisterClusterRequest{
+	result, err := orch.RegisterCluster(context.Background(), RegisterClusterRequest{
 		Name:     "cert-based",
 		Provider: "kubeconfig",
 		Kubeconfig: `apiVersion: v1
@@ -200,15 +209,48 @@ contexts:
 users:
 - name: u
   user:
-    client-certificate-data: ZmFrZQ==
-    client-key-data: ZmFrZQ==
+    client-certificate-data: ZmFrZS1jZXJ0
+    client-key-data: ZmFrZS1rZXk=
 `,
 	})
-	if err == nil {
-		t.Fatal("expected cert-based kubeconfig to be rejected at the orchestrator boundary")
+	if err != nil {
+		t.Fatalf("expected cert-based kubeconfig to be accepted (V2-cleanup-56.1), got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "bearer-token") {
-		t.Errorf("error should mention bearer-token guidance, got: %v", err)
+	if result.Status != "success" {
+		t.Errorf("expected status=success, got %q", result.Status)
+	}
+
+	if len(asm.ensured) != 1 {
+		t.Fatalf("expected exactly 1 Ensure call, got %d", len(asm.ensured))
+	}
+	spec := asm.ensured[0]
+	if spec.Token != "" {
+		t.Errorf("Ensure spec.Token = %q, want empty for a cert-pair kubeconfig", spec.Token)
+	}
+	// The parsed PEM bytes are re-encoded to base64 for the spec — the
+	// kubeconfig carried base64("fake-cert") / base64("fake-key").
+	if spec.CertData != "ZmFrZS1jZXJ0" {
+		t.Errorf("Ensure spec.CertData = %q, want base64 of the kubeconfig client cert", spec.CertData)
+	}
+	if spec.KeyData != "ZmFrZS1rZXk=" {
+		t.Errorf("Ensure spec.KeyData = %q, want base64 of the kubeconfig client key", spec.KeyData)
+	}
+	if spec.CAData == "" {
+		t.Error("Ensure spec.CAData is empty; expected the base64-encoded CA bundle")
+	}
+
+	// The write_argocd_secret step is the marker that the direct write ran —
+	// without it the cert-pair cluster would stay Unreachable forever (the
+	// pasted creds never reach any secrets backend the reconciler reads).
+	foundStep := false
+	for _, step := range result.CompletedSteps {
+		if step == "write_argocd_secret" {
+			foundStep = true
+			break
+		}
+	}
+	if !foundStep {
+		t.Errorf("expected write_argocd_secret step; got %v", result.CompletedSteps)
 	}
 }
 

@@ -68,7 +68,13 @@ type ArgoSecretSpec struct {
 	CAData string
 	// Token is a static bearer token. When set, the Secret is written in
 	// ArgoCD's bearerToken shape (the kubeconfig registration path).
-	Token       string
+	Token string
+	// CertData / KeyData are the base64-encoded PEM client certificate pair
+	// (same encoding as CAData). When BOTH are set, the Secret is written in
+	// ArgoCD's plain-TLS shape — cert pair takes precedence over Token
+	// (V2-cleanup-56.1, kind / kubeadm / on-prem kubeconfigs).
+	CertData    string
+	KeyData     string
 	Labels      map[string]string
 	Annotations map[string]string
 }

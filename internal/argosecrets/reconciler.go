@@ -404,15 +404,25 @@ func (r *Reconciler) reconcileCluster(ctx context.Context, cluster models.Cluste
 		Server:  creds.Server,
 		Region:  cluster.Region,
 		RoleARN: r.defaultRoleARN,
-		// Carry the bearer token through so buildSecretConfig emits the
-		// bearerToken shape for kubeconfig-registered clusters. Without this
-		// the spec would fall into the execProviderConfig (argocd-k8s-auth)
-		// branch and clobber the good bearer-token Secret written at
-		// registration. EKS/IAM clusters return Token=="" and still take the
-		// exec branch (RoleARN/Region preserved).
-		Token:  creds.Token,
-		CAData: base64.StdEncoding.EncodeToString(creds.CAData),
-		Labels: clusterLabels,
+		// Carry ALL the credential material through so buildSecretConfig can
+		// pick the right shape (precedence: cert pair > token > exec,
+		// V2-cleanup-56.1):
+		//   - CertData+KeyData set (client-certificate kubeconfig — kind /
+		//     kubeadm / on-prem): plain-TLS shape. Without this the spec fell
+		//     into the exec branch and ArgoCD ran argocd-k8s-auth against a
+		//     non-AWS cluster — connection Failed forever.
+		//   - Token set (bearer-token kubeconfig): bearerToken shape. Without
+		//     this the exec branch would clobber the good bearer-token Secret
+		//     written at registration.
+		//   - Neither (EKS / IAM clusters): exec shape (RoleARN/Region
+		//     preserved).
+		Token: creds.Token,
+		// EncodeToString(nil) == "" so clusters without a cert pair leave
+		// these fields empty and never take the cert branch.
+		CertData: base64.StdEncoding.EncodeToString(creds.CertData),
+		KeyData:  base64.StdEncoding.EncodeToString(creds.KeyData),
+		CAData:   base64.StdEncoding.EncodeToString(creds.CAData),
+		Labels:   clusterLabels,
 	}
 
 	// 4. Call Manager.Ensure() — returns whether it changed anything.

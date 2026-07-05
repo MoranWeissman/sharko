@@ -38,7 +38,14 @@ type Kubeconfig struct {
 	Raw    []byte // Full kubeconfig YAML bytes
 	Server string // API server URL (extracted for ArgoCD registration)
 	CAData []byte // CA certificate data
-	Token  string // Bearer token or client cert, if present
+	Token  string // Bearer token, if present
+	// CertData / KeyData carry the client certificate + key pair (raw PEM
+	// bytes) for cert-based kubeconfigs (kind / kubeadm / on-prem). The
+	// ArgoCD secret writers need these to emit the plain-TLS cluster secret
+	// shape instead of misclassifying the cluster as EKS exec
+	// (V2-cleanup-56.1). Both fields are set together or not at all.
+	CertData []byte // Client certificate data (PEM)
+	KeyData  []byte // Client key data (PEM)
 }
 
 // ClusterInfo is a lightweight cluster descriptor from the secrets backend.

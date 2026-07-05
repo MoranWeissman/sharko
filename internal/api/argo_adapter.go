@@ -46,6 +46,8 @@ func (a *argoManagerAdapter) Ensure(ctx context.Context, spec orchestrator.ArgoS
 		RoleARN:     spec.RoleARN,
 		CAData:      spec.CAData,
 		Token:       spec.Token,
+		CertData:    spec.CertData,
+		KeyData:     spec.KeyData,
 		Labels:      spec.Labels,
 		Annotations: spec.Annotations,
 	})

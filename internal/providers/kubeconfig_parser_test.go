@@ -135,19 +135,84 @@ func TestParseInlineKubeconfig_RejectMissingClusterEntry(t *testing.T) {
 	}
 }
 
-func TestParseInlineKubeconfig_RejectCertBasedAuth(t *testing.T) {
-	_, err := ParseInlineKubeconfig(certBasedKubeconfig)
+// TestParseInlineKubeconfig_AcceptsCertPair pins V2-cleanup-56.1: a
+// client-certificate kubeconfig (kind / kubeadm / on-prem) is ACCEPTED and
+// the cert pair bytes are carried on the returned Kubeconfig so the ArgoCD
+// secret writers can emit the plain-TLS cluster secret shape.
+func TestParseInlineKubeconfig_AcceptsCertPair(t *testing.T) {
+	kc, err := ParseInlineKubeconfig(certBasedKubeconfig)
+	if err != nil {
+		t.Fatalf("expected cert-pair kubeconfig to be accepted (V2-cleanup-56.1), got: %v", err)
+	}
+	if kc.Server != "https://10.0.0.1:6443" {
+		t.Errorf("Server: got %q, want %q", kc.Server, "https://10.0.0.1:6443")
+	}
+	if kc.Token != "" {
+		t.Errorf("Token should be empty for a cert-pair kubeconfig, got %q", kc.Token)
+	}
+	if string(kc.CertData) != "test-cert" {
+		t.Errorf("CertData: got %q, want %q", string(kc.CertData), "test-cert")
+	}
+	if string(kc.KeyData) != "test-key" {
+		t.Errorf("KeyData: got %q, want %q", string(kc.KeyData), "test-key")
+	}
+	if string(kc.CAData) != "test-ca-bytes" {
+		t.Errorf("CAData: got %q, want %q", string(kc.CAData), "test-ca-bytes")
+	}
+	if len(kc.Raw) == 0 {
+		t.Error("Raw should be populated for downstream remoteclient verification")
+	}
+}
+
+// TestParseInlineKubeconfig_RejectHalfCertPair: cert without key must NOT be
+// treated as cert auth — it is rejected with guidance, exactly as before
+// V2-cleanup-56.1.
+func TestParseInlineKubeconfig_RejectHalfCertPair(t *testing.T) {
+	halfPair := strings.Replace(certBasedKubeconfig, "    client-key-data: dGVzdC1rZXk=\n", "", 1)
+	_, err := ParseInlineKubeconfig(halfPair)
 	if err == nil {
-		t.Fatal("expected cert-based kubeconfig to be rejected (bearer-token only in v1.25)")
+		t.Fatal("expected half cert pair (cert without key) to be rejected")
 	}
 	if !errors.Is(err, ErrUnsupportedKubeconfigAuth) {
 		t.Errorf("error should wrap ErrUnsupportedKubeconfigAuth, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "bearer-token") {
-		t.Errorf("error should mention bearer-token guidance, got: %v", err)
+	if !strings.Contains(err.Error(), "incomplete client certificate pair") {
+		t.Errorf("error should describe the incomplete pair, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "kubectl create token") {
-		t.Errorf("error should include the kubectl create token recipe, got: %v", err)
+}
+
+// TestParseInlineKubeconfig_RejectCertByFilePath: cert/key referenced by file
+// path cannot be resolved server-side (the files live on the caller's
+// machine) — rejected with flatten guidance.
+func TestParseInlineKubeconfig_RejectCertByFilePath(t *testing.T) {
+	filePathKubeconfig := `apiVersion: v1
+kind: Config
+current-context: cert-ctx
+clusters:
+- name: cert-cluster
+  cluster:
+    server: https://10.0.0.1:6443
+    certificate-authority-data: dGVzdC1jYS1ieXRlcw==
+contexts:
+- name: cert-ctx
+  context:
+    cluster: cert-cluster
+    user: cert-user
+users:
+- name: cert-user
+  user:
+    client-certificate: /home/someone/.minikube/client.crt
+    client-key: /home/someone/.minikube/client.key
+`
+	_, err := ParseInlineKubeconfig(filePathKubeconfig)
+	if err == nil {
+		t.Fatal("expected file-path cert kubeconfig to be rejected")
+	}
+	if !errors.Is(err, ErrUnsupportedKubeconfigAuth) {
+		t.Errorf("error should wrap ErrUnsupportedKubeconfigAuth, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "--flatten") {
+		t.Errorf("error should include the kubectl config view --flatten recipe, got: %v", err)
 	}
 }
 

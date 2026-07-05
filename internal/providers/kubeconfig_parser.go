@@ -9,33 +9,38 @@ import (
 )
 
 // ErrUnsupportedKubeconfigAuth is returned when an inline kubeconfig uses an
-// authentication method this release cannot consume safely (cert-based or
-// exec-plugin auth). It is wrapped with a descriptive error message that
+// authentication method this release cannot consume safely (exec-plugin auth,
+// or a half cert pair). It is wrapped with a descriptive error message that
 // callers can pass through to the API as a 400-level validation failure.
 //
-// This release ships bearer-token-only support. Cert-based and
-// exec-plugin auth (aws-iam-authenticator, gke-gcloud-auth-plugin) need
-// follow-on work — either run the exec plugin server-side (security
-// boundary: we'd execute arbitrary binaries in the Sharko pod) or
-// persist cert+key as the ArgoCD cluster Secret payload (different
-// ArgoCD secret schema plus rotation concerns). The current path
-// surfaces a clear error with a `kubectl create token` recipe.
+// Supported auth methods:
+//   - Bearer token (Token / TokenFile)
+//   - Client certificate + key pair, inline data only (V2-cleanup-56.1 —
+//     kind / kubeadm / on-prem kubeconfigs; persisted as ArgoCD's plain-TLS
+//     cluster secret shape)
+//
+// Exec-plugin auth (aws-iam-authenticator, gke-gcloud-auth-plugin) stays
+// unsupported: running arbitrary auth binaries inside the Sharko pod is a
+// security boundary we do not cross.
 var ErrUnsupportedKubeconfigAuth = errors.New("unsupported kubeconfig auth method")
 
 // ParseInlineKubeconfig parses a raw kubeconfig YAML supplied inline by
-// an API caller and extracts the bearer-token credentials needed for
-// ArgoCD cluster registration.
+// an API caller and extracts the credentials needed for ArgoCD cluster
+// registration: either a bearer token or a client certificate + key pair.
 //
 // The function rejects auth methods this release does not support:
-//   - Cert-based auth (TLSClientConfig.CertData / KeyData populated, no
-//     bearer token present): returns ErrUnsupportedKubeconfigAuth wrapped
-//     with a message pointing at `kubectl create token`.
 //   - Exec-plugin auth (AuthInfo.Exec non-nil, e.g. aws-iam-authenticator
-//     or gke-gcloud-auth-plugin): returns ErrUnsupportedKubeconfigAuth
-//     wrapped with the same guidance.
+//     or gke-gcloud-auth-plugin): returns ErrUnsupportedKubeconfigAuth.
+//   - A half cert pair (cert without key or key without cert, no bearer
+//     token present): returns ErrUnsupportedKubeconfigAuth.
+//   - Cert/key referenced by FILE PATH (client-certificate / client-key):
+//     the files live on the caller's machine, not in the Sharko pod, so the
+//     bytes cannot be resolved server-side. Returns ErrUnsupportedKubeconfigAuth
+//     with guidance to embed the data inline (kubectl config view --flatten).
 //
-// On success it returns a *Kubeconfig populated with Server, CAData, Token
-// and Raw (for downstream Stage1 verification via remoteclient).
+// On success it returns a *Kubeconfig populated with Server, CAData, Raw
+// (for downstream Stage1 verification via remoteclient) and either Token or
+// the CertData/KeyData pair.
 func ParseInlineKubeconfig(raw string) (*Kubeconfig, error) {
 	if strings.TrimSpace(raw) == "" {
 		return nil, fmt.Errorf("kubeconfig is empty")
@@ -45,8 +50,7 @@ func ParseInlineKubeconfig(raw string) (*Kubeconfig, error) {
 
 	// Step 1: structural parse (no auth resolution) so we can inspect the
 	// chosen context's AuthInfo and reject unsupported methods before they
-	// reach RESTConfigFromKubeConfig (which would happily resolve a cert-
-	// based config and return one we can't push to ArgoCD as bearer-token).
+	// reach RESTConfigFromKubeConfig.
 	apiCfg, err := clientcmd.Load(rawBytes)
 	if err != nil {
 		return nil, fmt.Errorf("invalid kubeconfig: %w", err)
@@ -77,20 +81,30 @@ func ParseInlineKubeconfig(raw string) (*Kubeconfig, error) {
 		return nil, fmt.Errorf("kubeconfig references missing user %q", ctx.AuthInfo)
 	}
 
-	// Step 2: enforce the bearer-token-only constraint.
+	// Step 2: enforce the supported-auth constraint (bearer token OR a
+	// complete inline cert pair).
 	if authInfo.Exec != nil {
-		return nil, fmt.Errorf("%w: exec-plugin auth (e.g. aws-iam-authenticator, gke-gcloud-auth-plugin) is not supported; this release supports bearer-token only — generate a token via `kubectl create token <serviceaccount> --duration=24h` and paste a kubeconfig that uses it", ErrUnsupportedKubeconfigAuth)
+		return nil, fmt.Errorf("%w: exec-plugin auth (e.g. aws-iam-authenticator, gke-gcloud-auth-plugin) is not supported; use a bearer token (`kubectl create token <serviceaccount> --duration=24h`) or a client-certificate kubeconfig with inline data", ErrUnsupportedKubeconfigAuth)
 	}
-	hasCert := len(authInfo.ClientCertificateData) > 0 || authInfo.ClientCertificate != ""
-	hasKey := len(authInfo.ClientKeyData) > 0 || authInfo.ClientKey != ""
+	hasCertData := len(authInfo.ClientCertificateData) > 0
+	hasKeyData := len(authInfo.ClientKeyData) > 0
+	hasCertFile := authInfo.ClientCertificate != ""
+	hasKeyFile := authInfo.ClientKey != ""
 	hasToken := authInfo.Token != "" || authInfo.TokenFile != ""
-	if (hasCert || hasKey) && !hasToken {
-		return nil, fmt.Errorf("%w: cert-based auth is not supported; this release supports bearer-token only — generate a token via `kubectl create token <serviceaccount> --duration=24h` and paste a kubeconfig that uses it", ErrUnsupportedKubeconfigAuth)
+	if !hasToken {
+		if (hasCertFile || hasKeyFile) && !(hasCertData && hasKeyData) {
+			// Cert/key referenced by file path — the files are on the
+			// caller's machine, unreadable from the Sharko pod.
+			return nil, fmt.Errorf("%w: kubeconfig references client certificate/key by file path; embed the data inline first (`kubectl config view --flatten`) or use a bearer token", ErrUnsupportedKubeconfigAuth)
+		}
+		if (hasCertData || hasKeyData) && !(hasCertData && hasKeyData) {
+			// Half pair — cert without key or key without cert.
+			return nil, fmt.Errorf("%w: kubeconfig carries an incomplete client certificate pair (need both client-certificate-data and client-key-data); fix the kubeconfig or use a bearer token", ErrUnsupportedKubeconfigAuth)
+		}
 	}
 
-	// Step 3: resolve to a *rest.Config — at this point we've ruled out
-	// cert-only / exec-only kubeconfigs, so the resolved config will carry
-	// a bearer token (and possibly the parsed CA bundle).
+	// Step 3: resolve to a *rest.Config — at this point the config carries a
+	// bearer token, a complete inline cert pair, or nothing usable.
 	restCfg, err := clientcmd.RESTConfigFromKubeConfig(rawBytes)
 	if err != nil {
 		return nil, fmt.Errorf("resolving kubeconfig: %w", err)
@@ -99,17 +113,24 @@ func ParseInlineKubeconfig(raw string) (*Kubeconfig, error) {
 	if restCfg.Host == "" {
 		return nil, fmt.Errorf("kubeconfig resolved to empty server URL")
 	}
-	if restCfg.BearerToken == "" {
-		// A token file (TokenFile) on AuthInfo is resolved by clientcmd at
-		// build time, so an empty BearerToken here means the token file
-		// pointed nowhere. Treat the same as a missing-token kubeconfig.
-		return nil, fmt.Errorf("%w: kubeconfig contains no usable bearer token; generate one via `kubectl create token <serviceaccount> --duration=24h`", ErrUnsupportedKubeconfigAuth)
-	}
 
-	return &Kubeconfig{
+	kc := &Kubeconfig{
 		Raw:    rawBytes,
 		Server: restCfg.Host,
 		CAData: restCfg.TLSClientConfig.CAData,
 		Token:  restCfg.BearerToken,
-	}, nil
+	}
+	if len(restCfg.TLSClientConfig.CertData) > 0 && len(restCfg.TLSClientConfig.KeyData) > 0 {
+		kc.CertData = restCfg.TLSClientConfig.CertData
+		kc.KeyData = restCfg.TLSClientConfig.KeyData
+	}
+
+	if kc.Token == "" && (len(kc.CertData) == 0 || len(kc.KeyData) == 0) {
+		// A token file (TokenFile) on AuthInfo is resolved by clientcmd at
+		// build time, so an empty BearerToken here means the token file
+		// pointed nowhere. Treat the same as a missing-credentials kubeconfig.
+		return nil, fmt.Errorf("%w: kubeconfig contains no usable bearer token or client certificate pair; generate a token via `kubectl create token <serviceaccount> --duration=24h`", ErrUnsupportedKubeconfigAuth)
+	}
+
+	return kc, nil
 }

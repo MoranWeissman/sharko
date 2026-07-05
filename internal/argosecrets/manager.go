@@ -67,6 +67,19 @@ type ClusterSecretSpec struct {
 	// bearer token that ArgoCDProvider.GetCredentials reads back directly.
 	// When empty, the execProviderConfig (EKS / IAM) shape is used.
 	Token string
+	// CertData is the base64-encoded PEM client certificate for mTLS
+	// authentication (kind / kubeadm / on-prem clusters). When BOTH CertData
+	// and KeyData are non-empty the secret config is written in ArgoCD's
+	// plain-TLS shape ({"tlsClientConfig": {"certData": ..., "keyData": ...,
+	// "caData": ...}}) — no exec, no bearer token. Cert-pair precedence is
+	// ABOVE Token: a spec carrying both a cert pair and a token emits the
+	// cert shape (V2-cleanup-56.1).
+	CertData string
+	// KeyData is the base64-encoded PEM client key paired with CertData.
+	// A half pair (cert without key, or key without cert) never takes the
+	// cert branch — the spec falls through to the token / exec precedence
+	// exactly as before.
+	KeyData string
 	// CAData is the base64-encoded PEM CA certificate for TLS verification of the cluster API server.
 	// When non-empty it is written into tlsClientConfig.caData so ArgoCD can verify the server cert.
 	// When empty, ArgoCD falls back to system trust roots.
@@ -110,6 +123,26 @@ type bearerTokenConfig struct {
 	TLSClientConfig tlsConfig `json:"tlsClientConfig"`
 }
 
+// certTLSConfig is the JSON structure written into secret stringData.config
+// for clusters that authenticate with a client certificate + key pair
+// (kind / kubeadm / on-prem clusters registered from a cert-based
+// kubeconfig). It is ArgoCD's plain-TLS shape: no execProviderConfig, no
+// bearerToken — just tlsClientConfig carrying the cert pair and CA bundle
+// (V2-cleanup-56.1).
+type certTLSConfig struct {
+	TLSClientConfig certTLSClientConfig `json:"tlsClientConfig"`
+}
+
+// certTLSClientConfig extends the tlsConfig fields with certData/keyData.
+// Declared separately so the bearer and exec shapes stay byte-identical to
+// their pre-56.1 output (their tlsClientConfig never gains new keys).
+type certTLSClientConfig struct {
+	Insecure bool   `json:"insecure"`
+	CertData string `json:"certData"`
+	KeyData  string `json:"keyData"`
+	CAData   string `json:"caData,omitempty"`
+}
+
 type execProvider struct {
 	Command    string   `json:"command"`
 	Args       []string `json:"args"`
@@ -123,7 +156,8 @@ type tlsConfig struct {
 
 // BuildSecretConfigJSON is the public wrapper around buildSecretConfig.
 // It exists so the clusterreconciler (internal/clusterreconciler) can
-// construct the exact same execProviderConfig payload this package's
+// construct the exact same config payload (cert / bearer / exec shape,
+// per the cert > token > exec precedence) this package's
 // Manager.Ensure writes — without going through Ensure's adoption path
 // (which the reconciler deliberately avoids per the ownership policy).
 // Output is byte-identical to Ensure's output for the same spec, so
@@ -145,7 +179,17 @@ func BuildClusterSecretLabels(spec ClusterSecretSpec) map[string]string {
 
 // buildSecretConfig constructs the ArgoCD cluster Secret data["config"] JSON.
 //
-// When spec.Token is non-empty the bearerToken shape is emitted (the
+// Shape precedence (V2-cleanup-56.1): cert pair > token > exec.
+//
+// When BOTH spec.CertData and spec.KeyData are non-empty the plain-TLS shape
+// is emitted: tlsClientConfig carrying certData + keyData + caData, with no
+// execProviderConfig and no bearerToken. This is the shape ArgoCD needs for
+// client-certificate kubeconfigs (kind / kubeadm / on-prem); without it those
+// clusters were silently written as EKS exec and argocd-k8s-auth failed
+// forever from a non-AWS environment. A half pair (cert without key or vice
+// versa) never takes this branch.
+//
+// Else, when spec.Token is non-empty the bearerToken shape is emitted (the
 // kubeconfig registration path): a static token plus a tlsClientConfig that
 // carries the CA bundle (or insecure:true when no CA is present). This is the
 // shape providers.ArgoCDProvider.GetCredentials can read back directly, which
@@ -155,7 +199,27 @@ func BuildClusterSecretLabels(spec ClusterSecretSpec) map[string]string {
 // The --role-arn arg is only included when spec.RoleARN is non-empty.
 // No env vars are set: argocd-k8s-auth inherits the environment from ArgoCD and
 // ArgoCD v2.14 cannot unmarshal the env field in execProviderConfig.
+//
+// The bearer and exec outputs are byte-identical to their pre-56.1 shapes —
+// pinned by golden tests — so existing EKS / bearer-token clusters see no
+// secret churn from this change.
 func buildSecretConfig(spec ClusterSecretSpec) (string, error) {
+	if spec.CertData != "" && spec.KeyData != "" {
+		cfg := certTLSConfig{
+			TLSClientConfig: certTLSClientConfig{
+				Insecure: false,
+				CertData: spec.CertData,
+				KeyData:  spec.KeyData,
+				CAData:   spec.CAData,
+			},
+		}
+		b, err := json.MarshalIndent(cfg, "", "  ")
+		if err != nil {
+			return "", fmt.Errorf("marshalling certTLSConfig: %w", err)
+		}
+		return string(b), nil
+	}
+
 	if spec.Token != "" {
 		cfg := bearerTokenConfig{
 			BearerToken: spec.Token,
