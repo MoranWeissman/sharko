@@ -256,8 +256,9 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	// new cluster up via either the post-merge trigger or the periodic
 	// safety-net tick, reading credentials from the secrets backend.
 	//
-	// The kubeconfig path is different: the pasted bearer-token credentials
-	// never reach any secrets backend, so the reconciler can NEVER create the
+	// The kubeconfig path is different: the pasted credentials (bearer token
+	// or client-certificate pair, V2-cleanup-56.1) never reach any secrets
+	// backend, so the reconciler can NEVER create the
 	// ArgoCD cluster Secret for them — leaving the cluster permanently
 	// Unreachable (V2-cleanup-8.2). We therefore write the Secret directly
 	// here, right after Stage-1 verification, from the parsed credentials.
@@ -268,7 +269,8 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	// best-effort: a failure is logged and recorded but does not abort
 	// registration (the Git source of truth and reconciler can still
 	// converge). When no manager is wired (out-of-cluster), this is skipped.
-	if isInlineSource(credsSource) && o.argoSecretManager != nil && creds.Token != "" {
+	hasInlineCertPair := len(creds.CertData) > 0 && len(creds.KeyData) > 0
+	if isInlineSource(credsSource) && o.argoSecretManager != nil && (creds.Token != "" || hasInlineCertPair) {
 		// Addon labels in the canonical "enabled"/"disabled" vocabulary —
 		// the SAME value the reconciler writes when it later reconciles this
 		// cluster from managed-clusters.yaml (which we also write in this
@@ -293,10 +295,17 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 			models.AnnotationRegistrationPending: models.RegistrationPendingTimestamp(time.Now()),
 		}
 		_, ensureErr := o.argoSecretManager.Ensure(ctx, ArgoSecretSpec{
-			Name:        req.Name,
-			Server:      creds.Server,
-			CAData:      base64.StdEncoding.EncodeToString(creds.CAData),
-			Token:       creds.Token,
+			Name:   req.Name,
+			Server: creds.Server,
+			CAData: base64.StdEncoding.EncodeToString(creds.CAData),
+			Token:  creds.Token,
+			// Client-certificate kubeconfigs (kind / kubeadm / on-prem) carry
+			// a cert pair instead of a token; the manager emits ArgoCD's
+			// plain-TLS shape for them (cert > token > exec precedence,
+			// V2-cleanup-56.1). EncodeToString(nil) == "" so token-based
+			// registrations leave these empty.
+			CertData:    base64.StdEncoding.EncodeToString(creds.CertData),
+			KeyData:     base64.StdEncoding.EncodeToString(creds.KeyData),
 			Labels:      secretLabels,
 			Annotations: pendingAnnotations,
 		})

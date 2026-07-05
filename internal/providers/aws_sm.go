@@ -329,6 +329,13 @@ func (p *AWSSecretsManagerProvider) buildFromRawKubeconfig(raw []byte, secretNam
 	kc.Server = config.Host
 	kc.CAData = config.TLSClientConfig.CAData
 	kc.Token = config.BearerToken
+	// Carry the client cert pair for cert-based kubeconfigs (kind / kubeadm /
+	// on-prem). Only a complete pair is propagated — a half pair would never
+	// take the cert branch in the ArgoCD secret writers anyway (V2-cleanup-56.1).
+	if len(config.TLSClientConfig.CertData) > 0 && len(config.TLSClientConfig.KeyData) > 0 {
+		kc.CertData = config.TLSClientConfig.CertData
+		kc.KeyData = config.TLSClientConfig.KeyData
+	}
 
 	return kc, nil
 }

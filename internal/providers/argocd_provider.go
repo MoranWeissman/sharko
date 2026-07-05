@@ -173,10 +173,10 @@ func (e *ArgoCDProviderError) Is(target error) bool {
 // argoCDClusterConfig mirrors the JSON shape ArgoCD writes into the cluster
 // Secret's data["config"] field. Only the subset Sharko inspects is modelled.
 type argoCDClusterConfig struct {
-	BearerToken        string                  `json:"bearerToken,omitempty"`
-	AWSAuthConfig      *argoCDAWSAuthConfig    `json:"awsAuthConfig,omitempty"`
-	ExecProviderConfig *argoCDExecProvider     `json:"execProviderConfig,omitempty"`
-	TLSClientConfig    argoCDTLSClientConfig   `json:"tlsClientConfig"`
+	BearerToken        string                `json:"bearerToken,omitempty"`
+	AWSAuthConfig      *argoCDAWSAuthConfig  `json:"awsAuthConfig,omitempty"`
+	ExecProviderConfig *argoCDExecProvider   `json:"execProviderConfig,omitempty"`
+	TLSClientConfig    argoCDTLSClientConfig `json:"tlsClientConfig"`
 }
 
 type argoCDAWSAuthConfig struct {
@@ -194,6 +194,11 @@ type argoCDExecProvider struct {
 type argoCDTLSClientConfig struct {
 	Insecure bool   `json:"insecure,omitempty"`
 	CAData   string `json:"caData,omitempty"`
+	// CertData / KeyData carry the client certificate pair for the plain-TLS
+	// cluster secret shape (kind / kubeadm / on-prem clusters written by
+	// argosecrets.buildSecretConfig's cert branch, V2-cleanup-56.1).
+	CertData string `json:"certData,omitempty"`
+	KeyData  string `json:"keyData,omitempty"`
 }
 
 // listClusterSecrets returns all cluster-typed Secrets in the configured
@@ -241,6 +246,8 @@ func (p *ArgoCDProvider) findClusterSecret(ctx context.Context, clusterName stri
 //   - bearerToken non-empty       → returns ready-to-use *Kubeconfig
 //   - awsAuthConfig non-nil        → returns ErrArgoCDProviderIAMRequired
 //   - execProviderConfig non-nil   → returns ErrArgoCDProviderExecUnsupported
+//   - tlsClientConfig certData+keyData → returns ready-to-use *Kubeconfig
+//     (plain-TLS / client-certificate shape, V2-cleanup-56.1)
 //   - none of the above            → returns ErrArgoCDProviderUnsupportedAuth
 //
 // The caller can dispatch via errors.Is(err, ErrArgoCDProvider*) and pull the
@@ -304,15 +311,101 @@ func (p *ArgoCDProvider) GetCredentials(clusterName string) (*Kubeconfig, error)
 				storedName, cfg.ExecProviderConfig.Command),
 		}
 
+	case cfg.TLSClientConfig.CertData != "" && cfg.TLSClientConfig.KeyData != "":
+		return p.buildCertKubeconfig(storedName, server, cfg)
+
 	default:
 		return nil, &ArgoCDProviderError{
 			Code:        ArgoCDProviderCodeUnsupportedAuth,
 			ClusterName: storedName,
 			Server:      server,
 			Detail: fmt.Sprintf("argocd cluster secret for %q has no recognised auth shape "+
-				"(expected bearerToken, awsAuthConfig, or execProviderConfig)", storedName),
+				"(expected bearerToken, awsAuthConfig, execProviderConfig, or a tlsClientConfig client-certificate pair)", storedName),
 		}
 	}
+}
+
+// buildCertKubeconfig constructs a *Kubeconfig from the plain-TLS
+// (client-certificate) shape written by argosecrets.buildSecretConfig's cert
+// branch (V2-cleanup-56.1). CertData / KeyData / CAData are base64-decoded
+// from tlsClientConfig. The Raw field is a synthesized kubeconfig YAML that
+// round-trips through clientcmd.RESTConfigFromKubeConfig cleanly so downstream
+// consumers (remoteclient.NewClientFromKubeconfig) can use it as-is.
+func (p *ArgoCDProvider) buildCertKubeconfig(name, server string, cfg argoCDClusterConfig) (*Kubeconfig, error) {
+	if server == "" {
+		return nil, fmt.Errorf("argocd cluster secret for %q has empty server URL", name)
+	}
+
+	certBytes, err := base64.StdEncoding.DecodeString(cfg.TLSClientConfig.CertData)
+	if err != nil {
+		return nil, fmt.Errorf("decoding tlsClientConfig.certData for cluster %q: %w", name, err)
+	}
+	keyBytes, err := base64.StdEncoding.DecodeString(cfg.TLSClientConfig.KeyData)
+	if err != nil {
+		return nil, fmt.Errorf("decoding tlsClientConfig.keyData for cluster %q: %w", name, err)
+	}
+
+	var caBytes []byte
+	if cfg.TLSClientConfig.CAData != "" {
+		decoded, err := base64.StdEncoding.DecodeString(cfg.TLSClientConfig.CAData)
+		if err != nil {
+			return nil, fmt.Errorf("decoding tlsClientConfig.caData for cluster %q: %w", name, err)
+		}
+		caBytes = decoded
+	}
+
+	// Synthesize a minimal kubeconfig YAML. The original base64 strings go
+	// into the *-data fields verbatim (kubeconfig spec requires base64).
+	// The cluster block varies by TLS mode; the user block always carries
+	// the cert pair.
+	var clusterTLSLine string
+	switch {
+	case cfg.TLSClientConfig.Insecure:
+		clusterTLSLine = "\n    insecure-skip-tls-verify: true"
+	case cfg.TLSClientConfig.CAData != "":
+		clusterTLSLine = "\n    certificate-authority-data: " + cfg.TLSClientConfig.CAData
+	default:
+		// No CA data and not insecure — system trust roots will be used by callers.
+		clusterTLSLine = ""
+	}
+	kubeconfigYAML := fmt.Sprintf(`apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+    server: %s%s
+  name: %s
+contexts:
+- context:
+    cluster: %s
+    user: %s
+  name: %s
+current-context: %s
+users:
+- name: %s
+  user:
+    client-certificate-data: %s
+    client-key-data: %s
+`, server, clusterTLSLine, name, name, name, name, name, name,
+		cfg.TLSClientConfig.CertData, cfg.TLSClientConfig.KeyData)
+
+	// Verify the synthesized YAML round-trips through clientcmd. This is the
+	// same call downstream consumers make; failing here surfaces the bug at
+	// fetch time instead of inside remoteclient.
+	if _, err := clientcmd.RESTConfigFromKubeConfig([]byte(kubeconfigYAML)); err != nil {
+		return nil, fmt.Errorf("synthesized kubeconfig for cluster %q failed to parse: %w", name, err)
+	}
+
+	slog.Info("[provider] argocd client-certificate kubeconfig built",
+		"cluster", name, "server", server,
+		"hasCA", len(caBytes) > 0, "insecure", cfg.TLSClientConfig.Insecure)
+
+	return &Kubeconfig{
+		Raw:      []byte(kubeconfigYAML),
+		Server:   server,
+		CAData:   caBytes,
+		CertData: certBytes,
+		KeyData:  keyBytes,
+	}, nil
 }
 
 // buildBearerTokenKubeconfig constructs a *Kubeconfig from the bearerToken
