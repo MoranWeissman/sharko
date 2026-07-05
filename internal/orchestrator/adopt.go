@@ -92,7 +92,7 @@ func (o *Orchestrator) AdoptClusters(ctx context.Context, req AdoptClustersReque
 		if o.credProvider != nil && o.remoteClientFn != nil {
 			// Resolve the stored secretPath override (if any) — a re-adopted
 			// cluster may already have a record with one (V2-cleanup-55.1).
-			creds, credErr := o.credProvider.GetCredentials(o.credentialLookupKey(ctx, clusterName))
+			creds, credErr := o.fetchClusterCredentials(ctx, clusterName)
 			if credErr != nil {
 				cr.Status = "failed"
 				cr.Error = fmt.Sprintf("fetching credentials for cluster %q: %v", clusterName, credErr)

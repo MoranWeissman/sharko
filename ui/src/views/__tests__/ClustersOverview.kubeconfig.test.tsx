@@ -66,9 +66,10 @@ async function openAddDialog() {
 }
 
 // The creds-source <select> is identified by its current display value. The
-// dialog opens defaulting to the EKS-token option.
+// dialog opens with NO choice made (V2-cleanup-60.4 un-trap) — the select
+// shows a non-selectable placeholder until the user picks explicitly.
 function credsSourceSelect(): HTMLSelectElement {
-  return screen.getByDisplayValue(/Amazon EKS — generate a token/i) as HTMLSelectElement;
+  return screen.getByDisplayValue(/Choose where this cluster's credentials come from/i) as HTMLSelectElement;
 }
 
 describe('ClustersOverview — creds-reframe-2 credential source', () => {
@@ -82,30 +83,56 @@ describe('ClustersOverview — creds-reframe-2 credential source', () => {
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true } as Response)));
   });
 
-  it('offers the three plain-English credential-source options', async () => {
+  it('offers the three plain-English credential-source options behind a required placeholder', async () => {
     renderView();
     await openAddDialog();
 
     const select = credsSourceSelect();
     const values = Array.from(select.options).map((o) => o.value);
     expect(values).toEqual([
+      '',
       'inline-kubeconfig',
       'secret-kubeconfig',
       'eks-token',
     ]);
-    // Default is the EKS token path.
-    expect(select.value).toBe('eks-token');
+    // V2-cleanup-60.4: NO silent default — the dialog opens on the
+    // placeholder and the placeholder itself is not selectable.
+    expect(select.value).toBe('');
+    expect(select.options[0].disabled).toBe(true);
+  });
+
+  it('blocks Register and Preview until a credential source is explicitly chosen', async () => {
+    renderView();
+    await openAddDialog();
+
+    // Name alone is not enough — the creds-source choice is required.
+    fireEvent.change(screen.getByPlaceholderText(/prod-us-east-1/i), {
+      target: { value: 'trap-check' },
+    });
+
+    const registerButtons = screen.getAllByRole('button', { name: /^register/i });
+    expect(registerButtons.every((b) => b.hasAttribute('disabled'))).toBe(true);
+    const previewButton = screen.getByRole('button', { name: /preview/i });
+    expect(previewButton).toHaveAttribute('disabled');
+
+    // Picking the EKS token path explicitly unblocks (it has no extra
+    // required fields).
+    fireEvent.change(credsSourceSelect(), { target: { value: 'eks-token' } });
+    const registerAfter = screen.getAllByRole('button', { name: /^register/i });
+    expect(registerAfter.some((b) => !b.hasAttribute('disabled'))).toBe(true);
   });
 
   it('choosing "Paste a kubeconfig" shows the textarea + helper text and hides AWS fields', async () => {
     renderView();
     await openAddDialog();
 
-    // Start: EKS token form shows the AWS-shaped fields.
+    // Choose the EKS token path: the AWS-shaped fields appear.
+    const select = credsSourceSelect();
+    fireEvent.change(select, { target: { value: 'eks-token' } });
     expect(screen.getByPlaceholderText(/arn:aws:iam/i)).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/Override AWS SM secret name/i)).toBeInTheDocument();
 
-    fireEvent.change(credsSourceSelect(), { target: { value: 'inline-kubeconfig' } });
+    fireEvent.change(select, { target: { value: 'inline-kubeconfig' } });
 
     // AWS fields gone.
     expect(screen.queryByPlaceholderText(/arn:aws:iam/i)).not.toBeInTheDocument();

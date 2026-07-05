@@ -18,7 +18,7 @@ import (
 //   - Body includes a stable error code "provider_not_configured"
 //   - Body includes a hint string operators/UIs can render
 //
-// Coverage: every handler that early-returns on `s.credProvider == nil`.
+// Coverage: every handler that early-returns on `s.credProvider() == nil`.
 //
 // Note: handler order is "authz → provider check → other". Tests use the
 // isolated test server which has no auth headers wired, so the authz layer

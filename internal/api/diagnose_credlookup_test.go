@@ -38,7 +38,7 @@ func newDiagnoseCredLookupServer(t *testing.T) (*Server, *recordingCredProvider)
 		"configuration/managed-clusters.yaml": []byte(diagnoseCredLookupManagedClusters),
 	}})
 	fake := &recordingCredProvider{err: errors.New("stub credentials backend — lookup key is the assertion")}
-	srv.credProvider = fake
+	installCredProvider(srv, fake, nil, nil)
 	return srv, fake
 }
 

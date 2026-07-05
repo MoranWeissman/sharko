@@ -16,12 +16,11 @@ import (
 // honest for other API consumers.
 func TestGetProviders_ReportsPrefix(t *testing.T) {
 	srv := newTestServer()
-	srv.credProvider = healthTestStubCredProvider{}
-	srv.addonSecretCfg = &providers.AddonSecretProviderConfig{
+	installCredProvider(srv, healthTestStubCredProvider{}, &providers.AddonSecretProviderConfig{
 		Type:   "aws-sm",
 		Region: "eu-west-1",
 		Prefix: "clusters/",
-	}
+	}, nil)
 
 	req := httptest.NewRequest("GET", "/api/v1/providers", nil)
 	w := httptest.NewRecorder()
@@ -61,8 +60,7 @@ func TestGetProviders_ReportsPrefix(t *testing.T) {
 // so consumers get a stable shape.
 func TestGetProviders_PrefixKeyPresentWhenEmpty(t *testing.T) {
 	srv := newTestServer()
-	srv.credProvider = healthTestStubCredProvider{}
-	srv.clusterTestCfg = &providers.ClusterTestProviderConfig{Type: "k8s-secrets"}
+	installCredProvider(srv, healthTestStubCredProvider{}, nil, &providers.ClusterTestProviderConfig{Type: "k8s-secrets"})
 
 	req := httptest.NewRequest("GET", "/api/v1/providers", nil)
 	w := httptest.NewRecorder()

@@ -32,7 +32,7 @@ func (s *Server) handleBatchRegisterClusters(w http.ResponseWriter, r *http.Requ
 	if !authz.RequireWithResponse(w, r, "cluster.register") {
 		return
 	}
-	if s.credProvider == nil {
+	if s.credProvider() == nil {
 		writeMissingProviderError(w)
 		return
 	}
@@ -78,7 +78,7 @@ func (s *Server) handleBatchRegisterClusters(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	orch := orchestrator.New(&s.gitMu, s.credProvider, ac, git, s.gitopsCfg, s.repoPaths, nil)
+	orch := orchestrator.New(&s.gitMu, s.credProvider(), ac, git, s.gitopsCfg, s.repoPaths, nil)
 	s.attachPRTracker(orch)
 	orch.SetSecretManagement(s.addonSecretDefs, s.secretFetcher, remoteclient.NewClientFromKubeconfig)
 	if len(s.defaultAddons) > 0 {
@@ -86,8 +86,8 @@ func (s *Server) handleBatchRegisterClusters(w http.ResponseWriter, r *http.Requ
 	}
 	if s.argoSecretManager != nil {
 		roleARN := ""
-		if s.addonSecretCfg != nil {
-			roleARN = s.addonSecretCfg.RoleARN
+		if s.addonSecretCfg() != nil {
+			roleARN = s.addonSecretCfg().RoleARN
 		}
 		orch.SetArgoSecretManager(&argoManagerAdapter{mgr: s.argoSecretManager}, roleARN)
 	}

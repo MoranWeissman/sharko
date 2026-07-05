@@ -156,7 +156,7 @@ func (s *Server) runInitOperation(
 	ac orchestrator.ArgocdClient,
 	templateFS fs.FS,
 ) {
-	orch := orchestrator.New(&s.gitMu, s.credProvider, ac, gp, gitopsCfg, s.repoPaths, templateFS)
+	orch := orchestrator.New(&s.gitMu, s.credProvider(), ac, gp, gitopsCfg, s.repoPaths, templateFS)
 	s.attachPRTracker(orch)
 
 	s.opsStore.Start(sessionID)

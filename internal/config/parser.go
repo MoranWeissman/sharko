@@ -52,6 +52,10 @@ type clusterEntry struct {
 	// Secret (default); "user" = self-managed connection, Sharko syncs addon
 	// labels only (V2-cleanup-57.2). Mirrors models.ManagedClusterEntry.
 	ConnectionManagedBy string `yaml:"connectionManagedBy,omitempty"`
+	// CredsSource: where the cluster's credentials live (V2-cleanup-60.4):
+	// inline-kubeconfig / secret-kubeconfig / eks-token, or "" for records
+	// that predate the field. Mirrors models.ManagedClusterEntry.
+	CredsSource string `yaml:"credsSource,omitempty"`
 }
 
 // AddonCatalogSpec is the spec body of an enveloped addons-catalog.yaml.
@@ -167,6 +171,7 @@ func (p *Parser) ParseClusterAddons(data []byte) ([]models.Cluster, error) {
 			Labels:              parseLabels(entry.Labels),
 			Region:              entry.Region,
 			ConnectionManagedBy: entry.ConnectionManagedBy,
+			CredsSource:         entry.CredsSource,
 		}
 		clusters = append(clusters, cluster)
 	}

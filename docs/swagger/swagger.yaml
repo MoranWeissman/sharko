@@ -1389,6 +1389,15 @@ definitions:
     type: object
   internal_api.fleetClusterSummary:
     properties:
+      connection_managed_by:
+        description: |-
+          ConnectionManagedBy mirrors the cluster record's connectionManagedBy
+          (V2-cleanup-60.4 / review M6): "" or "sharko" — Sharko owns the ArgoCD
+          cluster Secret; "user" — self-managed connection (Sharko only syncs
+          addon labels). Sourced from the same cluster record the main
+          /clusters endpoint exposes, so fleet/dashboard consumers can render
+          the "connection managed by: me" mode without a second call.
+        type: string
       connection_status:
         type: string
       degraded_addons:
@@ -3549,8 +3558,13 @@ paths:
         "kubeconfig" field — bearer-token auth only).
         Optionally set "creds_source" to state explicitly where credentials come
         from: "inline-kubeconfig", "secret-kubeconfig", or "eks-token". When omitted
-        it is derived from "provider" (kubeconfig→inline, else→backend) so existing
-        requests are unchanged; when set it wins over "provider".
+        it is derived: provider "kubeconfig" → inline; a pasted "kubeconfig" with no
+        provider → inline (the paste is authoritative — it is never silently ignored
+        in favour of a backend lookup); anything else → backend. When set it wins
+        over "provider". The effective source is recorded on the cluster's
+        managed-clusters.yaml entry as "credsSource" and later credential fetches
+        (test/diagnose/secrets/addon operations) route by it, so inline-registered
+        clusters keep working when a secrets-backend connection is configured.
         Optionally set "connection_managed_by" to declare who owns the ArgoCD
         cluster secret: "sharko" (default — Sharko writes and rotates it) or
         "user" (self-managed — you create the secret by hand; Sharko never writes

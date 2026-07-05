@@ -174,13 +174,24 @@ describe('ClustersOverview — whose-connection labels (V2-cleanup-55.3)', () =>
       });
     }
 
+    // The dialog opens with NO creds-source choice (V2-cleanup-60.4 un-trap)
+    // — the select shows the non-selectable placeholder.
     function credsSourceSelect(): HTMLSelectElement {
-      return screen.getByDisplayValue(/Amazon EKS — generate a token/i) as HTMLSelectElement;
+      return screen.getByDisplayValue(/Choose where this cluster's credentials come from/i) as HTMLSelectElement;
     }
 
-    it('shows the EKS-token hint by default', async () => {
+    it('shows the required-choice hint by default and the EKS hint only after an explicit pick', async () => {
       renderView();
       await openAddDialog();
+
+      // No silent eks-token default anymore.
+      expect(credsSourceSelect().value).toBe('');
+      expect(
+        screen.getByText('Required — pick one of the three options before registering.'),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/short-lived AWS tokens/)).not.toBeInTheDocument();
+
+      fireEvent.change(credsSourceSelect(), { target: { value: 'eks-token' } });
 
       expect(
         screen.getByText(

@@ -490,6 +490,11 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		SecretPath:          req.SecretPath,
 		Labels:              clusterLabels,
 		ConnectionManagedBy: connMode,
+		// Stamp the effective creds source so later credential fetches
+		// (Test / Diagnose / secrets / addon ops) route correctly per
+		// cluster — an inline-registered cluster must be read via the
+		// ArgoCD provider under ANY backend connection (V2-cleanup-60.4).
+		CredsSource: string(credsSource),
 	})
 	if addEntryErr != nil {
 		log.Error("failed to add cluster entry to cluster-addons.yaml — continuing with values file only",
@@ -629,7 +634,7 @@ func (o *Orchestrator) DeregisterCluster(ctx context.Context, name string, serve
 	// Step 3: Delete Sharko-managed secrets from remote cluster (best-effort).
 	// Resolve the stored secretPath override (if any) — V2-cleanup-55.1.
 	if o.credProvider != nil {
-		creds, credErr := o.credProvider.GetCredentials(o.credentialLookupKey(ctx, name))
+		creds, credErr := o.fetchClusterCredentials(ctx, name)
 		if credErr == nil {
 			o.deleteAllAddonSecrets(ctx, creds.Raw) // best-effort, don't fail deregister for this
 		}
@@ -706,7 +711,7 @@ func (o *Orchestrator) UpdateClusterAddons(ctx context.Context, name string, ser
 	// Resolve the stored secretPath override (if any) — V2-cleanup-55.1.
 	var rawKubeconfig []byte
 	if o.credProvider != nil {
-		creds, credErr := o.credProvider.GetCredentials(o.credentialLookupKey(ctx, name))
+		creds, credErr := o.fetchClusterCredentials(ctx, name)
 		if credErr == nil {
 			rawKubeconfig = creds.Raw
 		}
@@ -870,7 +875,7 @@ func (o *Orchestrator) RefreshClusterCredentials(ctx context.Context, name strin
 		return nil
 	}
 	// Resolve the stored secretPath override (if any) — V2-cleanup-55.1.
-	if _, err := o.credProvider.GetCredentials(o.credentialLookupKey(ctx, name)); err != nil {
+	if _, err := o.fetchClusterCredentials(ctx, name); err != nil {
 		return fmt.Errorf("fetching fresh credentials for cluster %q: %w", name, err)
 	}
 	// Probe succeeded — hand off to reconciler. Secret write happens

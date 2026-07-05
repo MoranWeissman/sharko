@@ -97,7 +97,7 @@ describe('ClustersOverview — V125-1.4 dry-run null safety + tooltips', () => {
     // Choose "Paste a kubeconfig" + fill the minimum fields needed to enable
     // the Preview button (cluster name + kubeconfig text). creds-reframe-2:
     // the creds-source <select> replaced the old Provider dropdown.
-    const select = screen.getByDisplayValue(/Amazon EKS — generate a token/i) as HTMLSelectElement;
+    const select = screen.getByDisplayValue(/Choose where this cluster's credentials come from/i) as HTMLSelectElement;
     fireEvent.change(select, { target: { value: 'inline-kubeconfig' } });
     fireEvent.change(screen.getByPlaceholderText(/prod-us-east-1/i), {
       target: { value: 'kind-test' },
@@ -138,6 +138,12 @@ describe('ClustersOverview — V125-1.4 dry-run null safety + tooltips', () => {
 
     renderView();
     await openAddDialog();
+    // Explicit creds-source choice required (V2-cleanup-60.4: no silent
+    // eks-token default) — pick the token path, which needs no extra fields.
+    fireEvent.change(
+      screen.getByDisplayValue(/Choose where this cluster's credentials come from/i),
+      { target: { value: 'eks-token' } },
+    );
     fireEvent.change(screen.getByPlaceholderText(/prod-us-east-1/i), {
       target: { value: 'kind-test' },
     });
@@ -225,6 +231,10 @@ describe('ClustersOverview — V125-1.4 dry-run null safety + tooltips', () => {
     });
     renderView();
     await openAddDialog();
+    fireEvent.change(
+      screen.getByDisplayValue(/Choose where this cluster's credentials come from/i),
+      { target: { value: 'eks-token' } },
+    );
     fireEvent.change(screen.getByPlaceholderText(/prod-us-east-1/i), {
       target: { value: 'kind-test' },
     });

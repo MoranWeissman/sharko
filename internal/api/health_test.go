@@ -14,9 +14,9 @@ import (
 )
 
 // healthTestStubCredProvider is a minimal ClusterCredentialsProvider
-// implementation used only to flip srv.credProvider to non-nil for the
+// implementation used only to flip srv.credProvider() to non-nil for the
 // BUG-041 capability-flag assertion. The handler under test only checks
-// `s.credProvider != nil` — none of the interface methods are invoked.
+// `s.credProvider() != nil` — none of the interface methods are invoked.
 type healthTestStubCredProvider struct{}
 
 func (healthTestStubCredProvider) GetCredentials(string) (*providers.Kubeconfig, error) {
@@ -103,7 +103,7 @@ func TestHealthEndpoint_ClusterTestAvailable_False_NoCredProvider(t *testing.T) 
 // button fully enabled.
 func TestHealthEndpoint_ClusterTestAvailable_True_WithCredProvider(t *testing.T) {
 	srv := newTestServer()
-	srv.credProvider = &healthTestStubCredProvider{}
+	installCredProvider(srv, &healthTestStubCredProvider{}, nil, nil)
 	router := NewRouter(srv, nil)
 
 	req := httptest.NewRequest("GET", "/api/v1/health", nil)

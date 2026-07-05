@@ -145,6 +145,14 @@ type Orchestrator struct {
 	defaultRoleARN    string            // connection-level default RoleARN, held for SetArgoSecretManager back-compat
 	prTracker         PRTracker         // optional — tracks every commitChanges-created PR
 	triggerFn         func()            // optional — invoked after Sharko writes managed-clusters.yaml to nudge the reconciler; nil disables
+
+	// credsRouter routes per-cluster credential fetches by the cluster's
+	// stored creds source (V2-cleanup-60.4): inline-registered clusters are
+	// read via the ArgoCD provider regardless of the configured backend.
+	// New() defaults it from credProvider; the API layer overrides it via
+	// SetCredsRouter so api-side and orchestrator-side fetches share one
+	// router (and its cached ArgoCD reader).
+	credsRouter *providers.ClusterCredsRouter
 }
 
 // SetDefaultAddons configures the default addons applied to clusters
@@ -217,5 +225,17 @@ func New(
 		paths:        paths,
 		templateFS:   templateFS,
 		drainSleep:   5 * time.Second,
+		credsRouter:  providers.NewClusterCredsRouter(credProvider, providers.ClusterTestProviderConfig{}),
+	}
+}
+
+// SetCredsRouter overrides the per-cluster credential-fetch router
+// (V2-cleanup-60.4). The API layer passes its server-lifetime router here
+// (via attachPRTracker) so every per-request orchestrator shares the same
+// cached ArgoCD reader and the same test seam. Passing nil is a no-op —
+// the New() default stays in place.
+func (o *Orchestrator) SetCredsRouter(r *providers.ClusterCredsRouter) {
+	if r != nil {
+		o.credsRouter = r
 	}
 }
