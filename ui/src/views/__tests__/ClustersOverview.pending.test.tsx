@@ -231,7 +231,9 @@ describe('ClustersOverview — V125-1.5 manual-mode register toast (BUG-050)', (
       expect(screen.getByText(/PR opened — merge to activate/i)).toBeInTheDocument();
     });
 
-    const prLink = screen.getByRole('link', { name: 'https://github.com/org/repo/pull/77' }) as HTMLAnchorElement;
+    // V2-cleanup-61.1 (C4): the raw PR URL used to be the link text; now it
+    // matches the Addons flow's tidy "View PR" link.
+    const prLink = screen.getByRole('link', { name: /View PR/i }) as HTMLAnchorElement;
     expect(prLink.href).toBe('https://github.com/org/repo/pull/77');
     expect(prLink.target).toBe('_blank');
   });

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, act, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ClusterDetail } from '@/views/ClusterDetail';
 import { AuthContext } from '@/hooks/useAuth';
@@ -266,9 +266,9 @@ describe('ClusterDetail', () => {
     expect(screen.queryByText('Not Enabled')).not.toBeInTheDocument();
 
     // Table rows
-    expect(screen.getByText('Ingress-nginx')).toBeInTheDocument();
-    expect(screen.getByText('Cert-manager')).toBeInTheDocument();
-    expect(screen.getByText('Prometheus')).toBeInTheDocument();
+    expect(screen.getAllByText('ingress-nginx').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('cert-manager').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('prometheus').length).toBeGreaterThan(0);
 
     // Version override shown as Git Version
     expect(screen.getByText('4.6.0')).toBeInTheDocument();
@@ -289,7 +289,7 @@ describe('ClusterDetail', () => {
     renderView('addons');
 
     await waitFor(() => {
-      expect(screen.getByText('Ingress-nginx')).toBeInTheDocument();
+      expect(screen.getAllByText('ingress-nginx').length).toBeGreaterThan(0);
     });
 
     // Click "Healthy" stat card
@@ -297,10 +297,16 @@ describe('ClusterDetail', () => {
     expect(healthyCard).toBeTruthy();
     fireEvent.click(healthyCard!);
 
-    // Only healthy addon should show
-    expect(screen.getByText('Ingress-nginx')).toBeInTheDocument();
-    expect(screen.queryByText('Cert-manager')).not.toBeInTheDocument();
-    expect(screen.queryByText('Prometheus')).not.toBeInTheDocument();
+    // Only healthy addon should show in the comparison table. Scoped to
+    // the table itself (not `screen`) because the addon names also appear,
+    // unfiltered, in the separate "Manage Addons" toggle panel further
+    // down the page — that panel isn't touched by the table's stat-card
+    // filter, so a page-wide query would see cert-manager/prometheus there
+    // regardless of whether the table filtered correctly.
+    const table = screen.getByRole('table');
+    expect(within(table).getAllByText('ingress-nginx').length).toBeGreaterThan(0);
+    expect(within(table).queryByText('cert-manager')).not.toBeInTheDocument();
+    expect(within(table).queryByText('prometheus')).not.toBeInTheDocument();
   });
 
   it('navigates back when clicking back button', async () => {
@@ -318,10 +324,10 @@ describe('ClusterDetail', () => {
     renderView('addons');
 
     await waitFor(() => {
-      expect(screen.getByText('Cert-manager')).toBeInTheDocument();
+      expect(screen.getAllByText('cert-manager').length).toBeGreaterThan(0);
     });
 
-    // Cert-manager has 2 issues with long text, should show expand button
+    // cert-manager has 2 issues with long text, should show expand button
     expect(
       screen.getByText('Addon is configured in Git but not deployed in ArgoCD'),
     ).toBeInTheDocument();
@@ -357,7 +363,7 @@ describe('ClusterDetail', () => {
       expect(screen.getByText('All Addons')).toBeInTheDocument();
     });
 
-    expect(screen.getByText('Ingress-nginx')).toBeInTheDocument();
+    expect(screen.getAllByText('ingress-nginx').length).toBeGreaterThan(0);
   });
 
   // BUG-042: the cluster→addons sub-page must show open pending-PR
@@ -403,7 +409,7 @@ describe('ClusterDetail', () => {
       renderView('addons');
 
       await waitFor(() => {
-        expect(screen.getByText('Ingress-nginx')).toBeInTheDocument();
+        expect(screen.getAllByText('ingress-nginx').length).toBeGreaterThan(0);
       });
 
       // Wait for the PR fetch to resolve and badges to render.
@@ -437,7 +443,7 @@ describe('ClusterDetail', () => {
       renderView('addons');
 
       await waitFor(() => {
-        expect(screen.getByText('Ingress-nginx')).toBeInTheDocument();
+        expect(screen.getAllByText('ingress-nginx').length).toBeGreaterThan(0);
       });
 
       // Allow the PR fetch to resolve.
@@ -488,7 +494,7 @@ describe('ClusterDetail', () => {
       renderView('addons');
 
       await waitFor(() => {
-        expect(screen.getByText('Prometheus')).toBeInTheDocument();
+        expect(screen.getAllByText('prometheus').length).toBeGreaterThan(0);
       });
 
       await waitFor(() => {
@@ -530,7 +536,7 @@ describe('ClusterDetail', () => {
       renderView('addons');
 
       await waitFor(() => {
-        expect(screen.getByText('Ingress-nginx')).toBeInTheDocument();
+        expect(screen.getAllByText('ingress-nginx').length).toBeGreaterThan(0);
       });
 
       await waitFor(() => {
@@ -1631,10 +1637,11 @@ describe('ClusterDetail', () => {
       // Wait for the cluster name to appear (comparison loaded).
       await screen.findByText('prod-eu', {}, { timeout: 5000 });
 
-      // Addon names are displayed via capitalizeAddonName() — first letter uppercased.
+      // V2-cleanup-61.1 (E3c): addon names render as-is (no more
+      // capitalize-mangling of canonical names like "keda"/"velero").
       // Both keda (sync_failing) and velero (deploying) must appear in the table.
-      expect(screen.getByText('Keda')).toBeInTheDocument();
-      expect(screen.getByText('Velero')).toBeInTheDocument();
+      expect(screen.getAllByText('keda').length).toBeGreaterThan(0);
+      expect(screen.getAllByText('velero').length).toBeGreaterThan(0);
     });
   });
 

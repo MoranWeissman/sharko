@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Search, Server, Package, FileText, LayoutDashboard, Activity, ArrowUpCircle, Settings } from 'lucide-react'
+import { Search, Server, Package, LayoutDashboard, Activity, Settings, Network, BarChart3, ClipboardList } from 'lucide-react'
 import { api } from '@/services/api'
 
 interface SearchResult {
@@ -10,13 +10,20 @@ interface SearchResult {
   icon: typeof Search
 }
 
+// V2-cleanup-61.1 (A5): only list pages that actually land somewhere real.
+// "Version Drift Detector" (/version-matrix) and "Upgrade Checker"
+// (/upgrade) used to be here but both are a redirect / a hidden route with
+// no nav entry — offering them in the palette was a dead end. System,
+// Audit, and Dashboards are real routed pages with sidebar nav entries
+// (see Layout.tsx navSections) that the palette was missing.
 const PAGE_RESULTS: SearchResult[] = [
   { label: 'Dashboard', type: 'page', path: '/dashboard', icon: LayoutDashboard },
   { label: 'Clusters', type: 'page', path: '/clusters', icon: Server },
   { label: 'Addons Catalog', type: 'page', path: '/addons', icon: Package },
-  { label: 'Version Drift Detector', type: 'page', path: '/version-matrix', icon: FileText },
+  { label: 'System', type: 'page', path: '/system', icon: Network },
   { label: 'Observability', type: 'page', path: '/observability', icon: Activity },
-  { label: 'Upgrade Checker', type: 'page', path: '/upgrade', icon: ArrowUpCircle },
+  { label: 'Dashboards', type: 'page', path: '/dashboards', icon: BarChart3 },
+  { label: 'Audit Log', type: 'page', path: '/audit', icon: ClipboardList },
   { label: 'Settings', type: 'page', path: '/settings', icon: Settings },
 ]
 
@@ -125,7 +132,7 @@ export function CommandPalette() {
 
       {/* Modal */}
       <div className="fixed left-1/2 top-[20%] z-[60] w-full max-w-lg -translate-x-1/2">
-        <div className="overflow-hidden rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-2xl dark:border-gray-700 dark:bg-gray-900">
+        <div className="overflow-hidden rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-2xl dark:ring-gray-700 dark:bg-gray-900">
           {/* Search input */}
           <div className="flex items-center gap-3 border-b border-[#6aade0] px-4 dark:border-gray-700">
             <Search className="h-5 w-5 shrink-0 text-[#3a6a8a]" />
@@ -138,7 +145,7 @@ export function CommandPalette() {
               placeholder="Search pages, clusters, addons..."
               className="w-full bg-transparent py-3.5 text-sm text-[#0a2a4a] placeholder-[#5a8aaa] outline-none dark:text-gray-100"
             />
-            <kbd className="hidden shrink-0 rounded ring-2 ring-[#6aade0] bg-[#e8f4ff] px-1.5 py-0.5 text-[10px] font-medium text-[#3a6a8a] sm:block dark:border-gray-700 dark:bg-gray-800">
+            <kbd className="hidden shrink-0 rounded ring-2 ring-[#6aade0] bg-[#e8f4ff] px-1.5 py-0.5 text-[10px] font-medium text-[#3a6a8a] sm:block dark:ring-gray-700 dark:bg-gray-800">
               ESC
             </kbd>
           </div>

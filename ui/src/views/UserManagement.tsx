@@ -268,7 +268,7 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
       )}
 
       {/* Role legend */}
-      <div className="flex flex-wrap gap-4 rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+      <div className="flex flex-wrap gap-4 rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 shadow-sm dark:ring-gray-700 dark:bg-gray-800">
         <div className="text-xs font-medium text-[#2a5a7a] dark:text-gray-400">Roles:</div>
         <div className="flex items-center gap-1.5 text-xs">
           <Shield className="h-3.5 w-3.5 text-red-500" />
@@ -288,7 +288,7 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
       </div>
 
       {/* Users table */}
-      <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
+      <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm dark:ring-gray-700 dark:bg-gray-800">
         <div className="flex items-center justify-between border-b border-[#6aade0] p-4 dark:border-gray-700">
           <h3 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
             Users ({users.length})
@@ -445,7 +445,7 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
       )}
 
       {/* API Tokens section */}
-      <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
+      <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm dark:ring-gray-700 dark:bg-gray-800">
         <div className="flex items-center justify-between border-b border-[#6aade0] p-4 dark:border-gray-700">
           <h3 className="flex items-center gap-2 text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
             <Key className="h-5 w-5 text-[#3a6a8a]" />

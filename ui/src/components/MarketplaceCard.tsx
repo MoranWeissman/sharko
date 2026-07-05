@@ -155,7 +155,7 @@ export function MarketplaceCard({
           <Package className="h-5 w-5" />
         </div>
         <div className="min-w-0 flex-1">
-          <h3 className="truncate text-base font-bold capitalize text-[#0a2a4a] dark:text-gray-100">
+          <h3 className="truncate text-base font-bold text-[#0a2a4a] dark:text-gray-100">
             {entry.name}
           </h3>
           <p className="mt-0.5 truncate text-xs text-[#2a5a7a] dark:text-gray-400">

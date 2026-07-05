@@ -141,7 +141,7 @@ export function EnableAddonPicker({
                   className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-[#d6eeff] dark:hover:bg-gray-700"
                 >
                   <Plus className="h-3.5 w-3.5 shrink-0 text-teal-600 dark:text-teal-400" />
-                  <span className="capitalize text-[#0a2a4a] dark:text-gray-200">{addonName}</span>
+                  <span className="text-[#0a2a4a] dark:text-gray-200">{addonName}</span>
                 </button>
               ))
             )}

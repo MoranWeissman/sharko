@@ -586,7 +586,7 @@ export function MarketplaceAddonDetail({
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
           <h1
             id="mp-addon-detail-title"
-            className="truncate text-xl font-bold capitalize text-[#0a2a4a] dark:text-gray-100"
+            className="truncate text-xl font-bold text-[#0a2a4a] dark:text-gray-100"
           >
             {entry.name}
           </h1>
@@ -725,7 +725,7 @@ export function MarketplaceAddonDetail({
         <header className="flex flex-col gap-1">
           <h2
             id="mp-add-panel-title"
-            className="text-base font-bold capitalize text-[#0a2a4a] dark:text-gray-100"
+            className="text-base font-bold text-[#0a2a4a] dark:text-gray-100"
           >
             Add {entry.name} to your catalog
           </h2>
@@ -750,7 +750,7 @@ export function MarketplaceAddonDetail({
           >
             <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
             <p>
-              <span className="font-semibold capitalize">{entry.name}</span> is
+              <span className="font-semibold">{entry.name}</span> is
               already in your catalog.{' '}
               <Link
                 to={`/addons/${encodeURIComponent(entry.name)}`}
