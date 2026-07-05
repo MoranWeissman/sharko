@@ -117,3 +117,11 @@ The handoff: **BMAD plans → tech lead dispatches → role agents build → tec
 **Leadership:**
 - `.claude/team/product-manager.md` — product vision, user needs, feature prioritization
 - `.claude/team/project-manager.md` — progress tracking, build sequence, quality gates
+
+## Model Routing (agent dispatches)
+
+Two tiers, chosen per dispatch by the tech lead:
+
+- **Thinking work stays on the strongest model (currently Fable 5):** orchestration (the main chat), BMAD planning and design sessions, code review agents, debugging/root-cause investigation, and anything touching secrets or security-sensitive code. Never downgrade these.
+- **Implementation dispatches default to Sonnet 5** (`model: sonnet` on the Agent call): story briefs already carry exact files, acceptance criteria, and quality gates, and every agent's work must pass build + tests + review — that safety net is what makes the cheaper/faster tier safe.
+- **Escape hatch (tech-lead judgment):** upgrade a specific implementation dispatch back to the strongest model when the story is hard thinking in disguise — deep cross-cutting refactors, root-cause fixes, or credential-handling code.
