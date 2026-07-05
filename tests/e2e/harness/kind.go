@@ -27,6 +27,12 @@ const (
 	SentinelOn  = "true"
 	clusterName = "sharko-e2e"
 
+	// LabelTestLegacy is the pre-rename (sharko.io) spelling of LabelTest.
+	// New clusters are only ever labeled with LabelTest, but the stale-cluster
+	// sweeper (hasSentinelLabel) must still recognize clusters leaked by
+	// pre-rename harness runs, or they'd never get cleaned up.
+	LabelTestLegacy = "e2e.sharko.io/test"
+
 	defaultKindImage     = "kindest/node:v1.31.0"
 	defaultKindBin       = "kind"
 	defaultKubectlBin    = "kubectl"
@@ -464,11 +470,21 @@ func liveKindClusters(kindBin string) []string {
 	return names
 }
 
+// jsonPathLabel escapes the literal dots in a Kubernetes label key so it can
+// be embedded in a kubectl jsonpath selector (e.g. "e2e.sharko.dev/test" ->
+// `e2e\.sharko\.dev/test`).
+func jsonPathLabel(label string) string {
+	return strings.ReplaceAll(label, ".", `\.`)
+}
+
 // hasSentinelLabel returns true iff at least one node in the cluster carries
-// e2e.sharko.dev/test=true. Probes via `kind get kubeconfig` piped to `kubectl
-// get nodes -o jsonpath`. Returns false on any error (defensive — a probe
-// failure means we cannot prove the sentinel is present, so leave the
-// cluster alone).
+// e2e.sharko.dev/test=true (current spelling, LabelTest) OR
+// e2e.sharko.io/test=true (pre-rename spelling, LabelTestLegacy). Reading
+// both means kind clusters leaked by pre-rename harness runs still get
+// swept up, not just new ones. Probes via `kind get kubeconfig` piped to
+// `kubectl get nodes -o jsonpath`. Returns false on any error (defensive —
+// a probe failure means we cannot prove the sentinel is present, so leave
+// the cluster alone).
 func hasSentinelLabel(t *testing.T, clusterName string, req ProvisionRequest) bool {
 	t.Helper()
 
@@ -497,8 +513,13 @@ func hasSentinelLabel(t *testing.T, clusterName string, req ProvisionRequest) bo
 
 	probeCtx, probeCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer probeCancel()
-	// jsonpath dot in the label key MUST be escaped: e2e\.sharko\.dev/test
-	jsonpath := `{.items[*].metadata.labels.e2e\.sharko\.dev/test}`
+	// jsonpath dots in the label key MUST be escaped — jsonPathLabel does
+	// that for both LabelTest and LabelTestLegacy so the two selectors stay
+	// derived from the same constants used everywhere else in this file.
+	jsonpath := fmt.Sprintf(
+		"{.items[*].metadata.labels.%s} {.items[*].metadata.labels.%s}",
+		jsonPathLabel(LabelTest), jsonPathLabel(LabelTestLegacy),
+	)
 	out, err := exec.CommandContext(probeCtx, req.KubectlBinary,
 		"--kubeconfig", f.Name(),
 		"get", "nodes",

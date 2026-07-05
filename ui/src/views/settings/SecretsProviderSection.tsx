@@ -28,8 +28,19 @@ type CanonicalProviderType = 'argocd' | 'aws-sm' | 'k8s-secrets' | 'azure' | 'gc
 // auto-default arm — that arm isn't a user-selectable type.
 type ProviderType = '' | CanonicalProviderType
 
+// Sentinel for "the connection's stored provider type doesn't canonicalize
+// onto any known row." Before this guard, canonicalizeProviderType's ''
+// fallback made an unrecognized stored type indistinguishable from
+// genuinely unconfigured — the dropdown silently showed "None", and a
+// Save the user thought was a no-op (or unrelated, e.g. saving a region
+// tweak) persisted `provider: undefined`, wiping the backend's config
+// (L7). Selecting this sentinel keeps the form from claiming "None" and
+// makes Save pass the raw stored type through unchanged instead.
+const UNKNOWN_PROVIDER = '__unknown__' as const
+type FormProviderType = ProviderType | typeof UNKNOWN_PROVIDER
+
 interface ProviderFormData {
-  provider_type: ProviderType
+  provider_type: FormProviderType
   provider_region: string
   provider_prefix: string
 }
@@ -133,6 +144,9 @@ export function SecretsProviderSection() {
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [justSaved, setJustSaved] = useState(false)
+  // Non-null iff the currently hydrated form.provider_type === UNKNOWN_PROVIDER;
+  // holds the raw stored string so Save can pass it through unchanged.
+  const [unknownRawType, setUnknownRawType] = useState<string | null>(null)
 
   // GET /providers feeds the STATUS card only (type / region / live
   // health). It is deliberately NOT the source the form hydrates from:
@@ -169,8 +183,21 @@ export function SecretsProviderSection() {
 
   useEffect(() => {
     if (!hasConnProvider) return
+    const canonical = canonicalizeProviderType(connType)
+    if (connType && canonical === '') {
+      // Non-empty stored type that maps to nothing we recognize — do NOT
+      // hydrate as "None" (see UNKNOWN_PROVIDER comment above).
+      setUnknownRawType(connType)
+      setForm({
+        provider_type: UNKNOWN_PROVIDER,
+        provider_region: connRegion,
+        provider_prefix: connPrefix,
+      })
+      return
+    }
+    setUnknownRawType(null)
     setForm({
-      provider_type: canonicalizeProviderType(connType),
+      provider_type: canonical,
       provider_region: connRegion,
       provider_prefix: connPrefix,
     })
@@ -183,8 +210,19 @@ export function SecretsProviderSection() {
   // the connection means nothing to lose.
   useEffect(() => {
     if (hasConnProvider || !providerInfo) return
+    const canonical = canonicalizeProviderType(providerInfo.type)
+    if (providerInfo.type && canonical === '') {
+      setUnknownRawType(providerInfo.type)
+      setForm({
+        provider_type: UNKNOWN_PROVIDER,
+        provider_region: providerInfo.region || '',
+        provider_prefix: providerInfo.prefix || '',
+      })
+      return
+    }
+    setUnknownRawType(null)
     setForm({
-      provider_type: canonicalizeProviderType(providerInfo.type),
+      provider_type: canonical,
       provider_region: providerInfo.region || '',
       provider_prefix: providerInfo.prefix || '',
     })
@@ -196,7 +234,7 @@ export function SecretsProviderSection() {
     setSaveError(null)
     try {
       // Build minimal payload preserving existing connection data
-      const connPayload = buildConnectionPayload(existingConn, form)
+      const connPayload = buildConnectionPayload(existingConn, form, unknownRawType)
       await api.updateConnection(existingConn.name, connPayload)
       // Toast first: refreshConnections() flips the shared loading flag,
       // and feedback rendered inside this section would be swallowed by
@@ -284,9 +322,20 @@ export function SecretsProviderSection() {
               <select
                 className={selectCls}
                 value={form.provider_type}
-                onChange={(e) => setForm(prev => ({ ...prev, provider_type: e.target.value as ProviderType }))}
+                onChange={(e) => {
+                  // Any explicit user selection replaces the "keep as-is"
+                  // sentinel — they've now made a real choice, including
+                  // deliberately picking "None".
+                  setUnknownRawType(null)
+                  setForm(prev => ({ ...prev, provider_type: e.target.value as ProviderType }))
+                }}
               >
                 <option value="">None</option>
+                {unknownRawType && (
+                  <option value={UNKNOWN_PROVIDER} disabled>
+                    Unknown provider &quot;{unknownRawType}&quot; (keep as-is)
+                  </option>
+                )}
                 {PROVIDER_OPTIONS.map((opt) => (
                   <option key={opt.value} value={opt.value} disabled={!opt.supported}>
                     {opt.label}
@@ -297,6 +346,10 @@ export function SecretsProviderSection() {
                 <p className="mt-1 text-[10px] text-[#3a6a8a]">
                   Sharko reads credentials from the ArgoCD cluster Secret it creates during register-cluster. No additional setup required when Sharko runs in-cluster.
                 </p>
+              ) : form.provider_type === UNKNOWN_PROVIDER ? (
+                <p className="mt-1 text-[10px] text-amber-600 dark:text-amber-400">
+                  This connection's stored provider type ("{unknownRawType}") isn't one Sharko's UI recognizes. Saving now keeps it unchanged — pick a different option above to replace it.
+                </p>
               ) : form.provider_type !== '' && !isSupported(form.provider_type) ? (
                 <p className="mt-1 text-[10px] text-amber-600 dark:text-amber-400">
                   This provider is not yet supported — Sharko can't retrieve cluster credentials with it. Pick AWS Secrets Manager, Kubernetes Secrets, or ArgoCD.
@@ -305,7 +358,7 @@ export function SecretsProviderSection() {
                 <p className="mt-1 text-[10px] text-[#3a6a8a]">How Sharko retrieves cluster credentials for secret-based providers.</p>
               )}
             </div>
-            {form.provider_type !== '' && REGION_PROVIDERS.has(form.provider_type) && (
+            {form.provider_type !== '' && form.provider_type !== UNKNOWN_PROVIDER && REGION_PROVIDERS.has(form.provider_type) && (
               <div>
                 <label className={labelCls}>Region</label>
                 <input
@@ -316,7 +369,7 @@ export function SecretsProviderSection() {
                 />
               </div>
             )}
-            {form.provider_type !== '' && PREFIX_PROVIDERS.has(form.provider_type) && (
+            {form.provider_type !== '' && form.provider_type !== UNKNOWN_PROVIDER && PREFIX_PROVIDERS.has(form.provider_type) && (
               <div>
                 <label className={labelCls}>Prefix <span className="text-[#3a6a8a] font-normal">(optional)</span></label>
                 <input
@@ -362,10 +415,16 @@ export function SecretsProviderSection() {
   )
 }
 
-// Build a full connection update payload, preserving existing fields
+// Build a full connection update payload, preserving existing fields.
+// `unknownRawType` is non-null iff the form is showing the "unknown
+// provider, keep as-is" sentinel (UNKNOWN_PROVIDER) — in that case the
+// original stored type string is written back unchanged instead of the
+// sentinel itself, so Save can never silently wipe an unrecognized
+// provider config just because the UI didn't have a row for it (L7).
 function buildConnectionPayload(
   conn: { name: string; git_provider: string; git_repo_identifier: string; argocd_server_url: string; argocd_namespace: string },
-  providerForm: ProviderFormData
+  providerForm: ProviderFormData,
+  unknownRawType: string | null
 ) {
   let gitUrl = ''
   if (conn.git_provider === 'github') {
@@ -376,6 +435,8 @@ function buildConnectionPayload(
       gitUrl = `https://dev.azure.com/${parts[0]}/${parts[1]}/_git/${parts[2]}`
     }
   }
+  const resolvedProviderType =
+    providerForm.provider_type === UNKNOWN_PROVIDER ? unknownRawType : providerForm.provider_type
   return {
     name: conn.name,
     git: { repo_url: gitUrl },
@@ -384,9 +445,9 @@ function buildConnectionPayload(
       namespace: conn.argocd_namespace || 'argocd',
       insecure: true,
     },
-    provider: providerForm.provider_type
+    provider: resolvedProviderType
       ? {
-          type: providerForm.provider_type,
+          type: resolvedProviderType,
           region: providerForm.provider_region || undefined,
           prefix: providerForm.provider_prefix || undefined,
         }

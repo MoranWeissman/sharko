@@ -196,8 +196,11 @@ make test-e2e-fast
 # changes touching orchestrator, reconciler, or secrets paths
 make test-e2e
 
-# Forbidden-content sweep (always — see CLAUDE.md Content Policy)
-grep -rn "scrdairy\|merck\|msd\.com\|mahi-techlabs\|merck-ahtl" \
+# Forbidden-content sweep (always — see CLAUDE.md Content Policy). The pattern list lives
+# only in .github/workflows/ci.yml's security-scan job (FORBIDDEN_PATTERNS array); extract
+# at runtime — never duplicate the literal strings in this doc.
+grep -rn -f <(sed -n '/FORBIDDEN_PATTERNS=(/,/)/p' .github/workflows/ci.yml \
+    | grep -oE '"[^"]+"' | tr -d '"') \
   --include="*.go" --include="*.ts" --include="*.yaml" . | \
   grep -v node_modules | grep -v .git/
 # (Must return empty.)

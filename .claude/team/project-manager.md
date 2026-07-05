@@ -26,8 +26,10 @@ swag init -g cmd/sharko/serve.go -o docs/swagger --parseDependency --parseIntern
 go run ./cmd/schema-gen               # if envelope-relevant model changed (V125-1-9)
 ./bin/sharko validate-config docs/site/configuration/  # YAML samples (V125-1-9)
 
-# Security check
-grep -rn "scrdairy\|merck\|msd\.com\|mahi-techlabs\|merck-ahtl" \
+# Security check — pattern list lives only in .github/workflows/ci.yml's security-scan
+# job (FORBIDDEN_PATTERNS array); extract at runtime, never duplicate the literal strings here
+grep -rn -f <(sed -n '/FORBIDDEN_PATTERNS=(/,/)/p' .github/workflows/ci.yml \
+    | grep -oE '"[^"]+"' | tr -d '"') \
   --include="*.go" --include="*.ts" --include="*.yaml" . | \
   grep -v node_modules | grep -v .git/   # Must return empty
 ```

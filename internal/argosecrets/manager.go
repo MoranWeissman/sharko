@@ -45,27 +45,41 @@ const (
 // Annotation keys used by Sharko on ArgoCD cluster secrets.
 const (
 	// AnnotationAdopted marks a cluster as adopted (vs. registered from scratch).
-	AnnotationAdopted = "sharko.sharko.dev/adopted"
+	// Canonical key as of V2-cleanup-60.5 (L10): the V2-cleanup-59 rename
+	// landed "sharko.sharko.dev/adopted", carrying a historical doubled
+	// "sharko." prefix into the new domain. Zero adopters existed while that
+	// spelling was live, so this is the one and only chance to correct it
+	// for free. Writers stamp ONLY this key.
+	AnnotationAdopted = "sharko.dev/adopted"
+
+	// AnnotationAdoptedDoubledPrefixLegacy is the short-lived V2-cleanup-59
+	// canonical spelling ("sharko.sharko.dev/adopted"), superseded by
+	// AnnotationAdopted (L10, V2-cleanup-60.5). Only ever READ.
+	AnnotationAdoptedDoubledPrefixLegacy = "sharko.sharko.dev/adopted"
 
 	// AnnotationAdoptedLegacy is the pre-V2-cleanup-59 adopted key
 	// (sharko.io — a domain the project never owned). Only ever READ:
 	// clusters adopted before the group rename carry it on their live
 	// ArgoCD Secret, and it must keep protecting them from the orphan
 	// sweeps for all of v2.x. Writers stamp only AnnotationAdopted;
-	// Unadopt removes both. Use IsAdopted for every presence check.
+	// Unadopt removes all three spellings. Use IsAdopted for every
+	// presence check.
 	AnnotationAdoptedLegacy = "sharko.sharko.io/adopted"
 )
 
 // IsAdopted reports whether annotations mark the cluster Secret as adopted,
-// under EITHER the canonical or the legacy key (V2-cleanup-59 READ-BOTH).
-// nil-safe. This is the single shared predicate for the adopted state —
-// internal/clusterreconciler's orphan sweep uses it too, so the two
-// reconcilers can never disagree about what "adopted" means.
+// under ANY of the three key spellings (canonical, the short-lived
+// doubled-prefix spelling, or the original pre-rename legacy key —
+// V2-cleanup-60.5 READ-ALL-THREE). nil-safe. This is the single shared
+// predicate for the adopted state — internal/clusterreconciler's orphan
+// sweep uses it too, so the two reconcilers can never disagree about what
+// "adopted" means.
 func IsAdopted(annotations map[string]string) bool {
 	if annotations == nil {
 		return false
 	}
 	return annotations[AnnotationAdopted] == "true" ||
+		annotations[AnnotationAdoptedDoubledPrefixLegacy] == "true" ||
 		annotations[AnnotationAdoptedLegacy] == "true"
 }
 
@@ -415,8 +429,9 @@ func (m *Manager) Ensure(ctx context.Context, spec ClusterSecretSpec) (bool, err
 			adopted.Annotations = make(map[string]string)
 		}
 		adopted.Annotations[AnnotationAdopted] = "true"
-		// Normalise a pre-rename adopted marker while we are writing anyway:
-		// the canonical key above supersedes it (V2-cleanup-59).
+		// Normalise any older adopted marker while we are writing anyway:
+		// the canonical key above supersedes both (V2-cleanup-59, V2-cleanup-60.5).
+		delete(adopted.Annotations, AnnotationAdoptedDoubledPrefixLegacy)
 		delete(adopted.Annotations, AnnotationAdoptedLegacy)
 		if spec.Annotations != nil {
 			adopted.Annotations = mergeAnnotations(adopted.Annotations, spec.Annotations)
@@ -779,8 +794,9 @@ func (m *Manager) Unadopt(ctx context.Context, name string) error {
 	updated := existing.DeepCopy()
 	delete(updated.Labels, LabelManagedBy)
 	delete(updated.Annotations, AnnotationAdopted)
-	// A cluster adopted before the group rename carries the legacy key —
-	// remove it too, or the Secret would stay orphan-sweep-immune forever.
+	// A cluster adopted before either rename carries an older key spelling —
+	// remove both, or the Secret would stay orphan-sweep-immune forever.
+	delete(updated.Annotations, AnnotationAdoptedDoubledPrefixLegacy)
 	delete(updated.Annotations, AnnotationAdoptedLegacy)
 	if _, updateErr := m.client.CoreV1().Secrets(m.namespace).Update(ctx, updated, metav1.UpdateOptions{}); updateErr != nil {
 		return fmt.Errorf("unadopting secret %q in namespace %q: %w", name, m.namespace, updateErr)

@@ -207,8 +207,10 @@ go run ./cmd/schema-gen                       # If any schema-relevant model fie
 make test-e2e-fast                            # In-process e2e (~30s, no kind)
 # make test-e2e                               # Full kind-backed e2e (~10-15 min) — for release-gate runs
 
-# Security (always)
-grep -rn "scrdairy\|merck\|msd\.com\|mahi-techlabs\|merck-ahtl" \
+# Security (always) — pattern list lives only in .github/workflows/ci.yml's security-scan
+# job (FORBIDDEN_PATTERNS array); extract at runtime, never duplicate the literal strings here
+grep -rn -f <(sed -n '/FORBIDDEN_PATTERNS=(/,/)/p' .github/workflows/ci.yml \
+    | grep -oE '"[^"]+"' | tr -d '"') \
   --include="*.go" --include="*.ts" --include="*.yaml" . | \
   grep -v node_modules | grep -v .git/
 ```

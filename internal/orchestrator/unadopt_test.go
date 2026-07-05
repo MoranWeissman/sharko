@@ -111,6 +111,35 @@ func TestUnadoptCluster_LegacyAnnotation_StillRecognised(t *testing.T) {
 	}
 }
 
+// TestUnadoptCluster_DoubledPrefixLegacyAnnotation_StillRecognised
+// (V2-cleanup-60.5 L10): a cluster adopted during the short window when
+// "sharko.sharko.dev/adopted" (the doubled-prefix V2-cleanup-59 spelling)
+// was canonical carries only that key. Unadopt must keep recognising it —
+// read-all-three, not read-both.
+func TestUnadoptCluster_DoubledPrefixLegacyAnnotation_StillRecognised(t *testing.T) {
+	argocd := newMockArgocd()
+	git := newMockGitProvider()
+	git.files["configuration/managed-clusters.yaml"] = []byte("clusters:\n  - name: cluster-a\n    labels: {}\n")
+
+	asm := newMockArgoSecretManager()
+	// ONLY the short-lived doubled-prefix key present.
+	asm.annotations["cluster-a"] = map[string]string{AnnotationAdoptedDoubledPrefixLegacy: "true"}
+
+	orch := New(nil, nil, argocd, git, autoMergeGitOps(), defaultPaths(), nil)
+	orch.SetArgoSecretManager(asm, "")
+
+	result, err := orch.UnadoptCluster(context.Background(), "cluster-a", UnadoptClusterRequest{Yes: true})
+	if err != nil {
+		t.Fatalf("unexpected error for doubled-prefix-annotated cluster: %v", err)
+	}
+	if result.Status != "success" {
+		t.Errorf("expected success, got %s (error: %s)", result.Status, result.Error)
+	}
+	if len(asm.unadopted) != 1 || asm.unadopted[0] != "cluster-a" {
+		t.Errorf("expected unadopt call for cluster-a, got: %v", asm.unadopted)
+	}
+}
+
 func TestUnadoptCluster_EmptyName(t *testing.T) {
 	orch := New(nil, nil, newMockArgocd(), newMockGitProvider(), autoMergeGitOps(), defaultPaths(), nil)
 	_, err := orch.UnadoptCluster(context.Background(), "", UnadoptClusterRequest{Yes: true})

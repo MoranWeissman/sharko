@@ -359,7 +359,15 @@ jobs:
               line="Tested with ArgoCD ${min}–${max}"
             fi
           fi
-          echo "SHARKO_TESTED_ARGOCD_LINE=${line}" >> "$GITHUB_ENV"
+          # Heredoc delimiter form (multiline-safe) — a plain KEY=value
+          # write to GITHUB_ENV breaks if the value ever contains a
+          # newline; this is fine even if the "Tested with ArgoCD..."
+          # line stays single-line forever.
+          {
+            echo "SHARKO_TESTED_ARGOCD_LINE<<SHARKO_ARGOCD_LINE_EOF"
+            echo "$line"
+            echo "SHARKO_ARGOCD_LINE_EOF"
+          } >> "$GITHUB_ENV"
           echo "release-notes tested-range line: '${line}'"
 
       - name: Run GoReleaser

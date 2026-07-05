@@ -14,8 +14,19 @@ import (
 // AnnotationAdopted is the key used to mark a cluster as adopted by Sharko.
 // Writers stamp ONLY this key. Kept in lockstep with
 // internal/argosecrets.AnnotationAdopted (the orchestrator cannot import
-// argosecrets — dependency boundary).
-const AnnotationAdopted = "sharko.sharko.dev/adopted"
+// argosecrets — dependency boundary, see internal/orchestrator/orchestrator.go).
+//
+// Canonical spelling as of V2-cleanup-60.5 (L10): the V2-cleanup-59 rename
+// landed "sharko.sharko.dev/adopted", a historical doubled "sharko." prefix.
+// Zero adopters existed while that spelling was live, so this is the one
+// and only chance to correct it for free.
+const AnnotationAdopted = "sharko.dev/adopted"
+
+// AnnotationAdoptedDoubledPrefixLegacy is the short-lived V2-cleanup-59
+// canonical spelling ("sharko.sharko.dev/adopted"), superseded by
+// AnnotationAdopted (L10, V2-cleanup-60.5). Only ever READ. Kept in
+// lockstep with internal/argosecrets.AnnotationAdoptedDoubledPrefixLegacy.
+const AnnotationAdoptedDoubledPrefixLegacy = "sharko.sharko.dev/adopted"
 
 // AnnotationAdoptedLegacy is the pre-V2-cleanup-59 adopted key (sharko.io —
 // a domain the project never owned). Only ever READ: clusters adopted before

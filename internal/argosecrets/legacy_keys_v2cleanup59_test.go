@@ -6,6 +6,12 @@ package argosecrets
 // rename still carries the OLD keys on its ArgoCD Secrets; these tests pin
 // that such Secrets keep being recognised (adopted protection, check-label
 // strips) and that Sharko's own writers migrate labels to the new key.
+//
+// V2-cleanup-60.5 (L10) widened this to READ-ALL-THREE: the V2-cleanup-59
+// canonical spelling itself ("sharko.sharko.dev/adopted") carried a
+// historical doubled "sharko." prefix, corrected here to "sharko.dev/adopted"
+// while adoption was still at zero adopters. Every read-both case below now
+// has a doubled-prefix-key sibling.
 
 import (
 	"context"
@@ -18,7 +24,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/models"
 )
 
-func TestIsAdopted_RecognisesBothKeys(t *testing.T) {
+func TestIsAdopted_RecognisesAllThreeKeys(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name string
@@ -27,11 +33,17 @@ func TestIsAdopted_RecognisesBothKeys(t *testing.T) {
 	}{
 		{"nil annotations", nil, false},
 		{"empty annotations", map[string]string{}, false},
-		{"new key true", map[string]string{AnnotationAdopted: "true"}, true},
-		{"legacy key true", map[string]string{AnnotationAdoptedLegacy: "true"}, true},
-		{"both keys true", map[string]string{AnnotationAdopted: "true", AnnotationAdoptedLegacy: "true"}, true},
-		{"new key non-true", map[string]string{AnnotationAdopted: "false"}, false},
-		{"legacy key non-true", map[string]string{AnnotationAdoptedLegacy: "yes"}, false},
+		{"canonical key true", map[string]string{AnnotationAdopted: "true"}, true},
+		{"doubled-prefix legacy key true", map[string]string{AnnotationAdoptedDoubledPrefixLegacy: "true"}, true},
+		{"pre-rename legacy key true", map[string]string{AnnotationAdoptedLegacy: "true"}, true},
+		{"all three keys true", map[string]string{
+			AnnotationAdopted:                    "true",
+			AnnotationAdoptedDoubledPrefixLegacy: "true",
+			AnnotationAdoptedLegacy:              "true",
+		}, true},
+		{"canonical key non-true", map[string]string{AnnotationAdopted: "false"}, false},
+		{"doubled-prefix legacy key non-true", map[string]string{AnnotationAdoptedDoubledPrefixLegacy: "no"}, false},
+		{"pre-rename legacy key non-true", map[string]string{AnnotationAdoptedLegacy: "yes"}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -92,6 +104,64 @@ func TestEnsure_LegacyAdoptedAnnotation_TakesLabelsOnlyPath(t *testing.T) {
 	for k, want := range foreignData {
 		if gotV := string(got.Data[k]); gotV != string(want) {
 			t.Errorf("Data[%q] = %q, want %q (legacy-adopted Secret's connection data must never be rewritten)", k, gotV, string(want))
+		}
+	}
+	// Desired addon label converged.
+	if got.Labels["addon-datadog"] != "enabled" {
+		t.Errorf("addon label not converged; labels=%v", got.Labels)
+	}
+}
+
+// TestEnsure_DoubledPrefixLegacyAdoptedAnnotation_TakesLabelsOnlyPath is the
+// doubled-prefix-key sibling of TestEnsure_LegacyAdoptedAnnotation_TakesLabelsOnlyPath
+// (V2-cleanup-60.5 L10): a Secret adopted while "sharko.sharko.dev/adopted"
+// was still canonical carries ONLY that key. Ensure must still route it to
+// the labels-only adopted path.
+func TestEnsure_DoubledPrefixLegacyAdoptedAnnotation_TakesLabelsOnlyPath(t *testing.T) {
+	t.Parallel()
+	foreignData := map[string][]byte{
+		"config": []byte(`{"bearerToken":"user-token","tlsClientConfig":{"insecure":false}}`),
+		"server": []byte("https://doubled-prefix-adopted.example.com"),
+		"name":   []byte("doubled-prefix-adopted"),
+	}
+	existing := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "doubled-prefix-adopted",
+			Namespace: testNamespace,
+			Labels: map[string]string{
+				LabelSecretType: "cluster",
+				LabelManagedBy:  ManagedByValue,
+			},
+			Annotations: map[string]string{
+				// ONLY the short-lived doubled-prefix key.
+				AnnotationAdoptedDoubledPrefixLegacy: "true",
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: foreignData,
+	}
+
+	spec := ClusterSecretSpec{
+		Name:   "doubled-prefix-adopted",
+		Server: "https://somewhere-else.example.com", // would rewrite config on the non-adopted path
+		Labels: map[string]string{"addon-datadog": "enabled"},
+	}
+
+	client := fake.NewSimpleClientset(existing)
+	mgr := NewManager(client, testNamespace)
+
+	if _, err := mgr.Ensure(context.Background(), spec); err != nil {
+		t.Fatalf("Ensure() returned error: %v", err)
+	}
+
+	got, err := client.CoreV1().Secrets(testNamespace).Get(context.Background(), "doubled-prefix-adopted", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("secret not found: %v", err)
+	}
+	// Connection data must be preserved verbatim — labels-only path.
+	for k, want := range foreignData {
+		if gotV := string(got.Data[k]); gotV != string(want) {
+			t.Errorf("Data[%q] = %q, want %q (doubled-prefix-adopted Secret's connection data must never be rewritten)", k, gotV, string(want))
 		}
 	}
 	// Desired addon label converged.
@@ -258,10 +328,12 @@ func TestSyncLabelsOnly_LegacyCheckLabelStripped(t *testing.T) {
 	}
 }
 
-// TestUnadopt_RemovesLegacyAnnotationToo: Unadopt on a pre-rename adopted
-// Secret must remove BOTH annotation spellings, or the Secret would remain
-// orphan-sweep-immune forever under the old key.
-func TestUnadopt_RemovesLegacyAnnotationToo(t *testing.T) {
+// TestUnadopt_RemovesAllLegacyAnnotationsToo: Unadopt on a Secret carrying
+// EVERY annotation spelling (canonical + both legacy) must remove ALL
+// THREE, or the Secret would remain orphan-sweep-immune forever under
+// whichever key survived (V2-cleanup-59 read-both, widened to
+// read-all-three by V2-cleanup-60.5 L10).
+func TestUnadopt_RemovesAllLegacyAnnotationsToo(t *testing.T) {
 	t.Parallel()
 	existing := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
@@ -272,7 +344,9 @@ func TestUnadopt_RemovesLegacyAnnotationToo(t *testing.T) {
 				LabelManagedBy:  ManagedByValue,
 			},
 			Annotations: map[string]string{
-				AnnotationAdoptedLegacy: "true",
+				AnnotationAdopted:                    "true",
+				AnnotationAdoptedDoubledPrefixLegacy: "true",
+				AnnotationAdoptedLegacy:              "true",
 			},
 		},
 		Type: corev1.SecretTypeOpaque,
@@ -292,6 +366,11 @@ func TestUnadopt_RemovesLegacyAnnotationToo(t *testing.T) {
 	if IsAdopted(got.Annotations) {
 		t.Errorf("Secret still reads as adopted after Unadopt; annotations=%v", got.Annotations)
 	}
+	for _, key := range []string{AnnotationAdopted, AnnotationAdoptedDoubledPrefixLegacy, AnnotationAdoptedLegacy} {
+		if _, has := got.Annotations[key]; has {
+			t.Errorf("Unadopt must remove annotation %q; annotations=%v", key, got.Annotations)
+		}
+	}
 	if _, has := got.Labels[LabelManagedBy]; has {
 		t.Errorf("managed-by label must be removed by Unadopt; labels=%v", got.Labels)
 	}
@@ -303,46 +382,62 @@ func TestUnadopt_RemovesLegacyAnnotationToo(t *testing.T) {
 // pre-rename adopted cluster from orphan deletion.
 func TestEnsure_TakeoverNormalisesLegacyAdoptedKey(t *testing.T) {
 	t.Parallel()
-	// A foreign Secret that (unusually) already carries the legacy adopted
+	// A foreign Secret that (unusually) already carries EITHER older adopted
 	// key but not the managed-by label — the takeover path stamps the new
-	// key and drops the old one while it is writing anyway.
-	existing := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "takeover-legacy",
-			Namespace: testNamespace,
-			Labels: map[string]string{
-				LabelSecretType: "cluster",
-			},
-			Annotations: map[string]string{
-				AnnotationAdoptedLegacy: "true",
-			},
-		},
-		Type: corev1.SecretTypeOpaque,
-		Data: map[string][]byte{"config": []byte(`{"bearerToken":"x"}`)},
+	// canonical key and drops BOTH older spellings while it is writing
+	// anyway (V2-cleanup-59, widened to all three by V2-cleanup-60.5 L10).
+	cases := []struct {
+		name       string
+		legacyKey  string
+		secretName string
+	}{
+		{"pre-rename legacy key", AnnotationAdoptedLegacy, "takeover-legacy"},
+		{"doubled-prefix legacy key", AnnotationAdoptedDoubledPrefixLegacy, "takeover-doubled-prefix-legacy"},
 	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			existing := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      tc.secretName,
+					Namespace: testNamespace,
+					Labels: map[string]string{
+						LabelSecretType: "cluster",
+					},
+					Annotations: map[string]string{
+						tc.legacyKey: "true",
+					},
+				},
+				Type: corev1.SecretTypeOpaque,
+				Data: map[string][]byte{"config": []byte(`{"bearerToken":"x"}`)},
+			}
 
-	client := fake.NewSimpleClientset(existing)
-	mgr := NewManager(client, testNamespace)
+			client := fake.NewSimpleClientset(existing)
+			mgr := NewManager(client, testNamespace)
 
-	if _, err := mgr.Ensure(context.Background(), ClusterSecretSpec{
-		Name:   "takeover-legacy",
-		Server: "https://takeover-legacy.example.com",
-	}); err != nil {
-		t.Fatalf("Ensure() returned error: %v", err)
-	}
+			if _, err := mgr.Ensure(context.Background(), ClusterSecretSpec{
+				Name:   tc.secretName,
+				Server: "https://" + tc.secretName + ".example.com",
+			}); err != nil {
+				t.Fatalf("Ensure() returned error: %v", err)
+			}
 
-	got, err := client.CoreV1().Secrets(testNamespace).Get(context.Background(), "takeover-legacy", metav1.GetOptions{})
-	if err != nil {
-		t.Fatalf("secret not found: %v", err)
-	}
-	if got.Annotations[AnnotationAdopted] != "true" {
-		t.Errorf("takeover must stamp the new adopted key; annotations=%v", got.Annotations)
-	}
-	if _, still := got.Annotations[AnnotationAdoptedLegacy]; still {
-		t.Errorf("takeover write should normalise away the legacy adopted key; annotations=%v", got.Annotations)
-	}
-	// Connection data preserved (takeover never touches Data).
-	if string(got.Data["config"]) != `{"bearerToken":"x"}` {
-		t.Errorf("takeover mutated Data: %q", string(got.Data["config"]))
+			got, err := client.CoreV1().Secrets(testNamespace).Get(context.Background(), tc.secretName, metav1.GetOptions{})
+			if err != nil {
+				t.Fatalf("secret not found: %v", err)
+			}
+			if got.Annotations[AnnotationAdopted] != "true" {
+				t.Errorf("takeover must stamp the new adopted key; annotations=%v", got.Annotations)
+			}
+			for _, key := range []string{AnnotationAdoptedDoubledPrefixLegacy, AnnotationAdoptedLegacy} {
+				if _, still := got.Annotations[key]; still {
+					t.Errorf("takeover write should normalise away older adopted key %q; annotations=%v", key, got.Annotations)
+				}
+			}
+			// Connection data preserved (takeover never touches Data).
+			if string(got.Data["config"]) != `{"bearerToken":"x"}` {
+				t.Errorf("takeover mutated Data: %q", string(got.Data["config"]))
+			}
+		})
 	}
 }
