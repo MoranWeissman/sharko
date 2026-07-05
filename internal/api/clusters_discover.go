@@ -40,7 +40,7 @@ func (s *Server) handleDiscoverClusters(w http.ResponseWriter, r *http.Request) 
 	if !authz.RequireWithResponse(w, r, "cluster.discover") {
 		return
 	}
-	if s.credProvider == nil {
+	if s.credProvider() == nil {
 		writeMissingProviderError(w)
 		return
 	}
@@ -52,7 +52,7 @@ func (s *Server) handleDiscoverClusters(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Get all clusters from the credentials provider.
-	providerClusters, err := s.credProvider.ListClusters()
+	providerClusters, err := s.credProvider().ListClusters()
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "failed to list provider clusters: "+err.Error())
 		return
@@ -156,7 +156,7 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&req)
 	}
 
-	if s.credProvider == nil {
+	if s.credProvider() == nil {
 		// A bare "no credentials provider configured" message would be
 		// surfaced by the UI as "Unreachable" — but the cluster isn't
 		// unreachable, the *test feature* is unavailable because no
@@ -171,17 +171,13 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve the credential lookup name. If the cluster is registered and has
-	// a SecretPath override, use that instead of the cluster name. Shared
-	// resolver (V2-cleanup-55.1) — reads the stored managed-clusters.yaml
-	// record via the active Git connection; falls back to the plain name.
-	credLookupName := s.credentialLookupKey(r.Context(), name)
-	if credLookupName != name {
-		slog.Info("[cluster-test] using secretPath override", "name", name, "secretPath", credLookupName)
-	}
-
-	slog.Info("[cluster-test] fetching credentials", "name", name, "lookupName", credLookupName)
-	creds, err := s.credProvider.GetCredentials(credLookupName)
+	// Routed fetch (V2-cleanup-60.4): resolves the stored secretPath
+	// override (V2-cleanup-55.1) AND routes by the cluster's stored
+	// creds_source — an inline-registered cluster is read from the ArgoCD
+	// cluster Secret regardless of the configured backend type, so Test
+	// works on mixed inline + backend fleets.
+	slog.Info("[cluster-test] fetching credentials", "name", name)
+	creds, err := s.fetchClusterCredentials(r.Context(), name)
 	if err != nil {
 		// When the active credentials provider is ArgoCDProvider (the
 		// built-in default for in-cluster installs), it returns a typed
@@ -218,7 +214,7 @@ func (s *Server) handleTestCluster(w http.ResponseWriter, r *http.Request) {
 		// If credential fetch failed with "not found", search for similar secrets
 		// and include them as suggestions so the UI can offer one-click correction.
 		if strings.Contains(err.Error(), "not found") {
-			suggestions, searchErr := s.credProvider.SearchSecrets(name)
+			suggestions, searchErr := s.credProvider().SearchSecrets(name)
 			if searchErr != nil {
 				slog.Warn("[cluster-test] SearchSecrets failed", "name", name, "error", searchErr)
 			}
@@ -363,8 +359,8 @@ func (s *Server) handleDiscoverEKS(w http.ResponseWriter, r *http.Request) {
 
 	// Default region from provider config if not specified in request.
 	region := req.Region
-	if region == "" && s.addonSecretCfg != nil {
-		region = s.addonSecretCfg.Region
+	if region == "" && s.addonSecretCfg() != nil {
+		region = s.addonSecretCfg().Region
 	}
 
 	slog.Info("[discover-eks] starting EKS discovery", "roleARNs", req.RoleARNs, "region", region)

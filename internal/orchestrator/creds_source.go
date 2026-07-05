@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // InvalidCredsSourceError is returned by the creds-source resolver when the
@@ -83,6 +84,16 @@ var ErrMissingInlineKubeconfig = errors.New("creds_source inline-kubeconfig requ
 func ResolveCredsSource(req RegisterClusterRequest) (CredsSource, error) {
 	if req.CredsSource == "" {
 		if req.Provider == "kubeconfig" {
+			return CredsSourceInlineKubeconfig, nil
+		}
+		// A pasted kubeconfig with NOTHING else said (no creds_source, no
+		// provider) unambiguously means the inline path (V2-cleanup-60.4):
+		// deriving the backend source here would silently ignore the pasted
+		// payload and look up a backend secret that does not exist — the
+		// eks-token/backend default trap. An explicit non-kubeconfig
+		// Provider still wins (the caller said "backend"), preserving every
+		// pre-field request byte-for-byte.
+		if req.Provider == "" && strings.TrimSpace(req.Kubeconfig) != "" {
 			return CredsSourceInlineKubeconfig, nil
 		}
 		return CredsSourceSecretKubeconfig, nil

@@ -219,10 +219,14 @@ export function ClustersOverview() {
   // Credential-source selection (creds-reframe-2). This is the PRIMARY
   // question the Direct-mode form asks: "How should Sharko get this
   // cluster's credentials?" It drives which inputs are shown and is sent
-  // to the backend as `creds_source`. Default to the EKS token path to
-  // preserve the pre-reframe default behavior (the dialog used to open on
-  // the EKS provider).
-  const [credsSource, setCredsSource] = useState<CredsSource>('eks-token');
+  // to the backend as `creds_source`.
+  //
+  // NO silent default (V2-cleanup-60.4): the dialog used to open on
+  // 'eks-token', which quietly routed a registration to the AWS token path
+  // when the user never made a choice — the exact trap the maintainer fell
+  // into. '' means "not chosen yet"; the Preview/Register buttons stay
+  // disabled until the user picks explicitly.
+  const [credsSource, setCredsSource] = useState<CredsSource | ''>('');
 
   // Connection-ownership choice (V2-cleanup-57.2): who manages the ArgoCD
   // cluster secret. 'sharko' (default) = today's behavior; 'user' = the
@@ -240,7 +244,9 @@ export function ClustersOverview() {
   //   eks-token         → 'eks'          (the AWS token path)
   const providerForCredsSource = (cs: CredsSource): ClusterProvider =>
     cs === 'inline-kubeconfig' ? 'kubeconfig' : 'eks';
-  const provider: ClusterProvider = providerForCredsSource(credsSource);
+  // Before an explicit choice exists ('' state) the payload builder is
+  // unreachable (buttons disabled), so the fallback here is display-only.
+  const provider: ClusterProvider = credsSource === '' ? 'eks' : providerForCredsSource(credsSource);
 
   // Discovery mode
   const [registrationMode, setRegistrationMode] = useState<'direct' | 'discovery'>('direct');
@@ -364,7 +370,8 @@ export function ClustersOverview() {
     setAddClusterSecretPath('');
     setAddClusterKubeconfig('');
     setSelectedAddons({});
-    setCredsSource('eks-token');
+    // No silent creds-source default — the user must choose (V2-cleanup-60.4).
+    setCredsSource('');
     setConnManagedBy('sharko');
     setRegistrationMode('direct');
     setDiscoveryRoleArns('');
@@ -414,18 +421,23 @@ export function ClustersOverview() {
   const buildRegisterPayload = useCallback(
     (name: string, extra?: { dry_run?: boolean }): Parameters<typeof registerCluster>[0] => {
       const addons = Object.keys(selectedAddons).length > 0 ? selectedAddons : undefined;
+      // Direct mode is gated until an explicit creds-source choice exists
+      // (directRequiredMissing), so '' here only happens for the
+      // discovery-mode dry-run — and discovery registers via the EKS token
+      // path by definition (see handleAddCluster's discovery branch).
+      const source: CredsSource = credsSource === '' ? 'eks-token' : credsSource;
       // connection_managed_by is only sent for the non-default 'user'
       // choice — omitting it for 'sharko' keeps the request byte-compatible
       // with pre-57.2 servers.
       const base = {
         name,
-        creds_source: credsSource,
+        creds_source: source,
         provider,
         addons,
         ...(connManagedBy === 'user' ? { connection_managed_by: 'user' as const } : {}),
         ...extra,
       };
-      switch (credsSource) {
+      switch (source) {
         case 'inline-kubeconfig':
           // Inline paste — server rejects AWS-shaped fields here, so omit them.
           return { ...base, kubeconfig: addClusterKubeconfig };
@@ -828,9 +840,14 @@ export function ClustersOverview() {
   // connectivity), so nothing here blocks submission.
   const directRequiredMissing =
     registrationMode === 'direct' &&
-    connManagedBy !== 'user' &&
-    ((credsSource === 'inline-kubeconfig' && !addClusterKubeconfig.trim()) ||
-      (credsSource === 'secret-kubeconfig' && !addClusterSecretPath.trim()));
+    // The creds-source choice itself is ALWAYS required in Direct mode —
+    // there is no silent default to fall into (V2-cleanup-60.4). The
+    // per-source required fields below stay relaxed for self-managed
+    // connections (credentials optional, verification only).
+    (credsSource === '' ||
+      (connManagedBy !== 'user' &&
+        ((credsSource === 'inline-kubeconfig' && !addClusterKubeconfig.trim()) ||
+          (credsSource === 'secret-kubeconfig' && !addClusterSecretPath.trim()))));
 
   const handleStatusFilter = (filter: StatusFilter) => {
     setStatusFilter(statusFilter === filter ? 'all' : filter);
@@ -1007,13 +1024,19 @@ export function ClustersOverview() {
                   onChange={(e) => setCredsSource(e.target.value as CredsSource)}
                   className="w-full rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
                 >
+                  {/* No silent default (V2-cleanup-60.4): the placeholder is
+                    * not selectable, and Preview/Register stay disabled until
+                    * the user makes an explicit choice. */}
+                  <option value="" disabled>Choose where this cluster's credentials come from…</option>
                   <option value="inline-kubeconfig">Paste a kubeconfig</option>
                   <option value="secret-kubeconfig">Use a stored kubeconfig (from your secret store)</option>
                   <option value="eks-token">Amazon EKS — generate a token from cloud identity</option>
                 </select>
                 {/* Plain-English hint for the selected option (V2-cleanup-55.3). */}
                 <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
-                  {CREDS_SOURCE_HINTS[credsSource]}
+                  {credsSource === ''
+                    ? 'Required — pick one of the three options before registering.'
+                    : CREDS_SOURCE_HINTS[credsSource]}
                 </p>
               </div>
             )}

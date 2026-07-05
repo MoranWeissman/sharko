@@ -16,6 +16,26 @@ package models
 // methods; callers that only hold a cluster name resolve through
 // CredentialLookupKeyFor (or the git-reading wrapper in internal/config).
 
+// Canonical creds-source labels (V2-cleanup-60.4). These mirror the
+// orchestrator's CredsSource constants (internal/orchestrator/types.go) but
+// live here so the lower layers (config, providers) can route on them
+// without importing the orchestrator. The registration writer stamps the
+// effective source onto the cluster's managed-clusters.yaml record as
+// credsSource; records written before the field existed carry "" (unknown).
+const (
+	// CredsSourceInlineKubeconfig — the cluster was registered with a pasted
+	// kubeconfig. Its credentials live ONLY in the ArgoCD cluster Secret;
+	// no secrets backend holds anything for it. Credential fetches MUST go
+	// through the ArgoCD reader regardless of the configured backend type.
+	CredsSourceInlineKubeconfig = "inline-kubeconfig"
+	// CredsSourceSecretKubeconfig — a kubeconfig stored in the secrets
+	// backend. Fetches go through the configured backend provider.
+	CredsSourceSecretKubeconfig = "secret-kubeconfig"
+	// CredsSourceEKSToken — structured EKS JSON in the secrets backend that
+	// mints a short-lived STS token. Same backend route as secret-kubeconfig.
+	CredsSourceEKSToken = "eks-token"
+)
+
 // CredentialLookupKey returns the key to pass to
 // ClusterCredentialsProvider.GetCredentials for this cluster: the stored
 // SecretPath override when set, else the cluster name.
@@ -41,10 +61,23 @@ func (e ManagedClusterEntry) CredentialLookupKey() string {
 // not found at all — the plain name is returned, which is byte-identical to
 // the pre-resolver behavior.
 func CredentialLookupKeyFor(clusters []Cluster, name string) string {
+	key, _ := CredentialRoutingFor(clusters, name)
+	return key
+}
+
+// CredentialRoutingFor is the V2-cleanup-60.4 extension of
+// CredentialLookupKeyFor: alongside the lookup key it returns the cluster's
+// stored credsSource so credential-fetch sites can route per cluster —
+// inline-kubeconfig-registered clusters read via the ArgoCD provider
+// regardless of the configured backend, backend-registered clusters keep
+// their backend route. credsSource is "" when the cluster is not found or
+// its record predates the field (unknown — callers fall back to the
+// backend-first-then-ArgoCD-read heuristic).
+func CredentialRoutingFor(clusters []Cluster, name string) (lookupKey, credsSource string) {
 	for _, c := range clusters {
 		if c.Name == name {
-			return c.CredentialLookupKey()
+			return c.CredentialLookupKey(), c.CredsSource
 		}
 	}
-	return name
+	return name, ""
 }

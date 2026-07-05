@@ -47,6 +47,14 @@ immediately**, check whether your ArgoCD cluster secrets survived
 and re-register any cluster whose secret is gone. Inline-registered
 clusters need their kubeconfig pasted again.
 
+One more thing to know about rolling back: from v2.2.1, any cluster you
+register records a new `credsSource` field in its `managed-clusters.yaml`
+entry. A v2.2.0-or-older binary can't read a file with that field — schema
+validation rejects it outright, so the old binary fails loudly and refuses
+to start instead of silently misreading the file. That's a safe failure
+(no empty-list misread, no sweep), but it's still one more reason not to
+roll back to an older binary once you've written anything.
+
 ## Rule 2 — multiple instances on one repo upgrade together
 
 Two Sharko instances sharing one Git repo must run the same major.minor

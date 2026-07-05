@@ -102,3 +102,65 @@ func TestResolveCredentialLookupKey_FallbacksToName(t *testing.T) {
 		}
 	})
 }
+
+// ---------------------------------------------------------------------------
+// V2-cleanup-60.4 — routing resolver (lookup key + stored creds source)
+// ---------------------------------------------------------------------------
+
+const credRoutingTestYAML = `clusters:
+  - name: kind-inline
+    credsSource: inline-kubeconfig
+    labels: {}
+  - name: prod-eu
+    secretPath: clusters/prod-eu
+    credsSource: eks-token
+    labels: {}
+  - name: legacy
+    labels: {}
+`
+
+func TestResolveCredentialRoutingFromData(t *testing.T) {
+	tests := []struct {
+		name       string
+		data       []byte
+		arg        string
+		wantKey    string
+		wantSource string
+	}{
+		{"inline record returns its source", []byte(credRoutingTestYAML), "kind-inline", "kind-inline", "inline-kubeconfig"},
+		{"backend record: secretPath override + source", []byte(credRoutingTestYAML), "prod-eu", "clusters/prod-eu", "eks-token"},
+		{"legacy record (pre-field) returns empty source", []byte(credRoutingTestYAML), "legacy", "legacy", ""},
+		{"unknown cluster falls back to (name, empty)", []byte(credRoutingTestYAML), "ghost", "ghost", ""},
+		{"malformed YAML falls back to (name, empty)", []byte(":\n\t- not yaml"), "kind-inline", "kind-inline", ""},
+		{"nil data falls back to (name, empty)", nil, "kind-inline", "kind-inline", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			key, source := ResolveCredentialRoutingFromData(tt.data, tt.arg)
+			if key != tt.wantKey || source != tt.wantSource {
+				t.Errorf("ResolveCredentialRoutingFromData(%q) = (%q, %q), want (%q, %q)",
+					tt.arg, key, source, tt.wantKey, tt.wantSource)
+			}
+		})
+	}
+}
+
+func TestResolveCredentialRouting_ReadsStoredRecord(t *testing.T) {
+	reader := &fakeManagedClustersReader{data: []byte(credRoutingTestYAML)}
+	key, source := ResolveCredentialRouting(context.Background(), reader, "", "", "kind-inline")
+	if key != "kind-inline" || source != "inline-kubeconfig" {
+		t.Fatalf("got (%q, %q), want (kind-inline, inline-kubeconfig)", key, source)
+	}
+	// The lookup-key twin stays in lockstep (it delegates).
+	if got := ResolveCredentialLookupKey(context.Background(), reader, "", "", "prod-eu"); got != "clusters/prod-eu" {
+		t.Fatalf("ResolveCredentialLookupKey = %q, want clusters/prod-eu", got)
+	}
+}
+
+func TestResolveCredentialRouting_ReadFailure_FallsBack(t *testing.T) {
+	reader := &fakeManagedClustersReader{err: errors.New("git down")}
+	key, source := ResolveCredentialRouting(context.Background(), reader, "", "", "kind-inline")
+	if key != "kind-inline" || source != "" {
+		t.Fatalf("got (%q, %q), want (kind-inline, \"\")", key, source)
+	}
+}

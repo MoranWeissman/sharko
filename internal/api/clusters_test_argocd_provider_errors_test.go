@@ -50,7 +50,7 @@ import (
 // unexported field; this avoids adding a new exported setter just for tests.
 func installFakeCredProvider(t *testing.T, srv *Server, getCreds func(name string) (*providers.Kubeconfig, error)) {
 	t.Helper()
-	srv.credProvider = &cpStub{getCreds: getCreds}
+	installCredProvider(srv, &cpStub{getCreds: getCreds}, nil, nil)
 }
 
 // cpStub satisfies providers.ClusterCredentialsProvider with a function-based

@@ -26,7 +26,7 @@ func (s *Server) handleGetProviders(w http.ResponseWriter, r *http.Request) {
 	availableTypes := []string{"aws-sm", "k8s-secrets"}
 
 	displayType, displayRegion, displayPrefix := s.providerDisplay()
-	if displayType == "" && displayRegion == "" && displayPrefix == "" && s.credProvider == nil {
+	if displayType == "" && displayRegion == "" && displayPrefix == "" && s.credProvider() == nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"configured_provider": nil,
 			"available_types":     availableTypes,
@@ -38,10 +38,10 @@ func (s *Server) handleGetProviders(w http.ResponseWriter, r *http.Request) {
 	// A 3-second timeout ensures this never stalls the page load.
 	status := "configured"
 	var statusError string
-	if s.credProvider != nil {
+	if s.credProvider() != nil {
 		hctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 		defer cancel()
-		if err := s.credProvider.HealthCheck(hctx); err == nil {
+		if err := s.credProvider().HealthCheck(hctx); err == nil {
 			status = "connected"
 		} else {
 			status = "error"
@@ -119,13 +119,13 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 		}
 		provider = prov
 		provType = req.Type
-	} else if s.credProvider != nil {
-		provider = s.credProvider
-		if s.clusterTestCfg != nil {
-			provType = s.clusterTestCfg.Type
+	} else if s.credProvider() != nil {
+		provider = s.credProvider()
+		if s.clusterTestCfg() != nil {
+			provType = s.clusterTestCfg().Type
 		}
-		if provType == "" && s.addonSecretCfg != nil {
-			provType = s.addonSecretCfg.Type
+		if provType == "" && s.addonSecretCfg() != nil {
+			provType = s.addonSecretCfg().Type
 		}
 	} else {
 		writeError(w, http.StatusNotImplemented, "no provider configured and no type specified in request")
@@ -274,13 +274,13 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 // (cluster-test-only install), we fall back to cluster-test's Type and
 // empty Region/Prefix.
 func (s *Server) providerDisplay() (typ, region, prefix string) {
-	if s.addonSecretCfg != nil {
-		typ = s.addonSecretCfg.Type
-		region = s.addonSecretCfg.Region
-		prefix = s.addonSecretCfg.Prefix
+	if s.addonSecretCfg() != nil {
+		typ = s.addonSecretCfg().Type
+		region = s.addonSecretCfg().Region
+		prefix = s.addonSecretCfg().Prefix
 	}
-	if typ == "" && s.clusterTestCfg != nil {
-		typ = s.clusterTestCfg.Type
+	if typ == "" && s.clusterTestCfg() != nil {
+		typ = s.clusterTestCfg().Type
 	}
 	return typ, region, prefix
 }

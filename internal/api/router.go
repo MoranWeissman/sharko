@@ -16,6 +16,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -54,6 +55,77 @@ type ArgoReconcilerCfg struct {
 	ManagedClustersPath string // path in Git repo to managed-clusters.yaml
 }
 
+// providerSet is the immutable snapshot published through
+// Server.providerState (review M1 — provider hot-reload was a data race:
+// ReinitializeFromConnection plain-assigned three fields while handlers
+// read them). A new set is built and atomically stored on every publish;
+// readers get a consistent trio + router or all-nil.
+type providerSet struct {
+	credProvider   providers.ClusterCredentialsProvider
+	addonSecretCfg *providers.AddonSecretProviderConfig
+	clusterTestCfg *providers.ClusterTestProviderConfig
+	// credsRouter routes per-cluster credential fetches by the cluster's
+	// stored creds source (V2-cleanup-60.4) — rebuilt on every publish so
+	// its cached ArgoCD reader tracks the active configuration.
+	credsRouter *providers.ClusterCredsRouter
+}
+
+// credProvider returns the currently-published cluster-credentials
+// provider (nil when none is configured). Race-safe (M1).
+func (s *Server) credProvider() providers.ClusterCredentialsProvider {
+	if ps := s.providerState.Load(); ps != nil {
+		return ps.credProvider
+	}
+	return nil
+}
+
+// addonSecretCfg returns the currently-published addon-secret provider
+// config (nil when none is configured). Race-safe (M1).
+func (s *Server) addonSecretCfg() *providers.AddonSecretProviderConfig {
+	if ps := s.providerState.Load(); ps != nil {
+		return ps.addonSecretCfg
+	}
+	return nil
+}
+
+// clusterTestCfg returns the currently-published cluster-test provider
+// config (nil when none is configured). Race-safe (M1).
+func (s *Server) clusterTestCfg() *providers.ClusterTestProviderConfig {
+	if ps := s.providerState.Load(); ps != nil {
+		return ps.clusterTestCfg
+	}
+	return nil
+}
+
+// credsRouter returns the currently-published per-cluster credential-fetch
+// router (nil when no provider set was ever published). Race-safe (M1).
+func (s *Server) credsRouter() *providers.ClusterCredsRouter {
+	if ps := s.providerState.Load(); ps != nil {
+		return ps.credsRouter
+	}
+	return nil
+}
+
+// publishProviders atomically publishes a new provider snapshot. The ONLY
+// writer path for the provider trio (SetWriteAPIDeps at boot,
+// ReinitializeFromConnection on hot-reload, tests via their seams).
+func (s *Server) publishProviders(
+	credProvider providers.ClusterCredentialsProvider,
+	addonSecretCfg *providers.AddonSecretProviderConfig,
+	clusterTestCfg *providers.ClusterTestProviderConfig,
+) {
+	base := providers.ClusterTestProviderConfig{}
+	if clusterTestCfg != nil {
+		base = *clusterTestCfg
+	}
+	s.providerState.Store(&providerSet{
+		credProvider:   credProvider,
+		addonSecretCfg: addonSecretCfg,
+		clusterTestCfg: clusterTestCfg,
+		credsRouter:    providers.NewClusterCredsRouter(credProvider, base),
+	})
+}
+
 // SecretReconciler is the interface the server uses to trigger and query the reconciler.
 // It is implemented by internal/secrets.Reconciler but defined here to avoid an import cycle.
 type SecretReconciler interface {
@@ -78,11 +150,16 @@ type Server struct {
 	//
 	// Two typed configs cover the provider surface. Handlers that need
 	// addon-secret fields (RoleARN, Region, Prefix) read from
-	// addonSecretCfg; the /providers + /providers/test endpoints display
-	// either addonSecretCfg or clusterTestCfg per request semantics.
-	credProvider    providers.ClusterCredentialsProvider
-	addonSecretCfg  *providers.AddonSecretProviderConfig
-	clusterTestCfg  *providers.ClusterTestProviderConfig
+	// addonSecretCfg(); the /providers + /providers/test endpoints display
+	// either addonSecretCfg() or clusterTestCfg() per request semantics.
+	//
+	// providerState is the RACE-SAFE publication point for the provider
+	// trio + the per-cluster creds router (V2-cleanup-60.4 / review M1):
+	// ReinitializeFromConnection hot-swaps providers while request handlers
+	// read them concurrently, so ALL reads go through the credProvider() /
+	// addonSecretCfg() / clusterTestCfg() / credsRouter() accessors and all
+	// writes through publishProviders(). Never add a direct field back.
+	providerState   atomic.Pointer[providerSet]
 	repoPaths       orchestrator.RepoPathsConfig
 	gitopsCfg       orchestrator.GitOpsConfig
 	gitMu           sync.Mutex // shared mutex serializing all Git operations across requests
@@ -282,9 +359,7 @@ func (s *Server) SetWriteAPIDeps(
 	paths orchestrator.RepoPathsConfig,
 	gitops orchestrator.GitOpsConfig,
 ) {
-	s.credProvider = credProvider
-	s.addonSecretCfg = addonSecretCfg
-	s.clusterTestCfg = clusterTestCfg
+	s.publishProviders(credProvider, addonSecretCfg, clusterTestCfg)
 	s.repoPaths = paths
 	s.gitopsCfg = gitops
 }
@@ -348,7 +423,7 @@ func (s *Server) ReconcilerTrigger() func() {
 // HOT-RELOAD CONSTRAINT (V2-cleanup-53.1): this is the seam that keeps the
 // registration/cluster-test credProvider tracking the ACTIVE connection
 // without a pod restart. Register/test handlers build a per-request
-// orchestrator from s.credProvider, so swapping it here is sufficient — but
+// orchestrator from s.credProvider(), so swapping it here is sufficient — but
 // the fan-through below MUST route every supported provider type (via the
 // shared providers.ClusterTestConfigFromConnection mapper). Dropping a type
 // here silently reverts registrations to the in-cluster ArgoCD auto-default
@@ -434,9 +509,10 @@ func (s *Server) ReinitializeFromConnection() {
 		if err != nil {
 			slog.Info("[startup] no credentials provider configured", "reason", err)
 		} else {
-			s.credProvider = p
-			s.addonSecretCfg = &addonCfg
-			s.clusterTestCfg = &testCfg
+			// Race-safe publish (M1): handlers read the provider trio
+			// concurrently with this hot-reload; the atomic snapshot swap
+			// replaces the old plain field assignments.
+			s.publishProviders(p, &addonCfg, &testCfg)
 			slog.Info("[startup] provider reinitialized from connection", "type", addonCfg.Type, "region", addonCfg.Region, "prefix", addonCfg.Prefix)
 		}
 	}
@@ -468,7 +544,7 @@ func (s *Server) ReinitializeFromConnection() {
 	}
 
 	// Restart argosecrets reconciler with the updated provider/config.
-	if s.argoReconcilerConfig != nil && s.credProvider != nil {
+	if s.argoReconcilerConfig != nil && s.credProvider() != nil {
 		// Stop the existing reconciler before replacing it.
 		if s.argoSecretReconciler != nil {
 			s.argoSecretReconciler.Stop()
@@ -480,14 +556,14 @@ func (s *Server) ReinitializeFromConnection() {
 			baseBranch = "main"
 		}
 		defaultRoleARN := ""
-		if s.addonSecretCfg != nil {
-			defaultRoleARN = s.addonSecretCfg.RoleARN
+		if s.addonSecretCfg() != nil {
+			defaultRoleARN = s.addonSecretCfg().RoleARN
 		}
 
 		newManager := argosecrets.NewManager(cfg.K8sClient, cfg.ArgocdNamespace)
 		newReconciler := argosecrets.NewReconciler(
 			newManager,
-			s.credProvider,
+			s.credProvider(),
 			cfg.GitReaderFn,
 			cfg.Parser,
 			baseBranch,
@@ -497,6 +573,12 @@ func (s *Server) ReinitializeFromConnection() {
 		)
 
 		auditLog := s.auditLog
+		// Structured single-entry audit events (V2-cleanup-60 L11) — mirrors
+		// the serve.go wiring so cluster_secret_user_pending survives a live
+		// connection change.
+		newReconciler.SetEntryAuditFunc(func(entry audit.Entry) {
+			auditLog.Add(entry)
+		})
 		newReconciler.SetAuditFunc(func(created, updated, deleted int) {
 			auditLog.Add(audit.Entry{
 				Level:    "info",
@@ -1649,7 +1731,7 @@ func writeUpstreamError(w http.ResponseWriter, op string, err error) {
 // configuration flows so the UI / CLI can render an actionable message
 // without parsing English text.
 //
-// Used by every handler that calls `s.credProvider == nil` early-return.
+// Used by every handler that calls `s.credProvider() == nil` early-return.
 func writeMissingProviderError(w http.ResponseWriter) {
 	writeJSON(w, http.StatusServiceUnavailable, map[string]string{
 		"error": "credentials provider is not configured",

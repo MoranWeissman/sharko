@@ -38,6 +38,6 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"status":                  "healthy",
 		"version":                 v,
 		"mode":                    deploymentMode,
-		"cluster_test_available":  s.credProvider != nil,
+		"cluster_test_available":  s.credProvider() != nil,
 	})
 }

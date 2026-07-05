@@ -55,6 +55,13 @@ type ClusterEntryInput struct {
 	// V2-cleanup-57.2. Writers pass "" for Sharko-managed so pre-field
 	// files stay byte-identical on re-emit.
 	ConnectionManagedBy string
+	// CredsSource records where the cluster's credentials live
+	// (V2-cleanup-60.4): models.CredsSourceInlineKubeconfig /
+	// models.CredsSourceSecretKubeconfig / models.CredsSourceEKSToken.
+	// The credential-fetch router keys off this so inline-registered
+	// clusters are read via the ArgoCD provider under any backend
+	// connection. "" omits the field (legacy shape preserved).
+	CredsSource string
 }
 
 // AddClusterEntry adds a new cluster to the managed-clusters.yaml spec.
@@ -82,6 +89,7 @@ func AddClusterEntry(data []byte, entry ClusterEntryInput) ([]byte, error) {
 		Region:              entry.Region,
 		SecretPath:          entry.SecretPath,
 		ConnectionManagedBy: entry.ConnectionManagedBy,
+		CredsSource:         entry.CredsSource,
 	}
 	// Always set Labels to a non-nil map when labels are provided, so
 	// the emitted YAML carries `labels: { ... }` rather than `labels: null`.

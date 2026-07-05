@@ -34,17 +34,18 @@ func (s *Server) handleDiagnoseCluster(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	slog.Info("[cluster-diagnose] starting diagnostics", "name", name)
 
-	if s.credProvider == nil {
+	if s.credProvider() == nil {
 		writeError(w, http.StatusServiceUnavailable, "no credentials provider configured")
 		return
 	}
 
-	// Resolve the stored secretPath override (if any) — never pass the raw
-	// cluster name to the provider (V2-cleanup-55.1).
-	lookupKey := s.credentialLookupKey(r.Context(), name)
-	creds, err := s.credProvider.GetCredentials(lookupKey)
+	// Routed fetch (V2-cleanup-60.4): resolves the stored secretPath
+	// override (V2-cleanup-55.1) AND routes by the cluster's stored
+	// creds_source — an inline-registered cluster is read from the ArgoCD
+	// cluster Secret regardless of the configured backend type.
+	creds, err := s.fetchClusterCredentials(r.Context(), name)
 	if err != nil {
-		slog.Error("[cluster-diagnose] failed to fetch credentials", "name", name, "lookupKey", lookupKey, "error", err)
+		slog.Error("[cluster-diagnose] failed to fetch credentials", "name", name, "error", err)
 		writeError(w, http.StatusBadGateway, "failed to fetch credentials: "+err.Error())
 		return
 	}

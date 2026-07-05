@@ -10,9 +10,16 @@ import (
 type fleetClusterSummary struct {
 	Name             string `json:"name"`
 	ConnectionStatus string `json:"connection_status"`
-	TotalAddons      int    `json:"total_addons"`
-	HealthyAddons    int    `json:"healthy_addons"`
-	DegradedAddons   int    `json:"degraded_addons"`
+	// ConnectionManagedBy mirrors the cluster record's connectionManagedBy
+	// (V2-cleanup-60.4 / review M6): "" or "sharko" — Sharko owns the ArgoCD
+	// cluster Secret; "user" — self-managed connection (Sharko only syncs
+	// addon labels). Sourced from the same cluster record the main
+	// /clusters endpoint exposes, so fleet/dashboard consumers can render
+	// the "connection managed by: me" mode without a second call.
+	ConnectionManagedBy string `json:"connection_managed_by,omitempty"`
+	TotalAddons         int    `json:"total_addons"`
+	HealthyAddons       int    `json:"healthy_addons"`
+	DegradedAddons      int    `json:"degraded_addons"`
 }
 
 // fleetStatusResponse is the response for GET /api/v1/fleet/status (cluster status overview).
@@ -99,8 +106,9 @@ func (s *Server) handleGetFleetStatus(w http.ResponseWriter, r *http.Request) {
 					resp.DisconnectedClusters++
 				}
 				resp.Clusters = append(resp.Clusters, fleetClusterSummary{
-					Name:             c.Name,
-					ConnectionStatus: c.ConnectionStatus,
+					Name:                c.Name,
+					ConnectionStatus:    c.ConnectionStatus,
+					ConnectionManagedBy: c.ConnectionManagedBy,
 				})
 			}
 

@@ -55,6 +55,14 @@
                   "sharko",
                   "user"
                 ]
+              },
+              "credsSource": {
+                "type": "string",
+                "enum": [
+                  "inline-kubeconfig",
+                  "secret-kubeconfig",
+                  "eks-token"
+                ]
               }
             },
             "additionalProperties": false,

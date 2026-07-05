@@ -34,12 +34,12 @@ func (s *Server) handleListClusterSecrets(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "cluster name is required")
 		return
 	}
-	if s.credProvider == nil {
+	if s.credProvider() == nil {
 		writeMissingProviderError(w)
 		return
 	}
 
-	creds, err := s.credProvider.GetCredentials(s.credentialLookupKey(r.Context(), name))
+	creds, err := s.fetchClusterCredentials(r.Context(), name)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "fetching cluster credentials: "+err.Error())
 		return
@@ -113,12 +113,12 @@ func (s *Server) handleRefreshClusterSecrets(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "cluster name is required")
 		return
 	}
-	if s.credProvider == nil {
+	if s.credProvider() == nil {
 		writeMissingProviderError(w)
 		return
 	}
 
-	creds, err := s.credProvider.GetCredentials(s.credentialLookupKey(r.Context(), name))
+	creds, err := s.fetchClusterCredentials(r.Context(), name)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "fetching cluster credentials: "+err.Error())
 		return
@@ -144,7 +144,7 @@ func (s *Server) handleRefreshClusterSecrets(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	orch := orchestrator.New(&s.gitMu, s.credProvider, ac, git, s.gitopsCfg, s.repoPaths, nil)
+	orch := orchestrator.New(&s.gitMu, s.credProvider(), ac, git, s.gitopsCfg, s.repoPaths, nil)
 	s.attachPRTracker(orch)
 	orch.SetSecretManagement(s.addonSecretDefs, s.secretFetcher, remoteclient.NewClientFromKubeconfig)
 

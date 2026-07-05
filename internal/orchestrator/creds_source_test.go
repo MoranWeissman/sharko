@@ -58,6 +58,27 @@ func TestResolveCredsSource_Derivation(t *testing.T) {
 			want: CredsSourceSecretKubeconfig,
 		},
 		{
+			// V2-cleanup-60.4 un-trap: a pasted kubeconfig with nothing else
+			// said is authoritative — never silently ignored in favour of a
+			// backend lookup.
+			name: "empty creds_source + empty provider + pasted kubeconfig derives inline",
+			req:  RegisterClusterRequest{Name: "c", Kubeconfig: "apiVersion: v1\nkind: Config\n"},
+			want: CredsSourceInlineKubeconfig,
+		},
+		{
+			// Whitespace-only paste is NOT a paste.
+			name: "empty creds_source + empty provider + whitespace kubeconfig derives backend",
+			req:  RegisterClusterRequest{Name: "c", Kubeconfig: "  \n\t"},
+			want: CredsSourceSecretKubeconfig,
+		},
+		{
+			// An explicit non-kubeconfig provider still wins over the paste
+			// (the caller said "backend"; the handler edge-rejects the bleed).
+			name: "empty creds_source + eks provider + pasted kubeconfig derives backend",
+			req:  RegisterClusterRequest{Name: "c", Provider: "eks", Kubeconfig: "apiVersion: v1\nkind: Config\n"},
+			want: CredsSourceSecretKubeconfig,
+		},
+		{
 			name: "explicit inline-kubeconfig is honored",
 			req:  RegisterClusterRequest{Name: "c", CredsSource: CredsSourceInlineKubeconfig},
 			want: CredsSourceInlineKubeconfig,

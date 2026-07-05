@@ -166,7 +166,7 @@ describe('ClustersOverview — self-managed connections (V2-cleanup-57.2)', () =
     // Switch to the inline-kubeconfig source and leave it EMPTY — allowed
     // for self-managed connections (credentials optional).
     fireEvent.change(
-      screen.getByDisplayValue(/Amazon EKS — generate a token/i),
+      screen.getByDisplayValue(/Choose where this cluster's credentials come from/i),
       { target: { value: 'inline-kubeconfig' } },
     );
     fireEvent.change(screen.getByPlaceholderText('e.g. prod-us-east-1'), {
@@ -189,7 +189,12 @@ describe('ClustersOverview — self-managed connections (V2-cleanup-57.2)', () =
     renderView();
     await openAddDialog();
 
-    // Default ownership (sharko) + default EKS source: register.
+    // Default ownership (sharko) + an EXPLICIT EKS source (V2-cleanup-60.4:
+    // there is no silent creds-source default anymore): register.
+    fireEvent.change(
+      screen.getByDisplayValue(/Choose where this cluster's credentials come from/i),
+      { target: { value: 'eks-token' } },
+    );
     fireEvent.change(screen.getByPlaceholderText('e.g. prod-us-east-1'), {
       target: { value: 'normal-cluster' },
     });
@@ -207,7 +212,7 @@ describe('ClustersOverview — self-managed connections (V2-cleanup-57.2)', () =
     await openAddDialog();
 
     fireEvent.change(
-      screen.getByDisplayValue(/Amazon EKS — generate a token/i),
+      screen.getByDisplayValue(/Choose where this cluster's credentials come from/i),
       { target: { value: 'inline-kubeconfig' } },
     );
     fireEvent.change(screen.getByPlaceholderText('e.g. prod-us-east-1'), {

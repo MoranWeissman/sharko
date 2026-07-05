@@ -34,8 +34,13 @@ var validClusterNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]*$`)
 // @Description "kubeconfig" field — bearer-token auth only).
 // @Description Optionally set "creds_source" to state explicitly where credentials come
 // @Description from: "inline-kubeconfig", "secret-kubeconfig", or "eks-token". When omitted
-// @Description it is derived from "provider" (kubeconfig→inline, else→backend) so existing
-// @Description requests are unchanged; when set it wins over "provider".
+// @Description it is derived: provider "kubeconfig" → inline; a pasted "kubeconfig" with no
+// @Description provider → inline (the paste is authoritative — it is never silently ignored
+// @Description in favour of a backend lookup); anything else → backend. When set it wins
+// @Description over "provider". The effective source is recorded on the cluster's
+// @Description managed-clusters.yaml entry as "credsSource" and later credential fetches
+// @Description (test/diagnose/secrets/addon operations) route by it, so inline-registered
+// @Description clusters keep working when a secrets-backend connection is configured.
 // @Description Optionally set "connection_managed_by" to declare who owns the ArgoCD
 // @Description cluster secret: "sharko" (default — Sharko writes and rotates it) or
 // @Description "user" (self-managed — you create the secret by hand; Sharko never writes
@@ -155,7 +160,7 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 		// EXCEPTION: a self-managed registration (connection_managed_by:
 		// user) never needs credentials at all — Sharko never writes the
 		// ArgoCD cluster secret for it; verification is simply skipped.
-		if s.credProvider == nil && !selfManaged {
+		if s.credProvider() == nil && !selfManaged {
 			writeMissingProviderError(w)
 			return
 		}
@@ -174,7 +179,7 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	orch := orchestrator.New(&s.gitMu, s.credProvider, ac, git, s.gitopsCfg, s.repoPaths, nil)
+	orch := orchestrator.New(&s.gitMu, s.credProvider(), ac, git, s.gitopsCfg, s.repoPaths, nil)
 	s.attachPRTracker(orch)
 	orch.SetSecretManagement(s.addonSecretDefs, s.secretFetcher, remoteclient.NewClientFromKubeconfig)
 	if len(s.defaultAddons) > 0 {
@@ -182,8 +187,8 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.argoSecretManager != nil {
 		roleARN := ""
-		if s.addonSecretCfg != nil {
-			roleARN = s.addonSecretCfg.RoleARN
+		if s.addonSecretCfg() != nil {
+			roleARN = s.addonSecretCfg().RoleARN
 		}
 		orch.SetArgoSecretManager(&argoManagerAdapter{mgr: s.argoSecretManager}, roleARN)
 	}
@@ -308,13 +313,13 @@ func (s *Server) handleDeregisterCluster(w http.ResponseWriter, r *http.Request)
 	}
 	req.Name = name
 
-	orch := orchestrator.New(&s.gitMu, s.credProvider, ac, git, s.gitopsCfg, s.repoPaths, nil)
+	orch := orchestrator.New(&s.gitMu, s.credProvider(), ac, git, s.gitopsCfg, s.repoPaths, nil)
 	s.attachPRTracker(orch)
 	orch.SetSecretManagement(s.addonSecretDefs, s.secretFetcher, remoteclient.NewClientFromKubeconfig)
 	if s.argoSecretManager != nil {
 		roleARN := ""
-		if s.addonSecretCfg != nil {
-			roleARN = s.addonSecretCfg.RoleARN
+		if s.addonSecretCfg() != nil {
+			roleARN = s.addonSecretCfg().RoleARN
 		}
 		orch.SetArgoSecretManager(&argoManagerAdapter{mgr: s.argoSecretManager}, roleARN)
 	}
@@ -413,7 +418,7 @@ func (s *Server) handleUpdateClusterAddons(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	orch := orchestrator.New(&s.gitMu, s.credProvider, ac, git, s.gitopsCfg, s.repoPaths, nil)
+	orch := orchestrator.New(&s.gitMu, s.credProvider(), ac, git, s.gitopsCfg, s.repoPaths, nil)
 	s.attachPRTracker(orch)
 	orch.SetSecretManagement(s.addonSecretDefs, s.secretFetcher, remoteclient.NewClientFromKubeconfig)
 
@@ -539,7 +544,7 @@ func (s *Server) handleRefreshClusterCredentials(w http.ResponseWriter, r *http.
 		return
 	}
 
-	if s.credProvider == nil {
+	if s.credProvider() == nil {
 		writeMissingProviderError(w)
 		return
 	}
@@ -560,7 +565,7 @@ func (s *Server) handleRefreshClusterCredentials(w http.ResponseWriter, r *http.
 		return
 	}
 
-	orch := orchestrator.New(&s.gitMu, s.credProvider, ac, nil, s.gitopsCfg, s.repoPaths, nil)
+	orch := orchestrator.New(&s.gitMu, s.credProvider(), ac, nil, s.gitopsCfg, s.repoPaths, nil)
 	s.attachPRTracker(orch)
 	if err := orch.RefreshClusterCredentials(r.Context(), name, serverURL); err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())

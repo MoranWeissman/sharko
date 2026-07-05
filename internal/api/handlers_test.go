@@ -543,6 +543,25 @@ func newIsolatedTestServer(t *testing.T) *Server {
 	return NewServer(connSvc, clusterSvc, addonSvc, dashboardSvc, observabilitySvc, upgradeSvc, aiClient)
 }
 
+// installCredProvider publishes cp as the server's cluster-credentials
+// provider (with optional typed configs) through the same race-safe
+// publication point production uses — with the ArgoCD-read route DISABLED
+// so unit tests stay hermetic: the production ArgoCD reader falls back to
+// ~/.kube/config out-of-cluster, which must never be touched from a test.
+func installCredProvider(srv *Server, cp providers.ClusterCredentialsProvider, addonCfg *providers.AddonSecretProviderConfig, testCfg *providers.ClusterTestProviderConfig) {
+	srv.providerState.Store(&providerSet{
+		credProvider:   cp,
+		addonSecretCfg: addonCfg,
+		clusterTestCfg: testCfg,
+		credsRouter: &providers.ClusterCredsRouter{
+			Backend: cp,
+			ArgoCDReaderFn: func() (providers.ClusterCredentialsProvider, error) {
+				return nil, fmt.Errorf("argocd reader disabled in unit tests")
+			},
+		},
+	})
+}
+
 // seedActiveConnection saves a Connection and marks it active on the server's connSvc.
 func seedActiveConnection(t *testing.T, srv *Server, conn models.Connection) {
 	t.Helper()
@@ -566,7 +585,7 @@ func TestReinitializeFromConnection_NoConnection(t *testing.T) {
 	srv := newIsolatedTestServer(t)
 	srv.ReinitializeFromConnection()
 
-	if srv.credProvider != nil {
+	if srv.credProvider() != nil {
 		t.Error("expected credProvider to remain nil when no active connection")
 	}
 }
@@ -630,17 +649,17 @@ func TestReinitializeFromConnection_SetsProvider(t *testing.T) {
 	// deterministic in CI. This is also the hot-reload contract: this same
 	// method runs on every connection save, so the swap here IS what makes
 	// a Settings change take effect without a pod restart.
-	if _, ok := srv.credProvider.(*providers.AWSSecretsManagerProvider); !ok {
-		t.Fatalf("credProvider = %T, want *providers.AWSSecretsManagerProvider (restored aws-sm cluster-creds arm)", srv.credProvider)
+	if _, ok := srv.credProvider().(*providers.AWSSecretsManagerProvider); !ok {
+		t.Fatalf("credProvider = %T, want *providers.AWSSecretsManagerProvider (restored aws-sm cluster-creds arm)", srv.credProvider())
 	}
-	if srv.clusterTestCfg == nil || srv.clusterTestCfg.Type != "aws-sm" {
-		t.Errorf("expected clusterTestCfg.Type=aws-sm, got %+v", srv.clusterTestCfg)
+	if srv.clusterTestCfg() == nil || srv.clusterTestCfg().Type != "aws-sm" {
+		t.Errorf("expected clusterTestCfg.Type=aws-sm, got %+v", srv.clusterTestCfg())
 	}
-	if srv.clusterTestCfg != nil && srv.clusterTestCfg.ArgoCDNamespace != "" {
-		t.Errorf("ArgoCDNamespace = %q, want empty (V125-1-10.8 guard)", srv.clusterTestCfg.ArgoCDNamespace)
+	if srv.clusterTestCfg() != nil && srv.clusterTestCfg().ArgoCDNamespace != "" {
+		t.Errorf("ArgoCDNamespace = %q, want empty (V125-1-10.8 guard)", srv.clusterTestCfg().ArgoCDNamespace)
 	}
-	if srv.addonSecretCfg == nil || srv.addonSecretCfg.Type != "aws-sm" {
-		t.Errorf("expected addonSecretCfg.Type=aws-sm, got %+v", srv.addonSecretCfg)
+	if srv.addonSecretCfg() == nil || srv.addonSecretCfg().Type != "aws-sm" {
+		t.Errorf("expected addonSecretCfg.Type=aws-sm, got %+v", srv.addonSecretCfg())
 	}
 }
 
@@ -700,8 +719,8 @@ func TestReinitializeFromConnection_ArgoCDExplicit(t *testing.T) {
 	// What we CAN assert: when construction succeeded the addon-secret
 	// typed config should reflect the wired-through type, and the call
 	// must not panic.
-	if srv.addonSecretCfg != nil && srv.addonSecretCfg.Type != "argocd" {
-		t.Errorf("expected addonSecretCfg.Type=argocd when set, got %q", srv.addonSecretCfg.Type)
+	if srv.addonSecretCfg() != nil && srv.addonSecretCfg().Type != "argocd" {
+		t.Errorf("expected addonSecretCfg.Type=argocd when set, got %q", srv.addonSecretCfg().Type)
 	}
 }
 
@@ -724,8 +743,8 @@ func TestReinitializeFromConnection_K8sSecretsRegression(t *testing.T) {
 	// k8s-secrets construction may fail in the unit-test env (no in-cluster
 	// config + no ~/.kube/config), but the api code must not crash and the
 	// type must round-trip when a provider was successfully constructed.
-	if srv.addonSecretCfg != nil && srv.addonSecretCfg.Type != "k8s-secrets" {
-		t.Errorf("expected addonSecretCfg.Type=k8s-secrets when set, got %q", srv.addonSecretCfg.Type)
+	if srv.addonSecretCfg() != nil && srv.addonSecretCfg().Type != "k8s-secrets" {
+		t.Errorf("expected addonSecretCfg.Type=k8s-secrets when set, got %q", srv.addonSecretCfg().Type)
 	}
 }
 
@@ -749,7 +768,7 @@ func TestReinitializeFromConnection_EmptyType_OutOfCluster(t *testing.T) {
 	// Must not panic.
 	srv.ReinitializeFromConnection()
 
-	if srv.credProvider != nil {
+	if srv.credProvider() != nil {
 		t.Error("expected credProvider to remain nil when out-of-cluster + empty provider type")
 	}
 }
@@ -780,7 +799,7 @@ func TestReinitializeFromConnection_NilProvider(t *testing.T) {
 	// In the test env (out-of-cluster), the auto-default fails and credProvider
 	// stays nil. The fact that the call was made — and didn't panic — IS the
 	// fix; the in-cluster success branch is covered at the unit level.
-	if srv.credProvider != nil {
+	if srv.credProvider() != nil {
 		t.Error("expected credProvider to remain nil when out-of-cluster + nil provider config")
 	}
 }
@@ -831,10 +850,10 @@ func TestReinitializeFromConnection_NoCrossContaminationIntoClusterTestNamespace
 	// when the cluster-test config is actually used, which means
 	// clusterTestCfg got set. So we assert ONLY the populated case (matching
 	// the existing TestReinitializeFromConnection_SetsProvider pattern).
-	if srv.clusterTestCfg != nil && srv.clusterTestCfg.ArgoCDNamespace != "" {
+	if srv.clusterTestCfg() != nil && srv.clusterTestCfg().ArgoCDNamespace != "" {
 		t.Errorf("V125-1-11.7-fix regression: clusterTestCfg.ArgoCDNamespace = %q, want \"\" "+
 			"(addon-secrets-shaped Provider.Namespace must NOT bleed into the argocd-install-namespace slot)",
-			srv.clusterTestCfg.ArgoCDNamespace)
+			srv.clusterTestCfg().ArgoCDNamespace)
 	}
 
 	// addonSecretCfg in this case can still be populated when the
@@ -844,9 +863,9 @@ func TestReinitializeFromConnection_NoCrossContaminationIntoClusterTestNamespace
 	// Provider.Namespace verbatim when the factory completes — that's the
 	// correct addon-secret-namespace semantics and explicitly NOT the bug
 	// we're guarding against here.
-	if srv.addonSecretCfg != nil && srv.addonSecretCfg.Namespace != "sharko" {
+	if srv.addonSecretCfg() != nil && srv.addonSecretCfg().Namespace != "sharko" {
 		t.Errorf("addonSecretCfg.Namespace = %q, want \"sharko\" "+
 			"(addon-secret namespace should carry the connection's Provider.Namespace through verbatim)",
-			srv.addonSecretCfg.Namespace)
+			srv.addonSecretCfg().Namespace)
 	}
 }

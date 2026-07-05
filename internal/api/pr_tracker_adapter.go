@@ -81,6 +81,13 @@ func (s *Server) attachPRTracker(orch *orchestrator.Orchestrator) *orchestrator.
 	if s.reconcilerTrigger != nil {
 		orch.SetReconcilerTrigger(s.reconcilerTrigger)
 	}
+	// Per-cluster credential-fetch routing (V2-cleanup-60.4): share the
+	// server-lifetime router so orchestrator-side fetches (addon ops,
+	// adopt/unadopt, cluster updates) route inline-registered clusters via
+	// the ArgoCD reader exactly like the api-side fetch sites — one cached
+	// ArgoCD reader, one test seam. nil (no provider published) is a no-op:
+	// the orchestrator keeps its New() default.
+	orch.SetCredsRouter(s.credsRouter())
 	return orch
 }
 

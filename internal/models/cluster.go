@@ -60,6 +60,16 @@ type ManagedClusterEntry struct {
 	// falling back to Sharko-managed. See internal/models/connection_mode.go
 	// for the canonical constants + predicate.
 	ConnectionManagedBy string `json:"connectionManagedBy,omitempty" yaml:"connectionManagedBy,omitempty" jsonschema:"enum=sharko,enum=user"`
+
+	// CredsSource records WHERE this cluster's credentials live
+	// (V2-cleanup-60.4): "inline-kubeconfig" — pasted at registration, the
+	// credentials exist ONLY in the ArgoCD cluster Secret and every fetch
+	// must use the ArgoCD reader regardless of the configured backend;
+	// "secret-kubeconfig" / "eks-token" — the secrets backend holds them.
+	// Absent/empty means the record predates the field (unknown) — readers
+	// fall back to backend-first-then-ArgoCD-read. See
+	// models.CredentialRoutingFor + internal/providers.ClusterCredsRouter.
+	CredsSource string `json:"credsSource,omitempty" yaml:"credsSource,omitempty" jsonschema:"enum=inline-kubeconfig,enum=secret-kubeconfig,enum=eks-token"`
 }
 
 // ClusterLabels is the addon-enablement map on a managed-cluster entry. Its
@@ -300,6 +310,14 @@ type Cluster struct {
 	// syncs addon labels onto it. The UI renders a read-only
 	// "connection: managed by you" caption off this field.
 	ConnectionManagedBy string `json:"connection_managed_by,omitempty" yaml:"connectionManagedBy,omitempty"`
+
+	// CredsSource mirrors the managed-clusters.yaml entry's credsSource
+	// field (V2-cleanup-60.4): "inline-kubeconfig" (credentials live only in
+	// the ArgoCD cluster Secret), "secret-kubeconfig" / "eks-token" (the
+	// secrets backend holds them), or "" (record predates the field). The
+	// credential-fetch routing (Test / Diagnose / secrets / addon ops) keys
+	// off this so inline-registered clusters work under any backend.
+	CredsSource string `json:"creds_source,omitempty" yaml:"credsSource,omitempty"`
 
 	// Connectivity check fields (V2-cleanup-29). Flat primitives only —
 	// computed at the API layer from ArgoCD application state. The models

@@ -59,7 +59,7 @@ func newRegisterBackendTestServer(t *testing.T, cp providers.ClusterCredentialsP
 	srv := newIsolatedTestServer(t)
 	argoStub := startArgocdStub(t, nil) // no clusters registered in ArgoCD
 	seedActiveConnectionWithArgo(t, srv, argoStub.URL)
-	srv.credProvider = cp
+	installCredProvider(srv, cp, nil, nil)
 	return srv
 }
 
@@ -215,17 +215,17 @@ func TestHotReload_ConnectionSaveSwapsRegistrationProviderToAWSSM(t *testing.T) 
 	}
 
 	// The save path must have hot-reloaded the registration provider.
-	if _, ok := srv.credProvider.(*providers.AWSSecretsManagerProvider); !ok {
-		t.Fatalf("credProvider after connection save = %T, want *providers.AWSSecretsManagerProvider (hot-reload must not require a pod restart)", srv.credProvider)
+	if _, ok := srv.credProvider().(*providers.AWSSecretsManagerProvider); !ok {
+		t.Fatalf("credProvider after connection save = %T, want *providers.AWSSecretsManagerProvider (hot-reload must not require a pod restart)", srv.credProvider())
 	}
-	if srv.clusterTestCfg == nil || srv.clusterTestCfg.Type != "aws-sm" {
-		t.Fatalf("clusterTestCfg after connection save = %+v, want Type=aws-sm", srv.clusterTestCfg)
+	if srv.clusterTestCfg() == nil || srv.clusterTestCfg().Type != "aws-sm" {
+		t.Fatalf("clusterTestCfg after connection save = %+v, want Type=aws-sm", srv.clusterTestCfg())
 	}
-	if srv.clusterTestCfg.ArgoCDNamespace != "" {
-		t.Errorf("ArgoCDNamespace = %q, want empty (V125-1-10.8 cross-contamination guard)", srv.clusterTestCfg.ArgoCDNamespace)
+	if srv.clusterTestCfg().ArgoCDNamespace != "" {
+		t.Errorf("ArgoCDNamespace = %q, want empty (V125-1-10.8 cross-contamination guard)", srv.clusterTestCfg().ArgoCDNamespace)
 	}
-	if srv.clusterTestCfg.Region != "eu-west-1" || srv.clusterTestCfg.Prefix != "clusters/" {
-		t.Errorf("clusterTestCfg carried (region=%q, prefix=%q), want (eu-west-1, clusters/)", srv.clusterTestCfg.Region, srv.clusterTestCfg.Prefix)
+	if srv.clusterTestCfg().Region != "eu-west-1" || srv.clusterTestCfg().Prefix != "clusters/" {
+		t.Errorf("clusterTestCfg carried (region=%q, prefix=%q), want (eu-west-1, clusters/)", srv.clusterTestCfg().Region, srv.clusterTestCfg().Prefix)
 	}
 }
 
@@ -233,7 +233,7 @@ func TestHotReload_ConnectionSaveSwapsRegistrationProviderToAWSSM(t *testing.T) 
 // provider. We pin the full loop: save aws-sm connection → swap in a
 // recording fake shaped like the reloaded provider is NOT needed — instead we
 // assert the reloaded provider is what the register handler will read
-// (per-request orchestrator reads s.credProvider at request time, so the
+// (per-request orchestrator reads s.credProvider() at request time, so the
 // swap IS the contract). This test drives one step further: change the
 // connection provider TYPE and confirm the registration path consults the
 // provider that matches the latest save.
@@ -291,8 +291,33 @@ func TestHotReload_SubsequentRegistrationUsesNewProvider(t *testing.T) {
 	if len(fakeOld.calls) != 1 {
 		t.Fatalf("old provider was consulted after the connection save (calls=%v) — hot-reload failed", fakeOld.calls)
 	}
-	if _, ok := srv.credProvider.(*providers.AWSSecretsManagerProvider); !ok {
-		t.Fatalf("credProvider = %T after save, want *providers.AWSSecretsManagerProvider", srv.credProvider)
+	if _, ok := srv.credProvider().(*providers.AWSSecretsManagerProvider); !ok {
+		t.Fatalf("credProvider = %T after save, want *providers.AWSSecretsManagerProvider", srv.credProvider())
+	}
+
+	// L14 strengthening: "old provider not consulted" is only half the
+	// contract — the registration must actually SUCCEED through the
+	// currently-published provider. The reloaded real AWS SM provider can't
+	// serve credentials in a unit test, so publish a recording fake through
+	// the SAME single-writer publish path ReinitializeFromConnection uses
+	// (M1's atomic snapshot) and prove the very next registration (a) reads
+	// it at request time and (b) completes with 200.
+	fakeNew := &recordingCredProvider{kc: &providers.Kubeconfig{Server: "https://new.example.com"}}
+	srv.publishProviders(fakeNew, nil, &providers.ClusterTestProviderConfig{Type: "aws-sm"})
+
+	req3 := httptest.NewRequest(http.MethodPost, "/api/v1/clusters", bytes.NewReader(body))
+	req3.Header.Set("Content-Type", "application/json")
+	w3 := httptest.NewRecorder()
+	router.ServeHTTP(w3, req3)
+
+	if w3.Code != http.StatusOK {
+		t.Fatalf("post-reload registration status = %d, want 200 dry-run success (body=%s)", w3.Code, w3.Body.String())
+	}
+	if len(fakeNew.calls) != 1 || fakeNew.calls[0] != "prod-eu" {
+		t.Fatalf("newly published provider calls = %v, want [prod-eu] — the second registration must go THROUGH the new provider", fakeNew.calls)
+	}
+	if len(fakeOld.calls) != 1 {
+		t.Fatalf("old provider consulted again (calls=%v)", fakeOld.calls)
 	}
 }
 

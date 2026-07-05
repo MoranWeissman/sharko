@@ -92,13 +92,12 @@ func TestRegisterCluster_EKSProvider_RejectsKubeconfigField(t *testing.T) {
 	srv := newIsolatedTestServer(t)
 	router := NewRouter(srv, nil)
 
-	// Empty provider == legacy EKS path. Kubeconfig field on this branch
-	// is rejected so users don't accidentally paste credentials into the
-	// wrong code path (which would silently route through credProvider
-	// and ignore their kubeconfig).
+	// An EXPLICIT non-kubeconfig provider still rejects a pasted kubeconfig
+	// (cross-provider field bleed → 400): the caller said "backend", so a
+	// kubeconfig on the request is almost certainly a bug.
 	body, _ := json.Marshal(map[string]interface{}{
 		"name":       "prod-eu",
-		"provider":   "",
+		"provider":   "eks",
 		"kubeconfig": "some yaml here",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/clusters", bytes.NewReader(body))
@@ -112,6 +111,38 @@ func TestRegisterCluster_EKSProvider_RejectsKubeconfigField(t *testing.T) {
 	msg := decodeError(t, w)
 	if !strings.Contains(msg, "kubeconfig") {
 		t.Errorf("error %q should mention kubeconfig", msg)
+	}
+}
+
+func TestRegisterCluster_PastedKubeconfig_NoProvider_DerivesInlinePath(t *testing.T) {
+	// V2-cleanup-60.4 derive-rule un-trap: a pasted kubeconfig with NOTHING
+	// else said (no creds_source, no provider) is authoritative — the
+	// request takes the inline path. Before this rule the same request was
+	// derived onto the backend path and rejected with "kubeconfig is only
+	// valid for an inline-kubeconfig registration", which trained callers
+	// to drop the paste and fall into the silent backend/eks-token trap.
+	srv := newIsolatedTestServer(t)
+	router := NewRouter(srv, nil)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"name":       "kind-local",
+		"kubeconfig": "apiVersion: v1\nkind: Config\n",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/clusters", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	// The inline path must be taken: NOT the backend-path 503 (no provider
+	// configured on this bare test server) and NOT the old cross-field 400.
+	if w.Code == http.StatusServiceUnavailable {
+		t.Fatalf("status = 503: pasted-kubeconfig request was derived onto the backend path")
+	}
+	if w.Code == http.StatusBadRequest {
+		msg := decodeError(t, w)
+		if strings.Contains(msg, "only valid for an inline-kubeconfig registration") {
+			t.Fatalf("old derive rule still active: %q", msg)
+		}
 	}
 }
 
