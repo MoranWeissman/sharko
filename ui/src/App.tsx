@@ -19,6 +19,7 @@ const ClusterDetail = lazy(() => import('@/views/ClusterDetail'))
 const AddonCatalog = lazy(() => import('@/views/AddonCatalog'))
 const AddonDetail = lazy(() => import('@/views/AddonDetail'))
 const Observability = lazy(() => import('@/views/Observability'))
+const SystemView = lazy(() => import('@/views/SystemView'))
 const Dashboards = lazy(() => import('@/views/Dashboards'))
 const Settings = lazy(() => import('@/views/Settings'))
 const UserInfo = lazy(() => import('@/views/UserInfo'))
@@ -211,6 +212,7 @@ export function ConnectedApp() {
           <Route path="addons/:name" element={<AddonDetail />} />
           <Route path="version-matrix" element={<Navigate to="/addons" replace />} />
           <Route path="observability" element={<Observability />} />
+          <Route path="system" element={<SystemView />} />
           <Route path="upgrade" element={<UpgradeChecker />} />
           <Route path="dashboards" element={<Dashboards />} />
           <Route path="audit" element={<AuditViewer />} />

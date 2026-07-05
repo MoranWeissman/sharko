@@ -7,6 +7,7 @@ import {
   Activity,
   BarChart3,
   ClipboardList,
+  Network,
   Settings,
   ChevronLeft,
   ChevronRight,
@@ -54,6 +55,7 @@ const navSections: NavSection[] = [
   {
     label: 'Manage',
     items: [
+      { to: '/system', label: 'System', icon: Network },
       { to: '/observability', label: 'Observability', icon: Activity },
       { to: '/dashboards', label: 'Dashboards', icon: BarChart3 },
       { to: '/audit', label: 'Audit Log', icon: ClipboardList },
@@ -72,6 +74,7 @@ const routeLabels: Record<string, string> = {
   dashboard: 'Dashboard',
   clusters: 'Clusters',
   addons: 'Addons Catalog',
+  system: 'System',
   observability: 'Observability',
   dashboards: 'Dashboards',
   audit: 'Audit Log',
