@@ -82,6 +82,35 @@ func TestUnadoptCluster_DryRun(t *testing.T) {
 	}
 }
 
+// TestUnadoptCluster_LegacyAnnotation_StillRecognised (V2-cleanup-59): a
+// cluster adopted BEFORE the sharko.dev group rename carries only the old
+// sharko.sharko.io/adopted annotation on its live ArgoCD Secret. Unadopt
+// must keep recognising it — otherwise a pre-rename adopted cluster could
+// never be unadopted.
+func TestUnadoptCluster_LegacyAnnotation_StillRecognised(t *testing.T) {
+	argocd := newMockArgocd()
+	git := newMockGitProvider()
+	git.files["configuration/managed-clusters.yaml"] = []byte("clusters:\n  - name: cluster-a\n    labels: {}\n")
+
+	asm := newMockArgoSecretManager()
+	// ONLY the pre-rename key present.
+	asm.annotations["cluster-a"] = map[string]string{AnnotationAdoptedLegacy: "true"}
+
+	orch := New(nil, nil, argocd, git, autoMergeGitOps(), defaultPaths(), nil)
+	orch.SetArgoSecretManager(asm, "")
+
+	result, err := orch.UnadoptCluster(context.Background(), "cluster-a", UnadoptClusterRequest{Yes: true})
+	if err != nil {
+		t.Fatalf("unexpected error for legacy-annotated cluster: %v", err)
+	}
+	if result.Status != "success" {
+		t.Errorf("expected success, got %s (error: %s)", result.Status, result.Error)
+	}
+	if len(asm.unadopted) != 1 || asm.unadopted[0] != "cluster-a" {
+		t.Errorf("expected unadopt call for cluster-a, got: %v", asm.unadopted)
+	}
+}
+
 func TestUnadoptCluster_EmptyName(t *testing.T) {
 	orch := New(nil, nil, newMockArgocd(), newMockGitProvider(), autoMergeGitOps(), defaultPaths(), nil)
 	_, err := orch.UnadoptCluster(context.Background(), "", UnadoptClusterRequest{Yes: true})

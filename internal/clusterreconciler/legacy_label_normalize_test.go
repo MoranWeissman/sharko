@@ -22,7 +22,7 @@ func TestPollOnce_LegacyTrueLabel_NormalizedToEnabled(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	body := []byte(`apiVersion: sharko.io/v1
+	body := []byte(`apiVersion: sharko.dev/v1
 kind: ManagedClusters
 metadata:
   name: managed-clusters

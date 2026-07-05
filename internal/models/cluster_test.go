@@ -16,7 +16,7 @@ import (
 // V125-1-9 Story 9.1 — reader/writer envelope compat for
 // managed-clusters.yaml. These tests pin both the back-compat read path
 // (legacy bare YAML continues to load) and the new envelope read+write
-// path (apiVersion: sharko.io/v1, kind: ManagedClusters).
+// path (apiVersion: sharko.dev/v1, kind: ManagedClusters).
 //
 // The test names match the dispatch's acceptance-criteria list verbatim so
 // CI failure messages and the orchestrator's traceability matrix line up.
@@ -162,7 +162,7 @@ func TestLoadManagedClusters_EnvelopedYAML_Accept(t *testing.T) {
 	t.Parallel()
 
 	body := []byte(`# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json
-apiVersion: sharko.io/v1
+apiVersion: sharko.dev/v1
 kind: ManagedClusters
 metadata:
   name: managed-clusters
@@ -202,7 +202,7 @@ spec:
 }
 
 // TestLoadManagedClusters_EnvelopedWrongKind_Reject confirms that an
-// envelope with apiVersion: sharko.io/v1 but kind: AddonCatalog (or
+// envelope with apiVersion: sharko.dev/v1 but kind: AddonCatalog (or
 // anything other than ManagedClusters) is rejected with an explicit error,
 // rather than silently parsing as an empty clusters list. This is the
 // load-time guard for "wrong file handed to the wrong loader" — the kind
@@ -212,7 +212,7 @@ spec:
 func TestLoadManagedClusters_EnvelopedWrongKind_Reject(t *testing.T) {
 	t.Parallel()
 
-	body := []byte(`apiVersion: sharko.io/v1
+	body := []byte(`apiVersion: sharko.dev/v1
 kind: AddonCatalog
 metadata:
   name: addon-catalog
@@ -243,7 +243,7 @@ spec:
 //
 //   - Line 1 of the output is the yaml-language-server schema header
 //     (editors use it to fetch the schema for inline validation).
-//   - The body contains the full envelope: apiVersion: sharko.io/v1,
+//   - The body contains the full envelope: apiVersion: sharko.dev/v1,
 //     kind: ManagedClusters, metadata.name: managed-clusters, and the
 //     spec block.
 //
@@ -386,7 +386,7 @@ func TestRoundTrip_EnvelopedRead_EnvelopedWrite_Read(t *testing.T) {
 	t.Parallel()
 
 	enveloped := []byte(`# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json
-apiVersion: sharko.io/v1
+apiVersion: sharko.dev/v1
 kind: ManagedClusters
 metadata:
   name: managed-clusters
@@ -461,8 +461,8 @@ func TestLoadManagedClusters_EnvelopedInvalid_Reject(t *testing.T) {
 	// Body is enveloped (so the validator runs) but violates the schema
 	// in three ways: missing spec.clusters (required), extra field at
 	// spec level (additionalProperties: false), and apiVersion is the
-	// wrong const value (sharko.io/v2 instead of sharko.io/v1).
-	body := []byte(`apiVersion: sharko.io/v1
+	// wrong const value (sharko.dev/v2 instead of sharko.dev/v1).
+	body := []byte(`apiVersion: sharko.dev/v1
 kind: ManagedClusters
 metadata:
   name: managed-clusters

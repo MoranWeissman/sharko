@@ -138,7 +138,7 @@ bootstrapAdmin:
 # Connectivity Check (V2-cleanup-29)
 # ---------------------------------------------------------------------------
 # When enabled (the default), Sharko stamps the label
-# sharko.io/connectivity-check: enabled on every newly-registered cluster
+# sharko.dev/connectivity-check: enabled on every newly-registered cluster
 # Secret that has zero addons enabled. The connectivity-check ApplicationSet
 # in the bootstrap chart selects those Secrets and deploys a harmless
 # ConfigMap through ArgoCD. Synced+Healthy = end-to-end proof; a failed

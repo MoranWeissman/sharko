@@ -141,12 +141,16 @@ func GenerateSchema(target any, id, title, description, kindConst string) ([]byt
 		kindSchema.Enum = nil
 	}
 
-	// Constrain apiVersion the same way — wrong apiVersion becomes a
-	// validation error rather than a quiet fall-through.
+	// Constrain apiVersion to the two accepted groups — the canonical
+	// sharko.dev/v1 plus the legacy sharko.io/v1 (READ-BOTH compat,
+	// V2-cleanup-59). An enum rather than a const because enveloped files
+	// authored before the group rename must keep validating clean for all
+	// of v2.x; any OTHER apiVersion is still a validation error rather
+	// than a quiet fall-through.
 	if apiVersionSchema, ok := s.Properties.Get("apiVersion"); ok {
-		apiVersionSchema.Const = APIVersion
+		apiVersionSchema.Enum = []any{APIVersion, APIVersionLegacy}
 		apiVersionSchema.Type = ""
-		apiVersionSchema.Enum = nil
+		apiVersionSchema.Const = nil
 	}
 
 	// MarshalIndent for human readability and stable map-key ordering.

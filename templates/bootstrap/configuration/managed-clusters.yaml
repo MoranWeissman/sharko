@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json
-apiVersion: sharko.io/v1
+apiVersion: sharko.dev/v1
 kind: ManagedClusters
 metadata:
   name: managed-clusters

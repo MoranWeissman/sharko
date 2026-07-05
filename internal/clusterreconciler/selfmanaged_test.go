@@ -41,7 +41,7 @@ type testClusterEntry struct {
 
 func envelopedWithModes(entries ...testClusterEntry) []byte {
 	var b strings.Builder
-	b.WriteString("apiVersion: sharko.io/v1\n")
+	b.WriteString("apiVersion: sharko.dev/v1\n")
 	b.WriteString("kind: ManagedClusters\n")
 	b.WriteString("metadata:\n")
 	b.WriteString("  name: managed-clusters\n")

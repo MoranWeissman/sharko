@@ -14,7 +14,7 @@ import (
 // apiVersion/kind/metadata/spec envelope, and one cert-manager entry the
 // complex-fields path can mutate.
 const envelopedKedaCatalog = `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/addons-catalog.v1.json
-apiVersion: sharko.io/v1
+apiVersion: sharko.dev/v1
 kind: AddonCatalog
 metadata:
   name: addon-catalog
@@ -42,7 +42,7 @@ func assertEnvelopedComplexUpdate(t *testing.T, out []byte, msg string) []models
 	if !strings.HasPrefix(string(out), catalogSchemaHeaderLine+"\n") {
 		t.Errorf("%s: schema header missing or not on line 1\n--- got ---\n%s\n--- end ---", msg, out)
 	}
-	if !strings.Contains(string(out), "apiVersion: sharko.io/v1") {
+	if !strings.Contains(string(out), "apiVersion: sharko.dev/v1") {
 		t.Errorf("%s: envelope apiVersion missing", msg)
 	}
 	if !strings.Contains(string(out), "kind: AddonCatalog") {

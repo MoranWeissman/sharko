@@ -274,7 +274,7 @@ Advisory data is fetched from `internal/advisories/` (ArtifactHub primary, relea
 1. Per-cluster Stage 1 connectivity verification.
 2. Per-cluster atomic adoption: create values file, add to `managed-clusters.yaml`, commit as PR.
 
-Rejects clusters managed by another tool (`managed-by` label check). After PR merge, sets the `sharko.sharko.io/adopted` annotation on the ArgoCD cluster secret. Supports dry-run mode.
+Rejects clusters managed by another tool (`managed-by` label check). After PR merge, sets the `sharko.sharko.dev/adopted` annotation on the ArgoCD cluster secret. Supports dry-run mode.
 
 ### orchestrator/unadopt.go
 

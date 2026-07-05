@@ -30,7 +30,7 @@ func TestDeployingNotCountedAsIssue_V2cleanup45(t *testing.T) {
 
 	// managedClustersYAML has a single cluster whose labels enable the three
 	// addons we're testing. The enveloped format is what the real service writes.
-	managedClustersYAML := `apiVersion: sharko.io/v1
+	managedClustersYAML := `apiVersion: sharko.dev/v1
 kind: ManagedClusters
 metadata:
   name: managed-clusters
@@ -45,7 +45,7 @@ spec:
 `
 
 	// addonsCatalogYAML declares the three addons.
-	addonsCatalogYAML := `apiVersion: sharko.io/v1
+	addonsCatalogYAML := `apiVersion: sharko.dev/v1
 kind: AddonCatalog
 metadata:
   name: addon-catalog

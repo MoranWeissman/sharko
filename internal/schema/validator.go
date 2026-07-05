@@ -253,7 +253,7 @@ func (v *Validator) ValidateAutoDetect(body []byte) error {
 		return fmt.Errorf("schema validator: auto-detect: %w", err)
 	}
 	if !enveloped {
-		return errors.New("schema validator: auto-detect: body is not an enveloped Sharko document (apiVersion missing or not sharko.io/v1)")
+		return errors.New("schema validator: auto-detect: body is not an enveloped Sharko document (apiVersion missing or not sharko.dev/v1 / legacy sharko.io/v1)")
 	}
 
 	var header struct {

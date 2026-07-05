@@ -155,7 +155,7 @@ func hasEventForResource(entries []audit.Entry, event, substr string) bool {
 // fails schema validation BEFORE the diff runs.
 func envelopedManagedClusters(clusters ...string) []byte {
 	var b strings.Builder
-	b.WriteString("apiVersion: sharko.io/v1\n")
+	b.WriteString("apiVersion: sharko.dev/v1\n")
 	b.WriteString("kind: ManagedClusters\n")
 	b.WriteString("metadata:\n")
 	b.WriteString("  name: managed-clusters\n")
@@ -528,7 +528,7 @@ func TestPollOnce_InvalidYAML_RejectedNotApplied(t *testing.T) {
 	// Enveloped body with the wrong kind — LoadManagedClusters rejects
 	// it with an explicit wrong-kind error. This exercises the V125-1-9
 	// schema-aware reader path the spec calls for.
-	invalid := []byte(`apiVersion: sharko.io/v1
+	invalid := []byte(`apiVersion: sharko.dev/v1
 kind: AddonCatalog
 metadata:
   name: managed-clusters

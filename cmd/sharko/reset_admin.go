@@ -176,7 +176,7 @@ func deleteInitialAdminSecret(ctx context.Context, clientset kubernetes.Interfac
 // (kept in sync deliberately — see initialAdminSecretName comment for why we
 // duplicate rather than import).
 //
-// The annotation `sharko.io/initial-secret: "rotated-on-reset-admin"` marks
+// The annotation `sharko.dev/initial-secret: "rotated-on-reset-admin"` marks
 // that the secret persists across `sharko reset-admin` rotations, each
 // rotation rewriting `data.password` to the new plaintext. Operators who no
 // longer need it can `kubectl delete` it manually at any time.
@@ -196,7 +196,7 @@ func writeInitialAdminSecretCLI(ctx context.Context, clientset kubernetes.Interf
 				"app.kubernetes.io/component":  "bootstrap",
 			},
 			Annotations: map[string]string{
-				"sharko.io/initial-secret": "rotated-on-reset-admin",
+				"sharko.dev/initial-secret": "rotated-on-reset-admin",
 			},
 		},
 		Type: corev1.SecretTypeOpaque,

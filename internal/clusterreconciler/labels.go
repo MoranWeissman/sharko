@@ -16,6 +16,8 @@ package clusterreconciler
 
 import (
 	corev1 "k8s.io/api/core/v1"
+
+	"github.com/MoranWeissman/sharko/internal/argosecrets"
 )
 
 const (
@@ -31,13 +33,12 @@ const (
 
 	// annotationAdopted is the annotation key that marks a cluster Secret as
 	// adopted (brought under Sharko management from a pre-existing ArgoCD
-	// secret) rather than registered from scratch by Sharko.
-	//
-	// Canonical definition: internal/argosecrets.AnnotationAdopted
-	// ("sharko.sharko.io/adopted"). Duplicated here to avoid a circular import
-	// between clusterreconciler and argosecrets — both packages must stay
-	// independent. Value MUST stay byte-identical to the argosecrets const.
-	annotationAdopted = "sharko.sharko.io/adopted"
+	// secret) rather than registered from scratch by Sharko. Aliased from the
+	// canonical definition in internal/argosecrets (this package already
+	// imports argosecrets for the shared Secret builders, so there is no
+	// cycle). Presence checks must go through argosecrets.IsAdopted, which
+	// also recognises the pre-rename legacy key (V2-cleanup-59).
+	annotationAdopted = argosecrets.AnnotationAdopted
 )
 
 // IsManagedBySharko reports whether secret carries the Sharko ownership label

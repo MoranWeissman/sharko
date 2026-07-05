@@ -36,7 +36,7 @@ import (
 // with different field shapes (with and without optional fields) exercise
 // the reader/writer paths the mutators stitch together.
 const envelopedCatalogFixture = `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/addons-catalog.v1.json
-apiVersion: sharko.io/v1
+apiVersion: sharko.dev/v1
 kind: AddonCatalog
 metadata:
   name: addon-catalog
@@ -82,7 +82,7 @@ func assertEnvelopedCatalogOutput(t *testing.T, out []byte, msg string) []models
 	if !strings.HasPrefix(string(out), catalogSchemaHeader+"\n") {
 		t.Errorf("%s: schema header missing or not on line 1\n--- got ---\n%s\n--- end ---", msg, out)
 	}
-	if !strings.Contains(string(out), "apiVersion: sharko.io/v1") {
+	if !strings.Contains(string(out), "apiVersion: sharko.dev/v1") {
 		t.Errorf("%s: envelope apiVersion missing", msg)
 	}
 	if !strings.Contains(string(out), "kind: AddonCatalog") {
@@ -307,7 +307,7 @@ func TestRemoveCatalogEntry_Last(t *testing.T) {
 
 func TestRemoveCatalogEntry_Middle(t *testing.T) {
 	threeEntry := `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/addons-catalog.v1.json
-apiVersion: sharko.io/v1
+apiVersion: sharko.dev/v1
 kind: AddonCatalog
 metadata:
   name: addon-catalog
@@ -354,7 +354,7 @@ func TestRemoveCatalogEntry_NotFound(t *testing.T) {
 
 func TestRemoveCatalogEntry_OnlyEntry(t *testing.T) {
 	input := `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/addons-catalog.v1.json
-apiVersion: sharko.io/v1
+apiVersion: sharko.dev/v1
 kind: AddonCatalog
 metadata:
   name: addon-catalog

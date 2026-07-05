@@ -3,7 +3,7 @@
 All Sharko configuration is managed via Helm values. This page documents every supported option.
 
 > Sharko-owned YAML config files wrap content in an
-> `apiVersion: sharko.io/v1` envelope with schema-validated structure.
+> `apiVersion: sharko.dev/v1` envelope with schema-validated structure.
 > ArgoCD cluster Secret lifecycle is managed by an in-Pod reconciler
 > goroutine — Secrets are created post-merge (no orphan-on-PR-close),
 > gated by an `app.kubernetes.io/managed-by: sharko` ownership label.

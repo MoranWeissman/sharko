@@ -2,7 +2,7 @@
 # Addon Catalog — managed by Sharko
 # See docs: https://moranweissman.github.io/sharko/user-guide/addons/
 
-apiVersion: sharko.io/v1
+apiVersion: sharko.dev/v1
 kind: AddonCatalog
 metadata:
   name: addon-catalog

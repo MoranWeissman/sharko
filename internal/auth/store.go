@@ -724,7 +724,7 @@ func writeInitialAdminSecretEnabled() bool {
 //     app.kubernetes.io/managed-by: sharko
 //     app.kubernetes.io/component:  bootstrap
 //   metadata.annotations:
-//     sharko.io/initial-secret: "rotated-on-reset-admin"
+//     sharko.dev/initial-secret: "rotated-on-reset-admin"
 //   data:
 //     username: <base64('admin')>
 //     password: <base64(plaintext)>
@@ -743,7 +743,7 @@ func (s *Store) writeInitialAdminSecret(ctx context.Context, password string) er
 				"app.kubernetes.io/component":  "bootstrap",
 			},
 			Annotations: map[string]string{
-				"sharko.io/initial-secret": "rotated-on-reset-admin",
+				"sharko.dev/initial-secret": "rotated-on-reset-admin",
 			},
 		},
 		Type: corev1SecretTypeOpaque,
@@ -776,7 +776,10 @@ func (s *Store) writeInitialAdminSecret(ctx context.Context, password string) er
 		if existing.Annotations == nil {
 			existing.Annotations = make(map[string]string)
 		}
-		existing.Annotations["sharko.io/initial-secret"] = "rotated-on-reset-admin"
+		existing.Annotations["sharko.dev/initial-secret"] = "rotated-on-reset-admin"
+		// Pre-rename secrets carry the old sharko.io key — drop it while we
+		// are updating anyway so exactly one marker remains (V2-cleanup-59).
+		delete(existing.Annotations, "sharko.io/initial-secret")
 		if _, err := s.clientset.CoreV1().Secrets(s.namespace).Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
 			return fmt.Errorf("update %s/%s: %w", s.namespace, InitialAdminSecretName, err)
 		}

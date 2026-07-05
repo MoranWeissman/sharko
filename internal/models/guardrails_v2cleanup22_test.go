@@ -58,7 +58,7 @@ func TestSaveManagedClusters_GateRejectsInvalidBody(t *testing.T) {
 	t.Parallel()
 
 	// A structurally-broken managed-clusters body: scalar labels.
-	bad := []byte(`apiVersion: sharko.io/v1
+	bad := []byte(`apiVersion: sharko.dev/v1
 kind: ManagedClusters
 metadata:
   name: managed-clusters

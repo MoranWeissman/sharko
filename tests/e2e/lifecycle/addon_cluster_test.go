@@ -144,7 +144,7 @@ func TestPerClusterAddonLifecycle(t *testing.T) {
 	}
 
 	// Mop up any stragglers from prior aborted runs. Idempotent — only
-	// touches clusters carrying the e2e.sharko.io/test=true sentinel.
+	// touches clusters carrying the e2e.sharko.dev/test=true sentinel.
 	harness.DestroyAllStaleE2EClusters(t)
 
 	// 1 mgmt + 2 targets, all parallel-provisioned.

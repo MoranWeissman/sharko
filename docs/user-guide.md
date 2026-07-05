@@ -176,7 +176,7 @@ Key behaviors:
 - Adoption rejects clusters managed by a different tool (non-`sharko` `managed-by` label).
 - A Stage 1 connectivity test runs before adoption proceeds.
 - If a PR already exists for the cluster (idempotent retry), it returns the existing PR instead of creating a duplicate.
-- After the PR is merged, Sharko sets the `sharko.sharko.io/adopted` annotation on the ArgoCD cluster secret.
+- After the PR is merged, Sharko sets the `sharko.sharko.dev/adopted` annotation on the ArgoCD cluster secret.
 
 #### Un-adopt a Cluster
 

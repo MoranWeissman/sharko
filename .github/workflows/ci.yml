@@ -166,7 +166,7 @@ jobs:
   # On every pull request, this job builds the sharko CLI binary and
   # runs `sharko validate-config` against every changed *.yaml / *.yml
   # file in the PR diff. The CLI itself decides which files are Sharko-
-  # owned (top-level apiVersion: sharko.io/v1) and silently skips the
+  # owned (top-level apiVersion: sharko.dev/v1) and silently skips the
   # rest, so this job stays permissive: it only blocks PRs whose
   # enveloped Sharko YAML actually fails schema validation. Helm
   # templates, kustomize, workflows, kind configs, etc. all flow
@@ -248,7 +248,7 @@ jobs:
 
       - name: Bootstrap chart render regression (V2-cleanup-17)
         # The bootstrap chart turns the addon catalog into ArgoCD ApplicationSets.
-        # Sharko writes the catalog under the sharko.io/v1 envelope, so the addon
+        # Sharko writes the catalog under the sharko.dev/v1 envelope, so the addon
         # list lives at .Values.spec.applicationsets. A path bug (reading the
         # top-level .Values.applicationsets) rendered ZERO ApplicationSets, so no
         # addon ever deployed. Render the bootstrap chart against an enveloped

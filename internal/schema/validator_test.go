@@ -13,7 +13,7 @@ import (
 // uses. Reused across happy-path tests so the validator is exercised
 // against the SAME bytes a human author would type from the design doc.
 const validManagedClustersBody = `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json
-apiVersion: sharko.io/v1
+apiVersion: sharko.dev/v1
 kind: ManagedClusters
 metadata:
   name: managed-clusters
@@ -30,7 +30,7 @@ spec:
 `
 
 const validAddonCatalogBody = `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/addons-catalog.v1.json
-apiVersion: sharko.io/v1
+apiVersion: sharko.dev/v1
 kind: AddonCatalog
 metadata:
   name: addon-catalog
@@ -134,7 +134,7 @@ func TestValidator_InvalidEnvelopedYAML_Reject(t *testing.T) {
 		{
 			name: "missing required field spec.clusters",
 			kind: KindManagedClusters,
-			body: `apiVersion: sharko.io/v1
+			body: `apiVersion: sharko.dev/v1
 kind: ManagedClusters
 metadata:
   name: managed-clusters
@@ -157,7 +157,7 @@ spec:
 		{
 			name: "extra forbidden field at spec level (additionalProperties: false)",
 			kind: KindManagedClusters,
-			body: `apiVersion: sharko.io/v1
+			body: `apiVersion: sharko.dev/v1
 kind: ManagedClusters
 metadata:
   name: managed-clusters
@@ -179,7 +179,7 @@ spec:
 		{
 			name: "AddonCatalog — missing required field spec.applicationsets",
 			kind: KindAddonCatalog,
-			body: `apiVersion: sharko.io/v1
+			body: `apiVersion: sharko.dev/v1
 kind: AddonCatalog
 metadata:
   name: addon-catalog
@@ -312,7 +312,7 @@ func TestValidator_ValidateAutoDetect_UnknownKind_Reject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewValidator: %v", err)
 	}
-	body := []byte(`apiVersion: sharko.io/v1
+	body := []byte(`apiVersion: sharko.dev/v1
 kind: ChartReleases
 metadata:
   name: chart-releases
