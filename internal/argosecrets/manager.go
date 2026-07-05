@@ -728,6 +728,45 @@ func (m *Manager) GetManagedByLabel(ctx context.Context, name string) (string, e
 	return existing.Labels[LabelManagedBy], nil
 }
 
+// StripOwnershipLabel removes Sharko's ownership label
+// (app.kubernetes.io/managed-by: sharko) from the named cluster secret
+// WITHOUT deleting the secret and without touching anything else — no
+// annotations, no other labels, no connection data. It is the handover
+// primitive for self-managed connections at removal time (V2-cleanup-60.1):
+// once the cluster's git entry is gone, the reconciler tick that would
+// normally strip the label on a mode switch never sees the entry again, so
+// RemoveCluster strips eagerly instead. Without the strip, the orphan sweep
+// would see a sharko-labeled secret with no git entry and delete the user's
+// connection.
+//
+// Idempotent. Returns (stripped, error):
+//   - (false, nil) — secret does not exist, or exists without the sharko
+//     ownership label (nothing to hand over; a foreign managed-by value is
+//     never touched).
+//   - (true, nil) — the label was removed.
+func (m *Manager) StripOwnershipLabel(ctx context.Context, name string) (bool, error) {
+	existing, err := m.client.CoreV1().Secrets(m.namespace).Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("getting secret %q in namespace %q: %w", name, m.namespace, err)
+	}
+	if existing.Labels[LabelManagedBy] != ManagedByValue {
+		return false, nil
+	}
+
+	updated := existing.DeepCopy()
+	delete(updated.Labels, LabelManagedBy)
+	if _, updateErr := m.client.CoreV1().Secrets(m.namespace).Update(ctx, updated, metav1.UpdateOptions{}); updateErr != nil {
+		return false, fmt.Errorf("stripping ownership label from secret %q in namespace %q: %w", name, m.namespace, updateErr)
+	}
+	slog.Info("[argosecrets] sharko ownership label stripped from cluster secret — connection handed over to the user",
+		"cluster", name, "namespace", m.namespace,
+	)
+	return true, nil
+}
+
 // Unadopt removes the managed-by label and adopted annotation from the named secret
 // without deleting it. The secret remains in the argocd namespace so ArgoCD can still
 // connect to the cluster.

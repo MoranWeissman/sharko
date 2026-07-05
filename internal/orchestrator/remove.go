@@ -11,6 +11,28 @@ import (
 	"github.com/MoranWeissman/sharko/internal/models"
 )
 
+// ownershipLabelStripper is the OPTIONAL capability RemoveCluster uses for
+// the handover-at-removal-time label strip (V2-cleanup-60.1). It is declared
+// as a separate single-method interface (asserted at the call site) rather
+// than added to ArgoSecretManager so existing implementations and test mocks
+// keep compiling unchanged. The production adapter in internal/api
+// (argo_adapter.go) implements it by delegating to
+// argosecrets.Manager.StripOwnershipLabel.
+type ownershipLabelStripper interface {
+	// StripOwnershipLabel removes Sharko's ownership label
+	// (app.kubernetes.io/managed-by: sharko) from the named ArgoCD cluster
+	// Secret without deleting it or touching anything else. Returns
+	// (stripped, error); a missing secret or an absent/foreign label is a
+	// (false, nil) no-op.
+	StripOwnershipLabel(ctx context.Context, name string) (bool, error)
+}
+
+// sharkoManagedByValue mirrors argosecrets.ManagedByValue — the value of the
+// app.kubernetes.io/managed-by label Sharko stamps on secrets it owns. It is
+// duplicated here (like the literal in adopt.go's FR-4.6 check) because the
+// orchestrator must not import argosecrets.
+const sharkoManagedByValue = "sharko"
+
 // RemoveCluster orchestrates cluster removal with configurable cleanup scope.
 //
 // Cleanup scopes:
@@ -23,6 +45,12 @@ import (
 //  1. Validate confirmation (yes: true required).
 //  2. Create PR: remove managed-clusters entry + delete values file (except cleanup=none).
 //  3. If cleanup=all: delete addon secrets from remote cluster + delete ArgoCD cluster secret.
+//     The ArgoCD secret delete is gated on Sharko's ownership label
+//     (V2-cleanup-60.1): a Secret that does not carry
+//     app.kubernetes.io/managed-by: sharko is NEVER deleted — the git entry
+//     may already be gone (retry of a partially-failed removal), in which
+//     case the mode check above cannot see connectionManagedBy: user and the
+//     Secret itself is the only ownership record left.
 func (o *Orchestrator) RemoveCluster(ctx context.Context, req RemoveClusterRequest) (*RemoveClusterResult, error) {
 	log := logging.LoggerFromContext(ctx)
 	if req.Name == "" {
@@ -172,6 +200,28 @@ func (o *Orchestrator) RemoveCluster(ctx context.Context, req RemoveClusterReque
 		}
 	}
 
+	// HANDOVER AT REMOVAL TIME (V2-cleanup-60.1): when the pre-mutation
+	// bytes say the connection is the user's, strip Sharko's ownership
+	// label from the Secret NOW — the reconcile tick that normally does
+	// this on a mode switch reads the git entry, and the PR above just
+	// removed it, so no later tick can ever perform the handover. Without
+	// the strip, the orphan sweep would see a sharko-labeled Secret with no
+	// git entry and delete the user's connection. Applies to every cleanup
+	// scope (the entry is removed in all of them). Best-effort: a failure
+	// is logged loudly but never blocks the removal.
+	if selfManagedConnection && o.argoSecretManager != nil {
+		if stripper, ok := o.argoSecretManager.(ownershipLabelStripper); ok {
+			stripped, stripErr := stripper.StripOwnershipLabel(ctx, req.Name)
+			switch {
+			case stripErr != nil:
+				log.Error("could not strip Sharko's ownership label from the user's ArgoCD cluster Secret during removal — no reconcile tick can do it now that the git entry is gone; remove the app.kubernetes.io/managed-by label by hand or the orphan sweep may delete the Secret",
+					"cluster", req.Name, "error", stripErr)
+			case stripped:
+				steps = append(steps, "strip_sharko_ownership_label")
+			}
+		}
+	}
+
 	// Step 3: If cleanup=all, delete ArgoCD cluster secret.
 	//
 	// SELF-MANAGED GUARD (V2-cleanup-57.2): the user created and maintains
@@ -190,20 +240,47 @@ func (o *Orchestrator) RemoveCluster(ctx context.Context, req RemoveClusterReque
 		clusters, listErr := o.argocd.ListClusters(ctx)
 		if listErr == nil {
 			for _, c := range clusters {
-				if c.Name == req.Name {
-					if delErr := o.argocd.DeleteCluster(ctx, c.Server); delErr != nil {
-						log.Error("failed to delete ArgoCD cluster during removal",
-							"cluster", req.Name, "error", delErr)
-						result.Status = "partial"
-						result.FailedStep = "delete_argocd_cluster"
-						result.Error = delErr.Error()
-						result.CompletedSteps = steps
-						result.Message = "Git changes committed but ArgoCD cluster deletion failed"
-						return result, nil
+				if c.Name != req.Name {
+					continue
+				}
+
+				// OWNERSHIP GATE (V2-cleanup-60.1): never delete a Secret
+				// that does not carry Sharko's ownership label. The mode
+				// check above reads the cluster's git entry — but on a
+				// retry of a removal whose PR already merged, the entry is
+				// gone and selfManagedConnection silently defaults to
+				// false. The label on the Secret itself is the ownership
+				// record that survives the entry's removal, so it has the
+				// final say. Any doubt (read error, missing secret, absent
+				// or foreign label) means refuse.
+				managedBy, labelErr := o.argoSecretManager.GetManagedByLabel(ctx, req.Name)
+				if labelErr != nil || managedBy != sharkoManagedByValue {
+					if labelErr != nil {
+						log.Warn("could not confirm Sharko's ownership label on the ArgoCD cluster Secret — refusing to delete it",
+							"cluster", req.Name, "error", labelErr)
+					} else {
+						log.Info("ArgoCD cluster Secret does not carry Sharko's ownership label — refusing to delete it",
+							"cluster", req.Name, "managed_by", managedBy)
 					}
-					steps = append(steps, "delete_argocd_cluster")
+					steps = append(steps, "skip_argocd_secret_not_sharko_labeled")
+					result.Message = fmt.Sprintf(
+						"Cluster %s was removed from Sharko, but its ArgoCD cluster Secret was left in place: the Secret does not carry Sharko's ownership label (app.kubernetes.io/managed-by: sharko), so Sharko cannot confirm it created it and will not delete it. If you manage that connection yourself this is exactly right — delete the Secret yourself if you no longer want ArgoCD connected to this cluster.",
+						req.Name)
 					break
 				}
+
+				if delErr := o.argocd.DeleteCluster(ctx, c.Server); delErr != nil {
+					log.Error("failed to delete ArgoCD cluster during removal",
+						"cluster", req.Name, "error", delErr)
+					result.Status = "partial"
+					result.FailedStep = "delete_argocd_cluster"
+					result.Error = delErr.Error()
+					result.CompletedSteps = steps
+					result.Message = "Git changes committed but ArgoCD cluster deletion failed"
+					return result, nil
+				}
+				steps = append(steps, "delete_argocd_cluster")
+				break
 			}
 		}
 	}

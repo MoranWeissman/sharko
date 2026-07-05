@@ -34,6 +34,15 @@ func (a *argoManagerAdapter) Unadopt(ctx context.Context, name string) error {
 	return a.mgr.Unadopt(ctx, name)
 }
 
+// StripOwnershipLabel delegates to the real Manager. This method is not part
+// of orchestrator.ArgoSecretManager — it satisfies the OPTIONAL
+// ownershipLabelStripper capability that RemoveCluster type-asserts for the
+// handover-at-removal-time strip on self-managed connections
+// (V2-cleanup-60.1).
+func (a *argoManagerAdapter) StripOwnershipLabel(ctx context.Context, name string) (bool, error) {
+	return a.mgr.StripOwnershipLabel(ctx, name)
+}
+
 // Ensure converts the orchestrator-local spec to argosecrets.ClusterSecretSpec
 // and delegates to the real Manager. Labels and config JSON are built inside
 // Manager.Ensure (via buildLabels / buildSecretConfig), so the write is

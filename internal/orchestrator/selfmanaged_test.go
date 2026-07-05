@@ -268,6 +268,9 @@ func TestRemoveCluster_SharkoManaged_StillDeletesArgoSecret(t *testing.T) {
 		"clusters:\n  - name: sharko-owned\n    labels:\n      monitoring: \"enabled\"\n")
 	git.files["configuration/addons-clusters-values/sharko-owned.yaml"] = []byte("clusterGlobalValues: {}\n")
 	mgr := newMockArgoSecretManager()
+	// The ownership gate (V2-cleanup-60.1) requires the Secret to carry
+	// Sharko's managed-by label before the delete is allowed.
+	mgr.managedByLabel["sharko-owned"] = "sharko"
 	orch := New(nil, nil, argocd, git, defaultGitOps(), defaultPaths(), nil)
 	orch.SetArgoSecretManager(mgr, "")
 
