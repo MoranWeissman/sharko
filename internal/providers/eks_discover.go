@@ -23,6 +23,13 @@ type DiscoveredCluster struct {
 	Endpoint   string `json:"endpoint"`
 	Status     string `json:"status"` // ACTIVE, CREATING, DELETING, FAILED, UPDATING, PENDING
 	Error      string `json:"error,omitempty"`
+	// RoleARN is the IAM role that was assumed to discover this cluster
+	// (empty when the default IRSA identity was used). Wire name "arn"
+	// matches the UI's DiscoveredClusterItem.arn field, which the
+	// post-discovery register flow passes back as role_arn — so the
+	// cluster mints EKS tokens with the same identity that discovered it
+	// (V2-cleanup-62.2).
+	RoleARN string `json:"arn,omitempty"`
 }
 
 // EKSDiscoveryAPI abstracts the EKS API calls needed for cluster discovery.
@@ -178,6 +185,7 @@ func discoverForIdentity(
 				Account: accountID,
 				Status:  "UNKNOWN",
 				Error:   err.Error(),
+				RoleARN: roleARN,
 			})
 			continue
 		}
@@ -187,6 +195,9 @@ func discoverForIdentity(
 			Name:    name,
 			Region:  effectiveRegion,
 			Account: accountID,
+			// Record which identity found this cluster so the register
+			// flow can mint tokens with the same role (V2-cleanup-62.2).
+			RoleARN: roleARN,
 		}
 		if c.Version != nil {
 			dc.K8sVersion = *c.Version

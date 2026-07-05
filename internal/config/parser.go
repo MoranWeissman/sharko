@@ -56,6 +56,10 @@ type clusterEntry struct {
 	// inline-kubeconfig / secret-kubeconfig / eks-token, or "" for records
 	// that predate the field. Mirrors models.ManagedClusterEntry.
 	CredsSource string `yaml:"credsSource,omitempty"`
+	// RoleARN: per-cluster IAM role for EKS token minting
+	// (V2-cleanup-62.2), or "" for records that predate the field.
+	// Mirrors models.ManagedClusterEntry.
+	RoleARN string `yaml:"roleArn,omitempty"`
 }
 
 // AddonCatalogSpec is the spec body of an enveloped addons-catalog.yaml.
@@ -172,6 +176,7 @@ func (p *Parser) ParseClusterAddons(data []byte) ([]models.Cluster, error) {
 			Region:              entry.Region,
 			ConnectionManagedBy: entry.ConnectionManagedBy,
 			CredsSource:         entry.CredsSource,
+			RoleARN:             entry.RoleARN,
 		}
 		clusters = append(clusters, cluster)
 	}

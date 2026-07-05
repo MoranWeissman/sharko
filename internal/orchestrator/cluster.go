@@ -205,8 +205,13 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 			if req.SecretPath != "" {
 				credLookupName = req.SecretPath
 			}
+			// The entry is not in managed-clusters.yaml yet, so the stored-
+			// record resolver cannot supply the per-cluster role — pass the
+			// request's role_arn directly so the registration-time fetch
+			// (and the Stage-1 verification it feeds) mints with the same
+			// identity later fetches will use (V2-cleanup-62.2).
 			var fetchErr error
-			creds, fetchErr = o.credProvider.GetCredentials(credLookupName)
+			creds, fetchErr = providers.GetCredentialsWithOptionalRole(o.credProvider, credLookupName, req.RoleARN)
 			if fetchErr != nil {
 				if !selfManaged {
 					return nil, fmt.Errorf("fetching credentials for cluster %q: %w", req.Name, fetchErr)
@@ -495,6 +500,12 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 		// cluster — an inline-registered cluster must be read via the
 		// ArgoCD provider under ANY backend connection (V2-cleanup-60.4).
 		CredsSource: string(credsSource),
+		// Stamp the per-cluster role ARN so token minting keeps using the
+		// identity the caller registered with — before this, the field was
+		// silently dropped and a discovery-registered cross-account cluster
+		// minted tokens with the wrong identity (V2-cleanup-62.2). Empty
+		// omits the field (pre-field files stay byte-identical).
+		RoleARN: req.RoleARN,
 	})
 	if addEntryErr != nil {
 		log.Error("failed to add cluster entry to cluster-addons.yaml — continuing with values file only",

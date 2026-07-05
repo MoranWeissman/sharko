@@ -41,7 +41,7 @@ func TestRouter_InlineSource_RoutesToArgoCDReader_BackendUntouched(t *testing.T)
 	reader := &routingFakeProvider{kc: &Kubeconfig{Server: "https://from-argocd"}}
 	r := &ClusterCredsRouter{Backend: backend, ArgoCDReaderFn: readerFn(reader, nil)}
 
-	kc, err := r.Fetch("kind-local", "some-secret-path-override", models.CredsSourceInlineKubeconfig)
+	kc, err := r.Fetch("kind-local", "some-secret-path-override", models.CredsSourceInlineKubeconfig, "")
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestRouter_InlineSource_ReaderUnavailable_ActionableError(t *testing.T) {
 	backend := &routingFakeProvider{kc: &Kubeconfig{}}
 	r := &ClusterCredsRouter{Backend: backend, ArgoCDReaderFn: readerFn(nil, errors.New("no in-cluster config"))}
 
-	_, err := r.Fetch("kind-local", "kind-local", models.CredsSourceInlineKubeconfig)
+	_, err := r.Fetch("kind-local", "kind-local", models.CredsSourceInlineKubeconfig, "")
 	if err == nil {
 		t.Fatal("want error when the ArgoCD reader is unavailable for an inline cluster")
 	}
@@ -81,7 +81,7 @@ func TestRouter_BackendSources_RouteToBackend_NoFallback(t *testing.T) {
 		reader := &routingFakeProvider{kc: &Kubeconfig{Server: "https://from-argocd"}}
 		r := &ClusterCredsRouter{Backend: backend, ArgoCDReaderFn: readerFn(reader, nil)}
 
-		_, err := r.Fetch("prod-eu", "clusters/prod-eu", src)
+		_, err := r.Fetch("prod-eu", "clusters/prod-eu", src, "")
 		if !errors.Is(err, backendErr) {
 			t.Errorf("src %s: err = %v, want the backend error verbatim", src, err)
 		}
@@ -100,7 +100,7 @@ func TestRouter_UnknownSource_BackendSuccess_NoReaderCall(t *testing.T) {
 	reader := &routingFakeProvider{kc: &Kubeconfig{Server: "https://from-argocd"}}
 	r := &ClusterCredsRouter{Backend: backend, ArgoCDReaderFn: readerFn(reader, nil)}
 
-	kc, err := r.Fetch("prod-eu", "prod-eu", "")
+	kc, err := r.Fetch("prod-eu", "prod-eu", "", "")
 	if err != nil || kc.Server != "https://from-backend" {
 		t.Fatalf("kc=%+v err=%v, want backend credentials", kc, err)
 	}
@@ -116,7 +116,7 @@ func TestRouter_UnknownSource_BackendMiss_HealsViaArgoCDReader(t *testing.T) {
 	reader := &routingFakeProvider{kc: &Kubeconfig{Server: "https://from-argocd"}}
 	r := &ClusterCredsRouter{Backend: backend, ArgoCDReaderFn: readerFn(reader, nil)}
 
-	kc, err := r.Fetch("kind-local", "kind-local", "")
+	kc, err := r.Fetch("kind-local", "kind-local", "", "")
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestRouter_UnknownSource_BothFail_OriginalBackendError(t *testing.T) {
 	reader := &routingFakeProvider{err: errors.New("argocd secret missing too")}
 	r := &ClusterCredsRouter{Backend: backend, ArgoCDReaderFn: readerFn(reader, nil)}
 
-	_, err := r.Fetch("prod-eu", "prod-eu", "")
+	_, err := r.Fetch("prod-eu", "prod-eu", "", "")
 	if !errors.Is(err, backendErr) {
 		t.Errorf("err = %v, want the original backend error", err)
 	}
@@ -151,7 +151,7 @@ func TestRouter_ArgoCDBackend_SingledPath(t *testing.T) {
 	// The empty fake clientset makes the ArgoCD backend fail with its own
 	// "not found" shape — the point is the ROUTE: an inline source must go
 	// straight to Backend (single path), never through the separate reader.
-	_, err := r.Fetch("kind-local", "kind-local", models.CredsSourceInlineKubeconfig)
+	_, err := r.Fetch("kind-local", "kind-local", models.CredsSourceInlineKubeconfig, "")
 	if err == nil {
 		t.Fatal("empty ArgoCD backend should error — routing must have gone to the backend")
 	}
@@ -160,22 +160,82 @@ func TestRouter_ArgoCDBackend_SingledPath(t *testing.T) {
 	}
 }
 
+// roleRecordingProvider extends routingFakeProvider with the
+// RoleARNCredentialsProvider capability, recording the role each fetch used.
+type roleRecordingProvider struct {
+	routingFakeProvider
+	roleCalls []string // roleARN per GetCredentialsWithRoleARN call
+}
+
+func (p *roleRecordingProvider) GetCredentialsWithRoleARN(name, roleARN string) (*Kubeconfig, error) {
+	p.roleCalls = append(p.roleCalls, roleARN)
+	return p.GetCredentials(name)
+}
+
+// V2-cleanup-62.2 — a stored per-cluster roleArn is forwarded to a
+// role-capable backend for the eks-token route (and never to the ArgoCD
+// reader, which mints nothing).
+func TestRouter_EKSToken_ForwardsPerClusterRoleARN(t *testing.T) {
+	const role = "arn:aws:iam::111122223333:role/example"
+	backend := &roleRecordingProvider{routingFakeProvider: routingFakeProvider{kc: &Kubeconfig{Server: "https://from-backend"}}}
+	reader := &routingFakeProvider{kc: &Kubeconfig{Server: "https://from-argocd"}}
+	r := &ClusterCredsRouter{Backend: backend, ArgoCDReaderFn: readerFn(reader, nil)}
+
+	kc, err := r.Fetch("cross-account", "cross-account", models.CredsSourceEKSToken, role)
+	if err != nil || kc.Server != "https://from-backend" {
+		t.Fatalf("kc=%+v err=%v, want backend credentials", kc, err)
+	}
+	if len(backend.roleCalls) != 1 || backend.roleCalls[0] != role {
+		t.Errorf("roleCalls = %v, want [%s]", backend.roleCalls, role)
+	}
+	if len(reader.calls) != 0 {
+		t.Errorf("ArgoCD reader consulted for a backend cluster: %v", reader.calls)
+	}
+}
+
+// Empty roleARN never invokes the capability path — the plain GetCredentials
+// route is byte-identical to pre-62.2 behavior. A role-incapable backend with
+// a non-empty roleARN also degrades to plain GetCredentials (no error).
+func TestRouter_RoleARN_EmptyOrIncapableBackend_PlainFetch(t *testing.T) {
+	t.Run("empty roleARN skips the capability", func(t *testing.T) {
+		backend := &roleRecordingProvider{routingFakeProvider: routingFakeProvider{kc: &Kubeconfig{Server: "https://from-backend"}}}
+		r := &ClusterCredsRouter{Backend: backend, ArgoCDReaderFn: readerFn(&routingFakeProvider{}, nil)}
+		if _, err := r.Fetch("prod-eu", "prod-eu", models.CredsSourceEKSToken, ""); err != nil {
+			t.Fatalf("Fetch: %v", err)
+		}
+		if len(backend.roleCalls) != 0 {
+			t.Errorf("capability path used for an empty roleARN: %v", backend.roleCalls)
+		}
+		if len(backend.calls) != 1 {
+			t.Errorf("plain GetCredentials calls = %v, want exactly one", backend.calls)
+		}
+	})
+	t.Run("role-incapable backend degrades to plain fetch", func(t *testing.T) {
+		backend := &routingFakeProvider{kc: &Kubeconfig{Server: "https://from-backend"}}
+		r := &ClusterCredsRouter{Backend: backend, ArgoCDReaderFn: readerFn(&routingFakeProvider{}, nil)}
+		kc, err := r.Fetch("prod-eu", "prod-eu", models.CredsSourceEKSToken, "arn:aws:iam::111122223333:role/example")
+		if err != nil || kc.Server != "https://from-backend" {
+			t.Fatalf("kc=%+v err=%v, want backend credentials via plain fetch", kc, err)
+		}
+	})
+}
+
 // Nil-router / nil-backend defensive shapes.
 func TestRouter_NilShapes(t *testing.T) {
 	var nilRouter *ClusterCredsRouter
-	if _, err := nilRouter.Fetch("a", "a", ""); err == nil {
+	if _, err := nilRouter.Fetch("a", "a", "", ""); err == nil {
 		t.Error("nil router must error, not panic")
 	}
 
 	r := &ClusterCredsRouter{Backend: nil, ArgoCDReaderFn: nil}
-	if _, err := r.Fetch("a", "a", ""); err == nil {
+	if _, err := r.Fetch("a", "a", "", ""); err == nil {
 		t.Error("nil backend + nil reader must error, not panic")
 	}
 
 	// Nil backend + working reader: inline still routes.
 	reader := &routingFakeProvider{kc: &Kubeconfig{Server: "https://from-argocd"}}
 	r2 := &ClusterCredsRouter{Backend: nil, ArgoCDReaderFn: readerFn(reader, nil)}
-	kc, err := r2.Fetch("kind-local", "kind-local", models.CredsSourceInlineKubeconfig)
+	kc, err := r2.Fetch("kind-local", "kind-local", models.CredsSourceInlineKubeconfig, "")
 	if err != nil || kc.Server != "https://from-argocd" {
 		t.Errorf("inline with nil backend: kc=%+v err=%v, want ArgoCD-read credentials", kc, err)
 	}

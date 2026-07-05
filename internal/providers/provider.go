@@ -33,6 +33,36 @@ type ClusterCredentialsProvider interface {
 	HealthCheck(ctx context.Context) error
 }
 
+// RoleARNCredentialsProvider is the optional capability interface for
+// cluster-credential backends that can assume a caller-supplied IAM role at
+// token-mint time (V2-cleanup-62.2). Today only AWSSecretsManagerProvider
+// implements it (EKS STS token minting); other backends never mint, so the
+// capability simply does not apply to them.
+//
+// roleARN is the PER-CLUSTER role recorded on the cluster's
+// managed-clusters.yaml entry at registration (roleArn). Implementations
+// own the precedence decision — see AWSSecretsManagerProvider's
+// buildFromStructured for the canonical order (SM-secret roleArn >
+// per-cluster roleARN > connection-level default).
+type RoleARNCredentialsProvider interface {
+	GetCredentialsWithRoleARN(clusterName, roleARN string) (*Kubeconfig, error)
+}
+
+// GetCredentialsWithOptionalRole fetches credentials through p, passing the
+// per-cluster roleARN when both (a) roleARN is non-empty and (b) the backend
+// supports per-call role assumption (RoleARNCredentialsProvider). Every
+// other combination is byte-identical to p.GetCredentials(lookupKey), so
+// clusters without a stored roleArn — and every non-EKS backend — keep
+// today's behavior exactly.
+func GetCredentialsWithOptionalRole(p ClusterCredentialsProvider, lookupKey, roleARN string) (*Kubeconfig, error) {
+	if roleARN != "" {
+		if rp, ok := p.(RoleARNCredentialsProvider); ok {
+			return rp.GetCredentialsWithRoleARN(lookupKey, roleARN)
+		}
+	}
+	return p.GetCredentials(lookupKey)
+}
+
 // Kubeconfig holds the raw kubeconfig YAML and extracted connection info.
 type Kubeconfig struct {
 	Raw    []byte // Full kubeconfig YAML bytes

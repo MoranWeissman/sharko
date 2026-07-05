@@ -74,6 +74,17 @@ type RegisterClusterRequest struct {
 	// CredsSource wins and Provider becomes optional cluster-type metadata.
 	CredsSource CredsSource `json:"creds_source,omitempty"`
 
+	// RoleARN is the per-cluster IAM role Sharko assumes when minting EKS
+	// tokens for this cluster (V2-cleanup-62.2). Only meaningful for the
+	// eks-token creds source — the discovery flow passes the cross-account
+	// role that found the cluster so token minting uses the same identity;
+	// it is rejected (400) for an inline-kubeconfig registration. Persisted
+	// on the cluster's managed-clusters.yaml entry as roleArn and read back
+	// at every credential fetch. Token-mint precedence: the structured SM
+	// secret's own roleArn > this per-cluster value > the connection-level
+	// provider default. Empty keeps today's behavior byte-identical.
+	RoleARN string `json:"role_arn,omitempty"`
+
 	// Kubeconfig is the raw kubeconfig YAML supplied inline by the caller
 	// when the effective creds source is inline-kubeconfig. Bearer-token
 	// authentication only in v1.25 — cert-based and exec-plugin auth return

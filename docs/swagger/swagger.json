@@ -2580,7 +2580,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Registers a new cluster in ArgoCD and creates its GitOps configuration.\nPass \"dry_run\": true to preview what would happen without making changes.\nProvider may be \"eks\" (default; uses configured secrets provider) or\n\"kubeconfig\" (caller supplies kubeconfig YAML inline via the\n\"kubeconfig\" field — bearer-token auth only).\nOptionally set \"creds_source\" to state explicitly where credentials come\nfrom: \"inline-kubeconfig\", \"secret-kubeconfig\", or \"eks-token\". When omitted\nit is derived: provider \"kubeconfig\" → inline; a pasted \"kubeconfig\" with no\nprovider → inline (the paste is authoritative — it is never silently ignored\nin favour of a backend lookup); anything else → backend. When set it wins\nover \"provider\". The effective source is recorded on the cluster's\nmanaged-clusters.yaml entry as \"credsSource\" and later credential fetches\n(test/diagnose/secrets/addon operations) route by it, so inline-registered\nclusters keep working when a secrets-backend connection is configured.\nOptionally set \"connection_managed_by\" to declare who owns the ArgoCD\ncluster secret: \"sharko\" (default — Sharko writes and rotates it) or\n\"user\" (self-managed — you create the secret by hand; Sharko never writes\nit and only syncs addon labels onto it). For a self-managed registration\ncredentials are optional: when supplied, connectivity verification still\nruns; when absent, it is skipped.",
+                "description": "Registers a new cluster in ArgoCD and creates its GitOps configuration.\nPass \"dry_run\": true to preview what would happen without making changes.\nProvider may be \"eks\" (default; uses configured secrets provider) or\n\"kubeconfig\" (caller supplies kubeconfig YAML inline via the\n\"kubeconfig\" field — bearer-token auth only).\nOptionally set \"creds_source\" to state explicitly where credentials come\nfrom: \"inline-kubeconfig\", \"secret-kubeconfig\", or \"eks-token\". When omitted\nit is derived: provider \"kubeconfig\" → inline; a pasted \"kubeconfig\" with no\nprovider → inline (the paste is authoritative — it is never silently ignored\nin favour of a backend lookup); anything else → backend. When set it wins\nover \"provider\". The effective source is recorded on the cluster's\nmanaged-clusters.yaml entry as \"credsSource\" and later credential fetches\n(test/diagnose/secrets/addon operations) route by it, so inline-registered\nclusters keep working when a secrets-backend connection is configured.\nOptionally set \"role_arn\" (eks-token creds source only) to record the\nper-cluster IAM role Sharko assumes when minting EKS tokens for this\ncluster — the discovery flow passes the cross-account role that found\nthe cluster so token minting keeps using the same identity. Precedence\nat token-mint time: the structured SM secret's own roleArn, then this\nper-cluster role_arn, then the connection-level provider default.\nOptionally set \"connection_managed_by\" to declare who owns the ArgoCD\ncluster secret: \"sharko\" (default — Sharko writes and rotates it) or\n\"user\" (self-managed — you create the secret by hand; Sharko never writes\nit and only syncs addon labels onto it). For a self-managed registration\ncredentials are optional: when supplied, connectivity verification still\nruns; when absent, it is skipped.",
                 "consumes": [
                     "application/json"
                 ],
@@ -7920,6 +7920,10 @@
                 "region": {
                     "type": "string"
                 },
+                "role_arn": {
+                    "description": "RoleARN is the per-cluster IAM role Sharko assumes when minting EKS\ntokens for this cluster (V2-cleanup-62.2). Only meaningful for the\neks-token creds source — the discovery flow passes the cross-account\nrole that found the cluster so token minting uses the same identity;\nit is rejected (400) for an inline-kubeconfig registration. Persisted\non the cluster's managed-clusters.yaml entry as roleArn and read back\nat every credential fetch. Token-mint precedence: the structured SM\nsecret's own roleArn \u003e this per-cluster value \u003e the connection-level\nprovider default. Empty keeps today's behavior byte-identical.",
+                    "type": "string"
+                },
                 "secret_path": {
                     "type": "string"
                 }
@@ -8042,6 +8046,10 @@
             "type": "object",
             "properties": {
                 "account": {
+                    "type": "string"
+                },
+                "arn": {
+                    "description": "RoleARN is the IAM role that was assumed to discover this cluster\n(empty when the default IRSA identity was used). Wire name \"arn\"\nmatches the UI's DiscoveredClusterItem.arn field, which the\npost-discovery register flow passes back as role_arn — so the\ncluster mints EKS tokens with the same identity that discovered it\n(V2-cleanup-62.2).",
                     "type": "string"
                 },
                 "endpoint": {

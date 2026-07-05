@@ -115,6 +115,10 @@ const credRoutingTestYAML = `clusters:
     secretPath: clusters/prod-eu
     credsSource: eks-token
     labels: {}
+  - name: cross-account
+    credsSource: eks-token
+    roleArn: arn:aws:iam::111122223333:role/example
+    labels: {}
   - name: legacy
     labels: {}
 `
@@ -126,20 +130,22 @@ func TestResolveCredentialRoutingFromData(t *testing.T) {
 		arg        string
 		wantKey    string
 		wantSource string
+		wantRole   string
 	}{
-		{"inline record returns its source", []byte(credRoutingTestYAML), "kind-inline", "kind-inline", "inline-kubeconfig"},
-		{"backend record: secretPath override + source", []byte(credRoutingTestYAML), "prod-eu", "clusters/prod-eu", "eks-token"},
-		{"legacy record (pre-field) returns empty source", []byte(credRoutingTestYAML), "legacy", "legacy", ""},
-		{"unknown cluster falls back to (name, empty)", []byte(credRoutingTestYAML), "ghost", "ghost", ""},
-		{"malformed YAML falls back to (name, empty)", []byte(":\n\t- not yaml"), "kind-inline", "kind-inline", ""},
-		{"nil data falls back to (name, empty)", nil, "kind-inline", "kind-inline", ""},
+		{"inline record returns its source", []byte(credRoutingTestYAML), "kind-inline", "kind-inline", "inline-kubeconfig", ""},
+		{"backend record: secretPath override + source", []byte(credRoutingTestYAML), "prod-eu", "clusters/prod-eu", "eks-token", ""},
+		{"eks record with roleArn returns the per-cluster role", []byte(credRoutingTestYAML), "cross-account", "cross-account", "eks-token", "arn:aws:iam::111122223333:role/example"},
+		{"legacy record (pre-field) returns empty source", []byte(credRoutingTestYAML), "legacy", "legacy", "", ""},
+		{"unknown cluster falls back to (name, empty, empty)", []byte(credRoutingTestYAML), "ghost", "ghost", "", ""},
+		{"malformed YAML falls back to (name, empty, empty)", []byte(":\n\t- not yaml"), "kind-inline", "kind-inline", "", ""},
+		{"nil data falls back to (name, empty, empty)", nil, "kind-inline", "kind-inline", "", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			key, source := ResolveCredentialRoutingFromData(tt.data, tt.arg)
-			if key != tt.wantKey || source != tt.wantSource {
-				t.Errorf("ResolveCredentialRoutingFromData(%q) = (%q, %q), want (%q, %q)",
-					tt.arg, key, source, tt.wantKey, tt.wantSource)
+			key, source, role := ResolveCredentialRoutingFromData(tt.data, tt.arg)
+			if key != tt.wantKey || source != tt.wantSource || role != tt.wantRole {
+				t.Errorf("ResolveCredentialRoutingFromData(%q) = (%q, %q, %q), want (%q, %q, %q)",
+					tt.arg, key, source, role, tt.wantKey, tt.wantSource, tt.wantRole)
 			}
 		})
 	}
@@ -147,20 +153,24 @@ func TestResolveCredentialRoutingFromData(t *testing.T) {
 
 func TestResolveCredentialRouting_ReadsStoredRecord(t *testing.T) {
 	reader := &fakeManagedClustersReader{data: []byte(credRoutingTestYAML)}
-	key, source := ResolveCredentialRouting(context.Background(), reader, "", "", "kind-inline")
-	if key != "kind-inline" || source != "inline-kubeconfig" {
-		t.Fatalf("got (%q, %q), want (kind-inline, inline-kubeconfig)", key, source)
+	key, source, role := ResolveCredentialRouting(context.Background(), reader, "", "", "kind-inline")
+	if key != "kind-inline" || source != "inline-kubeconfig" || role != "" {
+		t.Fatalf("got (%q, %q, %q), want (kind-inline, inline-kubeconfig, \"\")", key, source, role)
 	}
 	// The lookup-key twin stays in lockstep (it delegates).
 	if got := ResolveCredentialLookupKey(context.Background(), reader, "", "", "prod-eu"); got != "clusters/prod-eu" {
 		t.Fatalf("ResolveCredentialLookupKey = %q, want clusters/prod-eu", got)
 	}
+	// A stored roleArn is surfaced (V2-cleanup-62.2).
+	if _, _, role := ResolveCredentialRouting(context.Background(), reader, "", "", "cross-account"); role != "arn:aws:iam::111122223333:role/example" {
+		t.Fatalf("roleARN = %q, want the stored per-cluster role", role)
+	}
 }
 
 func TestResolveCredentialRouting_ReadFailure_FallsBack(t *testing.T) {
 	reader := &fakeManagedClustersReader{err: errors.New("git down")}
-	key, source := ResolveCredentialRouting(context.Background(), reader, "", "", "kind-inline")
-	if key != "kind-inline" || source != "" {
-		t.Fatalf("got (%q, %q), want (kind-inline, \"\")", key, source)
+	key, source, role := ResolveCredentialRouting(context.Background(), reader, "", "", "kind-inline")
+	if key != "kind-inline" || source != "" || role != "" {
+		t.Fatalf("got (%q, %q, %q), want (kind-inline, \"\", \"\")", key, source, role)
 	}
 }

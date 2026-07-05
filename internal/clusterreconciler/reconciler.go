@@ -921,7 +921,11 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 	// managed-clusters.yaml works across both writers during the
 	// transition window; shared resolver — V2-cleanup-55.1).
 	credKey := entry.CredentialLookupKey()
-	creds, vaultErr := r.deps.Vault.GetCredentials(credKey)
+	// Forward the entry's per-cluster roleArn (V2-cleanup-62.2) so EKS token
+	// minting for a cross-account cluster assumes the cluster's own role.
+	// Empty roleArn — and any backend without the role capability — is
+	// byte-identical to a plain GetCredentials call.
+	creds, vaultErr := providers.GetCredentialsWithOptionalRole(r.deps.Vault, credKey, entry.RoleARN)
 	if vaultErr != nil {
 		stats.Errors++
 		log.Error("[clusterreconciler] vault GetCredentials failed — skipping cluster (others still reconcile)",
@@ -963,11 +967,19 @@ func (r *Reconciler) createOne(ctx context.Context, entry models.ManagedClusterE
 	// DisableConnectivityCheck is the zero-value-safe inverted sentinel: false
 	// (zero value = default) means "feature on"; true means "feature off".
 	models.ApplyConnectivityCheckLabel(clusterLabels, !r.deps.DisableConnectivityCheck)
+	// Per-cluster roleArn from the entry wins over the connection-level
+	// default (V2-cleanup-62.2) — the same identity ArgoCD's argocd-k8s-auth
+	// exec shape must assume for a cross-account cluster. Matches the
+	// DefaultRoleARN doc: "for clusters whose entry does NOT specify one".
+	specRoleARN := entry.RoleARN
+	if specRoleARN == "" {
+		specRoleARN = r.deps.DefaultRoleARN
+	}
 	spec := argosecrets.ClusterSecretSpec{
 		Name:    entry.Name,
 		Server:  creds.Server,
 		Region:  entry.Region,
-		RoleARN: r.deps.DefaultRoleARN,
+		RoleARN: specRoleARN,
 		// Carry ALL the credential material through so buildSecretConfig can
 		// pick the right shape (precedence: cert pair > token > exec,
 		// V2-cleanup-56.1):

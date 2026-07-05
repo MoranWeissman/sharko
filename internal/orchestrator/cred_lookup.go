@@ -43,8 +43,9 @@ func (o *Orchestrator) credentialLookupKey(ctx context.Context, name string) str
 func (o *Orchestrator) fetchClusterCredentials(ctx context.Context, name string) (*providers.Kubeconfig, error) {
 	lookupKey := name
 	credsSource := ""
+	roleARN := ""
 	if o.git != nil {
-		lookupKey, credsSource = config.ResolveCredentialRouting(ctx, o.git, o.paths.ManagedClusters, o.gitops.BaseBranch, name)
+		lookupKey, credsSource, roleARN = config.ResolveCredentialRouting(ctx, o.git, o.paths.ManagedClusters, o.gitops.BaseBranch, name)
 	}
 	if o.credsRouter == nil {
 		// Legacy-constructed orchestrator (tests building the struct
@@ -52,7 +53,7 @@ func (o *Orchestrator) fetchClusterCredentials(ctx context.Context, name string)
 		if o.credProvider == nil {
 			return nil, fmt.Errorf("no credentials provider configured")
 		}
-		return o.credProvider.GetCredentials(lookupKey)
+		return providers.GetCredentialsWithOptionalRole(o.credProvider, lookupKey, roleARN)
 	}
-	return o.credsRouter.Fetch(name, lookupKey, credsSource)
+	return o.credsRouter.Fetch(name, lookupKey, credsSource, roleARN)
 }

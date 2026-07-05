@@ -153,6 +153,18 @@ func validateCredsSource(src CredsSource, req RegisterClusterRequest) error {
 				"creds_source %s does not use secret_path (got %q); secret_path only applies to backend creds sources",
 				CredsSourceInlineKubeconfig, req.SecretPath)}
 		}
+		// role_arn is EKS-token-mint input (V2-cleanup-62.2); an inline
+		// registration mints nothing, so a request setting both is
+		// contradicting itself about which creds path it wants. The UI
+		// sends a disjoint field set per source (role_arn only on the
+		// eks-token payloads), so this cannot fire for anything that
+		// works today — before the field existed, role_arn was silently
+		// DROPPED by JSON decoding, never honored.
+		if req.RoleARN != "" {
+			return &InvalidCredsSourceError{Msg: fmt.Sprintf(
+				"creds_source %s does not use role_arn (got %q); role_arn only applies to the %s creds source",
+				CredsSourceInlineKubeconfig, req.RoleARN, CredsSourceEKSToken)}
+		}
 		if req.Kubeconfig == "" {
 			return &InvalidCredsSourceError{
 				Msg: fmt.Sprintf("creds_source %s requires a kubeconfig", CredsSourceInlineKubeconfig),

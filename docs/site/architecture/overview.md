@@ -117,15 +117,14 @@ AWS Secrets Manager
   v
 Format detection (internal/providers/aws_sm.go)
   |
-  +-- Raw YAML? → parse as kubeconfig directly
+  +-- Parses as JSON with a non-empty "host" key? → structured EKS descriptor
+  |     → resolve the IAM role to assume (precedence: the secret's own
+  |       "roleArn" > the cluster's registered role_arn > connection default)
+  |     → presign STS GetCallerIdentity (60s expiry, matching argocd-k8s-auth)
+  |     → k8s-aws-v1.<base64url(presigned-url)> token
+  |     → build kubeconfig from host + caData + fresh token
   |
-  +-- Structured JSON with "token" key?
-  |     → build kubeconfig from server + ca + token fields
-  |
-  +-- Structured JSON with "role_arn" key?
-        → call EKS STS token API (eks:DescribeCluster + pre-signed URL)
-        → k8s-aws-v1.<base64url(presigned-url)> token (15-min TTL)
-        → build kubeconfig from server + ca + fresh token
+  +-- Anything else → parse as a raw kubeconfig YAML
 ```
 
 The STS path requires IRSA — the Sharko pod's service account is annotated with an IAM role ARN that has `secretsmanager:GetSecretValue`, `eks:DescribeCluster`, and optionally `sts:AssumeRole` for cross-account clusters. See [IRSA Setup](../operator/configuration.md#irsa-setup).

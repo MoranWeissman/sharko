@@ -77,7 +77,13 @@ func DefaultArgoCDReaderFn(base ClusterTestProviderConfig) func() (ClusterCreden
 // (see the type doc). name is the cluster name (the ArgoCD Secret key);
 // lookupKey is the backend key (secretPath override when stored, else the
 // name); credsSource is the stored creds source ("" = unknown/legacy).
-func (r *ClusterCredsRouter) Fetch(name, lookupKey, credsSource string) (*Kubeconfig, error) {
+//
+// roleARN (V2-cleanup-62.2) is the per-cluster IAM role recorded on the
+// cluster's managed-clusters.yaml entry ("" = none stored). It is forwarded
+// to backend fetches through the RoleARNCredentialsProvider capability so
+// EKS token minting assumes the cluster's own role; it never applies to the
+// ArgoCD-reader route (inline clusters mint nothing).
+func (r *ClusterCredsRouter) Fetch(name, lookupKey, credsSource, roleARN string) (*Kubeconfig, error) {
 	if r == nil {
 		return nil, fmt.Errorf("no credentials provider configured")
 	}
@@ -88,7 +94,7 @@ func (r *ClusterCredsRouter) Fetch(name, lookupKey, credsSource string) (*Kubeco
 		if r.Backend == nil {
 			return nil, fmt.Errorf("no credentials provider configured")
 		}
-		return r.Backend.GetCredentials(lookupKey)
+		return GetCredentialsWithOptionalRole(r.Backend, lookupKey, roleARN)
 	}
 
 	switch credsSource {
@@ -105,7 +111,7 @@ func (r *ClusterCredsRouter) Fetch(name, lookupKey, credsSource string) (*Kubeco
 		if r.Backend == nil {
 			return nil, fmt.Errorf("cluster %q has creds_source %s but no secrets backend is configured", name, credsSource)
 		}
-		return r.Backend.GetCredentials(lookupKey)
+		return GetCredentialsWithOptionalRole(r.Backend, lookupKey, roleARN)
 
 	default:
 		// Unknown / pre-60.4 record: backend first (today's behavior), then
@@ -114,7 +120,7 @@ func (r *ClusterCredsRouter) Fetch(name, lookupKey, credsSource string) (*Kubeco
 		if r.Backend == nil {
 			return nil, fmt.Errorf("no credentials provider configured")
 		}
-		creds, backendErr := r.Backend.GetCredentials(lookupKey)
+		creds, backendErr := GetCredentialsWithOptionalRole(r.Backend, lookupKey, roleARN)
 		if backendErr == nil {
 			return creds, nil
 		}

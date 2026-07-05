@@ -883,6 +883,18 @@ definitions:
         type: string
       region:
         type: string
+      role_arn:
+        description: |-
+          RoleARN is the per-cluster IAM role Sharko assumes when minting EKS
+          tokens for this cluster (V2-cleanup-62.2). Only meaningful for the
+          eks-token creds source — the discovery flow passes the cross-account
+          role that found the cluster so token minting uses the same identity;
+          it is rejected (400) for an inline-kubeconfig registration. Persisted
+          on the cluster's managed-clusters.yaml entry as roleArn and read back
+          at every credential fetch. Token-mint precedence: the structured SM
+          secret's own roleArn > this per-cluster value > the connection-level
+          provider default. Empty keeps today's behavior byte-identical.
+        type: string
       secret_path:
         type: string
     type: object
@@ -974,6 +986,15 @@ definitions:
   github_com_MoranWeissman_sharko_internal_providers.DiscoveredCluster:
     properties:
       account:
+        type: string
+      arn:
+        description: |-
+          RoleARN is the IAM role that was assumed to discover this cluster
+          (empty when the default IRSA identity was used). Wire name "arn"
+          matches the UI's DiscoveredClusterItem.arn field, which the
+          post-discovery register flow passes back as role_arn — so the
+          cluster mints EKS tokens with the same identity that discovered it
+          (V2-cleanup-62.2).
         type: string
       endpoint:
         type: string
@@ -3565,6 +3586,12 @@ paths:
         managed-clusters.yaml entry as "credsSource" and later credential fetches
         (test/diagnose/secrets/addon operations) route by it, so inline-registered
         clusters keep working when a secrets-backend connection is configured.
+        Optionally set "role_arn" (eks-token creds source only) to record the
+        per-cluster IAM role Sharko assumes when minting EKS tokens for this
+        cluster — the discovery flow passes the cross-account role that found
+        the cluster so token minting keeps using the same identity. Precedence
+        at token-mint time: the structured SM secret's own roleArn, then this
+        per-cluster role_arn, then the connection-level provider default.
         Optionally set "connection_managed_by" to declare who owns the ArgoCD
         cluster secret: "sharko" (default — Sharko writes and rotates it) or
         "user" (self-managed — you create the secret by hand; Sharko never writes

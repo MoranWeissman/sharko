@@ -62,6 +62,10 @@ type ClusterEntryInput struct {
 	// clusters are read via the ArgoCD provider under any backend
 	// connection. "" omits the field (legacy shape preserved).
 	CredsSource string
+	// RoleARN records the per-cluster IAM role for EKS token minting
+	// (V2-cleanup-62.2, eks-token creds source only). "" omits the field
+	// (legacy shape preserved).
+	RoleARN string
 }
 
 // AddClusterEntry adds a new cluster to the managed-clusters.yaml spec.
@@ -90,6 +94,7 @@ func AddClusterEntry(data []byte, entry ClusterEntryInput) ([]byte, error) {
 		SecretPath:          entry.SecretPath,
 		ConnectionManagedBy: entry.ConnectionManagedBy,
 		CredsSource:         entry.CredsSource,
+		RoleARN:             entry.RoleARN,
 	}
 	// Always set Labels to a non-nil map when labels are provided, so
 	// the emitted YAML carries `labels: { ... }` rather than `labels: null`.

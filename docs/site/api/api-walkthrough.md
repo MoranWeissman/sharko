@@ -131,7 +131,7 @@ the optional `creds_source` field:
 |----------------|---------------|------------|
 | `inline-kubeconfig` | You paste a kubeconfig right in the request. Bearer-token auth only. | `kubeconfig` (the YAML) |
 | `secret-kubeconfig` | You point at a kubeconfig already stored in your secret backend. Works for **any** cluster, including local / on-prem. | `secret_path` |
-| `eks-token` | Sharko mints a short-lived token from your EKS cloud identity. Amazon EKS only. | `region` |
+| `eks-token` | Sharko mints a short-lived token from your EKS cloud identity. Amazon EKS only. | `region` (+ `role_arn` for a cross-account cluster) |
 
 Required field in every case: `name` (alphanumeric, may contain hyphens, must
 start with a letter or digit). The `addons` field is a map of addon name to
@@ -177,6 +177,16 @@ curl -s "${auth[@]}" -X POST "$SH/clusters" \
 Sharko mints a short-lived token from your EKS cloud identity, so you don't store
 or paste any long-lived credential. You give it the cluster's region.
 
+For a cluster in **another AWS account** (or any cluster Sharko's own identity
+can't reach directly), also pass `role_arn` — the IAM role Sharko should assume
+when minting tokens for this cluster. The role is recorded on the cluster's
+`managed-clusters.yaml` entry as `roleArn`, so every later token mint uses the
+same identity. Discovery does this for you: clusters found by scanning a
+cross-account role carry that role into registration automatically. If the
+secret payload in your backend carries its own `roleArn`, that wins (it's the
+most specific); then this per-cluster `role_arn`; then the connection-level
+default.
+
 ```bash
 curl -s "${auth[@]}" -X POST "$SH/clusters" \
   -H "Content-Type: application/json" \
@@ -184,6 +194,7 @@ curl -s "${auth[@]}" -X POST "$SH/clusters" \
         "name": "my-cluster",
         "creds_source": "eks-token",
         "region": "us-east-1",
+        "role_arn": "arn:aws:iam::111122223333:role/example",
         "addons": { "keda": true }
       }' | jq
 ```
