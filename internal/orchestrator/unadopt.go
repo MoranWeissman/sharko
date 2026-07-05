@@ -22,21 +22,28 @@ func (o *Orchestrator) UnadoptCluster(ctx context.Context, name string, req Unad
 
 	result := &UnadoptClusterResult{Name: name}
 
-	// Step 1: Check adopted annotation. Recognise the pre-rename legacy key
-	// too (V2-cleanup-59): a cluster adopted before the sharko.dev group
-	// rename carries only the old annotation and must stay unadoptable.
+	// Step 1: Check adopted annotation. Recognise both older key spellings
+	// too (V2-cleanup-59, V2-cleanup-60.5 L10): a cluster adopted before
+	// either rename carries only an older annotation and must stay
+	// unadoptable.
 	if o.argoSecretManager != nil {
 		adopted, err := o.argoSecretManager.GetAnnotation(ctx, name, AnnotationAdopted)
 		if err != nil {
 			return nil, fmt.Errorf("checking adopted annotation for cluster %q: %w", name, err)
 		}
 		if adopted != "true" {
-			legacy, legacyErr := o.argoSecretManager.GetAnnotation(ctx, name, AnnotationAdoptedLegacy)
-			if legacyErr != nil {
-				return nil, fmt.Errorf("checking adopted annotation for cluster %q: %w", name, legacyErr)
+			doubledPrefix, doubledPrefixErr := o.argoSecretManager.GetAnnotation(ctx, name, AnnotationAdoptedDoubledPrefixLegacy)
+			if doubledPrefixErr != nil {
+				return nil, fmt.Errorf("checking adopted annotation for cluster %q: %w", name, doubledPrefixErr)
 			}
-			if legacy != "true" {
-				return nil, fmt.Errorf("cluster %q was not adopted (missing %s annotation) — use remove-cluster instead", name, AnnotationAdopted)
+			if doubledPrefix != "true" {
+				legacy, legacyErr := o.argoSecretManager.GetAnnotation(ctx, name, AnnotationAdoptedLegacy)
+				if legacyErr != nil {
+					return nil, fmt.Errorf("checking adopted annotation for cluster %q: %w", name, legacyErr)
+				}
+				if legacy != "true" {
+					return nil, fmt.Errorf("cluster %q was not adopted (missing %s annotation) — use remove-cluster instead", name, AnnotationAdopted)
+				}
 			}
 		}
 	}

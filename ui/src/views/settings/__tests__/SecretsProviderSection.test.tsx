@@ -303,6 +303,99 @@ describe('SecretsProviderSection', () => {
     expect(body.provider.prefix).toBe('team-')
   })
 
+  // L7 (V2-cleanup-60.5) — an unrecognized stored provider type must never
+  // silently hydrate as "None": that made a subsequent Save (even one the
+  // user thought was unrelated) persist `provider: undefined`, wiping the
+  // backend's config. The guard: show it as a disabled "keep as-is" row and
+  // pass the raw stored type straight through on Save unless the user
+  // actively picks something else.
+  describe('Unknown stored provider type guard (L7)', () => {
+    it('shows a disabled "keep as-is" row instead of silently defaulting to None', async () => {
+      setupHook([{
+        ...sampleConnection,
+        provider: { type: 'some-future-backend', region: 'eu-west-1' },
+      }])
+      render(<SecretsProviderSection />)
+
+      const select = await screen.findByRole('combobox') as HTMLSelectElement
+      await waitFor(() => expect(select.value).toBe('__unknown__'))
+
+      const unknownOption = Array.from(select.querySelectorAll('option'))
+        .find((o) => o.value === '__unknown__')
+      expect(unknownOption).toBeDefined()
+      expect(unknownOption?.disabled).toBe(true)
+      expect(unknownOption?.textContent).toMatch(/some-future-backend/)
+      expect(unknownOption?.textContent).toMatch(/keep as-is/i)
+
+      // Warning copy is visible, not the generic "None" helper text.
+      expect(screen.getByText(/isn't one Sharko's UI recognizes/i)).toBeInTheDocument()
+    })
+
+    it('Save with the unknown row still selected passes the raw stored type through unchanged (no wipe)', async () => {
+      setupHook([{
+        ...sampleConnection,
+        provider: { type: 'some-future-backend', region: 'eu-west-1', prefix: 'x-' },
+      }])
+      const user = userEvent.setup()
+      render(<SecretsProviderSection />)
+
+      const select = await screen.findByRole('combobox') as HTMLSelectElement
+      await waitFor(() => expect(select.value).toBe('__unknown__'))
+
+      await user.click(screen.getByRole('button', { name: /Save Provider/i }))
+      await waitFor(() => expect(updateConnectionMock).toHaveBeenCalledTimes(1))
+
+      const body = updateConnectionMock.mock.calls[0][1] as { provider?: { type: string; region?: string; prefix?: string } }
+      // The exact original type is written back — NOT the sentinel, and
+      // NOT undefined (which would have wiped the stored config).
+      expect(body.provider).toBeDefined()
+      expect(body.provider?.type).toBe('some-future-backend')
+      expect(body.provider?.region).toBe('eu-west-1')
+      expect(body.provider?.prefix).toBe('x-')
+    })
+
+    it('actively picking None after an unknown type clears the sentinel and saves provider undefined', async () => {
+      setupHook([{
+        ...sampleConnection,
+        provider: { type: 'some-future-backend' },
+      }])
+      const user = userEvent.setup()
+      render(<SecretsProviderSection />)
+
+      const select = await screen.findByRole('combobox') as HTMLSelectElement
+      await waitFor(() => expect(select.value).toBe('__unknown__'))
+
+      // The user actively picks None — a deliberate choice, not a silent default.
+      await user.selectOptions(select, '')
+      expect(select.value).toBe('')
+
+      await user.click(screen.getByRole('button', { name: /Save Provider/i }))
+      await waitFor(() => expect(updateConnectionMock).toHaveBeenCalledTimes(1))
+      const body = updateConnectionMock.mock.calls[0][1] as { provider?: unknown }
+      expect(body.provider).toBeUndefined()
+    })
+
+    it('actively picking a real backend after an unknown type saves the new canonical value', async () => {
+      setupHook([{
+        ...sampleConnection,
+        provider: { type: 'some-future-backend' },
+      }])
+      const user = userEvent.setup()
+      render(<SecretsProviderSection />)
+
+      const select = await screen.findByRole('combobox') as HTMLSelectElement
+      await waitFor(() => expect(select.value).toBe('__unknown__'))
+
+      await user.selectOptions(select, 'argocd')
+      expect(select.value).toBe('argocd')
+
+      await user.click(screen.getByRole('button', { name: /Save Provider/i }))
+      await waitFor(() => expect(updateConnectionMock).toHaveBeenCalledTimes(1))
+      const body = updateConnectionMock.mock.calls[0][1] as { provider?: { type: string } }
+      expect(body.provider?.type).toBe('argocd')
+    })
+  })
+
   // V2-cleanup-55.2 Bug B — the maintainer saved a prefix, came back, and
   // the field was empty although the value WAS stored. Root cause: GET
   // /api/v1/providers builds configured_provider without the prefix field

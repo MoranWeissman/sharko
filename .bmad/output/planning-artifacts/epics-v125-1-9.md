@@ -41,7 +41,7 @@ This is **operational safety infrastructure**, not a feature. From the gitops-st
    spec: { ... }
    ```
 2. JSON Schema generated from Go struct definitions, emitted to `docs/schemas/managed-clusters.v1.json` + `docs/schemas/addon-catalog.v1.json`, **committed to the repo** (not gitignored).
-3. Schema header in every Sharko-written YAML: `# yaml-language-server: $schema=https://sharko.io/schemas/managed-clusters.v1.json`
+3. Schema header in every Sharko-written YAML: `# yaml-language-server: $schema=<schema URL>` (original design-doc example used `sharko.io` — domain not ours; the shipped implementation pins `https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json`, see `internal/models/cluster.go`'s `ManagedClustersSchemaHeader`).
 4. Validation on PR (Sharko CLI or CI hook) AND validation on read (reconciler).
 5. Reader accepts BOTH old (no envelope) and new (enveloped) formats during transition.
 6. Writer always emits enveloped shape after this epic ships.
@@ -247,7 +247,7 @@ Total: 5 wall-clock waves. ~3-5 dev days end-to-end per design doc estimate ("Th
 1. **JSON Schema generator library:** recommend `invopop/jsonschema` (proven, handles Go struct tags well). Confirm or pick alternative (handwritten emission, `xeipuuv/gojsonschema`, etc.).
 2. **Validation library:** recommend `santhosh-tekuri/jsonschema` v5 (pure Go, fast, JSON-Schema-2020-12). Confirm or pick alternative.
 3. **Filename rename window:** doc says "keep alias for back-compat" but doesn't quantify how long. Recommend: alias removed in V126 along with legacy reader. Confirm.
-4. **Schema URL hosting:** `https://sharko.io/schemas/managed-clusters.v1.json` per the design doc. Is `sharko.io` a domain you control / want to register, or do we host on `moranweissman.github.io/sharko/` (or similar GH Pages) with the `sharko.io` URL as aspirational? Affects 9.6's docs.
+4. **Schema URL hosting:** the design doc's example schema URL used the `sharko.io` domain (not ours — never registered, never fetchable). Is there a domain you control / want to register, or do we host on GitHub instead (raw file URL, GH Pages, etc.)? Affects 9.6's docs. **Resolved:** shipped implementation pins `https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/<kind>.v1.json` — see `internal/schema/generator.go`'s `ManagedClustersSchemaID` / `AddonCatalogSchemaID`.
 5. **CI validation file-match scope:** validate only known filenames (`managed-clusters.yaml`, `addon-catalog.yaml`), or every YAML in PR diff that has `apiVersion: sharko.io/*`? Recommend the latter — more permissive, catches user-renamed files too.
 6. **Coordination with PR #319:** PR #319 is still open. Should V125-1-9 wait for #319 to merge to main first, or proceed in parallel and rebase on conflicts? Recommend: proceed in parallel (low conflict surface), rebase if needed.
 

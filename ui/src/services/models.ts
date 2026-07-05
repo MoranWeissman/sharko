@@ -1012,9 +1012,10 @@ export interface DriftAlert {
 }
 
 // 'kubeconfig' is the inline-kubeconfig provider path. 'gke' / 'aks' are
-// disabled options surfaced as "coming soon" — no backend support yet.
-// 'generic' is kept in the union for backwards compatibility with
-// persisted UI state; the wizard no longer emits it.
+// kept in the type union for backwards compatibility with persisted UI
+// state, but are not surfaced as selectable options anywhere in the UI —
+// no backend support exists for them. 'generic' is likewise kept for
+// backwards compatibility; the wizard no longer emits it.
 //
 // As of the creds-reframe (creds-reframe-2), the registration dialog no
 // longer asks "which platform?" first — it asks "how should Sharko get

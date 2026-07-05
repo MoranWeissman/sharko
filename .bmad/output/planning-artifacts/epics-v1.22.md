@@ -482,7 +482,7 @@ So that I can follow a path from install → first cluster → first addon witho
 
 **Technical notes:**
 - Mostly prose. Lean on existing design docs (v1.20, v1.21) for authority; don't duplicate — link to them from the developer guide.
-- Verify no real AWS account IDs, no `scrdairy|merck|msd\.com|mahi-techlabs|merck-ahtl` content leaks in.
+- Verify no real AWS account IDs, no `scrdairy|<forbidden-org-string>|<forbidden-org-string>\.com|mahi-techlabs|<forbidden-org-string>` content leaks in.
 
 **Role file:** `.claude/team/docs-writer.md`.
 **Effort:** L.
@@ -537,7 +537,7 @@ So that any issues the implementing agent missed are caught before `v1.22.0` is 
 **Then** a remediation commit lands on `dev/v1.22` before the PR opens.
 
 **Given** `CLAUDE.md` forbidden-content grep runs
-**Then** zero matches against `scrdairy|merck|msd\.com|mahi-techlabs|merck-ahtl` or real AWS account IDs across the v1.22 diff.
+**Then** zero matches against `scrdairy|<forbidden-org-string>|<forbidden-org-string>\.com|mahi-techlabs|<forbidden-org-string>` or real AWS account IDs across the v1.22 diff.
 
 **Technical notes:**
 - Invoke the `bmad-code-review` skill; do not hand-roll a review.

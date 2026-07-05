@@ -40,7 +40,7 @@
 # - Tagging: NO tags cut reflexively — merge PRs to main when green; tag only when user explicitly asks (see feedback_release_cadence.md)
 
 generated: 2026-04-20
-last_updated: 2026-05-20 (5 PRs SHIPPED to main today: #332 V125-1-11 config split (d1f0274f), #333 DOC-01 release-notes backfill (9bd24691), #334 V1X-BUGS UI/UX sweep BUG-040..043 (e32a7105), #335 chore sprint-status (745cc337), #336 V124-1 polish bundle 5 stories (5b50bc8f). Auto-merge active per feedback_auto_merge_when_green memory. Remaining post-v1.25 backlog: DESIGN-01 + DESIGN-02 brainstorm-first items, BUG-033, standing e2e + sharko-dev.sh QoL items. V125-1-9 schema envelope sprint planned (6 stories) but not yet started.)
+last_updated: "2026-05-20 (5 PRs SHIPPED to main today: #332 V125-1-11 config split (d1f0274f), #333 DOC-01 release-notes backfill (9bd24691), #334 V1X-BUGS UI/UX sweep BUG-040..043 (e32a7105), #335 chore sprint-status (745cc337), #336 V124-1 polish bundle 5 stories (5b50bc8f). Auto-merge active per feedback_auto_merge_when_green memory. Remaining post-v1.25 backlog: DESIGN-01 + DESIGN-02 brainstorm-first items, BUG-033, standing e2e + sharko-dev.sh QoL items. V125-1-9 schema envelope sprint planned (6 stories) but not yet started.)"
 project: sharko
 project_key: NOKEY
 tracking_system: file-system
@@ -496,7 +496,7 @@ development_status:
   # Epic V124-9: argocd-token subcommand for sharko-dev.sh (BUG-027)
   # Maintainer mid-Track-B hit ArgoCD apiKey gauntlet (8 manual commands: port-forward,
   # patch argocd-cm, restart, re-login, generate). 3rd enterprise-paste of the day after
-  # Merck CA bake-in and dev-rebuild dance. V124-9 codifies the entire flow under
+  # <forbidden-org-string> CA bake-in and dev-rebuild dance. V124-9 codifies the entire flow under
   # `./scripts/sharko-dev.sh argocd-token --export` for eval-via-pipe.
   epic-V124-9: backlog
   V124-9-1-bug-027-argocd-token-subcommand-with-apikey-patch: done          # commit 839a9e1b — 6/6 validation flows pass; idempotency 34s→1.7s
