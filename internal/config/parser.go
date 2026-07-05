@@ -48,6 +48,10 @@ type clusterEntry struct {
 	SecretPath string      `yaml:"secretPath,omitempty"`
 	Labels     interface{} `yaml:"labels"` // Can be map[string]string or []interface{} (empty)
 	Region     string      `yaml:"region,omitempty"`
+	// ConnectionManagedBy: "" / "sharko" = Sharko owns the ArgoCD cluster
+	// Secret (default); "user" = self-managed connection, Sharko syncs addon
+	// labels only (V2-cleanup-57.2). Mirrors models.ManagedClusterEntry.
+	ConnectionManagedBy string `yaml:"connectionManagedBy,omitempty"`
 }
 
 // AddonCatalogSpec is the spec body of an enveloped addons-catalog.yaml.
@@ -158,10 +162,11 @@ func (p *Parser) ParseClusterAddons(data []byte) ([]models.Cluster, error) {
 	clusters := make([]models.Cluster, 0, len(file.Clusters))
 	for _, entry := range file.Clusters {
 		cluster := models.Cluster{
-			Name:       entry.Name,
-			SecretPath: entry.SecretPath,
-			Labels:     parseLabels(entry.Labels),
-			Region:     entry.Region,
+			Name:                entry.Name,
+			SecretPath:          entry.SecretPath,
+			Labels:              parseLabels(entry.Labels),
+			Region:              entry.Region,
+			ConnectionManagedBy: entry.ConnectionManagedBy,
 		}
 		clusters = append(clusters, cluster)
 	}

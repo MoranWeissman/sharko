@@ -54,6 +54,7 @@ import {
   SHARKO_CONN_TOOLTIP,
 } from '@/components/WhoseConnectionLabel';
 import { ClusterTypeBadge } from '@/components/ClusterTypeBadge';
+import { ConnectionOwnerBadge } from '@/components/ConnectionOwnerBadge';
 import { ClusterStatusLegend } from '@/components/ClusterStatusLegend';
 import { DiagnoseModal } from '@/components/DiagnoseModal';
 import { ArgoCDStatusBanner } from '@/components/ArgoCDStatusBanner';
@@ -96,6 +97,19 @@ const CREDS_SOURCE_HINTS: Record<CredsSource, string> = {
     'Sharko fetches the kubeconfig from your configured secrets backend (the secret name/path below).',
   'eks-token':
     'No stored kubeconfig — Sharko generates short-lived AWS tokens using its own AWS identity.',
+};
+
+// V2-cleanup-57.2: connection-ownership choice, in plain English. This is
+// the "Sharko never owns my connections" escape hatch: with "I do", Sharko
+// never creates, changes, or deletes the ArgoCD cluster secret — you make
+// it yourself (the operator guide shows the exact YAML) and Sharko only
+// keeps the addon labels on it in sync.
+export type ConnOwnership = 'sharko' | 'user';
+export const CONN_OWNERSHIP_HINTS: Record<ConnOwnership, string> = {
+  sharko:
+    'Sharko creates the ArgoCD cluster secret and keeps its credentials up to date. The usual choice.',
+  user:
+    'You create the ArgoCD cluster secret yourself and Sharko never touches its credentials — it only keeps the addon labels on it in sync. Credentials below become optional (used only to test connectivity). See the operator guide: Managing cluster connections yourself.',
 };
 
 export function ClustersOverview() {
@@ -209,6 +223,12 @@ export function ClustersOverview() {
   // preserve the pre-reframe default behavior (the dialog used to open on
   // the EKS provider).
   const [credsSource, setCredsSource] = useState<CredsSource>('eks-token');
+
+  // Connection-ownership choice (V2-cleanup-57.2): who manages the ArgoCD
+  // cluster secret. 'sharko' (default) = today's behavior; 'user' = the
+  // user creates the secret by hand, Sharko only syncs addon labels onto
+  // it, and the credential inputs become optional (verification only).
+  const [connManagedBy, setConnManagedBy] = useState<ConnOwnership>('sharko');
 
   // Legacy `provider` value, kept in sync with `credsSource` so anything
   // that still reads `provider` (audit trails, persisted state) sees a
@@ -345,6 +365,7 @@ export function ClustersOverview() {
     setAddClusterKubeconfig('');
     setSelectedAddons({});
     setCredsSource('eks-token');
+    setConnManagedBy('sharko');
     setRegistrationMode('direct');
     setDiscoveryRoleArns('');
     setDiscoveryRegion('');
@@ -393,7 +414,17 @@ export function ClustersOverview() {
   const buildRegisterPayload = useCallback(
     (name: string, extra?: { dry_run?: boolean }): Parameters<typeof registerCluster>[0] => {
       const addons = Object.keys(selectedAddons).length > 0 ? selectedAddons : undefined;
-      const base = { name, creds_source: credsSource, provider, addons, ...extra };
+      // connection_managed_by is only sent for the non-default 'user'
+      // choice — omitting it for 'sharko' keeps the request byte-compatible
+      // with pre-57.2 servers.
+      const base = {
+        name,
+        creds_source: credsSource,
+        provider,
+        addons,
+        ...(connManagedBy === 'user' ? { connection_managed_by: 'user' as const } : {}),
+        ...extra,
+      };
       switch (credsSource) {
         case 'inline-kubeconfig':
           // Inline paste — server rejects AWS-shaped fields here, so omit them.
@@ -417,7 +448,7 @@ export function ClustersOverview() {
           };
       }
     },
-    [credsSource, provider, selectedAddons, addClusterKubeconfig, addClusterSecretPath, addClusterRegion, addClusterRoleArn],
+    [credsSource, provider, connManagedBy, selectedAddons, addClusterKubeconfig, addClusterSecretPath, addClusterRegion, addClusterRoleArn],
   );
 
   const handleDryRun = useCallback(async () => {
@@ -790,8 +821,14 @@ export function ClustersOverview() {
   //   inline-kubeconfig → kubeconfig YAML required
   //   secret-kubeconfig → secret name / path required
   //   eks-token         → no extra required field (region/role optional)
+  //
+  // EXCEPTION (V2-cleanup-57.2): when the user manages the ArgoCD
+  // connection themselves, credentials are optional (Sharko never writes
+  // the cluster secret; supplied credentials are only used to test
+  // connectivity), so nothing here blocks submission.
   const directRequiredMissing =
     registrationMode === 'direct' &&
+    connManagedBy !== 'user' &&
     ((credsSource === 'inline-kubeconfig' && !addClusterKubeconfig.trim()) ||
       (credsSource === 'secret-kubeconfig' && !addClusterSecretPath.trim()));
 
@@ -936,6 +973,30 @@ export function ClustersOverview() {
               * (EKS/GKE/AKS) is now implied metadata, not the gate. Only
               * shown in Direct mode — Discovery scans EKS and always uses
               * the token path. */}
+            {/* Connection ownership — WHO manages the ArgoCD cluster secret
+              * (V2-cleanup-57.2). Asked before the credentials question
+              * because it changes what the credentials are FOR: with
+              * "I do", Sharko never writes the secret and the credential
+              * inputs below become optional (verification only). */}
+            {registrationMode === 'direct' && (
+              <div>
+                <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
+                  Who manages the ArgoCD connection?
+                </label>
+                <select
+                  value={connManagedBy}
+                  onChange={(e) => setConnManagedBy(e.target.value as ConnOwnership)}
+                  className="w-full rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                >
+                  <option value="sharko">Sharko (default)</option>
+                  <option value="user">I do — Sharko only manages addon labels</option>
+                </select>
+                <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
+                  {CONN_OWNERSHIP_HINTS[connManagedBy]}
+                </p>
+              </div>
+            )}
+
             {registrationMode === 'direct' && (
               <div>
                 <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
@@ -1008,7 +1069,9 @@ export function ClustersOverview() {
                     {/* Paste a kubeconfig — inline YAML. */}
                     <div>
                       <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
-                        Kubeconfig <span className="text-red-500">*</span>
+                        Kubeconfig {connManagedBy === 'user'
+                          ? <span className="font-normal text-[#5a8aaa] dark:text-gray-500">(optional — used only to verify connectivity)</span>
+                          : <span className="text-red-500">*</span>}
                       </label>
                       <textarea
                         value={addClusterKubeconfig}
@@ -1031,7 +1094,9 @@ export function ClustersOverview() {
                       * field to a first-class, required field). */}
                     <div>
                       <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
-                        Secret name / path <span className="text-red-500">*</span>
+                        Secret name / path {connManagedBy === 'user'
+                          ? <span className="font-normal text-[#5a8aaa] dark:text-gray-500">(optional — used only to verify connectivity)</span>
+                          : <span className="text-red-500">*</span>}
                       </label>
                       <input
                         type="text"
@@ -1772,6 +1837,8 @@ export function ClustersOverview() {
                             ? <StatusBadge status={cluster.connection_status ?? 'unknown'} />
                             : <ConnectionStatus status={cluster.connection_status ?? 'unknown'} />
                           }
+                          {/* Self-managed connection marker (V2-cleanup-57.2). */}
+                          <ConnectionOwnerBadge managedBy={cluster.connection_managed_by} />
                           <ConnectivityBadge
                             connectivityStatus={cluster.connectivity_status}
                             connectivityDetail={cluster.connectivity_detail}
@@ -1895,6 +1962,8 @@ export function ClustersOverview() {
                       ? <StatusBadge status={cluster.connection_status ?? 'unknown'} />
                       : <ConnectionStatus status={cluster.connection_status ?? 'unknown'} />
                     }
+                    {/* Self-managed connection marker (V2-cleanup-57.2). */}
+                    <ConnectionOwnerBadge managedBy={cluster.connection_managed_by} />
                     <ConnectivityBadge
                       connectivityStatus={cluster.connectivity_status}
                       connectivityDetail={cluster.connectivity_detail}

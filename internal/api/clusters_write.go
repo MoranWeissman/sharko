@@ -17,6 +17,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/gitops"
 	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/metrics"
+	"github.com/MoranWeissman/sharko/internal/models"
 	"github.com/MoranWeissman/sharko/internal/orchestrator"
 	"github.com/MoranWeissman/sharko/internal/remoteclient"
 )
@@ -35,6 +36,12 @@ var validClusterNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]*$`)
 // @Description from: "inline-kubeconfig", "secret-kubeconfig", or "eks-token". When omitted
 // @Description it is derived from "provider" (kubeconfig→inline, else→backend) so existing
 // @Description requests are unchanged; when set it wins over "provider".
+// @Description Optionally set "connection_managed_by" to declare who owns the ArgoCD
+// @Description cluster secret: "sharko" (default — Sharko writes and rotates it) or
+// @Description "user" (self-managed — you create the secret by hand; Sharko never writes
+// @Description it and only syncs addon labels onto it). For a self-managed registration
+// @Description credentials are optional: when supplied, connectivity verification still
+// @Description runs; when absent, it is skipped.
 // @Tags clusters
 // @Accept json
 // @Produce json
@@ -107,8 +114,24 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, srcErr.Error())
 		return
 	}
+
+	// Connection-ownership mode (V2-cleanup-57.2). An unknown value is a
+	// caller error; a typo must NOT silently fall back to Sharko-managed
+	// (that would take over a connection the caller explicitly tried to
+	// keep). When the connection is self-managed, credentials are optional
+	// — the edge checks below relax accordingly.
+	selfManaged := models.IsUserManagedConnection(req.ConnectionManagedBy)
+	if req.ConnectionManagedBy != "" &&
+		req.ConnectionManagedBy != models.ConnectionManagedBySharko &&
+		req.ConnectionManagedBy != models.ConnectionManagedByUser {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf(
+			"unknown connection_managed_by %q (want %q or %q)",
+			req.ConnectionManagedBy, models.ConnectionManagedBySharko, models.ConnectionManagedByUser))
+		return
+	}
+
 	if effectiveSource == orchestrator.CredsSourceInlineKubeconfig {
-		if strings.TrimSpace(req.Kubeconfig) == "" {
+		if strings.TrimSpace(req.Kubeconfig) == "" && !selfManaged {
 			writeError(w, http.StatusBadRequest, "kubeconfig is required for an inline-kubeconfig registration")
 			return
 		}
@@ -129,7 +152,10 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 		// The backend path still needs the secrets provider configured at
 		// runtime — return 503. The inline-kubeconfig path explicitly does
 		// NOT require credProvider (the whole point of the inline path).
-		if s.credProvider == nil {
+		// EXCEPTION: a self-managed registration (connection_managed_by:
+		// user) never needs credentials at all — Sharko never writes the
+		// ArgoCD cluster secret for it; verification is simply skipped.
+		if s.credProvider == nil && !selfManaged {
 			writeMissingProviderError(w)
 			return
 		}
@@ -166,6 +192,13 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 		// Invalid creds_source (creds-reframe-1): unknown value, or an
 		// inline source with no kubeconfig. Caller error → 400.
 		if orchestrator.IsInvalidCredsSource(err) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		// Invalid connection_managed_by (V2-cleanup-57.2). The edge check
+		// above already catches this; the orchestrator validates too so
+		// non-HTTP callers get the same contract. Caller error → 400.
+		if orchestrator.IsInvalidConnectionMode(err) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}

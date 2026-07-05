@@ -60,3 +60,12 @@ addons run where, and manage the catalog and values files in the repo
 directly. There is no export step, no data to convert, no proprietary
 state to unwind — your repo remains a fully self-describing ArgoCD
 setup, because that's what it was all along.
+
+## Don't want Sharko owning connections in the first place?
+
+Removal is the all-or-nothing version of a stance you can take
+per-cluster while Sharko is running:
+[Managing cluster connections yourself](self-managed-connections.md)
+lets you keep the ArgoCD cluster secret in your own hands — Sharko never
+writes, rotates, or deletes it and only syncs the addon labels onto it.
+Clusters adopted from an existing ArgoCD get that mode by default.

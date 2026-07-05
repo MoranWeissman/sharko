@@ -374,6 +374,29 @@ func (r *Reconciler) ReconcileOnce(ctx context.Context) {
 // created is true only when the secret was newly created (not in existingSet before the call).
 // existingSet is the pre-fetched map of already-managed secret names.
 func (r *Reconciler) reconcileCluster(ctx context.Context, cluster models.Cluster, existingSet map[string]bool) (changed, created bool, err error) {
+	log := logging.LoggerFromContext(ctx)
+
+	// Self-managed connection (connectionManagedBy: user — V2-cleanup-57.2):
+	// the user creates and maintains the ArgoCD cluster Secret; Sharko NEVER
+	// writes, rotates, or deletes its credential material. No credentials
+	// fetch (self-managed clusters routinely have nothing in the secrets
+	// backend — a lookup failure here must not error-loop), no Ensure —
+	// only a label-only merge onto the existing user-created Secret. A
+	// missing Secret is a visible pending state, not an error.
+	if cluster.UserManagedConnection() {
+		labelsChanged, secretFound, syncErr := r.manager.SyncLabelsOnly(ctx, cluster.Name, cluster.Labels)
+		if syncErr != nil {
+			return false, false, fmt.Errorf("syncing labels on self-managed connection: %w", syncErr)
+		}
+		if !secretFound {
+			log.Info("[argosecrets] self-managed connection: ArgoCD cluster Secret not created yet — waiting for the user (no write attempted)",
+				"cluster", cluster.Name,
+			)
+			return false, false, nil
+		}
+		return labelsChanged, false, nil
+	}
+
 	// 1. Resolve credential lookup key — secretPath overrides name
 	// (shared resolver — V2-cleanup-55.1).
 	credLookup := cluster.CredentialLookupKey()

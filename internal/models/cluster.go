@@ -49,6 +49,17 @@ type ManagedClusterEntry struct {
 	SecretPath string        `json:"secretPath,omitempty" yaml:"secretPath,omitempty"`
 	Region     string        `json:"region,omitempty" yaml:"region,omitempty"`
 	Labels     ClusterLabels `json:"labels,omitempty" yaml:"labels,omitempty"`
+
+	// ConnectionManagedBy declares who owns this cluster's ArgoCD cluster
+	// Secret (V2-cleanup-57.2). Absent/empty means "sharko" (the default —
+	// zero migration for pre-field files). "user" means the user creates and
+	// maintains the Secret by hand and Sharko only syncs addon labels onto
+	// it — never writing, rotating, or deleting the credential material.
+	// The jsonschema enum keeps hand-authored enveloped files honest: a
+	// typo'd value is rejected at validation time instead of silently
+	// falling back to Sharko-managed. See internal/models/connection_mode.go
+	// for the canonical constants + predicate.
+	ConnectionManagedBy string `json:"connectionManagedBy,omitempty" yaml:"connectionManagedBy,omitempty" jsonschema:"enum=sharko,enum=user"`
 }
 
 // ClusterLabels is the addon-enablement map on a managed-cluster entry. Its
@@ -281,6 +292,14 @@ type Cluster struct {
 	ServerVersion    string            `json:"server_version,omitempty"`
 	ConnectionStatus string            `json:"connection_status,omitempty"`
 	Managed          bool              `json:"managed"` // true if in cluster-addons.yaml
+
+	// ConnectionManagedBy mirrors the managed-clusters.yaml entry's
+	// connectionManagedBy field onto the API surface (V2-cleanup-57.2).
+	// Empty means Sharko-managed (the default); "user" means the user
+	// created and maintains the ArgoCD cluster Secret and Sharko only
+	// syncs addon labels onto it. The UI renders a read-only
+	// "connection: managed by you" caption off this field.
+	ConnectionManagedBy string `json:"connection_managed_by,omitempty" yaml:"connectionManagedBy,omitempty"`
 
 	// Connectivity check fields (V2-cleanup-29). Flat primitives only —
 	// computed at the API layer from ArgoCD application state. The models

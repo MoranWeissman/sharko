@@ -842,6 +842,21 @@ definitions:
           value overrides the default for this operation only. Resolved via
           resolveAutoMerge — never mutate o.gitops.PRAutoMerge.
         type: boolean
+      connection_managed_by:
+        description: |-
+          ConnectionManagedBy declares who owns this cluster's ArgoCD cluster
+          Secret (V2-cleanup-57.2): "" or "sharko" (default) — Sharko writes and
+          rotates the Secret exactly as before; "user" — the caller creates and
+          maintains the Secret by hand and Sharko NEVER writes it (registration
+          skips the direct Secret write; the reconcilers only sync addon labels
+          onto the existing user-created Secret). For a self-managed
+          registration, credentials become OPTIONAL: when supplied (inline
+          kubeconfig or a resolvable backend secret) Stage-1 connectivity
+          verification still runs as a fail-fast courtesy; when absent the
+          verification is skipped and registration proceeds straight to the Git
+          record. The value is recorded in the cluster's managed-clusters.yaml
+          entry as connectionManagedBy.
+        type: string
       creds_source:
         allOf:
         - $ref: '#/definitions/github_com_MoranWeissman_sharko_internal_orchestrator.CredsSource'
@@ -3536,6 +3551,12 @@ paths:
         from: "inline-kubeconfig", "secret-kubeconfig", or "eks-token". When omitted
         it is derived from "provider" (kubeconfig→inline, else→backend) so existing
         requests are unchanged; when set it wins over "provider".
+        Optionally set "connection_managed_by" to declare who owns the ArgoCD
+        cluster secret: "sharko" (default — Sharko writes and rotates it) or
+        "user" (self-managed — you create the secret by hand; Sharko never writes
+        it and only syncs addon labels onto it). For a self-managed registration
+        credentials are optional: when supplied, connectivity verification still
+        runs; when absent, it is skipped.
       parameters:
       - description: Cluster registration request (supports dry_run + kubeconfig fields)
         in: body

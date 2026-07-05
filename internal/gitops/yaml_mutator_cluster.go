@@ -49,6 +49,12 @@ type ClusterEntryInput struct {
 	Region     string            // optional
 	SecretPath string            // optional
 	Labels     map[string]string // addon labels, e.g. {"cert-manager": "enabled"}
+	// ConnectionManagedBy: "" (omit — Sharko-managed default) or
+	// models.ConnectionManagedByUser for a self-managed ArgoCD connection
+	// (user-created cluster Secret; Sharko syncs addon labels only).
+	// V2-cleanup-57.2. Writers pass "" for Sharko-managed so pre-field
+	// files stay byte-identical on re-emit.
+	ConnectionManagedBy string
 }
 
 // AddClusterEntry adds a new cluster to the managed-clusters.yaml spec.
@@ -72,9 +78,10 @@ func AddClusterEntry(data []byte, entry ClusterEntryInput) ([]byte, error) {
 	}
 
 	newEntry := models.ManagedClusterEntry{
-		Name:       entry.Name,
-		Region:     entry.Region,
-		SecretPath: entry.SecretPath,
+		Name:                entry.Name,
+		Region:              entry.Region,
+		SecretPath:          entry.SecretPath,
+		ConnectionManagedBy: entry.ConnectionManagedBy,
 	}
 	// Always set Labels to a non-nil map when labels are provided, so
 	// the emitted YAML carries `labels: { ... }` rather than `labels: null`.

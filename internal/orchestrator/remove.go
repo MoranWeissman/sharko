@@ -8,6 +8,7 @@ import (
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/gitops"
 	"github.com/MoranWeissman/sharko/internal/logging"
+	"github.com/MoranWeissman/sharko/internal/models"
 )
 
 // RemoveCluster orchestrates cluster removal with configurable cleanup scope.
@@ -97,6 +98,18 @@ func (o *Orchestrator) RemoveCluster(ctx context.Context, req RemoveClusterReque
 	// override (V2-cleanup-55.1).
 	credLookupKey := config.ResolveCredentialLookupKeyFromData(clusterAddonsData, req.Name)
 
+	// Resolve the connection-ownership mode from the SAME pre-mutation bytes
+	// (V2-cleanup-57.2). A self-managed connection (connectionManagedBy:
+	// user) means the ArgoCD cluster Secret is the USER's — removal must
+	// leave it in place even under cleanup=all. Parse failures degrade to
+	// the Sharko-managed default, which matches pre-field behavior.
+	selfManagedConnection := false
+	if clusterAddonsData != nil {
+		if parsed, parseErr := config.NewParser().ParseClusterAddons(clusterAddonsData); parseErr == nil {
+			selfManagedConnection = models.IsUserManagedConnection(models.ConnectionManagedByFor(parsed, req.Name))
+		}
+	}
+
 	var files map[string][]byte
 	var deletePaths []string
 
@@ -160,7 +173,19 @@ func (o *Orchestrator) RemoveCluster(ctx context.Context, req RemoveClusterReque
 	}
 
 	// Step 3: If cleanup=all, delete ArgoCD cluster secret.
-	if cleanup == "all" && o.argoSecretManager != nil {
+	//
+	// SELF-MANAGED GUARD (V2-cleanup-57.2): the user created and maintains
+	// this cluster's ArgoCD Secret; deleting it would kill THEIR connection.
+	// Leave it in place and say so.
+	if cleanup == "all" && selfManagedConnection {
+		log.Info("cluster connection is managed by the user — leaving the ArgoCD cluster Secret in place",
+			"cluster", req.Name)
+		steps = append(steps, "skip_argocd_secret_user_managed")
+		result.Message = fmt.Sprintf(
+			"Cluster %s removed from Sharko. Its ArgoCD cluster Secret was left in place because the connection is managed by you — delete it yourself if you no longer want ArgoCD connected to this cluster.",
+			req.Name)
+	}
+	if cleanup == "all" && !selfManagedConnection && o.argoSecretManager != nil {
 		// Find the server URL so we can delete from ArgoCD.
 		clusters, listErr := o.argocd.ListClusters(ctx)
 		if listErr == nil {
