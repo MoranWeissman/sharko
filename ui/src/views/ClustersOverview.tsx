@@ -23,6 +23,7 @@ import {
   ChevronUp,
   RefreshCw,
   Trash2,
+  ExternalLink,
 } from 'lucide-react';
 import { api, registerCluster, discoverEKSClusters, testClusterConnection, unadoptCluster, deleteOrphanCluster, isTestClusterUnavailable, type PRWriteResult } from '@/services/api';
 import { PRLifecycleProgress, extractPR } from '@/components/PRFeedback';
@@ -149,7 +150,17 @@ export function ClustersOverview() {
     // so the headline count and the resulting row list refer to the same
     // set of clusters (everything in managed-clusters.yaml that isn't
     // currently "Connected" / "Successful" in ArgoCD).
-    initialStatus === 'disconnected' ? 'disconnected' : 'all'
+    //
+    // V2-cleanup-61.1 (A1): the Dashboard's "Needs Attention" panel also
+    // links here with `?status=issues` ("View all {n} clusters"). This
+    // page has no per-cluster addon-health signal to reproduce the
+    // Dashboard's exact "issues" definition (connection failure OR
+    // unhealthy addons) — that would need the version-matrix data the
+    // Dashboard fetches separately. Honest mechanical mapping: `issues`
+    // aliases to the existing `disconnected` problem-subset filter
+    // (connection failures), the closest real filter this page has,
+    // rather than silently ignoring the param.
+    initialStatus === 'disconnected' || initialStatus === 'issues' ? 'disconnected' : 'all'
   );
   const [filters, setFilters] = useState<Filters>({
     name: '',
@@ -1322,7 +1333,7 @@ export function ClustersOverview() {
                         }
                         className="rounded border-[#5a9dd0] dark:border-gray-600"
                       />
-                      <span className="capitalize">{addon.addon_name}</span>
+                      <span>{addon.addon_name}</span>
                     </label>
                   ))}
                 </div>
@@ -1423,7 +1434,7 @@ export function ClustersOverview() {
                 directRequiredMissing ||
                 (registrationMode === 'discovery' && !Object.values(selectedDiscovered).some(Boolean))
               }
-              title="Create the ArgoCD cluster Secret, add the cluster to managed-clusters.yaml, and open a PR (or auto-merge if the box above is checked)."
+              title="Create the ArgoCD cluster Secret, add the cluster to managed-clusters.yaml, and open a PR. Whether that PR auto-merges follows your global GitOps setting (Settings → GitOps)."
               className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-700 dark:hover:bg-teal-600"
             >
               {addClusterSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
@@ -1460,11 +1471,23 @@ export function ClustersOverview() {
             {isPartial
               ? addClusterResultMsg
               : isPendingTag
-                ? <>Cluster registration PR opened — merge to activate. PR: <a href={taggedURL} target="_blank" rel="noopener noreferrer" className="underline font-medium">{taggedURL}</a></>
+                ? <>Cluster registration PR opened — merge to activate.{' '}
+                    <a href={taggedURL} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5 underline font-medium hover:no-underline">
+                      View PR <ExternalLink className="h-3 w-3" />
+                    </a>
+                  </>
                 : isMergedTag
-                  ? <>Cluster registered. PR: <a href={taggedURL} target="_blank" rel="noopener noreferrer" className="underline font-medium">{taggedURL}</a></>
+                  ? <>Cluster registered.{' '}
+                      <a href={taggedURL} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5 underline font-medium hover:no-underline">
+                        View PR <ExternalLink className="h-3 w-3" />
+                      </a>
+                    </>
                   : addClusterResultMsg.startsWith('http')
-                    ? <>Cluster registered. PR: <a href={addClusterResultMsg} target="_blank" rel="noopener noreferrer" className="underline font-medium">{addClusterResultMsg}</a></>
+                    ? <>Cluster registered.{' '}
+                        <a href={addClusterResultMsg} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5 underline font-medium hover:no-underline">
+                          View PR <ExternalLink className="h-3 w-3" />
+                        </a>
+                      </>
                     : addClusterResultMsg
             }
           </span>
@@ -1496,7 +1519,7 @@ export function ClustersOverview() {
       </div>
 
       {/* Advanced filters */}
-      <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#d0e8f8] p-4 dark:border-gray-700 dark:bg-gray-900">
+      <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#d0e8f8] p-4 dark:ring-gray-700 dark:bg-gray-900">
         <div className="flex flex-wrap items-center gap-3">
           {/* Name search */}
           <div className="relative min-w-[200px] flex-1">
@@ -1820,7 +1843,7 @@ export function ClustersOverview() {
         </h3>
 
         {viewMode === 'list' ? (
-          <div className="overflow-x-auto rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div className="overflow-x-auto rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm dark:ring-gray-700 dark:bg-gray-800">
             <table className="w-full text-left text-sm">
               <thead className="border-b border-[#6aade0] bg-[#d0e8f8] text-xs uppercase text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
                 <tr>
@@ -1939,7 +1962,7 @@ export function ClustersOverview() {
                 <div
                   key={cluster.name}
                   onClick={isInCluster ? undefined : () => navigate(`/clusters/${cluster.name}`)}
-                  className={`rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 shadow-sm transition-all dark:border-gray-700 dark:bg-gray-800 ${
+                  className={`rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 shadow-sm transition-all dark:ring-gray-700 dark:bg-gray-800 ${
                     isInCluster ? 'cursor-not-allowed opacity-70' : 'cursor-pointer hover:-translate-y-0.5 hover:shadow-md'
                   }`}
                 >
@@ -2022,7 +2045,7 @@ export function ClustersOverview() {
               );
             })}
             {managedClusters.length === 0 && (
-              <div className="col-span-full rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-8 text-center text-[#3a6a8a] dark:border-gray-700 dark:bg-gray-800 dark:text-gray-500">
+              <div className="col-span-full rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-8 text-center text-[#3a6a8a] dark:ring-gray-700 dark:bg-gray-800 dark:text-gray-500">
                 No managed clusters match the current filters.
               </div>
             )}

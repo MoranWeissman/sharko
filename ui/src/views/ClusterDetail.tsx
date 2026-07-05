@@ -63,6 +63,7 @@ import { DiagnoseModal } from '@/components/DiagnoseModal';
 import { PendingPRsPanel } from '@/components/PendingPRsPanel';
 import { PerClusterAddonOverridesEditor } from '@/components/PerClusterAddonOverridesEditor';
 import { showToast } from '@/components/ToastNotification';
+import { prettyOperation } from '@/lib/utils';
 import type { ConnectionsListResponse, TrackedPR } from '@/services/models';
 
 type StatusFilter =
@@ -118,10 +119,6 @@ function ClusterHistorySection({ clusterName }: { clusterName: string }) {
       </div>
     </div>
   );
-}
-
-function capitalizeAddonName(name: string): string {
-  return name.charAt(0).toUpperCase() + name.slice(1);
 }
 
 // Per-error-code copy + optional action link for the Test-unavailable
@@ -1018,7 +1015,7 @@ export function ClusterDetail() {
               {/* Cluster info stat cards */}
               <div className="flex flex-wrap gap-3">
                 {data.cluster.server_version && (
-                  <div className="flex items-center gap-2 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] px-4 py-3 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+                  <div className="flex items-center gap-2 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] px-4 py-3 shadow-sm dark:ring-gray-700 dark:bg-gray-800">
                     <Tag className="h-4 w-4 text-teal-500" />
                     <div>
                       <p className="text-xs text-[#2a5a7a] dark:text-gray-400">Cluster Version</p>
@@ -1047,7 +1044,7 @@ export function ClusterDetail() {
                     </div>
                   </div>
                 )}
-                <div className="flex items-center gap-2 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] px-4 py-3 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+                <div className="flex items-center gap-2 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] px-4 py-3 shadow-sm dark:ring-gray-700 dark:bg-gray-800">
                   <Server className="h-4 w-4 text-teal-500" />
                   <div>
                     <p className="text-xs text-[#2a5a7a] dark:text-gray-400">Connection</p>
@@ -1065,7 +1062,7 @@ export function ClusterDetail() {
                   </div>
                 </div>
                 {/* Secret Path */}
-                <div className="flex items-center gap-2 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] px-4 py-3 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+                <div className="flex items-center gap-2 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] px-4 py-3 shadow-sm dark:ring-gray-700 dark:bg-gray-800">
                   <KeyRound className="h-4 w-4 text-teal-500" />
                   <div className="min-w-0 flex-1">
                     <p className="text-xs text-[#2a5a7a] dark:text-gray-400">Secret Path</p>
@@ -1334,7 +1331,7 @@ export function ClusterDetail() {
                               : 'bg-[#f0f7ff] ring-[#6aade0] hover:bg-[#d6eeff] dark:bg-gray-700 dark:ring-gray-600 dark:hover:bg-gray-600'
                           }`}
                         >
-                          <span className="font-medium capitalize text-[#0a2a4a] dark:text-gray-100">{addon.addon_name}</span>
+                          <span className="font-medium text-[#0a2a4a] dark:text-gray-100">{addon.addon_name}</span>
                           <span className="ml-2 text-xs text-[#5a8aaa] dark:text-gray-400">v{addon.version}</span>
                           {addon.namespace && (
                             <span className="ml-2 text-xs text-[#5a8aaa] dark:text-gray-400">({addon.namespace})</span>
@@ -1461,7 +1458,7 @@ export function ClusterDetail() {
                     connStatus === 'check_failed';
 
                   return (
-                    <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800">
+                    <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:ring-gray-700 dark:bg-gray-800">
                       {/* Card header */}
                       <div className="mb-3 flex items-center justify-between gap-2">
                         <h3 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
@@ -1541,7 +1538,7 @@ export function ClusterDetail() {
                                 >
                                   <div className="flex min-w-0 flex-1 items-center gap-2">
                                     <span
-                                      className={`truncate text-sm font-medium capitalize ${
+                                      className={`truncate text-sm font-medium ${
                                         isPendingRemove
                                           ? 'line-through text-[#5a8aaa] dark:text-gray-500'
                                           : 'text-[#0a2a4a] dark:text-gray-200'
@@ -1675,7 +1672,7 @@ export function ClusterDetail() {
               </div>
 
               {/* Comparison table */}
-              <div className="overflow-x-auto rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
+              <div className="overflow-x-auto rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm dark:ring-gray-700 dark:bg-gray-800">
                 <table className="w-full text-left text-sm">
                   <thead className="border-b border-[#6aade0] bg-[#d0e8f8] text-xs uppercase text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
                     <tr>
@@ -1764,7 +1761,7 @@ export function ClusterDetail() {
             <PendingPRsPanel
               cluster={name}
               onMergeDetected={(pr: TrackedPR) => {
-                showToast(`PR #${pr.pr_id} merged -- ${pr.cluster ?? ''} ${pr.operation}`)
+                showToast(`Merged PR #${pr.pr_id}: ${prettyOperation(pr.operation)}${pr.cluster ? ` on ${pr.cluster}` : ''}.`)
                 void fetchData()
               }}
             />
@@ -1866,7 +1863,7 @@ function ComparisonRow({ addon, clusterName, isExpanded, onToggleExpand, argocdB
               className="hover:text-teal-600 hover:underline dark:hover:text-teal-400"
               title={`Open ${addon.addon_name} details`}
             >
-              {capitalizeAddonName(addon.addon_name)}
+              {addon.addon_name}
             </Link>
           )}
           {addon.argocd_application_name && argocdBaseURL && (
@@ -2036,7 +2033,7 @@ function ConfigOverridesPanel({ data, loading, error, onRetry }: ConfigOverrides
 
   if (overriddenAddons.length === 0) {
     return (
-      <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-8 text-center shadow-sm dark:border-gray-700 dark:bg-gray-800">
+      <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-8 text-center shadow-sm dark:ring-gray-700 dark:bg-gray-800">
         <p className="text-[#2a5a7a] dark:text-gray-400">
           This cluster uses all global defaults — no per-cluster overrides found.
         </p>
@@ -2050,11 +2047,11 @@ function ConfigOverridesPanel({ data, loading, error, onRetry }: ConfigOverrides
       {overriddenAddons.map((entry) => (
         <div
           key={entry.addon_name}
-          className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800"
+          className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm dark:ring-gray-700 dark:bg-gray-800"
         >
           <div className="flex items-center gap-2 border-b border-[#6aade0] px-4 py-3 dark:border-gray-700">
             <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
-              {capitalizeAddonName(entry.addon_name)}
+              {entry.addon_name}
             </h3>
             <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-400">
               Custom overrides

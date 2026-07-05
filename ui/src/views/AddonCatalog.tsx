@@ -251,13 +251,13 @@ function AddonCard({ addon }: { addon: AddonCatalogItem }) {
   return (
     <div
       onClick={handleCardClick}
-      className="group flex cursor-pointer flex-col rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:border-teal-400 hover:shadow-md dark:border-gray-700 dark:bg-gray-800 dark:hover:border-teal-500"
+      className="group flex cursor-pointer flex-col rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:border-teal-400 hover:shadow-md dark:ring-gray-700 dark:bg-gray-800 dark:hover:border-teal-500"
     >
       <div className="flex flex-1 flex-col p-4">
         {/* Header */}
         <div className="mb-2 flex items-start justify-between">
           <div className="min-w-0 flex-1">
-            <h3 className="truncate text-lg font-bold capitalize text-teal-700 dark:text-teal-400">
+            <h3 className="truncate text-lg font-bold text-teal-700 dark:text-teal-400">
               {addon.addon_name}
             </h3>
             <p className="truncate text-xs text-[#2a5a7a] dark:text-gray-400">
@@ -443,7 +443,7 @@ function PaginationControls({
 function AddonListTable({ addons }: { addons: AddonCatalogItem[] }) {
   const navigate = useNavigate()
   return (
-    <div className="overflow-x-auto rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm dark:border-gray-700 dark:bg-gray-800">
+    <div className="overflow-x-auto rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-sm dark:ring-gray-700 dark:bg-gray-800">
       <table className="w-full text-left text-sm">
         <thead className="border-b border-[#6aade0] bg-[#d0e8f8] text-xs uppercase text-[#2a5a7a] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400">
           <tr>
@@ -462,7 +462,7 @@ function AddonListTable({ addons }: { addons: AddonCatalogItem[] }) {
               onClick={() => navigate(`/addons/${addon.addon_name}`)}
               className="cursor-pointer hover:bg-[#d6eeff] dark:hover:bg-gray-700"
             >
-              <td className="px-6 py-3 font-medium capitalize text-[#0a2a4a] dark:text-gray-100">
+              <td className="px-6 py-3 font-medium text-[#0a2a4a] dark:text-gray-100">
                 {addon.addon_name}
               </td>
               <td className="px-6 py-3 font-mono text-xs text-[#2a5a7a] dark:text-gray-400">

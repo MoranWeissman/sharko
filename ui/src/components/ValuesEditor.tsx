@@ -514,7 +514,7 @@ export function ValuesEditor({
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           spellCheck={false}
-          className="block min-h-[320px] w-full resize-y rounded-md border border-[#c0ddf0] bg-[#f8fbff] p-3 font-mono text-xs leading-5 text-[#0a2a4a] focus:border-[#6aade0] focus:outline-none focus:ring-2 focus:ring-[#6aade0]/30 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+          className="block min-h-[320px] w-full resize-y rounded-md border border-[#c0ddf0] bg-[#f8fbff] p-3 font-mono text-xs leading-5 text-[#0a2a4a] focus:border-[#6aade0] focus:outline-none focus:ring-2 focus:ring-[#6aade0]/30 dark:ring-gray-700 dark:bg-gray-900 dark:text-gray-100"
           placeholder="# YAML values&#10;# e.g.&#10;# replicaCount: 2&#10;# resources:&#10;#   limits:&#10;#     memory: 256Mi"
         />
         <div className="mt-1 flex items-center justify-between text-xs text-[#3a6a8a] dark:text-gray-500">

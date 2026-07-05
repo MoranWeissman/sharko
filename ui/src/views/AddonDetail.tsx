@@ -881,7 +881,7 @@ function HealthProgressBar({ healthy, total }: { healthy: number; total: number 
     pct === 100 ? 'bg-green-500' : pct > 50 ? 'bg-yellow-500' : 'bg-red-500'
 
   return (
-    <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800">
+    <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:ring-gray-700 dark:bg-gray-800">
       <h3 className="mb-2 text-base font-semibold text-[#0a2a4a] dark:text-gray-100">Overall Health</h3>
       <div className="h-3 w-full overflow-hidden rounded-full bg-[#c0ddf0] dark:bg-gray-700">
         <div
@@ -1915,7 +1915,7 @@ export function AddonDetail() {
 
               {/* Environment Versions */}
               {envVersions.length > 0 && (
-                <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800">
+                <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:ring-gray-700 dark:bg-gray-800">
                   <h3 className="mb-3 text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
                     Environment Versions
                   </h3>
@@ -1923,7 +1923,7 @@ export function AddonDetail() {
                     {envVersions.map(({ env, version }) => (
                       <div
                         key={env}
-                        className="flex items-center justify-between rounded ring-2 ring-[#6aade0] px-3 py-2 dark:border-gray-700"
+                        className="flex items-center justify-between rounded ring-2 ring-[#6aade0] px-3 py-2 dark:ring-gray-700"
                       >
                         <span className="rounded-full border border-teal-200 bg-teal-50 px-2 py-0.5 text-xs font-medium text-teal-700 dark:border-teal-600 dark:bg-teal-900/30 dark:text-teal-400">
                           {env}
@@ -1959,7 +1959,7 @@ export function AddonDetail() {
           {activeSection === 'clusters' && (
             <>
               {/* Filter controls */}
-              <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800">
+              <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:ring-gray-700 dark:bg-gray-800">
                 <h3 className="mb-3 text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
                   Filter Applications
                 </h3>
@@ -2020,7 +2020,7 @@ export function AddonDetail() {
               </div>
 
               {/* Cluster Applications Table */}
-              <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] dark:border-gray-700 dark:bg-gray-800">
+              <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] dark:ring-gray-700 dark:bg-gray-800">
                 <div className="border-b px-4 py-3 dark:border-gray-700">
                   <h3 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
                     Cluster Applications
@@ -2105,7 +2105,7 @@ export function AddonDetail() {
 
               {/* Disabled clusters section */}
               {disabledApps.length > 0 && (
-                <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:border-gray-700 dark:bg-gray-800" id="disabled-clusters-section">
+                <div className="rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] p-4 dark:ring-gray-700 dark:bg-gray-800" id="disabled-clusters-section">
                   <h3 className="mb-3 text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
                     Disabled on {disabledApps.length} Clusters
                   </h3>

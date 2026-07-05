@@ -83,7 +83,7 @@ export function Login() {
                 autoComplete="username"
                 autoFocus
                 className="block w-full rounded-md border border-[#5a9dd0] bg-[#e0f0ff] px-3 py-2.5 text-sm text-[#0a2a4a] placeholder-[#7ab0d8] focus:border-[#9fcffb] focus:outline-none focus:ring-1 focus:ring-[#9fcffb]"
-                placeholder="admin"
+                placeholder="username"
               />
             </div>
 

@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { lazy, Suspense, useState, useEffect } from 'react'
 import { Loader2 } from 'lucide-react'
 import { AuthProvider, useAuth } from '@/hooks/useAuth'
@@ -25,6 +25,16 @@ const Settings = lazy(() => import('@/views/Settings'))
 const UserInfo = lazy(() => import('@/views/UserInfo'))
 const AuditViewer = lazy(() => import('@/views/AuditViewer'))
 const UpgradeChecker = lazy(() => import('@/views/UpgradeChecker'))
+
+// V2-cleanup-61.1 (A1): plain `<Navigate to="..." replace />` drops the
+// current query string — a deep-link like `/version-matrix?drift=true`
+// lands on the destination page with the `?drift=true` silently gone.
+// This wrapper carries the query string across the redirect so downstream
+// consumers of the param (now or later) actually see it.
+function RedirectPreservingQuery({ to }: { to: string }) {
+  const location = useLocation()
+  return <Navigate to={`${to}${location.search}`} replace />
+}
 
 function PageLoader() {
   return (
@@ -210,7 +220,7 @@ export function ConnectedApp() {
           <Route path="clusters/:name" element={<ClusterDetail />} />
           <Route path="addons" element={<AddonCatalog />} />
           <Route path="addons/:name" element={<AddonDetail />} />
-          <Route path="version-matrix" element={<Navigate to="/addons" replace />} />
+          <Route path="version-matrix" element={<RedirectPreservingQuery to="/addons" />} />
           <Route path="observability" element={<Observability />} />
           <Route path="system" element={<SystemView />} />
           <Route path="upgrade" element={<UpgradeChecker />} />

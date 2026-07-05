@@ -554,7 +554,7 @@ export function ConnectionSection() {
           <div className={`rounded-xl ring-2 bg-[#f0f7ff] p-6 shadow-sm dark:bg-gray-800 transition-all ${
             justSaved
               ? 'ring-teal-400 border border-teal-200 dark:ring-teal-600 dark:border-teal-800'
-              : 'ring-[#6aade0] dark:border-gray-700'
+              : 'ring-[#6aade0] dark:ring-gray-700'
           }`}>
             {justSaved && (
               <div className="mb-4 flex items-start gap-2 rounded-lg bg-teal-50 p-3 dark:bg-teal-950/30">

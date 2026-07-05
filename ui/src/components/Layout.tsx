@@ -120,7 +120,10 @@ function getAIPageContext(pathname: string): string | undefined {
     '/dashboard': 'the Dashboard (overview stats)',
     '/clusters': 'the Clusters page',
     '/addons': 'the Addons Catalog',
+    '/system': 'the System page (Sharko/ArgoCD → repo/clusters chain)',
     '/observability': 'the Observability page',
+    '/dashboards': 'the Dashboards page (external dashboard links)',
+    '/audit': 'the Audit Log page',
     '/settings': 'the Settings page',
   }
   if (routes[pathname]) return routes[pathname]
@@ -307,14 +310,22 @@ export function Layout() {
                       <span className="flex flex-1 items-center justify-between">
                         <span>{item.label}</span>
                         {item.to === '/' && openPRCount > 0 && (
-                          <span className="ml-1 inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-teal-500 px-1.5 text-[10px] font-bold text-white">
+                          <span
+                            className="ml-1 inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-teal-500 px-1.5 text-[10px] font-bold text-white"
+                            title={`${openPRCount} open pull request${openPRCount !== 1 ? 's' : ''}`}
+                            aria-label={`${openPRCount} open pull request${openPRCount !== 1 ? 's' : ''}`}
+                          >
                             {openPRCount}
                           </span>
                         )}
                       </span>
                     )}
                     {collapsed && !mobileOpen && item.to === '/' && openPRCount > 0 && (
-                      <span className="absolute -top-1 -right-1 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-teal-500 px-1 text-[9px] font-bold text-white">
+                      <span
+                        className="absolute -top-1 -right-1 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-teal-500 px-1 text-[9px] font-bold text-white"
+                        title={`${openPRCount} open pull request${openPRCount !== 1 ? 's' : ''}`}
+                        aria-label={`${openPRCount} open pull request${openPRCount !== 1 ? 's' : ''}`}
+                      >
                         {openPRCount}
                       </span>
                     )}
@@ -372,7 +383,7 @@ export function Layout() {
                 className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs transition-colors ${
                   aiPanelOpen
                     ? 'bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400'
-                    : 'ring-2 ring-[#6aade0] bg-[#e8f4ff] text-[#2a5a7a] hover:bg-[#d6eeff] dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
+                    : 'ring-2 ring-[#6aade0] bg-[#e8f4ff] text-[#2a5a7a] hover:bg-[#d6eeff] dark:ring-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
                 }`}
                 aria-label="Toggle AI Assistant"
               >
@@ -386,7 +397,7 @@ export function Layout() {
             {/* Search trigger */}
             <button
               onClick={() => { const e = new KeyboardEvent('keydown', { key: 'k', metaKey: true }); window.dispatchEvent(e) }}
-              className="hidden items-center gap-1.5 rounded-lg ring-2 ring-[#6aade0] bg-[#e8f4ff] px-3 py-1.5 text-xs text-[#3a6a8a] transition-colors hover:bg-[#d6eeff] sm:flex dark:border-gray-700 dark:bg-gray-800 dark:hover:bg-gray-700"
+              className="hidden items-center gap-1.5 rounded-lg ring-2 ring-[#6aade0] bg-[#e8f4ff] px-3 py-1.5 text-xs text-[#3a6a8a] transition-colors hover:bg-[#d6eeff] sm:flex dark:ring-gray-700 dark:bg-gray-800 dark:hover:bg-gray-700"
             >
               <Search className="h-3.5 w-3.5" />
               <span>Search...</span>
@@ -413,7 +424,7 @@ export function Layout() {
               {userMenuOpen && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setUserMenuOpen(false)} />
-                  <div className="absolute right-0 top-10 z-50 w-48 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] py-1 shadow-lg dark:border-gray-700 dark:bg-gray-800">
+                  <div className="absolute right-0 top-10 z-50 w-48 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] py-1 shadow-lg dark:ring-gray-700 dark:bg-gray-800">
                     <button
                       onClick={() => { navigate('/user'); setUserMenuOpen(false) }}
                       className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-[#0a3a5a] hover:bg-[#d6eeff] dark:text-gray-300 dark:hover:bg-gray-700"
