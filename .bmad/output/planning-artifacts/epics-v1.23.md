@@ -907,7 +907,7 @@ So that v1.23 ships without signing regressions or forbidden content.
 **Then** the review covers canonical serialization, bundle fetch error paths, trust-policy regex injection risk, and the release-pipeline signing step.
 
 **Given** forbidden-content grep runs
-**Then** zero matches for `scrdairy|merck|msd\.com|mahi-techlabs|merck-ahtl` or real AWS account IDs.
+**Then** zero matches for `scrdairy|<forbidden-org-string>|<forbidden-org-string>\.com|mahi-techlabs|<forbidden-org-string>` or real AWS account IDs.
 
 **Role file:** `.claude/team/code-reviewer.md` + `.claude/team/security-auditor.md`.
 **Effort:** M.

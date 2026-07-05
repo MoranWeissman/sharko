@@ -117,7 +117,7 @@ This document decomposes the v1.21 design doc (`docs/design/2026-04-17-v1.21-cat
 
 **NFR-V121-10** — Governance: `catalog/**` has `CODEOWNERS`; license allow-list enforced in CI; deprecation is a schema flag, not file deletion. (§4.9, §8 "Governance")
 
-**NFR-V121-11** — Forbidden content policy continues to hold (no `scrdairy`, `merck`, `msd.com`, `mahi-techlabs`, `merck-ahtl`, or real AWS account IDs anywhere in new code, docs, catalog entries, or CI). (`CLAUDE.md` Content Policy)
+**NFR-V121-11** — Forbidden content policy continues to hold (no `scrdairy`, `<forbidden-org-string>`, `<forbidden-org-string>.com`, `mahi-techlabs`, `<forbidden-org-string>`, or real AWS account IDs anywhere in new code, docs, catalog entries, or CI). (`CLAUDE.md` Content Policy)
 
 **NFR-V121-12** — LLM upstream calls are hard-blocked by a secret-leak pre-scan with no "send anyway" override; false-positive bias. (§4.4.3, Risk R4)
 
@@ -1354,7 +1354,7 @@ So that every new mutating handler is classified and every mutation is audited.
 **Then** `TestTierCoverage` and `TestAuditCoverage` both pass without allowlist additions (or any allowlist addition has a justification comment per `.claude/team/go-expert.md`).
 
 **Given** the forbidden-content grep from `.claude/team/code-reviewer.md` runs against the v1.21 diff
-**Then** zero matches are found for `scrdairy|merck|msd\.com|mahi-techlabs|merck-ahtl` or any real AWS account ID.
+**Then** zero matches are found for `scrdairy|<forbidden-org-string>|<forbidden-org-string>\.com|mahi-techlabs|<forbidden-org-string>` or any real AWS account ID.
 
 **Given** swagger regen runs
 **Then** `docs/swagger/` is up-to-date and CI's stale-swagger check passes.
@@ -1504,7 +1504,7 @@ Per `.claude/team/tech-lead.md` CHECK section + lean-workflow expectations, ever
 - Any change in `catalog/**`: `catalog-validate` CI must pass.
 
 **Cross-cutting:**
-- Forbidden-content grep: zero matches for `scrdairy|merck|msd\.com|mahi-techlabs|merck-ahtl` or real AWS account IDs.
+- Forbidden-content grep: zero matches for `scrdairy|<forbidden-org-string>|<forbidden-org-string>\.com|mahi-techlabs|<forbidden-org-string>` or real AWS account IDs.
 - Trust `go build` + `npm run build` over LSP (`feedback_lean_workflow.md` rule 4).
 - Dispatch `test-engineer` + `devops-agent` + `docs-writer` per epic (`feedback_always_involve_test_devops_docs.md`).
 - Dispatch `code-reviewer` + `security-auditor` at epic completion into the bundle branch; for V121-7 (AI guard) also dispatch `security-auditor` at story completion.

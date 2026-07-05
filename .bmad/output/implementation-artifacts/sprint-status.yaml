@@ -496,7 +496,7 @@ development_status:
   # Epic V124-9: argocd-token subcommand for sharko-dev.sh (BUG-027)
   # Maintainer mid-Track-B hit ArgoCD apiKey gauntlet (8 manual commands: port-forward,
   # patch argocd-cm, restart, re-login, generate). 3rd enterprise-paste of the day after
-  # Merck CA bake-in and dev-rebuild dance. V124-9 codifies the entire flow under
+  # <forbidden-org-string> CA bake-in and dev-rebuild dance. V124-9 codifies the entire flow under
   # `./scripts/sharko-dev.sh argocd-token --export` for eval-via-pipe.
   epic-V124-9: backlog
   V124-9-1-bug-027-argocd-token-subcommand-with-apikey-patch: done          # commit 839a9e1b — 6/6 validation flows pass; idempotency 34s→1.7s
