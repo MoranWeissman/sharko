@@ -57,7 +57,10 @@ metadata:
 			wantErr: false,
 		},
 		{
-			name: "future sharko.dev/v2 is treated as legacy by this v1 reader",
+			// V2-cleanup-60.2 (H2 forward guard): an unrecognized sharko.*
+			// apiVersion is a hard error, NEVER the bare-YAML fallthrough
+			// that silently reads the file as zero entries.
+			name: "future sharko.dev/v2 is a hard error, not legacy fallthrough",
 			body: `apiVersion: sharko.dev/v2
 kind: ManagedClusters
 metadata:
@@ -65,10 +68,10 @@ metadata:
 spec: {}
 `,
 			want:    false,
-			wantErr: false,
+			wantErr: true,
 		},
 		{
-			name: "old-domain future group sharko.io/v2 is not recognised either",
+			name: "old-domain future group sharko.io/v2 is a hard error too",
 			body: `apiVersion: sharko.io/v2
 kind: ManagedClusters
 metadata:
@@ -76,7 +79,7 @@ metadata:
 spec: {}
 `,
 			want:    false,
-			wantErr: false,
+			wantErr: true,
 		},
 		{
 			name:    "empty body returns false without error",

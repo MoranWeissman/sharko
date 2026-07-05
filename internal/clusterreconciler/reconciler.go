@@ -43,6 +43,7 @@
 package clusterreconciler
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -393,7 +394,10 @@ func (r *Reconciler) pollOnce(ctx context.Context) {
 			)
 			// fall through with body == nil; LoadManagedClusters([]byte{})
 			// would still error, so short-circuit to empty spec instead.
-			r.reconcileDiff(ctx, nil, &stats)
+			// fileNonEmpty=false: a missing file is a legitimate fresh
+			// install / pre-first-registration state, so the orphan-sweep
+			// sanity guard must NOT hold the sweep (V2-cleanup-60.2).
+			r.reconcileDiff(ctx, nil, false, &stats)
 			r.emitSummaryAudit(ctx, stats)
 			return
 		}
@@ -438,15 +442,50 @@ func (r *Reconciler) pollOnce(ctx context.Context) {
 		return
 	}
 
-	r.reconcileDiff(ctx, &spec, &stats)
+	// fileNonEmpty feeds the orphan-sweep sanity guard (V2-cleanup-60.2):
+	// a file that EXISTS with content but parses to zero clusters is the
+	// signature of a version/format mismatch, not of an intentionally
+	// emptied fleet — see orphanSweepHeld.
+	r.reconcileDiff(ctx, &spec, len(bytes.TrimSpace(body)) > 0, &stats)
 	r.emitSummaryAudit(ctx, stats)
+}
+
+// orphanSweepHeld is the orphan-sweep sanity guard (H2 forward guard,
+// V2-cleanup-60.2). It reports whether the reconciler must WITHHOLD every
+// orphan deletion this tick because the desired state looks like a silent
+// misread rather than a real "delete everything" instruction:
+//
+//   - desiredCount == 0    — the parsed managed-clusters.yaml declares zero
+//     clusters, and
+//   - fileNonEmpty         — yet the file EXISTS in git with content (a
+//     missing file or a genuinely empty body is a
+//     normal fresh-install state and never holds), and
+//   - observedManaged >= 1 — and at least one sharko-labeled ArgoCD cluster
+//     Secret is live.
+//
+// All three together mean "git suddenly says nothing while the live fleet
+// says something" — historically caused by a binary silently parsing a
+// newer-format file as empty (the v2.1.x-reads-sharko.dev/v1 incident).
+// Deleting every managed Secret on that signal is unrecoverable for
+// inline-registered clusters, so the guard fails safe: skip the sweep for
+// this tick, scream (Error log + orphan_sweep_held audit event), and let
+// the operator resolve the mismatch. An operator who really wants a
+// zero-cluster fleet removes the clusters through Sharko (which deletes
+// their Secrets as part of removal) or deletes the leftover Secrets by
+// hand — both make observedManaged reach zero and the guard disarm.
+func orphanSweepHeld(desiredCount int, fileNonEmpty bool, observedManaged int) bool {
+	return desiredCount == 0 && fileNonEmpty && observedManaged > 0
 }
 
 // reconcileDiff drives the create / delete decisions from the parsed
 // desired state and the live ArgoCD secret list. Extracted so the
 // "empty managed-clusters.yaml" branch in pollOnce can share the logic.
 // A nil spec is treated as "no clusters desired".
-func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClustersSpec, stats *reconcileStats) {
+//
+// fileNonEmpty reports whether managed-clusters.yaml existed in git with
+// non-whitespace content — one of the three inputs to the orphan-sweep
+// sanity guard (orphanSweepHeld, V2-cleanup-60.2).
+func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClustersSpec, fileNonEmpty bool, stats *reconcileStats) {
 	// Build the desired set (in-git names).
 	desired := make(map[string]models.ManagedClusterEntry)
 	if spec != nil {
@@ -570,6 +609,39 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 	// Create missing Secrets (in-git ∖ in-argocd).
 	for _, entry := range toCreate {
 		r.createOne(ctx, entry, stats)
+	}
+
+	// Orphan-sweep sanity guard (H2 forward guard, V2-cleanup-60.2): when
+	// the desired state reads as ZERO clusters even though the file exists
+	// non-empty in git AND sharko-labeled Secrets are live, the most likely
+	// explanation is a silent misread (version/format mismatch), not a real
+	// fleet-wide removal. Withhold every deletion this tick and scream. The
+	// per-candidate classification above (adopted / pending skips) already
+	// ran, so those operator signals still fire; only the destructive step
+	// is held. Fresh installs (file missing, or genuinely empty body) never
+	// trip this — fileNonEmpty is false there.
+	if len(toDelete) > 0 && orphanSweepHeld(len(desired), fileNonEmpty, len(existing)) {
+		stats.Errors++
+		logging.LoggerFromContext(ctx).Error(
+			"[clusterreconciler] orphan sweep HELD — managed-clusters.yaml is non-empty but parsed to zero clusters while sharko-labeled cluster Secrets exist; refusing to delete anything this tick. Check for a Sharko version/format mismatch on this repo (see operator guide: upgrade & rollback safety)",
+			"namespace", r.namespace,
+			"path", r.managedClustersPath,
+			"branch", r.branch,
+			"held_deletions", len(toDelete),
+			"observed_managed_secrets", len(existing),
+		)
+		r.audit(audit.Entry{
+			Level:     "error",
+			Event:     "orphan_sweep_held",
+			User:      "sharko",
+			Action:    "hold_orphan_sweep",
+			Resource:  fmt.Sprintf("namespace:%s held_deletions:%d observed_managed:%d", r.namespace, len(toDelete), len(existing)),
+			Source:    "reconciler",
+			Result:    "partial",
+			Detail:    "desired state parsed to zero clusters while the managed-clusters file exists non-empty and sharko-labeled cluster Secrets are live — orphan sweep withheld this tick; investigate a version/format mismatch before any Secret is deleted",
+			RequestID: logging.RequestID(ctx),
+		})
+		toDelete = nil
 	}
 
 	// Delete orphan Secrets (in-argocd ∖ in-git). Pass the cached corev1.Secret
