@@ -3,6 +3,8 @@ package models
 import (
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // V2-cleanup-57.2 — connectionManagedBy field semantics.
@@ -23,6 +25,33 @@ func TestIsUserManagedConnection(t *testing.T) {
 		if got := IsUserManagedConnection(c.value); got != c.want {
 			t.Errorf("IsUserManagedConnection(%q) = %v, want %v", c.value, got, c.want)
 		}
+	}
+}
+
+// TestBareLegacyYAML_UppercaseUser_ResolvesSelfManaged pins the M4 asymmetry
+// (V2-cleanup-60): a hand-edited, pre-envelope managed-clusters.yaml /
+// cluster-addons.yaml document with an oddly-cased connectionManagedBy value
+// resolves to self-managed via UserManagedConnection — the deliberate
+// fail-safe direction documented on IsUserManagedConnection. This is
+// distinct from the enveloped/API surfaces (see
+// TestManagedClusters_SchemaRejectsUnknownMode), which reject non-lowercase
+// values outright instead of case-folding them.
+func TestBareLegacyYAML_UppercaseUser_ResolvesSelfManaged(t *testing.T) {
+	data := []byte("clusters:\n  - name: legacy-cluster\n    connectionManagedBy: User\n")
+	var doc struct {
+		Clusters []Cluster `yaml:"clusters"`
+	}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("unmarshal bare legacy YAML: %v", err)
+	}
+	if len(doc.Clusters) != 1 {
+		t.Fatalf("expected 1 cluster, got %d", len(doc.Clusters))
+	}
+	if doc.Clusters[0].ConnectionManagedBy != "User" {
+		t.Fatalf("expected the raw casing to round-trip unmodified through yaml.Unmarshal, got %q", doc.Clusters[0].ConnectionManagedBy)
+	}
+	if !doc.Clusters[0].UserManagedConnection() {
+		t.Fatal("bare YAML connectionManagedBy: User must resolve to self-managed (fail-safe direction, M4)")
 	}
 }
 

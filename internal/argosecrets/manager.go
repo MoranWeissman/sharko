@@ -534,6 +534,22 @@ func (m *Manager) Ensure(ctx context.Context, spec ClusterSecretSpec) (bool, err
 //     sweeps can never reclaim (delete) the user's connection later. An
 //     ADOPTED Secret keeps its label + annotation — the adopt rail is
 //     already delete-proof and Unadopt depends on them.
+//   - Legacy value normalization (V2-cleanup-60 H3): every addon-label value
+//     is passed through models.NormalizeAddonLabelValue BEFORE it is
+//     compared against the live Secret or written. This is the single choke
+//     point both reconcilers converge through — the legacy
+//     internal/argosecrets reconciler still passes raw cluster.Labels (which
+//     may carry the old "true"/"false" values) while
+//     internal/clusterreconciler's syncSelfManaged pre-normalizes before
+//     calling in. Without normalizing here too, a cluster hand-switched to
+//     self-managed with old-style labels would converge to
+//     "enabled"/"disabled" on whichever reconciler ran the write, then the
+//     OTHER reconciler would see its own (unnormalized) desired set as
+//     mismatched and rewrite it back — an infinite flip that toggles the
+//     addon ApplicationSet's selection and makes ArgoCD deploy/prune the
+//     addon forever. Normalizing on every call, regardless of what the
+//     caller passes, means both callers' desired sets collapse to the same
+//     canonical map and the write converges in one pass.
 //
 // Merge semantics match the adopted path: desired addon labels win on
 // conflict, foreign labels are kept. The mutation is metadata-only on a
@@ -558,8 +574,17 @@ func (m *Manager) SyncLabelsOnly(ctx context.Context, name string, addonLabels m
 	// Desired = the caller's addon labels, minus the connectivity-check
 	// label (guest stance — never stamped on a connection Sharko does not
 	// own). We deliberately do NOT add LabelManagedBy or LabelSecretType.
+	//
+	// Normalize legacy "true"/"false" values to the canonical
+	// "enabled"/"disabled" vocabulary HERE, regardless of which reconciler
+	// called in or whether it already normalized (H3 — see doc comment
+	// above). Normalizing an already-canonical value is a no-op, so this is
+	// safe to run unconditionally on every call.
 	desired := make(map[string]string, len(addonLabels))
 	for k, v := range addonLabels {
+		if normalized, changed := models.NormalizeAddonLabelValue(v); changed {
+			v = normalized
+		}
 		desired[k] = v
 	}
 	models.RemoveConnectivityCheckLabels(desired)

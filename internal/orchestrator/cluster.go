@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/MoranWeissman/sharko/internal/config"
@@ -91,10 +92,13 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	if err := validateCredsSource(credsSource, req); err != nil {
 		// Self-managed registrations may omit credentials entirely — Sharko
 		// never writes the ArgoCD cluster Secret for them, so there is
-		// nothing the credentials are strictly REQUIRED for. An inline
-		// source with an empty kubeconfig therefore passes (verification is
-		// simply skipped); every other validation still applies.
-		if !(selfManaged && isInlineSource(credsSource) && req.Kubeconfig == "") {
+		// nothing the credentials are strictly REQUIRED for. Only the exact
+		// "inline source with no kubeconfig" case is relaxed, narrowed via
+		// the ErrMissingInlineKubeconfig sentinel (V2-cleanup-60 M3) — every
+		// OTHER validateCredsSource error (e.g. a contradictory secret_path
+		// set alongside an inline source) must still surface, even for a
+		// self-managed registration.
+		if !(selfManaged && errors.Is(err, ErrMissingInlineKubeconfig)) {
 			return nil, err
 		}
 	}
@@ -170,7 +174,13 @@ func (o *Orchestrator) RegisterCluster(ctx context.Context, req RegisterClusterR
 	var creds *providers.Kubeconfig
 	credsSkippedReason := ""
 	if isInlineSource(credsSource) {
-		if selfManaged && req.Kubeconfig == "" {
+		// TrimSpace (V2-cleanup-60 L5): a whitespace-only kubeconfig ("\n",
+		// spaces, ...) must be treated exactly like an absent one for the
+		// self-managed relaxation. Without this, ParseInlineKubeconfig below
+		// received the whitespace string, failed to parse it as YAML, and the
+		// registration errored (502) instead of cleanly skipping verification
+		// the way an empty Kubeconfig does.
+		if selfManaged && strings.TrimSpace(req.Kubeconfig) == "" {
 			credsSkippedReason = "no kubeconfig supplied"
 		} else {
 			var parseErr error

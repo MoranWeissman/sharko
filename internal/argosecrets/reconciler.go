@@ -6,9 +6,11 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
+	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/logging"
 	"github.com/MoranWeissman/sharko/internal/models"
@@ -38,6 +40,13 @@ type ClusterCredentialsProvider interface {
 
 // AuditFunc is invoked after each reconcile pass with change counts.
 type AuditFunc func(created, updated, deleted int)
+
+// EntryAuditFunc is invoked to emit a single structured audit.Entry — for
+// events AuditFunc's aggregate created/updated/deleted counters cannot
+// express, such as the self-managed "waiting for the user to create the
+// Secret" pending state (V2-cleanup-60 L11), which is neither a create nor
+// an update. Optional; nil-safe (see emitEntryAudit).
+type EntryAuditFunc func(audit.Entry)
 
 // ReconcileStats holds counters from the most recent reconcile cycle.
 type ReconcileStats struct {
@@ -74,6 +83,11 @@ type Reconciler struct {
 	// Optional audit callback — set via SetAuditFunc.
 	// Protected by mu.
 	auditFn AuditFunc
+
+	// Optional structured single-entry audit callback — set via
+	// SetEntryAuditFunc. Used for events auditFn's aggregate counters cannot
+	// express (V2-cleanup-60 L11). Protected by mu.
+	entryAuditFn EntryAuditFunc
 
 	// Content hash of last reconciled managed-clusters.yaml to skip no-ops.
 	// Protected by mu.
@@ -392,6 +406,21 @@ func (r *Reconciler) reconcileCluster(ctx context.Context, cluster models.Cluste
 			log.Info("[argosecrets] self-managed connection: ArgoCD cluster Secret not created yet — waiting for the user (no write attempted)",
 				"cluster", cluster.Name,
 			)
+			// Mirror the audit event internal/clusterreconciler's syncSelfManaged
+			// emits for the identical pending state (V2-cleanup-60 L11) — the
+			// operator docs promise this event regardless of which reconciler
+			// is active, so both must emit it.
+			r.emitEntryAudit(audit.Entry{
+				Level:     "info",
+				Event:     "cluster_secret_user_pending",
+				User:      "sharko",
+				Action:    "wait_user_secret",
+				Resource:  fmt.Sprintf("cluster:%s", cluster.Name),
+				Source:    "reconciler",
+				Result:    "partial",
+				Detail:    "connection is managed by the user; create the ArgoCD cluster Secret by hand (see operator guide: self-managed connections)",
+				RequestID: logging.RequestID(ctx),
+			})
 			return false, false, nil
 		}
 		return labelsChanged, false, nil
@@ -467,6 +496,31 @@ func (r *Reconciler) SetAuditFunc(fn AuditFunc) {
 	r.mu.Lock()
 	r.auditFn = fn
 	r.mu.Unlock()
+}
+
+// SetEntryAuditFunc registers an optional callback for single structured
+// audit.Entry events (V2-cleanup-60 L11) — currently only the self-managed
+// "waiting for the user" pending state. Pass nil to clear.
+func (r *Reconciler) SetEntryAuditFunc(fn EntryAuditFunc) {
+	r.mu.Lock()
+	r.entryAuditFn = fn
+	r.mu.Unlock()
+}
+
+// emitEntryAudit is a nil-safe wrapper around entryAuditFn, mirroring
+// internal/clusterreconciler's r.audit: a missing wire-up logs a warning and
+// continues rather than panicking or silently dropping the signal.
+func (r *Reconciler) emitEntryAudit(entry audit.Entry) {
+	r.mu.RLock()
+	fn := r.entryAuditFn
+	r.mu.RUnlock()
+	if fn == nil {
+		slog.Warn("[argosecrets] entry audit func not wired — dropping audit entry",
+			"event", entry.Event, "action", entry.Action,
+		)
+		return
+	}
+	fn(entry)
 }
 
 // GetStats returns a snapshot of the last reconcile run's statistics.

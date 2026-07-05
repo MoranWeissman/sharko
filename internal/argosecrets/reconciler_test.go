@@ -12,6 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
+	"github.com/MoranWeissman/sharko/internal/audit"
 	"github.com/MoranWeissman/sharko/internal/config"
 	"github.com/MoranWeissman/sharko/internal/providers"
 )
@@ -801,6 +802,84 @@ func TestReconcileOnce_NonAdoptedOrphan_DeletedAfterTwoCycles(t *testing.T) {
 	}
 	if rec.GetStats().Deleted != 1 {
 		t.Errorf("cycle 2: stats.Deleted = %d, want 1", rec.GetStats().Deleted)
+	}
+}
+
+// TestReconcileOnce_SelfManagedPending_EmitsAuditEvent pins V2-cleanup-60
+// L11: when a self-managed cluster's ArgoCD Secret has not been created yet
+// by the user, this (legacy) reconciler must emit the SAME
+// cluster_secret_user_pending audit event internal/clusterreconciler's
+// syncSelfManaged emits for the identical state — the operator docs promise
+// this event regardless of which reconciler is active.
+func TestReconcileOnce_SelfManagedPending_EmitsAuditEvent(t *testing.T) {
+	const selfManagedPendingYAML = `
+clusters:
+  - name: byo-pending
+    connectionManagedBy: user
+    labels:
+      addon-foo: "enabled"
+`
+	reader := &mockGitReader{
+		files: map[string][]byte{
+			clusterAddonsPath: []byte(selfManagedPendingYAML),
+		},
+	}
+	// No credProvider needed — self-managed skips the credentials fetch.
+	rec, _, client := newTestReconciler(func() GitReader { return reader }, nil)
+
+	var gotEntries []audit.Entry
+	rec.SetEntryAuditFunc(func(entry audit.Entry) {
+		gotEntries = append(gotEntries, entry)
+	})
+
+	rec.ReconcileOnce(context.Background())
+
+	// No Secret must have been written for the self-managed, not-yet-created
+	// cluster — Sharko never writes on this path.
+	if _, err := client.CoreV1().Secrets(testNamespace).Get(context.Background(), "byo-pending", metav1.GetOptions{}); err == nil {
+		t.Fatal("self-managed pending cluster must not get a Secret written by Sharko")
+	}
+
+	if len(gotEntries) != 1 {
+		t.Fatalf("expected exactly 1 audit entry, got %d: %+v", len(gotEntries), gotEntries)
+	}
+	entry := gotEntries[0]
+	if entry.Event != "cluster_secret_user_pending" {
+		t.Errorf("Event = %q, want cluster_secret_user_pending", entry.Event)
+	}
+	if entry.Resource != "cluster:byo-pending" {
+		t.Errorf("Resource = %q, want cluster:byo-pending", entry.Resource)
+	}
+	if entry.Source != "reconciler" {
+		t.Errorf("Source = %q, want reconciler", entry.Source)
+	}
+	if entry.Result != "partial" {
+		t.Errorf("Result = %q, want partial", entry.Result)
+	}
+}
+
+// TestReconcileOnce_SelfManagedPending_EntryAuditFuncNotWired_DoesNotPanic
+// confirms emitEntryAudit is nil-safe: a reconciler with no
+// SetEntryAuditFunc wiring must still complete the reconcile pass without
+// panicking (mirrors internal/clusterreconciler's r.audit nil-safety).
+func TestReconcileOnce_SelfManagedPending_EntryAuditFuncNotWired_DoesNotPanic(t *testing.T) {
+	const selfManagedPendingYAML = `
+clusters:
+  - name: byo-unwired
+    connectionManagedBy: user
+`
+	reader := &mockGitReader{
+		files: map[string][]byte{
+			clusterAddonsPath: []byte(selfManagedPendingYAML),
+		},
+	}
+	rec, _, _ := newTestReconciler(func() GitReader { return reader }, nil)
+
+	rec.ReconcileOnce(context.Background()) // must not panic
+
+	stats := rec.GetStats()
+	if stats.Errors != 0 {
+		t.Errorf("stats.Errors = %d, want 0", stats.Errors)
 	}
 }
 
