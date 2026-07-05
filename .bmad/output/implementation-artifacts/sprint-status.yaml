@@ -40,7 +40,7 @@
 # - Tagging: NO tags cut reflexively — merge PRs to main when green; tag only when user explicitly asks (see feedback_release_cadence.md)
 
 generated: 2026-04-20
-last_updated: 2026-05-20 (5 PRs SHIPPED to main today: #332 V125-1-11 config split (d1f0274f), #333 DOC-01 release-notes backfill (9bd24691), #334 V1X-BUGS UI/UX sweep BUG-040..043 (e32a7105), #335 chore sprint-status (745cc337), #336 V124-1 polish bundle 5 stories (5b50bc8f). Auto-merge active per feedback_auto_merge_when_green memory. Remaining post-v1.25 backlog: DESIGN-01 + DESIGN-02 brainstorm-first items, BUG-033, standing e2e + sharko-dev.sh QoL items. V125-1-9 schema envelope sprint planned (6 stories) but not yet started.)
+last_updated: "2026-05-20 (5 PRs SHIPPED to main today: #332 V125-1-11 config split (d1f0274f), #333 DOC-01 release-notes backfill (9bd24691), #334 V1X-BUGS UI/UX sweep BUG-040..043 (e32a7105), #335 chore sprint-status (745cc337), #336 V124-1 polish bundle 5 stories (5b50bc8f). Auto-merge active per feedback_auto_merge_when_green memory. Remaining post-v1.25 backlog: DESIGN-01 + DESIGN-02 brainstorm-first items, BUG-033, standing e2e + sharko-dev.sh QoL items. V125-1-9 schema envelope sprint planned (6 stories) but not yet started.)"
 project: sharko
 project_key: NOKEY
 tracking_system: file-system
