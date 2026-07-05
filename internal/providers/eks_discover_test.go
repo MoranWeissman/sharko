@@ -98,6 +98,36 @@ func TestDiscoverEKSClusters_DefaultIdentity(t *testing.T) {
 		if r.K8sVersion != "1.28" {
 			t.Errorf("expected version 1.28, got %q", r.K8sVersion)
 		}
+		// Default identity → no role recorded (V2-cleanup-62.2).
+		if r.RoleARN != "" {
+			t.Errorf("expected empty RoleARN for the default identity, got %q", r.RoleARN)
+		}
+	}
+}
+
+// V2-cleanup-62.2 — every discovered cluster records WHICH role found it, so
+// the UI's post-discovery register flow can send it back as role_arn and the
+// registered cluster mints EKS tokens with the same identity.
+func TestDiscoverEKSClusters_StampsDiscoveryRoleARN(t *testing.T) {
+	const role = "arn:aws:iam::111122223333:role/example"
+	mock := &mockEKSClient{clusters: []string{"cross-account"}}
+	stsMock := &mockSTSClient{account: "111122223333"}
+
+	results, err := discoverEKSClustersWithFactory(
+		context.Background(),
+		[]string{role},
+		"eu-west-1",
+		func(_ aws.Config) EKSDiscoveryAPI { return mock },
+		func(_ aws.Config) STSCallerIdentityAPI { return stsMock },
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 cluster, got %d", len(results))
+	}
+	if results[0].RoleARN != role {
+		t.Errorf("RoleARN = %q, want the discovery role %q", results[0].RoleARN, role)
 	}
 }
 

@@ -38,6 +38,21 @@ type ClusterCredentialsProvider interface {
 	GetCredentials(clusterName string) (*providers.Kubeconfig, error)
 }
 
+// getCredentialsForCluster fetches credentials, forwarding the cluster's
+// stored per-cluster roleArn (V2-cleanup-62.2) when the backend supports
+// per-call role assumption (providers.RoleARNCredentialsProvider). The local
+// ClusterCredentialsProvider interface is narrower than the providers one,
+// so the capability assert happens here instead of through
+// providers.GetCredentialsWithOptionalRole.
+func (r *Reconciler) getCredentialsForCluster(credLookup, roleARN string) (*providers.Kubeconfig, error) {
+	if roleARN != "" {
+		if rp, ok := r.credProvider.(providers.RoleARNCredentialsProvider); ok {
+			return rp.GetCredentialsWithRoleARN(credLookup, roleARN)
+		}
+	}
+	return r.credProvider.GetCredentials(credLookup)
+}
+
 // AuditFunc is invoked after each reconcile pass with change counts.
 type AuditFunc func(created, updated, deleted int)
 
@@ -432,8 +447,11 @@ func (r *Reconciler) reconcileCluster(ctx context.Context, cluster models.Cluste
 
 	secretExistedBefore := existingSet[cluster.Name]
 
-	// 2. Get credentials from provider.
-	creds, err := r.credProvider.GetCredentials(credLookup)
+	// 2. Get credentials from provider. When the cluster record carries a
+	// per-cluster roleArn (V2-cleanup-62.2) and the backend supports per-call
+	// role assumption, EKS token minting uses the cluster's own role; every
+	// other combination is byte-identical to a plain GetCredentials call.
+	creds, err := r.getCredentialsForCluster(credLookup, cluster.RoleARN)
 	if err != nil {
 		return false, false, fmt.Errorf("getting credentials: %w", err)
 	}
@@ -451,11 +469,18 @@ func (r *Reconciler) reconcileCluster(ctx context.Context, cluster models.Cluste
 	r.mu.RUnlock()
 	models.ApplyConnectivityCheckLabel(clusterLabels, checkEnabled)
 
+	// Per-cluster roleArn from the cluster record wins over the
+	// connection-level default (V2-cleanup-62.2) — the same identity the
+	// argocd-k8s-auth exec shape must assume for a cross-account cluster.
+	specRoleARN := cluster.RoleARN
+	if specRoleARN == "" {
+		specRoleARN = r.defaultRoleARN
+	}
 	spec := ClusterSecretSpec{
 		Name:    cluster.Name,
 		Server:  creds.Server,
 		Region:  cluster.Region,
-		RoleARN: r.defaultRoleARN,
+		RoleARN: specRoleARN,
 		// Carry ALL the credential material through so buildSecretConfig can
 		// pick the right shape (precedence: cert pair > token > exec,
 		// V2-cleanup-56.1):

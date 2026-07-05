@@ -63,6 +63,9 @@
                   "secret-kubeconfig",
                   "eks-token"
                 ]
+              },
+              "roleArn": {
+                "type": "string"
               }
             },
             "additionalProperties": false,

@@ -33,7 +33,7 @@ type ManagedClustersReader interface {
 // Empty managedClustersPath defaults to DefaultManagedClustersPath; empty
 // branch defaults to "main" (the same default the service layer uses).
 func ResolveCredentialLookupKey(ctx context.Context, git ManagedClustersReader, managedClustersPath, branch, name string) string {
-	key, _ := ResolveCredentialRouting(ctx, git, managedClustersPath, branch, name)
+	key, _, _ := ResolveCredentialRouting(ctx, git, managedClustersPath, branch, name)
 	return key
 }
 
@@ -47,9 +47,14 @@ func ResolveCredentialLookupKey(ctx context.Context, git ManagedClustersReader, 
 // credsSource is "" (unknown) on every failure path AND for records written
 // before the field existed; callers treat unknown as "backend first, then
 // ArgoCD-read fallback" (see providers.ClusterCredsRouter).
-func ResolveCredentialRouting(ctx context.Context, git ManagedClustersReader, managedClustersPath, branch, name string) (lookupKey, credsSource string) {
+//
+// roleARN (V2-cleanup-62.2) is the cluster's stored per-cluster IAM role
+// for EKS token minting; "" on every failure path and for records that
+// predate the field — the mint then falls back to the SM-secret roleArn /
+// connection-level default exactly as before.
+func ResolveCredentialRouting(ctx context.Context, git ManagedClustersReader, managedClustersPath, branch, name string) (lookupKey, credsSource, roleARN string) {
 	if git == nil || name == "" {
-		return name, ""
+		return name, "", ""
 	}
 	if managedClustersPath == "" {
 		managedClustersPath = DefaultManagedClustersPath
@@ -60,7 +65,7 @@ func ResolveCredentialRouting(ctx context.Context, git ManagedClustersReader, ma
 	data, err := git.GetFileContent(ctx, managedClustersPath, branch)
 	if err != nil || data == nil {
 		// No readable record — fall back to the plain name.
-		return name, ""
+		return name, "", ""
 	}
 	return ResolveCredentialRoutingFromData(data, name)
 }
@@ -72,26 +77,27 @@ func ResolveCredentialRouting(ctx context.Context, git ManagedClustersReader, ma
 // race the removal. Parse failures and unknown clusters fall back to the
 // plain name.
 func ResolveCredentialLookupKeyFromData(data []byte, name string) string {
-	key, _ := ResolveCredentialRoutingFromData(data, name)
+	key, _, _ := ResolveCredentialRoutingFromData(data, name)
 	return key
 }
 
-// ResolveCredentialRoutingFromData resolves (lookupKey, credsSource) for
-// name from already-fetched managed-clusters.yaml bytes — the routing twin
-// of ResolveCredentialLookupKeyFromData (V2-cleanup-60.4). Parse failures
-// and unknown clusters fall back to (name, "").
-func ResolveCredentialRoutingFromData(data []byte, name string) (lookupKey, credsSource string) {
+// ResolveCredentialRoutingFromData resolves (lookupKey, credsSource,
+// roleARN) for name from already-fetched managed-clusters.yaml bytes — the
+// routing twin of ResolveCredentialLookupKeyFromData (V2-cleanup-60.4;
+// roleARN added by V2-cleanup-62.2). Parse failures and unknown clusters
+// fall back to (name, "", "").
+func ResolveCredentialRoutingFromData(data []byte, name string) (lookupKey, credsSource, roleARN string) {
 	if len(data) == 0 || name == "" {
-		return name, ""
+		return name, "", ""
 	}
 	clusters, err := NewParser().ParseClusterAddons(data)
 	if err != nil {
-		return name, ""
+		return name, "", ""
 	}
-	key, source := models.CredentialRoutingFor(clusters, name)
+	key, source, role := models.CredentialRoutingFor(clusters, name)
 	if key != name {
 		slog.Info("[credlookup] using stored secretPath override for credential fetch",
 			"cluster", name, "lookupKey", key)
 	}
-	return key, source
+	return key, source, role
 }

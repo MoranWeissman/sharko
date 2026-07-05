@@ -97,7 +97,7 @@ func TestBuildFromStructured_EKSJSON_GoesDownSTSTokenPath(t *testing.T) {
 		t.Fatal("test payload must sniff as structured")
 	}
 
-	kc, err := p.buildFromStructured(structured)
+	kc, err := p.buildFromStructured(structured, "")
 	if err != nil {
 		t.Fatalf("buildFromStructured: %v", err)
 	}
@@ -140,11 +140,77 @@ func TestBuildFromStructured_FallsBackToProviderRoleARN(t *testing.T) {
 		// RoleARN intentionally empty.
 	}
 
-	if _, err := p.buildFromStructured(structured); err != nil {
+	if _, err := p.buildFromStructured(structured, ""); err != nil {
 		t.Fatalf("buildFromStructured: %v", err)
 	}
 	if gotRole != "arn:aws:iam::000000000000:role/ProviderDefault" {
 		t.Errorf("eksTokenFn roleARN = %q, want the provider-level default", gotRole)
+	}
+}
+
+// V2-cleanup-62.2 — the token-mint role-ARN precedence, pinned for all three
+// sources plus the all-empty case:
+//
+//	structured-SM-secret roleArn  >  per-cluster registered role_arn  >
+//	connection-level provider default  >  "" (no role assumed).
+//
+// The per-cluster value is the roleArn recorded on the cluster's
+// managed-clusters.yaml entry at registration (e.g. the cross-account role a
+// discovery-registered cluster was found with).
+func TestBuildFromStructured_RoleARNPrecedence(t *testing.T) {
+	const (
+		secretRole   = "arn:aws:iam::111122223333:role/FromSecret"
+		clusterRole  = "arn:aws:iam::111122223333:role/FromClusterEntry"
+		providerRole = "arn:aws:iam::111122223333:role/ConnectionDefault"
+	)
+
+	tests := []struct {
+		name         string
+		secretRole   string
+		clusterRole  string
+		providerRole string
+		wantRole     string
+	}{
+		{"SM-secret roleArn wins over per-cluster AND default", secretRole, clusterRole, providerRole, secretRole},
+		{"per-cluster role wins over the connection default", "", clusterRole, providerRole, clusterRole},
+		{"connection default when secret and cluster are empty", "", "", providerRole, providerRole},
+		{"all empty: no role assumed (byte-identical legacy behavior)", "", "", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotRole string
+			p := &AWSSecretsManagerProvider{
+				roleARN: tt.providerRole,
+				eksTokenFn: func(_ context.Context, _, _, roleARN string) (string, error) {
+					gotRole = roleARN
+					return "k8s-aws-v1.fake-token", nil
+				},
+			}
+			structured := structuredEKSSecret{
+				ClusterName: "prod-eu",
+				Host:        "https://abc123.gr7.eu-west-1.eks.example.com",
+				CAData:      base64.StdEncoding.EncodeToString([]byte(testCAPEM)),
+				Region:      "eu-west-1",
+				RoleARN:     tt.secretRole,
+			}
+			if _, err := p.buildFromStructured(structured, tt.clusterRole); err != nil {
+				t.Fatalf("buildFromStructured: %v", err)
+			}
+			if gotRole != tt.wantRole {
+				t.Errorf("eksTokenFn roleARN = %q, want %q", gotRole, tt.wantRole)
+			}
+		})
+	}
+}
+
+// GetCredentialsWithRoleARN("", ...) delegation contract: GetCredentials must
+// stay byte-identical to the with-role variant called with an empty role —
+// GetCredentials(name) == GetCredentialsWithRoleARN(name, ""). Pinned at the
+// capability seam so a future refactor cannot fork the two paths.
+func TestAWSSMProvider_ImplementsRoleARNCapability(t *testing.T) {
+	var p ClusterCredentialsProvider = &AWSSecretsManagerProvider{}
+	if _, ok := p.(RoleARNCredentialsProvider); !ok {
+		t.Fatal("AWSSecretsManagerProvider must implement RoleARNCredentialsProvider")
 	}
 }
 

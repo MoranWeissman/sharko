@@ -70,6 +70,16 @@ type ManagedClusterEntry struct {
 	// fall back to backend-first-then-ArgoCD-read. See
 	// models.CredentialRoutingFor + internal/providers.ClusterCredsRouter.
 	CredsSource string `json:"credsSource,omitempty" yaml:"credsSource,omitempty" jsonschema:"enum=inline-kubeconfig,enum=secret-kubeconfig,enum=eks-token"`
+
+	// RoleARN is the per-cluster IAM role Sharko assumes when minting EKS
+	// tokens for this cluster (V2-cleanup-62.2). Only meaningful for the
+	// eks-token creds source (a discovery-registered cross-account cluster
+	// records the role that discovered it here, so token minting uses the
+	// same identity). Role-ARN precedence at token-mint time: the
+	// structured SM secret's own roleArn (most specific, per-secret) >
+	// this per-cluster value > the connection-level provider default.
+	// Absent/empty keeps today's behavior byte-identical.
+	RoleARN string `json:"roleArn,omitempty" yaml:"roleArn,omitempty"`
 }
 
 // ClusterLabels is the addon-enablement map on a managed-cluster entry. Its
@@ -318,6 +328,12 @@ type Cluster struct {
 	// credential-fetch routing (Test / Diagnose / secrets / addon ops) keys
 	// off this so inline-registered clusters work under any backend.
 	CredsSource string `json:"creds_source,omitempty" yaml:"credsSource,omitempty"`
+
+	// RoleARN mirrors the managed-clusters.yaml entry's roleArn field
+	// (V2-cleanup-62.2): the per-cluster IAM role to assume when minting
+	// EKS tokens (eks-token creds source only). Empty for records that
+	// predate the field or clusters that use the connection-level default.
+	RoleARN string `json:"role_arn,omitempty" yaml:"roleArn,omitempty"`
 
 	// Connectivity check fields (V2-cleanup-29). Flat primitives only —
 	// computed at the API layer from ArgoCD application state. The models

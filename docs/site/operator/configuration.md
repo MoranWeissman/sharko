@@ -256,28 +256,39 @@ clusters:
 
 ### Format 2 — Structured JSON
 
-The secret value is a JSON object with individual fields. This is simpler to manage programmatically:
+The secret value is a JSON object describing an EKS cluster. Sharko detects this format by one signal: the value parses as JSON **and** has a non-empty `host` key. It then mints a short-lived STS token for the cluster instead of reading a stored credential:
 
 ```json
 {
-  "server": "https://abc123.gr7.us-east-1.eks.amazonaws.com",
-  "ca": "<base64-encoded-ca-data>",
-  "token": "<bearer-token>"
+  "clusterName": "prod-eu",
+  "host": "https://abc123.gr7.us-east-1.eks.amazonaws.com",
+  "caData": "<base64-encoded-ca-data>",
+  "region": "us-east-1",
+  "roleArn": "arn:aws:iam::111122223333:role/EKSReadRole"
 }
 ```
 
-For EKS clusters where you want Sharko to generate a short-lived STS token (recommended), provide `cluster_name` and `role_arn` instead of a static token:
+Field reference (names must match exactly — they are the Go struct tags in `internal/providers/aws_sm.go`):
 
-```json
-{
-  "server": "https://abc123.gr7.us-east-1.eks.amazonaws.com",
-  "ca": "<base64-encoded-ca-data>",
-  "cluster_name": "prod-eu",
-  "role_arn": "arn:aws:iam::123456789012:role/EKSReadRole"
-}
-```
+| Field | Required | Meaning |
+|-------|----------|---------|
+| `host` | yes | Cluster API server URL. Also the format-detection signal. |
+| `caData` | yes | Base64-encoded cluster CA certificate. |
+| `clusterName` | yes | EKS cluster name, sent as the `x-k8s-aws-id` token header. |
+| `region` | recommended | AWS region used for the STS call. |
+| `roleArn` | optional | IAM role to assume when minting the token for this cluster. |
 
-Sharko calls the EKS STS token API to generate a `k8s-aws-v1.*` bearer token on each credential fetch. Tokens are valid for 15 minutes and are never stored.
+`roleArn` is the most specific of three places a role can come from. Precedence at token-mint time:
+
+1. The secret's own `roleArn` (above) — stored with the credential material itself.
+2. The per-cluster `role_arn` recorded on the cluster's `managed-clusters.yaml` entry at registration (`roleArn`) — this is how a discovery-registered cross-account cluster keeps minting with the identity that discovered it.
+3. The connection-level provider default (`role_arn` on the provider config).
+
+When all three are empty, no role is assumed and the pod's own identity (IRSA) signs the token.
+
+Sharko generates a `k8s-aws-v1.*` bearer token on each credential fetch — the presigned STS URL expires after 60 seconds (matching ArgoCD's `argocd-k8s-auth`), and tokens are never stored.
+
+For a **static bearer token** instead of STS minting, store a full kubeconfig (Format 1) with the token inside it — a bare `{"server": ..., "token": ...}` JSON object is not a supported shape.
 
 ### IRSA Setup
 

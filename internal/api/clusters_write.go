@@ -41,6 +41,12 @@ var validClusterNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]*$`)
 // @Description managed-clusters.yaml entry as "credsSource" and later credential fetches
 // @Description (test/diagnose/secrets/addon operations) route by it, so inline-registered
 // @Description clusters keep working when a secrets-backend connection is configured.
+// @Description Optionally set "role_arn" (eks-token creds source only) to record the
+// @Description per-cluster IAM role Sharko assumes when minting EKS tokens for this
+// @Description cluster — the discovery flow passes the cross-account role that found
+// @Description the cluster so token minting keeps using the same identity. Precedence
+// @Description at token-mint time: the structured SM secret's own roleArn, then this
+// @Description per-cluster role_arn, then the connection-level provider default.
 // @Description Optionally set "connection_managed_by" to declare who owns the ArgoCD
 // @Description cluster secret: "sharko" (default — Sharko writes and rotates it) or
 // @Description "user" (self-managed — you create the secret by hand; Sharko never writes
@@ -146,6 +152,10 @@ func (s *Server) handleRegisterCluster(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.Region != "" {
 			writeError(w, http.StatusBadRequest, "field \"region\" is not valid for an inline-kubeconfig registration")
+			return
+		}
+		if req.RoleARN != "" {
+			writeError(w, http.StatusBadRequest, "field \"role_arn\" is not valid for an inline-kubeconfig registration")
 			return
 		}
 	} else {

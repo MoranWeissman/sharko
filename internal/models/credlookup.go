@@ -61,7 +61,7 @@ func (e ManagedClusterEntry) CredentialLookupKey() string {
 // not found at all — the plain name is returned, which is byte-identical to
 // the pre-resolver behavior.
 func CredentialLookupKeyFor(clusters []Cluster, name string) string {
-	key, _ := CredentialRoutingFor(clusters, name)
+	key, _, _ := CredentialRoutingFor(clusters, name)
 	return key
 }
 
@@ -73,11 +73,15 @@ func CredentialLookupKeyFor(clusters []Cluster, name string) string {
 // their backend route. credsSource is "" when the cluster is not found or
 // its record predates the field (unknown — callers fall back to the
 // backend-first-then-ArgoCD-read heuristic).
-func CredentialRoutingFor(clusters []Cluster, name string) (lookupKey, credsSource string) {
+//
+// roleARN (V2-cleanup-62.2) is the cluster's stored per-cluster IAM role
+// for EKS token minting; "" when the cluster is not found, the record
+// predates the field, or the cluster uses the connection-level default.
+func CredentialRoutingFor(clusters []Cluster, name string) (lookupKey, credsSource, roleARN string) {
 	for _, c := range clusters {
 		if c.Name == name {
-			return c.CredentialLookupKey(), c.CredsSource
+			return c.CredentialLookupKey(), c.CredsSource, c.RoleARN
 		}
 	}
-	return name, ""
+	return name, "", ""
 }

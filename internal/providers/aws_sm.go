@@ -108,8 +108,13 @@ type structuredEKSSecret struct {
 	RoleARN     string `json:"roleArn"` // optional — IAM role to assume for cluster access
 }
 
-// fetchSecret retrieves and parses credentials from the secret at the given exact name.
-func (p *AWSSecretsManagerProvider) fetchSecret(secretName string) (*Kubeconfig, error) {
+// fetchSecret retrieves and parses credentials from the secret at the given
+// exact name. clusterRoleARN is the optional per-cluster IAM role recorded on
+// the cluster's managed-clusters.yaml entry (V2-cleanup-62.2); "" means "no
+// per-cluster role" and preserves the pre-field behavior exactly. It only
+// participates in the structured-EKS (token-mint) path — a raw-kubeconfig
+// payload never mints, so the value is ignored there.
+func (p *AWSSecretsManagerProvider) fetchSecret(secretName, clusterRoleARN string) (*Kubeconfig, error) {
 	output, err := p.client.GetSecretValue(context.Background(), &secretsmanager.GetSecretValueInput{
 		SecretId: aws.String(secretName),
 	})
@@ -128,7 +133,7 @@ func (p *AWSSecretsManagerProvider) fetchSecret(secretName string) (*Kubeconfig,
 	// flow through the aws-sm arm with no separate wiring (V2-cleanup-53.1).
 	if structured, ok := sniffStructuredEKSSecret(raw); ok {
 		slog.Info("[provider] secret fetched", "secretName", secretName, "format", "structured", "size", len(raw))
-		return p.buildFromStructured(structured)
+		return p.buildFromStructured(structured, clusterRoleARN)
 	}
 
 	// Fallback: treat the secret value as raw kubeconfig YAML.
@@ -156,6 +161,16 @@ func sniffStructuredEKSSecret(raw []byte) (structuredEKSSecret, bool) {
 //  3. Try common name patterns (k8s-, eks-, cluster- prefixes) using GetSecretValue only.
 //  4. Fall back to ListSecrets-based search if permitted; if AccessDenied, skip gracefully.
 func (p *AWSSecretsManagerProvider) GetCredentials(clusterName string) (*Kubeconfig, error) {
+	return p.GetCredentialsWithRoleARN(clusterName, "")
+}
+
+// GetCredentialsWithRoleARN is GetCredentials with an optional per-cluster
+// IAM role for EKS token minting (V2-cleanup-62.2 — the
+// RoleARNCredentialsProvider capability). clusterRoleARN is the roleArn
+// recorded on the cluster's managed-clusters.yaml entry at registration;
+// "" is byte-identical to GetCredentials. See buildFromStructured for the
+// precedence decision (SM-secret roleArn > clusterRoleARN > provider default).
+func (p *AWSSecretsManagerProvider) GetCredentialsWithRoleARN(clusterName, clusterRoleARN string) (*Kubeconfig, error) {
 	slog.Info("[provider] GetCredentials called", "cluster", clusterName)
 
 	var tried []string
@@ -165,7 +180,7 @@ func (p *AWSSecretsManagerProvider) GetCredentials(clusterName string) (*Kubecon
 		withPrefix := p.prefix + clusterName
 		tried = append(tried, withPrefix)
 		slog.Debug("[provider] trying with prefix", "secretName", withPrefix)
-		if kc, err := p.fetchSecret(withPrefix); err == nil {
+		if kc, err := p.fetchSecret(withPrefix, clusterRoleARN); err == nil {
 			return kc, nil
 		}
 	}
@@ -175,7 +190,7 @@ func (p *AWSSecretsManagerProvider) GetCredentials(clusterName string) (*Kubecon
 		tried = append(tried, clusterName)
 	}
 	slog.Debug("[provider] trying exact name", "secretName", clusterName)
-	if kc, err := p.fetchSecret(clusterName); err == nil {
+	if kc, err := p.fetchSecret(clusterName, clusterRoleARN); err == nil {
 		return kc, nil
 	}
 
@@ -239,7 +254,9 @@ func (p *AWSSecretsManagerProvider) searchSimilar(query string) ([]string, error
 // buildFromStructured constructs a Kubeconfig from the EKS JSON metadata format.
 // It base64-decodes the CA cert, obtains a short-lived STS bearer token, and
 // builds a kubeconfig YAML for use by remoteclient.NewClientFromKubeconfig.
-func (p *AWSSecretsManagerProvider) buildFromStructured(s structuredEKSSecret) (*Kubeconfig, error) {
+// clusterRoleARN is the optional per-cluster role from the cluster's
+// managed-clusters.yaml entry ("" = none stored).
+func (p *AWSSecretsManagerProvider) buildFromStructured(s structuredEKSSecret, clusterRoleARN string) (*Kubeconfig, error) {
 	hostPreview := s.Host
 	if len(hostPreview) > 30 {
 		hostPreview = hostPreview[:30] + "..."
@@ -263,9 +280,22 @@ func (p *AWSSecretsManagerProvider) buildFromStructured(s structuredEKSSecret) (
 		name = s.Environment
 	}
 
-	// Prefer the per-cluster roleArn from the secret; fall back to the
-	// provider-level default configured via ProviderConfig.RoleARN.
+	// Role-ARN precedence (V2-cleanup-62.2 — the token-mint decision point):
+	//
+	//   1. The structured SM secret's own roleArn — most specific: it is
+	//      stored WITH the credential material for exactly this secret.
+	//   2. The per-cluster roleArn recorded on the cluster's
+	//      managed-clusters.yaml entry at registration (clusterRoleARN) —
+	//      this is how a discovery-registered cross-account cluster mints
+	//      tokens with the same identity that discovered it.
+	//   3. The connection-level provider default (ProviderConfig.RoleARN →
+	//      p.roleARN) — the coarsest fallback.
+	//
+	// Pinned by TestBuildFromStructured_RoleARNPrecedence in aws_sm_test.go.
 	roleARN := s.RoleARN
+	if roleARN == "" {
+		roleARN = clusterRoleARN
+	}
 	if roleARN == "" {
 		roleARN = p.roleARN
 	}
