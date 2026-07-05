@@ -64,6 +64,8 @@ func TestPollOnce_PendingSecretWithinGrace_Survives(t *testing.T) {
 
 // Test 11.1-b — pending Secret whose annotation timestamp is older than the
 // grace window AND still unmanaged → it IS reaped (no permanent leak).
+// Git keeps ONE other cluster ("keeper") so the V2-cleanup-60.2 fleet-wipe
+// guard does not hold the sweep.
 func TestPollOnce_PendingSecretExpired_StillUnmanaged_Reaped(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -72,8 +74,8 @@ func TestPollOnce_PendingSecretExpired_StillUnmanaged_Reaped(t *testing.T) {
 	// Stamped 11 minutes ago — past the 10m window.
 	secret := pendingSecret("ghost-cluster", now.Add(-11*time.Minute))
 
-	body := envelopedManagedClusters() // still not in git
-	k8sClient := fake.NewSimpleClientset(secret)
+	body := envelopedManagedClusters("keeper") // ghost-cluster still not in git
+	k8sClient := fake.NewSimpleClientset(secret, keeperSecret())
 	audits := &auditCollector{}
 
 	r := newReconcilerForTest(t, nil, k8sClient, &fakeVault{}, audits, body)
@@ -213,8 +215,10 @@ func TestPollOnce_MalformedPendingAnnotation_TreatedAsOrphan(t *testing.T) {
 		Type: corev1.SecretTypeOpaque,
 	}
 
-	body := envelopedManagedClusters() // not in git
-	k8sClient := fake.NewSimpleClientset(secret)
+	// "keeper" keeps the desired state non-zero so the V2-cleanup-60.2
+	// fleet-wipe guard does not hold the sweep.
+	body := envelopedManagedClusters("keeper") // "malformed" not in git
+	k8sClient := fake.NewSimpleClientset(secret, keeperSecret())
 	audits := &auditCollector{}
 
 	r := newReconcilerForTest(t, nil, k8sClient, &fakeVault{}, audits, body)

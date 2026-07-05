@@ -29,7 +29,9 @@ package schema
 
 import (
 	"bytes"
+	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 
 	"gopkg.in/yaml.v3"
@@ -56,6 +58,36 @@ const APIVersionLegacy = "sharko.io/v1"
 // logging on every parse would flood the log with thousands of identical
 // lines per day while adding no information.
 var legacyAPIVersionLogOnce sync.Once
+
+// sharkoGroupPrefix marks the apiVersion family this project owns. Any
+// apiVersion that starts with this prefix but is NOT in the accepted set
+// (APIVersion, APIVersionLegacy) was written by a newer or unknown Sharko —
+// IsEnveloped refuses to route such a body anywhere (hard error, never the
+// bare-YAML legacy fallthrough). See UnknownSharkoAPIVersionError.
+const sharkoGroupPrefix = "sharko."
+
+// UnknownSharkoAPIVersionError is returned by IsEnveloped when a document
+// declares an apiVersion in the sharko.* family that this binary does not
+// recognize (e.g. sharko.dev/v2 written by a future release, or a group
+// this project never shipped).
+//
+// This is the H2 forward guard (V2-cleanup-60.2): before it existed, an
+// unrecognized sharko.* apiVersion fell through to the bare-YAML legacy
+// reader, which silently parsed the file as ZERO clusters — and a
+// downstream orphan sweep then deleted every Sharko-managed ArgoCD cluster
+// Secret. An unknown Sharko identity must be a loud, actionable error,
+// never an empty result.
+type UnknownSharkoAPIVersionError struct {
+	// Found is the apiVersion value the document declared.
+	Found string
+}
+
+func (e *UnknownSharkoAPIVersionError) Error() string {
+	return fmt.Sprintf(
+		"unrecognized Sharko apiVersion %q: this file was written by a newer or unknown Sharko — refusing to guess how to read it (accepted: %s, %s (legacy)). Upgrade this Sharko instance to a version that understands %q; do not hand-edit the apiVersion unless you know the payload shape is compatible",
+		e.Found, APIVersion, APIVersionLegacy, e.Found,
+	)
+}
 
 // Kind constants name the Sharko envelope payload types. Each on-disk file
 // declares exactly one kind in its top-level kind: field.
@@ -110,11 +142,17 @@ type envelopeHeader struct {
 //     error in its own context
 //   - malformed YAML          -> (false, err)   so callers can distinguish
 //     "intentionally legacy" from "broken file"
-//   - unknown apiVersion      -> (false, nil)   treat as legacy; downstream
-//     readers may decide whether to
-//     fail-loudly on a foreign apiVersion
-//     (e.g. sharko.dev/v2 from a newer
-//     installation)
+//   - non-sharko apiVersion   -> (false, nil)   treat as legacy (a k8s
+//     manifest, someone else's file —
+//     not ours to police)
+//   - sharko.* apiVersion NOT in the accepted set
+//     -> (false, *UnknownSharkoAPIVersionError)
+//     hard error, NEVER the bare-YAML
+//     fallthrough. A newer/unknown Sharko
+//     wrote this file; silently reading it
+//     as "zero entries" is the H2 failure
+//     class (orphan sweep deletes every
+//     managed Secret). V2-cleanup-60.2.
 //   - apiVersion == sharko.dev/v1 -> (true, nil)
 //   - apiVersion == sharko.io/v1  -> (true, nil)  READ-BOTH compat
 //     (V2-cleanup-59): files authored
@@ -149,6 +187,9 @@ func IsEnveloped(body []byte) (bool, error) {
 		})
 		return true, nil
 	default:
+		if strings.HasPrefix(header.APIVersion, sharkoGroupPrefix) {
+			return false, &UnknownSharkoAPIVersionError{Found: header.APIVersion}
+		}
 		return false, nil
 	}
 }

@@ -288,16 +288,37 @@ func TestPollOnce_NewClusterInGit_CreatesLabeledSecret(t *testing.T) {
 	}
 }
 
+// keeperSecret returns a sharko-labeled cluster Secret named "keeper" that
+// matches an in-git entry. Orphan-delete tests park it in argocd so the
+// desired state stays non-zero: since V2-cleanup-60.2, a desired state that
+// reads as ZERO clusters while the file exists non-empty and labeled
+// Secrets are live HOLDS the whole sweep (orphanSweepHeld) — the total-wipe
+// case has its own tests in sweep_guard_v2cleanup60_test.go.
+func keeperSecret() *corev1.Secret {
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "keeper",
+			Namespace: DefaultArgoCDNamespace,
+			Labels: map[string]string{
+				LabelManagedBy:                   LabelValueSharko,
+				"argocd.argoproj.io/secret-type": "cluster",
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+	}
+}
+
 // Test 2 — orphan delete: an in-argocd, sharko-labeled Secret with no
 // matching entry in git is deleted on the next tick. The reconciler does
 // NOT defer to a second cycle (unlike the legacy argosecrets.Reconciler);
 // the design doc §9 self-heal semantic is "git is the source of truth,
-// delete immediately."
+// delete immediately." Git keeps ONE other cluster ("keeper") so the
+// V2-cleanup-60.2 fleet-wipe guard does not hold the sweep.
 func TestPollOnce_ClusterRemovedFromGit_DeletesLabeledSecret(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	body := envelopedManagedClusters() // zero clusters
+	body := envelopedManagedClusters("keeper") // stale-cluster was removed
 	preexisting := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "stale-cluster",
@@ -309,7 +330,7 @@ func TestPollOnce_ClusterRemovedFromGit_DeletesLabeledSecret(t *testing.T) {
 		},
 		Type: corev1.SecretTypeOpaque,
 	}
-	k8sClient := fake.NewSimpleClientset(preexisting)
+	k8sClient := fake.NewSimpleClientset(preexisting, keeperSecret())
 	audits := &auditCollector{}
 
 	r := newReconcilerForTest(t, nil, k8sClient, &fakeVault{}, audits, body)
@@ -792,7 +813,8 @@ func TestPollOnce_AdoptedOrphan_NeverDeleted(t *testing.T) {
 
 // TestPollOnce_NonAdoptedOrphan_Deleted verifies that a non-adopted orphan
 // IS deleted (regression: registration-pending and adopted checks must not
-// block regular orphan cleanup — Story 28.1).
+// block regular orphan cleanup — Story 28.1). Git keeps ONE other cluster
+// ("keeper") so the V2-cleanup-60.2 fleet-wipe guard does not hold the sweep.
 func TestPollOnce_NonAdoptedOrphan_Deleted(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -811,8 +833,8 @@ func TestPollOnce_NonAdoptedOrphan_Deleted(t *testing.T) {
 		Type: corev1.SecretTypeOpaque,
 	}
 
-	body := envelopedManagedClusters() // zero clusters
-	k8sClient := fake.NewSimpleClientset(plainOrphan)
+	body := envelopedManagedClusters("keeper")
+	k8sClient := fake.NewSimpleClientset(plainOrphan, keeperSecret())
 	audits := &auditCollector{}
 
 	r := newReconcilerForTest(t, nil, k8sClient, &fakeVault{}, audits, body)
