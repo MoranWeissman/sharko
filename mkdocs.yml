@@ -131,6 +131,7 @@ nav:
     - API Stability Contract: developer-guide/api-stability.md
     - Catalog Scan Runbook: developer-guide/catalog-scan-runbook.md
     - Catalog Sources Smoke Runbook: developer-guide/catalog-sources-smoke.md
+    - EKS Live-Test Runbook: developer-guide/eks-live-test-runbook.md
     - Testing Guide: developer-guide/testing-guide.md
     - End-to-End Testing: developer-guide/e2e-testing.md
     - Perf Harness: developer-guide/perf-harness.md
