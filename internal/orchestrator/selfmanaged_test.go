@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -170,6 +171,79 @@ func TestRegisterCluster_SelfManaged_BrokenInlineKubeconfig_StillErrors(t *testi
 	})
 	if err == nil {
 		t.Fatal("a broken pasted kubeconfig must still be rejected")
+	}
+}
+
+// TestRegisterCluster_SelfManaged_ContradictorySecretPath_Rejected pins
+// V2-cleanup-60 M3: the self-managed relaxation around validateCredsSource
+// must narrow to exactly the "no kubeconfig" case (ErrMissingInlineKubeconfig)
+// and let every OTHER InvalidCredsSourceError surface — here, a secret_path
+// set alongside an inline creds source, which is contradictory (secret_path
+// is a backend-only lookup key) and was previously swallowed by the old
+// broad "any error when selfManaged && inline && Kubeconfig==''" condition.
+func TestRegisterCluster_SelfManaged_ContradictorySecretPath_Rejected(t *testing.T) {
+	argocd := newMockArgocd()
+	git := newMockGitProvider()
+	orch := New(nil, nil, argocd, git, defaultGitOps(), defaultPaths(), nil)
+
+	_, err := orch.RegisterCluster(context.Background(), RegisterClusterRequest{
+		Name:                "byo-contradiction",
+		Provider:            "kubeconfig", // inline source
+		SecretPath:          "clusters/prod/byo-contradiction",
+		ConnectionManagedBy: models.ConnectionManagedByUser,
+		// Kubeconfig deliberately omitted — the pre-fix swallow condition
+		// would have accepted this request silently.
+	})
+	if err == nil {
+		t.Fatal("self-managed inline registration with a contradictory secret_path must now fail validation")
+	}
+	if !IsInvalidCredsSource(err) {
+		t.Fatalf("expected *InvalidCredsSourceError (→ 400), got %T: %v", err, err)
+	}
+	if errors.Is(err, ErrMissingInlineKubeconfig) {
+		t.Fatalf("expected the secret_path contradiction error, not the swallowable missing-kubeconfig sentinel: %v", err)
+	}
+}
+
+// TestRegisterCluster_SelfManaged_WhitespaceKubeconfig_TreatedAsAbsent pins
+// V2-cleanup-60 L5: a whitespace-only kubeconfig on a self-managed
+// registration must behave exactly like an absent one (skip verification,
+// no parse attempt, no error) instead of failing to parse whitespace as YAML.
+func TestRegisterCluster_SelfManaged_WhitespaceKubeconfig_TreatedAsAbsent(t *testing.T) {
+	argocd := newMockArgocd()
+	git := newMockGitProvider()
+	orch := New(nil, nil, argocd, git, defaultGitOps(), defaultPaths(), nil)
+
+	result, err := orch.RegisterCluster(context.Background(), RegisterClusterRequest{
+		Name:                "byo-whitespace",
+		Provider:            "kubeconfig",
+		Kubeconfig:          "\n   \n", // whitespace-only, not exactly ""
+		Addons:              map[string]bool{"monitoring": true},
+		ConnectionManagedBy: models.ConnectionManagedByUser,
+	})
+	if err != nil {
+		t.Fatalf("whitespace-only kubeconfig on self-managed registration must be treated as absent, got error: %v", err)
+	}
+	if result.Status != "success" {
+		t.Fatalf("expected success, got %q (%s)", result.Status, result.Error)
+	}
+	if result.Verification != nil {
+		t.Fatal("verification must be skipped when the kubeconfig is whitespace-only (treated as absent)")
+	}
+	foundSkip, foundParse := false, false
+	for _, s := range result.CompletedSteps {
+		if s == "skip_credentials_self_managed" {
+			foundSkip = true
+		}
+		if s == "parse_kubeconfig" {
+			foundParse = true
+		}
+	}
+	if !foundSkip {
+		t.Fatalf("expected skip_credentials_self_managed step, got %v", result.CompletedSteps)
+	}
+	if foundParse {
+		t.Fatalf("must not attempt to parse a whitespace-only kubeconfig, got %v", result.CompletedSteps)
 	}
 }
 

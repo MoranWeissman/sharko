@@ -1168,3 +1168,99 @@ func TestEnsure_AdoptedSteadyState_ConnectivityCheckLabelStripped(t *testing.T) 
 
 // Ensure k8stesting is imported (used indirectly via fake client assertions above).
 var _ k8stesting.Action // compile-time import check
+
+// TestSyncLabelsOnly_NormalizesLegacyAddonValues_BothCallerConventions pins
+// V2-cleanup-60 H3: SyncLabelsOnly is the single choke point that normalizes
+// legacy "true"/"false" addon-label values to the canonical
+// "enabled"/"disabled" vocabulary BEFORE comparing or writing — regardless
+// of which of the two reconcilers calls it and regardless of whether that
+// caller already normalized. Before this fix, the legacy internal/argosecrets
+// reconciler passed raw cluster.Labels (still "true"/"false") straight
+// through, while internal/clusterreconciler's syncSelfManaged pre-normalized
+// its own copy first; whichever reconciler ran last would see the other's
+// write as "not matching its own desired set" and rewrite the secret back —
+// an infinite flip that toggles the addon ApplicationSet selection.
+//
+// Both caller conventions are exercised here: one passing raw legacy values
+// (mirroring the legacy reconciler), one passing already-canonical values
+// (mirroring clusterreconciler's pre-normalization). Both must converge to
+// the canonical vocabulary in ONE write, and a second call with the SAME
+// caller-supplied labels (the legacy reconciler re-reads "true"/"false" from
+// YAML every tick — it never stops offering the old value) must be a no-op.
+func TestSyncLabelsOnly_NormalizesLegacyAddonValues_BothCallerConventions(t *testing.T) {
+	tests := []struct {
+		name         string
+		callerLabels map[string]string
+	}{
+		{
+			name: "legacy reconciler passes raw true/false",
+			callerLabels: map[string]string{
+				"addon-datadog":   "true",
+				"addon-karpenter": "false",
+			},
+		},
+		{
+			name: "clusterreconciler pre-normalizes before calling in",
+			callerLabels: map[string]string{
+				"addon-datadog":   "enabled",
+				"addon-karpenter": "disabled",
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			client := fake.NewSimpleClientset(&corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "byo-cluster",
+					Namespace: testNamespace,
+					Labels: map[string]string{
+						"team": "payments", // foreign label — must survive
+					},
+				},
+				Type: corev1.SecretTypeOpaque,
+			})
+			mgr := NewManager(client, testNamespace)
+
+			changed, found, err := mgr.SyncLabelsOnly(context.Background(), "byo-cluster", tc.callerLabels)
+			if err != nil {
+				t.Fatalf("first SyncLabelsOnly call: %v", err)
+			}
+			if !found {
+				t.Fatal("secret exists — found must be true")
+			}
+			if !changed {
+				t.Fatal("first call must write — labels are not yet canonical")
+			}
+
+			secret, err := client.CoreV1().Secrets(testNamespace).Get(context.Background(), "byo-cluster", metav1.GetOptions{})
+			if err != nil {
+				t.Fatalf("getting secret after sync: %v", err)
+			}
+			if secret.Labels["addon-datadog"] != "enabled" {
+				t.Errorf("addon-datadog = %q, want enabled", secret.Labels["addon-datadog"])
+			}
+			if secret.Labels["addon-karpenter"] != "disabled" {
+				t.Errorf("addon-karpenter = %q, want disabled", secret.Labels["addon-karpenter"])
+			}
+			if secret.Labels["team"] != "payments" {
+				t.Error("foreign label must survive the sync")
+			}
+
+			// Second call, same caller convention (the caller never stops
+			// offering its own value — the legacy reconciler re-reads the
+			// same "true"/"false" from YAML every tick). Must be a no-op:
+			// no Update issued, changed == false.
+			changed2, found2, err2 := mgr.SyncLabelsOnly(context.Background(), "byo-cluster", tc.callerLabels)
+			if err2 != nil {
+				t.Fatalf("second SyncLabelsOnly call: %v", err2)
+			}
+			if !found2 {
+				t.Fatal("second call: found must be true")
+			}
+			if changed2 {
+				t.Fatal("second call must be a no-op — labels already converged to canonical values")
+			}
+		})
+	}
+}

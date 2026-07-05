@@ -245,6 +245,43 @@ Two safety nets soften this, but don't skip the pause:
   reports `skip_argocd_secret_not_sharko_labeled` with a plain-English
   explanation instead — your hand-made secret is not deleted just because
   the entry that said "managed by me" no longer exists.
+## Turning off an addon on a self-managed cluster — set `disabled`, don't delete the line
+
+On a Sharko-managed cluster, removing an addon's line from `labels:` is
+enough — Sharko replaces the whole label set on every write, so a label with
+no corresponding entry just disappears.
+
+**A self-managed cluster is different.** The reconcilers only ever *merge*
+addon labels onto your secret — they never remove one, because there is no
+reliable way to tell "this label is a stale addon Sharko should clean up"
+apart from "this is your own label that happens to look similar." Removing
+an addon's line from the cluster's entry in `managed-clusters.yaml` means
+Sharko simply stops mentioning that label — it does **not** go back and
+delete it from your secret. The label (and whatever it was pointing the
+ArgoCD ApplicationSet selector at) stays exactly as it was.
+
+To actually turn an addon off for a self-managed cluster, set its value to
+`disabled` instead of deleting the line:
+
+```yaml
+apiVersion: sharko.dev/v1
+kind: ManagedClusters
+metadata:
+  name: managed-clusters
+spec:
+  clusters:
+    - name: prod-us
+      connectionManagedBy: user
+      labels:
+        monitoring: disabled   # turns it off — keep the line
+        logging: enabled
+```
+
+The next reconcile tick merges `monitoring: disabled` onto your secret, the
+ApplicationSet selector stops matching, and the addon's Application prunes —
+exactly like the Sharko-managed case. Deleting the `monitoring:` line
+instead would leave whatever value was last written (`enabled`, most likely)
+untouched on your secret, so the addon would keep deploying.
 
 ## Related pages
 

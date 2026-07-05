@@ -765,6 +765,13 @@ var serveCmd = &cobra.Command{
 						Result:   "success",
 					})
 				})
+				// Structured single-entry audit events (V2-cleanup-60 L11) —
+				// currently just cluster_secret_user_pending, the self-managed
+				// "waiting for the user" state SetAuditFunc's aggregate counters
+				// can't express.
+				argoReconciler.SetEntryAuditFunc(func(entry audit.Entry) {
+					auditLog.Add(entry)
+				})
 
 				srv.SetArgoSecretReconciler(argoReconciler)
 
