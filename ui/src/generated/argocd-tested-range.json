@@ -1,6 +1,10 @@
 {
   "tested_min": "v3.2",
-  "tested_max": "v3.2",
-  "tested_versions": ["v3.2.2"],
+  "tested_max": "v3.4",
+  "tested_versions": [
+    "v3.2.12",
+    "v3.3.12",
+    "v3.4.4"
+  ],
   "updated": "2026-07-05"
 }
