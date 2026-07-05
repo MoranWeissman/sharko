@@ -62,6 +62,15 @@ release:
   # "Latest release". Using `auto` (not `true`) lets the same workflow handle
   # both pre-release and GA cuts without a manual flip.
   prerelease: auto
+  # V2-cleanup-57.1: prepend the CI-verified ArgoCD compatibility line to
+  # every release body. SHARKO_TESTED_ARGOCD_LINE is exported by
+  # release.yml's "Derive ArgoCD tested-range release-notes line" step,
+  # which reads ui/src/generated/argocd-tested-range.json (maintained by
+  # the weekly argocd-matrix workflow). envOrDefault keeps local/ad-hoc
+  # `goreleaser` runs working when the variable is unset — the header is
+  # then empty rather than a template error.
+  header: |
+    {{ envOrDefault "SHARKO_TESTED_ARGOCD_LINE" "" }}
   # Story V123-2.5: attach per-entry cosign bundles produced by the
   # sign-catalog-entries job to the GitHub release. The signed catalog YAML
   # baked into the binary points `signature.bundle` URLs at these files via

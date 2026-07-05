@@ -4,6 +4,7 @@ package harness
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -15,6 +16,20 @@ const (
 	defaultArgoCDInstallURL = "https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml"
 	defaultArgoCDWait       = 3 * time.Minute
 )
+
+// argoCDInstallURL returns the upstream install-manifest URL. When
+// E2E_ARGOCD_VERSION is set (a git ref of argoproj/argo-cd, e.g.
+// "v2.14.11"), that ref replaces the default "stable" — the seam the
+// weekly argocd-matrix workflow (V2-cleanup-57.1) uses to run this same
+// suite pinned to each of the 3 newest ArgoCD minors. Follows the same
+// E2E_* env-override convention as E2E_KIND_IMAGE / E2E_KUBECTL_BIN in
+// kind.go.
+func argoCDInstallURL() string {
+	if v := os.Getenv("E2E_ARGOCD_VERSION"); v != "" {
+		return "https://raw.githubusercontent.com/argoproj/argo-cd/" + v + "/manifests/install.yaml"
+	}
+	return defaultArgoCDInstallURL
+}
 
 // InstallArgoCD installs the standard upstream ArgoCD distribution into the
 // given kind cluster. Idempotent — silently succeeds when ArgoCD is already
@@ -57,19 +72,20 @@ func InstallArgoCD(t *testing.T, cluster KindCluster) {
 
 	// Server-side apply of the upstream install manifest.
 	{
+		installURL := argoCDInstallURL()
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		out, err := exec.CommandContext(ctx, kubectl,
 			"--kubeconfig", cluster.Kubeconfig,
 			"apply",
 			"--server-side", "--force-conflicts",
 			"-n", ns,
-			"-f", defaultArgoCDInstallURL,
+			"-f", installURL,
 		).CombinedOutput()
 		cancel()
 		if err != nil {
 			t.Fatalf("InstallArgoCD: apply manifest on %s: %v\noutput: %s", cluster.Name, err, out)
 		}
-		t.Logf("harness: argocd manifest applied on %s", cluster.Name)
+		t.Logf("harness: argocd manifest applied on %s (source: %s)", cluster.Name, installURL)
 	}
 
 	// Wait for argocd-server deployment to become available.
