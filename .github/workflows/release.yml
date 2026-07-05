@@ -341,6 +341,27 @@ jobs:
         with:
           cosign-release: 'v2.4.1'
 
+      # V2-cleanup-57.1 — release notes carry the CI-verified ArgoCD
+      # compatibility claim. The weekly argocd-matrix workflow maintains
+      # ui/src/generated/argocd-tested-range.json; this step turns it
+      # into a one-line header that .goreleaser.yaml's release.header
+      # template reads via envOrDefault. If the file is absent or
+      # malformed the line is simply empty — a release never blocks on
+      # (and never invents) a compatibility claim.
+      - name: Derive ArgoCD tested-range release-notes line
+        run: |
+          f=ui/src/generated/argocd-tested-range.json
+          line=""
+          if [ -s "$f" ]; then
+            min=$(jq -r '.tested_min // empty' "$f" 2>/dev/null || true)
+            max=$(jq -r '.tested_max // empty' "$f" 2>/dev/null || true)
+            if [ -n "$min" ] && [ -n "$max" ]; then
+              line="Tested with ArgoCD ${min}–${max}"
+            fi
+          fi
+          echo "SHARKO_TESTED_ARGOCD_LINE=${line}" >> "$GITHUB_ENV"
+          echo "release-notes tested-range line: '${line}'"
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:

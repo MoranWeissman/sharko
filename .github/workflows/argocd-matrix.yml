@@ -1,0 +1,274 @@
+---
+name: ArgoCD Version Matrix
+
+# V2-cleanup-57.1 — weekly ArgoCD compatibility matrix.
+#
+# Sharko writes ArgoCD's declarative cluster-secret format, so "works
+# with ArgoCD X.Y–Z" must be a TESTED claim, refreshed automatically.
+# This workflow:
+#
+#   1. resolve-versions — asks the GitHub API for argoproj/argo-cd
+#      releases and picks the 3 newest MINOR lines (latest patch of
+#      each, stable releases only — drafts/prereleases excluded).
+#   2. e2e — runs the existing kind + real-argocd e2e suite once per
+#      resolved version. The pin threads through E2E_ARGOCD_VERSION,
+#      which tests/e2e/harness/argocd.go turns into
+#      https://raw.githubusercontent.com/argoproj/argo-cd/<ref>/manifests/install.yaml
+#      (default without the env var stays "stable" — nightly e2e.yml
+#      behaviour is unchanged). Steps mirror e2e.yml's `e2e` job.
+#   3. publish-tested-range — on FULL matrix success, writes
+#      ui/src/generated/argocd-tested-range.json and opens an automated
+#      PR following the catalog-scan.yml bot conventions (GITHUB_TOKEN
+#      auth, git author = repo owner, PR opened by github-actions[bot]
+#      via gh CLI, labelled). Divergence from catalog-scan, stated
+#      explicitly: the PR is NOT a draft — the JSON is a CI-verified
+#      fact with nothing subjective to review, unlike catalog proposals.
+#      No PR is opened when the tested set is unchanged (idempotent
+#      re-runs, same stance as catalog-scan's empty-changeset gate).
+#
+# ## Failure = loud (repo convention)
+#
+# This repo's convention for scheduled-job failures (nightly e2e.yml,
+# daily catalog-scan.yml, perf workflows) is the failed workflow run
+# itself — GitHub notifies on scheduled-run failures and the red run
+# names the failing leg. There is no issue-opening bot in this repo, so
+# none is introduced here. We amplify within that convention:
+# fail-fast is off so EVERY incompatible ArgoCD version reports (not
+# just the first), each failed leg writes a step summary naming the
+# ArgoCD version, and no tested-range PR is opened on partial success —
+# a stale `updated` date in the JSON is itself a visible signal.
+#
+# ## Required one-time setup (mirrors catalog-scan.yml's label note)
+#
+#   gh label create argocd-matrix --color BFD4F2 --description "Automated ArgoCD version-matrix result"
+#
+# (The publish job also creates it defensively with `|| true`.)
+
+on:
+  schedule:
+    - cron: '0 2 * * 1'   # weekly, Mondays 02:00 UTC (before nightly e2e at 03:00)
+  workflow_dispatch:       # manual trigger for first-run + ad-hoc tests
+
+permissions:
+  contents: read
+
+concurrency:
+  group: argocd-matrix
+  cancel-in-progress: false   # let in-flight matrix runs finish
+
+jobs:
+  resolve-versions:
+    name: Resolve 3 newest ArgoCD minors
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      versions: ${{ steps.resolve.outputs.versions }}
+      tested_min: ${{ steps.resolve.outputs.tested_min }}
+      tested_max: ${{ steps.resolve.outputs.tested_max }}
+    steps:
+      - name: Resolve latest patch of the 3 newest ArgoCD minor lines
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # 3 pages x 100 releases comfortably covers >3 minor lines of
+          # argo-cd (each minor line has ~10-20 stable patches plus RCs;
+          # RCs are excluded by the prerelease flag below).
+          : > tags.txt
+          for page in 1 2 3; do
+            gh api "repos/argoproj/argo-cd/releases?per_page=100&page=${page}" \
+              --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name' \
+              >> tags.txt
+          done
+
+          # Keep strict vX.Y.Z tags, dedupe, sort by version; the awk
+          # map keeps the highest patch per minor (ascending input means
+          # later lines overwrite), then take the 3 newest minors.
+          picked=$(
+            grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' tags.txt \
+              | sort -uV \
+              | awk -F. '{ latest[$1"."$2] = $0 } END { for (m in latest) print latest[m] }' \
+              | sort -V \
+              | tail -n 3
+          )
+          count=$(printf '%s\n' "$picked" | grep -c .)
+          if [ "$count" -ne 3 ]; then
+            echo "::error::resolved ${count} ArgoCD minor lines, expected 3 — GitHub API shape changed or release listing failed"
+            exit 1
+          fi
+
+          versions_json=$(printf '%s\n' "$picked" | jq -R . | jq -cs .)
+          tested_min=$(printf '%s\n' "$picked" | head -n 1 | cut -d. -f1,2)
+          tested_max=$(printf '%s\n' "$picked" | tail -n 1 | cut -d. -f1,2)
+
+          echo "Resolved matrix: ${versions_json} (range ${tested_min}–${tested_max})"
+          {
+            echo "versions=${versions_json}"
+            echo "tested_min=${tested_min}"
+            echo "tested_max=${tested_max}"
+          } >> "$GITHUB_OUTPUT"
+          echo "ArgoCD matrix: \`${versions_json}\` — range **${tested_min}–${tested_max}**" >> "$GITHUB_STEP_SUMMARY"
+
+  e2e:
+    name: Go E2E (ArgoCD ${{ matrix.argocd_version }})
+    needs: resolve-versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      # Every incompatible version must report, not just the first —
+      # the whole point of the matrix is the full compatibility picture.
+      fail-fast: false
+      matrix:
+        argocd_version: ${{ fromJSON(needs.resolve-versions.outputs.versions) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Mirrors e2e.yml's kind + kubectl install step.
+      - name: Install kind + kubectl
+        run: |
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+          curl -Lo ./kubectl "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x ./kubectl
+          sudo mv ./kubectl /usr/local/bin/kubectl
+          kind --version
+          kubectl version --client=true
+
+      - name: Install gotestsum
+        run: go install gotest.tools/gotestsum@latest
+
+      - name: Run E2E suite against ArgoCD ${{ matrix.argocd_version }}
+        env:
+          GOTMPDIR: /tmp
+          E2E_OFFLINE: "0"
+          # The pin: tests/e2e/harness/argocd.go swaps the "stable" ref
+          # in the upstream install-manifest URL for this version.
+          E2E_ARGOCD_VERSION: ${{ matrix.argocd_version }}
+        run: make test-e2e-report
+
+      - name: Upload JUnit XML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: argocd-matrix-junit-${{ matrix.argocd_version }}-${{ github.run_number }}
+          path: _dist/e2e-junit.xml
+          retention-days: 30
+
+      - name: Name the failing leg in the run summary
+        if: failure()
+        run: |
+          echo "## ArgoCD ${{ matrix.argocd_version }}: E2E FAILED" >> "$GITHUB_STEP_SUMMARY"
+          echo "Sharko's e2e suite does not pass against ArgoCD ${{ matrix.argocd_version }} — the tested-range JSON was NOT updated this run." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Cleanup stale kind clusters
+        if: always()
+        run: |
+          kind get clusters 2>/dev/null | grep "^sharko-e2e-" | \
+            xargs -I{} kind delete cluster --name {} || true
+
+  publish-tested-range:
+    name: Publish tested range (open PR)
+    # Runs only when EVERY matrix leg passed (default `needs`
+    # semantics) — a partial pass never becomes a published claim.
+    needs: [resolve-versions, e2e]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write        # push the bot branch
+      pull-requests: write   # open the PR
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # fetch-depth: 0 so the bot branch pushes cleanly — same
+          # rationale as catalog-scan.yml.
+          fetch-depth: 0
+
+      - name: Write argocd-tested-range.json
+        id: json
+        env:
+          VERSIONS: ${{ needs.resolve-versions.outputs.versions }}
+          TESTED_MIN: ${{ needs.resolve-versions.outputs.tested_min }}
+          TESTED_MAX: ${{ needs.resolve-versions.outputs.tested_max }}
+        run: |
+          set -euo pipefail
+          f=ui/src/generated/argocd-tested-range.json
+
+          # Idempotence gate (catalog-scan's empty-changeset stance):
+          # if the tested version set is already what we'd publish, skip
+          # the PR. `updated` alone changing is not worth a weekly PR —
+          # the claim itself hasn't moved.
+          if [ -f "$f" ] && jq -e --argjson want "$VERSIONS" \
+               '.tested_versions == $want' "$f" > /dev/null 2>&1; then
+            echo "tested range unchanged — skipping PR open"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          mkdir -p ui/src/generated
+          jq -n \
+            --arg min "$TESTED_MIN" \
+            --arg max "$TESTED_MAX" \
+            --argjson versions "$VERSIONS" \
+            --arg updated "$(date -u +%Y-%m-%d)" \
+            '{tested_min: $min, tested_max: $max, tested_versions: $versions, updated: $updated}' \
+            > "$f"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          cat "$f"
+
+      - name: Configure git author
+        if: steps.json.outputs.changed == 'true'
+        # Every commit is authored by the repo owner; the PR itself is
+        # opened by github-actions[bot] (gh CLI default) — same
+        # convention as catalog-scan.yml.
+        run: |
+          git config user.name 'Moran Weissman'
+          git config user.email 'moran.weissman@gmail.com'
+
+      - name: Open PR
+        if: steps.json.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TESTED_MIN: ${{ needs.resolve-versions.outputs.tested_min }}
+          TESTED_MAX: ${{ needs.resolve-versions.outputs.tested_max }}
+          VERSIONS: ${{ needs.resolve-versions.outputs.versions }}
+        run: |
+          set -euo pipefail
+          branch="argocd-tested-range/$(date -u +%Y-%m-%d)-${{ github.run_number }}"
+          git checkout -b "$branch"
+          git add ui/src/generated/argocd-tested-range.json
+          git commit -s -m "chore(ci): ArgoCD tested range ${TESTED_MIN}–${TESTED_MAX} (weekly version-matrix run ${{ github.run_number }})"
+          git push origin "$branch"
+
+          gh label create argocd-matrix \
+            --color BFD4F2 \
+            --description "Automated ArgoCD version-matrix result" || true
+
+          gh pr create \
+            --base main \
+            --head "$branch" \
+            --title "chore(ci): ArgoCD tested range ${TESTED_MIN}–${TESTED_MAX} (weekly version-matrix)" \
+            --label argocd-matrix \
+            --body "$(cat <<EOF
+          ## What
+
+          The full ArgoCD version matrix passed — Sharko's e2e suite is green against every version in \`${VERSIONS}\`.
+
+          This PR updates \`ui/src/generated/argocd-tested-range.json\` so the UI badge and the release-notes "Tested with ArgoCD" line carry the refreshed, CI-verified claim.
+
+          ## Evidence
+
+          Matrix run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          ---
+          _Generated by \`.github/workflows/argocd-matrix.yml\` (V2-cleanup-57.1)._
+          EOF
+          )"
