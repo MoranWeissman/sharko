@@ -4114,7 +4114,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Reverses adoption of a cluster — removes Sharko management but keeps the ArgoCD secret.\nThe cluster must have been adopted (has sharko.sharko.io/adopted annotation).",
+                "description": "Reverses adoption of a cluster — removes Sharko management but keeps the ArgoCD secret.\nThe cluster must have been adopted (has sharko.sharko.dev/adopted annotation).",
                 "consumes": [
                     "application/json"
                 ],

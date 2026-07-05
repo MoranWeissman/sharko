@@ -21,9 +21,9 @@ import (
 // These are the load-bearing safety contract for DestroyAllStaleE2EClusters.
 // See doc.go for the full invariant description.
 const (
-	LabelTest   = "e2e.sharko.io/test"
-	LabelRunID  = "e2e.sharko.io/run-id"
-	LabelRole   = "e2e.sharko.io/role"
+	LabelTest   = "e2e.sharko.dev/test"
+	LabelRunID  = "e2e.sharko.dev/run-id"
+	LabelRole   = "e2e.sharko.dev/role"
 	SentinelOn  = "true"
 	clusterName = "sharko-e2e"
 
@@ -57,7 +57,7 @@ type KindCluster struct {
 	Role string
 	// RunID is the shared run identifier across every cluster from a
 	// single ProvisionTopology call. Used as the value of the
-	// e2e.sharko.io/run-id node label.
+	// e2e.sharko.dev/run-id node label.
 	RunID string
 }
 
@@ -134,8 +134,8 @@ func nameFor(role, runID string) string {
 // a unique shared RunID. Returns []KindCluster (index 0 = mgmt, indices 1..N
 // = targets in declaration order).
 //
-// Sentinel labels (e2e.sharko.io/test=true, e2e.sharko.io/run-id=<RunID>,
-// e2e.sharko.io/role=<role>) are applied to every node so that
+// Sentinel labels (e2e.sharko.dev/test=true, e2e.sharko.dev/run-id=<RunID>,
+// e2e.sharko.dev/role=<role>) are applied to every node so that
 // DestroyAllStaleE2EClusters can safely identify harness-owned clusters.
 //
 // Provisioning happens in parallel via errgroup. On any failure, every
@@ -399,7 +399,7 @@ func forceRemoveKindControlPlane(t *testing.T, clusterName string) bool {
 }
 
 // DestroyAllStaleE2EClusters scans every kind cluster on the host and
-// destroys any whose nodes carry the e2e.sharko.io/test=true label
+// destroys any whose nodes carry the e2e.sharko.dev/test=true label
 // (regardless of run-id). Used at suite startup to mop up stragglers from
 // prior failed runs.
 //
@@ -465,7 +465,7 @@ func liveKindClusters(kindBin string) []string {
 }
 
 // hasSentinelLabel returns true iff at least one node in the cluster carries
-// e2e.sharko.io/test=true. Probes via `kind get kubeconfig` piped to `kubectl
+// e2e.sharko.dev/test=true. Probes via `kind get kubeconfig` piped to `kubectl
 // get nodes -o jsonpath`. Returns false on any error (defensive — a probe
 // failure means we cannot prove the sentinel is present, so leave the
 // cluster alone).
@@ -497,8 +497,8 @@ func hasSentinelLabel(t *testing.T, clusterName string, req ProvisionRequest) bo
 
 	probeCtx, probeCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer probeCancel()
-	// jsonpath dot in the label key MUST be escaped: e2e\.sharko\.io/test
-	jsonpath := `{.items[*].metadata.labels.e2e\.sharko\.io/test}`
+	// jsonpath dot in the label key MUST be escaped: e2e\.sharko\.dev/test
+	jsonpath := `{.items[*].metadata.labels.e2e\.sharko\.dev/test}`
 	out, err := exec.CommandContext(probeCtx, req.KubectlBinary,
 		"--kubeconfig", f.Name(),
 		"get", "nodes",

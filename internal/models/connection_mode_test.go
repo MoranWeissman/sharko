@@ -64,7 +64,7 @@ func TestManagedClusters_SchemaRejectsUnknownMode(t *testing.T) {
 	// The generated JSON Schema pins the enum: a typo'd mode on an
 	// ENVELOPED file must fail loudly at read time instead of silently
 	// defaulting to Sharko-managed ownership of the user's connection.
-	body := []byte(`apiVersion: sharko.io/v1
+	body := []byte(`apiVersion: sharko.dev/v1
 kind: ManagedClusters
 metadata:
   name: managed-clusters

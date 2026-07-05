@@ -682,7 +682,7 @@ var serveCmd = &cobra.Command{
 		// BOTH this (legacy) reconciler AND the clusterreconciler below run
 		// concurrently. After V2-cleanup-28 their adoption-safety semantics are
 		// aligned — orphan sweeps in both reconcilers skip secrets that carry the
-		// sharko.sharko.io/adopted annotation, and Manager.Ensure preserves the
+		// sharko.sharko.dev/adopted annotation, and Manager.Ensure preserves the
 		// connection Data of adopted secrets. Single-writer consolidation is a
 		// tracked follow-up.
 		if inClusterCfg, inClusterErr := rest.InClusterConfig(); inClusterErr != nil {

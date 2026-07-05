@@ -365,13 +365,13 @@ entry after the fix lands).
 
 ### Schema drift between V125-1-9 envelope and bare-YAML
 
-The schema envelope (`apiVersion: sharko.io/v1`) is the canonical
+The schema envelope (`apiVersion: sharko.dev/v1`) is the canonical
 shape for `managed-clusters.yaml`. If the existing file is a legacy
 bare-YAML shape, the AddClusterEntry path may fail to round-trip
 cleanly.
 
 Diagnostic signature: Diagnosis step 2 shows `unmarshal errors`. The
-file lacks the envelope (`apiVersion: sharko.io/v1`).
+file lacks the envelope (`apiVersion: sharko.dev/v1`).
 
 Fix lane: edit `managed-clusters.yaml` to wrap content in the
 envelope shape and re-run `sharko validate-config configuration/`

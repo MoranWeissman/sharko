@@ -74,7 +74,7 @@ func TestMarshalAddonCatalog_EmptyPassesValidator(t *testing.T) {
 func TestMarshalAddonCatalog_GateRejectsInvalidBody(t *testing.T) {
 	t.Parallel()
 
-	bad := []byte(`apiVersion: sharko.io/v1
+	bad := []byte(`apiVersion: sharko.dev/v1
 kind: AddonCatalog
 metadata:
   name: addon-catalog

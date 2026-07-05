@@ -36,9 +36,18 @@ const (
 	// added the cluster to managed-clusters.yaml. Its value is an RFC3339
 	// (UTC) timestamp recording the moment of the direct-write.
 	//
-	// The "sharko.io/" prefix matches Sharko's existing annotation/label
-	// domain convention (e.g. the schema header URL and label keys).
-	AnnotationRegistrationPending = "sharko.io/registration-pending"
+	// The "sharko.dev/" prefix matches Sharko's annotation/label domain
+	// convention (the maintainer-owned domain — V2-cleanup-59).
+	AnnotationRegistrationPending = "sharko.dev/registration-pending"
+
+	// AnnotationRegistrationPendingLegacy is the pre-V2-cleanup-59 key
+	// (sharko.io — a domain the project never owned). Only ever READ:
+	// a registration that was in flight on a live cluster at upgrade time
+	// carries the old key, and the orphan sweep must keep honouring its
+	// grace window (deleting the Secret mid-registration is exactly the
+	// race this annotation exists to prevent). Writers stamp only
+	// AnnotationRegistrationPending; the sweep's clear pass removes both.
+	AnnotationRegistrationPendingLegacy = "sharko.io/registration-pending"
 
 	// RegistrationPendingTimeFormat is the layout the annotation value is
 	// written and parsed with. RFC3339 so the expiry can be computed from the
@@ -75,10 +84,7 @@ func RegistrationPendingTimestamp(now time.Time) string {
 //     (fail-safe: an unparseable marker must never make a Secret immune to
 //     the sweep forever). The caller logs a warning.
 func IsRegistrationPending(annotations map[string]string, now time.Time) (pending, malformed bool) {
-	if annotations == nil {
-		return false, false
-	}
-	raw, ok := annotations[AnnotationRegistrationPending]
+	raw, ok := RegistrationPendingValue(annotations)
 	if !ok || raw == "" {
 		return false, false
 	}
@@ -89,4 +95,23 @@ func IsRegistrationPending(annotations map[string]string, now time.Time) (pendin
 	}
 	expiry := stamped.Add(RegistrationPendingGraceWindow)
 	return now.Before(expiry), false
+}
+
+// RegistrationPendingValue returns the registration-pending annotation value
+// under EITHER the canonical or the legacy key, preferring the canonical one.
+// ok reports whether either key is present. nil-safe. Readers (the orphan
+// sweep's presence checks and logs) must use this accessor rather than a
+// direct map lookup so an in-flight registration stamped before the group
+// rename keeps its grace window (V2-cleanup-59).
+func RegistrationPendingValue(annotations map[string]string) (value string, ok bool) {
+	if annotations == nil {
+		return "", false
+	}
+	if v, has := annotations[AnnotationRegistrationPending]; has {
+		return v, true
+	}
+	if v, has := annotations[AnnotationRegistrationPendingLegacy]; has {
+		return v, true
+	}
+	return "", false
 }

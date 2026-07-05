@@ -39,7 +39,7 @@ import (
 // shape so the two test layers stay in lockstep — a regression in
 // either body shape catches in both places.
 const validEnvelopeManagedClusters = `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json
-apiVersion: sharko.io/v1
+apiVersion: sharko.dev/v1
 kind: ManagedClusters
 metadata:
   name: managed-clusters
@@ -57,7 +57,7 @@ spec:
 // with a /spec/clusters: ... violation that includes the schema URL
 // pointer line.
 const invalidEnvelopeManagedClusters = `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json
-apiVersion: sharko.io/v1
+apiVersion: sharko.dev/v1
 kind: ManagedClusters
 metadata:
   name: managed-clusters

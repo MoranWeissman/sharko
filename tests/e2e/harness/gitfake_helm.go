@@ -393,7 +393,7 @@ func makeBuildGitfakeImage(ctx context.Context, t *testing.T, worktreeRoot, tag 
 //	app.kubernetes.io/managed-by = "sharko-e2e"  (keeps Sharko's "managed-by:
 //	                                              sharko" filter from matching
 //	                                              this test infra)
-//	e2e.sharko.io/test           = "true"        (lines up with the kind
+//	e2e.sharko.dev/test           = "true"        (lines up with the kind
 //	                                              sentinel for future
 //	                                              suite-wide cleanup hooks)
 func renderGitfakeManifest(imageRef string, cfg GitfakeInstallConfig) []byte {
@@ -408,7 +408,7 @@ func renderGitfakeManifest(imageRef string, cfg GitfakeInstallConfig) []byte {
 	sb.WriteString("  labels:\n")
 	sb.WriteString("    app: " + cfg.ServiceName + "\n")
 	sb.WriteString("    app.kubernetes.io/managed-by: sharko-e2e\n")
-	sb.WriteString("    e2e.sharko.io/test: \"true\"\n")
+	sb.WriteString("    e2e.sharko.dev/test: \"true\"\n")
 	sb.WriteString("spec:\n")
 	sb.WriteString("  replicas: 1\n")
 	sb.WriteString("  selector:\n")
@@ -419,7 +419,7 @@ func renderGitfakeManifest(imageRef string, cfg GitfakeInstallConfig) []byte {
 	sb.WriteString("      labels:\n")
 	sb.WriteString("        app: " + cfg.ServiceName + "\n")
 	sb.WriteString("        app.kubernetes.io/managed-by: sharko-e2e\n")
-	sb.WriteString("        e2e.sharko.io/test: \"true\"\n")
+	sb.WriteString("        e2e.sharko.dev/test: \"true\"\n")
 	sb.WriteString("    spec:\n")
 	sb.WriteString("      containers:\n")
 	sb.WriteString("      - name: gitfake\n")
@@ -473,7 +473,7 @@ func renderGitfakeManifest(imageRef string, cfg GitfakeInstallConfig) []byte {
 	sb.WriteString("  labels:\n")
 	sb.WriteString("    app: " + cfg.ServiceName + "\n")
 	sb.WriteString("    app.kubernetes.io/managed-by: sharko-e2e\n")
-	sb.WriteString("    e2e.sharko.io/test: \"true\"\n")
+	sb.WriteString("    e2e.sharko.dev/test: \"true\"\n")
 	sb.WriteString("spec:\n")
 	sb.WriteString("  type: ClusterIP\n")
 	sb.WriteString("  selector:\n")

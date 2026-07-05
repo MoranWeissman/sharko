@@ -422,10 +422,10 @@ const legacyBareCatalogYAML = `applicationsets:
 `
 
 // envelopedCatalogYAML mirrors legacyBareCatalogYAML wrapped in the
-// sharko.io/v1 envelope. Used to assert that the same logical content
+// sharko.dev/v1 envelope. Used to assert that the same logical content
 // round-trips through the enveloped reader path.
 const envelopedCatalogYAML = `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/addons-catalog.v1.json
-apiVersion: sharko.io/v1
+apiVersion: sharko.dev/v1
 kind: AddonCatalog
 metadata:
   name: addon-catalog
@@ -509,7 +509,7 @@ func TestLoadCatalog_EnvelopedYAML_Accept(t *testing.T) {
 // loudly here prevents silent reconcile drift in V125-1-8.
 func TestLoadCatalog_EnvelopedWrongKind_Reject(t *testing.T) {
 	t.Parallel()
-	body := `apiVersion: sharko.io/v1
+	body := `apiVersion: sharko.dev/v1
 kind: ManagedClusters
 metadata:
   name: managed-clusters
@@ -637,7 +637,7 @@ func TestResolveAddonCatalogPath_Missing(t *testing.T) {
 //
 // NOT parallel — uses slog.SetDefault.
 func TestParseClusterAddons_EnvelopedInvalid_Reject(t *testing.T) {
-	body := []byte(`apiVersion: sharko.io/v1
+	body := []byte(`apiVersion: sharko.dev/v1
 kind: ManagedClusters
 metadata:
   name: managed-clusters
@@ -675,7 +675,7 @@ spec:
 //
 // NOT parallel — uses slog.SetDefault.
 func TestParseAddonsCatalog_EnvelopedInvalid_Reject(t *testing.T) {
-	body := []byte(`apiVersion: sharko.io/v1
+	body := []byte(`apiVersion: sharko.dev/v1
 kind: AddonCatalog
 metadata:
   name: addon-catalog

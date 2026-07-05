@@ -167,7 +167,7 @@ Per-cluster kubeconfigs are written under `t.TempDir()` so they vanish on
 test cleanup.
 
 **Sentinel-label safety:** every node in every harness-provisioned cluster
-carries `e2e.sharko.io/test=true` plus run-id and role labels.
+carries `e2e.sharko.dev/test=true` plus run-id and role labels.
 `harness.DestroyAllStaleE2EClusters` enumerates kind clusters and destroys
 ONLY those carrying the sentinel — your dev cluster from
 `scripts/sharko-dev.sh` is never touched. Don't broaden the destroy

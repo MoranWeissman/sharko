@@ -103,7 +103,7 @@ kubectl delete secret sharko-initial-admin-secret -n sharko
 The next `sharko reset-admin` will recreate it with the new plaintext (rotation is the default). To prevent the secret from being created or recreated at all, set `bootstrapAdmin.writeInitialSecret: false` in your values file. In opt-out mode `sharko reset-admin` only deletes any stale secret left from a previous install; it does not recreate one.
 
 !!! note "Annotation wording"
-    The annotation `sharko.io/initial-secret: rotated-on-reset-admin` reflects the actual lifecycle. Earlier (V124-6.3) versions used the wording `delete-after-first-password-change`, which became misleading once V124-7 made `sharko reset-admin` rotate the secret instead of deleting it. If you see the older annotation on an existing cluster, the next reset-admin (or pod re-bootstrap) will refresh it.
+    The annotation `sharko.dev/initial-secret: rotated-on-reset-admin` reflects the actual lifecycle. Earlier (V124-6.3) versions used the wording `delete-after-first-password-change`, which became misleading once V124-7 made `sharko reset-admin` rotate the secret instead of deleting it. If you see the older annotation on an existing cluster, the next reset-admin (or pod re-bootstrap) will refresh it.
 
 #### (b) Pod logs (always works as fallback)
 

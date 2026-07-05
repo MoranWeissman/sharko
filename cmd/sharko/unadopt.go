@@ -19,7 +19,7 @@ var unadoptClusterCmd = &cobra.Command{
 	Short: "Reverse adoption of a cluster",
 	Long: `Un-adopt a cluster that was previously adopted. This removes Sharko
 management (GitOps config, managed-by labels) but keeps the ArgoCD cluster
-secret intact. The cluster must have the sharko.sharko.io/adopted annotation.`,
+secret intact. The cluster must have the sharko.sharko.dev/adopted annotation.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]

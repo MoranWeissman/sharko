@@ -1041,7 +1041,7 @@ func TestDelete_VerifiesLabel(t *testing.T) {
 // the takeover write strips it — adopted clusters are guests in a shared ArgoCD hub
 // and must never receive the check ApplicationSet.
 func TestEnsure_AdoptPath_ConnectivityCheckLabelExcluded(t *testing.T) {
-	const checkLabel = "sharko.io/connectivity-check"
+	const checkLabel = "sharko.dev/connectivity-check"
 
 	foreignData := map[string][]byte{
 		"config": []byte(`{"bearerToken":"tok","tlsClientConfig":{"insecure":false}}`),
@@ -1104,7 +1104,7 @@ func TestEnsure_AdoptPath_ConnectivityCheckLabelExcluded(t *testing.T) {
 // it before writing — the gate must hold on every reconcile, not just at adoption
 // time.
 func TestEnsure_AdoptedSteadyState_ConnectivityCheckLabelStripped(t *testing.T) {
-	const checkLabel = "sharko.io/connectivity-check"
+	const checkLabel = "sharko.dev/connectivity-check"
 
 	foreignData := map[string][]byte{
 		"config": []byte(`{"bearerToken":"tok","tlsClientConfig":{"insecure":false}}`),

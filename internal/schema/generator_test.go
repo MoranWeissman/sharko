@@ -194,7 +194,7 @@ func TestGenerateManagedClusters_AcceptsDesignDocExample(t *testing.T) {
 	schemaBytes := genManagedClusters(t)
 	sch := compileSchema(t, schemaBytes, sharkoschema.ManagedClustersSchemaID)
 
-	example := `apiVersion: sharko.io/v1
+	example := `apiVersion: sharko.dev/v1
 kind: ManagedClusters
 metadata:
   name: managed-clusters
@@ -263,7 +263,7 @@ func TestGenerateManagedClusters_RejectsMissingRequiredClusterName(t *testing.T)
 	schemaBytes := genManagedClusters(t)
 	sch := compileSchema(t, schemaBytes, sharkoschema.ManagedClustersSchemaID)
 
-	missingName := `apiVersion: sharko.io/v1
+	missingName := `apiVersion: sharko.dev/v1
 kind: ManagedClusters
 metadata:
   name: managed-clusters
@@ -287,7 +287,7 @@ func TestGenerateAddonCatalog_AcceptsValidEnvelope(t *testing.T) {
 	schemaBytes := genAddonCatalog(t)
 	sch := compileSchema(t, schemaBytes, sharkoschema.AddonCatalogSchemaID)
 
-	example := `apiVersion: sharko.io/v1
+	example := `apiVersion: sharko.dev/v1
 kind: AddonCatalog
 metadata:
   name: addon-catalog
@@ -326,7 +326,7 @@ func TestGenerateAddonCatalog_RejectsWrongKind(t *testing.T) {
 	schemaBytes := genAddonCatalog(t)
 	sch := compileSchema(t, schemaBytes, sharkoschema.AddonCatalogSchemaID)
 
-	wrongKind := `apiVersion: sharko.io/v1
+	wrongKind := `apiVersion: sharko.dev/v1
 kind: ManagedClusters
 metadata:
   name: addon-catalog
@@ -349,7 +349,7 @@ func TestGenerateManagedClusters_RejectsWrongKind(t *testing.T) {
 	schemaBytes := genManagedClusters(t)
 	sch := compileSchema(t, schemaBytes, sharkoschema.ManagedClustersSchemaID)
 
-	wrongKind := `apiVersion: sharko.io/v1
+	wrongKind := `apiVersion: sharko.dev/v1
 kind: AddonCatalog
 metadata:
   name: managed-clusters
@@ -372,7 +372,7 @@ func TestGenerateManagedClusters_RejectsForeignTopLevelField(t *testing.T) {
 	schemaBytes := genManagedClusters(t)
 	sch := compileSchema(t, schemaBytes, sharkoschema.ManagedClustersSchemaID)
 
-	foreign := `apiVersion: sharko.io/v1
+	foreign := `apiVersion: sharko.dev/v1
 kind: ManagedClusters
 metadata:
   name: managed-clusters
@@ -425,8 +425,15 @@ func TestGenerator_SchemaShapeBasics(t *testing.T) {
 				t.Errorf("properties.kind.const = %q, want %q", got, tc.kindConst)
 			}
 			apiVersionProp, _ := props["apiVersion"].(map[string]interface{})
-			if got, _ := apiVersionProp["const"].(string); got != sharkoschema.APIVersion {
-				t.Errorf("properties.apiVersion.const = %q, want %q", got, sharkoschema.APIVersion)
+			gotEnum, _ := apiVersionProp["enum"].([]interface{})
+			wantEnum := []string{sharkoschema.APIVersion, sharkoschema.APIVersionLegacy}
+			if len(gotEnum) != len(wantEnum) {
+				t.Fatalf("properties.apiVersion.enum = %v, want %v", gotEnum, wantEnum)
+			}
+			for i, want := range wantEnum {
+				if got, _ := gotEnum[i].(string); got != want {
+					t.Errorf("properties.apiVersion.enum[%d] = %q, want %q", i, got, want)
+				}
 			}
 			required, ok := doc["required"].([]interface{})
 			if !ok || len(required) != 4 {

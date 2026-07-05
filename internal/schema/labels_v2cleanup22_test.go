@@ -8,7 +8,7 @@ import "testing"
 // field was `interface{}` → schema `true` (accept anything), so a scalar
 // `labels: "oops"` passed validation and silently yielded zero addons.
 
-const labelsObjectBody = `apiVersion: sharko.io/v1
+const labelsObjectBody = `apiVersion: sharko.dev/v1
 kind: ManagedClusters
 metadata:
   name: managed-clusters
@@ -19,7 +19,7 @@ spec:
         cert-manager: enabled
 `
 
-const labelsScalarBody = `apiVersion: sharko.io/v1
+const labelsScalarBody = `apiVersion: sharko.dev/v1
 kind: ManagedClusters
 metadata:
   name: managed-clusters
@@ -29,7 +29,7 @@ spec:
       labels: oops
 `
 
-const labelsArrayBody = `apiVersion: sharko.io/v1
+const labelsArrayBody = `apiVersion: sharko.dev/v1
 kind: ManagedClusters
 metadata:
   name: managed-clusters

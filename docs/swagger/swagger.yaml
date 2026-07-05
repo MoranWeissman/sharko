@@ -4437,7 +4437,7 @@ paths:
       - application/json
       description: |-
         Reverses adoption of a cluster — removes Sharko management but keeps the ArgoCD secret.
-        The cluster must have been adopted (has sharko.sharko.io/adopted annotation).
+        The cluster must have been adopted (has sharko.sharko.dev/adopted annotation).
       parameters:
       - description: Cluster name
         in: path

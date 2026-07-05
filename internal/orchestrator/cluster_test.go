@@ -139,7 +139,7 @@ func TestParseAddonsCatalog_InvalidYAML(t *testing.T) {
 
 // V2-cleanup-34 — enveloped catalog shape tests.
 // The live gitops repo writes addons-catalog.yaml in the enveloped shape
-// (apiVersion: sharko.io/v1 / kind: AddonCatalog). The previous duplicate
+// (apiVersion: sharko.dev/v1 / kind: AddonCatalog). The previous duplicate
 // only understood the legacy bare top-level applicationsets: key, which
 // caused every catalog lookup to return zero entries on real repos.
 
@@ -148,7 +148,7 @@ func TestParseAddonsCatalog_InvalidYAML(t *testing.T) {
 // keda to the catalog but EnableAddon returned 422 addon "keda" is not in
 // the catalog).
 const envelopedCatalogFixture = `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/addons-catalog.v1.json
-apiVersion: sharko.io/v1
+apiVersion: sharko.dev/v1
 kind: AddonCatalog
 metadata:
   name: addon-catalog
@@ -163,7 +163,7 @@ spec:
 // envelopedCatalogFixtureMulti is an enveloped catalog with multiple entries,
 // used to test back-compat alongside the legacy path.
 const envelopedCatalogFixtureMulti = `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/addons-catalog.v1.json
-apiVersion: sharko.io/v1
+apiVersion: sharko.dev/v1
 kind: AddonCatalog
 metadata:
   name: addon-catalog

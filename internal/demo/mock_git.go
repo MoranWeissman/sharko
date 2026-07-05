@@ -42,7 +42,7 @@ func (p *MockGitProvider) seedFiles() {
 
 	// addons-catalog.yaml — the addon catalog (applicationsets format).
 	// The canonical filename is addons-catalog.yaml (plural) wrapped
-	// in the sharko.io/v1 envelope.
+	// in the sharko.dev/v1 envelope.
 	p.files["configuration/addons-catalog.yaml"] = []byte(addonsCatalogYAML)
 
 	// Global values stubs
@@ -299,7 +299,7 @@ func indexOf(s string, sep byte) int {
 // clusterAddonsYAML is the fake configuration/managed-clusters.yaml
 // (also seeded at the legacy configuration/cluster-addons.yaml alias path).
 //
-// The seed ships in the enveloped shape (apiVersion: sharko.io/v1,
+// The seed ships in the enveloped shape (apiVersion: sharko.dev/v1,
 // kind: ManagedClusters) with the yaml-language-server schema header
 // so the demo previews what a real Sharko-bootstrapped repo looks
 // like. The reader (config.ParseClusterAddons) is envelope-aware so
@@ -307,7 +307,7 @@ func indexOf(s string, sep byte) int {
 //
 // Each cluster has addon labels: addonName: enabled|disabled.
 const clusterAddonsYAML = `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json
-apiVersion: sharko.io/v1
+apiVersion: sharko.dev/v1
 kind: ManagedClusters
 metadata:
   name: managed-clusters
@@ -371,11 +371,11 @@ spec:
 `
 
 // addonsCatalogYAML is the fake configuration/addons-catalog.yaml in the
-// sharko.io/v1 envelope shape. The applicationsets payload itself is
+// sharko.dev/v1 envelope shape. The applicationsets payload itself is
 // unchanged; only the wrapping frame and the editor schema header are
 // new.
 const addonsCatalogYAML = `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/addons-catalog.v1.json
-apiVersion: sharko.io/v1
+apiVersion: sharko.dev/v1
 kind: AddonCatalog
 metadata:
   name: addon-catalog

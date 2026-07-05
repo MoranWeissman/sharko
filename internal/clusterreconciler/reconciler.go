@@ -24,7 +24,7 @@
 // wiring). After V2-cleanup-28 their adoption-safety semantics are aligned:
 //
 //   - Orphan sweeps in both reconcilers skip secrets that carry the
-//     sharko.sharko.io/adopted annotation — those secrets are owned by the
+//     sharko.sharko.dev/adopted annotation — those secrets are owned by the
 //     Adopt flow and can only be removed via an explicit Unadopt call.
 //   - internal/argosecrets.Manager.Ensure preserves the connection Data of
 //     adopted secrets and only converges their labels.
@@ -176,7 +176,7 @@ type Deps struct {
 	DefaultRoleARN string
 
 	// DisableConnectivityCheck opts out of the connectivity-check label
-	// (sharko.io/connectivity-check: enabled) that Sharko applies to
+	// (sharko.dev/connectivity-check: enabled) that Sharko applies to
 	// newly-created cluster Secrets for zero-addon clusters. When false
 	// (the zero value, i.e. the default), the feature is ON. Set to true
 	// to disable (wired from SHARKO_CONNECTIVITY_CHECK=false/0 in serve.go).
@@ -515,7 +515,10 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 		// sweep. They can only be removed via an explicit Unadopt call.
 		// The full corev1.Secret is already cached in existing[name] — no
 		// extra Get required.
-		if annotationsOf(secret)[annotationAdopted] == "true" {
+		// argosecrets.IsAdopted recognises the pre-rename legacy annotation
+		// key too — a cluster adopted before V2-cleanup-59 must stay
+		// delete-proof (this is the annotation that protects it).
+		if argosecrets.IsAdopted(annotationsOf(secret)) {
 			stats.SkippedAdopted++
 			logging.LoggerFromContext(ctx).Warn(
 				"[clusterreconciler] skipping orphan delete — Secret has adopted annotation; remove via Unadopt",
@@ -547,7 +550,10 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 				"[clusterreconciler] registration-pending annotation is unparseable — treating Secret as a normal orphan candidate",
 				"cluster", name, "namespace", r.namespace,
 				"annotation", models.AnnotationRegistrationPending,
-				"value", annotationsOf(secret)[models.AnnotationRegistrationPending],
+				"value", func() string {
+					v, _ := models.RegistrationPendingValue(annotationsOf(secret))
+					return v
+				}(),
 			)
 		}
 		if pending {
@@ -598,7 +604,7 @@ func (r *Reconciler) reconcileDiff(ctx context.Context, spec *models.ManagedClus
 		if !present {
 			continue // will be created above; nothing to clear.
 		}
-		if _, has := annotationsOf(secret)[models.AnnotationRegistrationPending]; has {
+		if _, has := models.RegistrationPendingValue(annotationsOf(secret)); has {
 			r.clearRegistrationPending(ctx, name, secret, stats)
 		}
 	}
@@ -720,6 +726,10 @@ func (r *Reconciler) clearRegistrationPending(ctx context.Context, name string, 
 	log := logging.LoggerFromContext(ctx)
 	updated := cached.DeepCopy()
 	delete(updated.Annotations, models.AnnotationRegistrationPending)
+	// A registration that was in flight across the V2-cleanup-59 upgrade
+	// carries the legacy key — clear it too so the Secret cannot stay
+	// sweep-immune under the old spelling.
+	delete(updated.Annotations, models.AnnotationRegistrationPendingLegacy)
 	// Strip the K8s-managed Data/StringData mismatch concern: we only mutate
 	// metadata here, so keep Data as-is (DeepCopy preserved it).
 	ApplyManagedBySharkoLabel(updated)

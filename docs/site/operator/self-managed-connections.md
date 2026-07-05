@@ -47,7 +47,7 @@ curl -X POST https://sharko.example.com/api/v1/clusters \
 `configuration/managed-clusters.yaml`:
 
 ```yaml
-apiVersion: sharko.io/v1
+apiVersion: sharko.dev/v1
 kind: ManagedClusters
 metadata:
   name: managed-clusters
@@ -156,7 +156,7 @@ verbatim:
 | Addon labels (`monitoring: enabled`, …)     | **Managed by Sharko** — merged on every reconcile tick |
 | `app.kubernetes.io/managed-by: sharko`      | Never added; a leftover from an earlier Sharko-managed life is **removed** (see mode switching) |
 
-Sharko also never stamps its `sharko.io/connectivity-check` label on a
+Sharko also never stamps its `sharko.dev/connectivity-check` label on a
 connection it does not own.
 
 ## Registered but no secret yet?

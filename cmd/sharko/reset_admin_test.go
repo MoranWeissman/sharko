@@ -46,7 +46,7 @@ func newInitialAdminSecret(oldPassword string) *corev1.Secret {
 			Annotations: map[string]string{
 				// Pre-V124-7 wording — assert that the rotation refreshes
 				// it to the new wording.
-				"sharko.io/initial-secret": "delete-after-first-password-change",
+				"sharko.dev/initial-secret": "delete-after-first-password-change",
 			},
 		},
 		Type: corev1.SecretTypeOpaque,
@@ -112,7 +112,7 @@ func TestRunResetAdmin_WriteEnabled_SecretAbsent_CreatesWithNewPlaintext(t *test
 	if got.Labels["app.kubernetes.io/component"] != "bootstrap" {
 		t.Errorf("missing component=bootstrap label: %+v", got.Labels)
 	}
-	if got.Annotations["sharko.io/initial-secret"] != "rotated-on-reset-admin" {
+	if got.Annotations["sharko.dev/initial-secret"] != "rotated-on-reset-admin" {
 		t.Errorf("annotation should reflect V124-7 wording, got: %+v", got.Annotations)
 	}
 
@@ -152,7 +152,7 @@ func TestRunResetAdmin_WriteEnabled_SecretPresent_RotatesPlaintext(t *testing.T)
 	if string(got.Data["password"]) == stale {
 		t.Errorf("stale plaintext leaked through rotation: %q still present", stale)
 	}
-	if got.Annotations["sharko.io/initial-secret"] != "rotated-on-reset-admin" {
+	if got.Annotations["sharko.dev/initial-secret"] != "rotated-on-reset-admin" {
 		t.Errorf("annotation not refreshed to V124-7 wording on rotation: %+v", got.Annotations)
 	}
 

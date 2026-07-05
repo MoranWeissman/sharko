@@ -34,7 +34,7 @@ type clusterAddonsFile struct {
 }
 
 // envelopedClusterAddonsFile is the parse target when the document is
-// enveloped (apiVersion: sharko.io/v1, kind: ManagedClusters). The spec
+// enveloped (apiVersion: sharko.dev/v1, kind: ManagedClusters). The spec
 // field re-uses clusterAddonsFile so the downstream label normalisation
 // is identical between legacy and enveloped reads.
 type envelopedClusterAddonsFile struct {
@@ -99,7 +99,7 @@ func NewParser() *Parser {
 // / reconciler consumers.
 //
 // Accepts BOTH the legacy bare-YAML shape AND the envelope shape
-// (apiVersion: sharko.io/v1, kind: ManagedClusters). Detection is
+// (apiVersion: sharko.dev/v1, kind: ManagedClusters). Detection is
 // delegated to schema.IsEnveloped so the routing primitive is shared
 // with the addon-catalog reader. The legacy reader is kept rather than
 // fully delegated to models.LoadManagedClusters because the
@@ -202,7 +202,7 @@ func parseLabels(raw interface{}) map[string]string {
 //
 // Detection is byte-level via schema.IsEnveloped, which only inspects the
 // top-level apiVersion field. When the body declares an apiVersion of
-// sharko.io/v1 but a kind other than AddonCatalog, this function returns an
+// sharko.dev/v1 but a kind other than AddonCatalog, this function returns an
 // error — a foreign envelope (e.g. ManagedClusters) is a structural bug, not
 // a legacy file, and silently treating it as bare YAML would mask the
 // mismatch.

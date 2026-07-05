@@ -34,7 +34,7 @@ import (
 // entries with different label shapes (map and absent) exercise the
 // reader/writer paths the mutators stitch together.
 const envelopedFixture = `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json
-apiVersion: sharko.io/v1
+apiVersion: sharko.dev/v1
 kind: ManagedClusters
 metadata:
   name: managed-clusters
@@ -78,7 +78,7 @@ func assertEnvelopedOutput(t *testing.T, out []byte, msg string) models.ManagedC
 	if !strings.HasPrefix(string(out), schemaHeader+"\n") {
 		t.Errorf("%s: schema header missing or not on line 1\n--- got ---\n%s\n--- end ---", msg, out)
 	}
-	if !strings.Contains(string(out), "apiVersion: sharko.io/v1") {
+	if !strings.Contains(string(out), "apiVersion: sharko.dev/v1") {
 		t.Errorf("%s: envelope apiVersion missing", msg)
 	}
 	if !strings.Contains(string(out), "kind: ManagedClusters") {

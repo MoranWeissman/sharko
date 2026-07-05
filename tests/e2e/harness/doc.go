@@ -24,9 +24,9 @@
 //
 // EVERY node in EVERY harness-provisioned cluster carries three labels:
 //
-//   - e2e.sharko.io/test=true        (the safe-to-destroy sentinel)
-//   - e2e.sharko.io/run-id=<RunID>   (groups one ProvisionTopology call)
-//   - e2e.sharko.io/role=<role>      (mgmt | target-1 | target-2 | ...)
+//   - e2e.sharko.dev/test=true        (the safe-to-destroy sentinel)
+//   - e2e.sharko.dev/run-id=<RunID>   (groups one ProvisionTopology call)
+//   - e2e.sharko.dev/role=<role>      (mgmt | target-1 | target-2 | ...)
 //
 // DestroyAllStaleE2EClusters relies on the sentinel: it enumerates every
 // kind cluster on the host, probes each one's nodes for the sentinel, and

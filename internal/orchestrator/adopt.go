@@ -12,7 +12,16 @@ import (
 )
 
 // AnnotationAdopted is the key used to mark a cluster as adopted by Sharko.
-const AnnotationAdopted = "sharko.sharko.io/adopted"
+// Writers stamp ONLY this key. Kept in lockstep with
+// internal/argosecrets.AnnotationAdopted (the orchestrator cannot import
+// argosecrets — dependency boundary).
+const AnnotationAdopted = "sharko.sharko.dev/adopted"
+
+// AnnotationAdoptedLegacy is the pre-V2-cleanup-59 adopted key (sharko.io —
+// a domain the project never owned). Only ever READ: clusters adopted before
+// the group rename still carry it, and Unadopt must keep recognising them.
+// Kept in lockstep with internal/argosecrets.AnnotationAdoptedLegacy.
+const AnnotationAdoptedLegacy = "sharko.sharko.io/adopted"
 
 // AdoptClusters orchestrates the two-phase adoption of existing ArgoCD clusters.
 //

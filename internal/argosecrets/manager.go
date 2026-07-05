@@ -45,8 +45,29 @@ const (
 // Annotation keys used by Sharko on ArgoCD cluster secrets.
 const (
 	// AnnotationAdopted marks a cluster as adopted (vs. registered from scratch).
-	AnnotationAdopted = "sharko.sharko.io/adopted"
+	AnnotationAdopted = "sharko.sharko.dev/adopted"
+
+	// AnnotationAdoptedLegacy is the pre-V2-cleanup-59 adopted key
+	// (sharko.io — a domain the project never owned). Only ever READ:
+	// clusters adopted before the group rename carry it on their live
+	// ArgoCD Secret, and it must keep protecting them from the orphan
+	// sweeps for all of v2.x. Writers stamp only AnnotationAdopted;
+	// Unadopt removes both. Use IsAdopted for every presence check.
+	AnnotationAdoptedLegacy = "sharko.sharko.io/adopted"
 )
+
+// IsAdopted reports whether annotations mark the cluster Secret as adopted,
+// under EITHER the canonical or the legacy key (V2-cleanup-59 READ-BOTH).
+// nil-safe. This is the single shared predicate for the adopted state —
+// internal/clusterreconciler's orphan sweep uses it too, so the two
+// reconcilers can never disagree about what "adopted" means.
+func IsAdopted(annotations map[string]string) bool {
+	if annotations == nil {
+		return false
+	}
+	return annotations[AnnotationAdopted] == "true" ||
+		annotations[AnnotationAdoptedLegacy] == "true"
+}
 
 // ClusterSecretSpec is the desired state for an ArgoCD cluster secret.
 type ClusterSecretSpec struct {
@@ -382,10 +403,11 @@ func (m *Manager) Ensure(ctx context.Context, spec ClusterSecretSpec) (bool, err
 		}
 		// Adopted gate (V2-cleanup-29): adopted clusters are guests in a shared
 		// hub-and-spoke ArgoCD; NEVER stamp the connectivity-check label on them,
-		// not even for one tick. Strip it here — the takeover write is the ONLY
-		// reliable place the existing secret and its AnnotationAdopted are both
-		// in hand simultaneously, so this is the canonical adopted gate.
-		delete(adopted.Labels, models.LabelConnectivityCheck)
+		// not even for one tick. Strip it here (both key spellings) — the
+		// takeover write is the ONLY reliable place the existing secret and its
+		// AnnotationAdopted are both in hand simultaneously, so this is the
+		// canonical adopted gate.
+		models.RemoveConnectivityCheckLabels(adopted.Labels)
 		// Always stamp the adopted annotation so the orphan sweeps recognise the
 		// secret as adopted even before the orchestrator's SetAnnotation call
 		// completes (closes the reconciler-fires-first race window).
@@ -393,6 +415,9 @@ func (m *Manager) Ensure(ctx context.Context, spec ClusterSecretSpec) (bool, err
 			adopted.Annotations = make(map[string]string)
 		}
 		adopted.Annotations[AnnotationAdopted] = "true"
+		// Normalise a pre-rename adopted marker while we are writing anyway:
+		// the canonical key above supersedes it (V2-cleanup-59).
+		delete(adopted.Annotations, AnnotationAdoptedLegacy)
 		if spec.Annotations != nil {
 			adopted.Annotations = mergeAnnotations(adopted.Annotations, spec.Annotations)
 		}
@@ -410,7 +435,9 @@ func (m *Manager) Ensure(ctx context.Context, spec ClusterSecretSpec) (bool, err
 	}
 
 	// Secret is managed by Sharko. Branch on whether it is adopted.
-	isAdopted := existing.Annotations[AnnotationAdopted] == "true"
+	// IsAdopted recognises the legacy annotation key too, so clusters
+	// adopted before the group rename stay on the labels-only path.
+	isAdopted := IsAdopted(existing.Annotations)
 
 	if isAdopted {
 		// Adopted secret — converge LABELS only. Never touch Data/StringData.
@@ -426,9 +453,13 @@ func (m *Manager) Ensure(ctx context.Context, spec ClusterSecretSpec) (bool, err
 		for k, v := range desiredLabels {
 			adoptedDesired[k] = v
 		}
-		delete(adoptedDesired, models.LabelConnectivityCheck)
+		models.RemoveConnectivityCheckLabels(adoptedDesired)
 
-		if desiredLabelsSubset(existing.Labels, adoptedDesired) {
+		// A lingering check label (either key spelling) on the live Secret
+		// must also force a write so the strip below actually runs — the
+		// subset check alone would skip when the addon labels match.
+		if !models.HasConnectivityCheckLabel(existing.Labels) &&
+			desiredLabelsSubset(existing.Labels, adoptedDesired) {
 			slog.Debug("[argosecrets] adopted cluster secret labels up-to-date, skipping",
 				"cluster", spec.Name, "namespace", m.namespace,
 			)
@@ -436,11 +467,12 @@ func (m *Manager) Ensure(ctx context.Context, spec ClusterSecretSpec) (bool, err
 		}
 		updated := existing.DeepCopy()
 		// Merge: desired wins on conflict, existing foreign keys kept.
-		// Remove the check label if it somehow ended up on the secret.
+		// Remove the check label (both key spellings) if it somehow ended
+		// up on the secret.
 		for k, v := range adoptedDesired {
 			updated.Labels[k] = v
 		}
-		delete(updated.Labels, models.LabelConnectivityCheck)
+		models.RemoveConnectivityCheckLabels(updated.Labels)
 		if spec.Annotations != nil {
 			updated.Annotations = mergeAnnotations(updated.Annotations, spec.Annotations)
 		}
@@ -530,18 +562,17 @@ func (m *Manager) SyncLabelsOnly(ctx context.Context, name string, addonLabels m
 	for k, v := range addonLabels {
 		desired[k] = v
 	}
-	delete(desired, models.LabelConnectivityCheck)
+	models.RemoveConnectivityCheckLabels(desired)
 
-	isAdopted := existing.Annotations[AnnotationAdopted] == "true"
+	// IsAdopted recognises the legacy annotation key too (V2-cleanup-59).
+	isAdopted := IsAdopted(existing.Annotations)
 	// Handover check: strip Sharko's ownership label on a plain (non-adopted)
 	// Secret so the orphan sweeps never treat the user's connection as
 	// Sharko-owned again.
 	stripManagedBy := !isAdopted && existing.Labels[LabelManagedBy] == ManagedByValue
-	// The check label must not linger from a Sharko-managed past either.
-	stripCheckLabel := func() bool {
-		_, has := existing.Labels[models.LabelConnectivityCheck]
-		return has
-	}()
+	// The check label (either key spelling) must not linger from a
+	// Sharko-managed past either.
+	stripCheckLabel := models.HasConnectivityCheckLabel(existing.Labels)
 
 	if !stripManagedBy && !stripCheckLabel && desiredLabelsSubset(existing.Labels, desired) {
 		slog.Debug("[argosecrets] self-managed cluster secret labels up-to-date, skipping",
@@ -557,7 +588,7 @@ func (m *Manager) SyncLabelsOnly(ctx context.Context, name string, addonLabels m
 	for k, v := range desired {
 		updated.Labels[k] = v
 	}
-	delete(updated.Labels, models.LabelConnectivityCheck)
+	models.RemoveConnectivityCheckLabels(updated.Labels)
 	if stripManagedBy {
 		delete(updated.Labels, LabelManagedBy)
 	}
@@ -709,6 +740,9 @@ func (m *Manager) Unadopt(ctx context.Context, name string) error {
 	updated := existing.DeepCopy()
 	delete(updated.Labels, LabelManagedBy)
 	delete(updated.Annotations, AnnotationAdopted)
+	// A cluster adopted before the group rename carries the legacy key —
+	// remove it too, or the Secret would stay orphan-sweep-immune forever.
+	delete(updated.Annotations, AnnotationAdoptedLegacy)
 	if _, updateErr := m.client.CoreV1().Secrets(m.namespace).Update(ctx, updated, metav1.UpdateOptions{}); updateErr != nil {
 		return fmt.Errorf("unadopting secret %q in namespace %q: %w", name, m.namespace, updateErr)
 	}

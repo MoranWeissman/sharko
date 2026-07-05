@@ -871,7 +871,7 @@ func (o *Orchestrator) RefreshClusterCredentials(ctx context.Context, name strin
 }
 
 // parseAddonsCatalog delegates to the canonical config.Parser so that both
-// the enveloped shape (apiVersion: sharko.io/v1 / kind: AddonCatalog) and the
+// the enveloped shape (apiVersion: sharko.dev/v1 / kind: AddonCatalog) and the
 // legacy bare applicationsets: top-level shape parse identically everywhere.
 // The orchestrator already imports internal/config (addon.go, addon_configure.go)
 // so there is no import cycle — the previous duplicate was based on a false assumption.

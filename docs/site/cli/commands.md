@@ -79,7 +79,7 @@ Exits 0 on valid, 1 on schema errors (printed to stderr).
 ### `sharko validate-config`
 
 Validate Sharko configuration YAML against the committed JSON Schema. Auto-detects the schema
-from the file's top-level `apiVersion: sharko.io/v1` + `kind:` fields, validates against the
+from the file's top-level `apiVersion: sharko.dev/v1` + `kind:` fields, validates against the
 embedded `managed-clusters.v1.json` or `addons-catalog.v1.json`, and prints a human-readable
 violation list with a direct link to the schema URL on failure.
 
@@ -105,7 +105,7 @@ sharko validate-config --quiet .
 **File selection in directory mode.** The walker descends recursively and picks up every
 `*.yaml` / `*.yml` file. For each file it peeks at the top-level `apiVersion`:
 
-- `apiVersion: sharko.io/v1` → validated against the matching schema (`kind` decides which one).
+- `apiVersion: sharko.dev/v1` → validated against the matching schema (`kind` decides which one).
 - anything else (or missing) → skipped with a one-line `skip: <path> (not a Sharko-enveloped file)`.
 
 Hidden directories (anything starting with `.`, e.g. `.git`, `.github`) are not descended

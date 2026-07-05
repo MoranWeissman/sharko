@@ -119,7 +119,7 @@ func argocdAppsListJSON(apps ...[]byte) []byte {
 // managed-clusters YAML has cluster "prod-eu" with keda=enabled, and a
 // catalog YAML with keda at 2.13.0.
 func newTestClusterAndCatalogGP() fakeGPWithClusters {
-	mc := []byte(`apiVersion: sharko.io/v1
+	mc := []byte(`apiVersion: sharko.dev/v1
 kind: ManagedClusters
 metadata:
   name: managed-clusters
@@ -129,7 +129,7 @@ spec:
       labels:
         keda: enabled
 `)
-	cat := []byte(`apiVersion: sharko.io/v1
+	cat := []byte(`apiVersion: sharko.dev/v1
 kind: AddonCatalog
 metadata:
   name: addons-catalog

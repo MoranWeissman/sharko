@@ -12,7 +12,21 @@ func TestIsEnveloped(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name: "enveloped sharko.io/v1 returns true",
+			name: "enveloped sharko.dev/v1 returns true",
+			body: `apiVersion: sharko.dev/v1
+kind: ManagedClusters
+metadata:
+  name: managed-clusters
+spec:
+  clusters: []
+`,
+			want:    true,
+			wantErr: false,
+		},
+		{
+			// READ-BOTH compat (V2-cleanup-59): files authored before the
+			// group rename keep routing to the enveloped reader path.
+			name: "legacy enveloped sharko.io/v1 returns true",
 			body: `apiVersion: sharko.io/v1
 kind: ManagedClusters
 metadata:
@@ -43,7 +57,18 @@ metadata:
 			wantErr: false,
 		},
 		{
-			name: "future sharko.io/v2 is treated as legacy by this v1 reader",
+			name: "future sharko.dev/v2 is treated as legacy by this v1 reader",
+			body: `apiVersion: sharko.dev/v2
+kind: ManagedClusters
+metadata:
+  name: managed-clusters
+spec: {}
+`,
+			want:    false,
+			wantErr: false,
+		},
+		{
+			name: "old-domain future group sharko.io/v2 is not recognised either",
 			body: `apiVersion: sharko.io/v2
 kind: ManagedClusters
 metadata:
@@ -67,7 +92,7 @@ spec: {}
 		},
 		{
 			name:    "malformed yaml returns error",
-			body:    "apiVersion: sharko.io/v1\n  kind: : : :\n\tbad indent\n",
+			body:    "apiVersion: sharko.dev/v1\n  kind: : : :\n\tbad indent\n",
 			want:    false,
 			wantErr: true,
 		},

@@ -3,7 +3,10 @@
   "$id": "https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/addons-catalog.v1.json",
   "properties": {
     "apiVersion": {
-      "const": "sharko.io/v1"
+      "enum": [
+        "sharko.dev/v1",
+        "sharko.io/v1"
+      ]
     },
     "kind": {
       "const": "AddonCatalog"

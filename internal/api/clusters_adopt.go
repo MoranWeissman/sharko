@@ -121,7 +121,7 @@ func (s *Server) handleAdoptClusters(w http.ResponseWriter, r *http.Request) {
 //
 // @Summary Un-adopt a cluster
 // @Description Reverses adoption of a cluster — removes Sharko management but keeps the ArgoCD secret.
-// @Description The cluster must have been adopted (has sharko.sharko.io/adopted annotation).
+// @Description The cluster must have been adopted (has sharko.sharko.dev/adopted annotation).
 // @Tags clusters
 // @Accept json
 // @Produce json

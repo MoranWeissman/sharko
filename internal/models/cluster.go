@@ -114,7 +114,7 @@ type ManagedClustersSpec struct {
 }
 
 // ManagedClustersDoc is the on-disk shape for an enveloped
-// managed-clusters.yaml (apiVersion: sharko.io/v1, kind: ManagedClusters).
+// managed-clusters.yaml (apiVersion: sharko.dev/v1, kind: ManagedClusters).
 // It is the canonical Save target; the reader accepts both this shape and
 // the legacy bare ManagedClustersSpec.
 type ManagedClustersDoc = schema.Envelope[ManagedClustersSpec]
@@ -134,7 +134,7 @@ const ManagedClustersMetadataName = "managed-clusters"
 //   - **Legacy bare YAML** (no apiVersion) — unmarshalled directly as a
 //     ManagedClustersSpec. Legacy bodies SKIP JSON Schema validation;
 //     pre-envelope files keep working as-is.
-//   - **Enveloped YAML** (apiVersion: sharko.io/v1, kind: ManagedClusters)
+//   - **Enveloped YAML** (apiVersion: sharko.dev/v1, kind: ManagedClusters)
 //     — JSON-Schema-validated against docs/schemas/managed-clusters.v1.json,
 //     then unmarshalled into ManagedClustersDoc; the spec field is
 //     returned. An envelope whose kind is not ManagedClusters (e.g.
@@ -164,7 +164,7 @@ func LoadManagedClusters(body []byte) (ManagedClustersSpec, error) {
 
 	if enveloped {
 		// Peek the kind BEFORE schema validation. The wrong-kind guard
-		// (an envelope with apiVersion sharko.io/v1 but a kind other
+		// (an envelope with apiVersion sharko.dev/v1 but a kind other
 		// than ManagedClusters) must emit the canonical actionable
 		// error message that downstream consumers (validate-config
 		// CLI, reconciler audit log) depend on — running validation
@@ -221,7 +221,7 @@ func LoadManagedClusters(body []byte) (ManagedClustersSpec, error) {
 //     `# yaml-language-server: $schema=...` line that yaml-language-server
 //     in editors uses to fetch the schema for inline validation +
 //     auto-completion).
-//  2. The full envelope: apiVersion: sharko.io/v1, kind: ManagedClusters,
+//  2. The full envelope: apiVersion: sharko.dev/v1, kind: ManagedClusters,
 //     metadata.name: managed-clusters, spec: { ... }.
 //
 // This is the canonical writer for new-file emission (bootstrap templates,

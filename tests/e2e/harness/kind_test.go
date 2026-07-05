@@ -32,7 +32,7 @@ func TestHarnessKindMultiCluster(t *testing.T) {
 	}
 
 	// Defensive: clean up any stragglers from prior failed runs. Safe — only
-	// touches clusters that carry the e2e.sharko.io/test=true sentinel.
+	// touches clusters that carry the e2e.sharko.dev/test=true sentinel.
 	DestroyAllStaleE2EClusters(t)
 
 	clusters := ProvisionTopology(t, ProvisionRequest{NumTargets: 1})
@@ -68,12 +68,12 @@ func TestHarnessKindMultiCluster(t *testing.T) {
 	out, err := exec.Command("kubectl",
 		"--kubeconfig", clusters[0].Kubeconfig,
 		"get", "nodes",
-		"-o", `jsonpath={.items[0].metadata.labels.e2e\.sharko\.io/test}`,
+		"-o", `jsonpath={.items[0].metadata.labels.e2e\.sharko\.dev/test}`,
 	).CombinedOutput()
 	if err != nil {
 		t.Fatalf("kubectl jsonpath probe failed: %v\noutput: %s", err, out)
 	}
 	if got := strings.TrimSpace(string(out)); got != "true" {
-		t.Fatalf("expected sentinel label e2e.sharko.io/test=true, got %q", got)
+		t.Fatalf("expected sentinel label e2e.sharko.dev/test=true, got %q", got)
 	}
 }

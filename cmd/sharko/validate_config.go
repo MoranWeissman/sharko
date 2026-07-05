@@ -59,8 +59,9 @@ Usage:
   sharko validate-config <directory>
   sharko validate-config --quiet <directory>
 
-Validates files whose top-level apiVersion is sharko.io/v1 against the
-committed schemas at internal/schema/*.v1.json. Files without that
+Validates files whose top-level apiVersion is sharko.dev/v1 (or the
+legacy sharko.io/v1, still accepted for compatibility) against the
+committed schemas at internal/schema/*.v1.json. Files without either
 apiVersion are skipped (not Sharko-managed). Exits 0 if all files
 validate or are skipped; exits 1 if any file fails validation.
 
@@ -226,7 +227,8 @@ func collectYAMLFiles(dir string) ([]string, error) {
 }
 
 // validateSingleFile reads one file, decides whether it's a Sharko
-// envelope (apiVersion: sharko.io/v1) and either validates or skips it.
+// envelope (apiVersion: sharko.dev/v1, or the legacy sharko.io/v1 —
+// READ-BOTH compat, V2-cleanup-59) and either validates or skips it.
 // Returns a fileVerdict so the caller can aggregate verdicts and pick
 // an exit code at the end.
 //

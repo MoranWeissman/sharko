@@ -66,7 +66,7 @@ type Reconciler struct {
 	stopOnce            sync.Once
 
 	// connectivityCheckEnabled controls whether the connectivity-check label
-	// (sharko.io/connectivity-check: enabled) is applied to newly-written
+	// (sharko.dev/connectivity-check: enabled) is applied to newly-written
 	// cluster Secrets for zero-addon clusters. Default true.
 	// Protected by mu.
 	connectivityCheckEnabled bool
@@ -100,7 +100,7 @@ type Reconciler struct {
 // to "configuration/managed-clusters.yaml".
 // interval <= 0 defaults to 3 minutes.
 // connectivityCheckEnabled controls whether the connectivity-check label
-// (sharko.io/connectivity-check: enabled) is applied to new cluster Secrets
+// (sharko.dev/connectivity-check: enabled) is applied to new cluster Secrets
 // for zero-addon clusters. Defaults to true when not explicitly set — use
 // SetConnectivityCheck(false) after construction to disable.
 func NewReconciler(
@@ -241,7 +241,7 @@ func (r *Reconciler) ReconcileOnce(ctx context.Context) {
 			s := &existingSecrets[i]
 			existingManaged = append(existingManaged, s.Name)
 			existingSet[s.Name] = true
-			if s.Annotations[AnnotationAdopted] == "true" {
+			if IsAdopted(s.Annotations) {
 				adoptedSecrets[s.Name] = true
 			}
 		}

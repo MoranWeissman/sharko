@@ -3,7 +3,7 @@
 //
 // Why this exists (V2-cleanup-17):
 //
-// Sharko writes its addon catalog under the sharko.io/v1 envelope, so the addon
+// Sharko writes its addon catalog under the sharko.dev/v1 envelope, so the addon
 // list lives at spec.applicationsets. The bootstrap root Application loads that
 // catalog as a Helm values file, so the list ends up at .Values.spec.applicationsets.
 // The chart templates originally iterated .Values.applicationsets (top level),
@@ -163,8 +163,8 @@ func TestBootstrapConnectivityCheckSelector(t *testing.T) {
 		t.Errorf("connectivity-check ApplicationSet is missing required matchLabel argocd.argoproj.io/secret-type: cluster\n"+
 			"--- rendered output ---\n%s", rendered)
 	}
-	if !regexp.MustCompile(`(?m)^\s+sharko\.io/connectivity-check:\s+enabled\s*$`).MatchString(rendered) {
-		t.Errorf("connectivity-check ApplicationSet is missing required matchLabel sharko.io/connectivity-check: enabled\n"+
+	if !regexp.MustCompile(`(?m)^\s+sharko\.dev/connectivity-check:\s+enabled\s*$`).MatchString(rendered) {
+		t.Errorf("connectivity-check ApplicationSet is missing required matchLabel sharko.dev/connectivity-check: enabled\n"+
 			"--- rendered output ---\n%s", rendered)
 	}
 }
