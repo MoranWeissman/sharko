@@ -2050,7 +2050,8 @@ for active exploitation).
 
 The transition plan documented in `SECURITY.md`:
 
-- Disclosure email moves to `security@sharko.io`.
+- Disclosure channel consolidates on GitHub's private vulnerability
+  reporting (Security Advisories) on the repository.
 - GitHub Security Advisory CVE flow becomes the canonical
   advisory channel.
 - CNA assignment via foundation route.

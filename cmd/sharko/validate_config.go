@@ -280,7 +280,7 @@ func validateSingleFile(v *sharkoschema.Validator, path string) fileVerdict {
 	}
 
 	// Peek the kind so we can include the schema URL pointer in the
-	// failure output ("→ for details: https://sharko.io/schemas/<kind>.v1.json").
+	// failure output ("→ for details: https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/<kind>.v1.json").
 	// The validator does the same peek internally via ValidateAutoDetect,
 	// but we want the kind in hand for both the success and failure
 	// paths to avoid a second decode.
@@ -352,7 +352,7 @@ func schemaURLForKind(kind string) string {
 	case sharkoschema.KindAddonCatalog:
 		return sharkoschema.AddonCatalogSchemaID
 	default:
-		return "https://sharko.io/schemas/"
+		return "https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/"
 	}
 }
 
@@ -363,7 +363,7 @@ func schemaURLForKind(kind string) string {
 //	skip: path/to/non-sharko.yaml (reason)     (always shown; cheap signal)
 //	✘ path/to/invalid.yaml: <reason>           (always shown)
 //	   ✘ /spec/clusters/0: missing "name"      (per-violation indent)
-//	   → for details: https://sharko.io/...    (schema URL pointer)
+//	   → for details: https://raw.githubusercontent.com/...    (schema URL pointer)
 //
 // Keeping the formatting helper isolated makes the test harness simpler:
 // the tests assert against the exact lines emitted here without having

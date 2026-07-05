@@ -33,7 +33,7 @@ import (
 // used by the round-trip tests. Schema header + envelope + two cluster
 // entries with different label shapes (map and absent) exercise the
 // reader/writer paths the mutators stitch together.
-const envelopedFixture = `# yaml-language-server: $schema=https://sharko.io/schemas/managed-clusters.v1.json
+const envelopedFixture = `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json
 apiVersion: sharko.io/v1
 kind: ManagedClusters
 metadata:
@@ -67,7 +67,7 @@ const legacyBareFixture = `clusters:
 // schemaHeader is the canonical line-1 emission. Tests assert exact
 // bytes (modulo trailing newline) — anything else would break editor
 // inline validation.
-const schemaHeader = "# yaml-language-server: $schema=https://sharko.io/schemas/managed-clusters.v1.json"
+const schemaHeader = "# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json"
 
 // assertEnvelopedOutput is the shared post-condition every mutator
 // must satisfy: line 1 is the schema header, the document re-parses

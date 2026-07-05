@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=https://sharko.io/schemas/addons-catalog.v1.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/addons-catalog.v1.json
 # Addon Catalog — managed by Sharko
 # See docs: https://moranweissman.github.io/sharko/user-guide/addons/
 

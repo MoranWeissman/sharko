@@ -73,7 +73,7 @@ Exits 0 on valid, 1 on schema errors (printed to stderr).
 
 > **Note:** `sharko validate` is the legacy field-presence validator over the pre-envelope YAML
 > shape. New work should use [`sharko validate-config`](#sharko-validate-config) below, which
-> validates against the committed JSON Schemas at `https://sharko.io/schemas/`. The legacy
+> validates against the committed JSON Schemas at `https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/`. The legacy
 > command is retained for back-compat through V125 and will be removed in V126.
 
 ### `sharko validate-config`
@@ -129,7 +129,7 @@ skip: templates/bootstrap/configuration/bootstrap-config.yaml (not a Sharko-enve
 ```
 ✘ configuration/managed-clusters.yaml: schema violations (kind: ManagedClusters)
    ✘ /spec/clusters/0: missing required property "name"
-   → for details: https://sharko.io/schemas/managed-clusters.v1.json
+   → for details: https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json
 
 1 file(s) failed validation
 ```

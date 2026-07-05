@@ -322,7 +322,9 @@ for AI-assisted commits, please do **not** carry that habit here.
 
 - New Sharko-owned YAML files **must** be envelope-shaped
   (`apiVersion: sharko.io/v1`, `kind: ...`, `metadata: {...}`,
-  `spec: {...}`).
+  `spec: {...}`). The `sharko.io/v1` group name is a
+  Kubernetes-convention identifier, not a web address — nothing is
+  ever fetched from it.
 - Always read via the envelope-aware loaders
   (`models.LoadManagedClusters`, `catalog.LoadAddonCatalog`); never
   hand-roll `yaml.Unmarshal` for these files.

@@ -424,7 +424,7 @@ const legacyBareCatalogYAML = `applicationsets:
 // envelopedCatalogYAML mirrors legacyBareCatalogYAML wrapped in the
 // sharko.io/v1 envelope. Used to assert that the same logical content
 // round-trips through the enveloped reader path.
-const envelopedCatalogYAML = `# yaml-language-server: $schema=https://sharko.io/schemas/addons-catalog.v1.json
+const envelopedCatalogYAML = `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/addons-catalog.v1.json
 apiVersion: sharko.io/v1
 kind: AddonCatalog
 metadata:

@@ -99,7 +99,7 @@ Adopt apiVersion/kind/spec envelope + published JSON Schema. Not a CRD (no opera
 
 Format example:
 ```yaml
-# yaml-language-server: $schema=https://sharko.io/schemas/managed-clusters.v1.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json
 apiVersion: sharko.io/v1
 kind: ManagedClusters
 metadata:
@@ -168,7 +168,7 @@ Make `managed-clusters.yaml` and `addons-catalog.yaml` self-describing, schema-v
    - Hosted at a stable URL (publish via the docs site or as a release artifact)
 3. **Header in every Sharko-written YAML**: ✅ shipped V1.25 — `models.SaveManagedClusters` + `config.MarshalAddonCatalog` prepend the `yaml-language-server` directive; bootstrap templates ship with the header already in place.
    ```yaml
-   # yaml-language-server: $schema=https://sharko.io/schemas/managed-clusters.v1.json
+   # yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json
    ```
 4. **Validation on PR** — Sharko's CLI or CI hook runs validation on proposed YAML changes. Reject malformed YAML before merge. ✅ shipped V1.25 — PR-side: `validate-sharko-config` GitHub Actions job in `.github/workflows/ci.yml` runs `sharko validate-config` against changed YAML in the PR diff and fails the build on schema violation.
 5. **Validation on read** — reconciler validates loaded YAML; rejects malformed file with audit-logged error rather than silent reconcile failure. ✅ shipped V1.25 — read-side: `internal/schema/validator.go` exposes `DefaultValidator()`, wired into `models.LoadManagedClusters`, `config.ParseClusterAddons`, and `config.ParseAddonsCatalog`. Loaders return a structured error on schema failure rather than silently dropping entries. (The V125-1-8 reconciler integration that consumes these validated loads is deferred to its own sprint.)

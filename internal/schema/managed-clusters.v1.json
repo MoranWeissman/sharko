@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://sharko.io/schemas/managed-clusters.v1.json",
+  "$id": "https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json",
   "properties": {
     "apiVersion": {
       "const": "sharko.io/v1"

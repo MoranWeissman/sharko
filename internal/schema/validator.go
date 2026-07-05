@@ -162,7 +162,7 @@ func NewValidator() (*Validator, error) {
 // the given kind. Kept as a method so the loop in NewValidator stays
 // compact and the failure path produces a wrapped error naming both the
 // kind and the schema id (the operator sees "AddonCatalog schema at
-// https://sharko.io/schemas/addons-catalog.v1.json failed to compile" —
+// https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/addons-catalog.v1.json failed to compile" —
 // enough information to pinpoint the breakage).
 func (v *Validator) registerEmbedded(kind, id string, body []byte) error {
 	if len(body) == 0 {

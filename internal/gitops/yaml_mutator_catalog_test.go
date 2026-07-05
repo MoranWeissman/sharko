@@ -35,7 +35,7 @@ import (
 // used by the round-trip tests. Schema header + envelope + two entries
 // with different field shapes (with and without optional fields) exercise
 // the reader/writer paths the mutators stitch together.
-const envelopedCatalogFixture = `# yaml-language-server: $schema=https://sharko.io/schemas/addons-catalog.v1.json
+const envelopedCatalogFixture = `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/addons-catalog.v1.json
 apiVersion: sharko.io/v1
 kind: AddonCatalog
 metadata:
@@ -70,7 +70,7 @@ const legacyBareCatalogFixture = `applicationsets:
 // catalogSchemaHeader is the canonical line-1 emission. Tests assert
 // exact bytes (modulo trailing newline) — anything else would break
 // editor inline validation.
-const catalogSchemaHeader = "# yaml-language-server: $schema=https://sharko.io/schemas/addons-catalog.v1.json"
+const catalogSchemaHeader = "# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/addons-catalog.v1.json"
 
 // assertEnvelopedCatalogOutput is the shared post-condition every
 // catalog mutator must satisfy: line 1 is the schema header, the
@@ -306,7 +306,7 @@ func TestRemoveCatalogEntry_Last(t *testing.T) {
 }
 
 func TestRemoveCatalogEntry_Middle(t *testing.T) {
-	threeEntry := `# yaml-language-server: $schema=https://sharko.io/schemas/addons-catalog.v1.json
+	threeEntry := `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/addons-catalog.v1.json
 apiVersion: sharko.io/v1
 kind: AddonCatalog
 metadata:
@@ -353,7 +353,7 @@ func TestRemoveCatalogEntry_NotFound(t *testing.T) {
 }
 
 func TestRemoveCatalogEntry_OnlyEntry(t *testing.T) {
-	input := `# yaml-language-server: $schema=https://sharko.io/schemas/addons-catalog.v1.json
+	input := `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/addons-catalog.v1.json
 apiVersion: sharko.io/v1
 kind: AddonCatalog
 metadata:

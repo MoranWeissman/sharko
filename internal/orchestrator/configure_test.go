@@ -13,7 +13,7 @@ import (
 // ZG1-A.264.1 round-trip tests below — schema header on line 1,
 // apiVersion/kind/metadata/spec envelope, and one cert-manager entry the
 // complex-fields path can mutate.
-const envelopedKedaCatalog = `# yaml-language-server: $schema=https://sharko.io/schemas/addons-catalog.v1.json
+const envelopedKedaCatalog = `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/addons-catalog.v1.json
 apiVersion: sharko.io/v1
 kind: AddonCatalog
 metadata:
@@ -30,7 +30,7 @@ spec:
 // catalogSchemaHeaderLine pins the canonical line-1 emission for the
 // shape-pinning regression test. Anything else here would break editor
 // inline validation against docs/schemas/addons-catalog.v1.json.
-const catalogSchemaHeaderLine = "# yaml-language-server: $schema=https://sharko.io/schemas/addons-catalog.v1.json"
+const catalogSchemaHeaderLine = "# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/addons-catalog.v1.json"
 
 // assertEnvelopedComplexUpdate is the shared post-condition every
 // complex-fields update must satisfy after ZG1-A.264.1: schema header on
