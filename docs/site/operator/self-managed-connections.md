@@ -205,6 +205,47 @@ from `managed-clusters.yaml` and cleans up Sharko's own artifacts, but
 explicitly. Delete the secret yourself if you no longer want ArgoCD
 connected to that cluster.
 
+## Switching to self-managed and then removing? Flip, wait for a sync, then remove
+
+If you plan to take over a connection **and** remove the cluster from
+Sharko, do it in two steps with a pause in between — never in one Git PR:
+
+1. **Flip the mode:** add `connectionManagedBy: user` to the cluster's
+   entry and merge that PR.
+2. **Wait for one reconcile tick** (up to 30 seconds). This is when Sharko
+   removes its `app.kubernetes.io/managed-by: sharko` ownership label from
+   the secret — the handover that makes the secret delete-proof. Verify:
+
+   ```bash
+   kubectl get secret -n argocd <cluster-name> \
+     -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}'
+   ```
+
+   Empty output means the handover happened.
+3. **Then remove the cluster** (via the UI, the API, or a Git PR).
+
+**Why the pause matters:** the label handover runs when a reconcile tick
+sees the entry in Git with `connectionManagedBy: user`. If one PR both
+flips the mode and removes the entry, no tick ever sees the flip — the
+entry is just *gone*, and Sharko's orphan sweep sees a secret that still
+carries the Sharko ownership label with no Git entry behind it. That is
+exactly the pattern the sweep deletes. Your connection would go down with
+it.
+
+Two safety nets soften this, but don't skip the pause:
+
+- **Removal through Sharko** (`DELETE /api/v1/clusters/{name}` or the UI)
+  reads the mode from the entry *before* removing it and strips the
+  ownership label at removal time (the removal response lists a
+  `strip_sharko_ownership_label` step). A direct Git edit that deletes the
+  entry bypasses this — nothing strips the label, and the sweep can still
+  take the secret.
+- **Sharko never deletes a secret without its ownership label.** A removal
+  retried after its PR merged (entry already gone) refuses the delete and
+  reports `skip_argocd_secret_not_sharko_labeled` with a plain-English
+  explanation instead — your hand-made secret is not deleted just because
+  the entry that said "managed by me" no longer exists.
+
 ## Related pages
 
 - [If You Remove Sharko (no lock-in)](removing-sharko.md) — the same
