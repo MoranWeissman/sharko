@@ -573,7 +573,12 @@ func (s *Server) ReinitializeFromConnection() {
 		)
 
 		auditLog := s.auditLog
-		// TODO(V2-cleanup-60): wire SetEntryAuditFunc here once 60.3 lands (see serve.go)
+		// Structured single-entry audit events (V2-cleanup-60 L11) — mirrors
+		// the serve.go wiring so cluster_secret_user_pending survives a live
+		// connection change.
+		newReconciler.SetEntryAuditFunc(func(entry audit.Entry) {
+			auditLog.Add(entry)
+		})
 		newReconciler.SetAuditFunc(func(created, updated, deleted int) {
 			auditLog.Add(audit.Entry{
 				Level:    "info",
