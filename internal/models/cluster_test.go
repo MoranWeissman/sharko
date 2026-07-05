@@ -161,7 +161,7 @@ func TestLoadManagedClusters_LegacyBareYAML_Accept(t *testing.T) {
 func TestLoadManagedClusters_EnvelopedYAML_Accept(t *testing.T) {
 	t.Parallel()
 
-	body := []byte(`# yaml-language-server: $schema=https://sharko.io/schemas/managed-clusters.v1.json
+	body := []byte(`# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json
 apiVersion: sharko.io/v1
 kind: ManagedClusters
 metadata:
@@ -385,7 +385,7 @@ func TestRoundTrip_LegacyRead_EnvelopedWrite_Read(t *testing.T) {
 func TestRoundTrip_EnvelopedRead_EnvelopedWrite_Read(t *testing.T) {
 	t.Parallel()
 
-	enveloped := []byte(`# yaml-language-server: $schema=https://sharko.io/schemas/managed-clusters.v1.json
+	enveloped := []byte(`# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json
 apiVersion: sharko.io/v1
 kind: ManagedClusters
 metadata:

@@ -12,7 +12,7 @@ import (
 // docs/design/2026-05-12-v125-architectural-todos.md lines 100-114
 // uses. Reused across happy-path tests so the validator is exercised
 // against the SAME bytes a human author would type from the design doc.
-const validManagedClustersBody = `# yaml-language-server: $schema=https://sharko.io/schemas/managed-clusters.v1.json
+const validManagedClustersBody = `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json
 apiVersion: sharko.io/v1
 kind: ManagedClusters
 metadata:
@@ -29,7 +29,7 @@ spec:
         metrics-server: enabled
 `
 
-const validAddonCatalogBody = `# yaml-language-server: $schema=https://sharko.io/schemas/addons-catalog.v1.json
+const validAddonCatalogBody = `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/addons-catalog.v1.json
 apiVersion: sharko.io/v1
 kind: AddonCatalog
 metadata:

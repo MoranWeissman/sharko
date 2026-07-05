@@ -22,7 +22,7 @@ const (
 	// AddonCatalogSchemaHeader is the editor schema directive emitted as the
 	// first line of every Sharko-written addons-catalog.yaml. yaml-language-server
 	// (VS Code / IntelliJ) uses it for inline validation + autocomplete.
-	AddonCatalogSchemaHeader = "# yaml-language-server: $schema=https://sharko.io/schemas/addons-catalog.v1.json"
+	AddonCatalogSchemaHeader = "# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/addons-catalog.v1.json"
 )
 
 // clusterAddonsFile represents the legacy bare-YAML structure of

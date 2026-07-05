@@ -25,13 +25,11 @@ If you would prefer to encrypt the report, ask in your initial email
 and a PGP key will be provided. The project does not currently publish
 a PGP key by default; one is available on request.
 
-> **Note:** Until the Sharko project has been accepted into the CNCF
-> Sandbox (or an equivalent neutral foundation home) and a dedicated
-> domain is provisioned, disclosures go directly to the lead
-> maintainer's email. After that transition, the disclosure address
-> will become **`security@sharko.io`** and this document will be
-> updated accordingly. See [GOVERNANCE.md](GOVERNANCE.md) for the
-> governance transition plan.
+> **Note:** You can also report privately through GitHub's built-in
+> vulnerability reporting (Security tab → "Report a vulnerability" on
+> the repository, which opens a private Security Advisory). Both
+> channels reach the lead maintainer directly. See
+> [GOVERNANCE.md](GOVERNANCE.md) for the governance transition plan.
 
 ### What to expect
 

@@ -35,7 +35,7 @@
 //     match the dialect Story 9.4's validator (santhosh-tekuri/jsonschema
 //     v5) will run against.
 //
-//   - We pin `$id: https://sharko.io/schemas/<name>` to the URL announced
+//   - We pin `$id: https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/<name>` to the URL announced
 //     in `# yaml-language-server: $schema=...` headers emitted by the
 //     writers (see internal/models/cluster.go SchemaHeader and
 //     internal/config/parser.go AddonCatalogSchemaHeader). Editors
@@ -76,13 +76,13 @@ import (
 // in this package (rather than re-declaring it in cmd/schema-gen/main.go)
 // ensures the writer-emitted header URL and the generator-emitted $id can
 // never drift apart.
-const ManagedClustersSchemaID = "https://sharko.io/schemas/managed-clusters.v1.json"
+const ManagedClustersSchemaID = "https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json"
 
 // AddonCatalogSchemaID is the public URL embedded in every generated
 // addons-catalog.v1.json file's $id. Mirrors ManagedClustersSchemaID for the
 // addon-catalog kind. The literal value matches AddonCatalogSchemaHeader in
 // internal/config/parser.go.
-const AddonCatalogSchemaID = "https://sharko.io/schemas/addons-catalog.v1.json"
+const AddonCatalogSchemaID = "https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/addons-catalog.v1.json"
 
 // SchemaDialect is the JSON Schema dialect URL emitted as $schema in every
 // generated file. Story 9.4's runtime validator (santhosh-tekuri/jsonschema

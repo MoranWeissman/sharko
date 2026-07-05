@@ -225,7 +225,7 @@ jobs:
             ./sharko validate-config "$f" || fail=1
           done <<< "$changed"
           if [ "$fail" -ne 0 ]; then
-            echo "::error::Sharko config validation failed — see https://sharko.io/schemas/ for schema URLs"
+            echo "::error::Sharko config validation failed — see https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/ for schema URLs"
             exit 1
           fi
           echo "All changed Sharko YAML validated cleanly."

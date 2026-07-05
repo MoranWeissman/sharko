@@ -147,7 +147,7 @@ func TestParseAddonsCatalog_InvalidYAML(t *testing.T) {
 // containing a single keda entry — mirrors the live repro (maintainer added
 // keda to the catalog but EnableAddon returned 422 addon "keda" is not in
 // the catalog).
-const envelopedCatalogFixture = `# yaml-language-server: $schema=https://sharko.io/schemas/addons-catalog.v1.json
+const envelopedCatalogFixture = `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/addons-catalog.v1.json
 apiVersion: sharko.io/v1
 kind: AddonCatalog
 metadata:
@@ -162,7 +162,7 @@ spec:
 
 // envelopedCatalogFixtureMulti is an enveloped catalog with multiple entries,
 // used to test back-compat alongside the legacy path.
-const envelopedCatalogFixtureMulti = `# yaml-language-server: $schema=https://sharko.io/schemas/addons-catalog.v1.json
+const envelopedCatalogFixtureMulti = `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/addons-catalog.v1.json
 apiVersion: sharko.io/v1
 kind: AddonCatalog
 metadata:

@@ -324,7 +324,7 @@ The Docs page (`Docs.tsx`) and AIAssistant page (`AIAssistant.tsx`) still exist 
 Every Sharko-owned YAML file (managed-clusters.yaml, addon-catalog.yaml) ships as:
 
 ```yaml
-# yaml-language-server: $schema=https://sharko.io/schemas/managed-clusters.v1.json
+# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json
 apiVersion: sharko.io/v1
 kind: ManagedClusters
 metadata:

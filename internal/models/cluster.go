@@ -13,7 +13,7 @@ import (
 // ManagedClustersSchemaHeader is the yaml-language-server header line
 // written as the first line of every Sharko-emitted
 // managed-clusters.yaml file.
-const ManagedClustersSchemaHeader = "# yaml-language-server: $schema=https://sharko.io/schemas/managed-clusters.v1.json"
+const ManagedClustersSchemaHeader = "# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json"
 
 // ManagedClusterEntry is one row in the spec.clusters array of a
 // managed-clusters.yaml document. Field semantics:

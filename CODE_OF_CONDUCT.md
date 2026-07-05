@@ -42,10 +42,9 @@ All community leaders are obligated to respect the privacy and security of the r
 
 > **Note:** Until the Sharko project has been accepted into the CNCF
 > Sandbox (or an equivalent neutral foundation home), Code of Conduct
-> reports go directly to the lead maintainer. Once the project has a
-> dedicated domain, this contact will transition to
-> `conduct@sharko.io`. See [GOVERNANCE.md](GOVERNANCE.md) for the
-> governance transition plan.
+> reports go directly to the lead maintainer at
+> **moran.weissman@gmail.com**. See [GOVERNANCE.md](GOVERNANCE.md)
+> for the governance transition plan.
 
 ## Enforcement Guidelines
 

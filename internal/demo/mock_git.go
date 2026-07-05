@@ -306,7 +306,7 @@ func indexOf(s string, sep byte) int {
 // the demo's GET /api/v1/clusters response resolves cleanly.
 //
 // Each cluster has addon labels: addonName: enabled|disabled.
-const clusterAddonsYAML = `# yaml-language-server: $schema=https://sharko.io/schemas/managed-clusters.v1.json
+const clusterAddonsYAML = `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json
 apiVersion: sharko.io/v1
 kind: ManagedClusters
 metadata:
@@ -374,7 +374,7 @@ spec:
 // sharko.io/v1 envelope shape. The applicationsets payload itself is
 // unchanged; only the wrapping frame and the editor schema header are
 // new.
-const addonsCatalogYAML = `# yaml-language-server: $schema=https://sharko.io/schemas/addons-catalog.v1.json
+const addonsCatalogYAML = `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/addons-catalog.v1.json
 apiVersion: sharko.io/v1
 kind: AddonCatalog
 metadata:

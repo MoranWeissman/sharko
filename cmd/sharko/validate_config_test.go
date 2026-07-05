@@ -38,7 +38,7 @@ import (
 // than promoting a test helper. The bytes are deliberately the SAME
 // shape so the two test layers stay in lockstep — a regression in
 // either body shape catches in both places.
-const validEnvelopeManagedClusters = `# yaml-language-server: $schema=https://sharko.io/schemas/managed-clusters.v1.json
+const validEnvelopeManagedClusters = `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json
 apiVersion: sharko.io/v1
 kind: ManagedClusters
 metadata:
@@ -56,7 +56,7 @@ spec:
 // instead of the schema-required array. The validator should reject
 // with a /spec/clusters: ... violation that includes the schema URL
 // pointer line.
-const invalidEnvelopeManagedClusters = `# yaml-language-server: $schema=https://sharko.io/schemas/managed-clusters.v1.json
+const invalidEnvelopeManagedClusters = `# yaml-language-server: $schema=https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json
 apiVersion: sharko.io/v1
 kind: ManagedClusters
 metadata:
@@ -159,7 +159,7 @@ func TestValidateConfig_SingleInvalidFile_Exit1(t *testing.T) {
 		"✘ " + path + ":",                                  // file failure header
 		"schema violations (kind: ManagedClusters)",        // kind callout
 		"   ✘ ",                                            // at least one violation, indented + prefixed
-		"→ for details: https://sharko.io/schemas/managed-clusters.v1.json", // remediation pointer
+		"→ for details: https://raw.githubusercontent.com/MoranWeissman/sharko/main/docs/schemas/managed-clusters.v1.json", // remediation pointer
 		"1 file(s) failed validation",                      // summary footer
 	} {
 		if !strings.Contains(out, want) {
