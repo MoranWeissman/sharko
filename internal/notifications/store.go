@@ -70,14 +70,27 @@ func NewStore(maxItems int, filePath string) *Store {
 	return s
 }
 
-// Add inserts a notification at the front. If an unread notification with the
-// same title already exists it is silently dropped (deduplication).
+// Add inserts a notification at the front. If a notification with the same
+// title already exists — read or unread — it is silently dropped
+// (deduplication).
 func (s *Store) Add(n Notification) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// Deduplicate by title — don't add if same title exists and is unread.
+	// Deduplicate by title regardless of read state. Marking a notification
+	// read is an acknowledgement, not an invitation to re-nag: the periodic
+	// checker (checker.go) re-scans and calls Add with the same title every
+	// tick as long as the underlying condition (e.g. a newer version) still
+	// holds. If dedup only blocked unread duplicates, "mark all as read"
+	// would flip the existing entry to read, and the very next tick would
+	// see no unread match and re-add the identical title — resurrecting an
+	// alert the user just cleared. A genuinely new development (e.g. an
+	// even newer version) produces a different title, so it is unaffected
+	// and still gets through. Titles that must re-fire after being cleared
+	// (e.g. a connection that recovers and later breaks again) go through
+	// Resolve first, which removes the old entry so a later Add is not a
+	// duplicate.
 	for _, existing := range s.notifications {
-		if existing.Title == n.Title && !existing.Read {
+		if existing.Title == n.Title {
 			return
 		}
 	}

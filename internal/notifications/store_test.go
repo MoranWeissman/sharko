@@ -70,17 +70,40 @@ func TestStore_MarkAllRead(t *testing.T) {
 	}
 }
 
-func TestStore_DedupAllowsReadToBeRe_added(t *testing.T) {
+func TestStore_DedupBlocksReAddAfterRead(t *testing.T) {
 	s := NewStore(10, "")
 
 	s.Add(Notification{ID: "1", Title: "Same title", Type: TypeUpgrade, Timestamp: time.Now()})
 	s.MarkAllRead()
-	// After marking read the same title can be added again.
+	// Marking read is an acknowledgement, not permission to re-nag: the same
+	// title must still be deduplicated after the existing entry is read.
 	s.Add(Notification{ID: "2", Title: "Same title", Type: TypeUpgrade, Timestamp: time.Now()})
 
 	items := s.List()
-	if len(items) != 2 {
-		t.Errorf("expected 2 notifications (read dedup allows re-add), got %d", len(items))
+	if len(items) != 1 {
+		t.Errorf("expected 1 notification (dedup by title regardless of read state), got %d", len(items))
+	}
+}
+
+// TestStore_ClearedNotificationDoesNotReappear is the regression test for the
+// "newer version available" nag: a checker tick re-adds the identical title
+// every 30 minutes as long as the condition holds. Before this fix, marking
+// the notification read let the next tick re-add it as fresh and unread,
+// nagging the user forever until they upgraded. Add → MarkAllRead → Add
+// (same title) must leave exactly one entry, and it must still be read.
+func TestStore_ClearedNotificationDoesNotReappear(t *testing.T) {
+	s := NewStore(10, "")
+
+	s.Add(Notification{ID: "1", Title: "podinfo 6.9.3 available", Type: TypeUpgrade, Timestamp: time.Now()})
+	s.MarkAllRead()
+	s.Add(Notification{ID: "2", Title: "podinfo 6.9.3 available", Type: TypeUpgrade, Timestamp: time.Now()})
+
+	items := s.List()
+	if len(items) != 1 {
+		t.Fatalf("expected exactly 1 notification with title %q, got %d: %+v", "podinfo 6.9.3 available", len(items), items)
+	}
+	if !items[0].Read {
+		t.Errorf("expected the surviving notification to remain Read == true, got Read == false")
 	}
 }
 
@@ -183,11 +206,12 @@ func TestStore_Resolve_RemovesReadAndUnread(t *testing.T) {
 
 	s.Add(Notification{ID: "1", Title: "Broken connection", Type: TypeConnection, Timestamp: time.Now()})
 	s.Add(Notification{ID: "2", Title: "Other alert", Type: TypeUpgrade, Timestamp: time.Now()})
-	// Mark everything read so we prove Resolve removes read entries too.
+	// Mark everything read so we prove Resolve removes a READ entry too, not
+	// just unread ones. (Store.Add now dedups by title regardless of read
+	// state, so a same-title re-add here would just be a no-op — the unread
+	// case is already covered by TestStore_Resolve_Persists, which resolves
+	// a freshly-added, still-unread notification.)
 	s.MarkAllRead()
-	// Add a second unread entry under the same title (post mark-read) to prove
-	// Resolve removes BOTH the read and the unread same-title entries.
-	s.Add(Notification{ID: "3", Title: "Broken connection", Type: TypeConnection, Timestamp: time.Now()})
 
 	s.Resolve("Broken connection")
 
@@ -229,6 +253,30 @@ func TestStore_Resolve_Persists(t *testing.T) {
 	}
 	if len(items) != 0 {
 		t.Errorf("expected resolved notification to be persisted as removed, got %+v", items)
+	}
+}
+
+// TestStore_ResolveThenAdd_Readds is the recovered-then-recurred path: once a
+// title has been Resolved (the connection came back healthy, or whatever it
+// was tracking cleared), a later Add with the same title must succeed —
+// Resolve already removed the old entry, so there is nothing left to dedup
+// against.
+func TestStore_ResolveThenAdd_Readds(t *testing.T) {
+	s := NewStore(10, "")
+
+	s.Add(Notification{ID: "1", Title: "Broken connection", Type: TypeConnection, Timestamp: time.Now()})
+	s.Resolve("Broken connection")
+	s.Add(Notification{ID: "2", Title: "Broken connection", Type: TypeConnection, Timestamp: time.Now()})
+
+	items := s.List()
+	if len(items) != 1 {
+		t.Fatalf("expected 1 notification after resolve+re-add, got %d: %+v", len(items), items)
+	}
+	if items[0].ID != "2" {
+		t.Errorf("expected the re-added notification (ID 2) to be present, got ID %q", items[0].ID)
+	}
+	if items[0].Read {
+		t.Errorf("expected the re-added notification to be unread, got Read == true")
 	}
 }
 
