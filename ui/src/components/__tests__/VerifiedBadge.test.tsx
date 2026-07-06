@@ -41,7 +41,7 @@ describe('VerifiedBadge', () => {
 
   it('compact mode applies tile-size classes', () => {
     const { container } = render(<VerifiedBadge verified={true} compact />)
-    expect(container.innerHTML).toContain('text-[11px]')
+    expect(container.innerHTML).toContain('text-xs')
   })
 
   it('does NOT include gray-* Tailwind utilities (palette guard)', () => {

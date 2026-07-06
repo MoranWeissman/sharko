@@ -416,7 +416,7 @@ export function ConnectionSection() {
                   placeholder="https://github.com/org/repo"
                   required
                 />
-                <p className="mt-1 text-[10px] text-[#3a6a8a]">GitHub, GitHub Enterprise, or Azure DevOps (auto-detected from URL)</p>
+                <p className="mt-1 text-xs text-[#3a6a8a]">GitHub, GitHub Enterprise, or Azure DevOps (auto-detected from URL)</p>
               </div>
               <div>
                 <label className={labelCls}>Token</label>
@@ -469,7 +469,7 @@ export function ConnectionSection() {
                   onChange={(e) => { setForm(prev => ({ ...prev, argocd_server_url: e.target.value })); setTestStatus({ git: 'idle', argocd: 'idle' }) }}
                   placeholder="Auto-discovered from cluster"
                 />
-                <p className="mt-1 text-[10px] text-[#3a6a8a]">Auto-filled for in-cluster. Override for external ArgoCD.</p>
+                <p className="mt-1 text-xs text-[#3a6a8a]">Auto-filled for in-cluster. Override for external ArgoCD.</p>
               </div>
               <div>
                 <label className={labelCls}>Token</label>
@@ -480,7 +480,7 @@ export function ConnectionSection() {
                   onChange={(e) => { setForm(prev => ({ ...prev, argocd_token: e.target.value })); setTestStatus({ git: 'idle', argocd: 'idle' }) }}
                   placeholder={isEdit ? 'Leave blank to keep existing' : 'ArgoCD API token'}
                 />
-                <p className="mt-1 text-[10px] text-[#3a6a8a]">ArgoCD account token (e.g. sharko-api-user). Falls back to ARGOCD_TOKEN env var.</p>
+                <p className="mt-1 text-xs text-[#3a6a8a]">ArgoCD account token (e.g. sharko-api-user). Falls back to ARGOCD_TOKEN env var.</p>
               </div>
               <div>
                 <label className={labelCls}>Namespace</label>

@@ -72,7 +72,7 @@ The dashboard loads with clusters discovered from ArgoCD. You will see:
 - **Managed clusters** — clusters already registered with Sharko
 - **Discovered clusters** — existing ArgoCD clusters not yet managed by Sharko
 
-Click **Start Managing** on a discovered cluster to bring it under Sharko management. Click **Test Connection** to verify connectivity to any cluster.
+Click **Start Managing** on a discovered cluster to bring it under Sharko management. Click **Test connection** to verify connectivity to any cluster.
 
 ## What's Next
 

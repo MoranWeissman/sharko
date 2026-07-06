@@ -165,7 +165,7 @@ export function MarketplaceCard({
         <div className="flex shrink-0 flex-col items-end gap-1">
           {inCatalog && (
             <span
-              className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-green-800 dark:bg-green-900/40 dark:text-green-300"
+              className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-green-800 dark:bg-green-900/40 dark:text-green-300"
               title="Already present in your addons-catalog.yaml"
             >
               <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
@@ -174,7 +174,7 @@ export function MarketplaceCard({
           )}
           {entry.deprecated && (
             <span
-              className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
+              className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
               title={
                 entry.superseded_by
                   ? `Deprecated — superseded by ${entry.superseded_by}`
@@ -195,7 +195,7 @@ export function MarketplaceCard({
       {/* Category + curated_by chips */}
       <div className="mt-3 flex flex-wrap gap-1.5">
         <span
-          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium capitalize"
+          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium capitalize"
           style={{ backgroundColor: palette.bg, color: palette.text }}
         >
           <Tag className="h-3 w-3" aria-hidden="true" />
@@ -204,7 +204,7 @@ export function MarketplaceCard({
         {entry.curated_by.map((c) => (
           <span
             key={c}
-            className="inline-flex items-center rounded-full bg-[#d6eeff] px-2 py-0.5 text-[11px] font-medium text-[#0a3a5a] dark:bg-gray-700 dark:text-gray-300"
+            className="inline-flex items-center rounded-full bg-[#d6eeff] px-2 py-0.5 text-xs font-medium text-[#0a3a5a] dark:bg-gray-700 dark:text-gray-300"
             title={`Curated source: ${c}`}
           >
             {c}
@@ -226,7 +226,7 @@ export function MarketplaceCard({
       {/* Footer row — license, score, stars */}
       <div className="mt-auto flex flex-wrap items-center gap-2 pt-3">
         <span
-          className="inline-flex items-center rounded-full bg-white px-2 py-0.5 text-[11px] font-medium text-[#2a5a7a] ring-1 ring-[#c0ddf0] dark:bg-gray-900 dark:text-gray-400 dark:ring-gray-700"
+          className="inline-flex items-center rounded-full bg-white px-2 py-0.5 text-xs font-medium text-[#2a5a7a] ring-1 ring-[#c0ddf0] dark:bg-gray-900 dark:text-gray-400 dark:ring-gray-700"
           title={`License: ${entry.license}`}
         >
           {entry.license}
@@ -242,7 +242,7 @@ export function MarketplaceCard({
         />
         {stars && (
           <span
-            className="ml-auto inline-flex items-center gap-1 text-[11px] font-medium text-[#2a5a7a] dark:text-gray-400"
+            className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-[#2a5a7a] dark:text-gray-400"
             title={`${entry.github_stars?.toLocaleString()} GitHub stars`}
           >
             <Github className="h-3.5 w-3.5" aria-hidden="true" />
@@ -257,11 +257,11 @@ export function MarketplaceCard({
           visible when in-catalog so the affordance is obvious without
           needing hover. */}
       {inCatalog ? (
-        <span className="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold text-green-700 dark:text-green-400">
+        <span className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-green-700 dark:text-green-400">
           View in your catalog <ExternalLink className="h-3 w-3" aria-hidden="true" />
         </span>
       ) : (
-        <span className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-teal-700 opacity-0 transition-opacity group-hover:opacity-100 group-focus:opacity-100 dark:text-teal-400">
+        <span className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-teal-700 opacity-0 transition-opacity group-hover:opacity-100 group-focus:opacity-100 dark:text-teal-400">
           View details <ExternalLink className="h-3 w-3" aria-hidden="true" />
         </span>
       )}

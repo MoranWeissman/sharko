@@ -472,8 +472,8 @@ version is vague handwaving.
 
 ```markdown
 - UI shows `"This cluster uses AWS IAM authentication. Configure AWS
-  credentials for the Sharko pod's role to enable Test."` on the
-  Cluster detail page when the operator clicks "Test cluster"
+  credentials for the Sharko pod's role to enable Test connection."` on the
+  Cluster detail page when the operator clicks "Test connection"
 - API: `POST /api/v1/clusters/{name}/test` returns `503 Service
   Unavailable` with body `{"error": "iam_auth_unsupported"}`
 - No specific alert fires (known limitation, not a runtime failure)

@@ -43,7 +43,7 @@ describe('DiagnoseModal', () => {
     renderModal();
 
     expect(screen.getByText('Running diagnostics...')).toBeInTheDocument();
-    expect(screen.getByText('Diagnose: prod-eu')).toBeInTheDocument();
+    expect(screen.getByText('Check permissions: prod-eu')).toBeInTheDocument();
   });
 
   it('renders permission checks with summary after API response', async () => {

@@ -373,7 +373,7 @@ function ArtifactHubResultCard({ pkg, onOpen }: ArtifactHubResultCardProps) {
         </div>
         {stars && (
           <span
-            className="ml-auto flex shrink-0 items-center gap-0.5 text-[11px] font-medium text-[#3a6a8a] dark:text-gray-400"
+            className="ml-auto flex shrink-0 items-center gap-0.5 text-xs font-medium text-[#3a6a8a] dark:text-gray-400"
             title={`${pkg.stars?.toLocaleString()} stars`}
           >
             <Star className="h-3 w-3 fill-current text-amber-500" aria-hidden="true" />
@@ -389,12 +389,12 @@ function ArtifactHubResultCard({ pkg, onOpen }: ArtifactHubResultCardProps) {
       )}
 
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
-        <span className="rounded-full bg-[#e8f3fb] px-2 py-0.5 text-[10px] font-medium text-[#1a4a6a] dark:bg-gray-800 dark:text-gray-300">
+        <span className="rounded-full bg-[#e8f3fb] px-2 py-0.5 text-xs font-medium text-[#1a4a6a] dark:bg-gray-800 dark:text-gray-300">
           ArtifactHub
         </span>
         {pkg.repository.verified_publisher && (
           <span
-            className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-medium text-blue-800 dark:bg-blue-900/40 dark:text-blue-300"
+            className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800 dark:bg-blue-900/40 dark:text-blue-300"
             title="Verified publisher — repo ownership confirmed via metadata token"
           >
             <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
@@ -403,14 +403,14 @@ function ArtifactHubResultCard({ pkg, onOpen }: ArtifactHubResultCardProps) {
         )}
         {pkg.repository.official && (
           <span
-            className="rounded-full bg-purple-100 px-2 py-0.5 text-[10px] font-medium text-purple-800 dark:bg-purple-900/40 dark:text-purple-300"
+            className="rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-800 dark:bg-purple-900/40 dark:text-purple-300"
             title="Official package (manually granted by ArtifactHub)"
           >
             Official
           </span>
         )}
         {pkg.version && (
-          <span className="ml-auto inline-flex items-center gap-1 text-[10px] font-mono text-[#3a6a8a] dark:text-gray-500">
+          <span className="ml-auto inline-flex items-center gap-1 text-xs font-mono text-[#3a6a8a] dark:text-gray-500">
             <Github className="h-3 w-3" aria-hidden="true" />
             {pkg.version}
           </span>

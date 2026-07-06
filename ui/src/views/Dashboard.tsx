@@ -473,7 +473,7 @@ export function Dashboard() {
                         >
                           {item.appName || item.addonName}
                         </Link>
-                        <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                        <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${
                           item.displayState === 'degraded' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
                             : item.displayState === 'missing' ? 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'
                               : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
@@ -522,7 +522,7 @@ export function Dashboard() {
           </div>
           {showProgressing && (
             <div className="border-t border-blue-200/70 p-3 dark:border-blue-800/60">
-              <p className="mb-2 text-[11px] text-blue-700/80 dark:text-blue-300/80">
+              <p className="mb-2 text-xs text-blue-700/80 dark:text-blue-300/80">
                 Apps in this state are still considered healthy. ArgoCD is rolling out a change or waiting on a workload.
                 Click an addon to investigate on its cluster page.
               </p>
@@ -538,7 +538,7 @@ export function Dashboard() {
                       {item.appName || item.addonName}
                       {item.cluster && <span className="ml-1 text-[#3a6a8a] font-normal">on {item.cluster}</span>}
                     </Link>
-                    <span className="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
+                    <span className="rounded bg-blue-100 px-1.5 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
                       Progressing
                     </span>
                   </div>

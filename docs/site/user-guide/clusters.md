@@ -201,7 +201,7 @@ Or if unreachable:
 {"reachable": false, "error": "connection refused"}
 ```
 
-In the UI, a **Test Connectivity** button on the cluster detail page shows the result as an inline badge.
+In the UI, a **Test connection** button on the cluster detail page shows the result as an inline badge.
 
 !!! tip
     Use connectivity tests after rotating cluster credentials or after ArgoCD reports a cluster as `Unknown`. It is a lightweight check (calls `ServerVersion()` only — no cluster-wide list operations).

@@ -593,7 +593,7 @@ export function MarketplaceAddonDetail({
           {entryInCatalog && (
             <Link
               to={`/addons/${encodeURIComponent(entry.name)}`}
-              className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-green-800 hover:bg-green-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-green-500 dark:bg-green-900/40 dark:text-green-300 dark:hover:bg-green-900/60"
+              className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-green-800 hover:bg-green-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-green-500 dark:bg-green-900/40 dark:text-green-300 dark:hover:bg-green-900/60"
               title="Open the addon page in your catalog"
             >
               <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
@@ -601,13 +601,13 @@ export function MarketplaceAddonDetail({
             </Link>
           )}
           {entry.deprecated && (
-            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
               Deprecated
             </span>
           )}
           {source === 'ah' && (
             <span
-              className="rounded-full bg-[#e8f3fb] px-2 py-0.5 text-[11px] font-medium text-[#1a4a6a] dark:bg-gray-800 dark:text-gray-300"
+              className="rounded-full bg-[#e8f3fb] px-2 py-0.5 text-xs font-medium text-[#1a4a6a] dark:bg-gray-800 dark:text-gray-300"
               title="Result fetched from ArtifactHub"
             >
               ArtifactHub

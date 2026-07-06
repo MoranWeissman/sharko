@@ -192,7 +192,7 @@ function StepGit({
             onChange={(e) => onChange({ git_url: e.target.value })}
             placeholder="https://github.com/your-org/your-repo"
           />
-          <p className="mt-1 text-[10px] text-[#3a6a8a]">
+          <p className="mt-1 text-xs text-[#3a6a8a]">
             GitHub, GitHub Enterprise, or Azure DevOps (auto-detected from URL)
           </p>
         </div>
@@ -210,7 +210,7 @@ function StepGit({
                 : 'Personal access token (PAT)'
             }
           />
-          <p className="mt-1 text-[10px] text-[#3a6a8a]">
+          <p className="mt-1 text-xs text-[#3a6a8a]">
             {hasSavedToken
               ? 'Submitting blank keeps your saved credential. Enter a new value to replace it.'
               : 'Needs read and write access so Sharko can open pull requests.'}
@@ -256,7 +256,7 @@ function StepGit({
           >
             Clear all configuration and start over
           </button>
-          <p className="mt-1 text-[10px] text-[#3a6a8a] dark:text-gray-500">
+          <p className="mt-1 text-xs text-[#3a6a8a] dark:text-gray-500">
             Removes the saved connection so you can configure Sharko from scratch.
           </p>
         </div>
@@ -336,12 +336,12 @@ function StepArgoCD({
             placeholder="Auto-discovered from cluster"
           />
           {form.argocd_server_url.includes('.svc.cluster.local') && form.argocd_server_url.startsWith('https://') && (
-            <p className="mt-1 text-[10px] text-amber-600 dark:text-amber-400">
+            <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
               ⚠ In-cluster services typically use http://, not https://
             </p>
           )}
           {!(form.argocd_server_url.includes('.svc.cluster.local') && form.argocd_server_url.startsWith('https://')) && (
-            <p className="mt-1 text-[10px] text-[#3a6a8a]">
+            <p className="mt-1 text-xs text-[#3a6a8a]">
               Leave blank for in-cluster auto-discovery. Override for external ArgoCD.
             </p>
           )}
@@ -360,7 +360,7 @@ function StepArgoCD({
                 : 'ArgoCD API token (optional if in-cluster RBAC)'
             }
           />
-          <p className="mt-1 text-[10px] text-[#3a6a8a]">
+          <p className="mt-1 text-xs text-[#3a6a8a]">
             {hasSavedToken
               ? 'Submitting blank keeps your saved credential. Enter a new value to replace it.'
               : 'Falls back to ARGOCD_TOKEN env var if not provided.'}
@@ -415,7 +415,7 @@ function StepArgoCD({
           <KeyRound className="h-3.5 w-3.5" />
           Secrets Provider (optional)
           {form.provider_type && (
-            <span className="ml-1 rounded-full bg-teal-100 px-2 py-0.5 text-[10px] font-medium text-teal-700 dark:bg-teal-900/30 dark:text-teal-400">
+            <span className="ml-1 rounded-full bg-teal-100 px-2 py-0.5 text-xs font-medium text-teal-700 dark:bg-teal-900/30 dark:text-teal-400">
               {form.provider_type}
             </span>
           )}
@@ -423,7 +423,7 @@ function StepArgoCD({
 
         {advancedOpen && (
           <div className="mt-3 space-y-3 rounded-lg bg-[#e8f4ff] p-4 dark:bg-gray-800">
-            <p className="text-[11px] text-[#2a5a7a] dark:text-gray-400">
+            <p className="text-xs text-[#2a5a7a] dark:text-gray-400">
               Optional: configure how Sharko retrieves cluster credentials. You can always update this later in Settings.
             </p>
             <div>

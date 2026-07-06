@@ -42,7 +42,7 @@ export function SourceBadge({ source, sourceRecord, compact }: SourceBadgeProps)
     return (
       <span
         className={`inline-flex items-center rounded-full bg-[#d6eeff] font-medium text-[#0a3a5a] ring-1 ring-[#c0ddf0] dark:bg-[#1a3a5a] dark:text-[#d6eeff] dark:ring-[#2a5a7a] ${
-          compact ? 'px-2 py-0.5 text-[11px]' : 'px-2.5 py-1 text-xs'
+          compact ? 'px-2 py-0.5 text-xs' : 'px-2.5 py-1 text-xs'
         }`}
         title="Source: Sharko embedded catalog"
         aria-label="Source: Sharko embedded catalog (curated)"
@@ -65,7 +65,7 @@ export function SourceBadge({ source, sourceRecord, compact }: SourceBadgeProps)
   return (
     <span
       className={`inline-flex items-center rounded-full bg-[#b4dcf5] font-medium text-[#0a3a5a] ring-1 ring-[#2a5a7a] dark:bg-[#2a5a7a] dark:text-[#d6eeff] dark:ring-[#b4dcf5] ${
-        compact ? 'px-2 py-0.5 text-[11px]' : 'px-2.5 py-1 text-xs'
+        compact ? 'px-2 py-0.5 text-xs' : 'px-2.5 py-1 text-xs'
       }`}
       title={tooltip}
       aria-label={`Source: ${label} (third-party catalog)`}

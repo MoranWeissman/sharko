@@ -117,7 +117,7 @@ export function Login() {
         </div>
 
         {/* Footer — live version from /api/v1/health, dash fallback while loading or on error */}
-        <p className="pb-4 text-center text-[10px] text-[#4a8abf]">
+        <p className="pb-4 text-center text-xs text-[#4a8abf]">
           Sharko v{appVersion || '—'}
         </p>
       </div>

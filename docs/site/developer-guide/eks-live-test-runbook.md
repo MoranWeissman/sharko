@@ -142,7 +142,7 @@ aws secretsmanager put-secret-value --region eu-west-1 --secret-id "sharko-eks-l
   --secret-string '{ ..., "roleArn": "<arn from role-setup>" }'
 ```
 
-**If both are set,** the secret's own `roleArn` wins, then the per-cluster `role_arn` from the UI, then the connection-level provider default. Use whichever leg you want to prove — the UI field now works end-to-end (PR #466 fixed the earlier bug where it was silently dropped) — then click **Test cluster** again in the UI, or trigger another addon sync.
+**If both are set,** the secret's own `roleArn` wins, then the per-cluster `role_arn` from the UI, then the connection-level provider default. Use whichever leg you want to prove — the UI field now works end-to-end (PR #466 fixed the earlier bug where it was silently dropped) — then click **Test connection** again in the UI, or trigger another addon sync.
 
 ### Step 11 — teardown (covers Part 2 too)
 
@@ -232,4 +232,4 @@ One honest caveat about **Parts 1–2**, so this runbook doesn't overclaim: the 
 
 - [Personal Smoke Runbook](personal-smoke-runbook.md) — the local kind + ArgoCD smoke pass this test complements; same "you drive the UI" rule applies.
 - [Cluster Connectivity Model](../operator/cluster-connectivity-model.md) — reference for the auth shapes Sharko supports.
-- [AWS IAM Cluster Auth Test Unsupported](../operator/aws-iam-cluster-auth.md) — the adjacent v1.x IAM-auth limitation for the **Test cluster** button specifically (different code path from the `eks-token` registration path this runbook exercises).
+- [AWS IAM Cluster Auth Test Unsupported](../operator/aws-iam-cluster-auth.md) — the adjacent v1.x IAM-auth limitation for the **Test connection** button specifically (different code path from the `eks-token` registration path this runbook exercises).

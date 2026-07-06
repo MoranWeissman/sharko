@@ -343,19 +343,19 @@ export function SecretsProviderSection() {
                 ))}
               </select>
               {form.provider_type === 'argocd' ? (
-                <p className="mt-1 text-[10px] text-[#3a6a8a]">
+                <p className="mt-1 text-xs text-[#3a6a8a]">
                   Sharko reads credentials from the ArgoCD cluster Secret it creates during register-cluster. No additional setup required when Sharko runs in-cluster.
                 </p>
               ) : form.provider_type === UNKNOWN_PROVIDER ? (
-                <p className="mt-1 text-[10px] text-amber-600 dark:text-amber-400">
+                <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
                   This connection's stored provider type ("{unknownRawType}") isn't one Sharko's UI recognizes. Saving now keeps it unchanged — pick a different option above to replace it.
                 </p>
               ) : form.provider_type !== '' && !isSupported(form.provider_type) ? (
-                <p className="mt-1 text-[10px] text-amber-600 dark:text-amber-400">
+                <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
                   This provider is not yet supported — Sharko can't retrieve cluster credentials with it. Pick AWS Secrets Manager, Kubernetes Secrets, or ArgoCD.
                 </p>
               ) : (
-                <p className="mt-1 text-[10px] text-[#3a6a8a]">How Sharko retrieves cluster credentials for secret-based providers.</p>
+                <p className="mt-1 text-xs text-[#3a6a8a]">How Sharko retrieves cluster credentials for secret-based providers.</p>
               )}
             </div>
             {form.provider_type !== '' && form.provider_type !== UNKNOWN_PROVIDER && REGION_PROVIDERS.has(form.provider_type) && (
@@ -378,7 +378,7 @@ export function SecretsProviderSection() {
                   onChange={(e) => setForm(prev => ({ ...prev, provider_prefix: e.target.value }))}
                   placeholder="e.g. k8s- (prepended to cluster name for SM lookup)"
                 />
-                <p className="mt-1 text-[10px] text-[#3a6a8a]">Prepended to cluster name when looking up the secret.</p>
+                <p className="mt-1 text-xs text-[#3a6a8a]">Prepended to cluster name when looking up the secret.</p>
               </div>
             )}
           </div>

@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/dialog';
 import { diagnoseCluster } from '@/services/api';
 import type { DiagnosticReport } from '@/services/models';
+import { CHECK_PERMISSIONS_LABEL, CHECK_PERMISSIONS_HINT } from '@/components/ClusterActionHints';
 
 interface DiagnoseModalProps {
   clusterName: string;
@@ -55,10 +56,8 @@ export function DiagnoseModal({ clusterName, open, onClose }: DiagnoseModalProps
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
       <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Diagnose: {clusterName}</DialogTitle>
-          <DialogDescription>
-            Permission checks and suggested fixes for cluster connectivity issues.
-          </DialogDescription>
+          <DialogTitle>{CHECK_PERMISSIONS_LABEL}: {clusterName}</DialogTitle>
+          <DialogDescription>{CHECK_PERMISSIONS_HINT}</DialogDescription>
         </DialogHeader>
 
         {loading && (

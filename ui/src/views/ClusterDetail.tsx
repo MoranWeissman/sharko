@@ -51,6 +51,12 @@ import { StatCard } from '@/components/StatCard';
 import { StatusBadge } from '@/components/StatusBadge';
 import { ConnectivityBadge } from '@/components/ConnectivityBadge';
 import { SHARKO_CONN_LABEL, SHARKO_CONN_TOOLTIP } from '@/components/WhoseConnectionLabel';
+import {
+  TEST_CONNECTION_LABEL,
+  TEST_CONNECTION_HINT,
+  CHECK_PERMISSIONS_LABEL,
+  CHECK_PERMISSIONS_HINT,
+} from '@/components/ClusterActionHints';
 import { ClusterTypeBadge } from '@/components/ClusterTypeBadge';
 import { InfoHint } from '@/components/InfoHint';
 import { LoadingState } from '@/components/LoadingState';
@@ -143,7 +149,7 @@ function TestUnavailableBanner({ result }: { result: TestClusterUnavailable }) {
     case 'argocd_provider_iam_required':
       title = 'AWS IAM authentication required';
       body =
-        "This cluster uses AWS IAM authentication. Configure AWS credentials for the Sharko pod's role (IRSA, EC2 instance profile, or Pod Identity) to enable Test for AWS-managed clusters.";
+        "This cluster uses AWS IAM authentication. Configure AWS credentials for the Sharko pod's role (IRSA, EC2 instance profile, or Pod Identity) to enable Test connection for AWS-managed clusters.";
       actionTo = '/docs/operator/aws-iam-cluster-auth';
       actionLabel = 'Open IAM setup guide';
       break;
@@ -853,15 +859,17 @@ export function ClusterDetail() {
               {/* Step-by-step test results */}
               {testResult.steps && testResult.steps.length > 0 && (
                 <div className="mb-2 rounded-lg bg-[#f8fbff] p-3 ring-1 ring-[#d0e4f5] dark:bg-gray-800 dark:ring-gray-700">
-                  {/* The Test flow is Sharko's own connection — say so (V2-cleanup-55.3). */}
+                  {/* The Test connection flow is Sharko's own connection — say so (V2-cleanup-55.3). */}
                   <div className="mb-2 flex items-center gap-1">
                     <p className="cursor-help text-xs font-semibold text-[#0a2a4a] dark:text-gray-200" title={SHARKO_CONN_TOOLTIP}>
-                      Test results ({SHARKO_CONN_LABEL}):
+                      Connection test results ({SHARKO_CONN_LABEL}):
                     </p>
                     {/* V2-cleanup-61.4 (G3): click/focus affordance for the
                       * explanation above — a hover-only title never reaches
-                      * touch or keyboard users. */}
-                    <InfoHint text={SHARKO_CONN_TOOLTIP} label="What does this mean?" />
+                      * touch or keyboard users. V2-cleanup-65.1: echoes the
+                      * same "what does Test connection do" one-liner shown
+                      * next to the button, plus the whose-connection note. */}
+                    <InfoHint text={`${TEST_CONNECTION_HINT} ${SHARKO_CONN_TOOLTIP}`} label="What does this mean?" />
                   </div>
                   <div className="space-y-1">
                     {testResult.steps.map((step, i) => (
@@ -951,16 +959,17 @@ export function ClusterDetail() {
               className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
             >
               {testResult === 'testing' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wifi className="h-3.5 w-3.5" />}
-              Test
+              {TEST_CONNECTION_LABEL}
             </button>
-            <InfoHint text={SHARKO_CONN_TOOLTIP} label="Whose connection does Test check?" />
+            <InfoHint text={TEST_CONNECTION_HINT} label="What does Test connection do?" />
             <button
               onClick={() => setDiagnoseOpen(true)}
               className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
             >
               <ScanSearch className="h-3.5 w-3.5" />
-              Diagnose
+              {CHECK_PERMISSIONS_LABEL}
             </button>
+            <InfoHint text={CHECK_PERMISSIONS_HINT} label="What does Check permissions do?" />
           </RoleGuard>
         </div>
       </div>
@@ -1053,7 +1062,7 @@ export function ClusterDetail() {
                           <span className="ml-1.5 text-xs font-normal">({nodeInfo.not_ready} not ready)</span>
                         )}
                       </p>
-                      <p className="text-[10px] text-[#2a5a7a]/70 dark:text-gray-500">Sharko's own cluster, not this target</p>
+                      <p className="text-xs text-[#2a5a7a]/70 dark:text-gray-500">Sharko's own cluster, not this target</p>
                     </div>
                   </div>
                 )}
@@ -1512,7 +1521,7 @@ export function ClusterDetail() {
                                   <span className="text-sm font-medium text-[#3a6a8a] dark:text-gray-300">
                                     Connectivity check
                                   </span>
-                                  <span className="rounded-full bg-[#c0ddf0] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#2a5a7a] dark:bg-gray-600 dark:text-gray-300">
+                                  <span className="rounded-full bg-[#c0ddf0] px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-[#2a5a7a] dark:bg-gray-600 dark:text-gray-300">
                                     Sharko system — automatic
                                   </span>
                                 </div>
@@ -1560,7 +1569,7 @@ export function ClusterDetail() {
                                       {addonName}
                                     </span>
                                     {(isPendingEnable || isPendingRemove) && (
-                                      <span className="shrink-0 rounded-full bg-teal-600 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white dark:bg-teal-700">
+                                      <span className="shrink-0 rounded-full bg-teal-600 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-white dark:bg-teal-700">
                                         {isPendingEnable ? 'pending' : 'removing'}
                                       </span>
                                     )}
@@ -1905,12 +1914,12 @@ function ComparisonRow({ addon, clusterName, isExpanded, onToggleExpand, argocdB
               onClick={(e) => e.stopPropagation()}
               data-testid="addon-pending-pr-badge"
               title={`Open PR #${pr.pr_id} — ${pr.pr_title}`}
-              className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:hover:bg-amber-900/60"
+              className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:hover:bg-amber-900/60"
             >
               <GitPullRequest className="h-3 w-3" />
               PR #{pr.pr_id}
               {pr.operation && (
-                <span className="rounded bg-amber-200/70 px-1 py-px text-[10px] capitalize text-amber-900 dark:bg-amber-800/50 dark:text-amber-200">
+                <span className="rounded bg-amber-200/70 px-1 py-px text-xs capitalize text-amber-900 dark:bg-amber-800/50 dark:text-amber-200">
                   {pr.operation.replace(/^addon-/, '')}
                 </span>
               )}

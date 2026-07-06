@@ -273,7 +273,7 @@ export function Dashboards() {
               >
                 <span className="min-w-0 flex-1 text-sm leading-tight">{d.name}</span>
                 <span
-                  className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${style.bg} ${style.text}`}
+                  className={`shrink-0 rounded-full px-1.5 py-0.5 text-xs font-semibold ${style.bg} ${style.text}`}
                 >
                   {style.label}
                 </span>

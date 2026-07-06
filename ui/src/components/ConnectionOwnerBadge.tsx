@@ -29,7 +29,7 @@ export function ConnectionOwnerBadge({ managedBy }: ConnectionOwnerBadgeProps) {
   if (managedBy !== 'user') return null;
   return (
     <span
-      className="w-fit cursor-help rounded bg-[#e0f0ff] px-1.5 py-0.5 text-[10px] font-medium text-[#2a5a7a] ring-1 ring-[#6aade0] dark:bg-gray-800 dark:text-gray-300 dark:ring-gray-600"
+      className="w-fit cursor-help rounded bg-[#e0f0ff] px-1.5 py-0.5 text-xs font-medium text-[#2a5a7a] ring-1 ring-[#6aade0] dark:bg-gray-800 dark:text-gray-300 dark:ring-gray-600"
       title={CONN_OWNER_USER_TOOLTIP}
     >
       {CONN_OWNER_USER_LABEL}

@@ -34,7 +34,7 @@ export function WhoseConnectionLabel({ who }: WhoseConnectionLabelProps) {
   return (
     <span className="inline-flex w-fit items-center gap-1">
       <span
-        className="cursor-help text-[10px] font-medium text-[#5a8aaa] dark:text-gray-500"
+        className="cursor-help text-xs font-medium text-[#5a8aaa] dark:text-gray-500"
         title={tooltip}
       >
         {label}

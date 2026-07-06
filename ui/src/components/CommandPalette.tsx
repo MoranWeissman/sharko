@@ -160,7 +160,7 @@ export function CommandPalette() {
             placeholder="Search pages, clusters, addons..."
             className="w-full bg-transparent py-3.5 text-sm text-[#0a2a4a] placeholder-[#5a8aaa] outline-none dark:text-gray-100"
           />
-          <kbd className="hidden shrink-0 rounded ring-2 ring-[#6aade0] bg-[#e8f4ff] px-1.5 py-0.5 text-[10px] font-medium text-[#3a6a8a] sm:block dark:ring-gray-700 dark:bg-gray-800">
+          <kbd className="hidden shrink-0 rounded ring-2 ring-[#6aade0] bg-[#e8f4ff] px-1.5 py-0.5 text-xs font-medium text-[#3a6a8a] sm:block dark:ring-gray-700 dark:bg-gray-800">
             ESC
           </kbd>
         </div>
@@ -186,7 +186,7 @@ export function CommandPalette() {
               >
                 <result.icon className="h-4 w-4 shrink-0 text-[#3a6a8a]" />
                 <span className="flex-1 truncate">{result.label}</span>
-                <span className="shrink-0 text-[10px] uppercase tracking-wide text-[#3a6a8a]">
+                <span className="shrink-0 text-xs uppercase tracking-wide text-[#3a6a8a]">
                   {typeLabel[result.type]}
                 </span>
               </button>
@@ -195,7 +195,7 @@ export function CommandPalette() {
         </div>
 
         {/* Footer hint */}
-        <div className="border-t border-[#6aade0] px-4 py-2 text-[10px] text-[#3a6a8a] dark:border-gray-700">
+        <div className="border-t border-[#6aade0] px-4 py-2 text-xs text-[#3a6a8a] dark:border-gray-700">
           <span className="mr-3">Arrow keys to navigate</span>
           <span className="mr-3">Enter to select</span>
           <span>Esc to close</span>

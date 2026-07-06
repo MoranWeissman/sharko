@@ -288,7 +288,7 @@ export function Layout() {
             <div className="min-w-0 -ml-1">
               <span className="text-2xl leading-tight text-blue-400" style={{ fontFamily: '"Quicksand", sans-serif', fontWeight: 700 }}>Sharko</span>
               {appVersion && (
-                <p className="text-[10px] text-[#5a9ad0] leading-tight">v{appVersion}</p>
+                <p className="text-xs text-[#5a9ad0] leading-tight">v{appVersion}</p>
               )}
             </div>
           )}
@@ -299,7 +299,7 @@ export function Layout() {
           {navSections.filter(s => !s.adminOnly || isAdmin).map((section, si) => (
             <div key={section.label} className={si > 0 ? 'mt-4 border-t border-[#14466e] pt-3' : ''}>
               {!collapsed && (
-                <span className="mb-1 block px-3 text-[10px] font-semibold uppercase tracking-wider text-[#5a9ad0]">
+                <span className="mb-1 block px-3 text-xs font-semibold uppercase tracking-wider text-[#5a9ad0]">
                   {section.label}
                 </span>
               )}
@@ -325,7 +325,7 @@ export function Layout() {
                         <span>{item.label}</span>
                         {item.to === '/' && openPRCount > 0 && (
                           <span
-                            className="ml-1 inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-teal-500 px-1.5 text-[10px] font-bold text-white"
+                            className="ml-1 inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-teal-500 px-1.5 text-xs font-bold text-white"
                             title={`${openPRCount} open pull request${openPRCount !== 1 ? 's' : ''}`}
                             aria-label={`${openPRCount} open pull request${openPRCount !== 1 ? 's' : ''}`}
                           >
@@ -334,6 +334,13 @@ export function Layout() {
                         )}
                       </span>
                     )}
+                    {/* V2-cleanup-65.1: kept at 9px deliberately — this is a
+                      * superscript-style open-PR-count bubble overlaid on
+                      * the collapsed-sidebar nav icon in a fixed h-4
+                      * (16px) circle; bumping to text-xs (12px) doesn't fit
+                      * inside the circle for 2-digit counts. The expanded
+                      * (non-collapsed) sibling badge above has more room
+                      * and was raised to text-xs. */}
                     {collapsed && !mobileOpen && item.to === '/' && openPRCount > 0 && (
                       <span
                         className="absolute -top-1 -right-1 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-teal-500 px-1 text-[9px] font-bold text-white"
@@ -415,7 +422,7 @@ export function Layout() {
             >
               <Search className="h-3.5 w-3.5" />
               <span>Search...</span>
-              <kbd className="ml-2 rounded border border-[#5a9dd0] bg-[#e8f4ff] px-1 py-0.5 text-[9px] font-medium dark:border-gray-600 dark:bg-gray-700">
+              <kbd className="ml-2 rounded border border-[#5a9dd0] bg-[#e8f4ff] px-1 py-0.5 text-xs font-medium dark:border-gray-600 dark:bg-gray-700">
                 {navigator.platform?.includes('Mac') ? '⌘' : 'Ctrl'}K
               </kbd>
             </button>
@@ -504,7 +511,7 @@ export function Layout() {
               <div>
                 <span className="text-sm font-semibold" style={{ fontFamily: '"Quicksand", sans-serif', fontWeight: 700 }}>Sharko AI</span>
                 {getAIPageContext(location.pathname) && (
-                  <p className="text-[10px] text-teal-200">Viewing {getAIPageContext(location.pathname)}</p>
+                  <p className="text-xs text-teal-200">Viewing {getAIPageContext(location.pathname)}</p>
                 )}
               </div>
             </div>

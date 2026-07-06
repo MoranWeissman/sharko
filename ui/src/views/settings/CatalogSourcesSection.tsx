@@ -88,7 +88,7 @@ export function CatalogSourcesSection() {
             </h4>
             <p className="mt-0.5 text-xs text-[#2a5a7a] dark:text-gray-400 max-w-prose">
               Configured via the{' '}
-              <code className="rounded bg-[#e8f4ff] px-1 font-mono text-[11px] text-[#0a3a5a] dark:bg-gray-900 dark:text-[#d6eeff]">
+              <code className="rounded bg-[#e8f4ff] px-1 font-mono text-xs text-[#0a3a5a] dark:bg-gray-900 dark:text-[#d6eeff]">
                 SHARKO_CATALOG_URLS
               </code>{' '}
               environment variable. Not editable here — update the env and
@@ -182,7 +182,7 @@ export function CatalogSourcesSection() {
                     <div className="flex flex-col gap-1">
                       <SourceBadge source={r.url} sourceRecord={r} />
                       {r.url !== 'embedded' && (
-                        <span className="break-all text-[11px] text-[#3a6a8a] dark:text-gray-500">
+                        <span className="break-all text-xs text-[#3a6a8a] dark:text-gray-500">
                           {r.url}
                         </span>
                       )}
@@ -205,13 +205,13 @@ export function CatalogSourcesSection() {
                             ? `Verified (issuer: ${r.issuer})`
                             : 'Verified'
                         }
-                        className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-300 dark:ring-emerald-800"
+                        className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-300 dark:ring-emerald-800"
                       >
                         <ShieldCheck className="h-3 w-3" aria-hidden />
                         Verified
                       </span>
                     ) : (
-                      <span className="text-[11px] text-[#3a6a8a] dark:text-gray-500">
+                      <span className="text-xs text-[#3a6a8a] dark:text-gray-500">
                         —
                       </span>
                     )}
@@ -248,7 +248,7 @@ export function CatalogSourcesSection() {
       {onlyEmbedded && !error ? (
         <p className="rounded-lg bg-[#e8f4ff] px-3 py-2 text-xs text-[#2a5a7a] dark:bg-gray-900 dark:text-gray-400">
           No third-party sources configured. Set{' '}
-          <code className="rounded bg-[#d6eeff] px-1 font-mono text-[11px] text-[#0a3a5a] dark:bg-gray-700 dark:text-[#d6eeff]">
+          <code className="rounded bg-[#d6eeff] px-1 font-mono text-xs text-[#0a3a5a] dark:bg-gray-700 dark:text-[#d6eeff]">
             SHARKO_CATALOG_URLS
           </code>{' '}
           to extend the catalog.
@@ -262,7 +262,7 @@ function StatusChip({ status }: { status: CatalogSourceRecord['status'] }) {
   if (status === 'ok') {
     return (
       <span
-        className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-300 dark:ring-emerald-800"
+        className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-300 dark:ring-emerald-800"
       >
         <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
         ok
@@ -272,7 +272,7 @@ function StatusChip({ status }: { status: CatalogSourceRecord['status'] }) {
   if (status === 'stale') {
     return (
       <span
-        className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700 ring-1 ring-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:ring-amber-800"
+        className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:ring-amber-800"
       >
         <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500" />
         stale
@@ -281,7 +281,7 @@ function StatusChip({ status }: { status: CatalogSourceRecord['status'] }) {
   }
   return (
     <span
-      className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-medium text-red-700 ring-1 ring-red-200 dark:bg-red-900/20 dark:text-red-300 dark:ring-red-800"
+      className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700 ring-1 ring-red-200 dark:bg-red-900/20 dark:text-red-300 dark:ring-red-800"
     >
       <span className="inline-block h-1.5 w-1.5 rounded-full bg-red-500" />
       failed

@@ -758,7 +758,7 @@ export function ValuesEditor({
                       Merged YAML (preview)
                     </summary>
                     <pre
-                      className="mt-2 max-h-80 overflow-auto rounded bg-[#f8fbff] p-2 font-mono text-[11px] leading-4 text-[#0a2a4a] dark:bg-gray-900 dark:text-gray-100"
+                      className="mt-2 max-h-80 overflow-auto rounded bg-[#f8fbff] p-2 font-mono text-xs leading-4 text-[#0a2a4a] dark:bg-gray-900 dark:text-gray-100"
                       style={{ scrollbarGutter: 'stable' }}
                     >
                       {previewResult.merged}

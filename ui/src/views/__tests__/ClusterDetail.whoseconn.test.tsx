@@ -110,13 +110,13 @@ describe('ClusterDetail — whose-connection labels (V2-cleanup-55.3)', () => {
     mockFetchTrackedPRs.mockResolvedValue({ prs: [] });
   });
 
-  it('gives the Test button a Sharko → cluster tooltip', async () => {
+  it('gives the Test connection button a Sharko → cluster tooltip', async () => {
     renderView();
     await waitFor(() => {
       expect(screen.getByText('prod-eu')).toBeInTheDocument();
     });
 
-    const testBtn = screen.getByRole('button', { name: 'Test' });
+    const testBtn = screen.getByRole('button', { name: 'Test connection' });
     expect(testBtn).toHaveAttribute('title', SHARKO_CONN_TOOLTIP);
   });
 
@@ -134,12 +134,12 @@ describe('ClusterDetail — whose-connection labels (V2-cleanup-55.3)', () => {
       expect(screen.getByText('prod-eu')).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Test' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Test connection' }));
 
     await waitFor(() => {
-      expect(screen.getByText('Test results (Sharko → cluster):')).toBeInTheDocument();
+      expect(screen.getByText('Connection test results (Sharko → cluster):')).toBeInTheDocument();
     });
-    expect(screen.getByText('Test results (Sharko → cluster):')).toHaveAttribute(
+    expect(screen.getByText('Connection test results (Sharko → cluster):')).toHaveAttribute(
       'title',
       SHARKO_CONN_TOOLTIP,
     );

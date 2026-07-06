@@ -321,7 +321,7 @@ function AddonCard({ addon }: { addon: AddonCatalogItem }) {
           if (driftCount > 0) {
             return (
               <div className="mt-2">
-                <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700">
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
                   ⚠ {driftCount} drifted
                 </span>
               </div>
@@ -1206,7 +1206,7 @@ export function AddonCatalog() {
                   />
                 )}
                 {repoValidState === 'valid' && !repoValidating && (
-                  <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-1.5 py-0.5 text-[10px] font-semibold text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                  <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-1.5 py-0.5 text-xs font-semibold text-green-700 dark:bg-green-900/30 dark:text-green-400">
                     <CheckCircle className="h-3 w-3" aria-hidden="true" />
                     Reachable · {repoCharts.length} chart{repoCharts.length === 1 ? '' : 's'}
                   </span>
@@ -1293,7 +1293,7 @@ export function AddonCatalog() {
                     )
                   })}
                   {repoCharts.length > 50 && (
-                    <li className="px-2 py-0.5 text-[11px] italic text-[#3a6a8a] dark:text-gray-500">
+                    <li className="px-2 py-0.5 text-xs italic text-[#3a6a8a] dark:text-gray-500">
                       +{repoCharts.length - 50} more — type to filter
                     </li>
                   )}

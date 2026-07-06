@@ -122,7 +122,7 @@ describe('ClusterTypeBadge — additional edge cases', () => {
     const { container } = render(
       <ClusterTypeBadge server="https://kind-x" compact />,
     )
-    expect(container.innerHTML).toContain('text-[11px]')
+    expect(container.innerHTML).toContain('text-xs')
   })
 
   it('renders an aria-label and a title tooltip', () => {
