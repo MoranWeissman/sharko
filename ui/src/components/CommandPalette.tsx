@@ -2,6 +2,12 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Search, Server, Package, LayoutDashboard, Activity, Settings, Network, BarChart3, ClipboardList } from 'lucide-react'
 import { api } from '@/services/api'
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog'
 
 interface SearchResult {
   label: string
@@ -38,22 +44,25 @@ export function CommandPalette() {
   const [addons, setAddons] = useState<string[]>([])
   const inputRef = useRef<HTMLInputElement>(null)
 
-  // Global keyboard shortcut
+  // Global keyboard shortcut to OPEN. Closing (Escape / outside click) is
+  // handled by the Dialog primitive below (V2-cleanup-61.4, G2) — this used
+  // to be a hand-rolled `fixed` backdrop + a manual window `keydown`
+  // listener for Escape, with no focus trap and no ARIA dialog semantics.
+  // Radix Dialog gives all of that for free: Escape closes it, clicking the
+  // overlay closes it, Tab is trapped inside while open, and focus returns
+  // to whatever opened it on close.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault()
         setOpen(true)
       }
-      if (e.key === 'Escape') {
-        setOpen(false)
-      }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [])
 
-  // Focus input when opened
+  // Reset + focus the search input every time the palette opens.
   useEffect(() => {
     if (open) {
       setQuery('')
@@ -123,71 +132,75 @@ export function CommandPalette() {
     }
   }
 
-  if (!open) return null
-
   const typeLabel = { page: 'Page', cluster: 'Cluster', addon: 'Addon' }
 
   return (
-    <>
-      {/* Backdrop */}
-      <div className="fixed inset-0 z-[60] bg-black/50 backdrop-blur-sm" onClick={() => setOpen(false)} />
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogContent
+        showCloseButton={false}
+        className="top-[20%] max-w-lg translate-y-0 gap-0 overflow-hidden rounded-xl border-0 bg-[#f0f7ff] p-0 shadow-2xl ring-2 ring-[#6aade0] dark:bg-gray-900 dark:ring-gray-700"
+      >
+        {/* Visually-hidden title/description — Radix requires an
+            accessible name/description for the dialog; the search input
+            below is the actual visible affordance. */}
+        <DialogTitle className="sr-only">Command palette</DialogTitle>
+        <DialogDescription className="sr-only">
+          Search pages, clusters, and addons
+        </DialogDescription>
 
-      {/* Modal */}
-      <div className="fixed left-1/2 top-[20%] z-[60] w-full max-w-lg -translate-x-1/2">
-        <div className="overflow-hidden rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-2xl dark:ring-gray-700 dark:bg-gray-900">
-          {/* Search input */}
-          <div className="flex items-center gap-3 border-b border-[#6aade0] px-4 dark:border-gray-700">
-            <Search className="h-5 w-5 shrink-0 text-[#3a6a8a]" />
-            <input
-              ref={inputRef}
-              type="text"
-              value={query}
-              onChange={e => setQuery(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Search pages, clusters, addons..."
-              className="w-full bg-transparent py-3.5 text-sm text-[#0a2a4a] placeholder-[#5a8aaa] outline-none dark:text-gray-100"
-            />
-            <kbd className="hidden shrink-0 rounded ring-2 ring-[#6aade0] bg-[#e8f4ff] px-1.5 py-0.5 text-[10px] font-medium text-[#3a6a8a] sm:block dark:ring-gray-700 dark:bg-gray-800">
-              ESC
-            </kbd>
-          </div>
-
-          {/* Results */}
-          <div className="max-h-72 overflow-y-auto py-2">
-            {results.length === 0 ? (
-              <div className="px-4 py-6 text-center text-sm text-[#2a5a7a]">
-                No results for "{query}"
-              </div>
-            ) : (
-              results.map((result, i) => (
-                <button
-                  key={result.path}
-                  onClick={() => select(result)}
-                  onMouseEnter={() => setSelectedIndex(i)}
-                  className={`flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm transition-colors ${
-                    i === selectedIndex
-                      ? 'bg-teal-50 text-teal-700 dark:bg-teal-900/20 dark:text-teal-400'
-                      : 'text-[#0a3a5a] hover:bg-[#e8f4ff] dark:text-gray-300 dark:hover:bg-gray-800'
-                  }`}
-                >
-                  <result.icon className="h-4 w-4 shrink-0 text-[#3a6a8a]" />
-                  <span className="flex-1 truncate">{result.label}</span>
-                  <span className="shrink-0 text-[10px] uppercase tracking-wide text-[#3a6a8a]">
-                    {typeLabel[result.type]}
-                  </span>
-                </button>
-              ))
-            )}
-          </div>
-
-          {/* Footer hint */}
-          <div className="border-t border-[#6aade0] px-4 py-2 text-[10px] text-[#3a6a8a] dark:border-gray-700">
-            <span className="mr-3">Arrow keys to navigate</span>
-            <span className="mr-3">Enter to select</span>
-            <span>Esc to close</span>
-          </div>
+        {/* Search input */}
+        <div className="flex items-center gap-3 border-b border-[#6aade0] px-4 dark:border-gray-700">
+          <Search className="h-5 w-5 shrink-0 text-[#3a6a8a]" />
+          <input
+            ref={inputRef}
+            type="text"
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Search pages, clusters, addons..."
+            className="w-full bg-transparent py-3.5 text-sm text-[#0a2a4a] placeholder-[#5a8aaa] outline-none dark:text-gray-100"
+          />
+          <kbd className="hidden shrink-0 rounded ring-2 ring-[#6aade0] bg-[#e8f4ff] px-1.5 py-0.5 text-[10px] font-medium text-[#3a6a8a] sm:block dark:ring-gray-700 dark:bg-gray-800">
+            ESC
+          </kbd>
         </div>
-      </div>
-    </>
+
+        {/* Results */}
+        <div className="max-h-72 overflow-y-auto py-2">
+          {results.length === 0 ? (
+            <div className="px-4 py-6 text-center text-sm text-[#2a5a7a]">
+              No results for "{query}"
+            </div>
+          ) : (
+            results.map((result, i) => (
+              <button
+                key={result.path}
+                type="button"
+                onClick={() => select(result)}
+                onMouseEnter={() => setSelectedIndex(i)}
+                className={`flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm transition-colors ${
+                  i === selectedIndex
+                    ? 'bg-teal-50 text-teal-700 dark:bg-teal-900/20 dark:text-teal-400'
+                    : 'text-[#0a3a5a] hover:bg-[#e8f4ff] dark:text-gray-300 dark:hover:bg-gray-800'
+                }`}
+              >
+                <result.icon className="h-4 w-4 shrink-0 text-[#3a6a8a]" />
+                <span className="flex-1 truncate">{result.label}</span>
+                <span className="shrink-0 text-[10px] uppercase tracking-wide text-[#3a6a8a]">
+                  {typeLabel[result.type]}
+                </span>
+              </button>
+            ))
+          )}
+        </div>
+
+        {/* Footer hint */}
+        <div className="border-t border-[#6aade0] px-4 py-2 text-[10px] text-[#3a6a8a] dark:border-gray-700">
+          <span className="mr-3">Arrow keys to navigate</span>
+          <span className="mr-3">Enter to select</span>
+          <span>Esc to close</span>
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }

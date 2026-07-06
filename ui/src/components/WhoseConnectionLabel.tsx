@@ -1,3 +1,5 @@
+import { InfoHint } from '@/components/InfoHint';
+
 // V2-cleanup-55.3: whose-connection attribution.
 //
 // A cluster's `connection_status` is ArgoCD's OWN connection to the cluster
@@ -21,19 +23,23 @@ interface WhoseConnectionLabelProps {
 
 /**
  * Small caption rendered above/next to a connection status so the user can
- * tell whose connection it describes. Uses a native `title` tooltip — this
- * renders inside table rows and cards where mounting a Radix tooltip per
- * row would be heavy.
+ * tell whose connection it describes. The label itself keeps its native
+ * `title` tooltip for mouse users; the adjacent `InfoHint` (V2-cleanup-61.4,
+ * finding G3) gives touch/keyboard users a click/focus way to reach the
+ * same explanation, since a hover-only tooltip never fires for them.
  */
 export function WhoseConnectionLabel({ who }: WhoseConnectionLabelProps) {
   const label = who === 'argocd' ? ARGOCD_CONN_LABEL : SHARKO_CONN_LABEL;
   const tooltip = who === 'argocd' ? ARGOCD_CONN_TOOLTIP : SHARKO_CONN_TOOLTIP;
   return (
-    <span
-      className="w-fit cursor-help text-[10px] font-medium text-[#5a8aaa] dark:text-gray-500"
-      title={tooltip}
-    >
-      {label}
+    <span className="inline-flex w-fit items-center gap-1">
+      <span
+        className="cursor-help text-[10px] font-medium text-[#5a8aaa] dark:text-gray-500"
+        title={tooltip}
+      >
+        {label}
+      </span>
+      <InfoHint text={tooltip} label={`What does "${label}" mean?`} />
     </span>
   );
 }

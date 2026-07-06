@@ -40,9 +40,8 @@ ClusterDetail.tsx      ClustersOverview.tsx
 Connections.tsx        Dashboard.tsx
 Dashboards.tsx         Docs.tsx
 Login.tsx              Observability.tsx
-Settings.tsx           UpgradeChecker.tsx
-UserInfo.tsx           UserManagement.tsx
-VersionMatrix.tsx
+Settings.tsx           UserInfo.tsx
+UserManagement.tsx     VersionMatrix.tsx
 ```
 
 ### Custom Components (`ui/src/components/`)

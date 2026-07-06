@@ -24,6 +24,13 @@ import {
 import { useConnections } from '@/hooks/useConnections'
 import { FloatingAssistant } from '@/components/FloatingAssistant'
 import { CommandPalette } from '@/components/CommandPalette'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { useTheme } from '@/hooks/useTheme'
 import { useAuth } from '@/hooks/useAuth'
 import { AIAssistant, type AIAssistantSeed } from '@/views/AIAssistant'
@@ -183,7 +190,6 @@ export function Layout() {
   }, [])
 
   const [appVersion, setAppVersion] = useState('')
-  const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
   const { activeConnection, loading } = useConnections()
   const [openPRCount, setOpenPRCount] = useState(0)
@@ -420,45 +426,51 @@ export function Layout() {
               </div>
             )}
 
-            {/* User avatar dropdown */}
-            <div className="relative">
-              <button
-                onClick={() => setUserMenuOpen((o) => !o)}
-                className="flex h-8 w-8 items-center justify-center rounded-full bg-teal-600 text-sm font-bold text-white hover:bg-teal-700"
-                aria-label="User menu"
+            {/* User avatar dropdown. V2-cleanup-61.4 (G2): this used to be a
+                hand-rolled `absolute` panel + a `fixed inset-0` click-catcher
+                div for "outside click" — no Escape handling, no focus trap,
+                no ARIA menu semantics. Swapped for the shadcn/Radix
+                DropdownMenu primitive: Escape closes it, outside click
+                closes it, arrow keys move between items, and focus returns
+                to the avatar button on close, all for free from Radix. */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  className="flex h-8 w-8 items-center justify-center rounded-full bg-teal-600 text-sm font-bold text-white hover:bg-teal-700"
+                  aria-label="User menu"
+                >
+                  <User className="h-4 w-4" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
+                className="w-48 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] dark:ring-gray-700 dark:bg-gray-800"
               >
-                <User className="h-4 w-4" />
-              </button>
-              {userMenuOpen && (
-                <>
-                  <div className="fixed inset-0 z-40" onClick={() => setUserMenuOpen(false)} />
-                  <div className="absolute right-0 top-10 z-50 w-48 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] py-1 shadow-lg dark:ring-gray-700 dark:bg-gray-800">
-                    <button
-                      onClick={() => { navigate('/user'); setUserMenuOpen(false) }}
-                      className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-[#0a3a5a] hover:bg-[#d6eeff] dark:text-gray-300 dark:hover:bg-gray-700"
-                    >
-                      <User className="h-4 w-4" />
-                      Account
-                    </button>
-                    <button
-                      onClick={() => { toggleTheme(); setUserMenuOpen(false) }}
-                      className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-[#0a3a5a] hover:bg-[#d6eeff] dark:text-gray-300 dark:hover:bg-gray-700"
-                    >
-                      {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-                      {theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
-                    </button>
-                    <div className="my-1 border-t border-[#6aade0] dark:border-gray-700" />
-                    <button
-                      onClick={logout}
-                      className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-red-600 hover:bg-[#d6eeff] dark:text-red-400 dark:hover:bg-gray-700"
-                    >
-                      <LogOut className="h-4 w-4" />
-                      Log out
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
+                <DropdownMenuItem
+                  onSelect={() => navigate('/user')}
+                  className="text-[#0a3a5a] focus:bg-[#d6eeff] dark:text-gray-300 dark:focus:bg-gray-700"
+                >
+                  <User className="h-4 w-4" />
+                  Account
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={() => toggleTheme()}
+                  className="text-[#0a3a5a] focus:bg-[#d6eeff] dark:text-gray-300 dark:focus:bg-gray-700"
+                >
+                  {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+                  {theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator className="bg-[#6aade0] dark:bg-gray-700" />
+                <DropdownMenuItem
+                  variant="destructive"
+                  onSelect={logout}
+                  className="focus:bg-[#d6eeff] dark:focus:bg-gray-700"
+                >
+                  <LogOut className="h-4 w-4" />
+                  Log out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </header>
 

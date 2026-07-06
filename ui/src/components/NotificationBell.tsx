@@ -1,7 +1,8 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Bell } from 'lucide-react'
 import { api } from '@/services/api'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 
 interface Notification {
   id: string
@@ -19,9 +20,14 @@ interface Notification {
 const CONNECTION_SETTINGS_ROUTE = '/settings?section=connections'
 
 export function NotificationBell() {
+  // V2-cleanup-61.4 (G2): this used to be a hand-rolled `absolute` div with
+  // a manual `mousedown` outside-click listener — no Escape handling, no
+  // focus trap, no ARIA. Swapped for the shadcn/Radix Popover primitive
+  // (already used elsewhere, e.g. ClusterStatusSummary): Escape closes it,
+  // outside click closes it, and focus returns to the bell on close, all
+  // for free from Radix.
   const [open, setOpen] = useState(false)
   const [notifications, setNotifications] = useState<Notification[]>([])
-  const ref = useRef<HTMLDivElement>(null)
   const navigate = useNavigate()
 
   // Fetch notifications from API
@@ -40,17 +46,6 @@ export function NotificationBell() {
     const interval = setInterval(fetchNotifications, 60000) // poll every 60s
     return () => clearInterval(interval)
   }, [fetchNotifications])
-
-  // Close dropdown when clicking outside
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [])
 
   const unreadCount = notifications.filter(n => !n.read).length
 
@@ -94,89 +89,91 @@ export function NotificationBell() {
   }
 
   return (
-    <div className="relative" ref={ref}>
-      <button
-        onClick={() => setOpen(o => !o)}
-        className="relative flex items-center justify-center rounded-lg p-2 text-[#2a5a7a] hover:bg-[#d6eeff] transition-colors"
-        aria-label="Notifications"
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          className="relative flex items-center justify-center rounded-lg p-2 text-[#2a5a7a] hover:bg-[#d6eeff] transition-colors"
+          aria-label="Notifications"
+        >
+          <Bell className="h-5 w-5" />
+          {unreadCount > 0 && (
+            <span className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[9px] font-bold text-white">
+              {unreadCount}
+            </span>
+          )}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="end"
+        sideOffset={8}
+        className="w-80 rounded-xl p-0 shadow-xl"
       >
-        <Bell className="h-5 w-5" />
-        {unreadCount > 0 && (
-          <span className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[9px] font-bold text-white">
-            {unreadCount}
-          </span>
-        )}
-      </button>
+        <div className="flex items-center justify-between border-b border-[#6aade0] px-4 py-3 dark:border-gray-700">
+          <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
+            Notifications {unreadCount > 0 && `(${unreadCount})`}
+          </h3>
+          {unreadCount > 0 && (
+            <button
+              onClick={markAllRead}
+              className="text-xs text-[#2a5a7a] hover:text-[#0a2a4a] dark:text-gray-400"
+            >
+              Mark all as read
+            </button>
+          )}
+        </div>
 
-      {open && (
-        <div className="absolute right-0 top-12 z-50 w-80 rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] shadow-xl dark:bg-gray-800 dark:ring-gray-700">
-          <div className="flex items-center justify-between border-b border-[#6aade0] px-4 py-3">
-            <h3 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">
-              Notifications {unreadCount > 0 && `(${unreadCount})`}
-            </h3>
-            {unreadCount > 0 && (
-              <button
-                onClick={markAllRead}
-                className="text-xs text-[#2a5a7a] hover:text-[#0a2a4a] dark:text-gray-400"
-              >
-                Mark all as read
-              </button>
-            )}
-          </div>
-
-          <div className="max-h-80 overflow-y-auto">
-            {notifications.length === 0 ? (
-              <p className="px-4 py-6 text-center text-sm text-[#3a6a8a]">
-                No notifications
-              </p>
-            ) : (
-              notifications.map(n => {
-                const actionable = n.type === 'connection'
-                return (
-                <div
-                  key={n.id}
-                  role={actionable ? 'button' : undefined}
-                  tabIndex={actionable ? 0 : undefined}
-                  onClick={actionable ? () => handleItemClick(n) : undefined}
-                  onKeyDown={
-                    actionable
-                      ? (e) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault()
-                            handleItemClick(n)
-                          }
+        <div className="max-h-80 overflow-y-auto">
+          {notifications.length === 0 ? (
+            <p className="px-4 py-6 text-center text-sm text-[#3a6a8a]">
+              No notifications
+            </p>
+          ) : (
+            notifications.map(n => {
+              const actionable = n.type === 'connection'
+              return (
+              <div
+                key={n.id}
+                role={actionable ? 'button' : undefined}
+                tabIndex={actionable ? 0 : undefined}
+                onClick={actionable ? () => handleItemClick(n) : undefined}
+                onKeyDown={
+                  actionable
+                    ? (e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault()
+                          handleItemClick(n)
                         }
-                      : undefined
-                  }
-                  className={`border-b border-[#d6eeff] px-4 py-3 last:border-0 ${
-                    !n.read ? 'bg-[#e0f0ff]' : ''
-                  } ${actionable ? 'cursor-pointer hover:bg-[#d6eeff] dark:hover:bg-gray-700' : ''}`}
-                >
-                  <div className="flex items-start gap-2">
-                    <span className="mt-0.5 text-sm">{typeIcon(n.type)}</span>
-                    <div className="min-w-0 flex-1">
-                      <p className={`text-sm ${!n.read ? 'font-semibold text-[#0a2a4a]' : 'text-[#1a4a6a]'}`}>
-                        {n.title}
+                      }
+                    : undefined
+                }
+                className={`border-b border-[#d6eeff] px-4 py-3 last:border-0 dark:border-gray-800 ${
+                  !n.read ? 'bg-[#e0f0ff] dark:bg-gray-900/50' : ''
+                } ${actionable ? 'cursor-pointer hover:bg-[#d6eeff] dark:hover:bg-gray-700' : ''}`}
+              >
+                <div className="flex items-start gap-2">
+                  <span className="mt-0.5 text-sm">{typeIcon(n.type)}</span>
+                  <div className="min-w-0 flex-1">
+                    <p className={`text-sm ${!n.read ? 'font-semibold text-[#0a2a4a] dark:text-white' : 'text-[#1a4a6a] dark:text-gray-300'}`}>
+                      {n.title}
+                    </p>
+                    <p className="mt-0.5 text-xs text-[#3a6a8a] dark:text-gray-400">{n.description}</p>
+                    <p className="mt-1 text-[10px] text-[#5a8aaa] dark:text-gray-500">{timeAgo(n.timestamp)}</p>
+                    {actionable && (
+                      <p className="mt-1 text-[10px] font-medium text-teal-600 dark:text-teal-400">
+                        Open Settings → Connection
                       </p>
-                      <p className="mt-0.5 text-xs text-[#3a6a8a]">{n.description}</p>
-                      <p className="mt-1 text-[10px] text-[#5a8aaa]">{timeAgo(n.timestamp)}</p>
-                      {actionable && (
-                        <p className="mt-1 text-[10px] font-medium text-teal-600 dark:text-teal-400">
-                          Open Settings → Connection
-                        </p>
-                      )}
-                    </div>
-                    {!n.read && (
-                      <div className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-blue-500" />
                     )}
                   </div>
+                  {!n.read && (
+                    <div className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-blue-500" />
+                  )}
                 </div>
-                )
-              })
-            )}
-          </div>
+              </div>
+              )
+            })
+          )}
         </div>
-      )}
-    </div>
+      </PopoverContent>
+    </Popover>
   )
 }
