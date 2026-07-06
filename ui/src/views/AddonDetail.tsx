@@ -1782,38 +1782,71 @@ export function AddonDetail() {
                 </div>
               </div>
 
-              {/* Summary stat cards */}
-              <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
-                <StatCard
-                  title="Active Apps"
-                  value={`${addon.enabled_clusters} / ${addon.total_clusters}`}
-                  icon={<Activity className="h-5 w-5" />}
-                />
-                <StatCard
-                  title="Healthy"
-                  value={`${addon.healthy_applications} (${healthPct}%)`}
-                  icon={<CheckCircle className="h-5 w-5" />}
-                  color="success"
-                />
-                {/* Degraded is a PROBLEM — red, matching its rendering
-                    everywhere else (V2-cleanup-61.2, D3). */}
-                <StatCard
-                  title="Degraded"
-                  value={addon.degraded_applications}
-                  icon={<AlertTriangle className="h-5 w-5" />}
-                  color={addon.degraded_applications > 0 ? 'error' : 'default'}
-                />
-                <StatCard
-                  title="Missing from ArgoCD"
-                  value={addon.missing_applications}
-                  icon={<XCircle className="h-5 w-5" />}
-                  color={addon.missing_applications > 0 ? 'error' : 'default'}
-                />
-                <StatCard
-                  title="Disabled in Git"
-                  value={disabledApps.length}
-                  icon={<Ban className="h-5 w-5" />}
-                />
+              {/* Summary stat cards — plain-English labels + subtitles
+                  (V2-cleanup-71.1). The problem/off cards (Having problems /
+                  Missing / Turned off) hide themselves when their count is
+                  zero, so an empty addon shows a calm 2-card view instead of
+                  a wall of zeros. Layout uses flex-wrap so the visible cards
+                  pack cleanly whether 2 or 5 are shown. */}
+              <h3 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
+                This addon across your clusters
+              </h3>
+              <div className="flex flex-wrap gap-4">
+                <div className="min-w-[160px] flex-1 basis-[calc(50%-0.5rem)] lg:basis-[calc(20%-0.8rem)]">
+                  <StatCard
+                    title="Clusters enabled"
+                    subtitle="turned on / total"
+                    value={`${addon.enabled_clusters} / ${addon.total_clusters}`}
+                    icon={<Activity className="h-5 w-5" />}
+                  />
+                </div>
+                <div className="min-w-[160px] flex-1 basis-[calc(50%-0.5rem)] lg:basis-[calc(20%-0.8rem)]">
+                  <StatCard
+                    title="Running fine"
+                    subtitle="passing health checks"
+                    value={`${addon.healthy_applications} (${healthPct}%)`}
+                    icon={<CheckCircle className="h-5 w-5" />}
+                    color="success"
+                  />
+                </div>
+                {/* Having problems is a PROBLEM — red, matching its rendering
+                    everywhere else (V2-cleanup-61.2, D3). Hidden when zero. */}
+                {addon.degraded_applications > 0 && (
+                  <div className="min-w-[160px] flex-1 basis-[calc(50%-0.5rem)] lg:basis-[calc(20%-0.8rem)]">
+                    <StatCard
+                      title="Having problems"
+                      subtitle="deployed but unhealthy"
+                      value={addon.degraded_applications}
+                      icon={<AlertTriangle className="h-5 w-5" />}
+                      color="error"
+                    />
+                  </div>
+                )}
+                {/* "Missing" — should be running but ArgoCD has no record.
+                    NOT "Not deployed yet" — that term is reserved for a
+                    different neutral state (status-vocabulary contract,
+                    PR #467). Hidden when zero. */}
+                {addon.missing_applications > 0 && (
+                  <div className="min-w-[160px] flex-1 basis-[calc(50%-0.5rem)] lg:basis-[calc(20%-0.8rem)]">
+                    <StatCard
+                      title="Missing"
+                      subtitle="should be running, but ArgoCD has no record"
+                      value={addon.missing_applications}
+                      icon={<XCircle className="h-5 w-5" />}
+                      color="error"
+                    />
+                  </div>
+                )}
+                {disabledApps.length > 0 && (
+                  <div className="min-w-[160px] flex-1 basis-[calc(50%-0.5rem)] lg:basis-[calc(20%-0.8rem)]">
+                    <StatCard
+                      title="Turned off"
+                      subtitle="switched off in the config"
+                      value={disabledApps.length}
+                      icon={<Ban className="h-5 w-5" />}
+                    />
+                  </div>
+                )}
               </div>
 
               {/* Overall health progress bar */}
