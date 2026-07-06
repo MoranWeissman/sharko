@@ -376,10 +376,29 @@ PY
 # Prints the HTTP status code; response body lands in $HUB_API_BODY.
 # Requires $HUB_TOKEN (set by hub_sharko_login).
 HUB_API_BODY=""
+
+# hub_api_init: create the shared response file IN THE PARENT SHELL. This must
+# be called (in the parent, never inside `$( )`) by every entry point before
+# its first hub_api call. Why it matters: hub_api is always invoked as
+# `code=$(hub_api ...)`, i.e. inside a command-substitution subshell. If the
+# response-file path were created lazily inside hub_api, the mktemp would run
+# in that throwaway subshell and the parent's HUB_API_BODY would stay empty —
+# so every later `json_field "$HUB_API_BODY" ...` in the parent reads nothing
+# and every API assertion silently comes back blank (the live-run bug this
+# fixes: type/status/creds_source/success all empty in env-up and api-smoke).
+hub_api_init() {
+    if [ -z "$HUB_API_BODY" ] || [ ! -f "$HUB_API_BODY" ]; then
+        HUB_API_BODY="$(mktemp "${TMPDIR:-/tmp}/sharko-hub-api.XXXXXX")"
+    fi
+}
+
 hub_api() {
     local method="$1"
     local path="$2"
     local body="${3:-}"
+    # Safety net only — the normal path is hub_api_init() in the parent shell.
+    # If this fires, it fires inside the `code=$(hub_api ...)` subshell and the
+    # assignment is lost to the parent; hub_api_init is what keeps it working.
     if [ -z "$HUB_API_BODY" ]; then
         HUB_API_BODY="$(mktemp "${TMPDIR:-/tmp}/sharko-hub-api.XXXXXX")"
     fi
@@ -1687,6 +1706,7 @@ print(json.dumps({"data": {"policy.csv": os.environ["NEW_POLICY"]}}))
 #   4. GET /api/v1/providers — assert the aws-sm provider reports
 #      "connected" with zero stored keys. That line is the proof.
 hub_configure_sharko() {
+    hub_api_init
     hub_pf_start || return 1
     hub_sharko_login || return 1
     log_ok "logged in to the hub Sharko as admin"
@@ -2167,6 +2187,7 @@ EOF
 
     # ---- 4. register via the hub Sharko API ----
     log_info "[4/4] registering '${CLUSTER_NAME}' in the hub Sharko (creds_source=eks-token, role_arn=${ROLE_NAME})"
+    hub_api_init
     hub_pf_start || return 1
     hub_sharko_login || return 1
 
@@ -2295,6 +2316,7 @@ EOF
     echo
 
     # ---- 1. login ----
+    hub_api_init
     if hub_pf_start && hub_sharko_login; then
         smoke_pass "login as admin"
     else
