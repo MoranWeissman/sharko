@@ -8,6 +8,8 @@
 
 Sharko runs in-cluster and manages the full lifecycle of addons (cert-manager, monitoring, logging, and more) across your entire fleet — from a single dashboard, CLI, or REST API. Every change goes through a Git PR, so fleet state is always auditable and version-controlled.
 
+![Sharko and ArgoCD run on the hub cluster, read/write the GitOps repo, and ArgoCD deploys addons to a mixed fleet of Sharko-managed, self-managed, and EKS-token spoke clusters.](assets/diagrams/01-hub-spoke.drawio.svg)
+
 **See Sharko in action:**
 
 ![Sharko dashboard — fleet health, addon version matrix, and live PR stream.](assets/screenshots/dashboard.png){ loading=lazy }

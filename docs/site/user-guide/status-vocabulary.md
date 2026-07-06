@@ -76,6 +76,8 @@ Shown on: catalog tiles, the catalog table, and the catalog stat cards.
 | **Sync failing** | Red | ArgoCD keeps failing to sync this addon somewhere. |
 | **Missing from ArgoCD** | Red | Enabled in the catalog but ArgoCD has no matching app — needs a look. |
 
+![Addon lifecycle: Not deployed yet, then Waiting to deploy once enabled, then Deploying…, then either Running on N/M clusters or straight to Running on N clusters; from there, ArgoCD sync problems lead to Sync failing or Missing from ArgoCD, both of which return to Running on N clusters once resolved, and disabling everywhere returns to Not deployed yet.](../assets/diagrams/06-addon-lifecycle.drawio.svg)
+
 "Not deployed yet" and "Missing from ArgoCD" replaced the old
 "Catalog Only" label, which meant both of these very different things.
 
