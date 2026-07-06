@@ -342,7 +342,7 @@ function ArtifactHubResultCard({ pkg, onOpen }: ArtifactHubResultCardProps) {
     pkg.display_name || pkg.name,
     pkg.description ?? '',
     `from ${repoLabel}`,
-    pkg.repository.verified_publisher ? 'verified publisher' : '',
+    pkg.repository.verified_publisher ? 'verified by ArtifactHub' : '',
     pkg.repository.official ? 'official' : '',
   ]
     .filter(Boolean)
@@ -395,10 +395,10 @@ function ArtifactHubResultCard({ pkg, onOpen }: ArtifactHubResultCardProps) {
         {pkg.repository.verified_publisher && (
           <span
             className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800 dark:bg-blue-900/40 dark:text-blue-300"
-            title="Verified publisher — repo ownership confirmed via metadata token"
+            title="Verified by ArtifactHub — repo ownership confirmed via metadata token"
           >
             <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
-            Verified
+            Verified by ArtifactHub
           </span>
         )}
         {pkg.repository.official && (

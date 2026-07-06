@@ -98,7 +98,7 @@ describe('MarketplaceSearchTab', () => {
     await waitFor(() => {
       expect(screen.getByText(/Curated by Sharko/i)).toBeInTheDocument()
       expect(screen.getByText(/From ArtifactHub/i)).toBeInTheDocument()
-      expect(screen.getByText(/Verified/i)).toBeInTheDocument()
+      expect(screen.getByText(/Verified by ArtifactHub/i)).toBeInTheDocument()
     })
   })
 
