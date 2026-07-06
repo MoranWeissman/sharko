@@ -750,7 +750,12 @@ describe('AddonCatalog — add-addon parity flow (V2-cleanup-15.1)', () => {
     expect(vi.mocked(addAddon).mock.calls[0][0].dry_run).toBe(true)
   })
 
-  it('merged===true refreshes the catalog and confirms it was added', async () => {
+  // V2-cleanup-66.1 — a merged PR used to close the dialog instantly (a toast
+  // was the only signal). Now the dialog STAYS OPEN showing the lifecycle
+  // window's terminal "Merged" state with an explicit "View addon" button —
+  // the catalog still refreshes in the background so it's ready when the
+  // user chooses to leave.
+  it('merged===true keeps the dialog open, refreshes the catalog in the background, and offers View addon', async () => {
     const { api } = await import('@/services/api')
     vi.mocked(addAddon).mockResolvedValue({
       pr_id: 8,
@@ -765,15 +770,51 @@ describe('AddonCatalog — add-addon parity flow (V2-cleanup-15.1)', () => {
       within(dialog).getByRole('button', { name: /register addon/i }),
     )
 
-    // Merged → catalog refetched + "added to your catalog" toast.
+    // Merged → catalog refetched in the background (no instant close).
     await waitFor(() =>
       expect(vi.mocked(api.getAddonCatalog).mock.calls.length).toBeGreaterThan(
         catalogCallsBefore,
       ),
     )
+    // The dialog is still open, with at least one "added to your catalog"
+    // confirmation visible (the toast and/or the lifecycle banner).
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
     expect(
-      await screen.findByText(/added to your catalog/i),
-    ).toBeInTheDocument()
+      screen.getAllByText(/added to your catalog/i).length,
+    ).toBeGreaterThan(0)
+
+    // Clicking "View addon" navigates and closes the dialog — the user
+    // decides when to leave, it isn't automatic.
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: /view addon/i }),
+    )
+    expect(mockNavigate).toHaveBeenCalledWith('/addons/my-addon')
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument(),
+    )
+  })
+
+  it('merged===true — "Add another" resets the form but keeps the dialog open', async () => {
+    vi.mocked(addAddon).mockResolvedValue({
+      pr_id: 8,
+      pr_url: 'https://gh/pr/8',
+      merged: true,
+    })
+    const dialog = await renderAndOpenDialog()
+    await fillSubmittableForm(dialog)
+
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: /register addon/i }),
+    )
+    await screen.findByRole('button', { name: /add another/i })
+
+    fireEvent.click(screen.getByRole('button', { name: /add another/i }))
+
+    // Dialog stays open, form is back to its empty/submittable-again state.
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(
+      (dialog.querySelector('#add-addon-name') as HTMLInputElement).value,
+    ).toBe('')
   })
 
   it('merged===false does NOT refresh the catalog and shows the clickable PR', async () => {
@@ -806,6 +847,16 @@ describe('AddonCatalog — add-addon parity flow (V2-cleanup-15.1)', () => {
     // The catalog was NOT refetched while the PR is still open.
     expect(vi.mocked(api.getAddonCatalog).mock.calls.length).toBe(
       catalogCallsBefore,
+    )
+
+    // Terminal state offers "Track on Dashboard" instead of an automatic
+    // jump (V2-cleanup-66.1). Clicking it navigates and closes the dialog.
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: /track on dashboard/i }),
+    )
+    expect(mockNavigate).toHaveBeenCalledWith('/dashboard?prs_state=pending')
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument(),
     )
   })
 })

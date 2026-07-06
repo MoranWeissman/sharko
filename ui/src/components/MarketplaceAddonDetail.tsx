@@ -518,19 +518,19 @@ export function MarketplaceAddonDetail({
       const wasMerged = res.merged ?? res.result?.merged ?? false
       const url = res.pr_url || res.result?.pr_url
 
-      // Post-submit navigation branches on whether the PR merged:
-      //   - merged  → the addon is really in the catalog → go to its page.
-      //   - opened  → a PR is awaiting review → go to the Dashboard's pending
-      //     PR panel (deep-linked via ?prs_state=pending) so the operator can
-      //     watch / merge it.
+      // Keep the lifecycle window (SubmitPhaseBanner / PRLifecycleProgress)
+      // on screen instead of navigating away the instant the POST resolves
+      // (V2-cleanup-66.1) — the user proceeds via the explicit "View addon"
+      // / "Track on Dashboard" button below the banner. Branch STRICTLY on
+      // `merged` (load-bearing — 61.3's "not really in git" fix):
+      //   - merged  → the addon really landed in git.
+      //   - opened  → a PR is awaiting review; don't imply it's applied yet.
       if (wasMerged) {
         setSubmitPhase('merged')
         showToast(`${entry.name} added to your catalog`, 'success')
-        navigate(`/addons/${encodeURIComponent(entry.name)}`)
       } else if (url) {
         setSubmitPhase('opened')
         showToast(`${label} opened — merge to apply`, 'success')
-        navigate('/dashboard?prs_state=pending')
       } else {
         // Defensive: no merge flag and no PR URL. Stay on the page and tell
         // the truth rather than navigating somewhere misleading.
@@ -886,6 +886,27 @@ export function MarketplaceAddonDetail({
                     <Eye className="h-4 w-4" aria-hidden="true" />
                   )}
                   Preview
+                </button>
+              )}
+              {/* Terminal-state navigation (V2-cleanup-66.1) — explicit
+                  buttons instead of an automatic jump, so the lifecycle
+                  window above stays on screen long enough to read. */}
+              {submitResult && submitPhase === 'merged' && (
+                <button
+                  type="button"
+                  onClick={() => navigate(`/addons/${encodeURIComponent(entry.name)}`)}
+                  className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 dark:bg-teal-700 dark:hover:bg-teal-600"
+                >
+                  View addon
+                </button>
+              )}
+              {submitResult && submitPhase === 'opened' && (
+                <button
+                  type="button"
+                  onClick={() => navigate('/dashboard?prs_state=pending')}
+                  className="inline-flex items-center gap-2 rounded-md bg-teal-600 px-4 py-2 text-sm font-medium text-white hover:bg-teal-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 dark:bg-teal-700 dark:hover:bg-teal-600"
+                >
+                  Track on Dashboard
                 </button>
               )}
               {!submitResult && (
