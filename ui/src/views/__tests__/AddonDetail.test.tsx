@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { AddonDetail } from '@/views/AddonDetail'
-import { getAddonPRs } from '@/services/api'
+import { getAddonPRs, api } from '@/services/api'
 
 vi.mock('@/services/api', () => ({
   getAddonPRs: vi.fn().mockResolvedValue({ prs: [] }),
@@ -109,17 +109,19 @@ describe('AddonDetail', () => {
       expect(screen.getAllByText('ingress-nginx').length).toBeGreaterThanOrEqual(1)
     })
 
-    // Stat cards
-    expect(screen.getByText('Active Apps')).toBeInTheDocument()
+    // Stat cards — plain-English labels (V2-cleanup-71.1)
+    expect(screen.getByText('Clusters enabled')).toBeInTheDocument()
     expect(screen.getByText('8 / 10')).toBeInTheDocument()
-    // "Healthy" appears in stat card, status badges, and filter — use getAllByText
-    expect(screen.getAllByText('Healthy').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByText('Running fine')).toBeInTheDocument()
     expect(screen.getByText('6 (75%)')).toBeInTheDocument()
-    // "Degraded" also appears in stat card + status badge + filter
-    expect(screen.getAllByText('Degraded').length).toBeGreaterThanOrEqual(1)
-    // V2-cleanup-61.2 (D1): the problem stat is named "Missing from ArgoCD".
-    expect(screen.getAllByText('Missing from ArgoCD').length).toBeGreaterThanOrEqual(1)
-    expect(screen.getByText('Disabled in Git')).toBeInTheDocument()
+    // The problem stat is now named "Having problems" (subtitle carries the
+    // "deployed but unhealthy" detail).
+    expect(screen.getByText('Having problems')).toBeInTheDocument()
+    // V2-cleanup-71.1: the problem stat is now named "Missing" (subtitle
+    // carries the ArgoCD detail), not "Missing from ArgoCD" and NOT
+    // "Not deployed yet" — that term is reserved for a different state.
+    expect(screen.getByText('Missing')).toBeInTheDocument()
+    expect(screen.getByText('Turned off')).toBeInTheDocument()
   })
 
   it('renders cluster applications table', async () => {
@@ -252,5 +254,118 @@ describe('AddonDetail — pending-PR banner copy (V2-cleanup-15.2)', () => {
       expect(screen.getByText('Upgrade in progress')).toBeInTheDocument()
     })
     expect(screen.queryByText('Add addon — PR open')).not.toBeInTheDocument()
+  })
+})
+
+// V2-cleanup-71.1 — the problem/off stat cards (Having problems / Missing /
+// Turned off) hide themselves when their count is zero, so an empty addon
+// shows a calm two-card view instead of a wall of zeros.
+describe('AddonDetail — hide problem/off stat cards when zero (V2-cleanup-71.1)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(getAddonPRs).mockResolvedValue({ prs: [] } as never)
+  })
+
+  it('hides "Having problems", "Missing", and "Turned off" when all their counts are zero', async () => {
+    vi.mocked(api.getAddonDetail).mockResolvedValueOnce({
+      addon: {
+        addon_name: 'ingress-nginx',
+        chart: 'ingress-nginx',
+        repo_url: 'https://kubernetes.github.io/ingress-nginx',
+        namespace: 'ingress-nginx',
+        version: '4.8.0',
+        total_clusters: 2,
+        enabled_clusters: 2,
+        healthy_applications: 2,
+        degraded_applications: 0,
+        missing_applications: 0,
+        applications: [
+          {
+            cluster_name: 'prod-cluster-1',
+            cluster_environment: 'prod',
+            enabled: true,
+            configured_version: '4.8.0',
+            deployed_version: '4.8.0',
+            namespace: 'ingress-nginx',
+            health_status: 'Healthy',
+            status: 'healthy',
+            application_name: 'ingress-nginx-prod-1',
+          },
+          {
+            cluster_name: 'staging-cluster-1',
+            cluster_environment: 'staging',
+            enabled: true,
+            configured_version: '4.8.0',
+            deployed_version: '4.8.0',
+            namespace: 'ingress-nginx',
+            health_status: 'Healthy',
+            status: 'healthy',
+          },
+        ],
+      },
+    } as never)
+
+    renderDetail()
+
+    await waitFor(() => {
+      expect(screen.getByText('Clusters enabled')).toBeInTheDocument()
+    })
+
+    // Always-shown cards are present.
+    expect(screen.getByText('Clusters enabled')).toBeInTheDocument()
+    expect(screen.getByText('Running fine')).toBeInTheDocument()
+
+    // Zero-count cards are absent, not just zeroed-out.
+    expect(screen.queryByText('Having problems')).not.toBeInTheDocument()
+    expect(screen.queryByText('Missing')).not.toBeInTheDocument()
+    expect(screen.queryByText('Turned off')).not.toBeInTheDocument()
+  })
+
+  it('shows "Having problems" when degraded_applications is greater than zero', async () => {
+    vi.mocked(api.getAddonDetail).mockResolvedValueOnce({
+      addon: {
+        addon_name: 'ingress-nginx',
+        chart: 'ingress-nginx',
+        repo_url: 'https://kubernetes.github.io/ingress-nginx',
+        namespace: 'ingress-nginx',
+        version: '4.8.0',
+        total_clusters: 2,
+        enabled_clusters: 2,
+        healthy_applications: 1,
+        degraded_applications: 1,
+        missing_applications: 0,
+        applications: [
+          {
+            cluster_name: 'prod-cluster-1',
+            cluster_environment: 'prod',
+            enabled: true,
+            configured_version: '4.8.0',
+            deployed_version: '4.8.0',
+            namespace: 'ingress-nginx',
+            health_status: 'Degraded',
+            status: 'degraded',
+          },
+          {
+            cluster_name: 'staging-cluster-1',
+            cluster_environment: 'staging',
+            enabled: true,
+            configured_version: '4.8.0',
+            deployed_version: '4.8.0',
+            namespace: 'ingress-nginx',
+            health_status: 'Healthy',
+            status: 'healthy',
+          },
+        ],
+      },
+    } as never)
+
+    renderDetail()
+
+    await waitFor(() => {
+      expect(screen.getByText('Having problems')).toBeInTheDocument()
+    })
+
+    expect(screen.queryByText('Missing')).not.toBeInTheDocument()
+    expect(screen.queryByText('Turned off')).not.toBeInTheDocument()
   })
 })
