@@ -344,7 +344,14 @@ print(json.dumps(out))
 }
 
 # json_field <file> <dotted.path>: print a JSON field (or empty on any miss).
-# List indices are numeric path segments. Dicts/lists print as compact JSON.
+# List indices are numeric path segments. Booleans print as the JSON literals
+# true/false, and null prints as empty (NOT Python's True/False/None — callers
+# compare against plain "true"/"false"/empty, so this must not leak Python
+# repr). Numbers print as-is. Dicts/lists print as compact JSON. Routed
+# through python3 -c/json.loads (python3 is already a hard dependency of this
+# script) instead of a regex/grep parser, so nested dotted paths and
+# non-string JSON types (bool/number/null) all resolve correctly instead of
+# silently coming back empty.
 json_field() {
     python3 - "$1" "$2" <<'PY' 2>/dev/null
 import json, sys
@@ -352,7 +359,14 @@ try:
     d = json.load(open(sys.argv[1]))
     for k in sys.argv[2].split('.'):
         d = d[int(k)] if isinstance(d, list) else d[k]
-    print(d if not isinstance(d, (dict, list)) else json.dumps(d))
+    if d is None:
+        pass
+    elif isinstance(d, bool):
+        print('true' if d else 'false')
+    elif isinstance(d, (dict, list)):
+        print(json.dumps(d))
+    else:
+        print(d)
 except Exception:
     pass
 PY
@@ -362,10 +376,29 @@ PY
 # Prints the HTTP status code; response body lands in $HUB_API_BODY.
 # Requires $HUB_TOKEN (set by hub_sharko_login).
 HUB_API_BODY=""
+
+# hub_api_init: create the shared response file IN THE PARENT SHELL. This must
+# be called (in the parent, never inside `$( )`) by every entry point before
+# its first hub_api call. Why it matters: hub_api is always invoked as
+# `code=$(hub_api ...)`, i.e. inside a command-substitution subshell. If the
+# response-file path were created lazily inside hub_api, the mktemp would run
+# in that throwaway subshell and the parent's HUB_API_BODY would stay empty —
+# so every later `json_field "$HUB_API_BODY" ...` in the parent reads nothing
+# and every API assertion silently comes back blank (the live-run bug this
+# fixes: type/status/creds_source/success all empty in env-up and api-smoke).
+hub_api_init() {
+    if [ -z "$HUB_API_BODY" ] || [ ! -f "$HUB_API_BODY" ]; then
+        HUB_API_BODY="$(mktemp "${TMPDIR:-/tmp}/sharko-hub-api.XXXXXX")"
+    fi
+}
+
 hub_api() {
     local method="$1"
     local path="$2"
     local body="${3:-}"
+    # Safety net only — the normal path is hub_api_init() in the parent shell.
+    # If this fires, it fires inside the `code=$(hub_api ...)` subshell and the
+    # assignment is lost to the parent; hub_api_init is what keeps it working.
     if [ -z "$HUB_API_BODY" ]; then
         HUB_API_BODY="$(mktemp "${TMPDIR:-/tmp}/sharko-hub-api.XXXXXX")"
     fi
@@ -662,7 +695,9 @@ beyond the cluster already running.
 Idempotent: reuses the role and access entry if they already exist.
 
 Steps:
-  1. aws iam create-role (trust policy: your account root may assume it)
+  1. aws iam create-role (trust policy: your account root may assume it +
+     tag its session — sts:AssumeRole + sts:TagSession, matching what the
+     hub's Pod Identity role needs to assume this role for real)
   2. aws eks create-access-entry (registers the role as a cluster principal)
   3. aws eks associate-access-policy (grants AmazonEKSClusterAdminPolicy,
      cluster-wide scope — fine for a throwaway test, not for production)
@@ -697,27 +732,39 @@ EOF
     local role_arn
     role_arn=$(aws iam get-role --role-name "$ROLE_NAME" --query 'Role.Arn' --output text 2>/dev/null || true)
 
-    if [ -n "$role_arn" ] && [ "$role_arn" != "None" ]; then
-        log_info "role '${ROLE_NAME}' already exists — reusing"
-    else
-        log_info "creating IAM role '${ROLE_NAME}'"
-        local trust_file
-        trust_file="$(mktemp)"
-        trap 'rm -f "$trust_file"' RETURN
-        cat > "$trust_file" <<EOF
+    # Trust policy is always (re-)written below, whether the role already
+    # exists or not. A throwaway role from a previous run predates the
+    # sts:TagSession fix (V2-cleanup-62.3 live-run fixes) and "reusing" it
+    # unchanged would silently keep producing the exact AccessDenied on
+    # sts:TagSession this fix exists to close.
+    local trust_file
+    trust_file="$(mktemp)"
+    trap 'rm -f "$trust_file"' RETURN
+    cat > "$trust_file" <<EOF
 {
   "Version": "2012-10-17",
   "Statement": [
     {
       "Effect": "Allow",
       "Principal": {"AWS": "arn:aws:iam::${SHARKO_EKS_TEST_ACCOUNT_ID}:root"},
-      "Action": "sts:AssumeRole"
+      "Action": ["sts:AssumeRole", "sts:TagSession"]
     }
   ]
 }
 EOF
-        # Trust policy is intentionally broad (whole account root) — this is
-        # a throwaway, single-account personal test, not a production role.
+    # Trust policy is intentionally broad (whole account root) — this is
+    # a throwaway, single-account personal test, not a production role.
+    if [ -n "$role_arn" ] && [ "$role_arn" != "None" ]; then
+        log_info "role '${ROLE_NAME}' already exists — reusing (refreshing trust policy)"
+        if ! aws iam update-assume-role-policy \
+            --role-name "$ROLE_NAME" \
+            --policy-document "file://${trust_file}" \
+            >/dev/null; then
+            log_fail "aws iam update-assume-role-policy (${ROLE_NAME}) failed"
+            return 1
+        fi
+    else
+        log_info "creating IAM role '${ROLE_NAME}'"
         local role_description
         role_description=$(ascii_safe "Sharko EKS live-test throwaway role (V2-cleanup-62.1) - safe to delete any time")
         if ! aws iam create-role \
@@ -1249,8 +1296,11 @@ EOF
 #     (ListSecrets is account-wide because AWS does not support resource-level
 #     scoping for that action — read-only names listing, acceptable here)
 #   - eks:DescribeCluster + eks:ListClusters (discovery/registration reads)
-#   - sts:AssumeRole on the phase-1 spoke role only (the per-cluster
-#     role_arn hop that registration exercises)
+#   - sts:AssumeRole + sts:TagSession on the phase-1 spoke role only (the
+#     per-cluster role_arn hop that registration exercises). TagSession is
+#     required in addition to AssumeRole: EKS Pod Identity sessions carry
+#     session tags, and AWS rejects the assume with AccessDenied on
+#     sts:TagSession if the hub role's policy grants AssumeRole alone.
 hub_iam_setup() {
     local hub_role_arn
     hub_role_arn=$(aws iam get-role --role-name "$HUB_ROLE_NAME" --query 'Role.Arn' --output text 2>/dev/null || true)
@@ -1329,7 +1379,7 @@ EOF
     {
       "Sid": "SharkoAssumeSpokeTestRole",
       "Effect": "Allow",
-      "Action": ["sts:AssumeRole"],
+      "Action": ["sts:AssumeRole", "sts:TagSession"],
       "Resource": "arn:aws:iam::${SHARKO_EKS_TEST_ACCOUNT_ID}:role/${ROLE_NAME}"
     }
   ]
@@ -1656,6 +1706,7 @@ print(json.dumps({"data": {"policy.csv": os.environ["NEW_POLICY"]}}))
 #   4. GET /api/v1/providers — assert the aws-sm provider reports
 #      "connected" with zero stored keys. That line is the proof.
 hub_configure_sharko() {
+    hub_api_init
     hub_pf_start || return 1
     hub_sharko_login || return 1
     log_ok "logged in to the hub Sharko as admin"
@@ -1710,7 +1761,7 @@ print(json.dumps({
     synced=$(json_field "$HUB_API_BODY" bootstrap_synced)
     log_info "repo status: initialized=${initialized:-?} bootstrap_synced=${synced:-?}"
 
-    if [ "$initialized" != "True" ] && [ "$initialized" != "true" ]; then
+    if [ "$initialized" != "true" ]; then
         log_info "repo not initialized — running Sharko's own init (scaffold + ArgoCD repo + root app)"
         payload='{"bootstrap_argocd": true, "auto_merge": true}'
         code=$(hub_api POST /api/v1/init "$payload")
@@ -1745,7 +1796,7 @@ print(json.dumps({
             return 1
         fi
         log_ok "repo initialized + ArgoCD bootstrapped by Sharko init"
-    elif [ "$synced" = "True" ] || [ "$synced" = "true" ]; then
+    elif [ "$synced" = "true" ]; then
         log_ok "repo initialized and bootstrap app already Synced — nothing to wire"
     else
         log_info "repo is initialized but this hub's ArgoCD has no healthy bootstrap — wiring it manually"
@@ -1769,8 +1820,9 @@ print(json.dumps({
         log_ok "ArgoCD repository credential in place"
 
         # 2b. Apply the repo's OWN root-app.yaml (written to the repo root by
-        # Sharko init back when the repo was first initialized — placeholders
-        # already replaced with the real repo URL).
+        # Sharko init back when the repo was first initialized — a raw fetch
+        # of the committed file still carries UNRESOLVED template placeholders
+        # on disk; see the substitution step below for why and how).
         log_info "fetching root-app.yaml from the gitops repo and applying it to the hub ArgoCD"
         local owner_repo
         owner_repo=$(RURL="$SHARKO_GITOPS_REPO_URL" python3 -c '
@@ -1793,6 +1845,39 @@ print("/".join(parts[:2]))')
             rm -f "$root_app_file"
             return 1
         fi
+
+        # The repo's root-app.yaml is the Helm-templated
+        # templates/bootstrap/root-app.yaml (see internal/orchestrator/init.go)
+        # and carries UNRESOLVED {{ .Values.repoURL }} / {{ .Values.targetRevision }}
+        # placeholders on disk — Sharko's own init only resolves them at
+        # commit time on first bootstrap, not on every read. kubectl apply
+        # chokes on the literal "{{ ... }}" text, so resolve them here the
+        # same way Sharko does, then fail loudly if anything got missed.
+        #
+        # Escape sed replacement metacharacters (backslash first, then & and
+        # the | delimiter) so a URL/branch value can never be misread as a
+        # sed backreference or "whole match" token.
+        local esc_repo_url esc_branch
+        esc_repo_url=$(printf '%s' "$SHARKO_GITOPS_REPO_URL" | sed -e 's/\\/\\\\/g' -e 's/&/\\\&/g' -e 's/|/\\|/g')
+        esc_branch=$(printf '%s' "${EKS_TEST_GITOPS_BRANCH:-main}" | sed -e 's/\\/\\\\/g' -e 's/&/\\\&/g' -e 's/|/\\|/g')
+        local subst_file
+        subst_file="$(mktemp "${TMPDIR:-/tmp}/sharko-root-app-subst.XXXXXX.yaml")"
+        if ! sed -e "s|{{ \.Values\.repoURL }}|${esc_repo_url}|g" \
+            -e "s|{{ \.Values\.targetRevision }}|${esc_branch}|g" \
+            "$root_app_file" > "$subst_file"; then
+            log_fail "sed substitution of root-app.yaml placeholders failed"
+            rm -f "$root_app_file" "$subst_file"
+            return 1
+        fi
+        mv "$subst_file" "$root_app_file"
+        if grep -q '{{' "$root_app_file"; then
+            log_fail "root-app.yaml still has unresolved template placeholder(s) after substitution:"
+            grep -n '{{' "$root_app_file" >&2
+            rm -f "$root_app_file"
+            return 1
+        fi
+        log_ok "root-app.yaml placeholders resolved (repoURL, targetRevision)"
+
         if ! hkctl apply -n argocd -f "$root_app_file" >/dev/null; then
             log_fail "kubectl apply of root-app.yaml failed"
             rm -f "$root_app_file"
@@ -2102,6 +2187,7 @@ EOF
 
     # ---- 4. register via the hub Sharko API ----
     log_info "[4/4] registering '${CLUSTER_NAME}' in the hub Sharko (creds_source=eks-token, role_arn=${ROLE_NAME})"
+    hub_api_init
     hub_pf_start || return 1
     hub_sharko_login || return 1
 
@@ -2230,6 +2316,7 @@ EOF
     echo
 
     # ---- 1. login ----
+    hub_api_init
     if hub_pf_start && hub_sharko_login; then
         smoke_pass "login as admin"
     else
@@ -2310,9 +2397,12 @@ print(json.dumps({
             200|201|202)
                 smoke_pass "POST /addons — podinfo ${PODINFO_VERSION} added to the catalog (auto_merge)"
                 ;;
+            409)
+                smoke_pass "podinfo already in catalog — reusing"
+                ;;
             *)
                 if grep -qi "already" "$HUB_API_BODY" 2>/dev/null; then
-                    smoke_pass "podinfo already in the catalog (POST said 'already')"
+                    smoke_pass "podinfo already in catalog — reusing"
                 else
                     smoke_fail "POST /addons (podinfo) — ${code}" "$(head -c 200 "$HUB_API_BODY" 2>/dev/null || true)"
                 fi
@@ -2368,7 +2458,7 @@ except Exception:
     print("parse-error")
 PY
 )
-    if [ "$code" = "200" ] && { [ "$t_success" = "True" ] || [ "$t_success" = "true" ]; } && [ -z "$t_failed_steps" ]; then
+    if [ "$code" = "200" ] && [ "$t_success" = "true" ] && [ -z "$t_failed_steps" ]; then
         smoke_pass "POST /clusters/${CLUSTER_NAME}/test — success, all steps pass"
     else
         smoke_fail "cluster test — ${code}, success='${t_success}', failing steps: ${t_failed_steps:-n/a}" \
