@@ -191,4 +191,15 @@ describe('MarketplaceAddonDetail — V2-cleanup-14 add-addon flow', () => {
     fireEvent.click(trackBtn)
     expect(mockNavigate).toHaveBeenCalledWith('/dashboard?prs_state=pending')
   })
+
+  // V2-cleanup-70.1 — the embedded-catalog "Internal" source badge showed the
+  // same meaningless word on every built-in addon (no third-party catalog
+  // configured), so it's hidden on this browsing surface. The mocked catalog
+  // entry above has no `source` field, i.e. embedded.
+  it('does not render an "Internal" source badge for a built-in catalog entry', async () => {
+    renderDetail()
+    await waitForActionPanel()
+
+    expect(screen.queryByText('Internal')).not.toBeInTheDocument()
+  })
 })
