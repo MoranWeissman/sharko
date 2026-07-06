@@ -387,7 +387,7 @@ EOF
         if ! aws iam create-role \
             --role-name "$ROLE_NAME" \
             --assume-role-policy-document "file://${trust_file}" \
-            --description "Sharko EKS live-test throwaway role (V2-cleanup-62.1) — safe to delete any time" \
+            --description "Sharko EKS live-test throwaway role (V2-cleanup-62.1) - safe to delete any time" \
             --tags Key=sharko:purpose,Value=live-test Key=sharko:throwaway,Value=true \
             >/dev/null; then
             log_fail "aws iam create-role failed"
@@ -612,29 +612,27 @@ ${BOLD}Leg 1 — Register Cluster dialog (baseline, no assumed role)${RESET}
                               (this sets creds_source=eks-token; Provider is
                               auto-set to "eks" by the UI, nothing to type)
   Region (optional):         ${REGION}
-  Role ARN (optional):       LEAVE BLANK — see "known gap" below, this field
-                              currently has zero effect no matter what you type
+  Role ARN (optional):       leave blank for this leg — there's no role to
+                              assume yet; see Leg 2 for how to supply one
   Secret Path (optional):    leave blank (defaults to the cluster name, which
                               matches the secret you just created above)
 
 ${BOLD}Leg 2 — prove the assume-role hop${RESET}
   1. Run: $0 role-setup                 (creates the throwaway role + access entry)
-  2. Put the printed role ARN into the SECRET's "roleArn" field (see above) —
-     NOT into the UI's Role ARN field (it does nothing, see below).
+  2. Supply the printed role ARN to Sharko either way:
+       a) UI: re-register (or edit) the cluster and paste it into the
+          Register Cluster dialog's "Role ARN" field. Persisted as role_arn
+          on the cluster's managed-clusters.yaml entry and used at token
+          mint time.
+       b) Secret: put it into the SECRET's "roleArn" field instead (see
+          above) — no re-registration needed, Sharko re-reads the secret
+          on every fetch.
+     Precedence if both are set: the secret's roleArn wins over the
+     per-cluster role_arn from the UI, which wins over the connection-level
+     provider default.
   3. In Sharko, click "Test cluster" (or trigger any addon deploy) again.
-     Sharko re-fetches the secret on every credential resolution, so this
-     now exercises the assume-role hop for real, through Sharko's own code.
-
-${BOLD}Known gap — report this, do not fix it here${RESET}
-  The Register Cluster dialog's "Role ARN" field (ui/src/views/ClustersOverview.tsx,
-  sent as JSON key "role_arn") has NO matching field in the backend's
-  RegisterClusterRequest struct (internal/orchestrator/types.go). Go's
-  json.Decode silently drops unknown fields, so whatever the maintainer types
-  into that box on registration is thrown away — it is never read, never
-  stored, never used. The only per-cluster role ARN that actually takes
-  effect is the "roleArn" key inside the AWS Secrets Manager secret payload
-  itself (see Leg 2 above). This is a real UI/backend mismatch, not a
-  live-test artifact — flag it to the tech lead / product owner.
+     This now exercises the assume-role hop for real, through Sharko's own
+     registration + credential-fetch code.
 EOF
     return 0
 }

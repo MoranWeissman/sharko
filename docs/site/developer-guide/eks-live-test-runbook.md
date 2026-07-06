@@ -84,7 +84,7 @@ Do the AWS Secrets Manager step yourself (copy-paste the printed command), then 
 
 ### Step 5 — register the cluster in Sharko (you drive this)
 
-Open Sharko's UI → **Clusters** → **Register Cluster**. Paste in the fields `register-help` printed: Direct mode, cluster name, credential source "Amazon EKS — generate a token from cloud identity," region. Leave the Role ARN field blank for this leg — `register-help` explains why (see the "known gap" note below).
+Open Sharko's UI → **Clusters** → **Register Cluster**. Paste in the fields `register-help` printed: Direct mode, cluster name, credential source "Amazon EKS — generate a token from cloud identity," region. Leave the Role ARN field blank for this leg — there's no role to assume yet; Part 2 covers where to put one once `role-setup` has printed it.
 
 ### Step 6 — deploy one small addon and verify green
 
@@ -132,16 +132,17 @@ Same as Step 3, but this time the token is minted for the assumed role, not your
 
 ### Step 10 — prove it through Sharko itself (optional, advanced)
 
-To exercise the same hop through Sharko's own registration/credential-fetch code (not just the script talking to AWS directly), update the AWS Secrets Manager secret you created in Step 4 to add the assumed role's ARN:
+To exercise the same hop through Sharko's own registration/credential-fetch code (not just the script talking to AWS directly), give Sharko the assumed role's ARN either way:
+
+- **Via the UI:** re-register (or edit) the cluster and paste the ARN into the Register Cluster dialog's "Role ARN" field. It's persisted as `role_arn` on the cluster's `managed-clusters.yaml` entry and used at token-mint time.
+- **Via the secret:** update the AWS Secrets Manager secret you created in Step 4 to add the assumed role's ARN — no re-registration needed, Sharko re-reads the secret on every fetch:
 
 ```bash
 aws secretsmanager put-secret-value --region eu-west-1 --secret-id "sharko-eks-live-test" \
   --secret-string '{ ..., "roleArn": "<arn from role-setup>" }'
 ```
 
-Sharko re-reads the secret on every credential fetch, so no re-registration is needed — just click **Test cluster** again in the UI, or trigger another addon sync.
-
-**Known gap, worth knowing about:** the Register Cluster dialog has its own "Role ARN" text field, and it looks like the natural place to do this. It isn't — that field is collected by the UI and sent to the backend, but the backend's request struct has no matching field to receive it, so whatever you type there is silently thrown away. The secret's `roleArn` field (above) is the only place a per-cluster role ARN actually takes effect today. This has been reported separately; it isn't something this runbook fixes.
+**If both are set,** the secret's own `roleArn` wins, then the per-cluster `role_arn` from the UI, then the connection-level provider default. Use whichever leg you want to prove — the UI field now works end-to-end (PR #466 fixed the earlier bug where it was silently dropped) — then click **Test cluster** again in the UI, or trigger another addon sync.
 
 ### Step 11 — teardown (covers Part 2 too)
 
