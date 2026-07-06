@@ -2,6 +2,10 @@
 
 The addon catalog is the source of truth for which Helm charts Sharko manages across your fleet. Adding an addon to the catalog makes it available to assign to clusters. Removing it from the catalog removes it from all clusters.
 
+Adding to the catalog and enabling on a cluster are two separate operations that only meet at the ApplicationSet:
+
+![Two parallel operations — add to catalog (PR adds the addon entry) and enable on a cluster (PR sets the addon label on that cluster's values file) — both feed the ApplicationSet's cluster x values-file matrix generator, which creates the ArgoCD Application that deploys the addon.](../assets/diagrams/04-two-operation-model.drawio.svg)
+
 ## Viewing the Catalog
 
 ```bash

@@ -20,6 +20,8 @@ In that mode, for that cluster:
   registration it only uses it to test connectivity; if you don't,
   registration skips the test and goes straight to the Git record.
 
+![Two ownership modes both converge at the ApplicationSet: sharko-managed, where Sharko creates and rotates the ArgoCD cluster Secret and the reconciler writes credentials plus addon labels; and self-managed, where you create the Secret by hand and the reconciler only ever merges addon labels onto it.](../assets/diagrams/05-connection-ownership.drawio.svg)
+
 Clusters you **adopt** from an existing ArgoCD get this mode automatically
 — they already have a secret you (or your tooling) created, and that is
 the whole point of adopting.

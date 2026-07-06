@@ -38,6 +38,8 @@ When you register a cluster, the first thing to settle is one question: **how sh
 
 The credentials source is the *only* thing that changes between these three. Everything else — which addons to enable, the environment label, the cluster name — works the same way no matter how Sharko reaches the cluster.
 
+![Credential flow: paste a kubeconfig, or point at a stored kubeconfig / EKS token which both call the secrets provider; a structured EKS secret then resolves which IAM role to assume — the secret's own roleArn, then the per-cluster role_arn, then the connection-level default, then the pod's own IRSA identity — before minting a short-lived STS token.](../assets/diagrams/03-credential-flows.drawio.svg)
+
 ### Via CLI
 
 ```bash

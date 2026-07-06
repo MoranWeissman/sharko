@@ -262,6 +262,10 @@ Every write operation that changes fleet state:
 4. ArgoCD watches the repo and syncs the ApplicationSet after the PR is merged
 5. The ApplicationSet generates ArgoCD Applications per-cluster, per-addon
 
+Sharko never changes your cluster or your Git repo directly — it opens a pull request instead. The diagram below traces this end to end for a cluster registration: the orchestrator commits and opens the PR, the merge (manual or auto-merge) wakes the cluster reconciler, and the reconciler is what actually writes the ArgoCD cluster Secret and addon labels that the ApplicationSet reads.
+
+![UI/API request flows through the orchestrator to a Git PR; once the PR merges, the cluster reconciler writes the ArgoCD cluster Secret and addon labels, and the ApplicationSet generates the Application that deploys the addon.](../assets/diagrams/02-pr-write-path.drawio.svg)
+
 This means Sharko's state is always reflected in Git — the addons repo is the source of truth, not the Sharko database.
 
 When `SHARKO_GITOPS_PR_AUTO_MERGE=true`, Sharko also deletes the feature branch immediately after a successful merge (`DeleteBranch`). Branch cleanup is best-effort — a failure is logged but does not affect the operation result.
