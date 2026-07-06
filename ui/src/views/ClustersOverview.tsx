@@ -55,6 +55,7 @@ import {
 } from '@/components/WhoseConnectionLabel';
 import { ClusterTypeBadge } from '@/components/ClusterTypeBadge';
 import { ClusterStatusLegend } from '@/components/ClusterStatusLegend';
+import { InfoHint } from '@/components/InfoHint';
 import { PRModelExplainer } from '@/components/PRFeedback';
 import { DiagnoseModal } from '@/components/DiagnoseModal';
 import { ArgoCDStatusBanner } from '@/components/ArgoCDStatusBanner';
@@ -1029,65 +1030,12 @@ export function ClustersOverview() {
             <DialogDescription>Add a new cluster to the Git catalog.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
-            {/* Credential source — the PRIMARY question (creds-reframe-2).
-              * This replaces the old platform-first "Provider" dropdown:
-              * we ask HOW Sharko should get the cluster's credentials, and
-              * that choice drives which inputs show below. Cluster platform
-              * (EKS/GKE/AKS) is now implied metadata, not the gate. Only
-              * shown in Direct mode — Discovery scans EKS and always uses
-              * the token path. */}
-            {/* Connection ownership — WHO manages the ArgoCD cluster secret
-              * (V2-cleanup-57.2). Asked before the credentials question
-              * because it changes what the credentials are FOR: with
-              * "I do", Sharko never writes the secret and the credential
-              * inputs below become optional (verification only). */}
-            {registrationMode === 'direct' && (
-              <div>
-                <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
-                  Who manages the ArgoCD connection?
-                </label>
-                <select
-                  value={connManagedBy}
-                  onChange={(e) => setConnManagedBy(e.target.value as ConnOwnership)}
-                  className="w-full rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
-                >
-                  <option value="sharko">Sharko (default)</option>
-                  <option value="user">I do — Sharko only manages addon labels</option>
-                </select>
-                <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
-                  {CONN_OWNERSHIP_HINTS[connManagedBy]}
-                </p>
-              </div>
-            )}
-
-            {registrationMode === 'direct' && (
-              <div>
-                <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
-                  How should Sharko get this cluster's credentials?
-                </label>
-                <select
-                  value={credsSource}
-                  onChange={(e) => setCredsSource(e.target.value as CredsSource)}
-                  className="w-full rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
-                >
-                  {/* No silent default (V2-cleanup-60.4): the placeholder is
-                    * not selectable, and Preview/Register stay disabled until
-                    * the user makes an explicit choice. */}
-                  <option value="" disabled>Choose where this cluster's credentials come from…</option>
-                  <option value="inline-kubeconfig">Paste a kubeconfig</option>
-                  <option value="secret-kubeconfig">Use a stored kubeconfig (from your secret store)</option>
-                  <option value="eks-token">Amazon EKS — generate a token from cloud identity</option>
-                </select>
-                {/* Plain-English hint for the selected option (V2-cleanup-55.3). */}
-                <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
-                  {credsSource === ''
-                    ? 'Required — pick one of the three options before registering.'
-                    : CREDS_SOURCE_HINTS[credsSource]}
-                </p>
-              </div>
-            )}
-
-            {/* Registration Mode Toggle */}
+            {/* Registration Mode Toggle — asked FIRST (V2-cleanup-61.4, C1).
+              * Direct vs Discovery decides which questions even apply below:
+              * ownership + creds-source are Direct-only, so asking them
+              * before the mode was chosen meant showing questions that the
+              * very next click could make irrelevant. Mode now gates
+              * everything that follows. */}
             <div>
               <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
                 Registration Mode
@@ -1117,6 +1065,64 @@ export function ClustersOverview() {
                 </button>
               </div>
             </div>
+
+            {/* Connection ownership — WHO manages the ArgoCD cluster secret
+              * (V2-cleanup-57.2). Direct mode only; asked before the
+              * credentials question because it changes what the credentials
+              * are FOR: with "I do", Sharko never writes the secret and the
+              * credential inputs below become optional (verification only). */}
+            {registrationMode === 'direct' && (
+              <div>
+                <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
+                  Who manages the ArgoCD connection?
+                </label>
+                <select
+                  value={connManagedBy}
+                  onChange={(e) => setConnManagedBy(e.target.value as ConnOwnership)}
+                  className="w-full rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                >
+                  <option value="sharko">Sharko (default)</option>
+                  <option value="user">I do — Sharko only manages addon labels</option>
+                </select>
+                <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
+                  {CONN_OWNERSHIP_HINTS[connManagedBy]}
+                </p>
+              </div>
+            )}
+
+            {/* Credential source — the PRIMARY Direct-mode question
+              * (creds-reframe-2). This replaces the old platform-first
+              * "Provider" dropdown: we ask HOW Sharko should get the
+              * cluster's credentials, and that choice drives which inputs
+              * show below. Cluster platform (EKS/GKE/AKS) is now implied
+              * metadata, not the gate. Discovery mode always uses the token
+              * path, so this question never applies there. */}
+            {registrationMode === 'direct' && (
+              <div>
+                <label className="mb-1 block text-sm font-medium text-[#0a3a5a] dark:text-gray-300">
+                  How should Sharko get this cluster's credentials?
+                </label>
+                <select
+                  value={credsSource}
+                  onChange={(e) => setCredsSource(e.target.value as CredsSource)}
+                  className="w-full rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                >
+                  {/* No silent default (V2-cleanup-60.4): the placeholder is
+                    * not selectable, and Preview/Register stay disabled until
+                    * the user makes an explicit choice. */}
+                  <option value="" disabled>Choose where this cluster's credentials come from…</option>
+                  <option value="inline-kubeconfig">Paste a kubeconfig</option>
+                  <option value="secret-kubeconfig">Use a stored kubeconfig (from your secret store)</option>
+                  <option value="eks-token">Amazon EKS — generate a token from cloud identity</option>
+                </select>
+                {/* Plain-English hint for the selected option (V2-cleanup-55.3). */}
+                <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
+                  {credsSource === ''
+                    ? 'Required — pick one of the three options before registering.'
+                    : CREDS_SOURCE_HINTS[credsSource]}
+                </p>
+              </div>
+            )}
 
             {registrationMode === 'direct' ? (
               <>
@@ -1253,8 +1259,27 @@ export function ClustersOverview() {
                     placeholder="Comma-separated: arn:aws:iam::111:role/a, arn:aws:iam::222:role/b"
                     className="w-full rounded-md border border-[#5a9dd0] px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-[#5a8aaa]"
                   />
+                  {/* V2-cleanup-61.4 (C3): the raw comma-separated ARN input
+                    * had zero guidance — a concrete example + what the role
+                    * needs + a docs link. Each ARN is tried in turn to list
+                    * EKS clusters reachable from that identity; the same
+                    * role can also be used later at registration time
+                    * (Direct mode's EKS token path). */}
                   <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
-                    Enter one or more AWS IAM Role ARNs to scan for EKS clusters
+                    Enter one or more AWS IAM Role ARNs to scan for EKS clusters, e.g.{' '}
+                    <code className="font-mono">arn:aws:iam::111122223333:role/sharko-discovery</code>.
+                    Each role needs <code className="font-mono">eks:ListClusters</code> and{' '}
+                    <code className="font-mono">eks:DescribeCluster</code> permission, and Sharko must
+                    be able to assume it. The same role can be reused when registering a cluster directly.{' '}
+                    <a
+                      href="https://sharko.readthedocs.io/en/latest/user-guide/clusters/#discovery-mode-and-role-arns"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-medium text-teal-600 underline hover:text-teal-700 dark:text-teal-400 dark:hover:text-teal-300"
+                    >
+                      Learn more
+                    </a>
+                    .
                   </p>
                 </div>
                 <div>
@@ -1977,6 +2002,13 @@ export function ClustersOverview() {
                               : <Wifi className="h-3 w-3" />}
                             Test
                           </button>
+                          {/* V2-cleanup-61.4 (G3): the disabled reason lived
+                            * only in `title`/`aria-label` — invisible to
+                            * touch/keyboard. This gives it a click/focus
+                            * affordance too, without touching the button. */}
+                          {!clusterTestAvailable && (
+                            <InfoHint text={TEST_BUTTON_DISABLED_TOOLTIP} label="Why is Test disabled?" />
+                          )}
                           <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); setDiagnoseCluster(cluster.name); }}
@@ -2048,6 +2080,9 @@ export function ClustersOverview() {
                         {testResult === 'testing' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wifi className="h-3 w-3" />}
                         Test
                       </button>
+                      {!clusterTestAvailable && (
+                        <InfoHint text={TEST_BUTTON_DISABLED_TOOLTIP} label="Why is Test disabled?" />
+                      )}
                       <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); setDiagnoseCluster(cluster.name); }}
@@ -2207,6 +2242,9 @@ export function ClustersOverview() {
                                 {testResult === 'testing' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wifi className="h-3 w-3" />}
                                 Test
                               </button>
+                              {!clusterTestAvailable && (
+                                <InfoHint text={TEST_BUTTON_DISABLED_TOOLTIP} label="Why is Test disabled?" />
+                              )}
                               {renderTestResult(cluster.name, testResult)}
                               <RoleGuard adminOnly>
                                 <button
@@ -2255,17 +2293,22 @@ export function ClustersOverview() {
                         </RoleGuard>
                         <h3 className="text-sm font-bold text-[#0a2a4a] dark:text-gray-100">{cluster.name}</h3>
                       </div>
-                      <button
-                        type="button"
-                        onClick={(e) => handleTestCluster(cluster.name, e)}
-                        disabled={testResult === 'testing' || !clusterTestAvailable}
-                        title={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : SHARKO_CONN_TOOLTIP}
-                        aria-label={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : 'Test'}
-                        className="inline-flex items-center gap-1 rounded border border-[#5a9dd0] px-2 py-1 text-xs text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 disabled:cursor-not-allowed dark:border-gray-600 dark:text-gray-300"
-                      >
-                        {testResult === 'testing' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wifi className="h-3 w-3" />}
-                        Test
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={(e) => handleTestCluster(cluster.name, e)}
+                          disabled={testResult === 'testing' || !clusterTestAvailable}
+                          title={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : SHARKO_CONN_TOOLTIP}
+                          aria-label={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : 'Test'}
+                          className="inline-flex items-center gap-1 rounded border border-[#5a9dd0] px-2 py-1 text-xs text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 disabled:cursor-not-allowed dark:border-gray-600 dark:text-gray-300"
+                        >
+                          {testResult === 'testing' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wifi className="h-3 w-3" />}
+                          Test
+                        </button>
+                        {!clusterTestAvailable && (
+                          <InfoHint text={TEST_BUTTON_DISABLED_TOOLTIP} label="Why is Test disabled?" />
+                        )}
+                      </div>
                     </div>
                     {cluster.server_url && (
                       <p className="mb-2 font-mono text-xs text-[#3a6a8a] dark:text-gray-400 truncate" title={cluster.server_url}>

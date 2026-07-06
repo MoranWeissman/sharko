@@ -52,6 +52,7 @@ import { StatusBadge } from '@/components/StatusBadge';
 import { ConnectivityBadge } from '@/components/ConnectivityBadge';
 import { SHARKO_CONN_LABEL, SHARKO_CONN_TOOLTIP } from '@/components/WhoseConnectionLabel';
 import { ClusterTypeBadge } from '@/components/ClusterTypeBadge';
+import { InfoHint } from '@/components/InfoHint';
 import { LoadingState } from '@/components/LoadingState';
 import { ErrorState } from '@/components/ErrorState';
 import { EmptyState } from '@/components/EmptyState';
@@ -853,9 +854,15 @@ export function ClusterDetail() {
               {testResult.steps && testResult.steps.length > 0 && (
                 <div className="mb-2 rounded-lg bg-[#f8fbff] p-3 ring-1 ring-[#d0e4f5] dark:bg-gray-800 dark:ring-gray-700">
                   {/* The Test flow is Sharko's own connection — say so (V2-cleanup-55.3). */}
-                  <p className="mb-2 cursor-help text-xs font-semibold text-[#0a2a4a] dark:text-gray-200" title={SHARKO_CONN_TOOLTIP}>
-                    Test results ({SHARKO_CONN_LABEL}):
-                  </p>
+                  <div className="mb-2 flex items-center gap-1">
+                    <p className="cursor-help text-xs font-semibold text-[#0a2a4a] dark:text-gray-200" title={SHARKO_CONN_TOOLTIP}>
+                      Test results ({SHARKO_CONN_LABEL}):
+                    </p>
+                    {/* V2-cleanup-61.4 (G3): click/focus affordance for the
+                      * explanation above — a hover-only title never reaches
+                      * touch or keyboard users. */}
+                    <InfoHint text={SHARKO_CONN_TOOLTIP} label="What does this mean?" />
+                  </div>
                   <div className="space-y-1">
                     {testResult.steps.map((step, i) => (
                       <div key={i} className="flex items-center gap-2 text-xs">
@@ -891,14 +898,17 @@ export function ClusterDetail() {
                 </div>
               )}
               {/* Summary badge — Sharko's own connection result (V2-cleanup-55.3). */}
-              <div title={SHARKO_CONN_TOOLTIP} className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${
-                testResult.reachable || testResult.success
-                  ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                  : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
-              }`}>
-                {testResult.reachable || testResult.success
-                  ? `Connected${testResult.server_version ? ` \u2014 ${testResult.server_version}` : ''}`
-                  : testResult.error || testResult.error_message || 'Unreachable'}
+              <div className="flex items-center gap-1">
+                <div title={SHARKO_CONN_TOOLTIP} className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${
+                  testResult.reachable || testResult.success
+                    ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                    : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+                }`}>
+                  {testResult.reachable || testResult.success
+                    ? `Connected${testResult.server_version ? ` \u2014 ${testResult.server_version}` : ''}`
+                    : testResult.error || testResult.error_message || 'Unreachable'}
+                </div>
+                <InfoHint text={SHARKO_CONN_TOOLTIP} label="What does this mean?" />
               </div>
               {!testResult.reachable && !testResult.success && testResult.suggestions && testResult.suggestions.length > 0 && (
                 <div className="mt-2 rounded-lg bg-[#e8f4ff] p-3 ring-2 ring-[#6aade0] dark:bg-gray-800 dark:ring-gray-700">
@@ -943,6 +953,7 @@ export function ClusterDetail() {
               {testResult === 'testing' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wifi className="h-3.5 w-3.5" />}
               Test
             </button>
+            <InfoHint text={SHARKO_CONN_TOOLTIP} label="Whose connection does Test check?" />
             <button
               onClick={() => setDiagnoseOpen(true)}
               className="inline-flex items-center gap-1.5 rounded-lg border border-[#5a9dd0] bg-[#f0f7ff] px-3 py-1.5 text-xs font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"

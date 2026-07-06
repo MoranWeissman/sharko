@@ -24,7 +24,6 @@ const Dashboards = lazy(() => import('@/views/Dashboards'))
 const Settings = lazy(() => import('@/views/Settings'))
 const UserInfo = lazy(() => import('@/views/UserInfo'))
 const AuditViewer = lazy(() => import('@/views/AuditViewer'))
-const UpgradeChecker = lazy(() => import('@/views/UpgradeChecker'))
 
 // V2-cleanup-61.1 (A1): plain `<Navigate to="..." replace />` drops the
 // current query string — a deep-link like `/version-matrix?drift=true`
@@ -223,7 +222,13 @@ export function ConnectedApp() {
           <Route path="version-matrix" element={<RedirectPreservingQuery to="/addons" />} />
           <Route path="observability" element={<Observability />} />
           <Route path="system" element={<SystemView />} />
-          <Route path="upgrade" element={<UpgradeChecker />} />
+          {/* V2-cleanup-61.4 (F2): the standalone Upgrade Checker page
+              duplicated AddonDetail's Upgrade tab (per-addon analysis,
+              conflicts, AI summary, downgrade guard, per-cluster upgrade —
+              all already live there) and had no real inbound deep-link with
+              an addon/version to preserve, so it's a plain redirect to the
+              catalog — same pattern as /version-matrix. */}
+          <Route path="upgrade" element={<RedirectPreservingQuery to="/addons" />} />
           <Route path="dashboards" element={<Dashboards />} />
           <Route path="audit" element={<AuditViewer />} />
           <Route path="settings" element={<Settings />} />

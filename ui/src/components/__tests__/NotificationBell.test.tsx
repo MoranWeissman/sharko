@@ -105,3 +105,43 @@ describe('NotificationBell — connection-health alerts', () => {
     expect(mockNavigate).not.toHaveBeenCalled();
   });
 });
+
+// V2-cleanup-61.4 (G2): the dropdown used to be a hand-rolled `absolute` div
+// with a manual `mousedown` outside-click listener — no Escape handling, no
+// focus trap, no ARIA. It's now the shadcn/Radix Popover primitive.
+describe('NotificationBell — dropdown keyboard behavior (V2-cleanup-61.4, G2)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getNotifications.mockResolvedValue({ notifications: [] });
+  });
+
+  it('closes on Escape', async () => {
+    renderBell();
+
+    fireEvent.click(screen.getByLabelText('Notifications'));
+    await waitFor(() => {
+      expect(screen.getByText('No notifications')).toBeInTheDocument();
+    });
+
+    fireEvent.keyDown(screen.getByText('No notifications'), { key: 'Escape' });
+
+    await waitFor(() => {
+      expect(screen.queryByText('No notifications')).not.toBeInTheDocument();
+    });
+  });
+
+  it('closes on outside click', async () => {
+    renderBell();
+
+    fireEvent.click(screen.getByLabelText('Notifications'));
+    await waitFor(() => {
+      expect(screen.getByText('No notifications')).toBeInTheDocument();
+    });
+
+    fireEvent.pointerDown(document.body);
+
+    await waitFor(() => {
+      expect(screen.queryByText('No notifications')).not.toBeInTheDocument();
+    });
+  });
+});

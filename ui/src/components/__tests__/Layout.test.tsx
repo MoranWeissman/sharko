@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { Layout } from '@/components/Layout'
 
@@ -163,6 +164,58 @@ describe('Layout', () => {
       fireEvent.click(toggle)
 
       expect(screen.getByText('Sharko AI')).toBeInTheDocument()
+    })
+  })
+
+  // V2-cleanup-61.4 (G2): the user avatar menu used to be a hand-rolled
+  // `absolute` panel + a `fixed inset-0` click-catcher for "outside click"
+  // — no Escape handling, no focus trap, no ARIA menu semantics. It's now
+  // the shadcn/Radix DropdownMenu primitive.
+  describe('user avatar menu', () => {
+    it('opens with Account / theme toggle / Log out items', async () => {
+      const user = userEvent.setup()
+      renderLayout()
+      await user.click(screen.getByLabelText('User menu'))
+
+      await waitFor(() => {
+        expect(screen.getByText('Log out')).toBeInTheDocument()
+      })
+      expect(screen.getByText('Account')).toBeInTheDocument()
+      expect(screen.getByText('Dark Mode')).toBeInTheDocument()
+    })
+
+    it('closes on Escape', async () => {
+      const user = userEvent.setup()
+      renderLayout()
+      await user.click(screen.getByLabelText('User menu'))
+      await waitFor(() => {
+        expect(screen.getByText('Log out')).toBeInTheDocument()
+      })
+
+      await user.keyboard('{Escape}')
+
+      await waitFor(() => {
+        expect(screen.queryByText('Log out')).not.toBeInTheDocument()
+      })
+    })
+
+    it('closes on outside click', async () => {
+      const user = userEvent.setup()
+      renderLayout()
+      await user.click(screen.getByLabelText('User menu'))
+      await waitFor(() => {
+        expect(screen.getByText('Log out')).toBeInTheDocument()
+      })
+
+      // Radix's DropdownMenu is modal — it sets pointer-events:none on the
+      // body while open, so a real pointer can't reach outside content
+      // (matches real browser behavior). Dispatch the raw event Radix's own
+      // dismissable-layer listens for instead of simulating a hardware click.
+      fireEvent.pointerDown(document.body)
+
+      await waitFor(() => {
+        expect(screen.queryByText('Log out')).not.toBeInTheDocument()
+      })
     })
   })
 })

@@ -619,7 +619,10 @@ export function Dashboard() {
         <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 shadow-sm dark:ring-gray-700 dark:bg-gray-800">
           <h3 className="mb-3 text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Quick Actions</h3>
           <div className="space-y-2">
-            <button onClick={() => navigate('/upgrade')}
+            {/* V2-cleanup-61.4 (F2): the standalone Upgrade Checker page is
+                gone — upgrade analysis lives on each addon's own Upgrade
+                tab, so this points straight at the catalog to pick one. */}
+            <button onClick={() => navigate('/addons')}
               className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-[#0a3a5a] transition-colors hover:bg-[#d6eeff] dark:text-gray-300 dark:hover:bg-gray-700">
               <ArrowUpCircle className="h-4 w-4 text-teal-500" />
               <span>Check Upgrade Impact</span>
