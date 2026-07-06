@@ -1334,7 +1334,7 @@ export function AddonCatalog() {
             <div className="rounded-md bg-[#e8f4ff] p-3 text-xs text-[#2a5a7a] ring-1 ring-[#c0ddf0] dark:bg-gray-800 dark:text-gray-300 dark:ring-gray-700">
               After adding, advanced options like sync options, ignore
               differences, and additional sources are available on the
-              addon&rsquo;s <strong>Deployment Options</strong> tab.
+              addon&rsquo;s <strong>ApplicationSet</strong> tab.
             </div>
 
             {/* Auto-merge is now a global setting — no per-flow checkbox. */}

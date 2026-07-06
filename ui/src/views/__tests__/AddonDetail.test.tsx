@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { AddonDetail } from '@/views/AddonDetail'
 import { getAddonPRs, api } from '@/services/api'
+import { AuthContext } from '@/hooks/useAuth'
 
 vi.mock('@/services/api', () => ({
   getAddonPRs: vi.fn().mockResolvedValue({ prs: [] }),
@@ -16,6 +17,11 @@ vi.mock('@/services/api', () => ({
     // V121-7.4: AI config probe used by AddonDetail to render the
     // "AI not configured" banner / annotate-now button conditionally.
     getAIConfig: vi.fn().mockResolvedValue({ current_provider: 'none', available_providers: [], annotate_on_seed: false }),
+    // V2-cleanup-72.1 — the Upgrade tab's child components fetch these on
+    // mount; stub them so tests that visit/click the Upgrade tab don't blow
+    // up on an undefined mock method.
+    getUpgradeRecommendations: vi.fn().mockResolvedValue({ current_version: '4.8.0' }),
+    getUpgradeVersions: vi.fn().mockResolvedValue({ versions: [] }),
     getAddonDetail: vi.fn().mockResolvedValue({
       addon: {
         addon_name: 'ingress-nginx',
@@ -254,6 +260,171 @@ describe('AddonDetail — pending-PR banner copy (V2-cleanup-15.2)', () => {
       expect(screen.getByText('Upgrade in progress')).toBeInTheDocument()
     })
     expect(screen.queryByText('Add addon — PR open')).not.toBeInTheDocument()
+  })
+})
+
+// V2-cleanup-72.1 — rename "Deployment Options" → "ApplicationSet", drop the
+// duplicate "Raw default values" peek and the duplicate header Upgrade
+// button, and tuck the raw ArgoCD knobs under a collapsed Advanced fold.
+const adminCtx = {
+  token: 't',
+  username: 'tester',
+  role: 'admin',
+  login: vi.fn(),
+  logout: vi.fn(),
+  isAuthenticated: true,
+  isAdmin: true,
+  loading: false,
+  error: null,
+}
+
+function renderDetailCatalogTab() {
+  return render(
+    <MemoryRouter initialEntries={['/addons/ingress-nginx?section=catalog']}>
+      <Routes>
+        <Route path="/addons/:name" element={<AddonDetail />} />
+      </Routes>
+    </MemoryRouter>,
+  )
+}
+
+function renderDetailAsAdmin(initialEntry = '/addons/ingress-nginx') {
+  return render(
+    <AuthContext.Provider value={adminCtx}>
+      <MemoryRouter initialEntries={[initialEntry]}>
+        <Routes>
+          <Route path="/addons/:name" element={<AddonDetail />} />
+        </Routes>
+      </MemoryRouter>
+    </AuthContext.Provider>,
+  )
+}
+
+describe('AddonDetail — tab renamed "ApplicationSet" (V2-cleanup-72.1)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('renders the tab as "ApplicationSet", not "Deployment Options"', async () => {
+    renderDetail()
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'ApplicationSet' })).toBeInTheDocument()
+    })
+    expect(screen.queryByText('Deployment Options')).not.toBeInTheDocument()
+  })
+
+  it('shows the "ApplicationSet" heading with a plain-English subtitle on the tab', async () => {
+    renderDetailCatalogTab()
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'ApplicationSet' })).toBeInTheDocument()
+    })
+    expect(
+      screen.getByText(/How ArgoCD deploys this addon across your clusters/i),
+    ).toBeInTheDocument()
+  })
+
+  it('does not render the removed "Raw default values" peek (Values tab owns Helm values)', async () => {
+    renderDetailCatalogTab()
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'ApplicationSet' })).toBeInTheDocument()
+    })
+    expect(screen.queryByText('Raw default values (read-only)')).not.toBeInTheDocument()
+  })
+
+  it('rewords the Self-Heal description in plain English', async () => {
+    renderDetailCatalogTab()
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'ApplicationSet' })).toBeInTheDocument()
+    })
+    expect(
+      screen.getByText(/ArgoCD undoes it and restores what.s in Git/i),
+    ).toBeInTheDocument()
+  })
+})
+
+describe('AddonDetail — Advanced fold tucks the raw ArgoCD knobs away (V2-cleanup-72.1)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('collapses Sync Options / Ignore Differences / Additional Sources under "Advanced — passed straight to ArgoCD" by default', async () => {
+    renderDetailCatalogTab()
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'ApplicationSet' })).toBeInTheDocument()
+    })
+
+    const summary = screen.getByText('Advanced — passed straight to ArgoCD')
+    const details = summary.closest('details')
+    expect(details).not.toBeNull()
+    // Collapsed by default (read-only viewer, not editing).
+    expect(details).not.toHaveAttribute('open')
+
+    const scoped = within(details as HTMLElement)
+    expect(scoped.getByText('Sync Options')).toBeInTheDocument()
+    expect(scoped.getByText('Ignore Differences')).toBeInTheDocument()
+    expect(scoped.getByText('Additional Sources')).toBeInTheDocument()
+    // Self-Heal stays outside the fold, always visible.
+    expect(scoped.queryByText('Self-Heal')).not.toBeInTheDocument()
+    expect(screen.getByText('Self-Heal')).toBeInTheDocument()
+
+    // Each advanced field links out to the matching ArgoCD docs page.
+    const learnMoreLinks = scoped.getAllByRole('link', { name: 'Learn more' })
+    expect(learnMoreLinks).toHaveLength(3)
+    const hrefs = learnMoreLinks.map((l) => l.getAttribute('href'))
+    expect(hrefs).toContain('https://argo-cd.readthedocs.io/en/stable/user-guide/sync-options/')
+    expect(hrefs).toContain('https://argo-cd.readthedocs.io/en/stable/user-guide/diffing/')
+    expect(hrefs).toContain('https://argo-cd.readthedocs.io/en/stable/user-guide/multiple_sources/')
+    learnMoreLinks.forEach((l) => {
+      expect(l).toHaveAttribute('target', '_blank')
+      expect(l).toHaveAttribute('rel', 'noopener noreferrer')
+    })
+  })
+
+  it('opens the Advanced fold automatically while editing', async () => {
+    renderDetailAsAdmin('/addons/ingress-nginx?section=catalog')
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'ApplicationSet' })).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /^Edit$/i }))
+
+    const summary = screen.getByText('Advanced — passed straight to ArgoCD')
+    const details = summary.closest('details')
+    expect(details).toHaveAttribute('open')
+  })
+})
+
+describe('AddonDetail — header no longer duplicates the Upgrade tab (V2-cleanup-72.1)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('has exactly one "Upgrade" control — the tab, not a header button', async () => {
+    renderDetailAsAdmin()
+
+    await waitFor(() => {
+      expect(screen.getAllByText('ingress-nginx').length).toBeGreaterThanOrEqual(1)
+    })
+
+    const upgradeControls = screen.getAllByRole('button', { name: /^Upgrade$/i })
+    expect(upgradeControls).toHaveLength(1)
+    // Refresh and Remove are still there.
+    expect(screen.getByTitle('Refresh')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Remove$/i })).toBeInTheDocument()
+  })
+
+  it('the Upgrade tab still opens the Upgrade section (flow untouched by the header-button removal)', async () => {
+    renderDetailAsAdmin('/addons/ingress-nginx?section=upgrade')
+
+    await waitFor(() => {
+      expect(screen.getByText('Current Catalog Version')).toBeInTheDocument()
+    })
   })
 })
 
