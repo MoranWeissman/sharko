@@ -14,9 +14,230 @@ the PR. Append new releases at the TOP of the v2.x stream so the most
 recent release is the first thing readers see.
 -->
 
+## v2.3.0 — UX overhaul + cross-account EKS identity
+
+**Status:** released 2026-07-06 (current release)
+
+v2.3.0 is a UX-focused release that unifies how Sharko talks about status
+across the whole UI, fixes the misleading first-run experience, and closes
+a real bug where cross-account EKS clusters could mint tokens with the
+wrong identity. No breaking changes.
+
+### Breaking changes
+
+No breaking changes — v2.3.0 is a minor release.
+
+### What's new
+
+- **One status vocabulary everywhere.** "Catalog Only" is now two honest
+  states — "Not deployed yet" (fine) vs. "Missing from ArgoCD" (a real
+  problem) — and every cluster gets a single composite status pill with an
+  accessible breakdown instead of up to four separate hover-only pills.
+  The confusing purple color is gone; a consistent color law (green =
+  working, blue = in progress, amber = needs attention, red = problem, gray
+  = inactive) now applies product-wide.
+  (V2-cleanup-61.2: PR [#467](https://github.com/MoranWeissman/sharko/pull/467))
+- **Honest first run.** A brand-new install no longer shows a green
+  "all systems operational" dashboard with nothing connected — it now says
+  "Nothing connected yet" and guides you to register a cluster or browse
+  the Marketplace. The Marketplace is now the front door for adding
+  addons, and a one-time note explains why a change opened a pull request
+  instead of applying immediately.
+  (V2-cleanup-61.3: PR [#468](https://github.com/MoranWeissman/sharko/pull/468))
+- **Clearer navigation.** "Manage" is renamed "Monitor" (it only ever held
+  read-only pages) and "Dashboards" is renamed "External Dashboards";
+  non-admin users can now reach the Settings page they already had partial
+  access to.
+  (V2-cleanup-61.3: PR [#468](https://github.com/MoranWeissman/sharko/pull/468))
+- **Register-cluster dialog reordered.** You now pick Direct or Discovery
+  mode first, then only see the fields that mode needs; Discovery mode
+  explains Role ARNs with a worked example. The old, separate Upgrade
+  Checker page is gone — its checks now live inside each addon's own
+  Upgrade tab, so there's one place to look instead of two.
+  (V2-cleanup-61.4: PR [#469](https://github.com/MoranWeissman/sharko/pull/469))
+- **Per-cluster Role ARN now works end-to-end.** A Role ARN entered at
+  registration is saved and actually used when minting EKS tokens, so a
+  cluster found through cross-account discovery authenticates with the
+  right identity instead of a default one.
+  (V2-cleanup-62.2: PR [#466](https://github.com/MoranWeissman/sharko/pull/466))
+- **New EKS live-test harness** (`scripts/eks-live-test.sh`) with a
+  companion runbook, for proving the EKS credential path against a real
+  cluster end-to-end.
+  (V2-cleanup-62.1: PR [#464](https://github.com/MoranWeissman/sharko/pull/464))
+
+### Bug fixes
+
+- **Dark mode, dead links, and stale UI copy fixed** across the app —
+  broken deep links into the Clusters page, leftover light-mode-only
+  borders, outdated command-palette entries, and addon names that were
+  incorrectly capitalized.
+  (V2-cleanup-61.1: PR [#465](https://github.com/MoranWeissman/sharko/pull/465))
+
+### Removed
+
+- **Dropped the unused `mkdocs-redirects` plugin.** It started injecting
+  an unrelated docs-tool advertisement into every build, and our redirect
+  map was empty anyway — removing it fixes the build and drops a
+  dependency we never used.
+  (PR [#470](https://github.com/MoranWeissman/sharko/pull/470))
+
+## v2.2.1 — Post-release safety fixes
+
+**Status:** released 2026-07-06
+
+v2.2.1 is a patch release that closes five gaps found in a post-release
+review of v2.2.0's cluster-connection changes — most importantly, two
+ways cluster removal or a bad config file could have deleted an ArgoCD
+secret Sharko didn't own. No breaking changes.
+
+### Breaking changes
+
+No breaking changes — v2.2.1 is a patch release.
+
+### Bug fixes
+
+- **Removing a cluster can no longer delete an ArgoCD secret Sharko
+  doesn't own.** Removal now checks the secret's own ownership label
+  before deleting it, instead of trusting Sharko's local records alone —
+  closing a path where a retried removal (after the underlying pull
+  request had already merged) could wipe out a connection someone else
+  set up.
+  (V2-cleanup-60.1: PR [#459](https://github.com/MoranWeissman/sharko/pull/459))
+- **An unrecognized config version is now a hard error instead of being
+  silently read as "zero clusters."** And if Sharko ever does compute zero
+  clusters while ArgoCD secrets clearly still exist, the automatic cleanup
+  sweep now holds instead of deleting everything — closing the class of
+  bug that could wipe every managed cluster secret at once.
+  (V2-cleanup-60.2: PR [#460](https://github.com/MoranWeissman/sharko/pull/460))
+- **Fixed a label flip-flop between Sharko's two internal reconcilers** on
+  self-managed clusters, where each one kept rewriting the other's legacy
+  label spelling back and forth.
+  (V2-cleanup-60.3: PR [#461](https://github.com/MoranWeissman/sharko/pull/461))
+- **Per-cluster credential routing fixed** — clusters registered with an
+  inline kubeconfig now work correctly no matter which secret backend
+  (AWS Secrets Manager, Kubernetes Secrets, etc.) is configured for the
+  rest of Sharko.
+  (V2-cleanup-60.4: PR [#463](https://github.com/MoranWeissman/sharko/pull/463))
+- **Cluster registration no longer silently defaults to the EKS-token
+  credential path** — you now have to choose it explicitly.
+  (V2-cleanup-60.4: PR [#463](https://github.com/MoranWeissman/sharko/pull/463))
+
+### Security
+
+- **Content-policy cleanup** across docs and historical planning files,
+  plus assorted CI workflow hardening (matrix-version handling, guard
+  against a false-empty check silently passing).
+  (V2-cleanup-60.5: PR [#462](https://github.com/MoranWeissman/sharko/pull/462))
+
+## v2.2.0 — sharko.dev identifiers + self-managed connections + System page
+
+**Status:** released 2026-07-05
+
+v2.2.0 moves Sharko's own API group and annotation identifiers to the
+maintainer-owned `sharko.dev` domain, adds a first-class "self-managed"
+option for ArgoCD connections, and ships the first read-only System page.
+No breaking changes for existing installs — old `sharko.io`-prefixed
+config is still read automatically.
+
+### Breaking changes
+
+No breaking changes — existing `sharko.io/v1` config and annotations
+continue to be read; only newly written config switches to `sharko.dev/v1`.
+
+### What's new
+
+- **Identifiers move to the sharko.dev domain.** Sharko's API group and
+  annotation prefixes now read old `sharko.io` names for backward
+  compatibility, but emit the new `sharko.dev` names going forward — the
+  old domain isn't one the project actually owns.
+  (V2-cleanup-59: PR [#457](https://github.com/MoranWeissman/sharko/pull/457),
+  V2-cleanup-58: PR [#456](https://github.com/MoranWeissman/sharko/pull/456))
+- **"Connection managed by: me"** — a new first-class option for
+  ArgoCD connections you set up and manage yourself. Sharko syncs only its
+  addon labels onto the connection and never writes or rotates the
+  underlying secret.
+  (V2-cleanup-57.2: PR [#454](https://github.com/MoranWeissman/sharko/pull/454))
+- **New System page (phase 1).** One read-only screen shows the whole
+  chain — Sharko, ArgoCD, the Git repo, and clusters — plus the ArgoCD
+  version Sharko detected against the range it's tested with.
+  (V2-cleanup-57.3: PR [#453](https://github.com/MoranWeissman/sharko/pull/453))
+- **Weekly ArgoCD compatibility testing.** A new CI job tests Sharko
+  against the three newest ArgoCD minor versions every week and publishes
+  the tested range — currently **v3.2–v3.4**.
+  (V2-cleanup-57.1: PR [#452](https://github.com/MoranWeissman/sharko/pull/452),
+  PR [#455](https://github.com/MoranWeissman/sharko/pull/455))
+- **Status now says whose connection it's describing** — ArgoCD's view of
+  a cluster vs. Sharko's — and the `/providers` endpoint reports its
+  configured secret-name prefix.
+  (PR [#450](https://github.com/MoranWeissman/sharko/pull/450),
+  PR [#447](https://github.com/MoranWeissman/sharko/pull/447))
+- **AI assistant is now opt-in** — hidden by default until enabled.
+  (V2-cleanup-55.4: PR [#449](https://github.com/MoranWeissman/sharko/pull/449))
+
+### Bug fixes
+
+- **Certificate-authenticated clusters (kind, kubeadm, on-prem) get the
+  right secret shape.** They were previously written as if they were an
+  EKS cluster; the secret writer now recognizes client-certificate
+  kubeconfigs and gives them a real TLS cluster secret.
+  (V2-cleanup-56.1: PR [#451](https://github.com/MoranWeissman/sharko/pull/451))
+
+## v2.1.0 — Secret-backend fix + credential-source clarity
+
+**Status:** released 2026-07-04
+
+v2.1.0 is a feature release that restores cluster registration through the
+configured secret backend, adds an explicit choice for how each cluster's
+credentials are supplied, and cleans up a large amount of unreachable UI.
+No breaking changes.
+
+### Breaking changes
+
+No breaking changes — v2.1.0 is a minor release.
+
+### What's new
+
+- **Cluster registration uses your configured secret backend again.**
+  Both AWS Secrets Manager and Kubernetes Secrets work as registration
+  targets, and saving a connection now hot-reloads the credential provider
+  without a restart.
+  (V2-cleanup-53.1: PR [#444](https://github.com/MoranWeissman/sharko/pull/444))
+- **Explicit choice for how Sharko gets a cluster's credentials** at
+  registration time — paste a kubeconfig inline, point at a secret, or use
+  an EKS token — instead of one silent default.
+  (creds-reframe-1/2/3: PRs [#433](https://github.com/MoranWeissman/sharko/pull/433),
+  [#434](https://github.com/MoranWeissman/sharko/pull/434))
+- **UI labels whose connection a status is showing** (ArgoCD → cluster vs.
+  Sharko → cluster) and explains each credential-source option in plain
+  English.
+  (V2-cleanup-55.3: PR [#447](https://github.com/MoranWeissman/sharko/pull/447))
+- **Deleted ~1,900 lines of unreachable UI** — old Connections, Docs, and
+  Version-Matrix views plus stale styling left over from earlier
+  redesigns.
+  (PR [#442](https://github.com/MoranWeissman/sharko/pull/442))
+- **Pre-publicity documentation honesty pass** — accurate Apache-2.0
+  license claim, a "why not just ApplicationSets?" explainer, honest
+  CNCF-progress wording, and a new page explaining what happens if you
+  remove Sharko.
+  (V2-cleanup-54.1: PR [#443](https://github.com/MoranWeissman/sharko/pull/443))
+
+### Bug fixes
+
+- **Shared credential-lookup fix** — Diagnose, adopt, remove, addon
+  operations, and the secrets endpoint all resolve a cluster's stored
+  secret path correctly now, instead of some of them passing the raw
+  cluster name.
+  (V2-cleanup-55.1: PR [#448](https://github.com/MoranWeissman/sharko/pull/448))
+- **Settings secrets-provider page only shows real backend choices** (no
+  more confusing aliases), and its prefix field round-trips correctly on
+  save.
+  (V2-cleanup-55.2: PR [#446](https://github.com/MoranWeissman/sharko/pull/446))
+
 ## v2.0.3 — Bootstrap addon-deployment fix
 
-**Status:** in development
+**Status:** shipped as part of v2.1.0 (2026-07-04) — no standalone v2.0.3
+build was ever tagged; the fix below landed under the v2.1.0 release
+instead.
 
 v2.0.3 is a patch release that fixes a high-severity bug in the bootstrap
 Helm chart: it read the addon catalog at the wrong path, so the chart
