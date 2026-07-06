@@ -174,5 +174,3 @@ plugins:
       enable_creation_date: false
       type: date
       fallback_to_build_date: true
-  - redirects:
-      redirect_maps: {}
