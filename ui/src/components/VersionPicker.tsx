@@ -172,7 +172,7 @@ export function VersionPicker({
               >
                 {v.version}
                 {v.prerelease && (
-                  <span className="ml-1 text-[10px] opacity-75">pre</span>
+                  <span className="ml-1 text-xs opacity-75">pre</span>
                 )}
               </button>
             )

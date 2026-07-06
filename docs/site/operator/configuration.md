@@ -172,7 +172,7 @@ Reconciler tuning lives in Helm under `secrets.reconciler.*` (see [Secrets Recon
 
 ### 2. Cluster connectivity (`clusterTest`)
 
-The **cluster-test** mechanism resolves cluster connectivity credentials — the kubeconfig used by the Test cluster button, the `POST /api/v1/clusters/{name}/test` endpoint, the dashboard "Verified" state, and the secrets reconciler's push channel.
+The **cluster-test** mechanism resolves cluster connectivity credentials — the kubeconfig used by the Test connection button, the `POST /api/v1/clusters/{name}/test` endpoint, the dashboard "Verified" state, and the secrets reconciler's push channel.
 
 **v1.25 supports one backend: `argocd`.** ArgoCDProvider reads cluster Secrets from the namespace where ArgoCD is installed. Auto-defaults to `argocd` when Sharko runs in-cluster, so the production happy path needs no explicit configuration.
 

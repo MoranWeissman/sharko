@@ -41,7 +41,7 @@ export function VerifiedBadge({
     return (
       <span
         className={`inline-flex items-center gap-1 rounded-full bg-[#d1f0e6] font-medium text-[#0a4a3a] ring-1 ring-[#5acca0] dark:bg-[#1a4a3a] dark:text-[#d1f0e6] dark:ring-[#5acca0] ${
-          compact ? 'px-2 py-0.5 text-[11px]' : 'px-2.5 py-1 text-xs'
+          compact ? 'px-2 py-0.5 text-xs' : 'px-2.5 py-1 text-xs'
         }`}
         title={tooltip}
         aria-label={ariaLabel}
@@ -57,7 +57,7 @@ export function VerifiedBadge({
   return (
     <span
       className={`inline-flex items-center gap-1 rounded-full bg-[#eaf4fc] font-medium text-[#2a5a7a] ring-1 ring-[#c0ddf0] dark:bg-[#123044] dark:text-[#b4dcf5] dark:ring-[#2a5a7a] ${
-        compact ? 'px-2 py-0.5 text-[11px]' : 'px-2.5 py-1 text-xs'
+        compact ? 'px-2 py-0.5 text-xs' : 'px-2.5 py-1 text-xs'
       }`}
       title="Unsigned — no cosign signature attached"
       aria-label="Unsigned (no cosign signature)"

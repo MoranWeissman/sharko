@@ -234,10 +234,12 @@ A good answer has `"success": true`. If the active connection has no secrets
 backend wired up, you'll get a 503 with `"error_code": "no_secrets_backend"` —
 that means the *test feature* is unavailable, not that the cluster is down.
 
-### Diagnose
+### Check permissions
 
 Runs a deeper set of permission/namespace checks against the cluster and returns
-a report with suggested fixes. No request body needed.
+a report with suggested fixes. No request body needed. (This is the "Check
+permissions" button on the Cluster Detail page — the endpoint name
+(`/diagnose`) is unchanged.)
 
 ```bash
 curl -s "${auth[@]}" -X POST "$SH/clusters/my-cluster/diagnose" | jq

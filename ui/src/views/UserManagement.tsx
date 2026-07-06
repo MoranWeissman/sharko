@@ -368,7 +368,7 @@ export function UserManagement({ embedded }: { embedded?: boolean } = {}) {
                         {user.username}
                       </span>
                       {!user.enabled && (
-                        <span className="rounded bg-[#d6eeff] px-1.5 py-0.5 text-[10px] text-[#2a5a7a] dark:bg-gray-800">disabled</span>
+                        <span className="rounded bg-[#d6eeff] px-1.5 py-0.5 text-xs text-[#2a5a7a] dark:bg-gray-800">disabled</span>
                       )}
                     </div>
                   </div>

@@ -220,7 +220,7 @@ export function ClusterStatusSummary(props: ClusterStatusSummaryProps) {
           return (
             <div key={`${part.who}-${part.label}`}>
               <p
-                className="cursor-help text-[10px] font-medium text-[#5a8aaa] dark:text-gray-500"
+                className="cursor-help text-xs font-medium text-[#5a8aaa] dark:text-gray-500"
                 title={part.whoTooltip}
               >
                 {part.who}

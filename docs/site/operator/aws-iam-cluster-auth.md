@@ -10,12 +10,12 @@
 > `internal/providers/argocd_provider.go`. The IRSA + EKS access-entry
 > instructions were re-run against an EKS 1.30 cluster from a
 > manually-deployed Sharko v1.25 pod. Re-verify before v2 ships — the
-> v2 IAM-auth Test path will replace the 503 surface, and operators
+> v2 IAM-auth Test connection path will replace the 503 surface, and operators
 > will move from this runbook to the in-app "Test succeeded" UX.
 
 Operators registering EKS clusters that use AWS IAM authentication
 (the `awsAuthConfig` shape inside the ArgoCD cluster Secret) hit a
-hard `503 Service Unavailable` whenever they click **Test cluster**
+hard `503 Service Unavailable` whenever they click **Test connection**
 in the UI. The error is clear, the cluster is correctly registered
 end-to-end, and ArgoCD itself can still deploy addons to the
 cluster — the only gap is Sharko's own connectivity-verification
@@ -28,7 +28,7 @@ here, so it must not 404; (2) operators on-boarding multiple EKS
 clusters need to understand that this is a known v1.x limitation, not
 a per-cluster misconfiguration; (3) the v2 fix path is documented so
 operators can plan the upgrade. v2 ships IRSA-backed IAM token
-minting for Test; until then, the workaround is to verify
+minting for Test connection; until then, the workaround is to verify
 connectivity manually outside Sharko.
 
 This runbook is shorter than the 300-line floor because the entire
@@ -42,11 +42,11 @@ brevity is intentional and documented in the
 
 What an operator sees when this fires:
 
-- UI: clicking **Test cluster** on a Cluster detail page surfaces the
+- UI: clicking **Test connection** on a Cluster detail page surfaces the
   banner verbatim:
 
   > "This cluster uses AWS IAM authentication. Configure AWS
-  > credentials for the Sharko pod's role to enable Test."
+  > credentials for the Sharko pod's role to enable Test connection."
 
 - API: `POST /api/v1/clusters/{name}/test` returns
   `503 Service Unavailable` with body:
@@ -61,7 +61,7 @@ What an operator sees when this fires:
   {"time":"...","level":"WARN","msg":"cluster test rejected: provider returned ErrArgoCDProviderIAMUnsupported","request_id":"req-...","cluster":"<name>"}
   ```
 
-- No Sharko alert fires — `Test cluster` is a synchronous read; the
+- No Sharko alert fires — `Test connection` is a synchronous read; the
   V2-3 burn-rate alerts do not cover it because there is no error
   budget defined for cluster-test calls. The failure is purely
   user-visible.
@@ -109,7 +109,7 @@ Expected on this failure path: `awsAuthConfig` is non-null,
 ```
 
 If `bearerToken` is set, your cluster is **not** using IAM auth
-(despite being on EKS) — the Test failure has a different cause.
+(despite being on EKS) — the Test connection failure has a different cause.
 
 ### 2. Confirm ArgoCD itself can use the cluster
 
@@ -130,7 +130,7 @@ kubectl -n sharko exec deploy/sharko -- sharko version
 ```
 
 Expected on this failure path: any v1.x version (v1.20 through
-v1.26). v2.0.0 and later ship the IAM-auth Test path; if you are on
+v1.26). v2.0.0 and later ship the IAM-auth Test connection path; if you are on
 v2.0.0+ and still seeing this, the issue is misconfigured IRSA, not
 the unsupported-in-v1 limitation — see Prevention below for the
 v2 IRSA setup.
@@ -139,14 +139,14 @@ v2 IRSA setup.
 
 ## Mitigation (try in order)
 
-The end-to-end Test path requires changes to Sharko itself; v1.x
+The end-to-end Test connection path requires changes to Sharko itself; v1.x
 operators have three lanes depending on how much verification they
 need today.
 
 ### 1. Verify connectivity manually outside Sharko (recommended)
 
 The fastest "did my cluster actually register?" check that does not
-depend on the Sharko Test button:
+depend on the Sharko Test connection button:
 
 ```sh
 # Sanity-check ArgoCD's view (succeeds even on this failure path)
@@ -166,18 +166,18 @@ cluster as Healthy/Synced; the cluster Secret carries the
 `app.kubernetes.io/managed-by: sharko` label (see
 [`cluster-reconciler.md`](cluster-reconciler.md)); and your local
 kubeconfig can reach the cluster API. Three greens = the
-registration succeeded and the Test button's 503 is purely
+registration succeeded and the Test connection button's 503 is purely
 cosmetic. Stop here.
 
 ### 2. Add the cluster to a pre-merge smoke ApplicationSet
 
 If you need automated "is this cluster healthy?" checks across the
 fleet (because your CI/CD pipeline currently leans on the Sharko
-Test button), deploy a tiny smoke ApplicationSet that targets every
+Test connection button), deploy a tiny smoke ApplicationSet that targets every
 new cluster with a lightweight workload (e.g. `podinfo` in a smoke
 namespace). When the smoke Application syncs healthy on the new
 cluster, you have proof the cluster works end-to-end. This is more
-robust than the Sharko Test button anyway — it tests the full
+robust than the Sharko Test connection button anyway — it tests the full
 deploy path, not just the API reachability.
 
 This is a fleet-management technique, not a Sharko fix; it is
@@ -186,7 +186,7 @@ time will hit this pain hardest.
 
 ### 3. Plan the v2 upgrade (real fix)
 
-The IAM-auth Test path ships in **v2.0.0**. Three pieces have to be
+The IAM-auth Test connection path ships in **v2.0.0**. Three pieces have to be
 present in the v2 deployment:
 
 - **IRSA on the Sharko pod's ServiceAccount.** Annotate the
@@ -198,9 +198,9 @@ present in the v2 deployment:
   EKS cluster's OIDC provider; do not use wildcard trust.
 - **`sharko` v2.0.0 or later**, which calls
   `aws-iam-authenticator` (or the AWS SDK's EKS token minter)
-  before the Test API call.
+  before the Test connection API call.
 
-Once all three are in place, **Test cluster** works for IAM-auth
+Once all three are in place, **Test connection** works for IAM-auth
 EKS clusters identically to bearer-token clusters. The v2.0.0
 production release shipped this path; see the architecture
 roadmap and the [`eks-token-generation-failed.md`](eks-token-generation-failed.md)
@@ -210,7 +210,7 @@ runbook for IRSA misconfiguration in v2.0.0+.
 
 **Not recommended.** EKS clusters can be added to ArgoCD using a
 static bearer token (a long-lived ServiceAccount token), bypassing
-IAM auth entirely. The Test button works because the cluster Secret
+IAM auth entirely. The Test connection button works because the cluster Secret
 shape is `bearerToken`, not `awsAuthConfig`. But long-lived
 ServiceAccount tokens are a security regression versus IAM auth —
 they do not rotate, they survive role revocation, and they cannot
@@ -268,13 +268,13 @@ different surface across versions.
 
 How to make this failure mode less likely going forward.
 
-- **Run v2.0.0 or later** — v2 ships the IAM-auth Test path with
+- **Run v2.0.0 or later** — v2 ships the IAM-auth Test connection path with
   IRSA-backed token minting. Operators still on a pre-v2 install
   should upgrade.
 - **Pre-stage IRSA on upgrade.** Operators upgrading to v2 can
   pre-create the IRSA role and IAM policy before swapping the image.
   After the v2 image rolls, annotate the `sharko` ServiceAccount
-  with the IRSA role-ARN, restart the Sharko pod, and the Test path
+  with the IRSA role-ARN, restart the Sharko pod, and the Test connection path
   immediately works for every previously-registered IAM-auth cluster
   without re-registration.
 
@@ -304,7 +304,7 @@ maintainer: `moran.weissman@gmail.com`. Include:
   showing the `awsAuthConfig` shape (redact the role ARN if your
   policy requires; the failure is not role-specific)
 - The fleet on-boarding scope (number of clusters, target Sharko
-  Test rollout date)
+  Test connection rollout date)
 
 The maintainer can clarify the v2 roadmap timing and may be able to
 back-port the IRSA wiring as a maintenance patch if there is a

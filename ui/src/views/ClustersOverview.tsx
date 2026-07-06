@@ -56,6 +56,12 @@ import {
 import { ClusterTypeBadge } from '@/components/ClusterTypeBadge';
 import { ClusterStatusLegend } from '@/components/ClusterStatusLegend';
 import { InfoHint } from '@/components/InfoHint';
+import {
+  TEST_CONNECTION_LABEL,
+  TEST_CONNECTION_HINT,
+  CHECK_PERMISSIONS_LABEL,
+  CHECK_PERMISSIONS_HINT,
+} from '@/components/ClusterActionHints';
 import { PRModelExplainer } from '@/components/PRFeedback';
 import { DiagnoseModal } from '@/components/DiagnoseModal';
 import { ArgoCDStatusBanner } from '@/components/ArgoCDStatusBanner';
@@ -1994,29 +2000,34 @@ export function ClustersOverview() {
                             onClick={(e) => handleTestCluster(cluster.name, e)}
                             disabled={testResult === 'testing' || !clusterTestAvailable}
                             title={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : SHARKO_CONN_TOOLTIP}
-                            aria-label={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : 'Test'}
+                            aria-label={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : TEST_CONNECTION_LABEL}
                             className="inline-flex items-center gap-1 rounded border border-[#5a9dd0] px-2 py-1 text-xs text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 disabled:cursor-not-allowed dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
                           >
                             {testResult === 'testing'
                               ? <Loader2 className="h-3 w-3 animate-spin" />
                               : <Wifi className="h-3 w-3" />}
-                            Test
+                            {TEST_CONNECTION_LABEL}
                           </button>
                           {/* V2-cleanup-61.4 (G3): the disabled reason lived
                             * only in `title`/`aria-label` — invisible to
-                            * touch/keyboard. This gives it a click/focus
-                            * affordance too, without touching the button. */}
-                          {!clusterTestAvailable && (
-                            <InfoHint text={TEST_BUTTON_DISABLED_TOOLTIP} label="Why is Test disabled?" />
-                          )}
+                            * touch/keyboard. V2-cleanup-65.1: when the button
+                            * IS enabled, the same slot explains what it does
+                            * instead, so there's always a click/focus
+                            * affordance next to it. */}
+                          <InfoHint
+                            text={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : TEST_CONNECTION_HINT}
+                            label={!clusterTestAvailable ? 'Why is Test connection disabled?' : 'What does Test connection do?'}
+                          />
                           <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); setDiagnoseCluster(cluster.name); }}
+                            aria-label={CHECK_PERMISSIONS_LABEL}
                             className="inline-flex items-center gap-1 rounded border border-[#5a9dd0] px-2 py-1 text-xs text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
                           >
                             <HelpCircle className="h-3 w-3" />
-                            Diagnose
+                            {CHECK_PERMISSIONS_LABEL}
                           </button>
+                          <InfoHint text={CHECK_PERMISSIONS_HINT} label="What does Check permissions do?" />
                           {cluster.adopted && (
                             <RoleGuard adminOnly>
                               <button
@@ -2074,22 +2085,26 @@ export function ClustersOverview() {
                         onClick={(e) => handleTestCluster(cluster.name, e)}
                         disabled={testResult === 'testing' || !clusterTestAvailable}
                         title={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : SHARKO_CONN_TOOLTIP}
-                        aria-label={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : 'Test'}
+                        aria-label={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : TEST_CONNECTION_LABEL}
                         className="inline-flex items-center gap-1 rounded border border-[#5a9dd0] px-2 py-1 text-xs text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 disabled:cursor-not-allowed dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
                       >
                         {testResult === 'testing' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wifi className="h-3 w-3" />}
-                        Test
+                        {TEST_CONNECTION_LABEL}
                       </button>
-                      {!clusterTestAvailable && (
-                        <InfoHint text={TEST_BUTTON_DISABLED_TOOLTIP} label="Why is Test disabled?" />
-                      )}
+                      <InfoHint
+                        text={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : TEST_CONNECTION_HINT}
+                        label={!clusterTestAvailable ? 'Why is Test connection disabled?' : 'What does Test connection do?'}
+                      />
                       <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); setDiagnoseCluster(cluster.name); }}
+                        aria-label={CHECK_PERMISSIONS_LABEL}
+                        title={CHECK_PERMISSIONS_LABEL}
                         className="inline-flex items-center gap-1 rounded border border-[#5a9dd0] px-2 py-1 text-xs text-[#0a3a5a] hover:bg-[#d6eeff] dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
                       >
                         <HelpCircle className="h-3 w-3" />
                       </button>
+                      <InfoHint text={CHECK_PERMISSIONS_HINT} label="What does Check permissions do?" />
                     </div>
                   </div>
                   {testResult && testResult !== 'testing' && (
@@ -2236,15 +2251,16 @@ export function ClustersOverview() {
                                 onClick={(e) => handleTestCluster(cluster.name, e)}
                                 disabled={testResult === 'testing' || !clusterTestAvailable}
                                 title={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : SHARKO_CONN_TOOLTIP}
-                                aria-label={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : 'Test'}
+                                aria-label={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : TEST_CONNECTION_LABEL}
                                 className="inline-flex items-center gap-1 rounded border border-[#5a9dd0] px-2 py-1 text-xs text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 disabled:cursor-not-allowed dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
                               >
                                 {testResult === 'testing' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wifi className="h-3 w-3" />}
-                                Test
+                                {TEST_CONNECTION_LABEL}
                               </button>
-                              {!clusterTestAvailable && (
-                                <InfoHint text={TEST_BUTTON_DISABLED_TOOLTIP} label="Why is Test disabled?" />
-                              )}
+                              <InfoHint
+                                text={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : TEST_CONNECTION_HINT}
+                                label={!clusterTestAvailable ? 'Why is Test connection disabled?' : 'What does Test connection do?'}
+                              />
                               {renderTestResult(cluster.name, testResult)}
                               <RoleGuard adminOnly>
                                 <button
@@ -2299,15 +2315,16 @@ export function ClustersOverview() {
                           onClick={(e) => handleTestCluster(cluster.name, e)}
                           disabled={testResult === 'testing' || !clusterTestAvailable}
                           title={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : SHARKO_CONN_TOOLTIP}
-                          aria-label={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : 'Test'}
+                          aria-label={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : TEST_CONNECTION_LABEL}
                           className="inline-flex items-center gap-1 rounded border border-[#5a9dd0] px-2 py-1 text-xs text-[#0a3a5a] hover:bg-[#d6eeff] disabled:opacity-50 disabled:cursor-not-allowed dark:border-gray-600 dark:text-gray-300"
                         >
                           {testResult === 'testing' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wifi className="h-3 w-3" />}
-                          Test
+                          {TEST_CONNECTION_LABEL}
                         </button>
-                        {!clusterTestAvailable && (
-                          <InfoHint text={TEST_BUTTON_DISABLED_TOOLTIP} label="Why is Test disabled?" />
-                        )}
+                        <InfoHint
+                          text={!clusterTestAvailable ? TEST_BUTTON_DISABLED_TOOLTIP : TEST_CONNECTION_HINT}
+                          label={!clusterTestAvailable ? 'Why is Test connection disabled?' : 'What does Test connection do?'}
+                        />
                       </div>
                     </div>
                     {cluster.server_url && (

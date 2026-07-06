@@ -526,7 +526,7 @@ export function AIAssistant({ embedded = false, pageContext, initialMessageSeed 
           </div>
           <div className="flex items-center gap-3">
             {messages.length > 0 && (
-              <span className="rounded-full bg-[#d6eeff] px-2 py-0.5 text-[10px] text-[#2a5a7a] dark:bg-gray-800 dark:text-gray-400">
+              <span className="rounded-full bg-[#d6eeff] px-2 py-0.5 text-xs text-[#2a5a7a] dark:bg-gray-800 dark:text-gray-400">
                 {messages.length} messages
               </span>
             )}
@@ -552,14 +552,14 @@ export function AIAssistant({ embedded = false, pageContext, initialMessageSeed 
       {/* Embedded mini toolbar — always visible when embedded */}
       {embedded && (
         <div className="flex items-center justify-between border-b border-[#6aade0] px-3 py-1.5 dark:border-gray-700">
-          <span className="text-[10px] text-[#3a6a8a] dark:text-gray-500">
+          <span className="text-xs text-[#3a6a8a] dark:text-gray-500">
             {messages.length > 0 ? `${messages.length} messages` : ''}
           </span>
           <div className="flex items-center gap-2">
             {messages.length > 0 && (
               <button
                 onClick={handleExport}
-                className="flex items-center gap-1 rounded px-2 py-1 text-[11px] text-gray-500 hover:bg-[#d6eeff] hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800"
+                className="flex items-center gap-1 rounded px-2 py-1 text-xs text-gray-500 hover:bg-[#d6eeff] hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800"
               >
                 <Download className="h-3 w-3" />
                 Export
@@ -567,7 +567,7 @@ export function AIAssistant({ embedded = false, pageContext, initialMessageSeed 
             )}
             <button
               onClick={handleNewConversation}
-              className="flex items-center gap-1 rounded px-2 py-1 text-[11px] text-gray-500 hover:bg-[#d6eeff] hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800"
+              className="flex items-center gap-1 rounded px-2 py-1 text-xs text-gray-500 hover:bg-[#d6eeff] hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800"
             >
               <RotateCcw className="h-3 w-3" />
               New Chat
@@ -645,7 +645,7 @@ export function AIAssistant({ embedded = false, pageContext, initialMessageSeed 
                     <p className="whitespace-pre-wrap">{msg.content}</p>
                   )}
                   <p
-                    className={`mt-1.5 text-[10px] ${
+                    className={`mt-1.5 text-xs ${
                       msg.role === 'user'
                         ? 'text-teal-200'
                         : 'text-[#5a8aaa] dark:text-gray-500'

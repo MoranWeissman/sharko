@@ -133,7 +133,7 @@ function RecommendedVersions({
                     <span className="text-xs font-semibold">Recommended</span>
                   </div>
                   {card.reason && (
-                    <p className="text-[11px] italic text-teal-700/80 dark:text-teal-400/80">
+                    <p className="text-xs italic text-teal-700/80 dark:text-teal-400/80">
                       {card.reason}
                     </p>
                   )}
@@ -150,13 +150,13 @@ function RecommendedVersions({
                 </span>
                 <div className="flex items-center gap-1">
                   {card.has_security && (
-                    <span className="flex items-center gap-0.5 rounded-full bg-green-100 px-1.5 py-0.5 text-[10px] font-semibold text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                    <span className="flex items-center gap-0.5 rounded-full bg-green-100 px-1.5 py-0.5 text-xs font-semibold text-green-700 dark:bg-green-900/30 dark:text-green-400">
                       <Shield className="h-3 w-3" />
                       Security
                     </span>
                   )}
                   {(card.has_breaking || card.cross_major) && (
-                    <span className="flex items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                    <span className="flex items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-xs font-semibold text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
                       <AlertTriangle className="h-3 w-3" />
                       Major change
                     </span>
@@ -334,7 +334,7 @@ function UpgradeVersionList({
               <div className="flex items-center gap-2">
                 <span className="font-mono text-sm font-bold text-[#0a2a4a] dark:text-gray-100">{v.version}</span>
                 {i === 0 && !searchQuery && (
-                  <span className="rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-semibold text-green-700 dark:bg-green-900/40 dark:text-green-400">
+                  <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-700 dark:bg-green-900/40 dark:text-green-400">
                     LATEST
                   </span>
                 )}
@@ -957,7 +957,7 @@ function PerClusterUpgradeRow({
           </Link>
           <span className="font-mono text-sm text-[#1a4a6a]">{deployedVersion}</span>
           {isDowngradingCluster && isDrifted && (
-            <span className="flex items-center gap-0.5 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+            <span className="flex items-center gap-0.5 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
               <AlertTriangle className="h-3 w-3" />
               Downgrade
             </span>

@@ -1,7 +1,7 @@
 # Cluster Connectivity Model
 
 > **Reference page, not a runbook.** This page explains the credential
-> selection model behind the **Test cluster** feature: which
+> selection model behind the **Test connection** feature: which
 > kubeconfig shapes Sharko handles today (bearer token, AWS IAM, exec
 > plugin), what the V125-1-10 `argocd` provider auto-default added, and
 > where the v1.x limitations live. If you are diagnosing a specific
@@ -12,17 +12,17 @@
 > [`argocd-exec-plugin-auth-unsupported.md`](argocd-exec-plugin-auth-unsupported.md)
 > / [`eks-token-generation-failed.md`](eks-token-generation-failed.md).
 
-How Sharko picks credentials for the **Test cluster** feature, what just works, and what needs additional setup.
+How Sharko picks credentials for the **Test connection** feature, what just works, and what needs additional setup.
 
 ## What V125-1-10 changed
 
-Before v1.25, the Test cluster feature required an explicit **secrets backend** (Vault / AWS-SM / k8s-secrets) to be configured on the active connection — even for self-hosted Kubernetes installs where the credentials Sharko already wrote into ArgoCD's namespace would do. Operators with no separate secrets backend hit a 503 "no credentials provider configured" dead end.
+Before v1.25, the Test connection feature required an explicit **secrets backend** (Vault / AWS-SM / k8s-secrets) to be configured on the active connection — even for self-hosted Kubernetes installs where the credentials Sharko already wrote into ArgoCD's namespace would do. Operators with no separate secrets backend hit a 503 "no credentials provider configured" dead end.
 
 v1.25 introduces a built-in `argocd` provider that reads cluster credentials directly from the ArgoCD cluster Secret Sharko already creates during `sharko register-cluster`. Test now routes by inspecting the Secret's `config` JSON shape — no extra configuration required for the production happy path.
 
 ## What just works today
 
-**Self-hosted Kubernetes** (EC2 / VMs / on-prem / bare-metal) registered via `sharko register-cluster` with a kubeconfig containing a static bearer token. ArgoCD stores the credentials with the `bearerToken` config shape; the `argocd` provider reads them back; the Test cluster 12-step flow runs end-to-end.
+**Self-hosted Kubernetes** (EC2 / VMs / on-prem / bare-metal) registered via `sharko register-cluster` with a kubeconfig containing a static bearer token. ArgoCD stores the credentials with the `bearerToken` config shape; the `argocd` provider reads them back; the Test connection 12-step flow runs end-to-end.
 
 This is the **primary production target** for v1.25. No secrets-backend configuration needed.
 

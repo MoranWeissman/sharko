@@ -449,7 +449,7 @@ export function SystemView() {
             to="Git repo"
             caption={
               <span
-                className="w-fit cursor-help text-[10px] font-medium text-[#5a8aaa] dark:text-gray-500"
+                className="w-fit cursor-help text-xs font-medium text-[#5a8aaa] dark:text-gray-500"
                 title={SHARKO_REPO_TOOLTIP}
               >
                 {SHARKO_REPO_LABEL}
@@ -466,7 +466,7 @@ export function SystemView() {
             to="Git repo"
             caption={
               <span
-                className="w-fit cursor-help text-[10px] font-medium text-[#5a8aaa] dark:text-gray-500"
+                className="w-fit cursor-help text-xs font-medium text-[#5a8aaa] dark:text-gray-500"
                 title={ARGOCD_REPO_TOOLTIP}
               >
                 {ARGOCD_REPO_LABEL}

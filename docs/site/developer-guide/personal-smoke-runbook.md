@@ -379,7 +379,7 @@ For every page below the rubric is the same:
 
 - [ ] **Observability / Dashboards** — embedded dashboards page renders, "+ Add" works.
 
-- [ ] **Diagnose modal** — somewhere in the UI (Cluster Detail → Diagnose button). Modal opens, runs probes, renders results.
+- [ ] **Check permissions modal** — somewhere in the UI (Cluster Detail → Check permissions button). Modal opens, runs probes, renders results.
 
 - [ ] **Logout** — returns to login page, token cleared from local storage (DevTools → Application → Local Storage).
 

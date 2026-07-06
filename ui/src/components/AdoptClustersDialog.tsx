@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/dialog'
 import { testClusterConnection, adoptClusters, isTestClusterUnavailable } from '@/services/api'
 import type { Cluster, AdoptResult, VerifyResult } from '@/services/models'
+import { CHECK_PERMISSIONS_LABEL } from '@/components/ClusterActionHints'
 
 interface AdoptClustersDialogProps {
   open: boolean
@@ -266,7 +267,7 @@ export function AdoptClustersDialog({
                             onClick={() => onDiagnose(v.cluster.name)}
                             className="text-xs font-medium text-blue-600 underline hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
                           >
-                            Diagnose
+                            {CHECK_PERMISSIONS_LABEL}
                           </button>
                         </div>
                       )}

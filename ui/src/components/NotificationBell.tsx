@@ -97,6 +97,11 @@ export function NotificationBell() {
         >
           <Bell className="h-5 w-5" />
           {unreadCount > 0 && (
+            // V2-cleanup-65.1: kept at 9px deliberately — this is a
+            // superscript-style unread-count bubble in a fixed h-4 w-4
+            // (16px) circle overlaid on the bell icon; bumping to text-xs
+            // (12px) doesn't fit inside the circle for 2-digit counts and
+            // visually breaks the badge.
             <span className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[9px] font-bold text-white">
               {unreadCount}
             </span>
@@ -157,9 +162,9 @@ export function NotificationBell() {
                       {n.title}
                     </p>
                     <p className="mt-0.5 text-xs text-[#3a6a8a] dark:text-gray-400">{n.description}</p>
-                    <p className="mt-1 text-[10px] text-[#5a8aaa] dark:text-gray-500">{timeAgo(n.timestamp)}</p>
+                    <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">{timeAgo(n.timestamp)}</p>
                     {actionable && (
-                      <p className="mt-1 text-[10px] font-medium text-teal-600 dark:text-teal-400">
+                      <p className="mt-1 text-xs font-medium text-teal-600 dark:text-teal-400">
                         Open Settings → Connection
                       </p>
                     )}

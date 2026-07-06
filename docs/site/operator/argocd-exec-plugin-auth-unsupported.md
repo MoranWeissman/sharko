@@ -39,7 +39,7 @@ fleet.
 What an operator sees when this fires:
 
 - **UI shows the exec-plugin-specific message** on the Cluster detail
-  page when the operator clicks **Test cluster**:
+  page when the operator clicks **Test connection**:
 
   ```
   cluster "<name>" uses exec-plugin auth (command "<helper>").

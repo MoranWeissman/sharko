@@ -235,7 +235,7 @@ function ResourceAlertsSection({ alerts }: { alerts: ResourceAlert[] }) {
                 </p>
               </div>
             </div>
-            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold uppercase text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
               {alert.alert_type.replace(/_/g, ' ')}
             </span>
           </div>
@@ -438,7 +438,7 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
                       {healthEntries.map(([status, count]) => (
                         <span
                           key={status}
-                          className="flex items-center gap-1 text-[11px] text-[#2a5a7a] dark:text-gray-400"
+                          className="flex items-center gap-1 text-xs text-[#2a5a7a] dark:text-gray-400"
                         >
                           <span
                             className="inline-block h-2 w-2 rounded-full"
@@ -479,12 +479,12 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
                                 {child.cluster_name}
                               </td>
                               <td className="py-2 pr-3">
-                                <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${healthBadgeCls(child.health)}`}>
+                                <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-semibold uppercase ${healthBadgeCls(child.health)}`}>
                                   {child.health || 'Unknown'}
                                 </span>
                               </td>
                               <td className="py-2 pr-3">
-                                <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${syncBadgeCls(child.sync_status)}`}>
+                                <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-semibold uppercase ${syncBadgeCls(child.sync_status)}`}>
                                   {child.sync_status || 'Unknown'}
                                 </span>
                               </td>
@@ -559,7 +559,7 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
                         {healthEntries.map(([status, count]) => (
                           <span
                             key={status}
-                            className="flex items-center gap-1 text-[11px] text-[#2a5a7a] dark:text-gray-400"
+                            className="flex items-center gap-1 text-xs text-[#2a5a7a] dark:text-gray-400"
                           >
                             <span
                               className="inline-block h-2 w-2 rounded-full"
@@ -600,12 +600,12 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
                                   {addon.addon_name}
                                 </td>
                                 <td className="py-2 pr-3">
-                                  <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${healthBadgeCls(addon.health)}`}>
+                                  <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-semibold uppercase ${healthBadgeCls(addon.health)}`}>
                                     {addon.health || 'Unknown'}
                                   </span>
                                 </td>
                                 <td className="py-2 pr-3">
-                                  <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${syncBadgeCls(addon.sync_status)}`}>
+                                  <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-semibold uppercase ${syncBadgeCls(addon.sync_status)}`}>
                                     {addon.sync_status || 'Unknown'}
                                   </span>
                                 </td>

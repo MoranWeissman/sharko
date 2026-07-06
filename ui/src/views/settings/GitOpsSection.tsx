@@ -168,7 +168,7 @@ export function GitOpsSection() {
           </div>
           <div>
             <span className="text-sm font-medium text-[#0a3a5a] dark:text-gray-300">Auto-merge PRs</span>
-            <p className="text-[10px] text-[#3a6a8a]">Automatically merge addon change PRs when checks pass</p>
+            <p className="text-xs text-[#3a6a8a]">Automatically merge addon change PRs when checks pass</p>
           </div>
         </label>
       </div>
@@ -186,7 +186,7 @@ export function GitOpsSection() {
               <div className="flex-1 rounded-lg border border-[#5a9dd0] bg-[#e0f0ff] px-3 py-2 text-sm text-[#0a2a4a] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100">
                 {detectedClusterName}
               </div>
-              <span className="flex items-center gap-1 rounded-full bg-teal-100 px-2 py-0.5 text-[10px] font-medium text-teal-700 dark:bg-teal-900/30 dark:text-teal-400">
+              <span className="flex items-center gap-1 rounded-full bg-teal-100 px-2 py-0.5 text-xs font-medium text-teal-700 dark:bg-teal-900/30 dark:text-teal-400">
                 <Info className="h-3 w-3" />
                 detected
               </span>
@@ -199,12 +199,12 @@ export function GitOpsSection() {
               placeholder={detectedClusterName || 'e.g. management'}
             />
           )}
-          <p className="mt-1 text-[10px] text-[#3a6a8a]">Name of the cluster running Sharko + ArgoCD</p>
+          <p className="mt-1 text-xs text-[#3a6a8a]">Name of the cluster running Sharko + ArgoCD</p>
           {isHostClusterDetected && (
             <button
               type="button"
               onClick={() => setDetectedClusterName(null)}
-              className="mt-1 text-[10px] text-[#3a6a8a] underline hover:text-[#1a4a6a]"
+              className="mt-1 text-xs text-[#3a6a8a] underline hover:text-[#1a4a6a]"
             >
               Override
             </button>
@@ -218,7 +218,7 @@ export function GitOpsSection() {
           <GitMerge className="h-4 w-4 text-[#2a5a7a]" />
           <h5 className="text-sm font-semibold text-[#0a2a4a] dark:text-gray-100">Default Addons</h5>
         </div>
-        <p className="mb-3 text-[10px] text-[#3a6a8a]">
+        <p className="mb-3 text-xs text-[#3a6a8a]">
           Addons enabled by default on newly registered clusters.
         </p>
         {catalogLoading ? (
@@ -247,7 +247,7 @@ export function GitOpsSection() {
           </div>
         )}
         {selectedDefaults.length > 0 && (
-          <p className="mt-2 text-[10px] text-[#3a6a8a]">
+          <p className="mt-2 text-xs text-[#3a6a8a]">
             Selected: {selectedDefaults.join(', ')}
           </p>
         )}

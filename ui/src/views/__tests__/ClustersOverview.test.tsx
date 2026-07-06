@@ -449,9 +449,10 @@ describe('ClustersOverview', () => {
       expect(mockHealth).toHaveBeenCalled();
     });
 
-    // After health resolves with true, no Test button is disabled by the gate.
-    // (it may still be disabled while testing=true, but no test is in flight.)
-    const testButtons = screen.getAllByRole('button', { name: /^Test$/ });
+    // After health resolves with true, no Test connection button is disabled
+    // by the gate. (it may still be disabled while testing=true, but no test
+    // is in flight.)
+    const testButtons = screen.getAllByRole('button', { name: /^Test connection$/ });
     expect(testButtons.length).toBeGreaterThanOrEqual(1);
     for (const btn of testButtons) {
       expect(btn).not.toBeDisabled();

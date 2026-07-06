@@ -72,7 +72,7 @@ const LIMIT_STEP = 200;
 function DetailField({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-0.5">
-      <dt className="text-[10px] font-semibold uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">{label}</dt>
+      <dt className="text-xs font-semibold uppercase tracking-wide text-[#5a8aaa] dark:text-gray-500">{label}</dt>
       <dd className="text-xs text-[#2a5a7a] dark:text-gray-300">{children}</dd>
     </div>
   );
@@ -375,7 +375,7 @@ export function AuditViewer() {
                   key={p.label}
                   type="button"
                   onClick={() => handlePreset(p.ms)}
-                  className="rounded-md ring-1 ring-[#6aade0] bg-[#e8f4ff] px-2 py-1 text-[11px] font-medium text-[#2a5a7a] hover:bg-[#d6eeff] dark:ring-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                  className="rounded-md ring-1 ring-[#6aade0] bg-[#e8f4ff] px-2 py-1 text-xs font-medium text-[#2a5a7a] hover:bg-[#d6eeff] dark:ring-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
                 >
                   {p.label}
                 </button>
@@ -384,7 +384,7 @@ export function AuditViewer() {
                 <button
                   type="button"
                   onClick={() => setFilterSince('')}
-                  className="rounded-md px-2 py-1 text-[11px] text-[#3a6a8a] underline-offset-2 hover:underline dark:text-gray-400"
+                  className="rounded-md px-2 py-1 text-xs text-[#3a6a8a] underline-offset-2 hover:underline dark:text-gray-400"
                 >
                   Clear
                 </button>
@@ -403,7 +403,7 @@ export function AuditViewer() {
               placeholder="Filter loaded entries…"
               className="w-full rounded-md border border-[#5a9dd0] bg-[#f0f7ff] px-2 py-1.5 text-xs focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:placeholder-[#5a8aaa]"
             />
-            <p className="mt-1 text-[10px] text-[#5a8aaa] dark:text-gray-500">
+            <p className="mt-1 text-xs text-[#5a8aaa] dark:text-gray-500">
               Searches the entries already loaded below (event, who, resource, detail).
             </p>
           </div>
@@ -506,10 +506,10 @@ export function AuditViewer() {
                               </div>
                             )}
                             <DetailField label="Event code">
-                              <code className="font-mono text-[11px]">{entry.event || '—'}</code>
+                              <code className="font-mono text-xs">{entry.event || '—'}</code>
                             </DetailField>
                             <DetailField label="Resource">
-                              <span className="font-mono text-[11px]">{entry.resource || '—'}</span>
+                              <span className="font-mono text-xs">{entry.resource || '—'}</span>
                               {parseResource(entry.resource) && (
                                 <span className="ml-1 text-[#5a8aaa] dark:text-gray-500">({parseResource(entry.resource)})</span>
                               )}
@@ -523,7 +523,7 @@ export function AuditViewer() {
                             </DetailField>
                             {entry.request_id && (
                               <DetailField label="Request ID">
-                                <code className="font-mono text-[11px]">{entry.request_id}</code>
+                                <code className="font-mono text-xs">{entry.request_id}</code>
                               </DetailField>
                             )}
                           </dl>

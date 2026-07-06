@@ -636,7 +636,7 @@ describe('ClusterDetail', () => {
       await waitFor(() => {
         expect(screen.getByText('prod-eu')).toBeInTheDocument();
       });
-      const testBtn = screen.getByRole('button', { name: /^test$/i });
+      const testBtn = screen.getByRole('button', { name: /^test connection$/i });
       fireEvent.click(testBtn);
       if (testid) {
         await waitFor(() => {
@@ -741,7 +741,7 @@ describe('ClusterDetail', () => {
       await waitFor(() => {
         expect(screen.getByText('prod-eu')).toBeInTheDocument();
       });
-      fireEvent.click(screen.getByRole('button', { name: /^test$/i }));
+      fireEvent.click(screen.getByRole('button', { name: /^test connection$/i }));
 
       await waitFor(() => {
         expect(screen.getByText('Service unavailable')).toBeInTheDocument();
@@ -763,7 +763,7 @@ describe('ClusterDetail', () => {
       await waitFor(() => {
         expect(screen.getByText('prod-eu')).toBeInTheDocument();
       });
-      fireEvent.click(screen.getByRole('button', { name: /^test$/i }));
+      fireEvent.click(screen.getByRole('button', { name: /^test connection$/i }));
 
       await waitFor(() => {
         expect(screen.getByText(/Connected.*v1\.29\.3/)).toBeInTheDocument();

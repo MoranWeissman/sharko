@@ -144,7 +144,7 @@ function operationBadge(op: string): OperationBadgeMeta {
 function CategoryBadge({ operation }: { operation: string }) {
   const { label, classes } = operationBadge(operation)
   return (
-    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${classes}`}>
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${classes}`}>
       {label}
     </span>
   )
@@ -200,7 +200,7 @@ function FilterControls({
               type="button"
               onClick={() => onCategoryChange(b.key)}
               aria-pressed={active}
-              className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium transition-colors ${
+              className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors ${
                 active
                   ? 'bg-teal-600 text-white shadow-sm'
                   : 'bg-[#e8f4ff] text-[#0a3a5a] hover:bg-[#d6eeff] dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
@@ -350,7 +350,7 @@ function PendingTabBody({
 
   return (
     <div className="space-y-2">
-      <div className="flex items-baseline justify-between text-[11px] text-[#3a6a8a] dark:text-gray-400">
+      <div className="flex items-baseline justify-between text-xs text-[#3a6a8a] dark:text-gray-400">
         <span>
           Showing {visiblePrs.length} of {prs.length} open PR{prs.length === 1 ? '' : 's'}
           {atCap ? ` (server cap)` : ''}
@@ -536,7 +536,7 @@ function MergedTabBody({
 
   return (
     <div className="space-y-2">
-      <div className="flex items-baseline justify-between text-[11px] text-[#3a6a8a] dark:text-gray-400">
+      <div className="flex items-baseline justify-between text-xs text-[#3a6a8a] dark:text-gray-400">
         <span>
           Showing {visiblePrs.length} of {prs.length} merged PR{prs.length === 1 ? '' : 's'}
         </span>

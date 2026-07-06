@@ -155,11 +155,11 @@ describe('ClustersOverview — whose-connection labels (V2-cleanup-55.3)', () =>
     expect(screen.queryByRole('button', { name: /^Connection Status/ })).not.toBeInTheDocument();
   });
 
-  it('gives the enabled Test button a Sharko → cluster tooltip', async () => {
+  it('gives the enabled Test connection button a Sharko → cluster tooltip', async () => {
     renderView();
     await waitForClusters();
 
-    const testButtons = screen.getAllByRole('button', { name: 'Test' });
+    const testButtons = screen.getAllByRole('button', { name: 'Test connection' });
     expect(testButtons.length).toBeGreaterThan(0);
     for (const btn of testButtons) {
       expect(btn).toHaveAttribute('title', SHARKO_CONN_TOOLTIP);
@@ -181,7 +181,7 @@ describe('ClustersOverview — whose-connection labels (V2-cleanup-55.3)', () =>
     // No Sharko caption before a test has run.
     expect(screen.queryByText(SHARKO_CONN_LABEL)).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Test' })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Test connection' })[0]);
 
     await waitFor(() => {
       expect(screen.getByText('Connected (2/2 checks passed)')).toBeInTheDocument();
