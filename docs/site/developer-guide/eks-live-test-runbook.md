@@ -146,13 +146,84 @@ aws secretsmanager put-secret-value --region eu-west-1 --secret-id "sharko-eks-l
 
 ### Step 11 — teardown (covers Part 2 too)
 
-`./scripts/eks-live-test.sh teardown` also deletes the throwaway IAM role and its access entry — no separate cleanup step needed. Re-run `status` to confirm.
+`./scripts/eks-live-test.sh teardown` also deletes the throwaway IAM role and its access entry — no separate cleanup step needed. Re-run `status` to confirm. (If you've also run Part 3 below, use `env-down` instead — plain `teardown` only knows about the spoke.)
+
+---
+
+## Part 3 — the full hub-on-EKS simulation
+
+Parts 1 and 2 kept the hub (Sharko + ArgoCD) on your local kind cluster, with your local AWS keys mounted. That deliberately skipped three claims that matter for anyone actually installing Sharko on EKS. Part 3 closes them, in one command.
+
+**What this proves, plainly:**
+
+- **The Helm chart installs and runs on a real EKS cluster** — not kind, not a laptop. Same chart in `charts/sharko/`, same published image from ghcr.io.
+- **Zero stored AWS keys, end to end.** Sharko's AWS identity comes from the cluster itself via EKS Pod Identity: a scoped IAM role is bound to Sharko's service account (and to ArgoCD's controllers, which mint their own EKS tokens for the spoke). No access key exists anywhere — not in a Secret, not in an env var, not in a values file. The "Secrets Provider: aws-sm — connected" line in the output is the receipt.
+- **The whole workflow works over the API.** Registration, catalog add, addon enable, cluster test — every step Part 1 did through the UI, Part 3 does with authenticated API calls and asserts the responses. This is the "really test work via API" pass.
+
+**What it costs:** two EKS control planes + two small nodes ≈ **$0.26/hour** while it runs. A half-day pass is $2–4. Nothing auto-expires — `env-down` is on you.
+
+### One command up
+
+Set the three env vars, then go:
+
+```bash
+export SHARKO_EKS_TEST_ACCOUNT_ID=<your-12-digit-AWS-account-id>
+export SHARKO_GITOPS_REPO_URL=https://github.com/<owner>/<your-gitops-repo>
+export SHARKO_GITHUB_TOKEN="$(gh auth token)"   # or your own PAT with repo scope
+
+./scripts/eks-live-test.sh env-up
+```
+
+Reusing the same gitops repo your local kind Sharko manages is fine — the hub simply becomes another consumer of it. (If the repo carries clusters from old kind sessions, the hub's reconciler will log warnings about credentials it can't resolve for them; noisy but harmless for a test env. A dedicated test repo is cleaner if you have one.)
+
+What happens, with rough timings:
+
+| Step | What | How long |
+|---|---|---|
+| spoke create | the Part-1 cluster, created only if missing | ~15–20 min (skipped if it exists) |
+| hub-up | EKS hub cluster + Pod Identity + ArgoCD + Sharko from the chart | ~20–25 min (cluster is most of it) |
+| spoke-connect | access entries + SM secret + API registration with `creds_source=eks-token` **and** the per-cluster `role_arn` | ~1–2 min |
+| api-smoke | the scripted API pass below | ~3–10 min (ArgoCD sync poll is the variable) |
+
+The registration step deliberately sends `role_arn` in the `POST /api/v1/clusters` body — the field that used to be silently dropped (Part 2's "known gap", fixed since) — so the fix is exercised from the API side on every run.
+
+`api-smoke` prints one PASS/FAIL line per step and exits non-zero if anything failed: login → providers (aws-sm connected, zero keys) → clusters (spoke present, eks-token) → podinfo in catalog → enable podinfo on the spoke → ArgoCD Synced/Healthy → cluster test → fleet status. You can re-run it alone at any time: `./scripts/eks-live-test.sh api-smoke`.
+
+At the end you get a **handover block**: the two port-forward commands (Sharko UI and ArgoCD UI on the hub), where each admin password lives, the spoke/podinfo state, and the running-cost line. Everything you need to poke around — or record the GIF.
+
+### The GIF shot-list (~30–60 seconds)
+
+You record this yourself (standing rule: you drive the UI). Suggested sequence, in order:
+
+1. **Terminal:** the tail of `env-up` — the PASS lines of `api-smoke` and the handover block scrolling in. (~5–10s)
+2. **Sharko UI, Clusters page:** the spoke `sharko-eks-live-test` sitting green, credential source showing the EKS token path. (~5s)
+3. **Sharko UI:** enable an addon on the spoke (pick anything small from the catalog — podinfo is already taken by the smoke pass). Click through the confirm. (~10s)
+4. **Sharko UI, PRs view (or GitHub):** the PR appearing and auto-merging. (~5–10s)
+5. **ArgoCD UI on the hub:** the new application flipping to Synced/Healthy on the spoke. (~10s)
+6. **Finale:** `kubectl port-forward` to podinfo on the spoke and show its greeting page — a real workload, on a real EKS spoke, deployed by a Sharko running keyless on a real EKS hub. (~5–10s)
+
+### One command down
+
+```bash
+./scripts/eks-live-test.sh env-down          # hub only (spoke keeps running)
+./scripts/eks-live-test.sh env-down --all    # everything: both clusters, both roles, the SM secret
+```
+
+Both end with the leftover-billing sweep across **both** clusters — CloudFormation stacks, tagged resources, roles, the secret — and print loud `LEFTOVER` warnings instead of silently succeeding. Idempotent; re-run until clean. `status` shows both clusters and the combined hourly rate at any time.
+
+### Honest footnotes
+
+- **No inbound exposure.** There's still no ALB/ingress anywhere — you reach the hub's Sharko and ArgoCD UIs through `kubectl port-forward` tunnels only. A public-URL flag is future work, not this.
+- **One re-bootstrap gap, worked around.** If your gitops repo was already initialized (by your kind Sharko), the hub's `POST /api/v1/init` refuses to re-bootstrap it onto the fresh ArgoCD — that guard is intentional in the product. The script does the two missing pieces itself (ArgoCD repository credential + applying the repo's own `root-app.yaml`). A real "install Sharko on a new cluster against an existing repo" user would hit this; it's been reported alongside this story.
+- **Pod Identity, not IRSA.** The chart needed no changes for this — its service account name is deterministic (`sharko`) and Pod Identity binds by name, no annotations required. If you ever need IRSA instead (older EKS, special constraints), the chart's `serviceAccount.annotations` value is the seam.
 
 ---
 
 ## A note on what "production-shaped" means here
 
-One honest caveat, so this runbook doesn't overclaim: the *credential source* Sharko's pod uses on your local kind hub — however it's currently wired for you locally — is whatever the AWS SDK's standard credential chain finds (env vars, a shared config file, or IRSA/Pod Identity if actually running in a properly configured EKS-hosted pod). That chain is AWS SDK behavior, not Sharko's code, and this harness doesn't change or test it. What Sharko's code *does* own, and what this runbook actually proves live, is everything downstream of "we have some AWS credentials": minting the STS token in the right shape, assuming a role first when one is configured, handing that token to `kubectl`/ArgoCD, and having a real cluster accept it. Part 2's assume-role hop is the closest cheap proxy for "an identity that isn't the cluster's owner" without needing a second AWS account.
+One honest caveat about **Parts 1–2**, so this runbook doesn't overclaim: the *credential source* Sharko's pod uses on your local kind hub — however it's currently wired for you locally — is whatever the AWS SDK's standard credential chain finds (env vars, a shared config file, or IRSA/Pod Identity if actually running in a properly configured EKS-hosted pod). That chain is AWS SDK behavior, not Sharko's code, and Parts 1–2 don't change or test it. What Sharko's code *does* own, and what those parts prove live, is everything downstream of "we have some AWS credentials": minting the STS token in the right shape, assuming a role first when one is configured, handing that token to `kubectl`/ArgoCD, and having a real cluster accept it. Part 2's assume-role hop is the closest cheap proxy for "an identity that isn't the cluster's owner" without needing a second AWS account.
+
+**Part 3 closes exactly this caveat**: on the EKS hub, the SDK default chain resolves to EKS Pod Identity, with no keys anywhere — so the full production credential story, from "where do credentials even come from" to "the spoke accepted the token", has been seen working end to end.
 
 ---
 
