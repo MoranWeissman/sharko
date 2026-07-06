@@ -40,7 +40,6 @@ import { StatCard } from '@/components/StatCard'
 import { StatusBadge } from '@/components/StatusBadge'
 import { LoadingState } from '@/components/LoadingState'
 import { ErrorState } from '@/components/ErrorState'
-import { YamlViewer } from '@/components/YamlViewer'
 import { RoleGuard } from '@/components/RoleGuard'
 import { ConfirmationModal } from '@/components/ConfirmationModal'
 
@@ -1644,14 +1643,6 @@ export function AddonDetail() {
           <RoleGuard adminOnly>
             <button
               type="button"
-              onClick={() => setActiveSection('upgrade')}
-              className="inline-flex items-center gap-2 rounded-lg border border-teal-300 bg-[#f0f7ff] px-3 py-2 text-sm font-medium text-teal-700 hover:bg-teal-50 dark:border-teal-700 dark:bg-gray-800 dark:text-teal-400 dark:hover:bg-teal-900/20"
-            >
-              <ArrowUpCircle className="h-4 w-4" />
-              Upgrade
-            </button>
-            <button
-              type="button"
               onClick={() => { setRemoveError(null); setRemoveModalOpen(true) }}
               className="inline-flex items-center gap-2 rounded-lg border border-red-300 bg-[#f0f7ff] px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 dark:border-red-700 dark:bg-gray-800 dark:text-red-400 dark:hover:bg-red-900/20"
             >
@@ -1696,10 +1687,10 @@ export function AddonDetail() {
                 { key: 'clusters', label: 'Clusters', badge: enabledApps.length, icon: Server },
                 { key: 'upgrade', label: 'Upgrade', icon: ArrowUpCircle },
                 { key: 'values', label: 'Values', icon: Pencil },
-                // Plain name on the user surface (V2-cleanup-61.2, E1) —
-                // this tab edits HOW the addon deploys. The underlying
-                // ArgoCD Application terms stay inside the tab's field docs.
-                { key: 'catalog', label: 'Deployment Options', icon: FileCode },
+                // Renamed from "Deployment Options" to "ApplicationSet"
+                // (V2-cleanup-72.1) — these settings all configure the
+                // per-addon ArgoCD ApplicationSet; the old name hid that.
+                { key: 'catalog', label: 'ApplicationSet', icon: FileCode },
               ],
             },
           ]}
@@ -1941,7 +1932,7 @@ export function AddonDetail() {
                 </div>
               )}
 
-              {/* Advanced Configuration lives in the Deployment Options
+              {/* Advanced Configuration lives in the ApplicationSet
                   tab — Overview just points the operator there. */}
               <div className="rounded-lg bg-[#e8f4ff] p-4 text-sm text-[#2a5a7a] ring-1 ring-[#c0ddf0] dark:bg-gray-800 dark:text-gray-300 dark:ring-gray-700">
                 <p className="flex flex-wrap items-center gap-1">
@@ -1954,7 +1945,7 @@ export function AddonDetail() {
                     onClick={() => setActiveSection('catalog')}
                     className="font-semibold text-teal-600 underline hover:no-underline dark:text-teal-400"
                   >
-                    Deployment Options tab &rarr;
+                    ApplicationSet tab &rarr;
                   </button>
                 </p>
               </div>
@@ -2212,7 +2203,7 @@ export function AddonDetail() {
                   onClick={() => setActiveSection('catalog')}
                   className="font-semibold text-teal-600 underline hover:no-underline dark:text-teal-400"
                 >
-                  Deployment Options tab →
+                  ApplicationSet tab →
                 </button>
               </p>
               {valuesSchemaLoading && !valuesSchema ? (
@@ -2362,7 +2353,7 @@ export function AddonDetail() {
             <div className="space-y-4">
               <div className="rounded-lg bg-[#e0f0ff] p-3 text-xs text-[#0a3a5a] dark:bg-gray-700 dark:text-gray-300">
                 <p>
-                  Deployment options for <span className="font-mono">{addon.addon_name}</span> —
+                  ApplicationSet settings for <span className="font-mono">{addon.addon_name}</span> —
                   sync wave, sync options, ignore differences, and additional sources. These map to the
                   addon&rsquo;s ArgoCD Application settings and control how it deploys. Editing opens a PR against{' '}
                   <span className="font-mono">addons-catalog.yaml</span>. Looking for Helm values?{' '}
@@ -2378,9 +2369,14 @@ export function AddonDetail() {
 
               <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 dark:ring-gray-700 dark:bg-gray-800">
                 <div className="mb-4 flex items-center justify-between">
-                  <h3 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
-                    Deployment Options
-                  </h3>
+                  <div>
+                    <h3 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
+                      ApplicationSet
+                    </h3>
+                    <p className="mt-0.5 text-xs text-[#3a6a8a] dark:text-gray-400">
+                      How ArgoCD deploys this addon across your clusters. Advanced — the defaults work for most addons.
+                    </p>
+                  </div>
                   {!isEditingConfig && (
                     <RoleGuard adminOnly>
                       <button
@@ -2433,7 +2429,7 @@ export function AddonDetail() {
                       <p className="text-sm font-medium text-[#0a2a4a] dark:text-gray-100">
                         Self-Heal
                       </p>
-                      <p className="text-xs text-[#3a6a8a] dark:text-gray-400">ArgoCD reverts manual drift back to the Git state when enabled.</p>
+                      <p className="text-xs text-[#3a6a8a] dark:text-gray-400">If someone changes this addon directly on a cluster, ArgoCD undoes it and restores what&rsquo;s in Git. On by default.</p>
                     </div>
                     {isEditingConfig ? (
                       <label className="flex cursor-pointer items-center gap-2">
@@ -2465,87 +2461,131 @@ export function AddonDetail() {
                     )}
                   </div>
 
-                  {/* Sync Options */}
-                  <div>
-                    <p className="text-sm font-medium text-[#0a2a4a] dark:text-gray-100">
-                      Sync Options
-                    </p>
-                    <p className="mb-2 text-xs text-[#3a6a8a] dark:text-gray-400">
-                      ArgoCD sync options, comma-separated. Example:{' '}
-                      <span className="font-mono text-[#1a4a6a] dark:text-gray-300">CreateNamespace=true, ServerSideApply=true, PruneLast=true</span>.
-                    </p>
-                    {isEditingConfig ? (
-                      <textarea
-                        value={editSyncOptionsText}
-                        onChange={(e) => setEditSyncOptionsText(e.target.value)}
-                        placeholder="e.g. CreateNamespace=true, ServerSideApply=true"
-                        rows={2}
-                        className="w-full rounded-md border border-[#5a9dd0] bg-white px-3 py-2 text-sm font-mono text-[#0a2a4a] focus:border-[#1a6aaa] focus:outline-none focus:ring-1 focus:ring-[#1a6aaa] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
-                      />
-                    ) : addon.syncOptions && addon.syncOptions.length > 0 ? (
-                      <div className="flex flex-wrap gap-1">
-                        {addon.syncOptions.map((opt: string) => (
-                          <span key={opt} className="rounded bg-[#d6eeff] px-2 py-0.5 text-xs font-mono text-[#0a2a4a] dark:bg-gray-700 dark:text-gray-300">{opt}</span>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-xs text-[#5a8aaa] dark:text-[#5a8aaa]/60">Default (CreateNamespace=true)</p>
-                    )}
-                  </div>
+                  {/* Advanced fold — Sync Options / Ignore Differences /
+                      Additional Sources are raw ArgoCD knobs most addons
+                      never need. Collapsed by default; forced open while
+                      editing so an admin can see/edit every field. */}
+                  <details
+                    open={isEditingConfig}
+                    className="rounded-lg ring-1 ring-[#c0ddf0] dark:ring-gray-700"
+                  >
+                    <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-[#0a2a4a] dark:text-gray-100 select-none">
+                      Advanced — passed straight to ArgoCD
+                    </summary>
+                    <div className="space-y-4 border-t border-[#c0ddf0] p-4 dark:border-gray-700">
+                      <p className="text-xs text-[#3a6a8a] dark:text-gray-400">
+                        These go straight to ArgoCD. Most addons never need them — the defaults are fine. Change them only if you already know the ArgoCD setting you want.
+                      </p>
 
-                  {/* Ignore Differences */}
-                  <div>
-                    <p className="text-sm font-medium text-[#0a2a4a] dark:text-gray-100">
-                      Ignore Differences
-                    </p>
-                    <p className="mb-2 text-xs text-[#3a6a8a] dark:text-gray-400">
-                      Fields ArgoCD ignores during diff — typically Helm-injected fields like autoscaler-managed replicas.
-                    </p>
-                    {isEditingConfig ? (
-                      <textarea
-                        value={editIgnoreDifferencesYaml}
-                        onChange={(e) => setEditIgnoreDifferencesYaml(e.target.value)}
-                        placeholder={`# Example:\n# - group: apps\n#   kind: Deployment\n#   jsonPointers:\n#     - /spec/replicas`}
-                        rows={6}
-                        className="w-full rounded-md border border-[#5a9dd0] bg-white px-3 py-2 text-sm font-mono text-[#0a2a4a] focus:border-[#1a6aaa] focus:outline-none focus:ring-1 focus:ring-[#1a6aaa] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
-                      />
-                    ) : addon.ignoreDifferences && addon.ignoreDifferences.length > 0 ? (
-                      <pre className="rounded bg-[#071828] p-3 text-xs text-[#bee0ff] overflow-auto">
-                        {JSON.stringify(addon.ignoreDifferences, null, 2)}
-                      </pre>
-                    ) : (
-                      <p className="text-xs text-[#5a8aaa] dark:text-[#5a8aaa]/60">None configured</p>
-                    )}
-                  </div>
-
-                  {/* Additional Sources */}
-                  <div>
-                    <p className="text-sm font-medium text-[#0a2a4a] dark:text-gray-100">
-                      Additional Sources
-                    </p>
-                    <p className="mb-2 text-xs text-[#3a6a8a] dark:text-gray-400">Extra chart or manifest sources deployed alongside the main addon (ArgoCD multi-source).</p>
-                    {isEditingConfig ? (
-                      <textarea
-                        value={editAdditionalSourcesYaml}
-                        onChange={(e) => setEditAdditionalSourcesYaml(e.target.value)}
-                        placeholder={`# Example:\n# - repoURL: https://github.com/org/repo\n#   path: charts/my-chart\n#   version: "1.0.0"`}
-                        rows={6}
-                        className="w-full rounded-md border border-[#5a9dd0] bg-white px-3 py-2 text-sm font-mono text-[#0a2a4a] focus:border-[#1a6aaa] focus:outline-none focus:ring-1 focus:ring-[#1a6aaa] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
-                      />
-                    ) : addon.additionalSources && addon.additionalSources.length > 0 ? (
-                      <div className="space-y-2">
-                        {addon.additionalSources.map((src, i: number) => (
-                          <div key={i} className="rounded bg-[#e0f0ff] px-3 py-2 text-xs dark:bg-gray-700">
-                            {src.chart && <p><span className="text-[#3a6a8a] dark:text-gray-400">Chart:</span> <span className="font-mono text-[#0a2a4a] dark:text-gray-100">{src.chart} @ {src.version}</span></p>}
-                            {src.path && <p><span className="text-[#3a6a8a] dark:text-gray-400">Path:</span> <span className="font-mono text-[#0a2a4a] dark:text-gray-100">{src.path}</span></p>}
-                            {src.repoURL && <p><span className="text-[#3a6a8a] dark:text-gray-400">Repo:</span> <span className="font-mono text-[#0a2a4a] dark:text-gray-100">{src.repoURL}</span></p>}
+                      {/* Sync Options */}
+                      <div>
+                        <p className="text-sm font-medium text-[#0a2a4a] dark:text-gray-100">
+                          Sync Options
+                        </p>
+                        <p className="mb-2 text-xs text-[#3a6a8a] dark:text-gray-400">
+                          Flags ArgoCD uses when syncing this addon, comma-separated. Example:{' '}
+                          <span className="font-mono text-[#1a4a6a] dark:text-gray-300">CreateNamespace=true, ServerSideApply=true, PruneLast=true</span>.{' '}
+                          <a
+                            href="https://argo-cd.readthedocs.io/en/stable/user-guide/sync-options/"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="font-medium text-teal-600 underline hover:no-underline dark:text-teal-400"
+                          >
+                            Learn more
+                          </a>
+                        </p>
+                        {isEditingConfig ? (
+                          <textarea
+                            value={editSyncOptionsText}
+                            onChange={(e) => setEditSyncOptionsText(e.target.value)}
+                            placeholder="e.g. CreateNamespace=true, ServerSideApply=true"
+                            rows={2}
+                            className="w-full rounded-md border border-[#5a9dd0] bg-white px-3 py-2 text-sm font-mono text-[#0a2a4a] focus:border-[#1a6aaa] focus:outline-none focus:ring-1 focus:ring-[#1a6aaa] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                          />
+                        ) : addon.syncOptions && addon.syncOptions.length > 0 ? (
+                          <div className="flex flex-wrap gap-1">
+                            {addon.syncOptions.map((opt: string) => (
+                              <span key={opt} className="rounded bg-[#d6eeff] px-2 py-0.5 text-xs font-mono text-[#0a2a4a] dark:bg-gray-700 dark:text-gray-300">{opt}</span>
+                            ))}
                           </div>
-                        ))}
+                        ) : (
+                          <p className="text-xs text-[#5a8aaa] dark:text-[#5a8aaa]/60">Default (CreateNamespace=true)</p>
+                        )}
                       </div>
-                    ) : (
-                      <p className="text-xs text-[#5a8aaa] dark:text-[#5a8aaa]/60">Single source (main chart only)</p>
-                    )}
-                  </div>
+
+                      {/* Ignore Differences */}
+                      <div>
+                        <p className="text-sm font-medium text-[#0a2a4a] dark:text-gray-100">
+                          Ignore Differences
+                        </p>
+                        <p className="mb-2 text-xs text-[#3a6a8a] dark:text-gray-400">
+                          Tells ArgoCD to ignore specific fields when checking for drift — useful when something else (like an autoscaler) changes them. Fields ArgoCD ignores during diff — typically Helm-injected fields like autoscaler-managed replicas.{' '}
+                          <a
+                            href="https://argo-cd.readthedocs.io/en/stable/user-guide/diffing/"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="font-medium text-teal-600 underline hover:no-underline dark:text-teal-400"
+                          >
+                            Learn more
+                          </a>
+                        </p>
+                        {isEditingConfig ? (
+                          <textarea
+                            value={editIgnoreDifferencesYaml}
+                            onChange={(e) => setEditIgnoreDifferencesYaml(e.target.value)}
+                            placeholder={`# Example:\n# - group: apps\n#   kind: Deployment\n#   jsonPointers:\n#     - /spec/replicas`}
+                            rows={6}
+                            className="w-full rounded-md border border-[#5a9dd0] bg-white px-3 py-2 text-sm font-mono text-[#0a2a4a] focus:border-[#1a6aaa] focus:outline-none focus:ring-1 focus:ring-[#1a6aaa] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                          />
+                        ) : addon.ignoreDifferences && addon.ignoreDifferences.length > 0 ? (
+                          <pre className="rounded bg-[#071828] p-3 text-xs text-[#bee0ff] overflow-auto">
+                            {JSON.stringify(addon.ignoreDifferences, null, 2)}
+                          </pre>
+                        ) : (
+                          <p className="text-xs text-[#5a8aaa] dark:text-[#5a8aaa]/60">None configured</p>
+                        )}
+                      </div>
+
+                      {/* Additional Sources */}
+                      <div>
+                        <p className="text-sm font-medium text-[#0a2a4a] dark:text-gray-100">
+                          Additional Sources
+                        </p>
+                        <p className="mb-2 text-xs text-[#3a6a8a] dark:text-gray-400">
+                          Extra chart or manifest sources deployed alongside the main addon (ArgoCD multi-source).{' '}
+                          <a
+                            href="https://argo-cd.readthedocs.io/en/stable/user-guide/multiple_sources/"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="font-medium text-teal-600 underline hover:no-underline dark:text-teal-400"
+                          >
+                            Learn more
+                          </a>
+                        </p>
+                        {isEditingConfig ? (
+                          <textarea
+                            value={editAdditionalSourcesYaml}
+                            onChange={(e) => setEditAdditionalSourcesYaml(e.target.value)}
+                            placeholder={`# Example:\n# - repoURL: https://github.com/org/repo\n#   path: charts/my-chart\n#   version: "1.0.0"`}
+                            rows={6}
+                            className="w-full rounded-md border border-[#5a9dd0] bg-white px-3 py-2 text-sm font-mono text-[#0a2a4a] focus:border-[#1a6aaa] focus:outline-none focus:ring-1 focus:ring-[#1a6aaa] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                          />
+                        ) : addon.additionalSources && addon.additionalSources.length > 0 ? (
+                          <div className="space-y-2">
+                            {addon.additionalSources.map((src, i: number) => (
+                              <div key={i} className="rounded bg-[#e0f0ff] px-3 py-2 text-xs dark:bg-gray-700">
+                                {src.chart && <p><span className="text-[#3a6a8a] dark:text-gray-400">Chart:</span> <span className="font-mono text-[#0a2a4a] dark:text-gray-100">{src.chart} @ {src.version}</span></p>}
+                                {src.path && <p><span className="text-[#3a6a8a] dark:text-gray-400">Path:</span> <span className="font-mono text-[#0a2a4a] dark:text-gray-100">{src.path}</span></p>}
+                                {src.repoURL && <p><span className="text-[#3a6a8a] dark:text-gray-400">Repo:</span> <span className="font-mono text-[#0a2a4a] dark:text-gray-100">{src.repoURL}</span></p>}
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-[#5a8aaa] dark:text-[#5a8aaa]/60">Single source (main chart only)</p>
+                        )}
+                      </div>
+                    </div>
+                  </details>
 
                   {/* Edit mode action buttons */}
                   {isEditingConfig && (
@@ -2571,18 +2611,6 @@ export function AddonDetail() {
                   )}
                 </div>
               </div>
-
-              {/* Raw global values (for quick inspection — editing is in Values tab) */}
-              {valuesYaml && (
-                <details className="rounded-xl ring-2 ring-[#6aade0] bg-white dark:ring-gray-700 dark:bg-gray-800">
-                  <summary className="cursor-pointer px-5 py-3 text-sm font-medium text-[#0a2a4a] dark:text-gray-100 select-none">
-                    Raw default values (read-only)
-                  </summary>
-                  <div className="border-t border-[#c0ddf0] p-4 dark:border-gray-700">
-                    <YamlViewer yaml={valuesYaml} title="Global Default Values" />
-                  </div>
-                </details>
-              )}
             </div>
           )}
         </div>
