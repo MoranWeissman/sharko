@@ -209,11 +209,13 @@ export function MarketplaceCard({
             {c}
           </span>
         ))}
-        <SourceBadge
-          source={entry.source}
-          sourceRecord={sourceRecord}
-          compact
-        />
+        {entry.source && entry.source !== 'embedded' && (
+          <SourceBadge
+            source={entry.source}
+            sourceRecord={sourceRecord}
+            compact
+          />
+        )}
       </div>
 
       {/* Footer row — license, score, stars */}

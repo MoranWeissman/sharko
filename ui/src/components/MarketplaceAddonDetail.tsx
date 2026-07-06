@@ -662,7 +662,7 @@ export function MarketplaceAddonDetail({
               // real score.
               hideWhenUnknown
             />
-            {source === 'curated' && (
+            {source === 'curated' && entry.source && entry.source !== 'embedded' && (
               <SourceBadge
                 source={entry.source}
                 sourceRecord={matchedSourceRecord}

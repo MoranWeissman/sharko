@@ -36,7 +36,6 @@ import { RecentPRsPanel } from '@/components/RecentPRsPanel'
 import { showToast } from '@/components/ToastNotification'
 import { AttributionNudge } from '@/components/AttributionNudge'
 import { MarkdownRenderer } from '@/components/MarkdownRenderer'
-import { SourceBadge } from '@/components/SourceBadge'
 import { StatCard } from '@/components/StatCard'
 import { StatusBadge } from '@/components/StatusBadge'
 import { LoadingState } from '@/components/LoadingState'
@@ -1750,31 +1749,22 @@ export function AddonDetail() {
                       able to look up a matching curated catalog entry.
                       Source URL is rendered as TEXT (never a clickable
                       link — paths may carry auth tokens). */}
-                  {catalogEntry && (
+                  {catalogEntry && catalogEntry.source && catalogEntry.source !== 'embedded' && (
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-wide text-[#5a8aaa] dark:text-[#5a8aaa]/60">Source</p>
-                      {catalogEntry.source && catalogEntry.source !== 'embedded' ? (
-                        <div className="mt-0.5 text-sm">
-                          <div className="break-all text-[#0a3a5a] dark:text-[#d6eeff]">
-                            {catalogEntry.source}
+                      <div className="mt-0.5 text-sm">
+                        <div className="break-all text-[#0a3a5a] dark:text-[#d6eeff]">
+                          {catalogEntry.source}
+                        </div>
+                        {catalogSourceRecord ? (
+                          <div className="mt-0.5 text-xs text-[#2a5a7a] dark:text-[#b4dcf5]">
+                            Status: {catalogSourceRecord.status}
+                            {catalogSourceRecord.last_fetched
+                              ? ` \u00b7 Last fetched ${catalogSourceRecord.last_fetched}`
+                              : ''}
                           </div>
-                          {catalogSourceRecord ? (
-                            <div className="mt-0.5 text-xs text-[#2a5a7a] dark:text-[#b4dcf5]">
-                              Status: {catalogSourceRecord.status}
-                              {catalogSourceRecord.last_fetched
-                                ? ` \u00b7 Last fetched ${catalogSourceRecord.last_fetched}`
-                                : ''}
-                            </div>
-                          ) : null}
-                        </div>
-                      ) : (
-                        <div className="mt-0.5">
-                          <SourceBadge
-                            source={catalogEntry.source}
-                            sourceRecord={catalogSourceRecord}
-                          />
-                        </div>
-                      )}
+                        ) : null}
+                      </div>
                     </div>
                   )}
                 </div>
