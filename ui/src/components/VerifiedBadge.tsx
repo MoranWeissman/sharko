@@ -1,6 +1,18 @@
 import { CheckCircle2, ShieldOff } from 'lucide-react'
 
 /**
+ * NOT CURRENTLY RENDERED ANYWHERE (V2-cleanup-68.1).
+ *
+ * Signing is off by default, so every catalog entry reads "Unsigned" and
+ * there's no honest trust distinction to show today — the maintainer
+ * approves every catalog entry, so all entries clear the same bar. The
+ * badge is hidden at all three call sites (MarketplaceCard,
+ * MarketplaceAddonDetail, AddonDetail) pending a future per-addon
+ * trust-signal story. The backend signing machinery (`entry.verified`,
+ * `entry.signature_identity`) is untouched — this component is kept on
+ * disk, with its test, so it's ready to wire back in when that story
+ * lands.
+ *
  * Small pill surfacing the cosign-keyless verification outcome of a
  * `CatalogEntry`.
  *
