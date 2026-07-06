@@ -12,7 +12,15 @@ interface StatusBadgeProps {
   testFailing?: boolean;
 }
 
-// --- Cluster status definitions (5-state) ---
+// --- Cluster status definitions (5-state Sharko test ladder) ---
+//
+// V2-cleanup-61.2 (findings D3 + E2): these are Sharko's OWN test results
+// for a cluster (Unknown → Connected → Verified → Operational, plus
+// Unreachable). Color law: green family = good (green / teal / emerald for
+// the three good rungs), red = problem, neutral = no information. Purple
+// is retired everywhere — it used to mean both "best state" and "warning".
+// Tooltips say what each test actually verified, in plain words — no
+// internal "Stage 1"/"Stage 2" vocabulary.
 
 interface ClusterStatusDef {
   dot: string;
@@ -35,28 +43,30 @@ const clusterStatusMap: Record<string, ClusterStatusDef> = {
     bg: 'bg-green-50 dark:bg-green-900/30',
     text: 'text-green-700 dark:text-green-400',
     label: 'Connected',
-    tooltip: 'Stage 1 test passed. Sharko can create and manage secrets.',
+    tooltip:
+      'Sharko reached the cluster directly and confirmed it can create and manage secrets there.',
   },
   verified: {
-    dot: 'bg-blue-500',
-    bg: 'bg-blue-50 dark:bg-blue-900/30',
-    text: 'text-blue-700 dark:text-blue-400',
+    dot: 'bg-teal-500',
+    bg: 'bg-teal-50 dark:bg-teal-900/30',
+    text: 'text-teal-700 dark:text-teal-400',
     label: 'Verified',
-    tooltip: 'Stage 2 test passed. Full ArgoCD pipeline verified.',
+    tooltip:
+      'A test deployment went through ArgoCD successfully — the full deploy path to this cluster works.',
   },
   operational: {
-    dot: 'bg-purple-500',
-    bg: 'bg-purple-50 dark:bg-purple-900/30',
-    text: 'text-purple-700 dark:text-purple-400',
+    dot: 'bg-emerald-600',
+    bg: 'bg-emerald-50 dark:bg-emerald-900/30',
+    text: 'text-emerald-700 dark:text-emerald-400',
     label: 'Operational',
-    tooltip: 'At least one addon is deployed and healthy.',
+    tooltip: 'At least one addon is deployed and healthy on this cluster.',
   },
   unreachable: {
     dot: 'bg-red-500',
     bg: 'bg-red-50 dark:bg-red-900/30',
     text: 'text-red-700 dark:text-red-400',
     label: 'Unreachable',
-    tooltip: 'Last test failed. Check IAM and network access.',
+    tooltip: 'The last connection test failed. Check IAM and network access.',
   },
 };
 
@@ -86,20 +96,25 @@ function getStatusColor(status: string): { dot: string; bg: string; text: string
   if (['healthy', 'synced', 'completed'].includes(s)) {
     return { dot: 'bg-green-500', bg: 'bg-green-50 dark:bg-green-900/30', text: 'text-green-700 dark:text-green-400' };
   }
-  if (['degraded', 'unhealthy', 'failed', 'error', 'sync_failing'].includes(s)) {
+  // Problem states are red — including "missing" (enabled in the catalog
+  // but ArgoCD has no Application for it), which used to render amber
+  // (V2-cleanup-61.2, findings D1 + D3).
+  if (['degraded', 'unhealthy', 'failed', 'error', 'sync_failing', 'missing', 'missing_in_argocd'].includes(s)) {
     return { dot: 'bg-red-500', bg: 'bg-red-50 dark:bg-red-900/30', text: 'text-red-700 dark:text-red-400' };
   }
   if (['running', 'progressing', 'outofsync', 'deploying'].includes(s)) {
     return { dot: 'bg-blue-500', bg: 'bg-blue-50 dark:bg-blue-900/30', text: 'text-blue-700 dark:text-blue-400' };
   }
-  if (['waiting', 'gated', 'paused', 'warning', 'missing', 'missing_in_argocd'].includes(s)) {
+  if (['waiting', 'gated', 'paused', 'warning'].includes(s)) {
     return { dot: 'bg-amber-500', bg: 'bg-amber-50 dark:bg-amber-900/30', text: 'text-amber-700 dark:text-amber-400' };
   }
   if (['cancelled'].includes(s)) {
     return { dot: 'bg-[#2a5a7a]', bg: 'bg-[#d6eeff] dark:bg-gray-700', text: 'text-[#1a4a6a] dark:text-gray-400' };
   }
+  // "Not managed" states are amber attention, NOT purple — purple used to
+  // collide with the best-state Operational color (V2-cleanup-61.2, D3).
   if (['untracked_in_argocd', 'not_in_git'].includes(s)) {
-    return { dot: 'bg-purple-500', bg: 'bg-purple-50 dark:bg-purple-900/30', text: 'text-purple-700 dark:text-purple-400' };
+    return { dot: 'bg-amber-500', bg: 'bg-amber-50 dark:bg-amber-900/30', text: 'text-amber-700 dark:text-amber-400' };
   }
   if (s === 'sharko_system') {
     return { dot: 'bg-[#6aade0]', bg: 'bg-[#d6eeff] dark:bg-blue-900/30', text: 'text-[#1a4a6a] dark:text-blue-300' };
@@ -110,8 +125,12 @@ function getStatusColor(status: string): { dot: string; bg: string; text: string
 
 const statusDisplayNames: Record<string, string> = {
   disabled_in_git: 'Not Enabled',
-  missing_in_argocd: 'Not Deployed',
-  untracked_in_argocd: 'Unmanaged',
+  // The PROBLEM name (V2-cleanup-61.2, D1): enabled in the catalog but
+  // ArgoCD has no Application for it. Distinct from the benign
+  // "Not deployed yet" (in the catalog, enabled nowhere).
+  missing_in_argocd: 'Missing from ArgoCD',
+  // Same word everywhere: matches the cluster-level "Not managed" state.
+  untracked_in_argocd: 'Not managed',
   sharko_system: 'Sharko system',
   unknown_state: 'Unknown',
   unknown_health: 'Unknown',

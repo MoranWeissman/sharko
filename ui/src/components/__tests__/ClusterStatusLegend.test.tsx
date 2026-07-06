@@ -1,33 +1,56 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { ClusterStatusLegend } from '@/components/ClusterStatusLegend';
+import {
+  CLUSTER_CONNECTION_KINDS,
+  CLUSTER_CONNECTION_STATES,
+} from '@/lib/clusterStatus';
 
+// V2-cleanup-61.2 (finding D2): the legend lists EXACTLY the canonical
+// "ArgoCD → cluster" connection states the Clusters view can display —
+// no more, no fewer. It used to describe a five-state test ladder the
+// table almost never showed.
 describe('ClusterStatusLegend', () => {
   it('renders the "Cluster Status:" label', () => {
     render(<ClusterStatusLegend />);
     expect(screen.getByText('Cluster Status:')).toBeInTheDocument();
   });
 
-  it('renders all 5 cluster statuses', () => {
+  it('renders the four canonical connection states', () => {
     render(<ClusterStatusLegend />);
-    expect(screen.getByText('Unknown')).toBeInTheDocument();
     expect(screen.getByText('Connected')).toBeInTheDocument();
-    expect(screen.getByText('Verified')).toBeInTheDocument();
-    expect(screen.getByText('Operational')).toBeInTheDocument();
-    expect(screen.getByText('Unreachable')).toBeInTheDocument();
+    expect(screen.getByText('Connecting…')).toBeInTheDocument();
+    expect(screen.getByText('Not managed')).toBeInTheDocument();
+    expect(screen.getByText('Disconnected')).toBeInTheDocument();
   });
 
-  it('renders a colored dot indicator for each status', () => {
-    const { container } = render(<ClusterStatusLegend />);
-    const dots = container.querySelectorAll('span.rounded-full');
-    expect(dots.length).toBe(5);
+  it('legend contents match exactly the displayable states (one entry per canonical state)', () => {
+    render(<ClusterStatusLegend />);
+    // Every canonical state appears…
+    for (const kind of CLUSTER_CONNECTION_KINDS) {
+      const def = CLUSTER_CONNECTION_STATES[kind];
+      const item = screen.getByText(def.label);
+      expect(item).toBeInTheDocument();
+      // …with its plain-English meaning available as a tooltip.
+      expect(item.closest('[title]')).toHaveAttribute('title', def.meaning);
+    }
+    // …and nothing else: no leftover 5-state test-ladder vocabulary.
+    for (const stale of ['Unknown', 'Verified', 'Operational', 'Unreachable']) {
+      expect(screen.queryByText(stale)).not.toBeInTheDocument();
+    }
+  });
 
-    // Verify specific dot colors
+  it('renders one severity-colored dot per state — no purple anywhere', () => {
+    const { container } = render(<ClusterStatusLegend />);
+    const dots = container.querySelectorAll('span.h-2\\.5');
+    expect(dots.length).toBe(CLUSTER_CONNECTION_KINDS.length);
+
     const dotClasses = Array.from(dots).map((d) => d.className);
-    expect(dotClasses.some((c) => c.includes('bg-[#3a6a8a]'))).toBe(true); // Unknown
     expect(dotClasses.some((c) => c.includes('bg-green-500'))).toBe(true); // Connected
-    expect(dotClasses.some((c) => c.includes('bg-blue-500'))).toBe(true); // Verified
-    expect(dotClasses.some((c) => c.includes('bg-purple-500'))).toBe(true); // Operational
-    expect(dotClasses.some((c) => c.includes('bg-red-500'))).toBe(true); // Unreachable
+    expect(dotClasses.some((c) => c.includes('bg-[#3a6a8a]'))).toBe(true); // Connecting…
+    expect(dotClasses.some((c) => c.includes('bg-amber-500'))).toBe(true); // Not managed
+    expect(dotClasses.some((c) => c.includes('bg-red-500'))).toBe(true); // Disconnected
+    // Purple is retired (V2-cleanup-61.2, D3).
+    expect(dotClasses.some((c) => c.includes('purple'))).toBe(false);
   });
 });

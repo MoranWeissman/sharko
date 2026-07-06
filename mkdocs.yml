@@ -51,9 +51,10 @@ nav:
     - Marketplace: user-guide/marketplace.md
     - Editing Values: user-guide/values-editing.md
     - Smart Values Layer: user-guide/smart-values.md
-    - Editing ArgoCD App Options: user-guide/argocd-app-options.md
+    - Editing Deployment Options: user-guide/argocd-app-options.md
     - Upgrades: user-guide/upgrades.md
     - Dashboard: user-guide/dashboard.md
+    - Status Vocabulary: user-guide/status-vocabulary.md
     - Notifications: user-guide/notifications.md
     - Verified Signatures: user-guide/verified-signatures.md
     - Git Attribution: user-guide/attribution.md

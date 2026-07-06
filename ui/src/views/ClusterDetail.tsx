@@ -771,16 +771,18 @@ export function ClusterDetail() {
       color: 'error',
       icon: <AlertTriangle className="h-5 w-5" />,
     },
+    // Canonical vocabulary (V2-cleanup-61.2, D1+D2): "Missing from ArgoCD"
+    // is the problem state (red); "Not managed" is the attention state.
     {
       key: 'missing_in_argocd',
-      title: 'Not Deployed',
+      title: 'Missing from ArgoCD',
       value: data.total_missing_in_argocd,
-      color: 'warning',
+      color: 'error',
       icon: <CloudOff className="h-5 w-5" />,
     },
     {
       key: 'untracked',
-      title: 'Unmanaged',
+      title: 'Not managed',
       value: data.total_untracked_in_argocd,
       color: 'warning',
       icon: <Eye className="h-5 w-5" />,
@@ -1353,7 +1355,7 @@ export function ClusterDetail() {
                           {deployResult.merged === true && (
                             <>
                               <p className="font-medium">
-                                {deployResult.prId ? `PR #${deployResult.prId} merged.` : 'PR merged.'} Addon will appear on the cluster within ~1 minute as ArgoCD reconciles.
+                                {deployResult.prId ? `PR #${deployResult.prId} merged.` : 'PR merged.'} The addon will appear on the cluster within ~1 minute as ArgoCD picks up the change.
                               </p>
                             </>
                           )}

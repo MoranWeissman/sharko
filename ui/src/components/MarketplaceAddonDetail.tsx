@@ -730,11 +730,11 @@ export function MarketplaceAddonDetail({
             Add {entry.name} to your catalog
           </h2>
           <p className="text-sm text-[#2a5a7a] dark:text-gray-400">
-            This creates an ArgoCD <strong>ApplicationSet</strong> for{' '}
+            This creates the <strong>deployment template</strong> ArgoCD uses to roll{' '}
             <code className="rounded bg-[#e8f3fb] px-1 py-0.5 font-mono text-xs text-[#0a3a5a] dark:bg-gray-800 dark:text-gray-300">
               {entry.name}
             </code>{' '}
-            and adds an entry to your{' '}
+            out to your clusters, and adds an entry to your{' '}
             <code className="rounded bg-[#e8f3fb] px-1 py-0.5 font-mono text-xs text-[#0a3a5a] dark:bg-gray-800 dark:text-gray-300">
               addons-catalog.yaml
             </code>
