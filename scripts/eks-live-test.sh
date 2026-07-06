@@ -140,6 +140,42 @@ log_info() { printf '%s %s\n' "$INFO_MARK" "$*" >&2; }
 log_warn() { printf '%s %s\n' "$WARN_MARK" "$*" >&2; }
 log_fail() { printf '%s %s\n' "$FAIL_MARK" "$*" >&2; }
 
+# ascii_safe: normalize a string headed for an AWS API VALUE field
+# (--description, --secret-string, a --tags value, Key=/Value= tag pairs,
+# etc.) down to plain ASCII. AWS validates fields like IAM role
+# --description against a strict ASCII/Latin-1 regex — a typographic
+# em-dash (—), en-dash (–), or curly quote typed by a human (or pasted
+# from an LLM) gets silently REJECTED by the API mid-flow. This exact
+# class of bug hit LIVE twice: first in the phase-1 spoke role-setup
+# (V2-cleanup-62.1, fixed), then reintroduced in the hub role-setup
+# (V2-cleanup-62.3) from an older base. One fix point, used everywhere,
+# kills the class instead of patching each recurrence.
+#
+# Dependency-free: sed + tr only, LC_ALL=C throughout so both operate on
+# raw bytes regardless of the caller's locale.
+#
+# Usage: safe=$(ascii_safe "$raw")
+# RULE: every AWS API-bound VALUE string (--description, --secret-string,
+# --tags, Key=/Value=) goes through this before being passed to aws/eksctl.
+# Log/echo/help text shown to the human is display-only and does NOT need
+# to go through this.
+ascii_safe() {
+    local s="$1"
+    # Known typographic sequences -> ASCII equivalents (byte-exact UTF-8
+    # matches, done BEFORE the generic strip below so they convert cleanly
+    # instead of being deleted).
+    s=$(LC_ALL=C printf '%s' "$s" | LC_ALL=C sed \
+        -e 's/\xe2\x80\x94/-/g' \
+        -e 's/\xe2\x80\x93/-/g' \
+        -e "s/\xe2\x80\x98/'/g" \
+        -e "s/\xe2\x80\x99/'/g" \
+        -e 's/\xe2\x80\x9c/"/g' \
+        -e 's/\xe2\x80\x9d/"/g')
+    # Anything else non-ASCII: strip outright.
+    s=$(LC_ALL=C printf '%s' "$s" | LC_ALL=C tr -d '\200-\377')
+    printf '%s' "$s"
+}
+
 # confirm_or_abort: prompt for y/N unless --yes is in effect.
 # Usage: confirm_or_abort <yes_flag> "<prompt>"
 confirm_or_abort() {
@@ -564,6 +600,7 @@ EOF
     confirm_or_abort "$yes" "Continue?" || return 1
 
     local tags="sharko:purpose=live-test,sharko:throwaway=true,sharko:cluster=${CLUSTER_NAME}"
+    tags=$(ascii_safe "$tags")
 
     local -a cmd=(eksctl create cluster
         --name "$CLUSTER_NAME"
@@ -681,10 +718,12 @@ EOF
 EOF
         # Trust policy is intentionally broad (whole account root) — this is
         # a throwaway, single-account personal test, not a production role.
+        local role_description
+        role_description=$(ascii_safe "Sharko EKS live-test throwaway role (V2-cleanup-62.1) - safe to delete any time")
         if ! aws iam create-role \
             --role-name "$ROLE_NAME" \
             --assume-role-policy-document "file://${trust_file}" \
-            --description "Sharko EKS live-test throwaway role (V2-cleanup-62.1) - safe to delete any time" \
+            --description "$role_description" \
             --tags Key=sharko:purpose,Value=live-test Key=sharko:throwaway,Value=true \
             >/dev/null; then
             log_fail "aws iam create-role failed"
@@ -1235,10 +1274,12 @@ hub_iam_setup() {
 }
 EOF
         local create_rc=0
+        local hub_role_description
+        hub_role_description=$(ascii_safe "Sharko hub-on-EKS live-test Pod Identity role (V2-cleanup-62.3) - safe to delete any time")
         aws iam create-role \
             --role-name "$HUB_ROLE_NAME" \
             --assume-role-policy-document "file://${trust_file}" \
-            --description "Sharko hub-on-EKS live-test Pod Identity role (V2-cleanup-62.3) — safe to delete any time" \
+            --description "$hub_role_description" \
             --tags Key=sharko:purpose,Value=live-test Key=sharko:throwaway,Value=true \
             >/dev/null || create_rc=1
         rm -f "$trust_file"
@@ -1797,6 +1838,7 @@ print("/".join(parts[:2]))')
 # =====================================================================
 do_hub_up() {
     local yes=0
+    local resume=0
     local arg
     for arg in "$@"; do
         case "$arg" in
@@ -1830,14 +1872,22 @@ Required env: SHARKO_EKS_TEST_ACCOUNT_ID, SHARKO_GITHUB_TOKEN,
 SHARKO_GITOPS_REPO_URL (see the top-of-file header).
 
 Flags:
-  --yes     skip the "this costs money" confirmation prompt
-  --help    this help
+  --yes      skip the "this costs money" confirmation prompt
+  --resume   the hub cluster already exists (e.g. a prior run died partway
+             through steps 2-7) — do NOT refuse; skip step 1 (cluster
+             create), just refresh the kubeconfig via 'eksctl utils
+             write-kubeconfig', and run steps 2-7 normally. Every one of
+             those steps is already idempotent (role/addon/association
+             reuse, helm upgrade --install, "already exists" tolerance),
+             so resuming just finishes what didn't complete.
+  --help     this help
 
-Usage: ./scripts/eks-live-test.sh hub-up [--yes]
+Usage: ./scripts/eks-live-test.sh hub-up [--yes] [--resume]
 EOF
                 return 0
                 ;;
             --yes|-y) yes=1 ;;
+            --resume) resume=1 ;;
         esac
     done
 
@@ -1846,10 +1896,14 @@ EOF
     require_hub_env || return 1
 
     if hub_cluster_exists; then
-        log_fail "hub cluster '${HUB_CLUSTER_NAME}' already exists in ${REGION} — refusing to create a second one."
-        echo "       Run: $0 status      to inspect it" >&2
-        echo "       Run: $0 env-down    to remove it first" >&2
-        return 1
+        if [ "$resume" != "1" ]; then
+            log_fail "hub cluster '${HUB_CLUSTER_NAME}' already exists in ${REGION} — refusing to create a second one."
+            echo "       Run: $0 status          to inspect it" >&2
+            echo "       Run: $0 env-down        to remove it first" >&2
+            echo "       Run: $0 hub-up --resume to finish provisioning it instead" >&2
+            return 1
+        fi
+        log_warn "hub cluster exists — resuming provisioning on it"
     fi
 
     log_warn "about to create a REAL EKS hub cluster in account ${SHARKO_EKS_TEST_ACCOUNT_ID}, region ${REGION}."
@@ -1858,28 +1912,41 @@ EOF
     confirm_or_abort "$yes" "Continue?" || return 1
 
     # ---- [1/7] cluster ----
-    local tags="sharko:purpose=live-test,sharko:throwaway=true,sharko:cluster=${HUB_CLUSTER_NAME}"
-    local -a cmd=(eksctl create cluster
-        --name "$HUB_CLUSTER_NAME"
-        --region "$REGION"
-        --nodegroup-name "$HUB_NODEGROUP_NAME"
-        --nodes 1 --nodes-min 1 --nodes-max 1
-        --node-type "$HUB_NODE_TYPE"
-        --managed
-        --kubeconfig "$HUB_KUBECONFIG_PATH"
-        --tags "$tags"
-    )
-    if [ -n "$K8S_VERSION" ]; then
-        cmd+=(--version "$K8S_VERSION")
+    if [ "$resume" = "1" ] && hub_cluster_exists; then
+        log_info "[1/7] hub cluster already exists — refreshing kubeconfig only"
+        if ! eksctl utils write-kubeconfig \
+            --cluster "$HUB_CLUSTER_NAME" --region "$REGION" \
+            --kubeconfig "$HUB_KUBECONFIG_PATH"; then
+            log_fail "eksctl utils write-kubeconfig failed — cannot resume without a working hub kubeconfig."
+            return 1
+        fi
+        chmod 600 "$HUB_KUBECONFIG_PATH" 2>/dev/null || true
+        log_ok "hub kubeconfig refreshed (${HUB_KUBECONFIG_PATH})"
+    else
+        local tags="sharko:purpose=live-test,sharko:throwaway=true,sharko:cluster=${HUB_CLUSTER_NAME}"
+        tags=$(ascii_safe "$tags")
+        local -a cmd=(eksctl create cluster
+            --name "$HUB_CLUSTER_NAME"
+            --region "$REGION"
+            --nodegroup-name "$HUB_NODEGROUP_NAME"
+            --nodes 1 --nodes-min 1 --nodes-max 1
+            --node-type "$HUB_NODE_TYPE"
+            --managed
+            --kubeconfig "$HUB_KUBECONFIG_PATH"
+            --tags "$tags"
+        )
+        if [ -n "$K8S_VERSION" ]; then
+            cmd+=(--version "$K8S_VERSION")
+        fi
+        log_info "[1/7] running: ${cmd[*]}"
+        if ! "${cmd[@]}"; then
+            log_fail "eksctl create cluster failed — see output above."
+            echo "       If a partial stack was left behind, run: $0 env-down" >&2
+            return 1
+        fi
+        chmod 600 "$HUB_KUBECONFIG_PATH" 2>/dev/null || true
+        log_ok "hub cluster created (kubeconfig: ${HUB_KUBECONFIG_PATH})"
     fi
-    log_info "[1/7] running: ${cmd[*]}"
-    if ! "${cmd[@]}"; then
-        log_fail "eksctl create cluster failed — see output above."
-        echo "       If a partial stack was left behind, run: $0 env-down" >&2
-        return 1
-    fi
-    chmod 600 "$HUB_KUBECONFIG_PATH" 2>/dev/null || true
-    log_ok "hub cluster created (kubeconfig: ${HUB_KUBECONFIG_PATH})"
 
     # ---- [2/7] IAM role (before associations reference it) ----
     log_info "[2/7] scoped IAM role"
@@ -2020,9 +2087,12 @@ EOF
         local secret_json
         secret_json=$(CN="$CLUSTER_NAME" H="$server" CA="$ca_b64" R="$REGION" \
             json_build clusterName=CN host=H caData=CA region=R)
+        secret_json=$(ascii_safe "$secret_json")
+        local secret_description
+        secret_description=$(ascii_safe "Sharko EKS live-test structured EKS secret (V2-cleanup-62) - safe to delete any time")
         if ! aws secretsmanager create-secret --region "$REGION" \
             --name "$CLUSTER_NAME" \
-            --description "Sharko EKS live-test structured EKS secret (V2-cleanup-62) — safe to delete any time" \
+            --description "$secret_description" \
             --secret-string "$secret_json" >/dev/null; then
             log_fail "aws secretsmanager create-secret failed"
             return 1
@@ -2355,6 +2425,12 @@ Sequence: preflight -> spoke create (if missing) -> hub-up -> spoke-connect
 -> api-smoke -> handover block (port-forwards, passwords, GIF shot-list,
 running cost).
 
+If the hub cluster already exists but namespace '${HUB_NAMESPACE}' is
+missing (a prior hub-up died partway through), env-up detects the
+half-provisioned hub and re-runs hub-up with --resume automatically —
+no manual cleanup needed. If the namespace is present, the hub is treated
+as fully provisioned and reused as-is.
+
 From nothing this takes ~35-45 min (two EKS control planes are the slow
 part) and the env costs ~\$0.26/hr while it runs. Run '$0 env-down' the
 moment you are done — nothing auto-expires.
@@ -2393,7 +2469,12 @@ EOF
     fi
 
     if hub_cluster_exists; then
-        log_warn "hub '${HUB_CLUSTER_NAME}' already exists — skipping hub-up (re-run env-down first for a truly fresh hub)"
+        if hkctl get ns "$HUB_NAMESPACE" >/dev/null 2>&1; then
+            log_ok "hub '${HUB_CLUSTER_NAME}' already exists and namespace '${HUB_NAMESPACE}' is present — reusing (fully provisioned)"
+        else
+            log_warn "hub '${HUB_CLUSTER_NAME}' exists but namespace '${HUB_NAMESPACE}' is missing — half-provisioned hub from a prior run, resuming"
+            do_hub_up "${passthru[@]}" --resume || return 1
+        fi
     else
         do_hub_up "${passthru[@]}" || return 1
     fi
@@ -2636,6 +2717,30 @@ EOF
 }
 
 # =====================================================================
+# Subcommand: selfcheck (hidden — maintainer/CI tripwire, not a live-test
+# operation; deliberately NOT listed in usage() below)
+#
+# Guards the ascii_safe() rule above: no --description or --secret-string
+# line in THIS file may ever contain a non-ASCII byte again. Run it any
+# time after editing this script, or wire it into CI if a scripts-lint
+# job is ever added.
+# =====================================================================
+do_selfcheck() {
+    local self="${BASH_SOURCE[0]}"
+    local bad
+    bad=$(LC_ALL=C grep -nE '^[[:space:]]*--(description|secret-string)[[:space:]]+["$]' "$self" \
+        | LC_ALL=C grep '[^ -~]' || true)
+    if [ -n "$bad" ]; then
+        log_fail "non-ASCII byte(s) found on a --description/--secret-string line:"
+        printf '%s\n' "$bad" >&2
+        echo "       Route the value through ascii_safe() before passing it to aws/eksctl." >&2
+        return 1
+    fi
+    log_ok "selfcheck: no non-ASCII bytes on any --description/--secret-string line"
+    return 0
+}
+
+# =====================================================================
 # usage / help
 # =====================================================================
 usage() {
@@ -2654,11 +2759,13 @@ ${BOLD}Phase 1 — spoke only (hub on local kind)${RESET}
 
 ${BOLD}Phase 2 — the full hub-on-EKS simulation (V2-cleanup-62.3)${RESET}
   hub-up          EKS hub: ArgoCD + Sharko (repo chart, ghcr image) + Pod
-                  Identity — zero stored AWS keys
+                  Identity — zero stored AWS keys (--resume: finish
+                  provisioning a half-provisioned hub instead of refusing)
   spoke-connect   Wire the spoke into the hub Sharko via API (eks-token +
                   per-cluster role_arn)
   api-smoke       Scripted API pass (podinfo end-to-end) — PASS/FAIL per step
   env-up          ONE CLICK: preflight -> spoke -> hub -> connect -> smoke
+                  (auto-resumes a half-provisioned hub if found)
   env-down        Full hub teardown; --all also removes spoke + role + secret
 
 ${BOLD}Either phase${RESET}
@@ -2732,6 +2839,9 @@ main() {
             ;;
         status)
             shift; do_status "$@"; return $?
+            ;;
+        selfcheck)
+            shift; do_selfcheck "$@"; return $?
             ;;
         help|--help|-h|"")
             usage
