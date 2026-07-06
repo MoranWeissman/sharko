@@ -137,7 +137,7 @@ function PerClusterAddonOverridesEditorImpl({
           <span>
             Anything here overrides global values for{' '}
             <span className="font-mono">{clusterName}</span>. Leave empty to use the global
-            defaults. Save opens a PR — on merge, ArgoCD reconciles only this cluster.
+            defaults. Save opens a PR — on merge, the change rolls out to this cluster only.
           </span>
         </p>
       </div>

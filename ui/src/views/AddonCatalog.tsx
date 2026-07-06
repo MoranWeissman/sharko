@@ -58,7 +58,16 @@ import {
 // total_target_cluster_count (see DeploymentBadge).
 type AddonsView = 'catalog' | 'marketplace'
 
-type FilterType = 'all' | 'healthy' | 'unhealthy' | 'git-only'
+type FilterType = 'all' | 'healthy' | 'unhealthy' | 'git-only' | 'drifted'
+
+// True when any enabled application runs a version different from the
+// catalog version. Shared by the card drift chip, the `drifted` filter,
+// and the `?drift=true` deep-link from the Dashboard (V2-cleanup-61.2).
+function countDriftedApps(addon: AddonCatalogItem): number {
+  return addon.applications.filter(
+    (a) => a.enabled && a.deployed_version && a.deployed_version !== addon.version,
+  ).length
+}
 type SortBy = 'name' | 'applications'
 type PageSize = 15 | 30 | 60
 
@@ -165,16 +174,20 @@ function StatusChip({
 
 /**
  * Tile badge that distinguishes "in catalog" from "running on N clusters".
- * Renders one of four copies based on (deployed, target):
+ * Renders one of these copies based on (deployed, target) — names follow
+ * the V2-cleanup-61.2 vocabulary (one name per state, one state per name):
  *
- *   target = 0           → "Not deployed anywhere"   (amber, no targets opted in)
- *   deployed = 0, M > 0  → "Not deployed yet"        (amber, opted-in but ArgoCD hasn't synced+healthy)
+ *   target = 0           → "Not deployed yet"        (neutral — in the catalog,
+ *                                                     not enabled on any cluster;
+ *                                                     benign, was "Catalog Only")
+ *   deployed = 0, M > 0  → "Waiting to deploy"       (amber — enabled on clusters
+ *                                                     but nothing running yet)
  *   0 < N < M            → "Running on N/M clusters" (project-blue, partial)
  *   N == M, M > 0        → "Running on N clusters"   (green, fully covered)
  *
  * Reads deployed_cluster_count + total_target_cluster_count from the addon
  * row; both default to 0 when missing, degrading gracefully to "Not
- * deployed anywhere" rather than crashing.
+ * deployed yet" rather than crashing.
  */
 function DeploymentBadge({ addon }: { addon: AddonCatalogItem }) {
   const deployed = addon.deployed_cluster_count ?? 0
@@ -186,20 +199,22 @@ function DeploymentBadge({ addon }: { addon: AddonCatalogItem }) {
   const hasDeploying = addon.applications.some((a) => a.enabled && a.status === 'deploying')
 
   let label: string
-  let tone: 'amber' | 'blue' | 'green' | 'red'
+  let tone: 'neutral' | 'amber' | 'blue' | 'green' | 'red'
 
   if (hasSyncFailing) {
     label = 'Sync failing'
     tone = 'red'
   } else if (target === 0) {
-    label = 'Not deployed anywhere'
-    tone = 'amber'
+    // Benign: nothing has opted in yet. Neutral, not a warning.
+    label = 'Not deployed yet'
+    tone = 'neutral'
   } else if (deployed === 0 && hasDeploying) {
     // Active first rollout — no completed deploys yet but something is Deploying.
     label = 'Deploying…'
     tone = 'blue'
   } else if (deployed === 0) {
-    label = 'Not deployed yet'
+    // Clusters opted in but ArgoCD hasn't produced a synced+healthy app yet.
+    label = 'Waiting to deploy'
     tone = 'amber'
   } else if (deployed === target) {
     // N == M, M > 0 — cleaner copy than "Running on N/N clusters"
@@ -212,6 +227,10 @@ function DeploymentBadge({ addon }: { addon: AddonCatalogItem }) {
   }
 
   const toneClasses: Record<typeof tone, string> = {
+    neutral:
+      // Neutral blue-tinted "inactive" tokens — matches the Unknown /
+      // Connecting… styling elsewhere.
+      'bg-[#d6eeff] text-[#1a4a6a] ring-[#a0d0f0] dark:bg-gray-700 dark:text-gray-300 dark:ring-gray-600',
     amber:
       'bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:ring-amber-700',
     blue:
@@ -284,18 +303,20 @@ function AddonCard({ addon }: { addon: AddonCatalogItem }) {
 
         <HealthProgressBar healthy={addon.healthy_applications} total={enabledApps} />
 
-        {/* Status chips */}
+        {/* Status chips. Problem states are red (V2-cleanup-61.2, D1+D3):
+            Degraded matches its red rendering everywhere else, and
+            "Missing from ArgoCD" is the PROBLEM name — enabled in the
+            catalog but ArgoCD has no Application for it (distinct from the
+            benign "Not deployed yet"). */}
         <div className="mt-2 flex flex-wrap gap-1">
           <StatusChip label="Healthy" count={addon.healthy_applications} color="green" />
-          <StatusChip label="Degraded" count={addon.degraded_applications} color="yellow" />
-          <StatusChip label="Catalog Only" count={addon.missing_applications} color="red" />
+          <StatusChip label="Degraded" count={addon.degraded_applications} color="red" />
+          <StatusChip label="Missing from ArgoCD" count={addon.missing_applications} color="red" />
         </div>
 
         {/* Version drift indicator */}
         {(() => {
-          const driftCount = addon.applications.filter(
-            a => a.enabled && a.deployed_version && a.deployed_version !== addon.version
-          ).length
+          const driftCount = countDriftedApps(addon)
           if (driftCount > 0) {
             return (
               <div className="mt-2">
@@ -452,7 +473,10 @@ function AddonListTable({ addons }: { addons: AddonCatalogItem[] }) {
             <th className="px-6 py-3">Deployed</th>
             <th className="px-6 py-3">Healthy</th>
             <th className="px-6 py-3">Degraded</th>
-            <th className="px-6 py-3">Catalog Only</th>
+            {/* The PROBLEM column (V2-cleanup-61.2, D1): enabled in the
+                catalog but ArgoCD has no Application. Was "Catalog Only",
+                which collided with the benign not-deployed badge. */}
+            <th className="px-6 py-3">Missing from ArgoCD</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-[#6aade0] dark:divide-gray-700">
@@ -470,8 +494,10 @@ function AddonListTable({ addons }: { addons: AddonCatalogItem[] }) {
               </td>
               <td className="px-6 py-3 text-[#0a3a5a] dark:text-gray-300">
                 {addon.enabled_clusters === 0 ? (
-                  <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
-                    Catalog Only
+                  // Benign state (V2-cleanup-61.2, D1): in the catalog,
+                  // not enabled on any cluster yet. Neutral tone.
+                  <span className="inline-flex items-center rounded-full bg-[#d6eeff] px-2 py-0.5 text-xs font-medium text-[#1a4a6a] dark:bg-gray-700 dark:text-gray-300">
+                    Not deployed yet
                   </span>
                 ) : (
                   <span className="inline-flex items-center rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">
@@ -547,13 +573,19 @@ export function AddonCatalog() {
   const [error, setError] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
   const [search, setSearch] = useState('')
-  const [filterType, setFilterType] = useState<FilterType>('all')
+  // The Dashboard's "addons with drift" button deep-links here with
+  // `?drift=true` (carried through the /version-matrix redirect by 61.1's
+  // RedirectPreservingQuery). Honor it: land pre-filtered on the drifted
+  // addons (V2-cleanup-61.2 handover).
+  const [filterType, setFilterType] = useState<FilterType>(
+    searchParams.get('drift') === 'true' ? 'drifted' : 'all',
+  )
   const [sortBy, setSortBy] = useState<SortBy>('name')
   const [pageSize, setPageSize] = useState<PageSize>(15)
   const [page, setPage] = useState(1)
 
   // Add Addon dialog state. No sync_wave input — operators set it on the
-  // addon's ArgoCD App Options tab after the addon exists. The dialog
+  // addon's Deployment Options tab after the addon exists. The dialog
   // auto-validates the repo URL and offers chart/version dropdowns.
   const [addAddonOpen, setAddAddonOpen] = useState(false)
   const [addonForm, setAddonForm] = useState({
@@ -773,7 +805,7 @@ export function AddonCatalog() {
       version: addonForm.version.trim(),
       namespace: addonForm.namespace.trim() || undefined,
       // sync_wave intentionally omitted — operators set it on the addon's
-      // ArgoCD App Options tab after creation.
+      // Deployment Options tab after creation.
       source: 'manual' as const,
       // auto_merge omitted — falls back to the global GitOps setting.
       dry_run: dryRun,
@@ -908,6 +940,8 @@ export function AddonCatalog() {
             return a.degraded_applications > 0 || a.missing_applications > 0
           case 'git-only':
             return a.enabled_clusters === 0
+          case 'drifted':
+            return countDriftedApps(a) > 0
           default:
             return true
         }
@@ -1039,8 +1073,10 @@ export function AddonCatalog() {
       {/* Action bar — refresh + Add Addon */}
       <div className="flex items-center justify-end gap-2">
         <p className="mr-auto text-xs text-[#3a6a8a] dark:text-gray-500">
-          <span className="font-medium text-amber-600 dark:text-amber-400">Catalog Only</span>{' '}
-          means the addon is defined in your catalog but not yet enabled on any cluster.
+          <span className="font-medium text-[#1a4a6a] dark:text-gray-300">Not deployed yet</span>{' '}
+          = in your catalog, not enabled on any cluster.{' '}
+          <span className="font-medium text-red-600 dark:text-red-400">Missing from ArgoCD</span>{' '}
+          = enabled, but ArgoCD has no matching app — needs a look.
         </p>
         <button
           onClick={handleRefresh}
@@ -1279,7 +1315,7 @@ export function AddonCatalog() {
             <div className="rounded-md bg-[#e8f4ff] p-3 text-xs text-[#2a5a7a] ring-1 ring-[#c0ddf0] dark:bg-gray-800 dark:text-gray-300 dark:ring-gray-700">
               After adding, advanced options like sync wave, sync options,
               ignore differences, and additional sources are available on the
-              addon&rsquo;s <strong>ArgoCD App Options</strong> tab.
+              addon&rsquo;s <strong>Deployment Options</strong> tab.
             </div>
 
             {/* Auto-merge is now a global setting — no per-flow checkbox. */}
@@ -1410,13 +1446,13 @@ export function AddonCatalog() {
           selected={filterType === 'unhealthy'}
         />
         <StatCard
-          title="Catalog Only"
+          title="Not deployed yet"
           value={catalogData.addons_only_in_git}
-          icon={<AlertTriangle className="h-5 w-5" />}
-          color="warning"
+          icon={<Boxes className="h-5 w-5" />}
+          color="default"
           onClick={() => handleStatFilter('git-only')}
           selected={filterType === 'git-only'}
-          subtitle="Defined in catalog, not deployed anywhere"
+          subtitle="In your catalog, not enabled on any cluster yet"
         />
       </div>
 
@@ -1443,7 +1479,8 @@ export function AddonCatalog() {
             <option value="all">All Addons</option>
             <option value="healthy">Healthy Only</option>
             <option value="unhealthy">Not Healthy</option>
-            <option value="git-only">Catalog Only (not deployed)</option>
+            <option value="git-only">Not deployed yet</option>
+            <option value="drifted">With version drift</option>
           </select>
         </div>
 

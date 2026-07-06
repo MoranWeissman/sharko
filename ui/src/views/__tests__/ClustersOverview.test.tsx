@@ -145,12 +145,18 @@ describe('ClustersOverview', () => {
       expect(screen.getByText('Clusters')).toBeInTheDocument();
     });
 
-    // Stat cards
+    // Stat cards — canonical connection vocabulary (V2-cleanup-61.2, D2):
+    // Connected / Disconnected / Connecting / Not managed.
     expect(screen.getByText('All Clusters')).toBeInTheDocument();
     expect(screen.getAllByText('Connected').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText('Failed').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText('Not Deployed')).toBeInTheDocument();
-    expect(screen.getByText('Unmanaged')).toBeInTheDocument();
+    expect(screen.getAllByText('Disconnected').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('Connecting')).toBeInTheDocument();
+    // "Not managed" appears in both the stat card and the legend.
+    expect(screen.getAllByText('Not managed').length).toBeGreaterThanOrEqual(1);
+    // The old competing names are gone.
+    expect(screen.queryByText('Failed')).not.toBeInTheDocument();
+    expect(screen.queryByText('Not Deployed')).not.toBeInTheDocument();
+    expect(screen.queryByText('Unmanaged')).not.toBeInTheDocument();
 
     // Stat values - total = total_in_git + not_in_git = 3
     // Use getAllByText because '3' may appear in both the stat card and a count badge
@@ -424,13 +430,15 @@ describe('ClustersOverview', () => {
       expect(screen.getByText('prod-eu')).toBeInTheDocument();
     });
 
-    // Click the "Failed" stat card to filter - find the one inside a stat card (role=button)
-    const failedCards = screen.getAllByText('Failed');
-    const failedStatCard = failedCards
+    // Click the "Disconnected" stat card to filter - find the one inside a
+    // stat card (role=button); the composite row pill also says
+    // "Disconnected" but is a plain <button> without the role attribute.
+    const disconnectedCards = screen.getAllByText('Disconnected');
+    const disconnectedStatCard = disconnectedCards
       .map((el) => el.closest('[role="button"]'))
       .find(Boolean);
-    expect(failedStatCard).toBeTruthy();
-    fireEvent.click(failedStatCard!);
+    expect(disconnectedStatCard).toBeTruthy();
+    fireEvent.click(disconnectedStatCard!);
 
     // Only the failed cluster should remain
     expect(screen.queryByText('prod-eu')).not.toBeInTheDocument();

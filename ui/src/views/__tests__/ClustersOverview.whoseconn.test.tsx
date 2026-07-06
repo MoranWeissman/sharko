@@ -108,16 +108,23 @@ describe('ClustersOverview — whose-connection labels (V2-cleanup-55.3)', () =>
     });
   });
 
-  it('captions every managed-cluster connection status as "ArgoCD → cluster" with the tooltip', async () => {
+  // V2-cleanup-61.2 (D4): each row now renders ONE composite status pill;
+  // the "ArgoCD → cluster" attribution lives in the pill's accessible
+  // popover breakdown instead of an always-visible per-row caption.
+  it('attributes the connection state to "ArgoCD → cluster" inside every row pill popover', async () => {
     renderView();
     await waitForClusters();
 
-    const captions = screen.getAllByText(ARGOCD_CONN_LABEL);
-    // One caption per managed cluster row.
-    expect(captions).toHaveLength(2);
-    for (const caption of captions) {
-      expect(caption).toHaveAttribute('title', ARGOCD_CONN_TOOLTIP);
-    }
+    // One composite pill per managed cluster row.
+    const pills = screen.getAllByTestId('cluster-status-pill');
+    expect(pills).toHaveLength(2);
+
+    // Opening a pill's popover reveals the attribution + its tooltip.
+    fireEvent.click(pills[0]);
+    await waitFor(() => {
+      expect(screen.getByText(ARGOCD_CONN_LABEL)).toBeInTheDocument();
+    });
+    expect(screen.getByText(ARGOCD_CONN_LABEL)).toHaveAttribute('title', ARGOCD_CONN_TOOLTIP);
   });
 
   it('attributes the connection-status filter to ArgoCD', async () => {

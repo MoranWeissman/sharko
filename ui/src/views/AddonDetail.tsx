@@ -1702,7 +1702,10 @@ export function AddonDetail() {
                 { key: 'clusters', label: 'Clusters', badge: enabledApps.length, icon: Server },
                 { key: 'upgrade', label: 'Upgrade', icon: ArrowUpCircle },
                 { key: 'values', label: 'Values', icon: Pencil },
-                { key: 'catalog', label: 'ArgoCD App Options', icon: FileCode },
+                // Plain name on the user surface (V2-cleanup-61.2, E1) —
+                // this tab edits HOW the addon deploys. The underlying
+                // ArgoCD Application terms stay inside the tab's field docs.
+                { key: 'catalog', label: 'Deployment Options', icon: FileCode },
               ],
             },
           ]}
@@ -1825,14 +1828,16 @@ export function AddonDetail() {
                   icon={<CheckCircle className="h-5 w-5" />}
                   color="success"
                 />
+                {/* Degraded is a PROBLEM — red, matching its rendering
+                    everywhere else (V2-cleanup-61.2, D3). */}
                 <StatCard
                   title="Degraded"
                   value={addon.degraded_applications}
                   icon={<AlertTriangle className="h-5 w-5" />}
-                  color={addon.degraded_applications > 0 ? 'warning' : 'default'}
+                  color={addon.degraded_applications > 0 ? 'error' : 'default'}
                 />
                 <StatCard
-                  title="Not Deployed"
+                  title="Missing from ArgoCD"
                   value={addon.missing_applications}
                   icon={<XCircle className="h-5 w-5" />}
                   color={addon.missing_applications > 0 ? 'error' : 'default'}
@@ -1907,10 +1912,11 @@ export function AddonDetail() {
                 )
               })}
 
-              {/* AppSet info */}
+              {/* Deployment-template info (an ArgoCD ApplicationSet under
+                  the hood — plain words on the user surface, V2-cleanup-61.2 E1). */}
               <div className="rounded-lg bg-[#e8f4ff] p-3 text-sm text-[#2a5a7a] dark:bg-gray-800 dark:text-gray-400">
-                <span className="font-medium text-[#0a2a4a] dark:text-gray-200">ApplicationSet:</span>{' '}
-                {addon.addon_name} — manages deployments across all clusters with this addon enabled
+                <span className="font-medium text-[#0a2a4a] dark:text-gray-200">Deployment template:</span>{' '}
+                {addon.addon_name} — one template drives this addon&rsquo;s deployment on every cluster where it&rsquo;s enabled
               </div>
 
               {/* Environment Versions */}
@@ -1935,12 +1941,12 @@ export function AddonDetail() {
                 </div>
               )}
 
-              {/* Advanced Configuration lives in the ArgoCD App Options
+              {/* Advanced Configuration lives in the Deployment Options
                   tab — Overview just points the operator there. */}
               <div className="rounded-lg bg-[#e8f4ff] p-4 text-sm text-[#2a5a7a] ring-1 ring-[#c0ddf0] dark:bg-gray-800 dark:text-gray-300 dark:ring-gray-700">
                 <p className="flex flex-wrap items-center gap-1">
                   <span className="font-medium text-[#0a2a4a] dark:text-gray-100">
-                    Advanced ArgoCD Application options
+                    Advanced deployment options
                   </span>
                   <span>(sync wave, sync options, ignore differences, additional sources) live in the</span>
                   <button
@@ -1948,7 +1954,7 @@ export function AddonDetail() {
                     onClick={() => setActiveSection('catalog')}
                     className="font-semibold text-teal-600 underline hover:no-underline dark:text-teal-400"
                   >
-                    ArgoCD App Options tab &rarr;
+                    Deployment Options tab &rarr;
                   </button>
                 </p>
               </div>
@@ -2206,7 +2212,7 @@ export function AddonDetail() {
                   onClick={() => setActiveSection('catalog')}
                   className="font-semibold text-teal-600 underline hover:no-underline dark:text-teal-400"
                 >
-                  ArgoCD App Options tab →
+                  Deployment Options tab →
                 </button>
               </p>
               {valuesSchemaLoading && !valuesSchema ? (
@@ -2214,7 +2220,7 @@ export function AddonDetail() {
               ) : (
                 <ValuesEditor
                   title={`Global Values — ${addon.addon_name}`}
-                  subtitle="Submitting opens a PR against your GitOps repo. Once merged, ArgoCD reconciles the change to every cluster that has this addon enabled."
+                  subtitle="Submitting opens a PR against your GitOps repo. Once merged, the change rolls out to every cluster that has this addon enabled."
                   initialYAML={valuesSchema?.current_values ?? valuesYaml ?? ''}
                   schema={valuesSchema?.schema ?? null}
                   hasPersonalToken={me?.has_github_token}
@@ -2356,9 +2362,9 @@ export function AddonDetail() {
             <div className="space-y-4">
               <div className="rounded-lg bg-[#e0f0ff] p-3 text-xs text-[#0a3a5a] dark:bg-gray-700 dark:text-gray-300">
                 <p>
-                  ArgoCD Application options for <span className="font-mono">{addon.addon_name}</span> —
-                  sync wave, sync options, ignore differences, and additional sources. These control how
-                  ArgoCD deploys the addon. Editing opens a PR against{' '}
+                  Deployment options for <span className="font-mono">{addon.addon_name}</span> —
+                  sync wave, sync options, ignore differences, and additional sources. These map to the
+                  addon&rsquo;s ArgoCD Application settings and control how it deploys. Editing opens a PR against{' '}
                   <span className="font-mono">addons-catalog.yaml</span>. Looking for Helm values?{' '}
                   <button
                     type="button"
@@ -2373,7 +2379,7 @@ export function AddonDetail() {
               <div className="rounded-xl ring-2 ring-[#6aade0] bg-[#f0f7ff] p-5 dark:ring-gray-700 dark:bg-gray-800">
                 <div className="mb-4 flex items-center justify-between">
                   <h3 className="text-base font-semibold text-[#0a2a4a] dark:text-gray-100">
-                    ArgoCD Application Options
+                    Deployment Options
                   </h3>
                   {!isEditingConfig && (
                     <RoleGuard adminOnly>

@@ -465,7 +465,7 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
                           <th className="pb-2 font-medium">Health</th>
                           <th className="pb-2 font-medium">Sync</th>
                           <th className="pb-2 font-medium">Resources</th>
-                          <th className="pb-2 font-medium">Last Reconciled</th>
+                          <th className="pb-2 font-medium">Last Synced</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-[#d6eeff] dark:divide-gray-800">
@@ -586,7 +586,7 @@ function AddonGroupsSection({ groups }: { groups: AddonGroupHealth[] }) {
                             <th className="pb-2 font-medium">Health</th>
                             <th className="pb-2 font-medium">Sync</th>
                             <th className="pb-2 font-medium">Resources</th>
-                            <th className="pb-2 font-medium">Last Reconciled</th>
+                            <th className="pb-2 font-medium">Last Synced</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-[#d6eeff] dark:divide-gray-800">

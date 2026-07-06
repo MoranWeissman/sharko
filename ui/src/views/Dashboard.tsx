@@ -508,8 +508,10 @@ export function Dashboard() {
           color={degradedCount > 0 ? 'error' : 'success'} onClick={() => navigate('/addons')} />
         <StatCard title="Available Addons" value={stats.addons.total_available} icon={<Package className="h-6 w-6" />}
           color="default" onClick={() => navigate('/addons')} />
+        {/* Neutral count, not a warning — amber is reserved for states that
+            need attention (V2-cleanup-61.2, D3). */}
         <StatCard title="Active Deployments" value={`${stats.addons.enabled_deployments}/${stats.addons.total_deployments}`}
-          icon={<Rocket className="h-6 w-6" />} color="warning" onClick={() => navigate('/version-matrix')} />
+          icon={<Rocket className="h-6 w-6" />} color="default" onClick={() => navigate('/version-matrix')} />
       </div>
 
       {/* Cluster Cards — problem clusters only */}

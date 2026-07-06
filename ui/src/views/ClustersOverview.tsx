@@ -44,18 +44,16 @@ import type {
 } from '@/services/models';
 import { StatCard } from '@/components/StatCard';
 import { ConnectionStatus } from '@/components/ConnectionStatus';
-import { ConnectivityBadge } from '@/components/ConnectivityBadge';
+import { ClusterStatusSummary } from '@/components/ClusterStatusSummary';
 import { LoadingState } from '@/components/LoadingState';
 import { ErrorState } from '@/components/ErrorState';
 import { RoleGuard } from '@/components/RoleGuard';
-import { StatusBadge, isClusterStatus } from '@/components/StatusBadge';
 import {
   WhoseConnectionLabel,
   ARGOCD_CONN_TOOLTIP,
   SHARKO_CONN_TOOLTIP,
 } from '@/components/WhoseConnectionLabel';
 import { ClusterTypeBadge } from '@/components/ClusterTypeBadge';
-import { ConnectionOwnerBadge } from '@/components/ConnectionOwnerBadge';
 import { ClusterStatusLegend } from '@/components/ClusterStatusLegend';
 import { DiagnoseModal } from '@/components/DiagnoseModal';
 import { ArgoCDStatusBanner } from '@/components/ArgoCDStatusBanner';
@@ -913,6 +911,10 @@ export function ClustersOverview() {
       color: 'default',
       icon: <Server className="h-5 w-5" />,
     },
+    // Titles and colors follow the canonical "ArgoCD → cluster" vocabulary
+    // in lib/clusterStatus.ts (V2-cleanup-61.2, findings D2 + D3):
+    // Connected (green) / Disconnected (red) / Connecting (neutral — the
+    // normal post-registration wait, not a warning) / Not managed (amber).
     {
       key: 'connected',
       title: 'Connected',
@@ -922,21 +924,21 @@ export function ClustersOverview() {
     },
     {
       key: 'failed',
-      title: 'Failed',
+      title: 'Disconnected',
       value: healthStats?.failed ?? 0,
       color: 'error',
       icon: <XCircle className="h-5 w-5" />,
     },
     {
       key: 'missing_from_argocd',
-      title: 'Not Deployed',
+      title: 'Connecting',
       value: healthStats?.missing_from_argocd ?? 0,
-      color: 'warning',
+      color: 'default',
       icon: <HelpCircle className="h-5 w-5" />,
     },
     {
       key: 'not_in_git',
-      title: 'Unmanaged',
+      title: 'Not managed',
       value: healthStats?.not_in_git ?? 0,
       color: 'warning',
       icon: <AlertTriangle className="h-5 w-5" />,
@@ -1876,24 +1878,20 @@ export function ClustersOverview() {
                         </span>
                       </td>
                       <td className="px-6 py-3">
-                        <div className="flex flex-col gap-1">
-                          {/* connection_status is ArgoCD's own connection — say so (V2-cleanup-55.3). */}
-                          <WhoseConnectionLabel who="argocd" />
-                          {isClusterStatus(cluster.connection_status ?? 'unknown')
-                            ? <StatusBadge status={cluster.connection_status ?? 'unknown'} />
-                            : <ConnectionStatus status={cluster.connection_status ?? 'unknown'} />
-                          }
-                          {/* Self-managed connection marker (V2-cleanup-57.2). */}
-                          <ConnectionOwnerBadge managedBy={cluster.connection_managed_by} />
-                          <ConnectivityBadge
-                            connectivityStatus={cluster.connectivity_status}
-                            connectivityDetail={cluster.connectivity_detail}
-                            sharkoStatus={cluster.sharko_status}
-                            lastTestAt={cluster.last_test_at}
-                            testFailing={cluster.test_failing}
-                            testErrorCode={cluster.test_error_code}
-                          />
-                        </div>
+                        {/* ONE composite status pill per row (V2-cleanup-61.2,
+                            D4). The pill shows the worst of the parts; the
+                            popover breaks down ArgoCD connection, deploy
+                            check, Sharko test, and connection ownership. */}
+                        <ClusterStatusSummary
+                          connectionStatus={cluster.connection_status}
+                          connectivityStatus={cluster.connectivity_status}
+                          connectivityDetail={cluster.connectivity_detail}
+                          sharkoStatus={cluster.sharko_status}
+                          lastTestAt={cluster.last_test_at}
+                          testFailing={cluster.test_failing}
+                          testErrorCode={cluster.test_error_code}
+                          connectionManagedBy={cluster.connection_managed_by}
+                        />
                       </td>
                       <td className="px-6 py-3 font-mono text-xs text-[#2a5a7a] dark:text-gray-400">
                         {cluster.server_version ?? '--'}
@@ -2002,21 +2000,17 @@ export function ClustersOverview() {
                     </div>
                   )}
                   <div className="mb-2 flex flex-col gap-1">
-                    {/* connection_status is ArgoCD's own connection — say so (V2-cleanup-55.3). */}
-                    <WhoseConnectionLabel who="argocd" />
-                    {isClusterStatus(cluster.connection_status ?? 'unknown')
-                      ? <StatusBadge status={cluster.connection_status ?? 'unknown'} />
-                      : <ConnectionStatus status={cluster.connection_status ?? 'unknown'} />
-                    }
-                    {/* Self-managed connection marker (V2-cleanup-57.2). */}
-                    <ConnectionOwnerBadge managedBy={cluster.connection_managed_by} />
-                    <ConnectivityBadge
+                    {/* ONE composite status pill per card (V2-cleanup-61.2,
+                        D4) — details live in the accessible popover. */}
+                    <ClusterStatusSummary
+                      connectionStatus={cluster.connection_status}
                       connectivityStatus={cluster.connectivity_status}
                       connectivityDetail={cluster.connectivity_detail}
                       sharkoStatus={cluster.sharko_status}
                       lastTestAt={cluster.last_test_at}
                       testFailing={cluster.test_failing}
                       testErrorCode={cluster.test_error_code}
+                      connectionManagedBy={cluster.connection_managed_by}
                     />
                   </div>
                   <p className="mb-2 font-mono text-xs text-[#2a5a7a] dark:text-gray-400">

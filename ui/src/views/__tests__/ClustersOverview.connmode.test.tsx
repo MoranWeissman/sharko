@@ -3,10 +3,7 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { ClustersOverview } from '@/views/ClustersOverview';
 import { AuthContext } from '@/hooks/useAuth';
-import {
-  CONN_OWNER_USER_LABEL,
-  CONN_OWNER_USER_TOOLTIP,
-} from '@/components/ConnectionOwnerBadge';
+import { CONN_OWNER_USER_LABEL } from '@/components/ConnectionOwnerBadge';
 
 // V2-cleanup-57.2 — "connection managed by: me" (self-managed ArgoCD
 // connections). These tests pin the UI half of the contract:
@@ -121,14 +118,30 @@ describe('ClustersOverview — self-managed connections (V2-cleanup-57.2)', () =
     mockRegisterCluster.mockResolvedValue({ status: 'success', git: { merged: true } });
   });
 
-  it('shows the "connection: managed by you" caption ONLY on self-managed clusters', async () => {
+  // V2-cleanup-61.2 (D4): the ownership note moved from an always-visible
+  // row caption into the composite status pill's accessible popover — one
+  // pill per row, details on demand (keyboard + touch friendly).
+  it('shows the "connection: managed by you" note ONLY in the self-managed cluster popover', async () => {
     renderView();
     await waitForClusters();
 
-    const captions = screen.getAllByText(CONN_OWNER_USER_LABEL);
-    // Exactly one cluster is self-managed → exactly one caption in the list.
-    expect(captions).toHaveLength(1);
-    expect(captions[0]).toHaveAttribute('title', CONN_OWNER_USER_TOOLTIP);
+    const pills = screen.getAllByTestId('cluster-status-pill');
+    expect(pills).toHaveLength(2);
+
+    // byo-conn renders first (self-managed) — its popover carries the note.
+    fireEvent.click(pills[0]);
+    await waitFor(() => {
+      expect(screen.getByText(new RegExp(CONN_OWNER_USER_LABEL))).toBeInTheDocument();
+    });
+    expect(screen.getByText(new RegExp('never writes, rotates, or deletes'))).toBeInTheDocument();
+
+    // Close and open the Sharko-managed cluster's popover — no note.
+    fireEvent.click(pills[0]);
+    fireEvent.click(pills[1]);
+    await waitFor(() => {
+      expect(screen.getAllByText('ArgoCD → cluster').length).toBeGreaterThanOrEqual(1);
+    });
+    expect(screen.queryByText(new RegExp(CONN_OWNER_USER_LABEL))).not.toBeInTheDocument();
   });
 
   it('asks "Who manages the ArgoCD connection?" with Sharko as the default', async () => {

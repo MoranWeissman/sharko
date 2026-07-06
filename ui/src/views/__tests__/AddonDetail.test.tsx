@@ -117,7 +117,8 @@ describe('AddonDetail', () => {
     expect(screen.getByText('6 (75%)')).toBeInTheDocument()
     // "Degraded" also appears in stat card + status badge + filter
     expect(screen.getAllByText('Degraded').length).toBeGreaterThanOrEqual(1)
-    expect(screen.getByText('Not Deployed')).toBeInTheDocument()
+    // V2-cleanup-61.2 (D1): the problem stat is named "Missing from ArgoCD".
+    expect(screen.getAllByText('Missing from ArgoCD').length).toBeGreaterThanOrEqual(1)
     expect(screen.getByText('Disabled in Git')).toBeInTheDocument()
   })
 

@@ -256,13 +256,14 @@ describe('ClusterDetail', () => {
       expect(screen.getByText('prod-eu')).toBeInTheDocument();
     });
 
-    // Stat cards — zero-count cards (Unmanaged, Not Enabled) are hidden
+    // Stat cards — zero-count cards (Not managed, Not Enabled) are hidden.
+    // Names follow the V2-cleanup-61.2 canonical vocabulary.
     expect(screen.getByText('All Addons')).toBeInTheDocument();
     expect(screen.getByText('Healthy')).toBeInTheDocument();
     expect(screen.getByText('With Issues')).toBeInTheDocument();
-    expect(screen.getAllByText('Not Deployed').length).toBeGreaterThanOrEqual(1);
-    // Unmanaged (0) and Not Enabled (0) should be hidden
-    expect(screen.queryByText('Unmanaged')).not.toBeInTheDocument();
+    expect(screen.getAllByText('Missing from ArgoCD').length).toBeGreaterThanOrEqual(1);
+    // Not managed (0) and Not Enabled (0) should be hidden
+    expect(screen.queryByText('Not managed')).not.toBeInTheDocument();
     expect(screen.queryByText('Not Enabled')).not.toBeInTheDocument();
 
     // Table rows

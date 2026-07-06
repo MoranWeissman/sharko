@@ -3,7 +3,7 @@ import { Server } from 'lucide-react'
 import { AddonDots } from '@/components/AddonDots'
 import { ClusterTypeBadge } from '@/components/ClusterTypeBadge'
 import { WhoseConnectionLabel } from '@/components/WhoseConnectionLabel'
-import { classifyClusterConnection } from '@/lib/clusterStatus'
+import { getClusterConnectionState } from '@/lib/clusterStatus'
 
 interface ClusterAddonSummary {
   name: string
@@ -21,32 +21,13 @@ interface ClusterCardProps {
   totalCount: number
 }
 
-// A freshly-registered cluster (ArgoCD has the secret but has not yet
-// produced a probe result) renders as a neutral "Connecting…" pill rather
-// than a red "Disconnected" failure — the ArgoCD probe window can be
-// ~10-60s on real installs.
-const PILL_STYLES: Record<
-  ReturnType<typeof classifyClusterConnection>,
-  { dot: string; text: string; label: string }
-> = {
-  connected: {
-    dot: 'bg-green-500',
-    text: 'text-green-700 dark:text-green-400',
-    label: 'Connected',
-  },
-  pending: {
-    // Neutral blue-tinted styling — matches the light-mode palette used
-    // elsewhere for "Unknown" cluster status (see StatusBadge.tsx).
-    dot: 'bg-[#3a6a8a] dark:bg-gray-400',
-    text: 'text-[#1a4a6a] dark:text-gray-300',
-    label: 'Connecting…',
-  },
-  failed: {
-    dot: 'bg-red-500',
-    text: 'text-red-700 dark:text-red-400',
-    label: 'Disconnected',
-  },
-}
+// The pill renders the canonical "ArgoCD → cluster" vocabulary from
+// lib/clusterStatus.ts (V2-cleanup-61.2, finding D2) — one name, one
+// color, one meaning across ClusterCard, ConnectionStatus, stat cards,
+// and the legend. A freshly-registered cluster (ArgoCD has the secret but
+// has not yet produced a probe result) renders as a neutral "Connecting…"
+// pill rather than a red "Disconnected" failure — the ArgoCD probe window
+// can be ~10-60s on real installs.
 
 export function ClusterCard({
   name,
@@ -57,7 +38,7 @@ export function ClusterCard({
   totalCount,
 }: ClusterCardProps) {
   const navigate = useNavigate()
-  const pill = PILL_STYLES[classifyClusterConnection(connectionStatus)]
+  const pill = getClusterConnectionState(connectionStatus)
 
   return (
     <div
@@ -76,7 +57,7 @@ export function ClusterCard({
       <div className="mb-2 flex flex-col gap-0.5">
         {/* connection_status is ArgoCD's own connection — say so (V2-cleanup-55.3/55.5). */}
         <WhoseConnectionLabel who="argocd" />
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5" title={pill.meaning}>
           <div className={`h-2 w-2 rounded-full ${pill.dot}`} />
           <span className={`text-xs ${pill.text}`}>{pill.label}</span>
         </div>

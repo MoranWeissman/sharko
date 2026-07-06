@@ -168,7 +168,10 @@ describe('AddonCatalog', () => {
     expect(screen.getAllByText('4').length).toBeGreaterThanOrEqual(1)
     expect(screen.getAllByText('Healthy').length).toBeGreaterThanOrEqual(1)
     expect(screen.getAllByText('Unhealthy').length).toBeGreaterThanOrEqual(1)
-    expect(screen.getAllByText('Catalog Only').length).toBeGreaterThanOrEqual(1)
+    // V2-cleanup-61.2 (D1): the benign stat is "Not deployed yet"; the
+    // ambiguous "Catalog Only" wording is retired.
+    expect(screen.getAllByText('Not deployed yet').length).toBeGreaterThanOrEqual(1)
+    expect(screen.queryByText('Catalog Only')).not.toBeInTheDocument()
 
     // Addon cards
     expect(screen.getByText('ingress-nginx')).toBeInTheDocument()
@@ -216,18 +219,15 @@ describe('AddonCatalog', () => {
 })
 
 /**
- * V126-3.1 (DESIGN-02): the tile-level DeploymentBadge replaces the historical
- * "Installed" / "Catalog Only" headline with one of four state-specific copies
- * driven by (deployed_cluster_count, total_target_cluster_count). The four
- * states are tested via the catalog fixture above which covers them all:
+ * V126-3.1 (DESIGN-02) + V2-cleanup-61.2 vocabulary: the tile-level
+ * DeploymentBadge renders one state-specific copy driven by
+ * (deployed_cluster_count, total_target_cluster_count). The four states
+ * are tested via the catalog fixture above which covers them all:
  *
  *  - ingress-nginx       (N=2, M=2) → "Running on 2 clusters"
  *  - cert-manager        (N=3, M=5) → "Running on 3/5 clusters"
- *  - addon-target-only   (N=0, M=4) → "Not deployed yet"
- *  - addon-nowhere       (N=0, M=0) → "Not deployed anywhere"
- *
- * The grid view renders DeploymentBadge per tile. We switch to grid mode
- * before asserting (default is list).
+ *  - addon-target-only   (N=0, M=4) → "Waiting to deploy"   (amber)
+ *  - addon-nowhere       (N=0, M=0) → "Not deployed yet"    (neutral, benign)
  */
 describe('AddonCatalog — DeploymentBadge (V126-3.1)', () => {
   beforeEach(() => {
@@ -254,14 +254,147 @@ describe('AddonCatalog — DeploymentBadge (V126-3.1)', () => {
     expect(screen.getByText('Running on 3/5 clusters')).toBeInTheDocument()
   })
 
-  it('renders "Not deployed yet" when N == 0 and M > 0', async () => {
+  it('renders "Waiting to deploy" when N == 0 and M > 0 (enabled but nothing running)', async () => {
     await renderInGridView()
-    expect(screen.getByText('Not deployed yet')).toBeInTheDocument()
+    expect(screen.getByText('Waiting to deploy')).toBeInTheDocument()
   })
 
-  it('renders "Not deployed anywhere" when M == 0', async () => {
+  it('renders the benign "Not deployed yet" badge when M == 0 (enabled nowhere)', async () => {
     await renderInGridView()
-    expect(screen.getByText('Not deployed anywhere')).toBeInTheDocument()
+    const badges = screen
+      .getAllByTestId('addon-deployment-badge')
+      .filter((b) => b.textContent === 'Not deployed yet')
+    expect(badges).toHaveLength(1)
+  })
+})
+
+/**
+ * V2-cleanup-61.2 (finding D1): "Catalog Only" used to mean BOTH the benign
+ * "enabled on no cluster yet" state AND the problem "enabled but missing
+ * from ArgoCD" state. The two now have distinct names — and for any single
+ * addon the two names never render together, because they describe
+ * mutually exclusive situations.
+ */
+describe('AddonCatalog — D1 vocabulary split (V2-cleanup-61.2)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  async function renderInGridView() {
+    renderCatalog()
+    await waitFor(() => {
+      expect(screen.getAllByTestId('addon-deployment-badge').length).toBeGreaterThan(0)
+    })
+  }
+
+  function cardOf(addonName: string): HTMLElement {
+    const card = screen.getByText(addonName).closest('div.group') as HTMLElement
+    expect(card).toBeTruthy()
+    return card
+  }
+
+  it('an addon enabled nowhere shows "Not deployed yet" and NEVER "Missing from ArgoCD"', async () => {
+    await renderInGridView()
+    const card = cardOf('addon-nowhere') // enabled_clusters=0, missing=0
+    expect(within(card).getByText('Not deployed yet')).toBeInTheDocument()
+    expect(within(card).queryByText('Missing from ArgoCD')).not.toBeInTheDocument()
+  })
+
+  it('an addon with apps missing from ArgoCD shows "Missing from ArgoCD" and NEVER "Not deployed yet"', async () => {
+    await renderInGridView()
+    const card = cardOf('addon-target-only') // enabled_clusters=4, missing=4
+    expect(within(card).getByText(/Missing from ArgoCD/)).toBeInTheDocument()
+    expect(within(card).queryByText('Not deployed yet')).not.toBeInTheDocument()
+  })
+
+  it('the retired "Catalog Only" spelling never renders anywhere on the page', async () => {
+    await renderInGridView()
+    expect(screen.queryByText(/Catalog Only/i)).not.toBeInTheDocument()
+  })
+})
+
+/**
+ * V2-cleanup-61.2 handover: the Dashboard's "addons with drift" button
+ * deep-links to /addons?drift=true (via the /version-matrix redirect that
+ * 61.1 taught to preserve the query). The catalog must consume the param
+ * and land pre-filtered on drifted addons.
+ */
+describe('AddonCatalog — ?drift=true deep-link (V2-cleanup-61.2)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('lands filtered to addons with version drift when ?drift=true is present', async () => {
+    const { api } = await import('@/services/api')
+    vi.mocked(api.getAddonCatalog).mockResolvedValueOnce({
+      addons: [
+        {
+          addon_name: 'drifted-addon',
+          chart: 'drifted-chart',
+          repo_url: 'https://example.com/charts',
+          namespace: 'drift',
+          version: '2.0.0',
+          total_clusters: 1,
+          enabled_clusters: 1,
+          healthy_applications: 1,
+          degraded_applications: 0,
+          missing_applications: 0,
+          deployed_cluster_count: 1,
+          total_target_cluster_count: 1,
+          applications: [
+            {
+              cluster_name: 'prod',
+              enabled: true,
+              configured_version: '2.0.0',
+              deployed_version: '1.9.0', // ≠ catalog version → drift
+              status: 'healthy',
+            },
+          ],
+        },
+        {
+          addon_name: 'steady-addon',
+          chart: 'steady-chart',
+          repo_url: 'https://example.com/charts',
+          namespace: 'steady',
+          version: '1.0.0',
+          total_clusters: 1,
+          enabled_clusters: 1,
+          healthy_applications: 1,
+          degraded_applications: 0,
+          missing_applications: 0,
+          deployed_cluster_count: 1,
+          total_target_cluster_count: 1,
+          applications: [
+            {
+              cluster_name: 'prod',
+              enabled: true,
+              configured_version: '1.0.0',
+              deployed_version: '1.0.0',
+              status: 'healthy',
+            },
+          ],
+        },
+      ],
+      total_addons: 2,
+      total_clusters: 1,
+      addons_only_in_git: 0,
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/addons?drift=true']}>
+        <AddonCatalog />
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('drifted-addon')).toBeInTheDocument()
+    })
+    // The non-drifted addon is filtered out.
+    expect(screen.queryByText('steady-addon')).not.toBeInTheDocument()
+    // The filter dropdown reflects the drift filter.
+    expect(
+      (screen.getByDisplayValue('With version drift') as HTMLSelectElement).value,
+    ).toBe('drifted')
   })
 })
 

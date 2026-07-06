@@ -1,51 +1,38 @@
-import { CheckCircle, XCircle, HelpCircle, AlertTriangle } from 'lucide-react';
+import { CheckCircle, XCircle, Clock, GitMerge } from 'lucide-react';
+import {
+  classifyClusterConnection,
+  CLUSTER_CONNECTION_STATES,
+  type ClusterConnectionKind,
+} from '@/lib/clusterStatus';
+
+// V2-cleanup-61.2 (finding D2): this component renders the canonical
+// "ArgoCD → cluster" connection vocabulary from lib/clusterStatus.ts —
+// the same names, colors, and meanings used by ClusterCard, the stat
+// cards, and the legend. Do not invent labels here.
 
 interface ConnectionStatusProps {
   status: string;
 }
 
-function getConnectionInfo(status: string): {
-  icon: React.ElementType;
-  label: string;
-  colorClass: string;
-} {
-  const s = status.toLowerCase();
-
-  if (s === 'connected' || s === 'successful') {
-    return {
-      icon: CheckCircle,
-      label: 'Connected',
-      colorClass: 'text-green-600',
-    };
-  }
-  if (s === 'failed') {
-    return { icon: XCircle, label: 'Failed', colorClass: 'text-red-600' };
-  }
-  if (s === 'missing' || s === 'missing_from_argocd') {
-    return {
-      icon: HelpCircle,
-      label: 'Missing from ArgoCD',
-      colorClass: 'text-yellow-600',
-    };
-  }
-  if (s === 'not_in_git') {
-    return {
-      icon: AlertTriangle,
-      label: 'Not in Git',
-      colorClass: 'text-purple-600',
-    };
-  }
-
-  return { icon: HelpCircle, label: 'Unknown', colorClass: 'text-[#2a5a7a]' };
-}
+const KIND_ICONS: Record<ClusterConnectionKind, React.ElementType> = {
+  connected: CheckCircle,
+  pending: Clock,
+  unmanaged: GitMerge,
+  failed: XCircle,
+};
 
 export function ConnectionStatus({ status }: ConnectionStatusProps) {
-  const { icon: Icon, label, colorClass } = getConnectionInfo(status);
+  const kind = classifyClusterConnection(status);
+  const def = CLUSTER_CONNECTION_STATES[kind];
+  const Icon = KIND_ICONS[kind];
 
   return (
-    <span className={`inline-flex items-center gap-1.5 ${colorClass}`}>
+    <span
+      className={`inline-flex items-center gap-1.5 ${def.text}`}
+      title={def.meaning}
+    >
       <Icon className="h-4 w-4" />
-      <span className="text-sm font-medium">{label}</span>
+      <span className="text-sm font-medium">{def.label}</span>
     </span>
   );
 }
