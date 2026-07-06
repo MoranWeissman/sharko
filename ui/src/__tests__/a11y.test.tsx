@@ -35,7 +35,6 @@ const fixtures: CatalogEntry[] = [
     chart: 'cert-manager',
     repo: 'https://charts.jetstack.io',
     default_namespace: 'cert-manager',
-    default_sync_wave: 1,
     maintainers: ['jetstack'],
     license: 'Apache-2.0',
     category: 'security',

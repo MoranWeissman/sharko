@@ -143,13 +143,13 @@ type SetAddonValuesRequest struct {
 // withAttributionWarning, so the canonical fields (PRUrl/PRID/Branch/Merged)
 // land on a flat object — we capture them with explicit json tags.
 type SetAddonValuesResult struct {
-	PRUrl               string `json:"pr_url"`
-	PRID                int    `json:"pr_id"`
-	Branch              string `json:"branch"`
-	Merged              bool   `json:"merged"`
-	CommitSHA           string `json:"commit_sha"`
-	ValuesFile          string `json:"values_file"`
-	AttributionWarning  string `json:"attribution_warning,omitempty"`
+	PRUrl              string `json:"pr_url"`
+	PRID               int    `json:"pr_id"`
+	Branch             string `json:"branch"`
+	Merged             bool   `json:"merged"`
+	CommitSHA          string `json:"commit_sha"`
+	ValuesFile         string `json:"values_file"`
+	AttributionWarning string `json:"attribution_warning,omitempty"`
 }
 
 // SetAddonValues PUTs the full YAML for an addon's global values. The
@@ -229,10 +229,10 @@ func (c *Client) AnnotateAddonValues(t *testing.T, addonName string) *AnnotateAd
 // PreviewMergeAddonValuesResult mirrors api.previewMergeResponse. Re-declared
 // here so the test layer doesn't depend on a non-exported type.
 type PreviewMergeAddonValuesResult struct {
-	Current         string                       `json:"current"`
-	Merged          string                       `json:"merged"`
-	UpstreamVersion string                       `json:"upstream_version"`
-	DiffSummary     PreviewMergeDiffSummary      `json:"diff_summary"`
+	Current         string                  `json:"current"`
+	Merged          string                  `json:"merged"`
+	UpstreamVersion string                  `json:"upstream_version"`
+	DiffSummary     PreviewMergeDiffSummary `json:"diff_summary"`
 }
 
 // PreviewMergeDiffSummary mirrors api.previewMergeSummary.
@@ -473,7 +473,6 @@ func SeedAddonsCatalog(t *testing.T, mock *MockGitProvider, extras ...string) {
     chart: cert-manager
     version: "1.16.3"
     namespace: cert-manager
-    syncWave: -1
 `
 	yaml := "applicationsets:\n" + certManagerEntry
 	for _, e := range extras {

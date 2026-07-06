@@ -6954,9 +6954,6 @@ const docTemplate = `{
                 "default_namespace": {
                     "type": "string"
                 },
-                "default_sync_wave": {
-                    "type": "integer"
-                },
                 "deprecated": {
                     "type": "boolean"
                 },
@@ -7485,12 +7482,6 @@ const docTemplate = `{
                 "chart": {
                     "type": "string"
                 },
-                "depends_on": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
-                },
                 "dry_run": {
                     "description": "DryRun, when true, makes AddAddon compute and return the files it WOULD\nwrite (as a DryRunResult on the returned GitResult) with NO side effects\n— no branch, no commit, no PR. Mirrors register-cluster's dry-run so the\nMarketplace UI can preview the change before committing.",
                     "type": "boolean"
@@ -7529,9 +7520,6 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
-                },
-                "sync_wave": {
-                    "type": "integer"
                 },
                 "version": {
                     "type": "string"
@@ -7651,9 +7639,6 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
-                },
-                "sync_wave": {
-                    "type": "integer"
                 },
                 "version": {
                     "type": "string"

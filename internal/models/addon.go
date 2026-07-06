@@ -1,5 +1,7 @@
 package models
 
+import "github.com/invopop/jsonschema"
+
 // AddonSecretRef describes a Kubernetes Secret that an addon needs on remote clusters.
 // Keys maps the secret data key (as it will appear in the K8s Secret) to the
 // provider path that holds the actual value (e.g. "secrets/datadog/api-key").
@@ -22,7 +24,7 @@ type AddonSource struct {
 // AddonCatalogEntry represents an addon definition from addons-catalog.yaml.
 type AddonCatalogEntry struct {
 	// Basic (required)
-	Name string `json:"name" yaml:"name"`
+	Name    string `json:"name" yaml:"name"`
 	RepoURL string `json:"repoURL" yaml:"repoURL"`
 	Chart   string `json:"chart" yaml:"chart"`
 	Version string `json:"version" yaml:"version"`
@@ -31,7 +33,6 @@ type AddonCatalogEntry struct {
 	Namespace string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
 
 	// Advanced — deployment behavior
-	SyncWave    int      `json:"syncWave,omitempty" yaml:"syncWave,omitempty"`
 	SelfHeal    *bool    `json:"selfHeal,omitempty" yaml:"selfHeal,omitempty"`
 	SyncOptions []string `json:"syncOptions,omitempty" yaml:"syncOptions,omitempty"`
 
@@ -44,12 +45,29 @@ type AddonCatalogEntry struct {
 	// Advanced — extra Helm configuration
 	ExtraHelmValues map[string]string `json:"extraHelmValues,omitempty" yaml:"extraHelmValues,omitempty"`
 
-	// Dependency ordering — addon names that must be synced before this one.
-	// Sharko uses this to warn when sync waves conflict and to validate the dependency graph.
-	DependsOn []string `json:"dependsOn,omitempty" yaml:"dependsOn,omitempty"`
-
 	// Secret requirements — Sharko creates these K8s Secrets on remote clusters
 	Secrets []AddonSecretRef `json:"secrets,omitempty" yaml:"secrets,omitempty"`
+}
+
+// JSONSchemaExtend relaxes the generated addons-catalog.v1.json schema so
+// entries tolerate unknown keys (invopop/jsonschema defaults every struct
+// to additionalProperties: false, which internal/config.Parser's
+// validate-on-read gate would otherwise enforce strictly).
+//
+// addons-catalog.yaml is a living, hand-editable config file: operators
+// author entries directly, and Sharko itself has removed fields from this
+// struct before (V2-cleanup-67.1 dropped syncWave + dependsOn — dead,
+// since Sharko's one-ApplicationSet-per-addon model can never use them to
+// order one addon against another). Without this relaxation, an existing
+// catalog file that still carries a since-removed key would fail the
+// read-time schema gate and Sharko would be unable to parse its own
+// catalog after upgrading — exactly the silent-breakage this method
+// prevents. Go's yaml.Unmarshal already ignores unknown keys by default;
+// this keeps the JSON Schema gate consistent with that behavior for this
+// one type. ManagedClusters and other envelope specs are unaffected —
+// this override is scoped to AddonCatalogEntry only.
+func (AddonCatalogEntry) JSONSchemaExtend(s *jsonschema.Schema) {
+	s.AdditionalProperties = jsonschema.TrueSchema
 }
 
 // AddonDeploymentInfo holds information about an addon's deployment in a specific cluster.
@@ -92,8 +110,8 @@ type AddonCatalogItem struct {
 	// distinguish "addon is in catalog" from "addon is actually
 	// running" without changing the historical stat semantics other
 	// tiles depend on.
-	DeployedClusterCount     int `json:"deployed_cluster_count"`
-	TotalTargetClusterCount  int `json:"total_target_cluster_count"`
+	DeployedClusterCount    int `json:"deployed_cluster_count"`
+	TotalTargetClusterCount int `json:"total_target_cluster_count"`
 
 	// Per-cluster details
 	Applications []AddonDeploymentInfo `json:"applications"`
@@ -101,10 +119,10 @@ type AddonCatalogItem struct {
 
 // AddonCatalogResponse is the API response for the addon catalog.
 type AddonCatalogResponse struct {
-	Addons        []AddonCatalogItem `json:"addons"`
-	TotalAddons   int                `json:"total_addons"`
-	TotalClusters int                `json:"total_clusters"`
-	AddonsOnlyInGit int              `json:"addons_only_in_git"`
+	Addons          []AddonCatalogItem `json:"addons"`
+	TotalAddons     int                `json:"total_addons"`
+	TotalClusters   int                `json:"total_clusters"`
+	AddonsOnlyInGit int                `json:"addons_only_in_git"`
 }
 
 // ApplicationSetCondition holds a single condition from an ArgoCD ApplicationSet status.
@@ -123,8 +141,8 @@ type ApplicationSetStatusInfo struct {
 
 // AddonDetailResponse is the API response for a single addon's details.
 type AddonDetailResponse struct {
-	Addon            AddonCatalogItem           `json:"addon"`
-	ApplicationSet   *ApplicationSetStatusInfo  `json:"application_set,omitempty"`
+	Addon          AddonCatalogItem          `json:"addon"`
+	ApplicationSet *ApplicationSetStatusInfo `json:"application_set,omitempty"`
 }
 
 // AddonValuesResponse is the API response for raw addon global values YAML.
@@ -145,10 +163,10 @@ type AddonValuesResponse struct {
 // banner. The field is `omitempty` so legacy files without a
 // `# sharko: managed=true` header keep working without a banner.
 type AddonValuesSchemaResponse struct {
-	AddonName             string                  `json:"addon_name"`
-	CurrentValues         string                  `json:"current_values"`
-	Schema                map[string]interface{}  `json:"schema,omitempty"`
-	ValuesVersionMismatch *ValuesVersionMismatch  `json:"values_version_mismatch,omitempty"`
+	AddonName             string                 `json:"addon_name"`
+	CurrentValues         string                 `json:"current_values"`
+	Schema                map[string]interface{} `json:"schema,omitempty"`
+	ValuesVersionMismatch *ValuesVersionMismatch `json:"values_version_mismatch,omitempty"`
 
 	// Header-derived AI annotation state. The UI uses these to gate the
 	// "AI not configured" banner (rendered when AIAnnotated=false AND

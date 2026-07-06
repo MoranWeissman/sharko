@@ -33,7 +33,6 @@ const validCatalogYAML = `addons:
     chart: example-one
     repo: https://charts.example.com
     default_namespace: example-one
-    default_sync_wave: 10
     license: Apache-2.0
     category: observability
     curated_by: [cncf-sandbox]
@@ -43,7 +42,6 @@ const validCatalogYAML = `addons:
     chart: example-two
     repo: https://charts.example.com
     default_namespace: example-two
-    default_sync_wave: 10
     license: MIT
     category: security
     curated_by: [cncf-incubating]
@@ -867,7 +865,6 @@ const signedEntryYAML = `addons:
     chart: signed-one
     repo: https://charts.example.com
     default_namespace: signed-one
-    default_sync_wave: 10
     license: Apache-2.0
     category: observability
     curated_by: [cncf-sandbox]

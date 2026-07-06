@@ -152,9 +152,6 @@ func TestCatalogSign_PreservesEntryFields(t *testing.T) {
 		if got.DefaultNamespace != want.DefaultNamespace {
 			t.Errorf("%s: DefaultNamespace drift", want.Name)
 		}
-		if got.DefaultSyncWave != want.DefaultSyncWave {
-			t.Errorf("%s: DefaultSyncWave drift", want.Name)
-		}
 		if got.DocsURL != want.DocsURL {
 			t.Errorf("%s: DocsURL drift", want.Name)
 		}

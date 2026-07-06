@@ -64,9 +64,6 @@ func (o *Orchestrator) ConfigureAddon(ctx context.Context, req ConfigureAddonReq
 			if req.Version != "" {
 				entries[i].Version = req.Version
 			}
-			if req.SyncWave != nil {
-				entries[i].SyncWave = *req.SyncWave
-			}
 			if req.SelfHeal != nil {
 				entries[i].SelfHeal = req.SelfHeal
 			}
@@ -91,9 +88,6 @@ func (o *Orchestrator) ConfigureAddon(ctx context.Context, req ConfigureAddonReq
 	updates := make(map[string]string)
 	if req.Version != "" {
 		updates["version"] = req.Version
-	}
-	if req.SyncWave != nil {
-		updates["syncWave"] = fmt.Sprintf("%d", *req.SyncWave)
 	}
 	if req.SelfHeal != nil {
 		updates["selfHeal"] = fmt.Sprintf("%v", *req.SelfHeal)

@@ -16,4 +16,3 @@ spec:
       chart: velero
       version: "7.2.1"
       namespace: velero
-      syncWave: 0

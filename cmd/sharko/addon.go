@@ -16,7 +16,6 @@ func init() {
 	addAddonCmd.Flags().String("repo", "", "Helm chart repository URL (required)")
 	addAddonCmd.Flags().String("version", "", "Chart version (required)")
 	addAddonCmd.Flags().String("namespace", "", "Target namespace")
-	addAddonCmd.Flags().Int("sync-wave", 0, "ArgoCD sync wave (0 = default, negative = earlier)")
 	addAddonCmd.MarkFlagRequired("chart")
 	addAddonCmd.MarkFlagRequired("repo")
 	addAddonCmd.MarkFlagRequired("version")
@@ -26,7 +25,6 @@ func init() {
 	rootCmd.AddCommand(removeAddonCmd)
 
 	configureAddonCmd.Flags().String("version", "", "Update chart version")
-	configureAddonCmd.Flags().Int("sync-wave", 0, "Deployment ordering (-2=early, 0=default, 2=late)")
 	configureAddonCmd.Flags().String("self-heal", "", "Auto-revert manual changes (true/false)")
 	configureAddonCmd.Flags().StringSlice("sync-option", nil, "ArgoCD sync option (repeatable)")
 	configureAddonCmd.Flags().String("ignore-differences", "", "ArgoCD ignoreDifferences JSON array")
@@ -34,7 +32,7 @@ func init() {
 	rootCmd.AddCommand(configureAddonCmd)
 	rootCmd.AddCommand(describeAddonCmd)
 
-	listAddonsCmd.Flags().Bool("show-config", false, "Show advanced config columns (sync-wave, self-heal, sync-options)")
+	listAddonsCmd.Flags().Bool("show-config", false, "Show advanced config columns (self-heal, sync-options)")
 	rootCmd.AddCommand(listAddonsCmd)
 }
 
@@ -48,7 +46,6 @@ var addAddonCmd = &cobra.Command{
 		repo, _ := cmd.Flags().GetString("repo")
 		ver, _ := cmd.Flags().GetString("version")
 		namespace, _ := cmd.Flags().GetString("namespace")
-		syncWave, _ := cmd.Flags().GetInt("sync-wave")
 
 		body := map[string]interface{}{
 			"name":      name,
@@ -56,9 +53,6 @@ var addAddonCmd = &cobra.Command{
 			"repo_url":  repo,
 			"version":   ver,
 			"namespace": namespace,
-		}
-		if syncWave != 0 {
-			body["sync_wave"] = syncWave
 		}
 
 		fmt.Printf("Adding addon %s... ", name)
@@ -131,10 +125,10 @@ var removeAddonCmd = &cobra.Command{
 			var dryRun struct {
 				Error  string `json:"error"`
 				Impact struct {
-					Addon                   string   `json:"addon"`
-					AffectedClusters        []string `json:"affected_clusters"`
+					Addon                    string   `json:"addon"`
+					AffectedClusters         []string `json:"affected_clusters"`
 					TotalDeploymentsToRemove int      `json:"total_deployments_to_remove"`
-					Warning                 string   `json:"warning"`
+					Warning                  string   `json:"warning"`
 				} `json:"impact"`
 			}
 			if err := json.Unmarshal(respBody, &dryRun); err != nil {
@@ -183,7 +177,6 @@ var configureAddonCmd = &cobra.Command{
 Only flags that are explicitly provided are sent to the server.
 
 Examples:
-  sharko configure-addon istio-base --sync-wave -1
   sharko configure-addon kyverno --sync-option ServerSideApply=true
   sharko configure-addon prometheus --self-heal=false
   sharko configure-addon cert-manager --version 1.15.0`,
@@ -196,10 +189,6 @@ Examples:
 		if cmd.Flags().Changed("version") {
 			v, _ := cmd.Flags().GetString("version")
 			body["version"] = v
-		}
-		if cmd.Flags().Changed("sync-wave") {
-			w, _ := cmd.Flags().GetInt("sync-wave")
-			body["sync_wave"] = w
 		}
 		if cmd.Flags().Changed("self-heal") {
 			s, _ := cmd.Flags().GetString("self-heal")
@@ -281,10 +270,10 @@ var describeAddonCmd = &cobra.Command{
 		}
 
 		var detail struct {
-			Name      string `json:"name"`
-			Chart     string `json:"chart"`
-			RepoURL   string `json:"repo_url"`
-			Version   struct {
+			Name    string `json:"name"`
+			Chart   string `json:"chart"`
+			RepoURL string `json:"repo_url"`
+			Version struct {
 				Value     string `json:"value"`
 				IsDefault bool   `json:"is_default"`
 			} `json:"version"`
@@ -292,18 +281,14 @@ var describeAddonCmd = &cobra.Command{
 				Value     string `json:"value"`
 				IsDefault bool   `json:"is_default"`
 			} `json:"namespace"`
-			SyncWave struct {
-				Value     int  `json:"value"`
-				IsDefault bool `json:"is_default"`
-			} `json:"sync_wave"`
 			SelfHeal struct {
 				Value     bool `json:"value"`
 				IsDefault bool `json:"is_default"`
 			} `json:"self_heal"`
-			SyncOptions        []string `json:"sync_options"`
-			IgnoreDifferences  []interface{} `json:"ignore_differences"`
-			ExtraHelmValues    []string `json:"extra_helm_values"`
-			AdditionalSources  []interface{} `json:"additional_sources"`
+			SyncOptions       []string      `json:"sync_options"`
+			IgnoreDifferences []interface{} `json:"ignore_differences"`
+			ExtraHelmValues   []string      `json:"extra_helm_values"`
+			AdditionalSources []interface{} `json:"additional_sources"`
 		}
 
 		if err := json.Unmarshal(respBody, &detail); err != nil {
@@ -335,7 +320,6 @@ var describeAddonCmd = &cobra.Command{
 		fmt.Printf("  Repo:      %s\n", detail.RepoURL)
 		fmt.Printf("  Version:   %s%s\n", detail.Version.Value, defaultTag(detail.Version.IsDefault))
 		fmt.Printf("  Namespace: %s%s\n", detail.Namespace.Value, defaultTag(detail.Namespace.IsDefault))
-		fmt.Printf("  Sync Wave: %d%s\n", detail.SyncWave.Value, defaultTag(detail.SyncWave.IsDefault))
 		fmt.Printf("  Self-Heal: %v%s\n", detail.SelfHeal.Value, defaultTag(detail.SelfHeal.IsDefault))
 		fmt.Printf("  Sync Options: %s\n", noneIfEmpty(detail.SyncOptions))
 		fmt.Printf("  Ignore Differences: %s\n", noneIfEmptyAny(detail.IgnoreDifferences))
@@ -367,14 +351,13 @@ Examples:
 
 		var resp struct {
 			Addons []struct {
-				AddonName       string  `json:"addon_name"`
-				Version         string  `json:"version"`
-				Namespace       string  `json:"namespace"`
-				SyncWave        int     `json:"syncWave"`
-				SelfHeal        *bool   `json:"selfHeal"`
+				AddonName       string   `json:"addon_name"`
+				Version         string   `json:"version"`
+				Namespace       string   `json:"namespace"`
+				SelfHeal        *bool    `json:"selfHeal"`
 				SyncOptions     []string `json:"syncOptions"`
-				TotalClusters   int     `json:"total_clusters"`
-				EnabledClusters int     `json:"enabled_clusters"`
+				TotalClusters   int      `json:"total_clusters"`
+				EnabledClusters int      `json:"enabled_clusters"`
 			} `json:"addons"`
 		}
 		if err := json.Unmarshal(respBody, &resp); err != nil {
@@ -388,7 +371,7 @@ Examples:
 
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 		if showConfig {
-			fmt.Fprintln(w, "NAME\tVERSION\tNAMESPACE\tSYNC-WAVE\tSELF-HEAL\tCLUSTERS")
+			fmt.Fprintln(w, "NAME\tVERSION\tNAMESPACE\tSELF-HEAL\tCLUSTERS")
 		} else {
 			fmt.Fprintln(w, "NAME\tVERSION\tNAMESPACE\tCLUSTERS")
 		}
@@ -400,8 +383,8 @@ Examples:
 				if a.SelfHeal != nil && *a.SelfHeal {
 					selfHeal = "true"
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\n",
-					a.AddonName, a.Version, a.Namespace, a.SyncWave, selfHeal, clusters)
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+					a.AddonName, a.Version, a.Namespace, selfHeal, clusters)
 			} else {
 				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
 					a.AddonName, a.Version, a.Namespace, clusters)

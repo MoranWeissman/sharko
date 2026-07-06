@@ -40,7 +40,6 @@ vi.mock('@/services/api', () => ({
       chart: 'kube-prometheus-stack',
       repo: 'https://prometheus-community.github.io/helm-charts',
       default_namespace: 'monitoring',
-      default_sync_wave: 0,
       maintainers: [],
       license: 'Apache-2.0',
       category: 'observability',
