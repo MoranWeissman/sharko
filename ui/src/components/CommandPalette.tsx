@@ -14,15 +14,17 @@ interface SearchResult {
 // "Version Drift Detector" (/version-matrix) and "Upgrade Checker"
 // (/upgrade) used to be here but both are a redirect / a hidden route with
 // no nav entry — offering them in the palette was a dead end. System,
-// Audit, and Dashboards are real routed pages with sidebar nav entries
-// (see Layout.tsx navSections) that the palette was missing.
+// Audit, and External Dashboards are real routed pages with sidebar nav
+// entries (see Layout.tsx navSections) that the palette was missing.
+// V2-cleanup-61.3 (A4): "Dashboards" renamed to "External Dashboards" to
+// match the sidebar and stop reading as a typo of "Dashboard" above it.
 const PAGE_RESULTS: SearchResult[] = [
   { label: 'Dashboard', type: 'page', path: '/dashboard', icon: LayoutDashboard },
   { label: 'Clusters', type: 'page', path: '/clusters', icon: Server },
   { label: 'Addons Catalog', type: 'page', path: '/addons', icon: Package },
   { label: 'System', type: 'page', path: '/system', icon: Network },
   { label: 'Observability', type: 'page', path: '/observability', icon: Activity },
-  { label: 'Dashboards', type: 'page', path: '/dashboards', icon: BarChart3 },
+  { label: 'External Dashboards', type: 'page', path: '/dashboards', icon: BarChart3 },
   { label: 'Audit Log', type: 'page', path: '/audit', icon: ClipboardList },
   { label: 'Settings', type: 'page', path: '/settings', icon: Settings },
 ]

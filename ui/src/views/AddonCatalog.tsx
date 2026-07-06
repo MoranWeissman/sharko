@@ -43,6 +43,7 @@ import {
   SubmitPhaseBanner,
   type SubmitPhase,
 } from '@/components/AddAddonFlow'
+import { PRModelExplainer } from '@/components/PRFeedback'
 import {
   Dialog,
   DialogContent,
@@ -1070,6 +1071,11 @@ export function AddonCatalog() {
         </div>
       )}
 
+      {/* One-time PR-model explainer (V2-cleanup-61.3, F1b) — shown the
+          first time an addon-add PR completes; dismissing it here also
+          hides it on the Clusters page (shared localStorage flag). */}
+      {toast && <PRModelExplainer />}
+
       {/* Action bar — refresh + Add Addon */}
       <div className="flex items-center justify-end gap-2">
         <p className="mr-auto text-xs text-[#3a6a8a] dark:text-gray-500">
@@ -1085,14 +1091,28 @@ export function AddonCatalog() {
         >
           <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
         </button>
+        {/* Primary CTA is the Marketplace (V2-cleanup-61.3, finding A2) — it's
+            the recommended path for adding an addon. The manual chart-URL
+            dialog below is the advanced/secondary path, demoted to an
+            outline button; it stays fully reachable, just not the default
+            affordance. */}
+        <button
+          type="button"
+          onClick={() => switchTab('marketplace')}
+          className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-[#0a2a4a] px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-[#0d3558] dark:bg-blue-700 dark:hover:bg-blue-600"
+        >
+          <Store className="h-4 w-4" />
+          Browse Marketplace
+        </button>
         <RoleGuard adminOnly>
           <button
             type="button"
             onClick={openAddAddon}
-            className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-[#0a2a4a] px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-[#0d3558] dark:bg-blue-700 dark:hover:bg-blue-600"
+            title="Advanced: register a Helm chart that isn't in the Marketplace"
+            className="inline-flex shrink-0 items-center gap-2 rounded-lg ring-2 ring-[#6aade0] bg-[#f0f7ff] px-4 py-2.5 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:ring-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
           >
             <Plus className="h-4 w-4" />
-            Add Addon
+            Add addon manually
           </button>
         </RoleGuard>
       </div>
@@ -1563,9 +1583,23 @@ export function AddonCatalog() {
       {/* Addon grid / list */}
       {paginatedAddons.length === 0 ? (
         <div className="rounded-lg border border-teal-200 bg-teal-50 p-6 text-center text-sm text-teal-700 dark:border-teal-700 dark:bg-teal-900/30 dark:text-teal-400">
-          {search
-            ? `No addons found matching "${search}"`
-            : 'No addons available in the catalog'}
+          {search ? (
+            `No addons found matching "${search}"`
+          ) : (
+            // V2-cleanup-61.3 (B2): the catalog empty state used to be a
+            // dead end that never mentioned the Marketplace. Point to it.
+            <div className="space-y-3">
+              <p>Your catalog is empty — nothing has been added yet.</p>
+              <button
+                type="button"
+                onClick={() => switchTab('marketplace')}
+                className="inline-flex items-center gap-2 rounded-lg bg-[#0a2a4a] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-[#0d3558] dark:bg-blue-700 dark:hover:bg-blue-600"
+              >
+                <Store className="h-4 w-4" />
+                Browse the Marketplace
+              </button>
+            </div>
+          )}
         </div>
       ) : viewMode === 'grid' ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">

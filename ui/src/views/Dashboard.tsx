@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import {
   Server, AppWindow, Package, Rocket, AlertTriangle, CheckCircle2,
   ArrowUpCircle, Activity, Clock, ChevronRight, ShieldAlert, RefreshCw,
-  Hourglass
+  Hourglass, Store, PlusCircle
 } from 'lucide-react';
 import { api } from '@/services/api';
 import type { DashboardStats, SyncActivityEntry, ClustersResponse } from '@/services/models';
@@ -321,34 +321,83 @@ export function Dashboard() {
   );
   const progressingItems = allAddonStates.filter((s) => s.displayState === 'progressing-advisory');
 
+  // V2-cleanup-61.3 (B1): a fresh install with nothing registered used to
+  // show green "All systems operational" + "0/0 healthy" — a false-positive
+  // reading of "everything's fine" when actually nothing has happened yet.
+  // This is also where the first-run wizard lands (every exit path —
+  // "Go to Dashboard", "Skip, go to Dashboard", and the X-button escape —
+  // navigates to /dashboard), so this neutral state doubles as the
+  // post-wizard next-step guidance the wizard itself doesn't provide.
+  const noClustersYet = stats.clusters.total === 0;
+
+  const heroSection = (
+    <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-teal-700 to-blue-800 px-8 py-8 text-white shadow-lg dark:from-teal-900 dark:to-blue-950">
+      <div className="flex items-center gap-6">
+        <img
+          src="/sharko-banner.png"
+          alt="Sharko"
+          className="hidden h-32 w-auto sm:block"
+        />
+        <div className="flex-1">
+          <h1 className="text-2xl font-bold tracking-tight sm:text-3xl" style={{ fontFamily: '"Quicksand", sans-serif', fontWeight: 700 }}>
+            Sharko
+          </h1>
+          <p className="mt-1 max-w-2xl text-sm text-teal-100 sm:text-base">
+            Addon management across all your Kubernetes clusters.
+          </p>
+        </div>
+        <button
+          onClick={handleRefresh}
+          className="rounded-md p-2 text-white/70 hover:bg-white/10 hover:text-white"
+          title="Refresh"
+        >
+          <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+        </button>
+      </div>
+      <WaveDecoration />
+    </div>
+  );
+
+  if (noClustersYet) {
+    return (
+      <div className="mx-auto max-w-screen-xl space-y-6">
+        {heroSection}
+        <div className="flex flex-col items-center gap-4 rounded-2xl ring-2 ring-[#6aade0] bg-[#f0f7ff] px-6 py-14 text-center shadow-sm dark:ring-gray-700 dark:bg-gray-800">
+          <Server className="h-10 w-10 text-[#5a8aaa] dark:text-gray-500" />
+          <div>
+            <h2 className="text-lg font-semibold text-[#0a2a4a] dark:text-gray-100">
+              Nothing connected yet
+            </h2>
+            <p className="mx-auto mt-1 max-w-md text-sm text-[#2a5a7a] dark:text-gray-400">
+              Register a cluster to start deploying addons, or browse the Marketplace to see
+              what&rsquo;s available first.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            <button
+              onClick={() => navigate('/clusters')}
+              className="inline-flex items-center gap-2 rounded-lg bg-[#0a2a4a] px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-[#0d3558] dark:bg-blue-700 dark:hover:bg-blue-600"
+            >
+              <PlusCircle className="h-4 w-4" />
+              Register a Cluster
+            </button>
+            <button
+              onClick={() => navigate('/addons?tab=marketplace')}
+              className="inline-flex items-center gap-2 rounded-lg ring-2 ring-[#6aade0] bg-[#e8f4ff] px-5 py-2.5 text-sm font-medium text-[#0a3a5a] hover:bg-[#d6eeff] dark:ring-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+            >
+              <Store className="h-4 w-4" />
+              Browse the Marketplace
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto max-w-screen-xl space-y-6">
       {/* Hero Section */}
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-teal-700 to-blue-800 px-8 py-8 text-white shadow-lg dark:from-teal-900 dark:to-blue-950">
-        <div className="flex items-center gap-6">
-          <img
-            src="/sharko-banner.png"
-            alt="Sharko"
-            className="hidden h-32 w-auto sm:block"
-          />
-          <div className="flex-1">
-            <h1 className="text-2xl font-bold tracking-tight sm:text-3xl" style={{ fontFamily: '"Quicksand", sans-serif', fontWeight: 700 }}>
-              Sharko
-            </h1>
-            <p className="mt-1 max-w-2xl text-sm text-teal-100 sm:text-base">
-              Addon management across all your Kubernetes clusters.
-            </p>
-          </div>
-          <button
-            onClick={handleRefresh}
-            className="rounded-md p-2 text-white/70 hover:bg-white/10 hover:text-white"
-            title="Refresh"
-          >
-            <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-          </button>
-        </div>
-        <WaveDecoration />
-      </div>
+      {heroSection}
 
       {/* ArgoCD Status Banner */}
       <ArgoCDStatusBanner visible={argoCDUnreachable} />

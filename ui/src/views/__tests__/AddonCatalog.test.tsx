@@ -3,7 +3,7 @@ import { render, screen, waitFor, fireEvent, within } from '@testing-library/rea
 import { MemoryRouter } from 'react-router-dom'
 import { AddonCatalog } from '@/views/AddonCatalog'
 import { AuthProvider } from '@/hooks/useAuth'
-import { addAddon } from '@/services/api'
+import { addAddon, api } from '@/services/api'
 
 const mockNavigate = vi.fn()
 vi.mock('react-router-dom', async () => {
@@ -36,6 +36,11 @@ vi.mock('@/services/api', () => ({
       latest_stable: '1.2.3',
       cached_at: new Date().toISOString(),
     }),
+    // V2-cleanup-61.3 (A2/B2): the Marketplace tab is now reachable from
+    // both the primary "Browse Marketplace" CTA and the empty-catalog
+    // state, so MarketplaceTab/MarketplaceBrowseTab's data call needs a
+    // fixture too.
+    listCuratedCatalog: vi.fn().mockResolvedValue({ addons: [] }),
     getAddonCatalog: vi.fn().mockResolvedValue({
       addons: [
         {
@@ -215,6 +220,65 @@ describe('AddonCatalog', () => {
 
     // Page size
     expect(screen.getByText('15 per page')).toBeInTheDocument()
+  })
+})
+
+// V2-cleanup-61.3 (A2): the Marketplace is the recommended path for adding
+// an addon — it must get the prominent, primary CTA. The manual chart-URL
+// dialog is the advanced/secondary path now, demoted but still reachable.
+describe('AddonCatalog — Marketplace front door (V2-cleanup-61.3, A2)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('shows "Browse Marketplace" as the primary CTA and switches to the Marketplace tab', async () => {
+    renderCatalog()
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Addons' })).toBeInTheDocument()
+    })
+
+    const marketplaceBtn = screen.getByRole('button', { name: /browse marketplace/i })
+    fireEvent.click(marketplaceBtn)
+
+    // Switching tabs re-renders the page header with the Marketplace copy.
+    await waitFor(() => {
+      expect(
+        screen.getByText(/browse Sharko.s curated catalog/i),
+      ).toBeInTheDocument()
+    })
+  })
+})
+
+// V2-cleanup-61.3 (B2): the empty catalog state used to be a dead end that
+// never mentioned the Marketplace.
+describe('AddonCatalog — empty catalog points to the Marketplace (V2-cleanup-61.3, B2)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('shows a "Browse the Marketplace" affordance when the catalog has no addons', async () => {
+    vi.mocked(api.getAddonCatalog).mockResolvedValueOnce({
+      addons: [],
+      total_addons: 0,
+      total_clusters: 0,
+      addons_only_in_git: 0,
+    })
+    renderCatalog()
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Addons' })).toBeInTheDocument()
+    })
+
+    expect(screen.getByText(/catalog is empty/i)).toBeInTheDocument()
+    const btn = screen.getByRole('button', { name: /browse the marketplace/i })
+    fireEvent.click(btn)
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/browse Sharko.s curated catalog/i),
+      ).toBeInTheDocument()
+    })
   })
 })
 

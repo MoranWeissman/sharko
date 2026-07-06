@@ -43,13 +43,17 @@ vi.mock('@/hooks/useTheme', () => ({
   }),
 }))
 
+// Mutable so individual tests (A6: non-admin Settings visibility) can flip
+// the role without re-declaring the whole mock module.
+const authState = vi.hoisted(() => ({ isAdmin: true }))
+
 vi.mock('@/hooks/useAuth', () => ({
   useAuth: () => ({
     token: 'test-token',
     login: vi.fn(),
     logout: vi.fn(),
     isAuthenticated: true,
-    isAdmin: true,
+    isAdmin: authState.isAdmin,
     loading: false,
     error: null,
   }),
@@ -67,6 +71,7 @@ describe('Layout', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockGetAIStatus.mockResolvedValue({ enabled: false })
+    authState.isAdmin = true
   })
 
   it('renders without crashing', () => {
@@ -87,6 +92,28 @@ describe('Layout', () => {
     const collapseBtn = screen.getByLabelText('Collapse sidebar')
     fireEvent.click(collapseBtn)
     expect(screen.getByLabelText('Expand sidebar')).toBeInTheDocument()
+  })
+
+  // V2-cleanup-61.3 (A3/A4): read-only pages section renamed "Manage" →
+  // "Monitor"; "Dashboards" (the external-dashboards shelf) renamed to
+  // "External Dashboards" so it stops reading as a sibling/typo of
+  // "Dashboard" above it.
+  it('renames the "Manage" nav section to "Monitor" and "Dashboards" to "External Dashboards"', () => {
+    renderLayout()
+    expect(screen.getByText('Monitor')).toBeInTheDocument()
+    expect(screen.queryByText('Manage')).not.toBeInTheDocument()
+    expect(screen.getByText('External Dashboards')).toBeInTheDocument()
+    expect(screen.queryByText('Dashboards')).not.toBeInTheDocument()
+  })
+
+  // V2-cleanup-61.3 (A6): non-admins have 5 sections allowlisted inside
+  // Settings (Settings.tsx ALLOWED_NON_ADMIN) and SystemView links every
+  // role there, but the nav item used to be adminOnly — no path to reach
+  // it. It must render for every role now.
+  it('shows the Settings nav item for non-admin roles too', () => {
+    authState.isAdmin = false
+    renderLayout()
+    expect(screen.getByText('Settings')).toBeInTheDocument()
   })
 
   // V2-cleanup-55.4: the AI assistant is OPT-IN — hidden by default, shown
