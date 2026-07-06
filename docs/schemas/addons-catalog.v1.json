@@ -49,9 +49,6 @@
               "namespace": {
                 "type": "string"
               },
-              "syncWave": {
-                "type": "integer"
-              },
               "selfHeal": {
                 "type": "boolean"
               },
@@ -106,12 +103,6 @@
                 },
                 "type": "object"
               },
-              "dependsOn": {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
               "secrets": {
                 "items": {
                   "properties": {
@@ -139,7 +130,7 @@
                 "type": "array"
               }
             },
-            "additionalProperties": false,
+            "additionalProperties": true,
             "type": "object",
             "required": [
               "name",

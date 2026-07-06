@@ -252,7 +252,6 @@ export function MarketplaceAddonDetail({
             chart: pkg.name,
             repo: pkg.repository.url || '',
             default_namespace: pkg.normalized_name || pkg.name,
-            default_sync_wave: 0,
             maintainers:
               pkg.maintainers
                 ?.map((m) => m.name)
@@ -466,8 +465,8 @@ export function MarketplaceAddonDetail({
       repo_url: entry.repo,
       version: version.trim(),
       namespace: namespace.trim(),
-      // No sync_wave field — operators set it on the addon page after
-      // creation.
+      // Advanced options (sync options, ignore differences, additional
+      // sources) are set on the addon page after creation.
       source: (source === 'curated' ? 'marketplace' : 'artifacthub') as
         | 'marketplace'
         | 'artifacthub',

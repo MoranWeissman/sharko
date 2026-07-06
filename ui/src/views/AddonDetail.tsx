@@ -1142,7 +1142,6 @@ export function AddonDetail() {
 
   // Advanced config editing
   const [isEditingConfig, setIsEditingConfig] = useState(false)
-  const [editSyncWave, setEditSyncWave] = useState<number>(0)
   const [editSelfHeal, setEditSelfHeal] = useState<boolean>(true)
   const [editSyncOptionsText, setEditSyncOptionsText] = useState<string>('')
   const [editHelmValues, setEditHelmValues] = useState<{ key: string; value: string }[]>([])
@@ -1321,7 +1320,6 @@ export function AddonDetail() {
 
   const handleStartEditConfig = useCallback(() => {
     if (!addon) return
-    setEditSyncWave(addon.syncWave ?? 0)
     setEditSelfHeal(addon.selfHeal !== false)
     setEditSyncOptionsText((addon.syncOptions ?? []).join(', '))
     setEditHelmValues(
@@ -1370,7 +1368,6 @@ export function AddonDetail() {
       }
 
       const payload: {
-        sync_wave?: number
         self_heal?: boolean
         sync_options?: string[]
         extra_helm_values?: Record<string, string>
@@ -1378,7 +1375,6 @@ export function AddonDetail() {
         additional_sources?: Record<string, unknown>[]
       } = {}
 
-      if (editSyncWave !== (addon.syncWave ?? 0)) payload.sync_wave = editSyncWave
       if (editSelfHeal !== (addon.selfHeal !== false)) payload.self_heal = editSelfHeal
       const origOptions = (addon.syncOptions ?? []).join(',')
       if (syncOptions.join(',') !== origOptions) payload.sync_options = syncOptions
@@ -1419,7 +1415,7 @@ export function AddonDetail() {
     } finally {
       setConfigSaving(false)
     }
-  }, [name, addon, editSyncWave, editSelfHeal, editSyncOptionsText, editHelmValues, editIgnoreDifferencesYaml, editAdditionalSourcesYaml])
+  }, [name, addon, editSelfHeal, editSyncOptionsText, editHelmValues, editIgnoreDifferencesYaml, editAdditionalSourcesYaml])
 
   const handleInlineAnalyze = useCallback(async (version: string) => {
     if (!name) return
@@ -1730,10 +1726,6 @@ export function AddonDetail() {
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-wide text-[#5a8aaa] dark:text-[#5a8aaa]/60">Namespace</p>
                     <p className="mt-0.5 text-sm text-[#0a2a4a] dark:text-gray-100">{namespace}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-wide text-[#5a8aaa] dark:text-[#5a8aaa]/60">Sync Wave</p>
-                    <p className="mt-0.5 font-mono text-sm text-[#0a2a4a] dark:text-gray-100">{addon.syncWave ?? 0}</p>
                   </div>
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-wide text-[#5a8aaa] dark:text-[#5a8aaa]/60">Self-Heal</p>
@@ -2427,29 +2419,6 @@ export function AddonDetail() {
                 )}
 
                 <div className="space-y-4">
-                  {/* Sync Wave */}
-                  <div className="flex items-center justify-between gap-4">
-                    <div>
-                      <p className="text-sm font-medium text-[#0a2a4a] dark:text-gray-100">
-                        Sync Wave
-                      </p>
-                      <p className="text-xs text-[#3a6a8a] dark:text-gray-400">
-                        Deploy order — lower numbers first. Use <span className="font-mono text-[#1a4a6a] dark:text-gray-300">-1</span> for CRDs, <span className="font-mono text-[#1a4a6a] dark:text-gray-300">0</span> for the default wave.
-                      </p>
-                    </div>
-                    {isEditingConfig ? (
-                      <input
-                        type="number"
-                        value={editSyncWave}
-                        onChange={(e) => setEditSyncWave(Number(e.target.value))}
-                        placeholder="e.g. 0 or -1"
-                        className="w-32 rounded-md border border-[#5a9dd0] bg-white px-3 py-1.5 text-right text-sm font-mono text-[#0a2a4a] focus:border-[#1a6aaa] focus:outline-none focus:ring-1 focus:ring-[#1a6aaa] dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
-                      />
-                    ) : (
-                      <span className="font-mono text-sm text-[#0a2a4a] dark:text-gray-100">{addon.syncWave ?? 0}</span>
-                    )}
-                  </div>
-
                   {/* Self-Heal */}
                   <div className="flex items-center justify-between gap-4">
                     <div>

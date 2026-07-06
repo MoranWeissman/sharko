@@ -152,10 +152,10 @@ type RegisterClusterResult struct {
 // DryRunResult holds the preview information returned when dry_run=true.
 // No writes (Git, ArgoCD, secrets) are performed.
 type DryRunResult struct {
-	EffectiveAddons []string      `json:"effective_addons"`
-	FilesToWrite    []FilePreview `json:"files_to_write"`
-	PRTitle         string        `json:"pr_title"`
-	SecretsToCreate []string      `json:"secrets_to_create"`
+	EffectiveAddons []string       `json:"effective_addons"`
+	FilesToWrite    []FilePreview  `json:"files_to_write"`
+	PRTitle         string         `json:"pr_title"`
+	SecretsToCreate []string       `json:"secrets_to_create"`
 	Verification    *verify.Result `json:"verification,omitempty"`
 }
 
@@ -204,13 +204,11 @@ type AddAddonRequest struct {
 	RepoURL           string                   `json:"repo_url"`
 	Version           string                   `json:"version"`
 	Namespace         string                   `json:"namespace"`
-	SyncWave          int                      `json:"sync_wave,omitempty"`
 	SelfHeal          *bool                    `json:"self_heal,omitempty"`
 	SyncOptions       []string                 `json:"sync_options,omitempty"`
 	AdditionalSources []models.AddonSource     `json:"additional_sources,omitempty"`
 	IgnoreDifferences []map[string]interface{} `json:"ignore_differences,omitempty"`
 	ExtraHelmValues   map[string]string        `json:"extra_helm_values,omitempty"`
-	DependsOn         []string                 `json:"depends_on,omitempty"`
 
 	// AutoMerge is the per-request auto-merge decision. nil means "fall back
 	// to the connection-level PRAutoMerge default"; a non-nil value overrides
@@ -266,7 +264,6 @@ type AddAddonRequest struct {
 type ConfigureAddonRequest struct {
 	Name              string                   `json:"name"`
 	Version           string                   `json:"version,omitempty"`
-	SyncWave          *int                     `json:"sync_wave,omitempty"`
 	SelfHeal          *bool                    `json:"self_heal,omitempty"`
 	SyncOptions       []string                 `json:"sync_options,omitempty"`
 	AdditionalSources []models.AddonSource     `json:"additional_sources,omitempty"`
@@ -293,13 +290,13 @@ type AdoptClustersRequest struct {
 
 // AdoptClusterResult holds the outcome for a single cluster adoption.
 type AdoptClusterResult struct {
-	Name         string        `json:"name"`
-	Status       string        `json:"status"` // "success", "partial", "failed", "skipped"
+	Name         string         `json:"name"`
+	Status       string         `json:"status"` // "success", "partial", "failed", "skipped"
 	Verification *verify.Result `json:"verification,omitempty"`
-	Git          *GitResult    `json:"git,omitempty"`
-	Error        string        `json:"error,omitempty"`
-	Message      string        `json:"message,omitempty"`
-	DryRun       *DryRunResult `json:"dry_run,omitempty"`
+	Git          *GitResult     `json:"git,omitempty"`
+	Error        string         `json:"error,omitempty"`
+	Message      string         `json:"message,omitempty"`
+	DryRun       *DryRunResult  `json:"dry_run,omitempty"`
 }
 
 // AdoptClustersResult is the aggregate response from adopting multiple clusters.
@@ -320,11 +317,11 @@ type UnadoptClusterRequest struct {
 
 // UnadoptClusterResult is the output of an un-adopt operation.
 type UnadoptClusterResult struct {
-	Name    string     `json:"name"`
-	Status  string     `json:"status"` // "success", "partial", "failed"
-	Git     *GitResult `json:"git,omitempty"`
-	Error   string     `json:"error,omitempty"`
-	Message string     `json:"message,omitempty"`
+	Name    string        `json:"name"`
+	Status  string        `json:"status"` // "success", "partial", "failed"
+	Git     *GitResult    `json:"git,omitempty"`
+	Error   string        `json:"error,omitempty"`
+	Message string        `json:"message,omitempty"`
 	DryRun  *DryRunResult `json:"dry_run,omitempty"`
 }
 
@@ -342,14 +339,14 @@ type RemoveClusterRequest struct {
 
 // RemoveClusterResult is the output of a cluster removal operation.
 type RemoveClusterResult struct {
-	Name           string     `json:"name"`
-	Status         string     `json:"status"` // "success", "partial", "failed"
-	Cleanup        string     `json:"cleanup"`
-	Git            *GitResult `json:"git,omitempty"`
-	CompletedSteps []string   `json:"completed_steps,omitempty"`
-	FailedStep     string     `json:"failed_step,omitempty"`
-	Error          string     `json:"error,omitempty"`
-	Message        string     `json:"message,omitempty"`
+	Name           string        `json:"name"`
+	Status         string        `json:"status"` // "success", "partial", "failed"
+	Cleanup        string        `json:"cleanup"`
+	Git            *GitResult    `json:"git,omitempty"`
+	CompletedSteps []string      `json:"completed_steps,omitempty"`
+	FailedStep     string        `json:"failed_step,omitempty"`
+	Error          string        `json:"error,omitempty"`
+	Message        string        `json:"message,omitempty"`
 	DryRun         *DryRunResult `json:"dry_run,omitempty"`
 }
 

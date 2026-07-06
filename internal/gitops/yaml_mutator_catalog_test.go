@@ -209,48 +209,6 @@ func TestAddCatalogEntry_WithNamespace(t *testing.T) {
 	}
 }
 
-func TestAddCatalogEntry_WithSyncWave(t *testing.T) {
-	out, err := AddCatalogEntry([]byte(envelopedCatalogFixture), CatalogEntryInput{
-		Name:     "cert-manager",
-		RepoURL:  "https://charts.jetstack.io",
-		Chart:    "cert-manager",
-		Version:  "1.14.0",
-		SyncWave: -5,
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	entries := assertEnvelopedCatalogOutput(t, out, "AddCatalogEntry (with syncWave)")
-	added := findEntry(entries, "cert-manager")
-	if added == nil {
-		t.Fatal("cert-manager missing")
-	}
-	if added.SyncWave != -5 {
-		t.Errorf("syncWave: got %d", added.SyncWave)
-	}
-}
-
-func TestAddCatalogEntry_WithDependsOn(t *testing.T) {
-	out, err := AddCatalogEntry([]byte(envelopedCatalogFixture), CatalogEntryInput{
-		Name:      "istiod",
-		RepoURL:   "https://istio-release.storage.googleapis.com/charts",
-		Chart:     "istiod",
-		Version:   "1.22.0",
-		DependsOn: []string{"datadog", "keda"},
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	entries := assertEnvelopedCatalogOutput(t, out, "AddCatalogEntry (with dependsOn)")
-	added := findEntry(entries, "istiod")
-	if added == nil {
-		t.Fatal("istiod missing")
-	}
-	if len(added.DependsOn) != 2 || added.DependsOn[0] != "datadog" || added.DependsOn[1] != "keda" {
-		t.Errorf("dependsOn: got %v", added.DependsOn)
-	}
-}
-
 func TestAddCatalogEntry_DuplicateName_ReturnsError(t *testing.T) {
 	// Unlike the cluster-side mutator (which silent-skips for retry
 	// semantics), the catalog mutator returns an error on duplicate —
@@ -476,21 +434,6 @@ func TestUpdateCatalogEntry_NotFound(t *testing.T) {
 	}
 }
 
-func TestUpdateCatalogEntry_SyncWaveParsed(t *testing.T) {
-	out, err := UpdateCatalogEntry([]byte(envelopedCatalogFixture), "datadog", map[string]string{"syncWave": "-3"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	entries := assertEnvelopedCatalogOutput(t, out, "UpdateCatalogEntry (syncWave)")
-	updated := findEntry(entries, "datadog")
-	if updated == nil {
-		t.Fatal("datadog missing")
-	}
-	if updated.SyncWave != -3 {
-		t.Errorf("syncWave: got %d", updated.SyncWave)
-	}
-}
-
 func TestUpdateCatalogEntry_SelfHealParsed(t *testing.T) {
 	out, err := UpdateCatalogEntry([]byte(envelopedCatalogFixture), "datadog", map[string]string{"selfHeal": "true"})
 	if err != nil {
@@ -515,13 +458,6 @@ func TestUpdateCatalogEntry_UnknownField_Rejected(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "nonexistent") {
 		t.Errorf("error should mention field key: %v", err)
-	}
-}
-
-func TestUpdateCatalogEntry_InvalidSyncWave_ReturnsError(t *testing.T) {
-	_, err := UpdateCatalogEntry([]byte(envelopedCatalogFixture), "datadog", map[string]string{"syncWave": "not-a-number"})
-	if err == nil {
-		t.Fatal("expected error for invalid syncWave value")
 	}
 }
 
@@ -584,11 +520,10 @@ func TestCatalogMutators_FullRoundTrip_EntriesStable(t *testing.T) {
 
 	// Add an entry.
 	body, err := AddCatalogEntry(body, CatalogEntryInput{
-		Name:     "cert-manager",
-		RepoURL:  "https://charts.jetstack.io",
-		Chart:    "cert-manager",
-		Version:  "1.14.0",
-		SyncWave: -5,
+		Name:    "cert-manager",
+		RepoURL: "https://charts.jetstack.io",
+		Chart:   "cert-manager",
+		Version: "1.14.0",
 	})
 	if err != nil {
 		t.Fatalf("AddCatalogEntry: %v", err)
@@ -625,9 +560,6 @@ func TestCatalogMutators_FullRoundTrip_EntriesStable(t *testing.T) {
 	if cm.Namespace != "cert-manager" {
 		t.Errorf("cert-manager namespace: got %q", cm.Namespace)
 	}
-	if cm.SyncWave != -5 {
-		t.Errorf("cert-manager syncWave: got %d", cm.SyncWave)
-	}
 
 	dd := findEntry(entries, "datadog")
 	if dd == nil {
@@ -639,5 +571,57 @@ func TestCatalogMutators_FullRoundTrip_EntriesStable(t *testing.T) {
 
 	if findEntry(entries, "keda") != nil {
 		t.Error("keda still present after RemoveCatalogEntry")
+	}
+}
+
+// TestParseAddonsCatalog_ToleratesRemovedSyncWaveAndDependsOnKeys —
+// V2-cleanup-67.1 removed the syncWave and dependsOn fields from
+// AddonCatalogEntry (they were dead: Sharko builds one ApplicationSet per
+// addon, so a sync-wave annotation on one addon's Application can never
+// order it against another addon's Application, and dependsOn only fed a
+// log-only warning). No migration was written — existing catalog files in
+// git may still carry these keys. This test pins that reading such a file
+// stays safe: yaml.v3 (via config.NewParser().ParseAddonsCatalog) ignores
+// unknown keys by default, so the stale keys are silently dropped and the
+// rest of the entry parses intact.
+func TestParseAddonsCatalog_ToleratesRemovedSyncWaveAndDependsOnKeys(t *testing.T) {
+	const body = `apiVersion: sharko.dev/v1
+kind: AddonCatalog
+metadata:
+  name: addon-catalog
+spec:
+  applicationsets:
+    - name: cert-manager
+      repoURL: https://charts.jetstack.io
+      chart: cert-manager
+      version: "1.16.3"
+      namespace: cert-manager
+      syncWave: 5
+      dependsOn: [datadog]
+`
+	entries, err := config.NewParser().ParseAddonsCatalog([]byte(body))
+	if err != nil {
+		t.Fatalf("ParseAddonsCatalog: unexpected error on a catalog body still carrying "+
+			"removed syncWave/dependsOn keys: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+
+	e := entries[0]
+	if e.Name != "cert-manager" {
+		t.Errorf("Name = %q, want %q", e.Name, "cert-manager")
+	}
+	if e.RepoURL != "https://charts.jetstack.io" {
+		t.Errorf("RepoURL = %q, want %q", e.RepoURL, "https://charts.jetstack.io")
+	}
+	if e.Chart != "cert-manager" {
+		t.Errorf("Chart = %q, want %q", e.Chart, "cert-manager")
+	}
+	if e.Version != "1.16.3" {
+		t.Errorf("Version = %q, want %q", e.Version, "1.16.3")
+	}
+	if e.Namespace != "cert-manager" {
+		t.Errorf("Namespace = %q, want %q", e.Namespace, "cert-manager")
 	}
 }

@@ -26,16 +26,16 @@ import (
 // allowedCategories mirrors catalog/schema.json / design §4.2.1. Mutating the
 // list is a schema PR, not a silent addition.
 var allowedCategories = map[string]struct{}{
-	"security":         {},
-	"observability":    {},
-	"networking":       {},
-	"autoscaling":      {},
-	"gitops":           {},
-	"storage":          {},
-	"database":         {},
-	"backup":           {},
-	"chaos":            {},
-	"developer-tools":  {},
+	"security":        {},
+	"observability":   {},
+	"networking":      {},
+	"autoscaling":     {},
+	"gitops":          {},
+	"storage":         {},
+	"database":        {},
+	"backup":          {},
+	"chaos":           {},
+	"developer-tools": {},
 }
 
 // allowedCuratedBy mirrors catalog/schema.json / design §4.2.
@@ -89,25 +89,24 @@ type Signature struct {
 // `verified: true` and masquerade as cosign-attested without ever
 // producing a valid signature.
 type CatalogEntry struct {
-	Name                 string        `yaml:"name" json:"name"`
-	Description          string        `yaml:"description" json:"description"`
-	Chart                string        `yaml:"chart" json:"chart"`
-	Repo                 string        `yaml:"repo" json:"repo"`
-	DefaultNamespace     string        `yaml:"default_namespace" json:"default_namespace"`
-	DefaultSyncWave      int           `yaml:"default_sync_wave" json:"default_sync_wave"`
-	DocsURL              string        `yaml:"docs_url,omitempty" json:"docs_url,omitempty"`
-	Homepage             string        `yaml:"homepage,omitempty" json:"homepage,omitempty"`
-	SourceURL            string        `yaml:"source_url,omitempty" json:"source_url,omitempty"`
-	Maintainers          []string      `yaml:"maintainers" json:"maintainers"`
-	License              string        `yaml:"license" json:"license"`
-	Category             string        `yaml:"category" json:"category"`
-	CuratedBy            []string      `yaml:"curated_by" json:"curated_by"`
-	SecurityScore        ScoreValue    `yaml:"security_score,omitempty" json:"security_score,omitempty"`
-	SecurityScoreUpdated string        `yaml:"security_score_updated,omitempty" json:"security_score_updated,omitempty"`
-	GitHubStars          int           `yaml:"github_stars,omitempty" json:"github_stars,omitempty"`
-	MinKubernetesVersion string        `yaml:"min_kubernetes_version,omitempty" json:"min_kubernetes_version,omitempty"`
-	Deprecated           bool          `yaml:"deprecated,omitempty" json:"deprecated,omitempty"`
-	SupersededBy         string        `yaml:"superseded_by,omitempty" json:"superseded_by,omitempty"`
+	Name                 string     `yaml:"name" json:"name"`
+	Description          string     `yaml:"description" json:"description"`
+	Chart                string     `yaml:"chart" json:"chart"`
+	Repo                 string     `yaml:"repo" json:"repo"`
+	DefaultNamespace     string     `yaml:"default_namespace" json:"default_namespace"`
+	DocsURL              string     `yaml:"docs_url,omitempty" json:"docs_url,omitempty"`
+	Homepage             string     `yaml:"homepage,omitempty" json:"homepage,omitempty"`
+	SourceURL            string     `yaml:"source_url,omitempty" json:"source_url,omitempty"`
+	Maintainers          []string   `yaml:"maintainers" json:"maintainers"`
+	License              string     `yaml:"license" json:"license"`
+	Category             string     `yaml:"category" json:"category"`
+	CuratedBy            []string   `yaml:"curated_by" json:"curated_by"`
+	SecurityScore        ScoreValue `yaml:"security_score,omitempty" json:"security_score,omitempty"`
+	SecurityScoreUpdated string     `yaml:"security_score_updated,omitempty" json:"security_score_updated,omitempty"`
+	GitHubStars          int        `yaml:"github_stars,omitempty" json:"github_stars,omitempty"`
+	MinKubernetesVersion string     `yaml:"min_kubernetes_version,omitempty" json:"min_kubernetes_version,omitempty"`
+	Deprecated           bool       `yaml:"deprecated,omitempty" json:"deprecated,omitempty"`
+	SupersededBy         string     `yaml:"superseded_by,omitempty" json:"superseded_by,omitempty"`
 
 	// Signature is the optional cosign-keyless attestation pointer.
 	// nil when the entry is unsigned.

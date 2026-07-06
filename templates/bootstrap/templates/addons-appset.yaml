@@ -65,10 +65,6 @@ spec:
         app-type: addon
       finalizers:
         - resources-finalizer.argocd.argoproj.io
-      {{- if $appset.syncWave }}
-      annotations:
-        argocd.argoproj.io/sync-wave: "{{ $appset.syncWave }}"
-      {{- end }}
     spec:
       project: {{ $appset.name }}
       sources:

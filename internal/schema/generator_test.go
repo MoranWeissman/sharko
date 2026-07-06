@@ -298,7 +298,6 @@ spec:
       chart: cert-manager
       version: v1.16.1
       namespace: cert-manager
-      syncWave: -10
     - name: datadog
       repoURL: https://helm.datadoghq.com
       chart: datadog

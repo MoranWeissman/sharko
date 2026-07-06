@@ -181,7 +181,6 @@ export interface AddonCatalogItem {
   deployed_cluster_count?: number
   total_target_cluster_count?: number
   applications: AddonDeploymentInfo[]
-  syncWave?: number
   selfHeal?: boolean
   syncOptions?: string[]
   additionalSources?: AddonSource[]
@@ -481,7 +480,6 @@ export interface CatalogEntry {
   chart: string
   repo: string
   default_namespace: string
-  default_sync_wave: number
   docs_url?: string
   homepage?: string
   source_url?: string

@@ -246,11 +246,9 @@ func TestConfigureAddon_ComplexFields_MultipleFields_AllApplied(t *testing.T) {
 	orch := New(nil, defaultCreds(), newMockArgocd(), git, autoMergeGitOps(), defaultPaths(), nil)
 
 	selfHeal := true
-	syncWave := 5
 	_, err := orch.ConfigureAddon(context.Background(), ConfigureAddonRequest{
 		Name:              "cert-manager",
 		Version:           "1.15.0",
-		SyncWave:          &syncWave,
 		SelfHeal:          &selfHeal,
 		SyncOptions:       []string{"CreateNamespace=true"},
 		AdditionalSources: []models.AddonSource{{RepoURL: "https://example.com", Chart: "extra", Version: "0.1.0"}},
@@ -269,9 +267,6 @@ func TestConfigureAddon_ComplexFields_MultipleFields_AllApplied(t *testing.T) {
 	e := entries[0]
 	if e.Version != "1.15.0" {
 		t.Errorf("Version = %q, want %q", e.Version, "1.15.0")
-	}
-	if e.SyncWave != 5 {
-		t.Errorf("SyncWave = %d, want %d", e.SyncWave, 5)
 	}
 	if e.SelfHeal == nil || *e.SelfHeal != true {
 		t.Errorf("SelfHeal = %v, want true", e.SelfHeal)

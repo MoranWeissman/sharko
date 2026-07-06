@@ -69,8 +69,8 @@ func TestMarshalAddonCatalog_EmptyPassesValidator(t *testing.T) {
 
 // TestMarshalAddonCatalog_GateRejectsInvalidBody proves the gate FIRES: the
 // exact validator MarshalAddonCatalog runs internally rejects an addons-
-// catalog body with a wrong-typed field (syncWave as a string instead of an
-// integer) — the same Validate call the writer makes before commit.
+// catalog body with a wrong-typed field (selfHeal as a string instead of a
+// boolean) — the same Validate call the writer makes before commit.
 func TestMarshalAddonCatalog_GateRejectsInvalidBody(t *testing.T) {
 	t.Parallel()
 
@@ -81,7 +81,7 @@ metadata:
 spec:
   applicationsets:
     - name: cert-manager
-      syncWave: "not-an-int"
+      selfHeal: "not-a-bool"
 `)
 
 	validator, vErr := schema.DefaultValidator()

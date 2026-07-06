@@ -122,8 +122,6 @@ definitions:
         type: array
       default_namespace:
         type: string
-      default_sync_wave:
-        type: integer
       deprecated:
         type: boolean
       description:
@@ -537,10 +535,6 @@ definitions:
         type: boolean
       chart:
         type: string
-      depends_on:
-        items:
-          type: string
-        type: array
       dry_run:
         description: |-
           DryRun, when true, makes AddAddon compute and return the files it WOULD
@@ -576,8 +570,6 @@ definitions:
         items:
           type: string
         type: array
-      sync_wave:
-        type: integer
       version:
         type: string
     type: object
@@ -661,8 +653,6 @@ definitions:
         items:
           type: string
         type: array
-      sync_wave:
-        type: integer
       version:
         type: string
     type: object

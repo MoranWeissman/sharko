@@ -52,7 +52,6 @@ func TestIntegration_FullLoop_FetcherToMergedCatalog(t *testing.T) {
     chart: alpha
     repo: https://example.com/charts
     default_namespace: alpha
-    default_sync_wave: 10
     maintainers: ["alpha-team"]
     license: Apache-2.0
     category: observability
@@ -62,7 +61,6 @@ func TestIntegration_FullLoop_FetcherToMergedCatalog(t *testing.T) {
     chart: beta
     repo: https://example.com/charts
     default_namespace: beta
-    default_sync_wave: 10
     maintainers: ["beta-team"]
     license: MIT
     category: networking
@@ -72,7 +70,6 @@ func TestIntegration_FullLoop_FetcherToMergedCatalog(t *testing.T) {
     chart: cert-manager
     repo: https://example.com/charts
     default_namespace: cert-manager
-    default_sync_wave: 10
     maintainers: ["third-party"]
     license: Apache-2.0
     category: security

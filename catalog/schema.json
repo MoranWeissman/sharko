@@ -56,11 +56,6 @@
           "pattern": "^[a-z0-9][a-z0-9-]*[a-z0-9]$",
           "maxLength": 63
         },
-        "default_sync_wave": {
-          "type": "integer",
-          "minimum": -100,
-          "maximum": 100
-        },
         "docs_url": { "type": "string", "format": "uri" },
         "homepage": { "type": "string", "format": "uri" },
         "source_url": { "type": "string", "format": "uri" },

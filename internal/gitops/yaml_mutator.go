@@ -14,9 +14,9 @@
 package gitops
 
 // CatalogEntryInput holds the fields for a new addons-catalog.yaml entry.
-// Namespace, SyncWave and DependsOn are optional (zero value means not
-// set). The orchestrator builds this struct from AddAddonRequest and
-// passes it to AddCatalogEntry.
+// Namespace is optional (zero value means not set). The orchestrator
+// builds this struct from AddAddonRequest and passes it to
+// AddCatalogEntry.
 //
 // Path field is intentionally absent: the typed
 // models.AddonCatalogEntry has no Path field, and the envelope writer
@@ -27,7 +27,5 @@ type CatalogEntryInput struct {
 	RepoURL   string
 	Chart     string
 	Version   string
-	Namespace string   // optional
-	SyncWave  int      // optional, 0 = not set
-	DependsOn []string // optional, addon names this entry depends on
+	Namespace string // optional
 }

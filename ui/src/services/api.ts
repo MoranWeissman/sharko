@@ -480,7 +480,6 @@ export async function addAddon(data: {
   repo_url: string
   version: string
   namespace?: string
-  sync_wave?: number
   /**
    * Identifies the originating UI flow.
    *   "marketplace" — Browse curated card → Configure
@@ -548,7 +547,6 @@ export async function configureAddon(
   name: string,
   config: {
     version?: string
-    sync_wave?: number
     self_heal?: boolean
     sync_options?: string[]
     extra_helm_values?: Record<string, string>
@@ -972,7 +970,6 @@ export const api = {
     addonName: string,
     body: {
       version?: string
-      sync_wave?: number
       self_heal?: boolean
       sync_options?: string[]
       ignore_differences?: Record<string, unknown>[]

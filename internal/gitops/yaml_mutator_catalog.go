@@ -27,7 +27,7 @@
 //     and rejects updates to the "name" key (caller contract preserved).
 //     String-shaped updates parse into the typed AddonCatalogEntry
 //     fields for the well-known keys (version, chart, repoURL,
-//     namespace, syncWave, selfHeal); unknown keys are rejected so the
+//     namespace, selfHeal); unknown keys are rejected so the
 //     caller cannot smuggle arbitrary YAML through this entry point.
 //   - UpdateCatalogVersion returns an error when the addon is not found
 //     (caller contract preserved — orchestrator/upgrade.go and
@@ -84,10 +84,6 @@ func AddCatalogEntry(data []byte, entry CatalogEntryInput) ([]byte, error) {
 		Chart:     entry.Chart,
 		Version:   entry.Version,
 		Namespace: entry.Namespace,
-		SyncWave:  entry.SyncWave,
-	}
-	if len(entry.DependsOn) > 0 {
-		newEntry.DependsOn = append([]string(nil), entry.DependsOn...)
 	}
 
 	entries = append(entries, newEntry)
@@ -125,9 +121,9 @@ func RemoveCatalogEntry(data []byte, addonName string) ([]byte, error) {
 // is supplied (the typed model exposes a fixed field set — silently
 // dropping unknown keys would mask caller bugs).
 //
-// Supported keys: version, chart, repoURL, namespace, syncWave, selfHeal.
-// All values are strings (matching the legacy line-level contract); int
-// and bool keys are parsed via strconv.
+// Supported keys: version, chart, repoURL, namespace, selfHeal. All
+// values are strings (matching the legacy line-level contract); bool
+// keys are parsed via strconv.
 func UpdateCatalogEntry(data []byte, addonName string, updates map[string]string) ([]byte, error) {
 	if _, ok := updates["name"]; ok {
 		return nil, fmt.Errorf("updating name is not allowed")
@@ -178,12 +174,6 @@ func applyCatalogFieldUpdate(entry *models.AddonCatalogEntry, key, value string)
 		entry.RepoURL = value
 	case "namespace":
 		entry.Namespace = value
-	case "syncWave":
-		n, err := strconv.Atoi(value)
-		if err != nil {
-			return fmt.Errorf("syncWave: %w", err)
-		}
-		entry.SyncWave = n
 	case "selfHeal":
 		b, err := strconv.ParseBool(value)
 		if err != nil {
@@ -191,7 +181,7 @@ func applyCatalogFieldUpdate(entry *models.AddonCatalogEntry, key, value string)
 		}
 		entry.SelfHeal = &b
 	default:
-		return fmt.Errorf("unsupported field %q (supported: version, chart, repoURL, namespace, syncWave, selfHeal)", key)
+		return fmt.Errorf("unsupported field %q (supported: version, chart, repoURL, namespace, selfHeal)", key)
 	}
 	return nil
 }

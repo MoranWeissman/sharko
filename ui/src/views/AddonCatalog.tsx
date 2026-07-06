@@ -585,9 +585,10 @@ export function AddonCatalog() {
   const [pageSize, setPageSize] = useState<PageSize>(15)
   const [page, setPage] = useState(1)
 
-  // Add Addon dialog state. No sync_wave input — operators set it on the
-  // addon's Deployment Options tab after the addon exists. The dialog
-  // auto-validates the repo URL and offers chart/version dropdowns.
+  // Add Addon dialog state. Advanced options (sync options, ignore
+  // differences, additional sources) are set on the addon's Deployment
+  // Options tab after the addon exists. The dialog auto-validates the
+  // repo URL and offers chart/version dropdowns.
   const [addAddonOpen, setAddAddonOpen] = useState(false)
   const [addonForm, setAddonForm] = useState({
     name: '',
@@ -809,8 +810,6 @@ export function AddonCatalog() {
       repo_url: addonForm.repo_url.trim(),
       version: addonForm.version.trim(),
       namespace: addonForm.namespace.trim() || undefined,
-      // sync_wave intentionally omitted — operators set it on the addon's
-      // Deployment Options tab after creation.
       source: 'manual' as const,
       // auto_merge omitted — falls back to the global GitOps setting.
       dry_run: dryRun,
@@ -1331,10 +1330,10 @@ export function AddonCatalog() {
               />
             </div>
 
-            {/* Note: where to set sync wave / advanced options after creation. */}
+            {/* Note: where to set advanced options after creation. */}
             <div className="rounded-md bg-[#e8f4ff] p-3 text-xs text-[#2a5a7a] ring-1 ring-[#c0ddf0] dark:bg-gray-800 dark:text-gray-300 dark:ring-gray-700">
-              After adding, advanced options like sync wave, sync options,
-              ignore differences, and additional sources are available on the
+              After adding, advanced options like sync options, ignore
+              differences, and additional sources are available on the
               addon&rsquo;s <strong>Deployment Options</strong> tab.
             </div>
 

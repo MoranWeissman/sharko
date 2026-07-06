@@ -56,19 +56,16 @@ spec:
       chart: keda
       version: "2.13.0"
       namespace: keda
-      syncWave: 0
     - name: velero
       repoURL: https://vmware-tanzu.github.io/helm-charts
       chart: velero
       version: "7.2.1"
       namespace: velero
-      syncWave: 0
     - name: cert-manager
       repoURL: https://charts.jetstack.io
       chart: cert-manager
       version: "1.14.4"
       namespace: cert-manager
-      syncWave: 0
 `
 
 	// Stub ArgoCD server: returns a matching cluster + the three apps.
@@ -211,8 +208,8 @@ func TestClassifyAddonApp_V2cleanup36(t *testing.T) {
 			// Old classifyHealth(Healthy, OutOfSync) → "healthy" (optimistic lie).
 			name: "keda_crd_too_long",
 			app: models.ArgocdApplication{
-				SyncStatus:   "OutOfSync",
-				HealthStatus: "Healthy",
+				SyncStatus:     "OutOfSync",
+				HealthStatus:   "Healthy",
 				OperationPhase: "Running",
 				OperationMessage: "one or more synchronization tasks completed unsuccessfully, " +
 					"reason: CustomResourceDefinition.apiextensions.k8s.io \"scaledjobs.keda.sh\" " +
@@ -230,10 +227,10 @@ func TestClassifyAddonApp_V2cleanup36(t *testing.T) {
 			// New: deploying.
 			name: "active_rollout_no_failures",
 			app: models.ArgocdApplication{
-				SyncStatus:     "OutOfSync",
-				HealthStatus:   "Healthy",
-				OperationPhase: "Running",
-				OperationMessage: "",
+				SyncStatus:            "OutOfSync",
+				HealthStatus:          "Healthy",
+				OperationPhase:        "Running",
+				OperationMessage:      "",
 				HasSyncFailedResource: false,
 			},
 			wantStatus:    "deploying",
@@ -288,9 +285,9 @@ func TestClassifyAddonApp_V2cleanup36(t *testing.T) {
 			// Phase=Failed (no running confusion).
 			name: "phase_failed",
 			app: models.ArgocdApplication{
-				SyncStatus:     "OutOfSync",
-				HealthStatus:   "Degraded",
-				OperationPhase: "Failed",
+				SyncStatus:       "OutOfSync",
+				HealthStatus:     "Degraded",
+				OperationPhase:   "Failed",
 				OperationMessage: "rpc error: code = Unknown desc = sync operation failed",
 			},
 			wantStatus:    "sync_failing",
@@ -301,9 +298,9 @@ func TestClassifyAddonApp_V2cleanup36(t *testing.T) {
 			// Phase=Error.
 			name: "phase_error",
 			app: models.ArgocdApplication{
-				SyncStatus:     "OutOfSync",
-				HealthStatus:   "Unknown",
-				OperationPhase: "Error",
+				SyncStatus:       "OutOfSync",
+				HealthStatus:     "Unknown",
+				OperationPhase:   "Error",
 				OperationMessage: "context deadline exceeded",
 			},
 			wantStatus:    "sync_failing",
@@ -315,10 +312,10 @@ func TestClassifyAddonApp_V2cleanup36(t *testing.T) {
 			// Message check alone must fire.
 			name: "running_message_only",
 			app: models.ArgocdApplication{
-				SyncStatus:     "OutOfSync",
-				HealthStatus:   "Healthy",
-				OperationPhase: "Running",
-				OperationMessage: "one or more synchronization tasks completed unsuccessfully",
+				SyncStatus:            "OutOfSync",
+				HealthStatus:          "Healthy",
+				OperationPhase:        "Running",
+				OperationMessage:      "one or more synchronization tasks completed unsuccessfully",
 				HasSyncFailedResource: false,
 			},
 			wantStatus:    "sync_failing",

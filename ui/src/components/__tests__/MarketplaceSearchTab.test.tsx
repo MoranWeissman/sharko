@@ -70,7 +70,6 @@ describe('MarketplaceSearchTab', () => {
           chart: 'prometheus',
           repo: 'https://prometheus-community.github.io/helm-charts',
           default_namespace: 'monitoring',
-          default_sync_wave: 0,
           maintainers: ['team'],
           license: 'Apache-2.0',
           category: 'observability',
