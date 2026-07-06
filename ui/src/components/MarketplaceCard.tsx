@@ -11,7 +11,6 @@ import { cn } from '@/lib/utils'
 import type { CatalogEntry, CatalogSourceRecord } from '@/services/models'
 import { ScorecardBadge } from '@/components/ScorecardBadge'
 import { SourceBadge } from '@/components/SourceBadge'
-import { VerifiedBadge } from '@/components/VerifiedBadge'
 
 /**
  * Single tile rendered in the Marketplace Browse grid.
@@ -213,12 +212,6 @@ export function MarketplaceCard({
         <SourceBadge
           source={entry.source}
           sourceRecord={sourceRecord}
-          compact
-        />
-        {/* Cosign signature attribution */}
-        <VerifiedBadge
-          verified={entry.verified}
-          signatureIdentity={entry.signature_identity}
           compact
         />
       </div>
